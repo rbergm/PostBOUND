@@ -1,0 +1,38 @@
+{
+    "join":
+    {
+        "value":
+        {
+            "select":
+            [
+                {"value": "person_id"},
+                {"value": "movie_id"}
+            ],
+            "from":
+            [
+                {"value": "cast_info", "name": "ci"},
+                {
+                    "join":
+                    {
+                        "value": "name", "name": "n"
+                    },
+                    "on":
+                    {
+                        "and":
+                        [
+                            {"eq": ["n.gender", {"literal": "m"}]},
+                            {"like": ["n.name", {"literal": "%Tim%"}]},
+                            {"eq": ["n.id", "ci.person_id"]},
+                            {"in": ["ci.note", {"literal": ["(producer)", "(executive producer)"]}]}
+                        ]
+                    }
+                }
+            ]
+        },
+        "name": "t_ci"
+    },
+    "on":
+    {
+        "eq": ["t_ci.movie_id", "mi_idx.movie_id"]
+    }
+}
