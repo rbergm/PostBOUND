@@ -163,3 +163,4 @@ cython_debug/
 
 # Python venv
 dt-venv/
+.psycopg_connection
