@@ -1,70 +1,61 @@
 #!/usr/bin/env python3
+
 import collections
-from typing import Any, Dict
-
-import pandas as pd
-import mo_sql_parsing as mosp
-
-# get access to our utility scripts
+import pathlib
+import functools
 import sys
-utils_path = "../utils/"
-if utils_path not in sys.path:
-    sys.path.insert(0, utils_path)
-from helper import unwrap, select
-import smat
 
-df = pd.read_csv("../pg-bao/workloads/job-ues-cout.csv")
-df["sql"] = df["query"].apply(mosp.parse)
+import mo_sql_parsing as mosp
+import natsort
+import numpy as np
+import pandas as pd
+import psycopg2
 
+from transform import flatten, db
 
-class QueryUpdate:
-    def __init__(self, base_table="", ):
-        self.base_table = base_table
-        self.table_renamings = collections.defaultdict(int)
-        self.table_references = list()
-        self.predicates = list()
+df_data = collections.defaultdict(list)
+workload_path = pathlib.Path("../simplicity-done-right/JOB-Queries/explicit")
+query_files = list(workload_path.glob("*.sql"))
+df_data["label"].extend(query_file.stem for query_file in query_files)
+df_data["query"].extend(query_file.read_text().replace("\n", " ").lower() for query_file in query_files)
 
-    def include_subquery(self, subquery):
+conn = psycopg2.connect("dbname=imdb user=strix host=localhost")
+cur = conn.cursor()
+dbschema = db.DBSchema(cur)
 
-        # first up, build the rename map
-        tables_in_sq = self._collect_tables(subquery)
-        print("=== Tables found:", tables_in_sq)
-        for table in tables_in_sq:
-            self.table_renamings[table] += 1
+df_queries = pd.DataFrame(df_data)
+df_queries.sort_values(by="label", key=lambda _: np.argsort(natsort.index_natsorted(df_queries["label"])), inplace=True)
+df_queries.reset_index(drop=True, inplace=True)
 
-    def _collect_tables(self, subquery):
-        tables = []
-        for clause in subquery["join"]["value"]["from"]:
-            if "join" in clause:
-                tables.append(clause["join"]["value"])
-            else:
-                tables.append(clause["value"])
-        return tables
-
-    def __str__(self) -> str:
-        return f"Tables: {self.table_references}, Predicates: {self.predicates}"
+flattener = functools.partial(flatten.flatten_query, dbschema=dbschema)
 
 
-def extract_subqueries(plan):
-    from_clause = plan["from"]
-    query_update = None
+def test(label):
+    q = df_queries[df_queries.label == label].iloc[0]["query"]
+    print(mosp.parse(q))
+    print(flattener(q))
 
-    # for each reference in the 'from' clause, check if it constitutes a subquery reference
-    for table in from_clause:
-
-        # extract the base table name and proceed with the joined tables
-        if not isinstance(table, dict) or "join" not in table:
-            query_update = QueryUpdate(table)
-            continue
-
-        join_target = table["join"]["value"]
-        if isinstance(join_target, dict) and "select" in join_target:
-            print("Found subquery:", join_target)
-            print("#####")
-            query_update.include_subquery(table)
-
-    print(query_update)
+    sys.exit()
 
 
-q: Dict[Any, Any] = unwrap(df[df.label == "18a"].sql)
-extract_subqueries(q)
+#test("11a")
+
+df_queries["flattened_mosp"] = df_queries["query"].apply(flattener)
+
+
+def flattened_formatter(df_row):
+    label = df_row["label"]
+    mosp_query = df_row["flattened_mosp"]
+    flattened_sql = None
+    try:
+        flattened_sql = mosp.format(mosp_query)
+    except:
+        print("... Error on label", label)
+        print("MOSP data is")
+        print(mosp_query)
+        print("=====")
+    return flattened_sql
+
+
+df_queries["flattened_query"] = df_queries.apply(flattened_formatter, axis="columns")
+df_queries.to_csv("transformed.csv", columns=["label", "query", "flattened_query"], index=False)
