@@ -3,12 +3,10 @@
 import argparse
 import json
 import os
-import random
 from datetime import datetime
 
 import pandas as pd
 import psycopg2
-
 
 SQL_COMMENT_PREFIX = "--"
 DEFAULT_WORKLOAD_COL = "query"
@@ -56,6 +54,12 @@ def execute_query(query, workload_prefix: str, cursor: "psycopg2.cursor"):
     return pd.Series({result_col: query_res, runtime_col: query_duration.total_seconds()})
 
 
+def run_workload(workload: pd.DataFrame, workload_col: str, cursor: "psycopg2.cursor"):
+    workload_res_df = workload[workload_col].apply(execute_query, workload_prefix=workload_col, cursor=cursor)
+    result_df = pd.merge(workload, workload_res_df, left_index=True, right_index=True, how="outer")
+    return result_df
+
+
 def main():
     parser = argparse.ArgumentParser(description="Utility to run different SQL workloads on postgres instances.")
     parser.add_argument("input", action="store", help="File containing the workload")
@@ -71,8 +75,7 @@ def main():
     pg_conn = connect_postgres(parser, args.pg_con)
     pg_cursor = pg_conn.cursor()
 
-    workload_res_df = df_workload[workload_col].apply(execute_query, workload_prefix=workload_col, cursor=pg_cursor)
-    result_df = pd.merge(df_workload, workload_res_df, left_index=True, right_index=True, how="outer")
+    result_df = run_workload(df_workload, workload_col, pg_cursor)
 
     out_file = args.out if args.out else generate_default_out_name()
     result_df.to_csv(out_file, index=False)
