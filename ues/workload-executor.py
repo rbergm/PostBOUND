@@ -56,12 +56,6 @@ def execute_query(query, workload_prefix: str, cursor: "psycopg2.cursor"):
     return pd.Series({result_col: query_res, runtime_col: query_duration.total_seconds()})
 
 
-def dummy_execute_query(query, workload_prefix: str, cursor: "psycopg2.cursor"):
-    result_col = f"{workload_prefix}_result"
-    runtime_col = f"{workload_prefix}_rt_total"
-    return pd.Series({result_col: random.random(), runtime_col: random.random()})
-
-
 def main():
     parser = argparse.ArgumentParser(description="Utility to run different SQL workloads on postgres instances.")
     parser.add_argument("input", action="store", help="File containing the workload")
@@ -77,7 +71,7 @@ def main():
     pg_conn = connect_postgres(parser, args.pg_con)
     pg_cursor = pg_conn.cursor()
 
-    workload_res_df = df_workload[workload_col].apply(dummy_execute_query, workload_prefix=workload_col, cursor=pg_cursor)
+    workload_res_df = df_workload[workload_col].apply(execute_query, workload_prefix=workload_col, cursor=pg_cursor)
     result_df = pd.merge(df_workload, workload_res_df, left_index=True, right_index=True, how="outer")
 
     out_file = args.out if args.out else generate_default_out_name()
