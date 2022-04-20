@@ -7,7 +7,7 @@ from datetime import datetime
 import pandas as pd
 
 import importlib
-executor = importlib.import_module("workload_executor")
+executor = importlib.import_module("workload-executor")
 
 DEFAULT_N_REPETITIONS = 3
 
@@ -24,12 +24,16 @@ def main():
     parser.add_argument("--repetitions", "-r", action="store", default=DEFAULT_N_REPETITIONS, type=int, help="The number of times the workload should be executed.")
     parser.add_argument("--out", "-o", action="store", help="Name of the output file to write the results to.")
     parser.add_argument("--pg-con", action="store", default="", help="Connect string to the postgres instance (psycopg2 format). If omitted, the string will be read from the file .psycopg_connection")
+    parser.add_argument("--pg-param", action="extend", default=[], type=str, nargs="*", help="Parameters to be send to the Postgres instance")
+    parser.add_argument("--query-mod", action="store", default="", help="Optional modifications of the base query. Can be either 'explain' or 'analyze' to turn all queries into EXPLAIN or EXPLAIN ANALYZE queries respectively.")
+    parser.add_argument("--verbose", action="store_true", default=False, help="Produce more debugging output")
 
     args = parser.parse_args()
     out_file = args.out if args.out else executor.generate_default_out_name("experiment")
 
     log(f"Running {args.repetitions} repetitions of workload from {args.input}.")
     log("Writing results to", args.out)
+    log("Additional postgres argugments:", args.pg_param)
 
     log("Reading workload")
     workload = executor.read_workload_csv(args.input) if args.csv else executor.read_workload_plain(args.input)
@@ -39,10 +43,12 @@ def main():
     pg_conn = executor.connect_postgres(parser, args.pg_con)
     pg_cursor = pg_conn.cursor()
 
+    query_mod = executor.QueryMod.parse(args.query_mod, parser)
+
     workload_results = []
     for run in range(1, args.repetitions + 1):
         log("Starting workload iteration", run, "at", datetime.now().strftime("%y%m%d, %H:%M"))
-        df_results = executor.run_workload(workload, workload_col, pg_cursor)
+        df_results = executor.run_workload(workload, workload_col, pg_cursor, pg_args=args.pg_param, query_mod=query_mod, logger=executor.make_logger(args.verbose))
         df_results["run"] = run
         workload_results.append(df_results)
 
