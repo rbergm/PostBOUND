@@ -47,7 +47,7 @@ def main():
 
     workload_results = []
     for run in range(1, args.repetitions + 1):
-        log("Starting workload iteration", run, "at", datetime.now().strftime("%y%m%d, %H:%M"))
+        log("Starting workload iteration", run, "at", datetime.now().strftime("%y-%m-%d, %H:%M"))
         df_results = executor.run_workload(workload, workload_col, pg_cursor, pg_args=args.pg_param, query_mod=query_mod, logger=executor.make_logger(args.verbose))
         df_results["run"] = run
         workload_results.append(df_results)
