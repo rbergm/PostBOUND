@@ -164,3 +164,8 @@ cython_debug/
 # Python venv
 dt-venv/
 .psycopg_connection
+
+# Project specific files
+
+# The imdb folder contains all sources for the IMDB dataset, we don't want this in VC
+imdb/
