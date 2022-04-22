@@ -165,8 +165,12 @@ cython_debug/
 dt-venv/
 .psycopg_connection
 
+# R env
+.Rproj.user
+.Rhistory
+
 # Project specific files
 
 # The imdb folder contains all sources for the IMDB dataset, we don't want this in VC
 imdb/
-.Rproj.user
+
