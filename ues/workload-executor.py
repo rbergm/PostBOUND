@@ -111,7 +111,7 @@ def execute_query(query, workload_prefix: str, cursor: "psycopg2.cursor", *, pg_
     query_end = datetime.now()
 
     query_res = cursor.fetchone()[0]
-    if isinstance(query_res, dict):
+    if isinstance(query_res, dict) or isinstance(query_res, list):
         query_res = json.dumps(query_res)
     query_duration = query_end - query_start
 
