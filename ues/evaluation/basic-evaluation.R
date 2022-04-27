@@ -89,11 +89,12 @@ df_agg <- df_repr %>%
             rt_total = sum(rt_total)) %>%
   mutate(top_heaviness = max_rt / rt_total,
          rt_remain = rt_total - max_rt,
-         experiment = paste(workload, ifelse(foreign_keys, "FKs", "no FKs"), sep = " :: "))
+         experiment = paste(workload, ifelse(foreign_keys, "FKs", "no FKs"), sep = " :: ")) %>%
+  arrange(foreign_keys, workload)
 ggplot(df_agg, aes(x = experiment, y = rt_total, fill = experiment)) +
-  geom_bar(stat = "identity") +
+  geom_col() +
   labs(title = "Total runtime of the different experiments",
-       x = "Setting", y = "Runtime",
+       x = "Setting", y = "Runtime [seconds]",
        fill = "Setting") +
   scale_fill_viridis(option = "cividis", discrete = TRUE) +
   theme_bw()
@@ -127,9 +128,9 @@ ggplot(df_agg %>%
                       names_to = "fraction",
                       values_to = "runtime"),
        aes(x = experiment, y = runtime, fill = fraction)) +
-  geom_bar(stat = "identity") +
+  geom_col() +
   labs(title = "Share of the longest running query on the total runtime",
-       x = "Setting", y = "Runtime",
+       x = "Setting", y = "Runtime [seconds]",
        fill = "Runtime") +
   scale_fill_viridis(labels = c("Longest query", "Remainder"),
                      option = "cividis", discrete = TRUE, direction = -1) +
@@ -172,6 +173,7 @@ ggplot(df_nofk, aes(x = 1:nrow(df_nofk), y = rt_change_pct, color = change_type,
   geom_hline(aes(yintercept = 1, linetype = "Normal runtime"), size = .2) +
   geom_vline(aes(xintercept = nrow(df_nofk) / 2, linetype = "50% workload"), size = .2) +
   ylim(0, NA) +
+  scale_y_log10() +
   labs(x = "Query (ordered by runtime change factor)", y = "Runtime change factor",
        fill = "Runtime change", color = "Runtime change", linetype = "Marker") +
   scale_fill_viridis(discrete = TRUE) +
@@ -195,7 +197,8 @@ ggplot(df_nofk, aes(x = base_table, y = rt_change_pct, color = trans_rt)) +
   labs(x = "Base table", y = "Runtime change factor",
        color = "Transformed RT") +
   scale_color_viridis() +
-  theme_bw()
+  theme_bw() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
 
 # Correlation w/ cardinality?
 ggplot(df_nofk, aes(x = card, y = rt_change_pct, color = trans_rt)) +
