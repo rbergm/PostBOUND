@@ -19,18 +19,29 @@ class MospQuery:
     def from_clause(self):
         return self.query["from"]
 
-    def base_table(self) -> db.TableRef:
+    def base_table(self) -> "db.TableRef":
         tab = next(tab for tab in self.from_clause() if "value" in tab)
         return db.TableRef(tab["value"], tab["name"])
 
-    def collect_tables(self) -> List[db.TableRef]:
+    def collect_tables(self) -> List["db.TableRef"]:
         tables = [self.base_table()]
         for join in self.joins():
             tables.extend(join.collect_tables())
         return tables
 
-    def joins(self) -> List["MospJoin"]:
-        return [MospJoin(tab) for tab in self.from_clause() if "join" in tab]
+    def joins(self, simplify=False) -> List["MospJoin"]:
+        joins = [MospJoin(tab) for tab in self.from_clause() if "join" in tab]
+        if simplify and len(joins) == 1:
+            return joins[0]
+        else:
+            return joins
+
+    def subqueries(self, simplify=False) -> List["MospJoin"]:
+        subqueries = [sq for sq in self.joins() if sq.is_subquery()]
+        if simplify and len(subqueries == 1):
+            return subqueries[0]
+        else:
+            return subqueries
 
     def __repr__(self) -> str:
         return str(self)
@@ -41,7 +52,7 @@ class MospQuery:
 
 class MospJoin:
     @staticmethod
-    def build(base_table: db.TableRef, predicate) -> "MospJoin":
+    def build(base_table: "db.TableRef", predicate) -> "MospJoin":
         mosp_data = {
             "join": {"value": base_table.full_name, "name": base_table.alias},
             "on": predicate
@@ -77,7 +88,7 @@ class MospJoin:
     def name(self) -> str:
         return self.join_data["name"]
 
-    def collect_tables(self) -> List[db.TableRef]:
+    def collect_tables(self) -> List["db.TableRef"]:
         return self.subquery.collect_tables() if self.is_subquery() else [self.base_table()]
 
     def __str__(self):
@@ -99,6 +110,13 @@ CompoundOperations = {
 
 
 class MospPredicate:
+    @staticmethod
+    def break_compound(mosp_data) -> List["MospPredicate"]:
+        operation = util.dict_key(mosp_data)
+        if operation not in CompoundOperations:
+            return MospPredicate(mosp_data)
+        return [MospPredicate.break_compound(sub_predicate) for sub_predicate in mosp_data[operation]]
+
     def __init__(self, mosp_data):
         self.mosp_data = mosp_data
         if not isinstance(mosp_data, dict):
@@ -150,6 +168,9 @@ class MospPredicate:
     def attributes(self) -> Tuple[str, Union[str, Any]]:
         return (self.left_attribute(), self.right_attribute())
 
+    def pretty_operation(self) -> str:
+        return _OperationPrinting.get(self.operation, self.operation)
+
     def to_mosp(self):
         if self.operation == "between":
             return {"between": [self.left, *self.right]}
@@ -162,6 +183,9 @@ class MospPredicate:
 
     def _extract_attribute(self, op: str) -> str:
         return ".".join(op.split(".")[1:])
+
+    def __repr__(self) -> str:
+        return str(self)
 
     def __str__(self) -> str:
         op_str = _OperationPrinting.get(self.operation, self.operation)

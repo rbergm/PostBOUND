@@ -1,4 +1,5 @@
 
+import itertools
 from typing import Any, List, Dict
 
 
@@ -28,3 +29,7 @@ def dict_value(dictionary: Dict[Any, Any]) -> Any:
     if len(vals) > 1:
         raise ValueError("Ambigous call - dict contains multiple entries: " + str(dictionary))
     return next(iter(vals))
+
+
+def flatten(deep_lst: List[List[Any]]) -> List[Any]:
+    return list(itertools.chain(*deep_lst))
