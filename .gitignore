@@ -169,8 +169,10 @@ dt-venv/
 .Rproj.user
 .Rhistory
 
+# VS code
+.vscode/
+
 # Project specific files
 
 # The imdb folder contains all sources for the IMDB dataset, we don't want this in VC
 imdb/
-
