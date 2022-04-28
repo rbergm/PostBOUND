@@ -8,3 +8,5 @@ cd postgres-server
 
 pg_ctl -D $(pwd)/data -l pg.log start
 
+cd ..
+
