@@ -91,7 +91,10 @@ class MospJoin:
     def collect_tables(self) -> List["db.TableRef"]:
         return self.subquery.collect_tables() if self.is_subquery() else [self.base_table()]
 
-    def __str__(self):
+    def __repr__(self) -> str:
+        return str(self)
+
+    def __str__(self) -> str:
         return f"{self.join_data} ON {self.join_predicate}"
 
 
