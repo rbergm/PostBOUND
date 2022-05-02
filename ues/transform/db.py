@@ -139,6 +139,12 @@ class PlanNode:
     def is_subquery(self):
         return self.subquery
 
+    def extract_subquery(self):
+        if self.is_subquery():
+            return self
+        child_sqs = [child.extract_subquery() for child in self.children]
+        return next((child_sq for child_sq in child_sqs if child_sq), None)
+
     def traverse(self, fn):
         fn(self)
         for child in self.children:
