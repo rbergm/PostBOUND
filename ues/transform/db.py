@@ -189,7 +189,8 @@ EXPLAIN_PREDICATE_FORMAT = re.compile(r"\(?(?P<left>[\w\.]+) (?P<op>[<>=!]+) (?P
 
 
 def _matches_any_predicate(explain_filter_needle: str, mosp_predicate_haystack: List[Any]) -> bool:
-    parsed_candidates = util.flatten([mosp.MospPredicate.break_compound(pred) for pred in mosp_predicate_haystack])
+    parsed_candidates = util.flatten([mosp.MospPredicate.break_compound(pred)
+                                      for pred in mosp_predicate_haystack], recursive=True)
     explain_pred_match = EXPLAIN_PREDICATE_FORMAT.match(explain_filter_needle)
     if not explain_pred_match:
         raise ValueError("Unkown filter format: {}".format(explain_pred_match))
@@ -273,7 +274,8 @@ def parse_explain_analyze(orig_query: "mosp.MospQuery", plan, *, with_subqueries
             join_pred = ""
 
         if with_subqueries and join_pred:
-            subquery_predicates = [sq.subquery.joins(simplify=True).predicate() for sq in orig_query.subqueries()]
+            subquery_joins = [sq.subquery.joins() for sq in orig_query.subqueries()]
+            subquery_predicates = [join.predicate() for join in util.flatten(subquery_joins)]
             is_subquery = _matches_any_predicate(join_pred, subquery_predicates)
         else:
             is_subquery = False
@@ -293,6 +295,7 @@ def parse_explain_analyze(orig_query: "mosp.MospQuery", plan, *, with_subqueries
                         source_table=source_tab, alias_name=alias, index_name=index_name,
                         exec_time=exec_time, proc_rows=proc_rows, planned_rows=planned_rows)
     else:
+        warnings.warn("Unknown node type: {}".format(node_type))
         parsed_children = [parse_explain_analyze(orig_query, child_plan, with_subqueries=with_subqueries)
                            for child_plan in plan.get("Plans", [])]
         return _simplify_plan_tree(parsed_children)
