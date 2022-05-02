@@ -196,14 +196,27 @@ def _matches_any_predicate(explain_filter_needle: str, mosp_predicate_haystack: 
         raise ValueError("Unkown filter format: {}".format(explain_pred_match))
     left, op, right = explain_pred_match.groupdict().values()
 
+    # We need to include some of the hacks from `compare_predicate_strs` here as well. In theory, we could delegate
+    # our work to that function as well. However, we would need to convert the MOSP predicate back to a string.
+    # This includes correctly formatting literal values such as Strings, having the correct escaping, etc. Therefore it
+    # is probably easier to just duplicate the comparison logic for our special case here.
+
     for candidate in parsed_candidates:
+        left_uneq_op = op in ["<>", "!="]
+        right_uneq_op = candidate.pretty_operation() in ["<>", "!="]
+        operations_match = (op == candidate.pretty_operation()) or (left_uneq_op and right_uneq_op)
+        if not operations_match:
+            return False
+
+        reflexive_operator = op in ["=", "!=", "<>"]
         direct_operand_match = candidate.left_op() == left and candidate.right_op() == right
-        reversed_operand_match = candidate.right_op() == left and candidate.left_op() == right
-
+        if reflexive_operator:
+            reversed_operand_match = candidate.right_op() == left and candidate.left_op() == right
+        else:
+            reversed_operand_match = False
         operands_match = direct_operand_match or reversed_operand_match
-        operation_match = candidate.pretty_operation() == op
 
-        if operands_match and operation_match:
+        if operands_match:
             return True
 
     return False
@@ -215,12 +228,26 @@ def compare_predicate_strs(first_pred: str, second_pred: str) -> bool:
     first_left, first_op, first_right = first_match.groupdict().values()
     second_left, second_op, second_right = second_match.groupdict().values()
 
-    direct_operand_match = first_left == second_left and first_right == second_right
-    reversed_operand_match = first_left == second_right and first_right == second_left
-    operands_match = direct_operand_match or reversed_operand_match
-    operations_match = first_op == second_op
+    # if we compare operations, we need to be extra careful: a != b may also be expressed as a <> b !
+    first_uneq_op = first_op in ["<>", "!="]
+    second_uneq_op = second_op in ["<>", "!="]
+    operations_match = (first_op == second_op) or (first_uneq_op and second_uneq_op)
+    if not operations_match:
+        return False
 
-    return operands_match and operations_match
+    # at this point we have established that both operations are equal, so we may use any of them to represent the
+    # predicate operation
+    reflexive_operator = first_op in ["=", "!=", "<>"]
+
+    direct_operand_match = first_left == second_left and first_right == second_right
+    if reflexive_operator:
+        reversed_operand_match = first_left == second_right and first_right == second_left
+    else:
+        reversed_operand_match = False
+
+    operands_match = direct_operand_match or reversed_operand_match
+
+    return operands_match
 
 
 def parse_explain_analyze(orig_query: "mosp.MospQuery", plan, *, with_subqueries=True) -> "PlanNode":
