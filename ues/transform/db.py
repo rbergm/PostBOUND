@@ -100,12 +100,13 @@ class QueryNode(enum.Enum):
 
     HASH_JOIN = "Hash Join"
     NESTED_LOOP = "Nested Loop"
+    MERGE_JOIN = "Merge Join"
     SEQ_SCAN = "Seq Scan"
     IDX_ONLY_SCAN = "Index Only Scan"
     IDX_SCAN = "Index Scan"
 
     def is_join(self) -> bool:
-        return self == QueryNode.HASH_JOIN or self == QueryNode.NESTED_LOOP
+        return self in [QueryNode.HASH_JOIN, QueryNode.NESTED_LOOP, QueryNode.MERGE_JOIN]
 
     def is_scan(self) -> bool:
         return self in [QueryNode.SEQ_SCAN, QueryNode.IDX_ONLY_SCAN, QueryNode.IDX_SCAN]
@@ -265,6 +266,11 @@ def parse_explain_analyze(orig_query: "mosp.MospQuery", plan, *, with_subqueries
                 reconstructed_join_condition = f"({scan_child.alias_name}.{join_col} {join_op} {target_col})"
                 join_pred = reconstructed_join_condition
                 scan_child.join_pred = ""
+        elif node == QueryNode.MERGE_JOIN:
+            join_pred = plan.get("Merge Cond", "")
+        else:
+            warnings.warn("Could not determine join condition for join '{}'".format(node_type))
+            join_pred = ""
 
         if with_subqueries and join_pred:
             subquery_predicates = [sq.subquery.joins(simplify=True).predicate() for sq in orig_query.subqueries()]
