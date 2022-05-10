@@ -273,7 +273,7 @@ def parse_explain_analyze(orig_query: "mosp.MospQuery", plan, *, with_subqueries
             join_pred = ""
 
         if with_subqueries and join_pred:
-            subquery_joins = [sq.subquery.joins() for sq in orig_query.subqueries()]
+            subquery_joins = [sq.subquery.joins()[0] for sq in orig_query.subqueries()]
             subquery_predicates = [join.predicate() for join in util.flatten(subquery_joins)]
             is_subquery = _matches_any_predicate(join_pred, subquery_predicates)
         else:
