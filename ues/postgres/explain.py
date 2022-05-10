@@ -46,11 +46,13 @@ class QueryNode(enum.Enum):
 
 
 class PlanNode:
-    def __init__(self, node: "QueryNode", *, join_pred: str = "", filter_pred: str = "",
+    def __init__(self, node: "QueryNode", *, pruned: bool = False, join_pred: str = "", filter_pred: str = "",
                  source_table: str = "", alias_name: str = "", index_name: str = "",
                  exec_time: np.double = np.nan, proc_rows: np.double = np.nan, planned_rows: np.double = np.nan,
                  children: List = None, subquery: bool = False, associated_query: "mosp.MospQuery" = None):
         self.node = node
+        self.pruned = pruned
+
         self.subquery = subquery
         self.join_pred = join_pred
         self.filter_pred = filter_pred
@@ -87,7 +89,15 @@ class PlanNode:
         for child in self.children:
             child.traverse(fn)
 
-    def pretty_print(self, *, indent=0):
+    def any_pruned(self, *, exclude_subqueries=False):
+        if exclude_subqueries and self.subquery:
+            return False
+
+        if self.pruned:
+            return True
+        return any(child.any_pruned() for child in self.children)
+
+    def pretty_print(self, *, include_filter=False, indent=0):
         indent_str = " " * indent
         if indent:
             indent_str += "<- "
@@ -96,8 +106,13 @@ class PlanNode:
             node_label = f"{self.node.value} {self.join_pred}" if self.join_pred else self.node.value
         elif self.node.is_scan():
             node_label = f"{self.node.value} :: {self.source_table}"
+            if include_filter and self.filter_pred:
+                node_label += f" ({self.filter_pred})"
         else:
             node_label = self.node.value
+
+        if self.pruned:
+            node_label = "[PRUNED] " + node_label
 
         if self.is_subquery():
             node_label = "[SQ] " + node_label
@@ -105,7 +120,7 @@ class PlanNode:
 
         child_labels = []
         for child in self.children:
-            child_labels.append(child.pretty_print(indent=indent+2))
+            child_labels.append(child.pretty_print(include_filter=include_filter, indent=indent+2))
         child_content = "".join(child_labels)
         return node_label + child_content
 
@@ -113,12 +128,13 @@ class PlanNode:
         return str(self)
 
     def __str__(self) -> str:
+        node_name = f"~{self.node.value}~" if self.pruned else self.node.value
         if self.node.is_join():
-            node_label = f"{self.node.value} {self.join_pred}" if self.join_pred else self.node.value
+            node_label = f"{node_name} {self.join_pred}" if self.join_pred else self.node.value
         elif self.node.is_scan():
-            node_label = f"{self.node.value} :: {self.source_table}"
+            node_label = f"{node_name} :: {self.source_table}"
         else:
-            node_label = self.node.value
+            node_label = node_name
         return f"{node_label} <- {self.children}" if self.children else node_label
 
 
@@ -263,7 +279,12 @@ def parse_explain_analyze(orig_query: "mosp.MospQuery", plan, *, with_subqueries
         else:
             is_subquery = False
 
-        return PlanNode(node, join_pred=join_pred, filter_pred=filter_pred,
+        if float(plan.get("Actual Startup Time", "-1")) == 0 and float(plan.get("Actual Total Time", "-1")) == 0:
+            pruned = True
+        else:
+            pruned = False
+
+        return PlanNode(node, pruned=pruned, join_pred=join_pred, filter_pred=filter_pred,
                         exec_time=exec_time, proc_rows=proc_rows, planned_rows=planned_rows,
                         children=children, subquery=is_subquery, associated_query=orig_query)
     elif QueryNode.is_scan_node(node_type):
@@ -274,7 +295,12 @@ def parse_explain_analyze(orig_query: "mosp.MospQuery", plan, *, with_subqueries
         index_name = plan.get("Index Name", "")
         alias = plan.get("Alias", "")
 
-        return PlanNode(node, join_pred=join_pred, filter_pred=filter_pred,
+        if float(plan.get("Actual Startup Time", "-1")) == 0 and float(plan.get("Actual Total Time", "-1")) == 0:
+            pruned = True
+        else:
+            pruned = False
+
+        return PlanNode(node, pruned=pruned, join_pred=join_pred, filter_pred=filter_pred,
                         source_table=source_tab, alias_name=alias, index_name=index_name,
                         exec_time=exec_time, proc_rows=proc_rows, planned_rows=planned_rows,
                         associated_query=orig_query)
