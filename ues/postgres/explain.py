@@ -6,7 +6,7 @@ from typing import Any, List, Union
 
 import numpy as np
 
-from transform import mosp, util
+from transform import db, mosp, util
 
 
 class QueryNode(enum.Enum):
@@ -76,13 +76,40 @@ class PlanNode:
     def is_subquery(self):
         return self.subquery
 
-    def extract_subqueries(self):
+    def extract_subqueries(self) -> List["PlanNode"]:
         subqueries = []
         if self.is_subquery():
             subqueries.append(self)
         for child in self.children:
             subqueries.extend(child.extract_subqueries())
         return subqueries
+
+    def lookup_subquery(self, join_filter: str) -> mosp.MospQuery:
+        subqueries = [sq.subquery for sq in self.associated_query.subqueries()]
+        return _lookup_join_predicate(join_filter, subqueries)
+
+    def lookup_scan(self, table: db.TableRef) -> "PlanNode":
+        if not self.node.is_scan():
+            for child in self.children:
+                lookup_res = child.lookup_scan(table)
+                if lookup_res:
+                    return lookup_res
+            return None
+        if self.source_table == table.full_name and self.alias_name == table.alias:
+            return self
+        else:
+            return None
+
+    def lookup_join(self, filter_cond: str) -> "PlanNode":
+        if not self.node.is_join():
+            return None
+        if self.join_pred == filter_cond:
+            return self
+        for child in self.children:
+            lookup_res = child.lookup_join(filter_cond)
+            if lookup_res:
+                return lookup_res
+        return None
 
     def traverse(self, fn):
         fn(self)
