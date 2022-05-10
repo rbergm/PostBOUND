@@ -131,7 +131,20 @@ def _simplify_plan_tree(plans: List[Any]) -> Union[Any, List[Any]]:
 EXPLAIN_PREDICATE_FORMAT = re.compile(r"\(?(?P<left>[\w\.]+) (?P<op>[<>=!]+) (?P<right>[\w\.]+)\)?")
 
 
+def _lookup_join_predicate(join_filter_needle: str, mosp_query_haystack: List[mosp.MospQuery]) -> mosp.MospQuery:
+    for query in mosp_query_haystack:
+        predicates = [join.predicate() for join in query.joins()]
+        if _matches_any_predicate(join_filter_needle, predicates):
+            return query
+    return None
+
+
 def _matches_any_predicate(explain_filter_needle: str, mosp_predicate_haystack: List[Any]) -> bool:
+    match = _search_matching_predicate(explain_filter_needle, mosp_predicate_haystack)
+    return True if match else False
+
+
+def _search_matching_predicate(explain_filter_needle: str, mosp_predicate_haystack: List[Any]) -> Any:
     parsed_candidates = util.flatten([mosp.MospPredicate.break_compound(pred)
                                       for pred in mosp_predicate_haystack], recursive=True)
     explain_pred_match = EXPLAIN_PREDICATE_FORMAT.match(explain_filter_needle)
@@ -149,7 +162,7 @@ def _matches_any_predicate(explain_filter_needle: str, mosp_predicate_haystack: 
         right_uneq_op = candidate.pretty_operation() in ["<>", "!="]
         operations_match = (op == candidate.pretty_operation()) or (left_uneq_op and right_uneq_op)
         if not operations_match:
-            return False
+            continue
 
         reflexive_operator = op in ["=", "!=", "<>"]
         direct_operand_match = candidate.left_op() == left and candidate.right_op() == right
@@ -160,9 +173,9 @@ def _matches_any_predicate(explain_filter_needle: str, mosp_predicate_haystack: 
         operands_match = direct_operand_match or reversed_operand_match
 
         if operands_match:
-            return True
+            return candidate
 
-    return False
+    return None
 
 
 def compare_predicate_strs(first_pred: str, second_pred: str) -> bool:
