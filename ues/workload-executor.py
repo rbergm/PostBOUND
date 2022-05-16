@@ -68,7 +68,7 @@ class QueryMod:
 def connect_postgres(parser: argparse.ArgumentParser, conn_str: str = None):
     if not conn_str:
         if not os.path.exists(".psycopg_connection"):
-            parser.error("No connect string for psycopg given.")
+            parser.error("No connect string for psycopg given and .psycopg_connection does not exist.")
         with open(".psycopg_connection", "r") as conn_file:
             conn_str = conn_file.readline().strip()
     conn = psycopg2.connect(conn_str)
@@ -93,7 +93,7 @@ def read_workload_csv(input: str) -> pd.DataFrame:
 
 
 def execute_query(query, workload_prefix: str, cursor: "psycopg2.cursor", *,
-                  pg_args: List[str], query_mod: QueryMod = None, logger=dummy_logger):
+                  pg_args: List[str], query_mod: QueryMod = None, query_hint: str = "", logger=dummy_logger):
     logger("Now running query", query)
 
     for arg in pg_args:
@@ -105,6 +105,10 @@ def execute_query(query, workload_prefix: str, cursor: "psycopg2.cursor", *,
         query = query_mod.apply_mods(query)
         if orig_query != query:
             logger("Query modified to", query)
+
+    if query_hint:
+        logger("Applying query hint", query_hint)
+        query = query_hint + " " + query
 
     query_start = datetime.now()
     cursor.execute(query)
@@ -122,12 +126,24 @@ def execute_query(query, workload_prefix: str, cursor: "psycopg2.cursor", *,
     return pd.Series({result_col: query_res, runtime_col: query_duration.total_seconds()})
 
 
+def execute_query_wrapper(workload_row: pd.Series, workload_col: str, cursor: "psycopg2.cursor", *,
+                          pg_args: List[str], query_mod: QueryMod = None, hint_col: str = "", logger=dummy_logger):
+    if hint_col:
+        hint = workload_row[hint_col]
+    else:
+        hint = None
+    return execute_query(workload_row[workload_col], workload_prefix=workload_col, cursor=cursor,
+                         pg_args=pg_args, query_mod=query_mod, query_hint=hint, logger=logger)
+
+
 def run_workload(workload: pd.DataFrame, workload_col: str, cursor: "psycopg2.cursor", *,
-                 pg_args: List[str], query_mod: QueryMod = None, logger=dummy_logger):
+                 pg_args: List[str], query_mod: QueryMod = None, hint_col: str = "", logger=dummy_logger):
     logger(len(workload), "queries total")
-    workload_res_df = workload[workload_col].apply(execute_query,
-                                                   workload_prefix=workload_col, cursor=cursor,
-                                                   pg_args=pg_args, query_mod=query_mod, logger=logger)
+    workload_res_df = workload.apply(execute_query_wrapper,
+                                     workload_col=workload_col, cursor=cursor,
+                                     pg_args=pg_args, query_mod=query_mod, hint_col=hint_col,
+                                     logger=logger,
+                                     axis="columns")
     result_df = pd.merge(workload, workload_res_df, left_index=True, right_index=True, how="outer")
     return result_df
 
@@ -147,6 +163,8 @@ def main():
     parser.add_argument("--query-mod", action="store", default="", help="Optional modifications of the base query. "
                         "Can be either 'explain' or 'analyze' to turn all queries into EXPLAIN or EXPLAIN ANALYZE "
                         "queries respectively.")
+    parser.add_argument("--hint-col", action="store", default="", help="In CSV mode, an optional column containing "
+                        "hints to apply on a per-query basis (as specified by the pg_hint_plan extension).")
     parser.add_argument("--verbose", action="store_true", default=False, help="Produce more debugging output")
 
     args = parser.parse_args()
@@ -160,7 +178,8 @@ def main():
     query_mod = QueryMod.parse(args.query_mod, parser)
 
     result_df = run_workload(df_workload, workload_col, pg_cursor, pg_args=args.pg_param,
-                             logger=make_logger(args.verbose), query_mod=query_mod)
+                             query_mod=query_mod, hint_col=args.hint_col,
+                             logger=make_logger(args.verbose))
 
     out_file = args.out if args.out else generate_default_out_name()
     result_df.to_csv(out_file, index=False)

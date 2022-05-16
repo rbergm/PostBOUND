@@ -33,6 +33,8 @@ def main():
     parser.add_argument("--query-mod", action="store", default="", help="Optional modifications of the base query. "
                         "Can be either 'explain' or 'analyze' to turn all queries into EXPLAIN or EXPLAIN ANALYZE "
                         "queries respectively.")
+    parser.add_argument("--hint-col", action="store", default="", help="In CSV mode, an optional column containing "
+                        "hints to apply on a per-query basis (as specified by the pg_hint_plan extension).")
     parser.add_argument("--verbose", action="store_true", default=False, help="Produce more debugging output")
 
     args = parser.parse_args()
@@ -56,7 +58,7 @@ def main():
     for run in range(1, args.repetitions + 1):
         log("Starting workload iteration", run, "at", datetime.now().strftime("%y-%m-%d, %H:%M"))
         df_results = executor.run_workload(workload, workload_col, pg_cursor,
-                                           pg_args=args.pg_param, query_mod=query_mod,
+                                           pg_args=args.pg_param, query_mod=query_mod, hint_col=args.hint_col,
                                            logger=executor.make_logger(args.verbose))
         df_results["run"] = run
         workload_results.append(df_results)
