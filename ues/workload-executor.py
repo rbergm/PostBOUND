@@ -33,7 +33,6 @@ def make_logger(logging_enabled: bool = True):
 class QueryMod:
     @staticmethod
     def parse(mod_str: str, error_reporter) -> "QueryMod":
-        query_mod = None
         if mod_str == "explain":
             return QueryMod(explain=True)
         elif mod_str == "analyze":
@@ -93,7 +92,8 @@ def read_workload_csv(input: str) -> pd.DataFrame:
     return pd.read_csv(input)
 
 
-def execute_query(query, workload_prefix: str, cursor: "psycopg2.cursor", *, pg_args: List[str], query_mod: QueryMod = None, logger=dummy_logger):
+def execute_query(query, workload_prefix: str, cursor: "psycopg2.cursor", *,
+                  pg_args: List[str], query_mod: QueryMod = None, logger=dummy_logger):
     logger("Now running query", query)
 
     for arg in pg_args:
@@ -122,7 +122,8 @@ def execute_query(query, workload_prefix: str, cursor: "psycopg2.cursor", *, pg_
     return pd.Series({result_col: query_res, runtime_col: query_duration.total_seconds()})
 
 
-def run_workload(workload: pd.DataFrame, workload_col: str, cursor: "psycopg2.cursor", *, pg_args: List[str], query_mod: QueryMod = None, logger=dummy_logger):
+def run_workload(workload: pd.DataFrame, workload_col: str, cursor: "psycopg2.cursor", *,
+                 pg_args: List[str], query_mod: QueryMod = None, logger=dummy_logger):
     logger(len(workload), "queries total")
     workload_res_df = workload[workload_col].apply(execute_query,
                                                    workload_prefix=workload_col, cursor=cursor,
@@ -134,12 +135,18 @@ def run_workload(workload: pd.DataFrame, workload_col: str, cursor: "psycopg2.cu
 def main():
     parser = argparse.ArgumentParser(description="Utility to run different SQL workloads on postgres instances.")
     parser.add_argument("input", action="store", help="File containing the workload")
-    parser.add_argument("--out", "-o", action="store", default=None, help="Name of the output CSV file containing the workload results.")
+    parser.add_argument("--out", "-o", action="store", default=None, help="Name of the output CSV file containing "
+                        "the workload results.")
     parser.add_argument("--csv", action="store_true", default=False, help="Parse input data as CSV file")
-    parser.add_argument("--csv-col", action="store", default="query", help="In CSV mode, name of the column containing the queries")
-    parser.add_argument("--pg-con", action="store", default="", help="Connect string to the postgres instance (psycopg2 format). If omitted, the string will be read from the file .psycopg_connection")
-    parser.add_argument("--pg-param", action="extend", default=[], type=str, nargs="*", help="Parameters to be send to the Postgres instance")
-    parser.add_argument("--query-mod", action="store", default="", help="Optional modifications of the base query. Can be either 'explain' or 'analyze' to turn all queries into EXPLAIN or EXPLAIN ANALYZE queries respectively.")
+    parser.add_argument("--csv-col", action="store", default="query", help="In CSV mode, name of the column "
+                        "containing the queries")
+    parser.add_argument("--pg-con", action="store", default="", help="Connect string to the postgres instance "
+                        "(psycopg2 format). If omitted, the string will be read from the file .psycopg_connection")
+    parser.add_argument("--pg-param", action="extend", default=[], type=str, nargs="*", help="Parameters to be send "
+                        "to the Postgres instance")
+    parser.add_argument("--query-mod", action="store", default="", help="Optional modifications of the base query. "
+                        "Can be either 'explain' or 'analyze' to turn all queries into EXPLAIN or EXPLAIN ANALYZE "
+                        "queries respectively.")
     parser.add_argument("--verbose", action="store_true", default=False, help="Produce more debugging output")
 
     args = parser.parse_args()
@@ -152,7 +159,8 @@ def main():
 
     query_mod = QueryMod.parse(args.query_mod, parser)
 
-    result_df = run_workload(df_workload, workload_col, pg_cursor, pg_args=args.pg_param, logger=make_logger(args.verbose), query_mod=query_mod)
+    result_df = run_workload(df_workload, workload_col, pg_cursor, pg_args=args.pg_param,
+                             logger=make_logger(args.verbose), query_mod=query_mod)
 
     out_file = args.out if args.out else generate_default_out_name()
     result_df.to_csv(out_file, index=False)
