@@ -77,13 +77,18 @@ class HintedMospQuery:
         self.cardinality_bounds[jid] = nrows
         self.join_contents[jid] = join
 
-    def generate_sqlcomment(self) -> str:
+    def generate_sqlcomment(self, *, strip_empty: bool = False) -> str:
+        if strip_empty and not self.scan_hints and not self.join_hints and not self.cardinality_bounds:
+            return ""
+
         scan_hints_stringified = "\n".join(self._scan_hint_to_str(tab) for tab in self.scan_hints.keys())
         join_hints_stringified = "\n".join(self._join_hint_to_str(join_id) for join_id in self.join_hints.keys())
         cardinality_bounds_stringified = "\n".join(self._cardinality_bound_to_str(join_id)
                                                    for join_id in self.cardinality_bounds.keys())
 
-        return "\n".join(["/*+", scan_hints_stringified, join_hints_stringified, cardinality_bounds_stringified, "*/"])
+        return "\n".join(s for s in ["/*+",
+                                     scan_hints_stringified, join_hints_stringified, cardinality_bounds_stringified,
+                                     "*/"] if s)
 
     def _scan_hint_to_str(self, base_table: db.TableRef) -> str:
         operator = self.scan_hints[base_table]

@@ -23,7 +23,9 @@ def main():
 
     args = parser.parse_args()
     df = read_input(args.input, args.query_col)
-    df[args.hint_col] = df[args.query_col].apply(hint.idxnlj_subqueries)
+    df[args.hint_col] = (df[args.query_col]
+                         .apply(hint.idxnlj_subqueries)
+                         .apply(hint.HintedMospQuery.generate_sqlcomment, strip_empty=True))
 
     df.to_csv(args.out, index=False)
 
