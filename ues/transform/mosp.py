@@ -7,6 +7,10 @@ import mo_sql_parsing as mosp
 from transform import db, util
 
 
+def extract_tableref(mosp_data) -> db.TableRef:
+    return db.TableRef(mosp_data.get("value", ""), mosp_data.get("name", ""))
+
+
 class MospQuery:
     """Provides accessors to work more comfortably with MOSP parse trees."""
     @staticmethod
@@ -91,11 +95,14 @@ class MospJoin:
     def collect_tables(self) -> List["db.TableRef"]:
         return self.subquery.collect_tables() if self.is_subquery() else [self.base_table()]
 
+    def __hash__(self) -> int:
+        return hash(frozenset(self.collect_tables()))
+
     def __repr__(self) -> str:
         return str(self)
 
     def __str__(self) -> str:
-        return f"{self.join_data} ON {self.join_predicate}"
+        return f"{extract_tableref(self.join_data)} ON {self.join_predicate}"
 
 
 _OperationPrinting = {

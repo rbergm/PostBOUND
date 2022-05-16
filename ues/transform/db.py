@@ -27,10 +27,16 @@ class TableRef:
     def bind_attribute(self, attr_name) -> str:
         return f"{self.alias}.{attr_name}"
 
+    def qualifier(self) -> str:
+        return self.alias if self.alias else self.full_name
+
     def to_mosp(self):
         if self.is_virtual:
             raise ValueError("Can not convert virtual tables")
         return {"value": self.full_name, "name": self.alias}
+
+    def __hash__(self) -> int:
+        return hash((self.full_name, self.alias))
 
     def __repr__(self):
         return str(self)
