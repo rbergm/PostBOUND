@@ -223,7 +223,8 @@ df_plt <- df %>%
   unnest(subquery_tables)
 ggplot(df_plt, aes(x = subquery_tables, y = ues_speedup, color = log(filter_strength))) +
   geom_point() +
-  labs(x = "Table referenced in subquery",  y = "UES speedup", color = "Filter strength [log]") +
+  labs(title = "UES speedup per referenced table",
+       x = "Table referenced in subquery",  y = "UES speedup", color = "Filter strength [log]") +
   theme_bw() +
   scale_color_viridis(option = "cividis") +
   theme(axis.text.x = element_text(angle = 45, hjust = 1))
