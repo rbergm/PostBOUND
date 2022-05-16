@@ -47,6 +47,9 @@ class MospQuery:
         else:
             return subqueries
 
+    def text(self) -> str:
+        return str(self)
+
     def __repr__(self) -> str:
         return str(self)
 

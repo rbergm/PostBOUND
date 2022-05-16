@@ -90,6 +90,10 @@ class HintedMospQuery:
                                      scan_hints_stringified, join_hints_stringified, cardinality_bounds_stringified,
                                      "*/"] if s)
 
+    def generate_query(self, *, strip_empty: bool = False) -> str:
+        hint = self.generate_sqlcomment(strip_empty=strip_empty)
+        return "\n".join(hint, self.query.text() + ";")
+
     def _scan_hint_to_str(self, base_table: db.TableRef) -> str:
         operator = self.scan_hints[base_table]
         return f"{operator.value}({base_table.qualifier()})"
