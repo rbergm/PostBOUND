@@ -116,9 +116,9 @@ class HintedMospQuery:
 def idxnlj_subqueries(query: mosp.MospQuery) -> HintedMospQuery:
     hinted_query = HintedMospQuery(query)
     for sq in [sq.subquery for sq in query.subqueries()]:
+        fk_table = sq.base_table()
+        hinted_query.force_idxscan(fk_table)
         for fk_join in sq.joins():
-            fk_table = fk_join.base_table()
-            hinted_query.force_idxscan(fk_table)
             hinted_query.force_nestloop(fk_join)
 
     return hinted_query
