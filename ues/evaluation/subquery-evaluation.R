@@ -265,3 +265,15 @@ ggplot(df_plt, aes(x = 1:nrow(df_plt), y = ues_speedup, color = cluster)) +
        x = "Query (ordered by speedup)", y = "UES speedup [seconds]",
        color = "Cluster") +
   theme_bw()
+
+# [+] Scatterplot :: Correlation between Subquery runtime and speedup ----
+df_plt <- df %>% mutate(ues_speedup = runtime_flat - runtime_ues)
+ggplot(df_plt, aes(x = subquery_runtime, y = ues_speedup,
+                   color = log(filter_strength))) +
+  geom_point() +
+  geom_smooth(method = lm, color = "#7a7a77", se = FALSE, size = 0.3) +
+  scale_color_viridis(option = "cividis") +
+  labs(title = "Correlation between subquery runtime and speedup",
+       x = "Subquery runtime [seconds]", y = "UES speedup [seconds]",
+       color = "Filter strength [log]") +
+  theme_bw()
