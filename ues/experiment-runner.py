@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 
 import argparse
+import functools
+import signal
 import sys
 from datetime import datetime
 
@@ -38,6 +40,8 @@ def main():
     parser.add_argument("--verbose", action="store_true", default=False, help="Produce more debugging output")
 
     args = parser.parse_args()
+    signal.signal(signal.SIGINT, functools.partial(executor.exit_handler, logger=log))
+
     out_file = args.out if args.out else executor.generate_default_out_name("experiment")
 
     log(f"Running {args.repetitions} repetitions of workload from {args.input}.")

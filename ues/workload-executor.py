@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
 
 import argparse
+import functools
 import json
 import os
 import re
+import signal
 import sys
 import warnings
 from datetime import datetime
@@ -28,6 +30,11 @@ def dummy_logger(*args, **kwargs):
 
 def make_logger(logging_enabled: bool = True):
     return log if logging_enabled else dummy_logger
+
+
+def exit_handler(sig, frame, logger=dummy_logger):
+    logger("Ctl+C received, exiting")
+    sys.exit(1)
 
 
 class QueryMod:
@@ -169,6 +176,9 @@ def main():
 
     args = parser.parse_args()
 
+    logger = make_logger(args.verbose)
+    signal.signal(signal.SIGINT, functools.partial(exit_handler, logger=logger))
+
     df_workload = read_workload_csv(args.input) if args.csv else read_workload_plain(args.input)
     workload_col = args.csv_col if args.csv else DEFAULT_WORKLOAD_COL
 
@@ -179,7 +189,7 @@ def main():
 
     result_df = run_workload(df_workload, workload_col, pg_cursor, pg_args=args.pg_param,
                              query_mod=query_mod, hint_col=args.hint_col,
-                             logger=make_logger(args.verbose))
+                             logger=logger)
 
     out_file = args.out if args.out else generate_default_out_name()
     result_df.to_csv(out_file, index=False)
