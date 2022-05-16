@@ -88,6 +88,15 @@ ggplot(df, aes(x = "all queries", y = filter_strength)) +
   labs(title = "Filter strength distribution", y = "Filter strength") +
   theme_bw() +
   theme(axis.title.x = element_blank(), axis.text.x =  element_blank())
+
+# Boxplot :: absolute filter strength distribution ----
+df_plt <- df %>% mutate(filter_strength = foreign_key_rows - rows_after_join)
+ggplot(df_plt, aes(x = "all queries", y = filter_strength)) +
+  geom_boxplot() +
+  scale_y_log10() +
+  labs(title = "Distribution of absolute filter strength", y = "Filter strength") +
+  theme_bw() +
+  theme(axis.title.x = element_blank(), axis.text.x = element_blank())
   
 # [+] Scatterplot :: Correlation between filter strength / rel. speedup ----
 df_plt <- df %>%
@@ -110,6 +119,7 @@ ggplot(df_plt, aes(x = filter_strength, y = ues_speedup,
   theme_bw()
 ggsave("evaluation/corr-filter-speedup-rel.pdf")
 
+
 # Scatterplot :: Correlation between filter strength / abs. speedup ----
 df_plt <- df %>%
   filter(!is.na(filter_strength)) %>%
@@ -131,6 +141,29 @@ ggplot(df_plt, aes(x = filter_strength, y = ues_speedup,
   scale_color_viridis() +
   theme_bw()
 ggsave("evaluation/corr-filter-speedup-abs.pdf")
+
+# [+] Scatterplot :: Correlation between abs. filter strength / abs. speedup ----
+df_plt <- df %>%
+  mutate(filter_strength = foreign_key_rows - rows_after_join) %>%
+  filter(!is.na(filter_strength), filter_strength != 0) %>%
+  mutate(ues_speedup = runtime_flat - runtime_ues,
+         branch_runtime_diff = subquery_partner_runtime - subquery_runtime,
+         pruned_status = ifelse(ues_pruned & flat_pruned, "both",
+                                ifelse(ues_pruned, "UES",
+                                       ifelse(flat_pruned, "linearized", "none"))))
+ggplot(df_plt, aes(x = filter_strength, y = ues_speedup,
+                   color = branch_runtime_diff, shape = pruned_status)) +
+  geom_point() +
+  scale_x_log10(breaks = breaks_log(), labels = label_scientific()) +
+  labs(title = "Correlation between subquery filter strength and observed absolute speedup",
+       subtitle = paste("Filter strength = Difference between number of incoming vs. outgoing rows in subquery",
+                        "Speedup = Difference between linearized vs. UES runtime", sep = "\n"),
+       x = "Filter strength", y = "UES speedup",
+       color = "Speedup of subquery compared\nto partner branch [seconds]",
+       shape = "Applied pruning actions\nper query variant") +
+  scale_color_viridis() +
+  theme_bw()
+ggsave("evaluation/corr-abs-filter-abs-speedup.pdf")
 
 # [+] Lineplot :: absolute runtime difference between subquery / partner branch ----
 df_plt <- df %>%
