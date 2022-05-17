@@ -150,8 +150,8 @@ ggsave("evaluation/corr-filter-speedup-abs.pdf")
 # [++] Scatterplot :: Correlation between abs. filter strength / abs. speedup ----
 df_plt <- df %>%
   mutate(filter_strength = foreign_key_rows - rows_after_join) %>%
-  filter(!is.na(filter_strength), filter_strength != 0) %>%
-  mutate(ues_speedup = runtime_flat - runtime_ues,
+  mutate(filter_strength = ifelse(filter_strength > 0, log(filter_strength), 0),
+         ues_speedup = runtime_flat - runtime_ues,
          branch_runtime_diff = subquery_partner_runtime - subquery_runtime,
          pruned_status = ifelse(ues_pruned & flat_pruned, "both",
                                 ifelse(ues_pruned, "UES",
@@ -159,11 +159,10 @@ df_plt <- df %>%
 ggplot(df_plt, aes(x = filter_strength, y = ues_speedup,
                    color = branch_runtime_diff, shape = pruned_status)) +
   geom_point() +
-  scale_x_log10(breaks = breaks_log(), labels = label_scientific()) +
   labs(title = "Correlation between subquery filter strength and observed absolute speedup",
        subtitle = paste("Filter strength = Difference between number of incoming vs. outgoing rows in subquery",
                         "Speedup = Difference between linearized vs. UES runtime", sep = "\n"),
-       x = "Filter strength", y = "UES speedup",
+       x = "Filter strength [log]", y = "UES speedup [seconds]",
        color = "Speedup of subquery compared\nto partner branch [seconds]",
        shape = "Applied pruning actions\nper query variant") +
   scale_color_viridis() +
