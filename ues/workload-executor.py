@@ -113,7 +113,7 @@ def execute_query(query, workload_prefix: str, cursor: "psycopg2.cursor", *,
         if orig_query != query:
             logger("Query modified to", query)
 
-    if query_hint:
+    if isinstance(query_hint, str) and query_hint:
         logger("Applying query hint", query_hint)
         query = query_hint + " " + query
 
