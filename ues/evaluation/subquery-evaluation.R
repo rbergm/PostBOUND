@@ -12,10 +12,15 @@ library(ggplot2)
 library(viridis, quietly = TRUE)
 library(scales, warn.conflicts = FALSE)
 
+# Setup ----
+
 parse_json <- Vectorize(fromJSON, USE.NAMES = FALSE)
 
 df <- read_csv("workloads/job-ues-eval-fks-nonlj.csv")
 df$subquery_tables <- parse_json(df$subquery_tables)
+df <- df %>%
+  full_join(df %>% group_by(label) %>% tally(name = "n_subqueries"),
+            by = "label")
 
 # [+] Barplot :: Total runtime of UES / linearized workload ----
 df_plt <- df %>%
@@ -183,7 +188,7 @@ ggplot(df_plt, aes(x = 1:nrow(df_plt), y = branch_runtime_diff, fill = faster_su
   theme_bw() +
   theme(axis.text.x = element_blank())
 
-# [+] Scatterplot :: correlation between subquery speedup / total speedup ----
+# [++] Scatterplot :: correlation between subquery speedup / total speedup ----
 df_plt <- df %>%
   filter(!is.na(subquery_runtime), !is.na(subquery_partner_runtime), !is.na(ues_speedup)) %>%
   mutate(branch_runtime_diff = subquery_partner_runtime - subquery_runtime,
@@ -191,6 +196,12 @@ df_plt <- df %>%
   arrange(desc(branch_runtime_diff))
 ggplot(df_plt, aes(x = branch_runtime_diff, y = total_speedup, color = log(filter_strength))) +
   geom_point() +
+  geom_text(data = df_plt %>%
+              arrange(desc(total_speedup)) %>%
+              head(n = 5),
+            aes(label = label),
+            nudge_y = 0.1,
+            check_overlap = TRUE) +
   labs(title = "Correlation between subquery speedup and total speedup",
        subtitle = paste("Subquery speedup = difference between join partner runtime and subquery runtime",
                         "Total speedup = difference of linearized runtime and UES runtime", sep = "\n"),
@@ -198,6 +209,7 @@ ggplot(df_plt, aes(x = branch_runtime_diff, y = total_speedup, color = log(filte
        color = "Filter strength [log]") +
   scale_color_viridis(option = "cividis") +
   theme_bw()
+ggsave("evaluation/corr-abs-sq-speedup-speedup.pdf")
 
 # [+] Line/Scatterplot :: "correlation" between pruning + speedup ----
 df_plt <- df %>%
@@ -266,14 +278,40 @@ ggplot(df_plt, aes(x = 1:nrow(df_plt), y = ues_speedup, color = cluster)) +
        color = "Cluster") +
   theme_bw()
 
-# [+] Scatterplot :: Correlation between Subquery runtime and speedup ----
+# [++] Scatterplot :: Correlation between Subquery runtime and speedup ----
 df_plt <- df %>% mutate(ues_speedup = runtime_flat - runtime_ues)
 ggplot(df_plt, aes(x = subquery_runtime, y = ues_speedup,
                    color = log(filter_strength))) +
   geom_point() +
-  geom_smooth(method = lm, color = "#7a7a77", se = FALSE, size = 0.3) +
+  geom_text(data = df_plt %>%
+              arrange(desc(ues_speedup)) %>%
+              head(n = 5),
+            aes(label = label),
+            nudge_y = 0.1,
+            check_overlap = TRUE) +
+  #geom_smooth(method = lm, color = "#7a7a77", se = FALSE, size = 0.3) +
   scale_color_viridis(option = "cividis") +
   labs(title = "Correlation between subquery runtime and speedup",
        x = "Subquery runtime [seconds]", y = "UES speedup [seconds]",
        color = "Filter strength [log]") +
   theme_bw()
+ggsave("evaluation/corr-sq-runtime-abs-speedup.pdf")
+
+# [++] Scatterplot :: Correlation between FK rows and speedup ----
+df_plt <- df %>%
+  mutate(total_speedup = runtime_flat - runtime_ues,
+         n_subqueries = as.factor(n_subqueries))
+ggplot(df_plt, aes(x = foreign_key_rows, y = total_speedup, color = subquery_runtime, shape = n_subqueries)) +
+  geom_point() +
+  geom_text(data = df_plt %>%
+              arrange(desc(total_speedup)) %>%
+              head(n = 5),
+            aes(label = label),
+            nudge_y = 0.1,
+            check_overlap = TRUE) +
+  scale_color_viridis(option = "cividis") +
+  labs(title = "Correlation between number of Foreign key rows and speedup",
+       x = "Number of tuples in FK table", y = "UES speedup [seconds]",
+       color = "Subquery runtime\n[seconds]", shape = "Number of\nsubqueries\nin query") +
+  theme_bw()
+ggsave("evaluation/corr-fk-tuples-speedup.pdf")
