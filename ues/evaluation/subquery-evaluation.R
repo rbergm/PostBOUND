@@ -147,7 +147,7 @@ ggplot(df_plt, aes(x = filter_strength, y = ues_speedup,
   theme_bw()
 ggsave("evaluation/corr-filter-speedup-abs.pdf")
 
-# [+] Scatterplot :: Correlation between abs. filter strength / abs. speedup ----
+# [++] Scatterplot :: Correlation between abs. filter strength / abs. speedup ----
 df_plt <- df %>%
   mutate(filter_strength = foreign_key_rows - rows_after_join) %>%
   filter(!is.na(filter_strength), filter_strength != 0) %>%
