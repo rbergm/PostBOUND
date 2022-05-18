@@ -117,12 +117,14 @@ class HintedMospQuery:
         return self.generate_sqlcomment()
 
 
-def idxnlj_subqueries(query: mosp.MospQuery) -> HintedMospQuery:
+def idxnlj_subqueries(query: mosp.MospQuery, *, all_nestloop=False) -> HintedMospQuery:
     hinted_query = HintedMospQuery(query)
     for sq in [sq.subquery for sq in query.subqueries()]:
         fk_table = sq.base_table()
+        first_pk_join = sq.joins()[0]
         hinted_query.force_idxscan(fk_table)
-        for fk_join in sq.joins():
-            hinted_query.force_nestloop(fk_join)
-
+        hinted_query.force_nestloop(first_pk_join)
+        remaining_joins = sq.joins()[1:] if all_nestloop else []
+        for pk_join in remaining_joins:
+            hinted_query.force_nestloop(pk_join)
     return hinted_query
