@@ -40,6 +40,7 @@ def main():
     parser.add_argument("--verbose", action="store_true", default=False, help="Produce more debugging output")
 
     args = parser.parse_args()
+    log("Invocation:", " ".join(sys.argv))
     signal.signal(signal.SIGINT, functools.partial(executor.exit_handler, logger=log))
 
     out_file = args.out if args.out else executor.generate_default_out_name("experiment")
