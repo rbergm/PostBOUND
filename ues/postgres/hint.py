@@ -117,14 +117,30 @@ class HintedMospQuery:
         return self.generate_sqlcomment()
 
 
-def idxnlj_subqueries(query: mosp.MospQuery, *, all_nestloop=False) -> HintedMospQuery:
+def idxnlj_subqueries(query: mosp.MospQuery, *, nestloop="first", idxscan="fk"):
+    if idxscan not in ["pk", "fk"]:
+        raise ValueError("idxscan must be either 'pk' or 'fk'")
+    if nestloop not in ["first", "all"]:
+        raise ValueError("nestloop must be either 'first' or 'all'")
+
     hinted_query = HintedMospQuery(query)
     for sq in [sq.subquery for sq in query.subqueries()]:
         fk_table = sq.base_table()
-        first_pk_join = sq.joins()[0]
-        hinted_query.force_idxscan(fk_table)
-        hinted_query.force_nestloop(first_pk_join)
-        remaining_joins = sq.joins()[1:] if all_nestloop else []
-        for pk_join in remaining_joins:
-            hinted_query.force_nestloop(pk_join)
+        if idxscan == "fk":
+            hinted_query.force_idxscan(fk_table)
+
+        if nestloop == "first":
+            first_pk_join = sq.joins()[0]
+            hinted_query.force_nestloop(first_pk_join)
+
+            if idxscan == "pk":
+                pk_table = first_pk_join.base_table()
+                hinted_query.force_idxscan(pk_table)
+        elif nestloop == "all":
+            for join_idx, join in enumerate(sq.joins()):
+                hinted_query.force_nestloop(join)
+
+                if idxscan == "pk" or join_idx > 0:
+                    pk_table = join.base_table()
+                    hinted_query.force_idxscan(pk_table)
     return hinted_query
