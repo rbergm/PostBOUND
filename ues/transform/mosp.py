@@ -42,7 +42,7 @@ class MospQuery:
 
     def subqueries(self, simplify=False) -> List["MospJoin"]:
         subqueries = [sq for sq in self.joins() if sq.is_subquery()]
-        if simplify and len(subqueries == 1):
+        if simplify and len(subqueries) == 1:
             return subqueries[0]
         else:
             return subqueries
