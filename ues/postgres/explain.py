@@ -155,17 +155,17 @@ class PlanNode:
         if self.node.is_idxscan():
             node_label += f" ({self.index_name})"
 
-        join_cond   = "  Join  : {}".format(self.join_pred if self.join_pred else "/")
+        join_cond   = "  Join  : {}".format(self.join_pred if self.join_pred else "/")  # noqa: E221
         filter_cond = "  Filter: {}".format(self.filter_pred if self.filter_pred else "/")
 
         if not self.is_join():
             in_rows = "  Incoming Rows: {}".format(self.incoming_rows())
         else:
-            in_rows =  "  Incoming Rows (left) : {}\n".format(self.left.proc_rows)
+            in_rows =  "  Incoming Rows (left) : {}\n".format(self.left.proc_rows)  # noqa: E222
             in_rows += "  Incoming Rows (right): {}".format(self.right.proc_rows)
 
         filter_rows = "  Filtered Rows: {}".format(self.filtered_rows if self.filtered_rows else "/")
-        out_rows    = "  Outgoing Rows: {}".format(self.proc_rows)
+        out_rows    = "  Outgoing Rows: {}".format(self.proc_rows)  # noqa: E221
 
         sep = "-" * max(len(line) for line in [node_label,
                                                join_cond, filter_cond,
