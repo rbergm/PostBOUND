@@ -2,7 +2,7 @@
 import enum
 import re
 import warnings
-from typing import Any, List, Union
+from typing import Any, List, Tuple, Union
 
 import numpy as np
 
@@ -44,11 +44,15 @@ class QueryNode(enum.Enum):
     def is_scan(self) -> bool:
         return self in [QueryNode.SEQ_SCAN, QueryNode.IDX_ONLY_SCAN, QueryNode.IDX_SCAN]
 
+    def is_idxscan(self) -> bool:
+        return self == QueryNode.IDX_ONLY_SCAN or self == QueryNode.IDX_SCAN
+
 
 class PlanNode:
     def __init__(self, node: "QueryNode", *, pruned: bool = False, join_pred: str = "", filter_pred: str = "",
                  source_table: str = "", alias_name: str = "", index_name: str = "",
-                 exec_time: np.double = np.nan, proc_rows: np.double = np.nan, planned_rows: np.double = np.nan,
+                 exec_time: np.double = np.nan,
+                 proc_rows: np.double = np.nan, planned_rows: np.double = np.nan, filtered_rows: np.double = np.nan,
                  children: List = None, subquery: bool = False, associated_query: "mosp.MospQuery" = None):
         self.node = node
         self.pruned = pruned
@@ -63,6 +67,7 @@ class PlanNode:
         self.exec_time = exec_time,
         self.proc_rows = proc_rows
         self.planned_rows = planned_rows
+        self.filtered_rows = filtered_rows
 
         self.parent, self.left, self.right = None, None, None
         self.children = children if children else []
@@ -75,6 +80,12 @@ class PlanNode:
 
     def is_subquery(self):
         return self.subquery
+
+    def is_join(self):
+        return self.node.is_join()
+
+    def is_scan(self):
+        return self.node.is_scan()
 
     def extract_subqueries(self) -> List["PlanNode"]:
         subqueries = []
@@ -89,7 +100,7 @@ class PlanNode:
         return _lookup_join_predicate(join_filter, subqueries)
 
     def lookup_scan(self, table: db.TableRef) -> "PlanNode":
-        if not self.node.is_scan():
+        if not self.is_scan():
             for child in self.children:
                 lookup_res = child.lookup_scan(table)
                 if lookup_res:
@@ -101,7 +112,7 @@ class PlanNode:
             return None
 
     def lookup_join(self, filter_cond: str) -> "PlanNode":
-        if not self.node.is_join():
+        if not self.is_join():
             return None
         if self.join_pred == filter_cond:
             return self
@@ -110,6 +121,19 @@ class PlanNode:
             if lookup_res:
                 return lookup_res
         return None
+
+    def leaf_join(self) -> "PlanNode":
+        leaf, __ = self._traverse_leaf_join()
+        return leaf
+
+    def depth(self, *, _curr_depth=1) -> int:
+        if not self.is_join():
+            return _curr_depth
+        return max(child.depth(_curr_depth=_curr_depth+1) for child in self.children)
+
+    def incoming_rows(self) -> int:
+        filter = self.filtered_rows if not np.isnan(self.filtered_rows) else 0
+        return self.proc_rows + filter
 
     def traverse(self, fn):
         fn(self)
@@ -124,17 +148,44 @@ class PlanNode:
             return True
         return any(child.any_pruned() for child in self.children)
 
+    def inspect_node(self) -> str:
+        node_label = f"{self.node.value}"
+        if self.is_scan():
+            node_label += f" :: {self.source_table} {self.alias_name}"
+        if self.node.is_idxscan():
+            node_label += f" ({self.index_name})"
+
+        join_cond   = "  Join  : {}".format(self.join_pred if self.join_pred else "/")
+        filter_cond = "  Filter: {}".format(self.filter_pred if self.filter_pred else "/")
+
+        if not self.is_join():
+            in_rows = "  Incoming Rows: {}".format(self.incoming_rows())
+        else:
+            in_rows =  "  Incoming Rows (left) : {}\n".format(self.left.proc_rows)
+            in_rows += "  Incoming Rows (right): {}".format(self.right.proc_rows)
+
+        filter_rows = "  Filtered Rows: {}".format(self.filtered_rows if self.filtered_rows else "/")
+        out_rows    = "  Outgoing Rows: {}".format(self.proc_rows)
+
+        sep = "-" * max(len(line) for line in [node_label,
+                                               join_cond, filter_cond,
+                                               filter_rows, out_rows])
+
+        return "\n".join([node_label, sep, join_cond, filter_cond, sep, in_rows, filter_rows, out_rows])
+
     def pretty_print(self, *, include_filter=False, indent=0):
         indent_str = " " * indent
         if indent:
             indent_str += "<- "
 
-        if self.node.is_join():
+        if self.is_join():
             node_label = f"{self.node.value} {self.join_pred}" if self.join_pred else self.node.value
-        elif self.node.is_scan():
+        elif self.is_scan():
             node_label = f"{self.node.value} :: {self.source_table}"
             if include_filter and self.filter_pred:
                 node_label += f" ({self.filter_pred})"
+            if include_filter and self.index_name:
+                node_label += f" (Idx: {self.index_name})"
         else:
             node_label = self.node.value
 
@@ -151,14 +202,30 @@ class PlanNode:
         child_content = "".join(child_labels)
         return node_label + child_content
 
+    def _traverse_leaf_join(self, *, curr_depth=0) -> Tuple["PlanNode", int]:
+        if not self.left.is_join() and not self.right.is_join():
+            return self, curr_depth
+
+        if self.left.is_join():
+            left_leaf, left_depth = self.left._traverse_leaf_join(curr_depth=curr_depth+1)
+        else:
+            left_leaf, left_depth = None, -1
+
+        if self.right.is_join():
+            right_leaf, right_depth = self.right._traverse_leaf_join(curr_depth=curr_depth+1)
+        else:
+            right_leaf, right_depth = None, -1
+
+        return (left_leaf, left_depth) if left_depth > right_depth else (right_leaf, right_depth)
+
     def __repr__(self) -> str:
         return str(self)
 
     def __str__(self) -> str:
         node_name = f"~{self.node.value}~" if self.pruned else self.node.value
-        if self.node.is_join():
+        if self.is_join():
             node_label = f"{node_name} {self.join_pred}" if self.join_pred else self.node.value
-        elif self.node.is_scan():
+        elif self.is_scan():
             node_label = f"{node_name} :: {self.source_table}"
         else:
             node_label = node_name
@@ -259,6 +326,7 @@ def parse_explain_analyze(orig_query: "mosp.MospQuery", plan, *, with_subqueries
     proc_rows = plan["Actual Rows"]
     planned_rows = plan["Plan Rows"]
     filter_pred = plan.get("Filter", "")
+    filtered_rows = plan.get("Rows Removed by Filter", plan.get("Rows Removed by Index Recheck", 0))
 
     if QueryNode.is_join_node(node_type):
         node = QueryNode.parse(node_type)
@@ -285,8 +353,7 @@ def parse_explain_analyze(orig_query: "mosp.MospQuery", plan, *, with_subqueries
             # Marking this as TODO for now.
 
             if not join_pred:
-                scan_child = (left_parsed if left_parsed.node == QueryNode.IDX_SCAN
-                              or left_parsed.node == QueryNode.IDX_ONLY_SCAN
+                scan_child = (left_parsed if left_parsed.join_pred
                               else right_parsed)
                 scan_condition = scan_child.join_pred
                 join_col, join_op, target_col = EXPLAIN_PREDICATE_FORMAT.match(scan_condition).groupdict().values()
@@ -300,7 +367,7 @@ def parse_explain_analyze(orig_query: "mosp.MospQuery", plan, *, with_subqueries
             join_pred = ""
 
         if with_subqueries and join_pred:
-            subquery_joins = [sq.subquery.joins()[0] for sq in orig_query.subqueries()]
+            subquery_joins = [sq.subquery.joins()[-1] for sq in orig_query.subqueries()]
             subquery_predicates = [join.predicate() for join in util.flatten(subquery_joins)]
             is_subquery = _matches_any_predicate(join_pred, subquery_predicates)
         else:
@@ -312,7 +379,8 @@ def parse_explain_analyze(orig_query: "mosp.MospQuery", plan, *, with_subqueries
             pruned = False
 
         return PlanNode(node, pruned=pruned, join_pred=join_pred, filter_pred=filter_pred,
-                        exec_time=exec_time, proc_rows=proc_rows, planned_rows=planned_rows,
+                        exec_time=exec_time,
+                        proc_rows=proc_rows, planned_rows=planned_rows, filtered_rows=filtered_rows,
                         children=children, subquery=is_subquery, associated_query=orig_query)
     elif QueryNode.is_scan_node(node_type):
         node = QueryNode.parse(node_type)
@@ -329,7 +397,8 @@ def parse_explain_analyze(orig_query: "mosp.MospQuery", plan, *, with_subqueries
 
         return PlanNode(node, pruned=pruned, join_pred=join_pred, filter_pred=filter_pred,
                         source_table=source_tab, alias_name=alias, index_name=index_name,
-                        exec_time=exec_time, proc_rows=proc_rows, planned_rows=planned_rows,
+                        exec_time=exec_time,
+                        proc_rows=proc_rows, planned_rows=planned_rows, filtered_rows=filtered_rows,
                         associated_query=orig_query)
     else:
         warnings.warn("Unknown node type: {}".format(node_type))
