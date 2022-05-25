@@ -131,7 +131,34 @@ class PlanNode:
             return _curr_depth
         return max(child.depth(_curr_depth=_curr_depth+1) for child in self.children)
 
-    def incoming_rows(self) -> int:
+    def incoming_rows(self, *, fallback_live: bool = False,
+                      fallback_live_idxscan: bool = False, fallback_live_seqscan: bool = False) -> int:
+        """Counts the number of rows the operator receives.
+
+        For basic (i.e. scan) nodes, the tuple count can optionally be retrieved from a live database.
+        This is usefull for Index scans, since the EXPLAIN ANALYZE output usually does not provide this number if an
+        Index filter condition is present.
+
+        Parameters
+        ----------
+        fallback_live : bool, optional
+            If set to `true`, will always retrieve the tuple count for scan operators from the live database. By
+            default False.
+        fallback_live_idxscan : bool, optional
+            Use tuple count from live database for Index scans (and Index Only scans), by default False
+        fallback_live_seqscan : bool, optional
+            Use tuple count from live database for Sequential scans, by default False
+
+        Returns
+        -------
+        int
+            Number of tuples the operator received. For Index Scans, the size of the base table.
+        """
+        trigger_idx_fallback = fallback_live or (self.node.is_idxscan() and fallback_live_idxscan)
+        trigger_seq_fallback = fallback_live or (self.node == QueryNode.SEQ_SCAN and fallback_live_seqscan)
+        if trigger_idx_fallback or trigger_seq_fallback:
+            dbschema = db.DBSchema.get_instance()
+            return dbschema.count_tuples(db.TableRef(self.source_table))
         filter = self.filtered_rows if not np.isnan(self.filtered_rows) else 0
         return self.proc_rows + filter
 
