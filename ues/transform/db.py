@@ -1,4 +1,5 @@
 
+import os
 import warnings
 from dataclasses import dataclass
 from typing import List
@@ -11,7 +12,7 @@ class TableRef:
     def virtual(alias: str) -> "TableRef":
         return TableRef(None, alias, True)
 
-    def __init__(self, full_name: str, alias: str, virtual: bool = False):
+    def __init__(self, full_name: str, alias: str = "", virtual: bool = False):
         self.full_name = full_name
         self.alias = alias
         self.is_virtual = virtual
@@ -59,9 +60,45 @@ class AttributeRef:
         return f"{self.src_table.alias}.{self.attribute}"
 
 
+_dbschema_instance = None
+
+
 class DBSchema:
+    @staticmethod
+    def get_instance(psycopg_connect: str = "", *, postgres_config_file: str = ".psycopg_connection"):
+        global _dbschema_instance
+        if _dbschema_instance:
+            return _dbschema_instance
+
+        if not psycopg_connect:
+            if not os.path.exists(postgres_config_file):
+                warnings.warn("No .psycopg_connection file found, trying empty connect string as last resort. This "
+                              "will likely not be intentional.")
+                psycopg_connect = ""
+            with open(postgres_config_file, "r") as conn_file:
+                psycopg_connect = conn_file.readline().strip()
+        conn = psycopg2.connect(psycopg_connect)
+        _dbschema_instance = DBSchema(conn.cursor())
+        return _dbschema_instance
+
     def __init__(self, cursor: "psycopg2.cursor"):
         self.cursor = cursor
+        self.cardinality_cache = {}
+
+    def count_tuples(self, table: TableRef, *, cache_enabled=True) -> int:
+        if cache_enabled and table in self.cardinality_cache:
+            return self.cardinality_cache[table]
+
+        if table.is_virtual:
+            raise ValueError("Cannot count tuples of virtual table")
+
+        count_query = "SELECT COUNT(*) FROM {}".format(table.full_name)
+        self.cursor.execute(count_query)
+        count = self.cursor.fetchone()[0]
+
+        if cache_enabled:
+            self.cardinality_cache[table] = count
+        return count
 
     def lookup_attribute(self, attribute_name: str, candidate_tables: List[TableRef]):
         for table in [tab for tab in candidate_tables if not tab.is_virtual]:
