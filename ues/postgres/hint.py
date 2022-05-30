@@ -119,9 +119,9 @@ class HintedMospQuery:
 
 def idxnlj_subqueries(query: mosp.MospQuery, *, nestloop="first", idxscan="fk"):
     if idxscan not in ["pk", "fk"]:
-        raise ValueError("idxscan must be either 'pk' or 'fk'")
+        raise ValueError("idxscan must be either 'pk' or 'fk', not '{}'".format(idxscan))
     if nestloop not in ["first", "all"]:
-        raise ValueError("nestloop must be either 'first' or 'all'")
+        raise ValueError("nestloop must be either 'first' or 'all', not '{}'".format(nestloop))
 
     hinted_query = HintedMospQuery(query)
     for sq in [sq.subquery for sq in query.subqueries()]:
