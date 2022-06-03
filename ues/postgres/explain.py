@@ -1,8 +1,9 @@
 
 import enum
+import json
 import re
 import warnings
-from typing import Any, List, Tuple, Union
+from typing import Any, Callable, List, Tuple, Union
 
 import numpy as np
 
@@ -475,3 +476,62 @@ def parse_explain_analyze(orig_query: "mosp.MospQuery", plan, *, with_subqueries
         else:
             warnings.warn("Unknown node type: {}".format(node_type))
         return _simplify_plan_tree(parsed_children)
+
+
+def prune_pg_plan(plan):
+    if isinstance(plan, list):
+        plan = plan[0]["Plan"]
+
+    plan = dict(plan)
+
+    # prune superfluous attributes
+    superfluous_attrs = ["Parallel Aware", "Async Capable", "Startup Cost", "Total Cost", "Plan width"]
+    for attr in superfluous_attrs:
+        plan.pop(attr, None)
+
+    node_type = plan.get("Node Type", "")
+    if QueryNode.is_join_node(node_type):
+        left, right = plan["Plans"]
+        left_parsed = prune_pg_plan(left)
+        right_parsed = prune_pg_plan(right)
+        pruned_children = [_simplify_plan_tree(left_parsed), _simplify_plan_tree(right_parsed)]
+        plan["Plans"] = pruned_children
+        return plan
+    elif QueryNode.is_scan_node(node_type):
+        return plan
+    else:
+        child_nodes = plan.get("Plans", [])
+        pruned_children = [prune_pg_plan(child) for child in child_nodes]
+        return _simplify_plan_tree(pruned_children)
+
+
+def traverse_pg_plan_until(plan: dict, condition: Callable[[dict], bool]) -> Union[dict, None]:
+    """Performs a depth-first search on the query plan until the first node passes the condition test.
+
+    Parameters
+    ----------
+    plan : dict
+        the plan tree
+    condition : Callable[[dict], bool]
+        a function which accepts a plan node and checks whether it matches the termination condition
+
+    Returns
+    -------
+    Union[dict, None]
+        a plan node matching the condition, or None if no such node was found
+    """
+    if isinstance(plan, list):
+        plan = plan[0]["Plan"]
+
+    if condition(plan):
+        return plan
+
+    for child in plan.get("Plans", []):
+        child_res = traverse_pg_plan_until(child, condition)
+        if child_res:
+            return child_res
+    return None
+
+
+def print_pg_plan(plan: dict):
+    print(json.dumps(plan, indent=2))
