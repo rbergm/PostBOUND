@@ -91,13 +91,17 @@ class PlanNode:
     def is_scan(self):
         return self.node.is_scan()
 
-    def extract_subqueries(self) -> List["PlanNode"]:
+    def extract_subqueries(self, *, simplify=False) -> List["PlanNode"]:
         subqueries = []
         if self.is_subquery():
             subqueries.append(self)
         for child in self.children:
             subqueries.extend(child.extract_subqueries())
-        return subqueries
+
+        if simplify and len(subqueries) == 1:
+            return subqueries[0]
+        else:
+            return subqueries
 
     def lookup_subquery(self, join_filter: str) -> mosp.MospQuery:
         subqueries = [sq.subquery for sq in self.associated_query.subqueries()]
