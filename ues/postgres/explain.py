@@ -417,7 +417,7 @@ def parse_explain_analyze(orig_query: "mosp.MospQuery", plan, *, with_subqueries
         node = QueryNode.parse(node_type)
         join_pred = plan.get("Index Cond", "")
 
-        source_tab = plan["Relation Name"]
+        source_tab = plan.get("Relation Name", "")
         index_name = plan.get("Index Name", "")
         alias = plan.get("Alias", "")
 
