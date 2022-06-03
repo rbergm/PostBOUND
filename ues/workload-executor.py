@@ -3,6 +3,7 @@
 import argparse
 import functools
 import json
+import random
 import os
 import re
 import signal
@@ -99,6 +100,11 @@ def read_workload_csv(input: str) -> pd.DataFrame:
     return pd.read_csv(input)
 
 
+def shuffle_workload(df):
+    shuffled_idx = random.sample(df.index.values.tolist(), k=len(df))
+    return df.loc[shuffled_idx].copy()
+
+
 def execute_query(query, workload_prefix: str, cursor: "psycopg2.cursor", *,
                   pg_args: List[str], query_mod: QueryMod = None, query_hint: str = "", logger=dummy_logger):
     logger("Now running query", query)
@@ -144,8 +150,13 @@ def execute_query_wrapper(workload_row: pd.Series, workload_col: str, cursor: "p
 
 
 def run_workload(workload: pd.DataFrame, workload_col: str, cursor: "psycopg2.cursor", *,
-                 pg_args: List[str], query_mod: QueryMod = None, hint_col: str = "", logger=dummy_logger):
+                 pg_args: List[str], query_mod: QueryMod = None, hint_col: str = "", shuffle: bool = False,
+                 logger=dummy_logger):
     logger(len(workload), "queries total")
+
+    if shuffle:
+        workload = shuffle_workload(workload)
+
     workload_res_df = workload.apply(execute_query_wrapper,
                                      workload_col=workload_col, cursor=cursor,
                                      pg_args=pg_args, query_mod=query_mod, hint_col=hint_col,
@@ -172,6 +183,8 @@ def main():
                         "queries respectively.")
     parser.add_argument("--hint-col", action="store", default="", help="In CSV mode, an optional column containing "
                         "hints to apply on a per-query basis (as specified by the pg_hint_plan extension).")
+    parser.add_argument("--randomized", action="store_true", default=False, help="Execute the queries in a random "
+                        "order.")
     parser.add_argument("--verbose", action="store_true", default=False, help="Produce more debugging output")
 
     args = parser.parse_args()
@@ -189,6 +202,7 @@ def main():
 
     result_df = run_workload(df_workload, workload_col, pg_cursor, pg_args=args.pg_param,
                              query_mod=query_mod, hint_col=args.hint_col,
+                             shuffle=args.randomized,
                              logger=logger)
 
     out_file = args.out if args.out else generate_default_out_name()
