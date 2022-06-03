@@ -129,7 +129,7 @@ class MospPredicate:
         operation = util.dict_key(mosp_data)
         if operation not in CompoundOperations:
             return MospPredicate(mosp_data)
-        return [MospPredicate.break_compound(sub_predicate) for sub_predicate in mosp_data[operation]]
+        return util.flatten([MospPredicate.break_compound(sub_predicate) for sub_predicate in mosp_data[operation]])
 
     def __init__(self, mosp_data):
         self.mosp_data = mosp_data
