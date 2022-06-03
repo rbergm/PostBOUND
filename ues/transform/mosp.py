@@ -76,6 +76,13 @@ class MospQuery:
                 return subquery
         return None
 
+    def count_result_tuples(self) -> int:
+        count_query = dict(self.query)
+        count_query["select"] = {"value": {"count": "*"}}
+        query_str = mosp.format(count_query)
+        n_tuples = db.DBSchema.get_instance().execute_query(query_str)[0][0]
+        return n_tuples
+
     def __repr__(self) -> str:
         return str(self)
 
