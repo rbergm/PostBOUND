@@ -92,6 +92,18 @@ class MospJoin:
     def predicate(self):
         return self.join_predicate
 
+    def parse_predicate(self):
+        all_predicates = MospPredicate.break_compound(self.join_predicate)
+        if isinstance(all_predicates, MospPredicate):
+            return all_predicates
+        join_predicates = [pred for pred in all_predicates if not pred.has_literal_op()]
+        if len(join_predicates) == 0:
+            return None
+        elif len(join_predicates) == 1:
+            return join_predicates[0]
+        else:
+            return join_predicates
+
     def name(self) -> str:
         return self.join_data["name"]
 
