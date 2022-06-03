@@ -353,8 +353,16 @@ def parse_explain_analyze(orig_query: "mosp.MospQuery", plan, *, with_subqueries
         plan = plan[0]["Plan"]
 
     node_type = plan.get("Node Type", "")
-    exec_time = plan["Actual Total Time"]
-    proc_rows = plan["Actual Rows"]
+
+    exec_time = plan["Actual Total Time"] / 1000  # convert ms -> s
+
+    # The multiplication by Actual Loops is necessary b/c Actual Rows is actually a per-loop value.
+    # The aggregated/total rows are obtained only by considering the number of loops.
+    # see https://www.postgresql.org/docs/current/using-explain.html#USING-EXPLAIN-ANALYZE for more details.
+    # FIXME: actually, this seems to not always be the case. In some (yet unknown) cases, Actual Rows already considers
+    # the total number of rows and multiplication by Actual Loops over-estimates this number.
+    proc_rows = plan["Actual Rows"] * plan["Actual Loops"]
+
     planned_rows = plan["Plan Rows"]
     filter_pred = plan.get("Filter", "")
     filtered_rows = (plan.get("Rows Removed by Filter", 0)
