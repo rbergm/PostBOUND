@@ -357,7 +357,9 @@ def parse_explain_analyze(orig_query: "mosp.MospQuery", plan, *, with_subqueries
     proc_rows = plan["Actual Rows"]
     planned_rows = plan["Plan Rows"]
     filter_pred = plan.get("Filter", "")
-    filtered_rows = plan.get("Rows Removed by Filter", plan.get("Rows Removed by Index Recheck", 0))
+    filtered_rows = (plan.get("Rows Removed by Filter", 0)
+                     + plan.get("Rows Removed by Index Recheck", 0)
+                     + plan.get("Rows Removed by Filter", 0))
 
     if QueryNode.is_join_node(node_type):
         node = QueryNode.parse(node_type)
