@@ -384,7 +384,7 @@ def parse_explain_analyze(orig_query: "mosp.MospQuery", plan, *, with_subqueries
             # Marking this as TODO for now.
 
             if not join_pred:
-                scan_child = (left_parsed if left_parsed.join_pred
+                scan_child = (left_parsed if left_parsed.is_scan() and left_parsed.join_pred
                               else right_parsed)
                 scan_condition = scan_child.join_pred
                 join_col, join_op, target_col = EXPLAIN_PREDICATE_FORMAT.match(scan_condition).groupdict().values()
