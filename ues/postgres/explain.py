@@ -35,6 +35,9 @@ class QueryNode(enum.Enum):
     NESTED_LOOP = "Nested Loop"
     MERGE_JOIN = "Merge Join"
     SEQ_SCAN = "Seq Scan"
+    BMP_IDX_SCAN = "Bitmap Index Scan"
+    BMP_HEAP_SCAN = "Bitmap Heap Scan"
+    BMP_SCAN = "Bitmap Scan (virtual)"
     IDX_ONLY_SCAN = "Index Only Scan"
     IDX_SCAN = "Index Scan"
 
@@ -42,7 +45,8 @@ class QueryNode(enum.Enum):
         return self in [QueryNode.HASH_JOIN, QueryNode.NESTED_LOOP, QueryNode.MERGE_JOIN]
 
     def is_scan(self) -> bool:
-        return self in [QueryNode.SEQ_SCAN, QueryNode.IDX_ONLY_SCAN, QueryNode.IDX_SCAN]
+        return self in [QueryNode.SEQ_SCAN, QueryNode.IDX_ONLY_SCAN, QueryNode.IDX_SCAN,
+                        QueryNode.BMP_IDX_SCAN, QueryNode.BMP_SCAN]
 
     def is_idxscan(self) -> bool:
         return self == QueryNode.IDX_ONLY_SCAN or self == QueryNode.IDX_SCAN
@@ -428,7 +432,26 @@ def parse_explain_analyze(orig_query: "mosp.MospQuery", plan, *, with_subqueries
                         proc_rows=proc_rows, planned_rows=planned_rows, filtered_rows=filtered_rows,
                         associated_query=orig_query)
     else:
-        warnings.warn("Unknown node type: {}".format(node_type))
         parsed_children = [parse_explain_analyze(orig_query, child_plan, with_subqueries=with_subqueries)
                            for child_plan in plan.get("Plans", [])]
+
+        # Dirty workaround/fix: A bitmap scan has elements of both Index Scan and Sequential Scan. It is also split up
+        # among two nodes: The Bitmap Heap Scan and the Bitmap Index Scan. The relevant attributes are scattered among
+        # them. To integrate this two-step scan into our structure, we dissolve the Bitmap Heap Scan part and push
+        # important attributes down to the Index Scan. Finally, the Index part is replaced by a virtual Bitmap Scan
+        # node.
+        if node_type == "Bitmap Heap Scan" and len(parsed_children) == 1:
+            bmp_idx_scan = parsed_children[0]
+
+            bmp_idx_scan.node = QueryNode.BMP_SCAN
+            bmp_idx_scan.exec_time = exec_time
+
+            bmp_idx_scan.source_table = plan.get("Relation Name", "")
+            bmp_idx_scan.alias_name = plan.get("Alias", "")
+
+            bmp_idx_scan.planned_rows = planned_rows
+            bmp_idx_scan.filtered_rows += filtered_rows
+            return bmp_idx_scan
+        else:
+            warnings.warn("Unknown node type: {}".format(node_type))
         return _simplify_plan_tree(parsed_children)
