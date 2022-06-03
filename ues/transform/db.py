@@ -89,6 +89,7 @@ class DBSchema:
     def __init__(self, cursor: "psycopg2.cursor"):
         self.cursor = cursor
         self.cardinality_cache = {}
+        self.query_cache = {}
 
     def count_tuples(self, table: TableRef, *, cache_enabled=True) -> int:
         if cache_enabled and table in self.cardinality_cache:
@@ -111,6 +112,17 @@ class DBSchema:
             if attribute_name in columns:
                 return table
         raise KeyError(f"Attribute not found: {attribute_name} in candidates {candidate_tables}")
+
+    def execute_query(self, query: str, *, cache_enabled=True):
+        if cache_enabled and query in self.query_cache:
+            return self.query_cache[query]
+
+        self.cursor.execute(query)
+        result = self.cursor.fetchall()
+
+        if cache_enabled:
+            self.query_cache[query] = result
+        return result
 
     def _fetch_columns(self, table_name):
         base_query = "SELECT column_name FROM information_schema.columns WHERE table_name = %s"
