@@ -404,7 +404,7 @@ def parse_explain_analyze(orig_query: "mosp.MospQuery", plan, *, with_subqueries
         else:
             is_subquery = False
 
-        if float(plan.get("Actual Startup Time", "-1")) == 0 and float(plan.get("Actual Total Time", "-1")) == 0:
+        if plan["Actual Loops"] == 0:
             pruned = True
         else:
             pruned = False
