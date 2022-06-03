@@ -1,6 +1,7 @@
 
-from typing import Any, List, Union, Tuple
+import re
 import warnings
+from typing import Any, List, Union, Tuple
 
 import mo_sql_parsing as mosp
 
@@ -9,6 +10,10 @@ from transform import db, util
 
 def extract_tableref(mosp_data) -> db.TableRef:
     return db.TableRef(mosp_data.get("value", ""), mosp_data.get("name", ""))
+
+
+_EXPLAIN_PREDICATE_FORMAT = re.compile(r"\(?(?P<predicate>(?P<left>[\w\.]+) (?P<op>[<>=!]+) (?P<right>[\w\.]+))\)?")
+_REFLEXIVE_OPS = ["=", "!=", "<>"]
 
 
 class MospQuery:
@@ -49,6 +54,27 @@ class MospQuery:
 
     def text(self) -> str:
         return str(self)
+
+    def lookup_subquery(self, join_predicate: str) -> Union["MospJoin", None]:
+        predicate_match = _EXPLAIN_PREDICATE_FORMAT.match(join_predicate)
+        if not predicate_match:
+            raise ValueError("Malformed join predicate: '{}'".format(join_predicate))
+        predicate_components = predicate_match.groupdict()
+        pretty_predicate = predicate_components["predicate"]
+
+        # make sure that we match both a = b, as well as b = a
+        # FIXME: the hack to prevent non-reflexive predicates suddenly matching is incredibly dirty..
+        left, op, right = predicate_components['right'], predicate_components['op'], predicate_components['left']
+        if op in _REFLEXIVE_OPS:
+            swapped_pretty_predicate = f"{left} {op} {right}"
+        else:
+            swapped_pretty_predicate = pretty_predicate
+
+        for subquery in self.subqueries():
+            subquery_join_predicates = [str(join.parse_predicate()) for join in subquery.subquery.joins()]
+            if pretty_predicate in subquery_join_predicates or swapped_pretty_predicate in subquery_join_predicates:
+                return subquery
+        return None
 
     def __repr__(self) -> str:
         return str(self)
