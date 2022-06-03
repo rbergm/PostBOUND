@@ -69,7 +69,7 @@ class PlanNode:
         self.alias_name = alias_name
         self.index_name = index_name
 
-        self.exec_time = exec_time,
+        self.exec_time = exec_time
         self.proc_rows = proc_rows
         self.planned_rows = planned_rows
         self.filtered_rows = filtered_rows
