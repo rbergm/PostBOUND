@@ -174,5 +174,7 @@ dt-venv/
 
 # Project specific files
 
+LocalTest*
+
 # The imdb folder contains all sources for the IMDB dataset, we don't want this in VC
 imdb/
