@@ -475,7 +475,7 @@ def parse_explain_analyze(orig_query: "mosp.MospQuery", plan, *, with_subqueries
             return bmp_idx_scan
         else:
             warnings.warn("Unknown node type: {}".format(node_type))
-        return _simplify_plan_tree(parsed_children)
+            return _simplify_plan_tree(parsed_children)
 
 
 def prune_pg_plan(plan):
