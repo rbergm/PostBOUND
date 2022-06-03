@@ -186,6 +186,9 @@ class PlanNode:
         if self.node.is_idxscan():
             node_label += f" ({self.index_name})"
 
+        if self.pruned:
+            node_label += " [PRUNED]"
+
         join_cond   = "  Join  : {}".format(self.join_pred if self.join_pred else "/")  # noqa: E221
         filter_cond = "  Filter: {}".format(self.filter_pred if self.filter_pred else "/")
 
@@ -198,11 +201,14 @@ class PlanNode:
         filter_rows = "  Filtered Rows: {}".format(self.filtered_rows if self.filtered_rows else "/")
         out_rows    = "  Outgoing Rows: {}".format(self.proc_rows)  # noqa: E221
 
+        runtime     = "  Execution Time: {} ms".format(self.exec_time)  # noqa: E221
+
         sep = "-" * max(len(line) for line in [node_label,
                                                join_cond, filter_cond,
-                                               filter_rows, out_rows])
+                                               filter_rows, out_rows,
+                                               runtime])
 
-        return "\n".join([node_label, sep, join_cond, filter_cond, sep, in_rows, filter_rows, out_rows])
+        return "\n".join([node_label, sep, join_cond, filter_cond, sep, in_rows, filter_rows, out_rows, sep, runtime])
 
     def pretty_print(self, *, include_filter=False, indent=0):
         indent_str = " " * indent
