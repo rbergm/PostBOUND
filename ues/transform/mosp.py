@@ -105,7 +105,8 @@ class MospJoin:
         return str(self)
 
     def __str__(self) -> str:
-        return f"{extract_tableref(self.join_data)} ON {self.join_predicate}"
+        join_body = f"({self.subquery})" if self.subquery else extract_tableref(self.join_data)
+        return f"JOIN {join_body} ON {self.parse_predicate()}"
 
 
 _OperationPrinting = {
