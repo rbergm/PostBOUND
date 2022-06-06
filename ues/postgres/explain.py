@@ -358,7 +358,8 @@ def compare_predicate_strs(first_pred: str, second_pred: str) -> bool:
     return operands_match
 
 
-def parse_explain_analyze(orig_query: "mosp.MospQuery", plan, *, with_subqueries=True) -> "PlanNode":
+def parse_explain_analyze(orig_query: "mosp.MospQuery", plan, *,
+                          with_subqueries: bool = True, inner: bool = False) -> "PlanNode":
     # unwrap plan content if necessary
     if isinstance(plan, list):
         plan = plan[0]["Plan"]
@@ -371,21 +372,24 @@ def parse_explain_analyze(orig_query: "mosp.MospQuery", plan, *, with_subqueries
     # The aggregated/total rows are obtained only by considering the number of loops.
     # see https://www.postgresql.org/docs/current/using-explain.html#USING-EXPLAIN-ANALYZE for more details.
     # FIXME: actually, this seems to not always be the case. In some (yet unknown) cases, Actual Rows already considers
-    # the total number of rows and multiplication by Actual Loops over-estimates this number.
-    proc_rows = plan["Actual Rows"] * plan["Actual Loops"]
+    # the total number of rows and multiplication by Actual Loops over-estimates this number. One of these situations
+    # is definitely related to inner nodes (which is already caught by the `inner` parameter). However, some other
+    # cases still remain.
+    loop_row_count_multiplier = 1 if inner else plan["Actual Loops"]
+    proc_rows = plan["Actual Rows"] * loop_row_count_multiplier
 
     planned_rows = plan["Plan Rows"]
     filter_pred = plan.get("Filter", "")
     filtered_rows = (plan.get("Rows Removed by Filter", 0)
                      + plan.get("Rows Removed by Index Recheck", 0)
-                     + plan.get("Rows Removed by Filter", 0))
+                     + plan.get("Rows Removed by Filter", 0)) * loop_row_count_multiplier
 
     if QueryNode.is_join_node(node_type):
         node = QueryNode.parse(node_type)
 
         left, right = plan["Plans"]
         left_parsed = parse_explain_analyze(orig_query, left, with_subqueries=with_subqueries)
-        right_parsed = parse_explain_analyze(orig_query, right, with_subqueries=with_subqueries)
+        right_parsed = parse_explain_analyze(orig_query, right, with_subqueries=with_subqueries, inner=True)
         children = [_simplify_plan_tree(left_parsed), _simplify_plan_tree(right_parsed)]
 
         if node == QueryNode.HASH_JOIN:
@@ -453,7 +457,7 @@ def parse_explain_analyze(orig_query: "mosp.MospQuery", plan, *, with_subqueries
                         proc_rows=proc_rows, planned_rows=planned_rows, filtered_rows=filtered_rows,
                         associated_query=orig_query)
     else:
-        parsed_children = [parse_explain_analyze(orig_query, child_plan, with_subqueries=with_subqueries)
+        parsed_children = [parse_explain_analyze(orig_query, child_plan, with_subqueries=with_subqueries, inner=inner)
                            for child_plan in plan.get("Plans", [])]
 
         # Dirty workaround/fix: A bitmap scan has elements of both Index Scan and Sequential Scan. It is also split up
