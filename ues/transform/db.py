@@ -91,11 +91,12 @@ class DBSchema:
             with open(postgres_config_file, "r") as conn_file:
                 psycopg_connect = conn_file.readline().strip()
         conn = psycopg2.connect(psycopg_connect)
-        _dbschema_instance = DBSchema(conn.cursor())
+        _dbschema_instance = DBSchema(conn.cursor(), connection=conn)
         return _dbschema_instance
 
-    def __init__(self, cursor: "psycopg2.cursor"):
+    def __init__(self, cursor: "psycopg2.cursor", *, connection: "psycopg2.connection"):
         self.cursor = cursor
+        self.connection = connection
         self.cardinality_cache = {}
         self.query_cache = {}
 
