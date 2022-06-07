@@ -1,7 +1,7 @@
 
 import re
 import warnings
-from typing import Any, List, Union, Tuple
+from typing import Any, List, Dict, Union, Tuple
 
 import mo_sql_parsing as mosp
 
@@ -29,12 +29,15 @@ class MospQuery:
     def from_clause(self):
         return self.query["from"]
 
+    def where_clause(self):
+        return self.query["where"]
+
     def base_table(self) -> "db.TableRef":
         tab = next(tab for tab in self.from_clause() if "value" in tab)
         return db.TableRef(tab["value"], tab["name"])
 
     def collect_tables(self) -> List["db.TableRef"]:
-        tables = [self.base_table()]
+        tables = [db.TableRef(tab["value"], tab["name"]) for tab in self.from_clause() if "value" in tab]
         for join in self.joins():
             tables.extend(join.collect_tables())
         return tables
