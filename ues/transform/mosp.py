@@ -49,6 +49,10 @@ class MospQuery:
         else:
             return joins
 
+    def predicates(self) -> List[Union["MospPredicate", "CompoundMospFilterPredicate"]]:
+        return CompoundMospFilterPredicate.parse(self.where_clause(), skip_initial_level=True,
+                                                 alias_map=self._build_alias_map())
+
     def subqueries(self, simplify=False) -> List["MospJoin"]:
         subqueries = [sq for sq in self.joins() if sq.is_subquery()]
         if simplify and len(subqueries) == 1:
@@ -182,6 +186,14 @@ CompoundOperations = {
 }
 
 
+def _expand_predicate_to_mosp_query(base_table: db.TableRef, mosp_data):
+    return {
+        "select": "*",
+        "from": {"value": base_table.full_name, "name": base_table.alias},
+        "where": mosp_data
+    }
+
+
 class MospPredicate:
     @staticmethod
     def break_compound(mosp_data: dict, *, alias_map: dict = None) -> List["MospPredicate"]:
@@ -212,6 +224,12 @@ class MospPredicate:
         if self.operation == "like" or self.operation == "exists" or self.operation == "missing":
             return True
         # FIXME: this heuristic is incomplete: a predicate like a.date (25, b.date) fails the tests
+        return False
+
+    def is_join_predicate(self) -> bool:
+        return not self.has_literal_op()
+
+    def is_compound(self) -> bool:
         return False
 
     def left_op(self) -> str:
@@ -298,6 +316,81 @@ class MospPredicate:
             right = f"'{right}'"
 
         return f"{self.left} {op_str} {right}"
+
+
+class CompoundMospFilterPredicate:
+    @staticmethod
+    def is_compound_predicate(mosp_data) -> bool:
+        operation = util.dict_key(mosp_data)
+        return operation in CompoundOperations
+
+    @staticmethod
+    def parse(mosp_data, *, skip_initial_level: bool = False,
+              alias_map: dict = None) -> Union["MospPredicate", "CompoundMospFilterPredicate"]:
+        operation = util.dict_key(mosp_data)
+        if not CompoundMospFilterPredicate.is_compound_predicate(mosp_data):
+            return MospPredicate(mosp_data, alias_map=alias_map)
+        parsed_children = [CompoundMospFilterPredicate.parse(child, alias_map=alias_map)
+                           for child in mosp_data[operation]]
+        if skip_initial_level:
+            return parsed_children
+        return CompoundMospFilterPredicate(parsed_children, operation)
+
+    @staticmethod
+    def build_and_predicate(children: List[Union["MospPredicate", "CompoundMospFilterPredicate"]]
+                            ) -> Union["MospPredicate", "CompoundMospFilterPredicate"]:
+        if len(children) == 1:
+            return children[0]
+
+        return CompoundMospFilterPredicate(children, "and")
+
+    def __init__(self, children: List[Union["MospPredicate", "CompoundMospFilterPredicate"]], operation: str):
+        if not children:
+            raise ValueError("Empty child list")
+        for child in children:
+            if isinstance(child, MospPredicate) and child.is_join_predicate():
+                raise ValueError("CompoundFILTERPredicate can only be built over filters, not join '{}'".format(child))
+        self.children = children
+        self.operation = operation
+
+    def is_compound(self) -> bool:
+        return True
+
+    def is_join_predicate(self) -> bool:
+        return False
+
+    def parse_left_attribute(self) -> db.AttributeRef:
+        left_attributes = set(child.parse_left_attribute() for child in self.children)
+        if len(left_attributes) != 1:
+            raise ValueError("Left is undefined for compound predicates over multiple attributes.")
+        return list(left_attributes)[0]
+
+    def base_table(self) -> db.TableRef:
+        # we know this is not a join so there may only be one base table
+        return self.children[0].parse_left_attribute().table
+
+    def to_mosp(self):
+        return {self.operation: [child.to_mosp() for child in self.children]}
+
+    def estimate_result_rows(self, *, dbs: db.DBSchema = None) -> int:
+        # TODO: sampling variant
+        dbs = db.DBSchema.get_instance() if not dbs else dbs
+        mosp_query = _expand_predicate_to_mosp_query(self.base_table(), self.to_mosp())
+        return dbs.pg_estimate(mosp.format(mosp_query))
+
+    def __hash__(self) -> int:
+        return hash(str(self))
+
+    def __eq__(self, other: object) -> bool:
+        if not isinstance(other, CompoundMospFilterPredicate):
+            return str(self) == str(other)
+
+    def __repr__(self):
+        return str(self)
+
+    def __str__(self):
+        op_str = _OperationPrinting.get(self.operation, self.operation)
+        return f" {op_str} ".join(str(child) for child in self.children)
 
 
 def parse(query):
