@@ -285,6 +285,14 @@ class MospPredicate:
             return {self.operation: self.left}
         return {self.operation: [self.left, self.right]}
 
+    def estimate_result_rows(self, *, dbs: db.DBSchema = None) -> int:
+        # TODO: sampling variant
+        if self.is_join_predicate():
+            raise ValueError("Can only estimate filters, not joins")
+        dbs = db.DBSchema.get_instance() if not dbs else dbs
+        mosp_query = _expand_predicate_to_mosp_query(self.parse_left_attribute().table, self.mosp_data)
+        return dbs.pg_estimate(mosp.format(mosp_query))
+
     def _extract_table(self, op: str) -> str:
         return op.split(".")[0]
 
