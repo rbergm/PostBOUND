@@ -24,6 +24,7 @@ class MospQuery:
 
     def __init__(self, mosp_data):
         self.query = mosp_data
+        self.alias_map = None
 
     def from_clause(self):
         return self.query["from"]
@@ -82,6 +83,14 @@ class MospQuery:
         query_str = mosp.format(count_query)
         n_tuples = db.DBSchema.get_instance().execute_query(query_str)[0][0]
         return n_tuples
+
+    def _build_alias_map(self) -> Dict[str, db.TableRef]:
+        if self.alias_map:
+            return self.alias_map
+        self.alias_map = {}
+        for tab in self.collect_tables():
+            self.alias_map[tab.alias] = tab
+        return self.alias_map
 
     def __repr__(self) -> str:
         return str(self)
@@ -172,14 +181,16 @@ CompoundOperations = {
 
 class MospPredicate:
     @staticmethod
-    def break_compound(mosp_data) -> List["MospPredicate"]:
+    def break_compound(mosp_data: dict, *, alias_map: dict = None) -> List["MospPredicate"]:
         operation = util.dict_key(mosp_data)
         if operation not in CompoundOperations:
-            return MospPredicate(mosp_data)
-        return util.flatten([MospPredicate.break_compound(sub_predicate) for sub_predicate in mosp_data[operation]])
+            return MospPredicate(mosp_data, alias_map=alias_map)
+        return util.flatten([MospPredicate.break_compound(sub_predicate, alias_map=alias_map)
+                             for sub_predicate in mosp_data[operation]])
 
-    def __init__(self, mosp_data):
+    def __init__(self, mosp_data, *, alias_map=None):
         self.mosp_data = mosp_data
+        self.alias_map = alias_map
         if not isinstance(mosp_data, dict):
             raise TypeError("Predicate type not supported: " + str(mosp_data))
         self.operation = util.dict_key(mosp_data)
@@ -209,6 +220,12 @@ class MospPredicate:
     def left_attribute(self) -> str:
         return self._extract_attribute(self.left)
 
+    def parse_left_attribute(self) -> db.AttributeRef:
+        if not self.alias_map:
+            raise ValueError("Cannot parse without alias map")
+        table = self.alias_map[self.left_table()]
+        return db.AttributeRef(table, self.left_attribute())
+
     def right_op(self) -> str:
         if self.has_literal_op():
             return util.dict_value(self.right) if isinstance(self.right, dict) else self.right
@@ -219,6 +236,14 @@ class MospPredicate:
 
     def right_attribute(self) -> str:
         return None if self.has_literal_op() else self._extract_attribute(self.right)
+
+    def parse_right_attribute(self) -> db.AttributeRef:
+        if self.has_literal_op():
+            raise ValueError("Can only parse attributes, not literal values")
+        if not self.alias_map:
+            raise ValueError("Cannot parse without alias map")
+        table = self.alias_map[self.right_table()]
+        return db.AttributeRef(table, self.right_attribute())
 
     def operands(self) -> Tuple[str, Union[str, Any]]:
         return (self.left, self.right)
