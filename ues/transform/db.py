@@ -55,14 +55,22 @@ class TableRef:
 
 @dataclass
 class AttributeRef:
-    src_table: TableRef
+    table: TableRef
     attribute: str
+
+    def __hash__(self) -> int:
+        return hash((self.table, self.attribute))
+
+    def __eq__(self, other: object) -> bool:
+        if not isinstance(other, AttributeRef):
+            return False
+        return self.table == other.table and self.attribute == other.attribute
 
     def __repr__(self):
         return str(self)
 
     def __str__(self):
-        return f"{self.src_table.alias}.{self.attribute}"
+        return f"{self.table.alias}.{self.attribute}"
 
 
 _dbschema_instance = None
