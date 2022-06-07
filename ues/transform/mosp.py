@@ -160,7 +160,9 @@ _OperationPrinting = {
     "le": "<=",
     "gt": ">",
     "ge": ">=",
-    "like": "LIKE"
+    "like": "LIKE",
+    "or": "OR",
+    "and": "AND"
 }
 
 CompoundOperations = {
@@ -255,8 +257,18 @@ class MospPredicate:
         return str(self)
 
     def __str__(self) -> str:
+        if self.operation == "exists":
+            return self.left + " IS NOT NULL"
+        elif self.operation == "missing":
+            return self.left + " IS NULL"
+
         op_str = _OperationPrinting.get(self.operation, self.operation)
         right = self.right_op()
+
+        right_is_str_value = not isinstance(right, list) and not util.represents_number(right)
+        if self.has_literal_op() and right_is_str_value:
+            right = f"'{right}'"
+
         return f"{self.left} {op_str} {right}"
 
 

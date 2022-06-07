@@ -41,3 +41,11 @@ def flatten(deep_lst: List[List[Any]], *, recursive=False) -> List[Any]:
 
 def enlist(obj: Any) -> List[Any]:
     return obj if isinstance(obj, list) else [obj]
+
+
+def represents_number(val: str) -> bool:
+    try:
+        float(val)
+    except (TypeError, ValueError):
+        return False
+    return True
