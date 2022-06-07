@@ -1,5 +1,6 @@
 
 import os
+import textwrap
 import warnings
 from dataclasses import dataclass
 from typing import List
@@ -73,6 +74,12 @@ class AttributeRef:
         return f"{self.table.alias}.{self.attribute}"
 
 
+_DTypeArrayConverters = {
+    "integer": "int[]",
+    "text": "text[]",
+    "character varying": "text[]"
+}
+
 _dbschema_instance = None
 
 
@@ -99,6 +106,9 @@ class DBSchema:
         self.connection = connection
         self.cardinality_cache = {}
         self.query_cache = {}
+        self.index_map = {}
+        self.estimates_cache = {}
+        self.mcvs_cache = {}
 
     def count_tuples(self, table: TableRef, *, cache_enabled=True) -> int:
         if cache_enabled and table in self.cardinality_cache:
@@ -133,8 +143,96 @@ class DBSchema:
             self.query_cache[query] = result
         return result
 
+    def is_primary_key(self, attribute: AttributeRef) -> bool:
+        """Checks if the given attribute is a primary key on its table."""
+        if attribute.table not in self.index_map:
+            self._inflate_index_map_for_table(attribute.table)
+        index_map_for_table = self.index_map[attribute.table]
+        return index_map_for_table.get(attribute.attribute, False)
+
+    def has_secondary_idx_on(self, attribute: AttributeRef) -> bool:
+        """Checks, whether the schema has a secondary index (e.g. Foreign key) specified on the given attribute."""
+        if attribute.table not in self.index_map:
+            self._inflate_index_map_for_table(attribute.table)
+        index_map_for_table = self.index_map[attribute.table]
+
+        # The index map contains an entry for each attribute that actually has an index. The value is True, if the
+        # attribute (which is known to be indexed), is even the Primary Key
+        # Our method should return False in two cases: 1) the attribute is not indexed at all; and 2) the attribute
+        # actually is the Primary key. Therefore, by assuming it is the PK in case of absence, we get the correct
+        # value.
+        return not index_map_for_table.get(attribute.attribute, True)
+
+    def pg_estimate(self, query: str, *, cache_enabled: bool = True):
+        """Retrieves the number of result tuples estimated by the PG query optimizer for the given query."""
+        if cache_enabled and query in self.estimates_cache:
+            return self.estimates_cache[query]
+        if not query.lower().startswith("explain (format json)"):
+            explain_query = "explain (format json) " + query
+        else:
+            explain_query = query
+        self.cursor.execute(explain_query)
+        explain_result = self.cursor.fetchone()[0]
+        estimate = explain_result[0]["Plan"]["Plan Rows"]
+
+        if cache_enabled:
+            self.estimates_cache[query] = estimate
+
+        return estimate
+
+    def load_most_common_values(self, attribute: AttributeRef, *, k: int = None, cache_enabled=True) -> list:
+        """Retrieves the MCV-list from the pg_stats view.
+
+        The list is returned as an ordered sequence of (value, count) pairs (starting with the most common value).
+
+        Optionally, the list can be cut after `k` values. E.g. setting `k = 1` just returns the most common value. If
+        less than `k` values are present, the entire list is returned.
+        """
+        if cache_enabled and attribute in self.mcvs_cache:
+            mcvs = self.mcvs_cache[attribute]
+            return mcvs[:k] if k else mcvs
+
+        mcvs = self._load_mcvs(attribute)
+
+        if cache_enabled:
+            self.mcvs_cache[attribute] = mcvs
+        return mcvs[:k] if k else mcvs
+
     def _fetch_columns(self, table_name):
         base_query = "SELECT column_name FROM information_schema.columns WHERE table_name = %s"
         self.cursor.execute(base_query, (table_name,))
         result_set = self.cursor.fetchall()
         return [col[0] for col in result_set]
+
+    def _inflate_index_map_for_table(self, table: TableRef):
+        # query adapted from https://wiki.postgresql.org/wiki/Retrieve_primary_key_columns
+        index_query = textwrap.dedent(f"""
+                                      SELECT a.attname, i.indisprimary
+                                      FROM pg_index i
+                                      JOIN pg_attribute a
+                                      ON i.indrelid = a.attrelid
+                                        AND a.attnum = any(i.indkey)
+                                      WHERE i.indrelid = '{table.full_name}'::regclass
+                                      """)
+        self.cursor.execute(index_query)
+        index_map = dict(self.cursor.fetchall())
+        self.index_map[table] = index_map
+
+    def _load_mcvs(self, attribute: AttributeRef) -> list:
+        # Postgres stores the Most common values in a column of type anyarray (since in this column, many MCVS from
+        # many different tables and data types are present). However, this type is not very convenient to work on.
+        # Therefore, we first need to convert the anyarray to an array of the actual attribute type.
+
+        # determine the attributes data type to figure out how it should be converted
+        self.cursor.execute("SELECT data_type FROM information_schema.columns "
+                            "WHERE table_name = %s AND column_name = %s",
+                            (attribute.table.full_name, attribute.attribute))
+        attribute_dtype = self.cursor.fetchone()[0]
+        attribute_converter = _DTypeArrayConverters[attribute_dtype]
+
+        # now, load the most frequent values
+        self.cursor.execute(f"SELECT UNNEST(most_common_vals::text::{attribute_converter}), UNNEST(most_common_freqs) "
+                            "FROM pg_stats "
+                            "WHERE tablename = %s AND attname = %s",
+                            (attribute.table.full_name, attribute.attribute))
+        return self.cursor.fetchall()
