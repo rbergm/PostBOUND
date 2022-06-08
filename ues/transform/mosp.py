@@ -88,7 +88,7 @@ class MospQuery:
         count_query = dict(self.query)
         count_query["select"] = {"value": {"count": "*"}}
         query_str = mosp.format(count_query)
-        n_tuples = db.DBSchema.get_instance().execute_query(query_str)[0][0]
+        n_tuples = db.DBSchema.get_instance().execute_query(query_str)
         return n_tuples
 
     def _build_alias_map(self) -> Dict[str, db.TableRef]:

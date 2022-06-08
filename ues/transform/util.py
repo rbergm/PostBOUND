@@ -1,6 +1,6 @@
 
 import itertools
-from typing import Any, List, Dict
+from typing import Any, List, Dict, Union
 
 
 def head(lst: List[Any]) -> Any:
@@ -41,6 +41,12 @@ def flatten(deep_lst: List[List[Any]], *, recursive=False) -> List[Any]:
 
 def enlist(obj: Any) -> List[Any]:
     return obj if isinstance(obj, list) else [obj]
+
+
+def simplify(lst: List[Any]) -> Union[Any, List[Any]]:
+    while (isinstance(lst, list) or isinstance(lst, tuple)) and len(lst) == 1:
+        lst = lst[0]
+    return lst
 
 
 def represents_number(val: str) -> bool:

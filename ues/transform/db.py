@@ -1,4 +1,6 @@
 
+import atexit
+import json
 import os
 import textwrap
 import warnings
@@ -7,6 +9,7 @@ from typing import List
 
 import psycopg2
 
+from transform import util
 
 class TableRef:
     @staticmethod
@@ -104,25 +107,32 @@ class DBSchema:
     def __init__(self, cursor: "psycopg2.cursor", *, connection: "psycopg2.connection"):
         self.cursor = cursor
         self.connection = connection
-        self.cardinality_cache = {}
-        self.query_cache = {}
+
         self.index_map = {}
         self.estimates_cache = {}
         self.mcvs_cache = {}
 
+        if os.path.isfile(".dbschema_query_cache.json"):
+            self.query_cache_file = open(".dbschema_query_cache.json", "r+")
+            self.query_cache = json.load(self.query_cache_file)
+        else:
+            self.query_cache_file = open(".dbschema_query_cache.json", "w")
+            self.query_cache = {}
+        atexit.register(self._save_query_cache)
+
     def count_tuples(self, table: TableRef, *, cache_enabled=True) -> int:
-        if cache_enabled and table in self.cardinality_cache:
-            return self.cardinality_cache[table]
+        count_query = "SELECT COUNT(*) FROM {}".format(table.full_name)
+        if cache_enabled and count_query in self.query_cache:
+            return self.query_cache[count_query]
 
         if table.is_virtual:
             raise ValueError("Cannot count tuples of virtual table")
 
-        count_query = "SELECT COUNT(*) FROM {}".format(table.full_name)
         self.cursor.execute(count_query)
         count = self.cursor.fetchone()[0]
 
         if cache_enabled:
-            self.cardinality_cache[table] = count
+            self.query_cache[count_query] = count
         return count
 
     def lookup_attribute(self, attribute_name: str, candidate_tables: List[TableRef]):
@@ -137,7 +147,7 @@ class DBSchema:
             return self.query_cache[query]
 
         self.cursor.execute(query)
-        result = self.cursor.fetchall()
+        result = util.simplify(self.cursor.fetchall())
 
         if cache_enabled:
             self.query_cache[query] = result
@@ -236,3 +246,7 @@ class DBSchema:
                             "WHERE tablename = %s AND attname = %s",
                             (attribute.table.full_name, attribute.attribute))
         return self.cursor.fetchall()
+
+    def _save_query_cache(self):
+        print(".. Storing query cache")
+        json.dump(self.query_cache, self.query_cache_file)
