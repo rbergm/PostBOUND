@@ -32,6 +32,10 @@ class DefaultUESCardinalityEstimator(JoinCardinalityEstimator):
         return 0
 
 
+class TopkUESCardinalityEstimator(JoinCardinalityEstimator):
+    pass
+
+
 class BaseTableCardinalityEstimator(abc.ABC):
 
     @abc.abstractmethod
@@ -133,7 +137,12 @@ class _EqualityJoinView:
 
 
 class _JoinGraph:
-    """The join graph provides a nice interface for querying information about the joins we have to execute."""
+    """The join graph provides a nice interface for querying information about the joins we have to execute.
+
+    The graph is treated mutable in that tables will subsequently be marked as included in the join. Many methods
+    operate on tables that are either already joined, or not yet joined and therefore provide different results
+    depending on the current state of the query processing.
+    """
 
     @staticmethod
     def build_for(query: mosp.MospQuery, *, dbs: db.DBSchema = db.DBSchema.get_instance()) -> "_JoinGraph":
@@ -235,7 +244,7 @@ class _JoinGraph:
         for table in tables:
             join_partners: List[Tuple[db.TableRef, List[mosp.MospPredicate]]] = (
                 [(partner, join["predicate"]) for partner, join in self.graph.adj[table].items()
-                 if not join["pk_fk_join"] and self.graph.nodes[partner]["free"]])
+                 if not join["pk_fk_join"] and self.is_free(partner)])
             join_views.extend(self._explode_compound_predicate_edges(table, join_partners))
         return join_views
 
@@ -243,8 +252,18 @@ class _JoinGraph:
         """Checks, whether the given table is not inserted into the join tree, yet."""
         return self.graph.nodes[table]["free"]
 
+    def available_join_paths(self, table: db.TableRef) -> Dict[db.TableRef, List[mosp.MospPredicate]]:
+        """Searches for all tables that are already joined and have a valid join predicate with the given table."""
+        if not self.is_free(table):
+            raise ValueError("Join paths for already joined table are undefined")
+        join_partners = {partner: util.simplify(join["predicate"]) for partner, join in self.graph.adj[table].items()
+                         if not self.is_free(partner)}
+        return join_partners
+
     def contains_free_n_m_tables(self) -> bool:
         """Checks, whether at least one free table remains in the graph."""
+        # Since we need to access multiple attributes on the node, we cannot pull them from the data-dictionary
+        # directly. Instead we have to operate on the entire dict.
         return any(node_data["free"] for (__, node_data) in list(self.graph.nodes.data()) if node_data["n_m_node"])
 
     def contains_free_tables(self) -> bool:
@@ -254,14 +273,15 @@ class _JoinGraph:
         """Annotates the given table as joined in the graph."""
         self.graph.nodes[table]["free"] = False
 
-    def count_free_joins(self, table: db.TableRef):
+    def count_free_joins(self, table: db.TableRef) -> int:
         return len([partner for partner, __ in self.graph.adj[table].items() if self.is_free(partner)])
 
     def print(self):
         """Writes the current join graph structure to a matplotlib device."""
         node_labels = {node: node.alias for node in self.graph.nodes}
         edge_sizes = [3.0 if pk_fk_join else 1.0 for (__, __, pk_fk_join) in self.graph.edges.data("pk_fk_join")]
-        node_edge_color = ["blue" if free else "grey" for (__, free) in self.graph.nodes.data("free")]
+        node_edge_color = ["black" if free else "grey" for (__, free) in self.graph.nodes.data("free")]
+        # TODO: include arrows for PK/FK directions
         nx.draw_shell(self.graph, with_labels=True,
                       width=edge_sizes, linewidths=1.8, node_size=1750,
                       node_color="white", edgecolors=node_edge_color, edge_color="black",
@@ -290,6 +310,7 @@ class JoinTree:
 
     @staticmethod
     def load_from_query(query: mosp.MospQuery) -> "JoinTree":
+        # TODO: include join predicates here
         join_tree = JoinTree.empty_join_tree()
         join_tree = join_tree.with_base_table(query.base_table())
         for join in query.joins():
@@ -300,9 +321,10 @@ class JoinTree:
                 join_tree = join_tree.joined_with_base_table(join.base_table())
         return join_tree
 
-    def __init__(self):
+    def __init__(self, *, predicate: mosp.MospPredicate = None):
         self.left = None
         self.right = None
+        self.predicate = predicate
 
     def is_empty(self) -> bool:
         return self.right is None
@@ -335,25 +357,40 @@ class JoinTree:
         self.right = table
         return self
 
-    def joined_with_base_table(self, table: db.TableRef) -> "JoinTree":
+    def joined_with_base_table(self, table: db.TableRef, *, predicate: mosp.MospPredicate = None) -> "JoinTree":
         if not self.left:
             self.left = table
+            self.predicate = predicate
             return self
 
-        new_root = JoinTree()
+        new_root = JoinTree(predicate=predicate)
         new_root.left = table
         new_root.right = self
         return new_root
 
-    def joined_with_subquery(self, subquery: "JoinTree") -> "JoinTree":
+    def joined_with_subquery(self, subquery: "JoinTree", *, predicate: mosp.MospPredicate = None) -> "JoinTree":
         if not self.left:
             self.left = subquery
+            self.predicate = predicate
             return self
 
-        new_root = JoinTree()
+        new_root = JoinTree(predicate=predicate)
         new_root.left = subquery
         new_root.right = self
         return new_root
+
+    def traverse_right_deep(self) -> dict:
+        if self.right_is_base_table():
+            yield_right = [{"subquery": False, "table": self.right}]
+        else:
+            yield_right = self.right.traverse_right_deep()
+
+        if self.left_is_base_table():
+            yield_left = [{"subquery": False, "table": self.left, "predicate": self.predicate}]
+        else:
+            yield_left = [{"subquery": True, "children": self.left.traverse_right_deep(), "predicate": self.predicate}]
+
+        return yield_right + yield_left
 
     def pretty_print(self, *, _indentation=0, _inner=False):
         indent_str = (" " * _indentation) + "<- "
@@ -399,7 +436,10 @@ class JoinTree:
         else:
             right_label = str(self.right)
 
-        return f"{right_label} ⋈ {left_label}"  # let's read joins from left to right!
+        join_str = f"{right_label} ⋈ {left_label}"  # let's read joins from left to right!
+        if self.predicate:
+            join_str += f" [{self.predicate}]"
+        return join_str
 
 
 class _AttributeFrequenciesLoader:
@@ -462,7 +502,7 @@ def _estimate_filtered_cardinalities(predicate_map: dict, estimator: BaseTableCa
     return cardinality_dict
 
 
-def _calculate_join_order(query: mosp.MospQuery, *,
+def _calculate_join_order(query: mosp.MospQuery, *, predicate_map,
                           join_cardinality_estimator: JoinCardinalityEstimator = None,
                           base_cardinality_estimator: BaseTableCardinalityEstimator = PostgresBaseTableCardinalityEstimator(),
                           subquery_generator: SubqueryGenerationStrategy = DefensiveSubqueryGeneration(),
@@ -476,7 +516,7 @@ def _calculate_join_order(query: mosp.MospQuery, *,
     # multiple independent join trees very well. Therefore, we are going to return either a single join tree (which
     # should be the case for most queries), or a list of join trees (one for each closed/connected part of the join
     # graph).
-    partitioned_join_trees = [_calculate_join_order_for_join_partition(query, partition,
+    partitioned_join_trees = [_calculate_join_order_for_join_partition(query, partition, predicate_map=predicate_map,
                                                                        join_cardinality_estimator=join_cardinality_estimator,
                                                                        base_cardinality_estimator=base_cardinality_estimator,
                                                                        subquery_generator=subquery_generator,
@@ -486,12 +526,13 @@ def _calculate_join_order(query: mosp.MospQuery, *,
 
 
 def _calculate_join_order_for_join_partition(query: mosp.MospQuery, join_graph: _JoinGraph, *,
+                                             predicate_map,
                                              join_cardinality_estimator: JoinCardinalityEstimator,
                                              base_cardinality_estimator: BaseTableCardinalityEstimator,
                                              subquery_generator: SubqueryGenerationStrategy,
                                              dbs: db.DBSchema = db.DBSchema.get_instance()) -> JoinTree:
     join_tree = JoinTree.empty_join_tree()
-    base_table_estimates = _estimate_filtered_cardinalities(_build_predicate_map(query), base_cardinality_estimator,
+    base_table_estimates = _estimate_filtered_cardinalities(predicate_map, base_cardinality_estimator,
                                                             dbs=dbs)
     attribute_frequencies = _AttributeFrequenciesLoader(dbs=dbs)
     upper_bounds = {}  # will be initialized in the main loop
@@ -545,8 +586,8 @@ def _calculate_join_order_for_join_partition(query: mosp.MospQuery, join_graph: 
             # FIXME: should this also include all PK/FK joins on the base table?!
             pk_joins = sorted(join_graph.free_pk_joins(lowest_bound_table),
                               key=lambda fk_join_view: base_table_estimates[fk_join_view.partner])
-            for pk_table in [pk_join.partner for pk_join in pk_joins]:
-                join_tree = join_tree.joined_with_base_table(pk_table)
+            for pk_table, join_predicate in [(pk_join.partner, pk_join.predicate) for pk_join in pk_joins]:
+                join_tree = join_tree.joined_with_base_table(pk_table, predicate=join_predicate)
                 join_graph.mark_joined(pk_table)
 
             # FIXME: should update statistics here?!
@@ -604,12 +645,14 @@ def _calculate_join_order_for_join_partition(query: mosp.MospQuery, join_graph: 
                                                   base_estimates=base_table_estimates):
             subquery_join = JoinTree().with_base_table(selected_candidate)
             for pk_join in pk_joins:
-                subquery_join = subquery_join.joined_with_base_table(pk_join.partner)
-            new_join_tree = new_join_tree.joined_with_subquery(subquery_join)
+                subquery_join = subquery_join.joined_with_base_table(pk_join.partner, predicate=pk_join.predicate)
+            join_predicate = util.dict_value(join_graph.available_join_paths(selected_candidate), pull_any=True)
+            new_join_tree = new_join_tree.joined_with_subquery(subquery_join, predicate=join_predicate)
         else:
-            new_join_tree = new_join_tree.joined_with_base_table(selected_candidate)
+            join_predicate = util.dict_value(join_graph.available_join_paths(selected_candidate), pull_any=True)
+            new_join_tree = new_join_tree.joined_with_base_table(selected_candidate, predicate=join_predicate)
             for pk_join in pk_joins:
-                new_join_tree = new_join_tree.joined_with_base_table(pk_join.partner)
+                new_join_tree = new_join_tree.joined_with_base_table(pk_join.partner, predicate=pk_join.predicate)
 
         # Update our statistics based on the join(s) we just executed
         upper_bounds[new_join_tree] = lowest_min_bound
@@ -655,7 +698,8 @@ def optimize_query(query: mosp.MospQuery, *,
     else:
         raise ValueError("Unknown subquery generation: '{}'".format(subquery_generation))
 
-    join_order = _calculate_join_order(query, dbs=dbs,
+    predicate_map = _build_predicate_map(query)
+    join_order = _calculate_join_order(query, dbs=dbs, predicate_map=predicate_map,
                                        cardinality_estimator=cardinality_estimator,
                                        subquery_generator=subquery_generator)
 

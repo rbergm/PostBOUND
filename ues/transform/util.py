@@ -1,37 +1,59 @@
 
 import itertools
-from typing import Any, List, Dict, Union
+import typing
+from typing import List, Dict, Union
 
 
-def head(lst: List[Any]) -> Any:
+_T = typing.TypeVar("_T")
+_K = typing.TypeVar("_K")
+_V = typing.TypeVar("_V")
+
+
+def head(lst: List[_T]) -> _T:
+    """Provides the first element of a list. Raises `ValueError` if list is empty."""
     if not len(lst):
         raise ValueError("List is empty")
     return lst[0]
 
 
-def dict_key(dictionary: Dict[Any, Any]) -> Any:
+def dict_key(dictionary: Dict[_K, _V], *, pull_any: bool = False) -> _K:
+    """For a dictionary with just one entry, provides the key of that entry.
+
+    If multiple entries exist and pull_any is `True`, provides any of the keys. Otherwise raises a ValueError.
+    """
     if not isinstance(dictionary, dict):
         raise TypeError("Not a dict: " + str(dictionary))
     if not dictionary:
         raise ValueError("No entries")
     keys = list(dictionary.keys())
-    if len(keys) > 1:
+    if len(keys) > 1 and not pull_any:
         raise ValueError("Ambigous call - dict contains multiple entries: " + str(dictionary))
     return next(iter(keys))
 
 
-def dict_value(dictionary: Dict[Any, Any]) -> Any:
+def dict_value(dictionary: Dict[_K, _V], *, pull_any: bool = False) -> _V:
+    """For a dictionary with just one entry, provides the value of that entry.
+
+    If multiple entries exist and pull_any is `True`, provides any of the values. Otherwise raises a ValueError.
+    """
     if not isinstance(dictionary, dict):
         raise TypeError("Not a dict: " + str(dictionary))
     if not dictionary:
         raise ValueError("No entries")
     vals = list(dictionary.values())
-    if len(vals) > 1:
+    if len(vals) > 1 and not pull_any:
         raise ValueError("Ambigous call - dict contains multiple entries: " + str(dictionary))
     return next(iter(vals))
 
 
-def flatten(deep_lst: List[List[Any]], *, recursive=False) -> List[Any]:
+def flatten(deep_lst: List[Union[List[_T], _T]], *, recursive=False) -> List[_T]:
+    """Unwraps all nested lists, leaving scalar values untouched.
+
+    E.g. for a deep list `[[1, 2, 3], 4, [5, 6]]` will return `[1, 2, 3, 4, 5, 6]` (mind the scalar 4).
+
+    If `recursive` is `True`, this process will continue until all nested lists are flattened (e.g. in the case of
+    `[[[1,2]]]`).
+    """
     deep_lst = [[deep_elem] if not isinstance(deep_elem, list) else deep_elem for deep_elem in deep_lst]
     flattened = list(itertools.chain(*deep_lst))
     if recursive and any(isinstance(deep_elem, list) for deep_elem in flattened):
@@ -39,17 +61,26 @@ def flatten(deep_lst: List[List[Any]], *, recursive=False) -> List[Any]:
     return flattened
 
 
-def enlist(obj: Any) -> List[Any]:
+def enlist(obj: _T) -> List[_T]:
+    """Turns a scalar value into a list, if it is not one already.
+
+    E.g. `enlist(42)` will return `[42]`, whereas `enlist([24])` returns `[24]`.
+    """
     return obj if isinstance(obj, list) else [obj]
 
 
-def simplify(lst: List[Any]) -> Union[Any, List[Any]]:
+def simplify(lst: List[_T]) -> Union[_T, List[_T]]:
+    """Unwraps single scalar values from list-like (i.e. list or tuple) containers.
+
+    E.g. `simplify([42])` will return 42, whereas `simplify([24, 42])` will return `[24, 42]`.
+    """
     while (isinstance(lst, list) or isinstance(lst, tuple)) and len(lst) == 1:
         lst = lst[0]
     return lst
 
 
 def represents_number(val: str) -> bool:
+    """Checks if `val` can be cast into an integer/float value."""
     try:
         float(val)
     except (TypeError, ValueError):
