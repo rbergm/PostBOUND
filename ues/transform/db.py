@@ -11,6 +11,7 @@ import psycopg2
 
 from transform import util
 
+
 class TableRef:
     @staticmethod
     def virtual(alias: str) -> "TableRef":
@@ -112,7 +113,8 @@ class DBSchema:
         self.estimates_cache = {}
         self.mcvs_cache = {}
 
-        if os.path.isfile(".dbschema_query_cache.json"):
+        # FIXME: saving does not seem to work correctly, deactivating query cache for now
+        if os.path.isfile(".dbschema_query_cache.json") and False:
             self.query_cache_file = open(".dbschema_query_cache.json", "r+")
             self.query_cache = json.load(self.query_cache_file)
         else:
@@ -248,5 +250,5 @@ class DBSchema:
         return self.cursor.fetchall()
 
     def _save_query_cache(self):
-        print(".. Storing query cache")
         json.dump(self.query_cache, self.query_cache_file)
+        self.query_cache_file.close()
