@@ -27,10 +27,10 @@ class MospQuery:
         self.alias_map = None
 
     def from_clause(self):
-        return self.query["from"]
+        return self.query.get("from", [])
 
     def where_clause(self):
-        return self.query["where"]
+        return self.query.get("where", [])
 
     def base_table(self) -> "db.TableRef":
         tab = next(tab for tab in self.from_clause() if "value" in tab)
@@ -266,11 +266,43 @@ class MospPredicate:
         table = self.alias_map[self.right_table()]
         return db.AttributeRef(table, self.right_attribute())
 
+    def parse_attributes(self) -> Tuple[db.AttributeRef]:
+        if not self.is_join_predicate():
+            raise ValueError("Filter predicates only have a left attribute")
+        return self.parse_left_attribute(), self.parse_right_attribute()
+
+    def join_partner(self, table: db.TableRef) -> db.AttributeRef:
+        if not self.is_join_predicate():
+            raise ValueError("Filter predicates have no join partner")
+        left, right = self.parse_attributes()
+        if left.table == table:
+            return right
+        elif right.table == table:
+            return left
+        else:
+            raise ValueError("Not in predicate: {}".format(table))
+
+    def attribute_of(self, table: db.TableRef) -> db.AttributeRef:
+        left, right = self.parse_attributes()
+        if left.table == table:
+            return left
+        elif right.table == table:
+            return right
+        else:
+            raise ValueError("Not in predicate: {}".format(table))
+
     def operands(self) -> Tuple[str, Union[str, Any]]:
         return (self.left, self.right)
 
     def tables(self) -> Tuple[str, Union[str, Any]]:
         return (self.left_table(), self.right_table())
+
+    def parse_tables(self) -> Union[db.TableRef, Tuple[db.TableRef, db.TableRef]]:
+        left_table = self.parse_left_attribute().table
+        if self.is_join_predicate():
+            right_table = self.parse_right_attribute().table
+            return left_table, right_table
+        return left_table
 
     def attributes(self) -> Tuple[str, Union[str, Any]]:
         return (self.left_attribute(), self.right_attribute())
@@ -285,7 +317,7 @@ class MospPredicate:
             return {self.operation: self.left}
         return {self.operation: [self.left, self.right]}
 
-    def estimate_result_rows(self, *, dbs: db.DBSchema = None) -> int:
+    def estimate_result_rows(self, *, sampling: bool = False, dbs: db.DBSchema = None) -> int:
         # TODO: sampling variant
         if self.is_join_predicate():
             raise ValueError("Can only estimate filters, not joins")
@@ -380,7 +412,7 @@ class CompoundMospFilterPredicate:
     def to_mosp(self):
         return {self.operation: [child.to_mosp() for child in self.children]}
 
-    def estimate_result_rows(self, *, dbs: db.DBSchema = None) -> int:
+    def estimate_result_rows(self, *, sampling: bool = False, dbs: db.DBSchema = None) -> int:
         # TODO: sampling variant
         dbs = db.DBSchema.get_instance() if not dbs else dbs
         mosp_query = _expand_predicate_to_mosp_query(self.base_table(), self.to_mosp())

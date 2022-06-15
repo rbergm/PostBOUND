@@ -112,6 +112,7 @@ class DBSchema:
         self.index_map = {}
         self.estimates_cache = {}
         self.mcvs_cache = {}
+        self.tuple_count_cache = {}
 
         # FIXME: saving does not seem to work correctly, deactivating query cache for now
         if os.path.isfile(".dbschema_query_cache.json") and False:
@@ -209,6 +210,20 @@ class DBSchema:
         if cache_enabled:
             self.mcvs_cache[attribute] = mcvs
         return mcvs[:k] if k else mcvs
+
+    def load_tuple_count(self, table: TableRef, *, cache_enabled: bool = True) -> int:
+        """Retrieves the total number of tuples from Postgres statistics, rather than executing a count query."""
+        if cache_enabled and table in self.tuple_count_cache:
+            return self.tuple_count_cache[table]
+
+        count_query = f"SELECT reltuples FROM pg_class WHERE oid = '{table.full_name}'::regclass"
+        self.cursor.execute(count_query)
+        stats_count = self.cursor.fetchone()[0]
+
+        if cache_enabled:
+            self.tuple_count_cache[table] = stats_count
+
+        return stats_count
 
     def _fetch_columns(self, table_name):
         base_query = "SELECT column_name FROM information_schema.columns WHERE table_name = %s"
