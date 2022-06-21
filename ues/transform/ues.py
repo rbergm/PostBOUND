@@ -19,7 +19,7 @@ class JoinCardinalityEstimator(abc.ABC):
 
     @abc.abstractmethod
     def calculate_upper_bound(self) -> int:
-        pass
+        return NotImplemented
 
 
 class DefaultUESCardinalityEstimator(JoinCardinalityEstimator):
@@ -41,7 +41,7 @@ class BaseTableCardinalityEstimator(abc.ABC):
     @abc.abstractmethod
     def estimate_rows(self, predicate: Union[mosp.MospPredicate, mosp.CompoundMospFilterPredicate], *,
                       dbs: db.DBSchema = db.DBSchema.get_instance()) -> int:
-        pass
+        return NotImplemented
 
     def all_tuples(self, table: db.TableRef, *, dbs: db.DBSchema = db.DBSchema.get_instance()) -> int:
         return dbs.count_tuples(table)
@@ -66,21 +66,27 @@ class SubqueryGenerationStrategy(abc.ABC):
     """
 
     @abc.abstractmethod
-    def execute_as_subquery(self, candidate: db.TableRef, join_graph: nx.DiGraph, *,
+    def execute_as_subquery(self, candidate: db.TableRef, join_graph: nx.Graph, *,
                             current_bounds, current_frequencies, base_estimates) -> bool:
-        pass
+        return NotImplemented
 
 
 class DefensiveSubqueryGeneration(SubqueryGenerationStrategy):
-    def execute_as_subquery(self, candidate: db.TableRef, join_graph: nx.DiGraph, *,
+    def execute_as_subquery(self, candidate: db.TableRef, join_graph: nx.Graph, *,
                             current_bounds, current_frequencies, base_estimates) -> bool:
         return current_bounds[candidate] < base_estimates[candidate]
 
 
 class GreedySubqueryGeneration(SubqueryGenerationStrategy):
-    def execute_as_subquery(self, candidate: db.TableRef, join_graph: nx.DiGraph, *,
+    def execute_as_subquery(self, candidate: db.TableRef, join_graph: nx.Graph, *,
                             current_bounds, current_frequencies, base_estimates) -> bool:
         return True
+
+
+class NoSubqueryGeneration(SubqueryGenerationStrategy):
+    def execute_as_subquery(self, candidate: db.TableRef, join_graph: nx.Graph, *,
+                            current_bounds, current_frequencies, base_estimates) -> bool:
+        return False
 
 
 def _is_pk_fk_join(join: mosp.MospPredicate, *, dbs: db.DBSchema = db.DBSchema.get_instance()) -> bool:
@@ -117,6 +123,7 @@ class _EqualityJoinView:
         self.table = table_attribute.table
         self.partner = partner_attribute.table
 
+        # TODO: why do we need the predicate? We already know its an equality join between the two attributes!?
         if predicate and not predicate.is_join_predicate():
             raise ValueError("Not a join predicate: '{}'".format(predicate))
         self.predicate = predicate
@@ -214,7 +221,26 @@ class _JoinGraph:
                        if node_data["free"] and node_data["n_m_node"]]
         return free_tables
 
-    def free_pk_joins(self, table: db.TableRef) -> List[_EqualityJoinView]:
+    def free_pk_fk_joins_with(self, table: db.TableRef) -> Dict[db.TableRef, List[List[_EqualityJoinView]]]:
+        """
+        Determines all (yet free) tables S which are joined with the given table R, such that R joined S is a Primary
+        Key/Foreign Key join.
+
+        The provided join view is created for R and has the tables S as its partner.
+        If R and S are joined via multiple predicates (such as `R.a = S.b AND R.c = S.d`), the join view will contain
+        a list of predicates.
+        """
+        join_partners: List[Tuple[db.TableRef, List[mosp.MospPredicate]]] = [
+            (partner, join["predicate"]) for partner, join in self.graph.adj[table].items()
+            if join["pk_fk_join"] and self.is_free(partner)]
+        partner_views = collections.defaultdict(list)
+        for partner, joins in join_partners:
+            partner_views[partner].append([_EqualityJoinView(predicate.attribute_of(table),
+                                                             predicate.attribute_of(partner), predicate=predicate)
+                                           for predicate in joins])
+        return dict(partner_views)
+
+    def free_pk_joins_with(self, table: db.TableRef) -> List[_EqualityJoinView]:
         """
         Determines all (yet free) tables S which are joined with the given table R, such that S joined R is a Primary
         Key/Foreign Key join with S acting as the Primary Key and (the given) table R acting as the Foreign Key.
@@ -225,9 +251,9 @@ class _JoinGraph:
         is created for each one. The same holds if R and S are joined via multiple attributes
         (such as R.a = S.b AND R.c = S.d): Each such predicate will be returned in its own view.
         """
-        join_partners: List[Tuple[db.TableRef, List[mosp.MospPredicate]]] = (
-            [(partner, join["predicate"]) for partner, join in self.graph.adj[table].items()
-             if join["pk_fk_join"] and partner == join["primary_key"].table and self.is_free(partner)])
+        join_partners: List[Tuple[db.TableRef, List[mosp.MospPredicate]]] = [
+            (partner, join["predicate"]) for partner, join in self.graph.adj[table].items()
+            if join["pk_fk_join"] and partner == join["primary_key"].table and self.is_free(partner)]
         return self._explode_compound_predicate_edges(table, join_partners)
 
     def free_n_m_join_partners(self, tables: Union[db.TableRef, List[db.TableRef]]) -> List[_EqualityJoinView]:
@@ -248,6 +274,22 @@ class _JoinGraph:
             join_views.extend(self._explode_compound_predicate_edges(table, join_partners))
         return join_views
 
+    def free_fk_tables(self) -> List[_EqualityJoinView]:
+        """Queries for all free tables that are exclusively joined in PK/FK joins and always act as the FK partner.
+
+        The provided join views are from the perspective of the FK table and join to one of the available PK partners.
+        """
+        all_free_tables = [tab for tab, node_data in list(self.graph.nodes.data())
+                           if node_data["free"] and node_data["pk_fk_node"]]
+        free_fk_tables = []
+        for candidate_table in all_free_tables:
+            neighbors = self.graph.adj[candidate_table].items()
+            if all(edge_data["fk"].table == candidate_table for __, edge_data in neighbors):
+                __, join_data = next(iter(neighbors))
+                free_fk_tables.append(_EqualityJoinView(join_data["fk"], join_data["pk"],
+                                                        predicate=join_data["predicate"]))
+        return free_fk_tables
+
     def is_free(self, table: db.TableRef) -> bool:
         """Checks, whether the given table is not inserted into the join tree, yet."""
         return self.graph.nodes[table]["free"]
@@ -266,6 +308,9 @@ class _JoinGraph:
         # directly. Instead we have to operate on the entire dict.
         return any(node_data["free"] for (__, node_data) in list(self.graph.nodes.data()) if node_data["n_m_node"])
 
+    def contains_free_pk_fk_tables(self) -> bool:
+        return any(node_data["free"] for (__, node_data) in list(self.graph.nodes.data()) if node_data["pk_fk_node"])
+
     def contains_free_tables(self) -> bool:
         return any(free for (__, free) in self.graph.nodes.data("free"))
 
@@ -276,16 +321,29 @@ class _JoinGraph:
     def count_free_joins(self, table: db.TableRef) -> int:
         return len([partner for partner, __ in self.graph.adj[table].items() if self.is_free(partner)])
 
-    def print(self):
+    def print(self, title: str = "", *, annotate_fk: bool = True, node_size: int = 1500, layout: str = "shell"):
         """Writes the current join graph structure to a matplotlib device."""
         node_labels = {node: node.alias for node in self.graph.nodes}
         edge_sizes = [3.0 if pk_fk_join else 1.0 for (__, __, pk_fk_join) in self.graph.edges.data("pk_fk_join")]
-        node_edge_color = ["black" if free else "grey" for (__, free) in self.graph.nodes.data("free")]
-        # TODO: include arrows for PK/FK directions
-        nx.draw_shell(self.graph, with_labels=True,
-                      width=edge_sizes, linewidths=1.8, node_size=1750,
-                      node_color="white", edgecolors=node_edge_color, edge_color="black",
-                      labels=node_labels)
+        node_edge_color = ["black" if free else "red" for (__, free) in self.graph.nodes.data("free")]
+        edge_data = dict(((source, target), data) for source, target, data in self.graph.edges.data())
+        edge_labels = {edge: f'[{data["foreign_key"].table.alias}]' if data["pk_fk_join"] else ""
+                       for edge, data in edge_data.items()} if annotate_fk else {edge: "" for edge in edge_data}
+
+        layouts = {"shell": nx.shell_layout, "planar": nx.planar_layout, "circular": nx.circular_layout,
+                   "spring": nx.spring_layout, "spiral": nx.spiral_layout}
+        pos = layouts.get(layout, nx.shell_layout)(self.graph)
+        nx.draw_networkx_nodes(self.graph, pos, node_size=node_size, node_color="white", edgecolors=node_edge_color,
+                               linewidths=1.8)
+        nx.draw_networkx_labels(self.graph, pos, node_labels)
+        nx.draw_networkx_edges(self.graph, pos, edge_color="black", width=edge_sizes)
+        nx.draw_networkx_edge_labels(self.graph, pos, edge_labels)
+
+        ax = plt.gca()
+        ax.margins(0.08)
+        ax.set_title(title)
+        plt.axis("off")
+        plt.tight_layout()
 
     def _explode_compound_predicate_edges(self, table, join_edges):
         join_views = []
@@ -488,9 +546,21 @@ def _build_predicate_map(query: mosp.MospQuery
 
     for tab in query.collect_tables():
         if tab not in aggregated_predicate_map:
-            aggregated_predicate_map[tab] = None
+            aggregated_predicate_map[tab] = []
 
     return aggregated_predicate_map
+
+
+def _build_join_map(query: mosp.MospQuery) -> Dict[db.TableRef, Set[mosp.MospPredicate]]:
+    """The join map is a dictionary which maps each table to the join predicates that apply to this table."""
+    all_join_predicates = [pred for pred in query.predicates() if pred.is_join_predicate()]
+    predicate_map = collections.defaultdict(set)
+
+    for join_pred in all_join_predicates:
+        predicate_map[join_pred.parse_left_attribute().table].add(join_pred)
+        predicate_map[join_pred.parse_right_attribute().table].add(join_pred)
+
+    return dict(predicate_map)
 
 
 def _estimate_filtered_cardinalities(predicate_map: dict, estimator: BaseTableCardinalityEstimator, *,
@@ -502,13 +572,38 @@ def _estimate_filtered_cardinalities(predicate_map: dict, estimator: BaseTableCa
     return cardinality_dict
 
 
+def _absorb_pk_fk_hull_of(table: db.TableRef, *, join_graph: _JoinGraph, join_tree: JoinTree,
+                          subquery_generator: SubqueryGenerationStrategy,
+                          base_table_estimates: Dict[db.TableRef, int]) -> JoinTree:
+    candidate_estimates: dict = {join[0].partner: base_table_estimates[join[0].partner]
+                                 for join in join_graph.free_pk_fk_joins_with(table)}
+    pk_fk_join_sequence = []
+    while candidate_estimates:
+        # always insert the table with minimum cardinality next
+        next_pk_fk_join = util.argmin(candidate_estimates)
+        pk_fk_join_sequence.append(next_pk_fk_join)
+        join_graph.mark_joined(next_pk_fk_join)
+
+        # after inserting the join into our join tree, new join paths may become available
+        fresh_joins = join_graph.free_pk_fk_joins_with(next_pk_fk_join)
+        candidate_estimates |= {join[0].partner: base_table_estimates[join[0].partner] for join in fresh_joins}
+
+        candidate_estimates.pop(next_pk_fk_join)
+        # TODO: if inserting a FK join, should also update statistics?
+
+    # TODO: check if executed as subquery and insert into join tree
+    return join_tree
+
+
 def _calculate_join_order(query: mosp.MospQuery, *, predicate_map,
                           join_cardinality_estimator: JoinCardinalityEstimator = None,
                           base_cardinality_estimator: BaseTableCardinalityEstimator = PostgresBaseTableCardinalityEstimator(),
                           subquery_generator: SubqueryGenerationStrategy = DefensiveSubqueryGeneration(),
+                          visualize: bool = False, visualize_args: dict = None,
                           dbs: db.DBSchema = db.DBSchema.get_instance()
                           ) -> Union[JoinTree, List[JoinTree]]:
-    join_cardinality_estimator = join_cardinality_estimator if join_cardinality_estimator else DefaultUESCardinalityEstimator(query)
+    join_cardinality_estimator = (join_cardinality_estimator if join_cardinality_estimator
+                                  else DefaultUESCardinalityEstimator(query))
     join_graph = _JoinGraph.build_for(query)
 
     # In principle it could be that our query involves a cross-product between some of its relations. If that is the
@@ -520,6 +615,8 @@ def _calculate_join_order(query: mosp.MospQuery, *, predicate_map,
                                                                        join_cardinality_estimator=join_cardinality_estimator,
                                                                        base_cardinality_estimator=base_cardinality_estimator,
                                                                        subquery_generator=subquery_generator,
+                                                                       visualize=visualize,
+                                                                       visualize_args=visualize_args,
                                                                        dbs=dbs)
                               for partition in join_graph.join_components()]
     return util.simplify(partitioned_join_trees)
@@ -530,6 +627,7 @@ def _calculate_join_order_for_join_partition(query: mosp.MospQuery, join_graph: 
                                              join_cardinality_estimator: JoinCardinalityEstimator,
                                              base_cardinality_estimator: BaseTableCardinalityEstimator,
                                              subquery_generator: SubqueryGenerationStrategy,
+                                             visualize: bool = False, visualize_args: dict = None,
                                              dbs: db.DBSchema = db.DBSchema.get_instance()) -> JoinTree:
     join_tree = JoinTree.empty_join_tree()
     base_table_estimates = _estimate_filtered_cardinalities(predicate_map, base_cardinality_estimator,
@@ -539,14 +637,19 @@ def _calculate_join_order_for_join_partition(query: mosp.MospQuery, join_graph: 
 
     if not join_graph.free_n_m_joined_tables():
         # TODO: if the query only consists of PK/FK joins, we need to determine the optimal order here
-        raise ValueError("Query only consists of PK/FK joins")
+        # The strategy applied here should be mostly the same as when pulling in the PK/FK joins for an n:m table
+        return NotImplemented
+
+    # This has nothing to do with the actual algorithm is merely some technical code for visualizations
+    if visualize:
+        visualize_args = {} if not visualize_args else visualize_args
+        n_iterations = len(join_graph.free_n_m_joined_tables())
+        current_iteration = 0
+        plt.figure(figsize=(8, 5 * n_iterations))  # 8 and 5 are magic numbers which normally produce well-sized plots
 
     # The UES algorithm will iteratively expand the join order one join at a time. In each iteration, the best n:m
     # join (after/before being potentially filtered via PK/FK joins) is selected. In the join graph, we keep track of
     # all the tables that we still have to join.
-    n_iterations = len(join_graph.free_n_m_joined_tables())
-    current_iteration = 0
-    plt.figure(figsize=(10, 10 * n_iterations))
     while join_graph.contains_free_n_m_tables():
 
         # First up, we have to update the upper bounds for all the relation that have not yet been joined
@@ -568,24 +671,28 @@ def _calculate_join_order_for_join_partition(query: mosp.MospQuery, join_graph: 
             # Now, let's look at all remaining PK/FK joins with the candidate table. We can get these easily via
             # join_graph.free_pk_joins.
             pk_joins = [(join_view.partner, join_view.table_attribute)
-                        for join_view in join_graph.free_pk_joins(candidate_table)]
+                        for join_view in join_graph.free_pk_joins_with(candidate_table)]
             pk_fk_bounds = [attribute_frequencies[(candidate_table, attribute)] * base_table_estimates[partner]
                             for (partner, attribute) in pk_joins]  # Formula: MF(candidate, fk_attr) * |pk_table|
             candidate_min_bound = min([filter_estimate] + pk_fk_bounds)
             upper_bounds[candidate_table] = candidate_min_bound
+
+            # If the bound we just calculated is less than our current best bound, we found an improved candidate
             if candidate_min_bound < lowest_min_bound:
                 lowest_min_bound = candidate_min_bound
                 lowest_bound_table = candidate_table
 
         # If we are choosing the base table, just insert it right away and continue with the next table
         if join_tree.is_empty():
-            print("Selected first table:", lowest_bound_table)
             join_tree = join_tree.with_base_table(lowest_bound_table)
             join_graph.mark_joined(lowest_bound_table)
 
             # FIXME: should this also include all PK/FK joins on the base table?!
-            pk_joins = sorted(join_graph.free_pk_joins(lowest_bound_table),
+            pk_joins = sorted(join_graph.free_pk_joins_with(lowest_bound_table),
                               key=lambda fk_join_view: base_table_estimates[fk_join_view.partner])
+            print("Selected first table:", lowest_bound_table, "with PK/FK joins",
+                  [pk_table.partner for pk_table in pk_joins])
+
             for pk_table, join_predicate in [(pk_join.partner, pk_join.predicate) for pk_join in pk_joins]:
                 join_tree = join_tree.joined_with_base_table(pk_table, predicate=join_predicate)
                 join_graph.mark_joined(pk_table)
@@ -593,9 +700,12 @@ def _calculate_join_order_for_join_partition(query: mosp.MospQuery, join_graph: 
             # FIXME: should update statistics here?!
             upper_bounds[join_tree] = lowest_min_bound
 
-            current_iteration += 1
-            plt.subplot(n_iterations, 1, current_iteration)
-            join_graph.print()
+            # This has nothing to do with the actual algorithm and is merely some technical code for visualization
+            if visualize:
+                current_iteration += 1
+                plt.subplot(n_iterations, 1, current_iteration)
+                join_graph.print(title=f"Join graph after base table selection, selected table: {lowest_bound_table}",
+                                 **visualize_args)
 
             continue
 
@@ -635,9 +745,13 @@ def _calculate_join_order_for_join_partition(query: mosp.MospQuery, join_graph: 
         # of intermediates. This idea corresponds to an execution of the candidate join as a subquery.
         # Which idea is the right one in the current situation is not decided by the algorithm itself. Instead, the
         # decision is left to a policy (the subquery_generator), which decides the appropriate action.
-        pk_joins = sorted(join_graph.free_pk_joins(selected_candidate),
+
+        # FIXME: Another special case: having a "rat-tail" of PK/FK joins on a n:m table, rather than just one PK table
+
+        pk_joins = sorted(join_graph.free_pk_joins_with(selected_candidate),
                           key=lambda fk_join_view: base_table_estimates[fk_join_view.partner])
-        print("Selected next table:", selected_candidate, "with PK joins", [pk_table.partner for pk_table in pk_joins])
+        print("Selected next table:", selected_candidate, "with PK/FK joins",
+              [pk_table.partner for pk_table in pk_joins])
         new_join_tree = join_tree
         if subquery_generator.execute_as_subquery(selected_candidate, join_graph,
                                                   current_bounds=upper_bounds,
@@ -654,13 +768,17 @@ def _calculate_join_order_for_join_partition(query: mosp.MospQuery, join_graph: 
             for pk_join in pk_joins:
                 new_join_tree = new_join_tree.joined_with_base_table(pk_join.partner, predicate=pk_join.predicate)
 
-        # Update our statistics based on the join(s) we just executed
+        # Update our statistics based on the join(s) we just executed.
+        # FIXME: this should be subject to the estimation policy
+        # TODO: Is the iteration scope correct, even if the selected candidate is not marked as joined yet?
         upper_bounds[new_join_tree] = lowest_min_bound
         for join_view in join_graph.free_n_m_join_partners(join_tree.all_tables()):
             candidate_attribute, tree_attribute = join_view.table_attribute, join_view.partner_attribute
             attribute_frequencies[(new_join_tree, tree_attribute)] *= attribute_frequencies[(selected_candidate, candidate_attribute)]
+            # TODO: shouldn't this update also take the reverse direction?
 
         # Update the join graph
+        # TODO: should this update happen sooner? (I.e. as soon as the table is included in the join tree)
         join_graph.mark_joined(selected_candidate)
         for fk_join_view in pk_joins:
             join_graph.mark_joined(fk_join_view.partner)
@@ -668,21 +786,120 @@ def _calculate_join_order_for_join_partition(query: mosp.MospQuery, join_graph: 
         # Store the new join tree
         join_tree = new_join_tree
 
-        current_iteration += 1
-        plt.subplot(n_iterations, 1, current_iteration)
-        join_graph.print()
-
-    # TODO: insert dangling FK-tables
+        # This has nothing to do with the actual algorithm and is merely some technical code for visualization
+        if visualize:
+            current_iteration += 1
+            plt.subplot(n_iterations, 1, current_iteration)
+            join_graph.print(title=f"Join graph after iteration {current_iteration}, "
+                             f"selected table: {selected_candidate}", **visualize_args)
 
     assert not join_graph.contains_free_tables()
 
     return join_tree
 
 
+def _determine_referenced_attributes(join_sequence: List[dict]) -> Dict[db.TableRef, Set[db.AttributeRef]]:
+    referenced_attributes = collections.defaultdict(set)
+    for join in join_sequence:
+        if join["subquery"]:
+            subquery_referenced_attributes = _determine_referenced_attributes(join["children"])
+            for table, attributes in subquery_referenced_attributes.items():
+                referenced_attributes[table] |= attributes
+        elif "predicate" in join:
+            for left, right in [predicate.parse_attributes() for predicate in util.enlist(join["predicate"])]:
+                referenced_attributes[left.table].add(left)
+                referenced_attributes[right.table].add(right)
+        else:
+            continue
+    return referenced_attributes
+
+
+def _collect_tables(join_sequence: List[dict]) -> db.TableRef:
+    tables = set()
+    for join in join_sequence:
+        if join["subquery"]:
+            tables |= _collect_tables(join["children"])
+        else:
+            tables.add(join["table"])
+    return tables
+
+
+def _rename_predicate_if_necessary(predicate: Union[mosp.MospPredicate, mosp.CompoundMospFilterPredicate],
+                                   table_renamings: Dict[db.TableRef, db.TableRef]
+                                   ) -> Union[mosp.MospPredicate, mosp.CompoundMospFilterPredicate]:
+    for table in util.enlist(predicate.parse_tables()):
+        if table in table_renamings:
+            predicate = predicate.rename_table(from_table=table, to_table=table_renamings[table])
+    return predicate
+
+
+def _generate_mosp_data_for_sequence(join_sequence: List[dict], *,
+                                     predicate_map: Dict[db.TableRef,
+                                                         Union[mosp.MospPredicate, mosp.CompoundMospFilterPredicate]],
+                                     referenced_attributes: Dict[db.TableRef, Set[db.AttributeRef]] = None,
+                                     table_renamings: Dict[db.TableRef, db.TableRef] = None):
+    if not referenced_attributes:
+        referenced_attributes = _determine_referenced_attributes(join_sequence)
+    if not table_renamings:
+        table_renamings = {}
+
+    base_table, *joins = join_sequence
+    base_table = base_table["table"]
+    from_list = [mosp.tableref_to_mosp(base_table)]
+
+    for join_idx, join in enumerate(joins):
+        if join["subquery"]:
+            subquery_mosp = _generate_mosp_data_for_sequence(join["children"],
+                                                             predicate_map=predicate_map,
+                                                             referenced_attributes=referenced_attributes,
+                                                             table_renamings=table_renamings)
+            subquery_tables = _collect_tables(join["children"])
+
+            # modify the subquery such that all necessary attributes are exported
+            where_clause_with_attributes = []
+            for subquery_table in subquery_tables:
+                where_clause_with_attributes.extend(referenced_attributes[subquery_table])
+            subquery_mosp["select"] = where_clause_with_attributes
+
+            # generate the virtual table name of the subquery
+            subquery_target_name = "_".join(sorted(table.alias for table in subquery_tables))
+            for subquery_table in subquery_tables:
+                table_renamings[subquery_table] = subquery_target_name
+
+            # generate the subquery predicate, renaming the attributes as appropriate
+            subquery_predicate = _rename_predicate_if_necessary(join["predicate"], table_renamings)
+
+            mosp_join = {"join": {"value": subquery_mosp, "name": subquery_target_name}, "on": subquery_predicate}
+        else:
+            join_partner, join_predicate = join["table"], join["predicate"]
+            filter_predicates = util.enlist(predicate_map[join_partner])
+            if join_idx == 0:
+                filter_predicates += util.enlist(predicate_map[base_table])
+
+            full_predicate = util.enlist(join_predicate) + filter_predicates
+            full_predicate = [_rename_predicate_if_necessary(pred, table_renamings) for pred in full_predicate]
+            full_predicate = mosp.flatten_and_predicate([pred for pred in full_predicate])
+
+            if len(full_predicate) > 1:
+                mosp_predicate = {"and": [pred.to_mosp() for pred in full_predicate]}
+            else:
+                mosp_predicate = util.simplify(full_predicate)
+
+            mosp_join = {"join": mosp.tableref_to_mosp(join_partner),
+                         "on": mosp_predicate}
+
+        from_list.append(mosp_join)
+
+    select_clause = {"value": {"count": "*"}}
+    mosp_data = {"select": select_clause, "from": from_list}
+    return mosp_data
+
+
 def optimize_query(query: mosp.MospQuery, *,
                    join_cardinality_estimation: str = "basic",
                    subquery_generation: str = "defensive",
-                   dbs: db.DBSchema = db.DBSchema.get_instance()) -> mosp.MospQuery:
+                   dbs: db.DBSchema = db.DBSchema.get_instance(),
+                   visualize: bool = False, visualize_args: dict = None) -> mosp.MospQuery:
     if join_cardinality_estimation == "basic":
         cardinality_estimator = DefaultUESCardinalityEstimator(query)
     elif join_cardinality_estimation == "advanced":
@@ -695,14 +912,26 @@ def optimize_query(query: mosp.MospQuery, *,
         subquery_generator = DefensiveSubqueryGeneration()
     elif subquery_generation == "greedy":
         subquery_generator = GreedySubqueryGeneration()
+    elif subquery_generation == "disabled":
+        subquery_generator = NoSubqueryGeneration()
     else:
         raise ValueError("Unknown subquery generation: '{}'".format(subquery_generation))
 
     predicate_map = _build_predicate_map(query)
     join_order = _calculate_join_order(query, dbs=dbs, predicate_map=predicate_map,
-                                       cardinality_estimator=cardinality_estimator,
-                                       subquery_generator=subquery_generator)
+                                       join_cardinality_estimator=cardinality_estimator,
+                                       subquery_generator=subquery_generator,
+                                       visualize=visualize, visualize_args=visualize_args)
 
-    # TODO: generate the optimized mosp query based on the join order
-
-    return None
+    if util.contains_multiple(join_order):
+        # query contains a cross-product
+        mosp_datasets = [_generate_mosp_data_for_sequence(order, predicate_map=predicate_map) for order in join_order]
+        first_set, *remaining_sets = mosp_datasets
+        for partial_query in remaining_sets:
+            partial_query["select"] = {"value": "*"}
+            first_set["from"].append({"join": {"value": partial_query}})
+        return mosp.MospQuery(first_set)
+    else:
+        join_sequence = join_order.traverse_right_deep()
+        mosp_data = _generate_mosp_data_for_sequence(join_sequence, predicate_map=predicate_map)
+        return mosp.MospQuery(mosp_data)

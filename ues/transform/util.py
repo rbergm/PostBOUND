@@ -1,7 +1,8 @@
 
 import itertools
+import numbers
 import typing
-from typing import List, Dict, Union
+from typing import List, Dict, Sized, Union
 
 
 _T = typing.TypeVar("_T")
@@ -86,3 +87,18 @@ def represents_number(val: str) -> bool:
     except (TypeError, ValueError):
         return False
     return True
+
+
+def argmin(mapping: Dict[_K, numbers.Number]) -> _K:
+    """
+    For a dict mapping keys to numeric types, returns the key `k` with minimum value `v`, s.t. for all keys `k'` with
+    values `v'` it holds that `v <= v'`.
+    """
+    return min(mapping, key=mapping.get)
+
+
+def contains_multiple(obj: Sized):
+    """Checks whether an object is list-like (i.e. has a length) and contains more than 1 entries."""
+    if "__len__" not in dir(obj):
+        return False
+    return len(obj) > 1

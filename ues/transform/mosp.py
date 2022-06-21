@@ -12,6 +12,10 @@ def extract_tableref(mosp_data) -> db.TableRef:
     return db.TableRef(mosp_data.get("value", ""), mosp_data.get("name", ""))
 
 
+def tableref_to_mosp(table: db.TableRef) -> Dict[str, str]:
+    return {"value": table.full_name, "name": table.alias}
+
+
 _EXPLAIN_PREDICATE_FORMAT = re.compile(r"\(?(?P<predicate>(?P<left>[\w\.]+) (?P<op>[<>=!]+) (?P<right>[\w\.]+))\)?")
 _REFLEXIVE_OPS = ["=", "!=", "<>"]
 
@@ -232,6 +236,9 @@ class MospPredicate:
     def is_compound(self) -> bool:
         return False
 
+    def is_join_predicate_over(self, table: db.TableRef) -> bool:
+        return self.is_join_predicate() and table in self.parse_tables()
+
     def left_op(self) -> str:
         return self.left
 
@@ -325,6 +332,24 @@ class MospPredicate:
         mosp_query = _expand_predicate_to_mosp_query(self.parse_left_attribute().table, self.mosp_data)
         return dbs.pg_estimate(mosp.format(mosp_query))
 
+    def rename_table(self, from_table: db.TableRef, to_table: db.TableRef) -> "MospPredicate":
+        updated_mosp_data = dict(self.mosp_data)
+        renamed_predicate = MospPredicate(updated_mosp_data, alias_map=self.alias_map)
+
+        left_attribute = self.parse_left_attribute()
+        if left_attribute.table == from_table:
+            renamed_attribute = db.AttributeRef(to_table, left_attribute.attribute)
+            renamed_predicate.left = str(renamed_attribute)
+
+        if self.is_join_predicate():
+            right_attribute = self.parse_right_attribute()
+            if right_attribute.table == from_table:
+                renamed_attribute = db.AttributeRef(to_table, right_attribute.attribute)
+                renamed_predicate.right = str(renamed_attribute)
+
+        renamed_predicate.mosp_data = renamed_predicate.to_mosp()
+        return renamed_predicate
+
     def _extract_table(self, op: str) -> str:
         return op.split(".")[0]
 
@@ -399,11 +424,21 @@ class CompoundMospFilterPredicate:
     def is_join_predicate(self) -> bool:
         return False
 
+    def is_and_compound(self) -> bool:
+        return self.operation == "and"
+
     def parse_left_attribute(self) -> db.AttributeRef:
         left_attributes = set(child.parse_left_attribute() for child in self.children)
         if len(left_attributes) != 1:
             raise ValueError("Left is undefined for compound predicates over multiple attributes.")
         return list(left_attributes)[0]
+
+    def parse_tables(self) -> List[db.TableRef]:
+        return util.flatten([child.parse_tables() for child in self.children], recursive=True)
+
+    def rename_table(self, from_table: db.TableRef, to_table: db.TableRef) -> "CompoundMospFilterPredicate":
+        renamed_children = [child.rename_table(from_table, to_table) for child in self.children]
+        return CompoundMospFilterPredicate(renamed_children, self.operation)
 
     def base_table(self) -> db.TableRef:
         # we know this is not a join so there may only be one base table
@@ -431,6 +466,24 @@ class CompoundMospFilterPredicate:
     def __str__(self):
         op_str = _OperationPrinting.get(self.operation, self.operation)
         return f" {op_str} ".join(str(child) for child in self.children)
+
+
+def flatten_and_predicate(predicates: List[Union[MospPredicate, CompoundMospFilterPredicate]]
+                          ) -> List[Union[MospPredicate, CompoundMospFilterPredicate]]:
+    """Simplifies a predicate tree, pulling all nested AND statements to the top level if possible.
+
+    A predicate like `R.a = 1 AND R.b = 2 AND (R.c = 3 AND R.d = 4)` will be flattened to
+    `R.a = 1 AND R.b = 2 AND R.c = 3 AND R.d = 4`. However, this transformation does not apply if the compound
+    predicate contains another conjunction higher up. E.g. `R.a = 1 AND R.b = 2 OR (R.c = 3 AND R.d = 4)` will not
+    be transformed.
+    """
+    flattened_predicates = []
+    for pred in predicates:
+        if pred.is_compound() and pred.is_and_compound():
+            flattened_predicates.extend(flatten_and_predicate(pred.children))
+        else:
+            flattened_predicates.append(pred)
+    return flattened_predicates
 
 
 def parse(query):
