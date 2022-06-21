@@ -2,7 +2,7 @@
 import itertools
 import numbers
 import typing
-from typing import List, Dict, Sized, Union
+from typing import List, Dict, Sized, Union, Callable
 
 
 _T = typing.TypeVar("_T")
@@ -45,6 +45,27 @@ def dict_value(dictionary: Dict[_K, _V], *, pull_any: bool = False) -> _V:
     if len(vals) > 1 and not pull_any:
         raise ValueError("Ambigous call - dict contains multiple entries: " + str(dictionary))
     return next(iter(vals))
+
+
+def dict_merge(a: Dict[_K, _V], b: Dict[_K, _V], *, update: Callable[[_K, _V, _V], _V] = None) -> Dict[_K, _V]:
+    """Creates a new dict containing all key/values pairs from both argument dictionaries.
+
+    If keys overlap, entries from dictionary `b` will take priority, unless an `update` method is given.
+    If `update` is given, and `a[k] = v` and `b[k] = v'` (i.e. both `a` and `b` share a key `k`) the merged dictionary
+    will contain the result of `update(k, v, v')` as entry for `k`.
+
+    Note that as of Python 3.9, such a method was added to dictionaries as well (via the `|=` syntax).
+    """
+    if not update:
+        return dict([*a.items()] + [*b.items()])
+    else:
+        merged = dict(a)
+        for key, val in b.items():
+            if key in merged:
+                merged[key] = update(key, merged[key], val)
+            else:
+                merged[key] = val
+        return merged
 
 
 def flatten(deep_lst: List[Union[List[_T], _T]], *, recursive=False) -> List[_T]:

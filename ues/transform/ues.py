@@ -294,6 +294,14 @@ class _JoinGraph:
         """Checks, whether the given table is not inserted into the join tree, yet."""
         return self.graph.nodes[table]["free"]
 
+    def is_free_fk_table(self, table: db.TableRef) -> bool:
+        """
+        Checks, whether the given table only takes part in PK/FK joins and acts as a FK partner in at least one of
+        them.
+        """
+        return self.is_free(table) and any(True for join_data in self.graph.adj[table].values()
+                                           if join_data["foreign_key"].table == table)
+
     def available_join_paths(self, table: db.TableRef) -> Dict[db.TableRef, List[mosp.MospPredicate]]:
         """Searches for all tables that are already joined and have a valid join predicate with the given table."""
         if not self.is_free(table):
@@ -575,8 +583,15 @@ def _estimate_filtered_cardinalities(predicate_map: dict, estimator: BaseTableCa
 def _absorb_pk_fk_hull_of(table: db.TableRef, *, join_graph: _JoinGraph, join_tree: JoinTree,
                           subquery_generator: SubqueryGenerationStrategy,
                           base_table_estimates: Dict[db.TableRef, int]) -> JoinTree:
-    candidate_estimates: dict = {join[0].partner: base_table_estimates[join[0].partner]
-                                 for join in join_graph.free_pk_fk_joins_with(table)}
+    # TODO: the choice of estimates and the iteration itself are actually not optimal. We do not consider filters at
+    # all!
+    # A better strategy would be: always merge PKs in first (since they can only reduce the intermediate size)
+    # Thereby we would effectively treat FK tables as n:m tables! Why did we make that distinction in the first place?
+
+    join_paths: dict = join_graph.free_pk_fk_joins_with(table)
+    candidate_estimates: dict = {join: base_table_estimates[join]
+                                 for join in join_paths}
+
     pk_fk_join_sequence = []
     while candidate_estimates:
         # always insert the table with minimum cardinality next
@@ -586,12 +601,19 @@ def _absorb_pk_fk_hull_of(table: db.TableRef, *, join_graph: _JoinGraph, join_tr
 
         # after inserting the join into our join tree, new join paths may become available
         fresh_joins = join_graph.free_pk_fk_joins_with(next_pk_fk_join)
-        candidate_estimates |= {join[0].partner: base_table_estimates[join[0].partner] for join in fresh_joins}
+        join_paths = util.dict_merge(join_paths, fresh_joins,
+                                     update=lambda __, existing_paths, new_paths: existing_paths + new_paths)
+        candidate_estimates = util.dict_merge(candidate_estimates,
+                                              {join: base_table_estimates[join] for join in fresh_joins})
 
         candidate_estimates.pop(next_pk_fk_join)
         # TODO: if inserting a FK join, should also update statistics?
 
     # TODO: check if executed as subquery and insert into join tree
+    for join in pk_fk_join_sequence:
+        # TODO: for now we just always use the first predicate available. Is this sufficient or does the choice of
+        # predicate matter?
+        join_tree = join_tree.joined_with_base_table(join, predicate=util.simplify(join_paths[join][0]))
     return join_tree
 
 
@@ -636,9 +658,16 @@ def _calculate_join_order_for_join_partition(query: mosp.MospQuery, join_graph: 
     upper_bounds = {}  # will be initialized in the main loop
 
     if not join_graph.free_n_m_joined_tables():
-        # TODO: if the query only consists of PK/FK joins, we need to determine the optimal order here
-        # The strategy applied here should be mostly the same as when pulling in the PK/FK joins for an n:m table
-        return NotImplemented
+        # TODO: documentation
+        first_fk_table = util.argmin({table: estimate for table, estimate in base_table_estimates.items()
+                                      if join_graph.is_free_fk_table(table)})
+        join_tree = join_tree.with_base_table(first_fk_table)
+        join_graph.mark_joined(first_fk_table)
+        join_tree = _absorb_pk_fk_hull_of(first_fk_table, join_graph=join_graph, join_tree=join_tree,
+                                          subquery_generator=NoSubqueryGeneration(),
+                                          base_table_estimates=base_table_estimates)
+        assert not join_graph.contains_free_tables()
+        return join_tree
 
     # This has nothing to do with the actual algorithm is merely some technical code for visualizations
     if visualize:
@@ -747,6 +776,9 @@ def _calculate_join_order_for_join_partition(query: mosp.MospQuery, join_graph: 
         # decision is left to a policy (the subquery_generator), which decides the appropriate action.
 
         # FIXME: Another special case: having a "rat-tail" of PK/FK joins on a n:m table, rather than just one PK table
+
+        # TODO: for now we just always use the first predicate available. Is this sufficient or does the choice of
+        # predicate matter?
 
         pk_joins = sorted(join_graph.free_pk_joins_with(selected_candidate),
                           key=lambda fk_join_view: base_table_estimates[fk_join_view.partner])
