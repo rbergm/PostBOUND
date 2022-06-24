@@ -83,12 +83,18 @@ def flatten(deep_lst: List[Union[List[_T], _T]], *, recursive=False) -> List[_T]
     return flattened
 
 
-def enlist(obj: _T) -> List[_T]:
+def enlist(obj: _T, strict: bool = True) -> List[_T]:
     """Turns a scalar value into a list, if it is not one already.
 
     E.g. `enlist(42)` will return `[42]`, whereas `enlist([24])` returns `[24]`.
+
+    Setting `strict` to `True` (the default) will always enlist, except for `list` arguments (e.g. tuples will also be
+    wrapped). Setting `strict` to `False` will only enlist objects that are not iterable.
     """
-    return obj if isinstance(obj, list) else [obj]
+    if strict:
+        return obj if isinstance(obj, list) else [obj]
+    else:
+        return obj if "__iter__" in dir(obj) else [obj]
 
 
 def simplify(lst: List[_T]) -> Union[_T, List[_T]]:
@@ -123,3 +129,15 @@ def contains_multiple(obj: Sized):
     if "__len__" not in dir(obj):
         return False
     return len(obj) > 1
+
+
+def _log(*args, **kwargs):
+    print(*args, **kwargs)
+
+
+def _dummy_log(*args, **kwargs):
+    pass
+
+
+def make_logger(enabled: bool = True):
+    return _log if enabled else _dummy_log

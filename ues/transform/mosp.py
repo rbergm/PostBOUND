@@ -1,7 +1,7 @@
 
 import re
 import warnings
-from typing import Any, List, Dict, Union, Tuple
+from typing import Any, List, Dict, Set, Union, Tuple
 
 import mo_sql_parsing as mosp
 
@@ -335,19 +335,26 @@ class MospPredicate:
     def rename_table(self, from_table: db.TableRef, to_table: db.TableRef) -> "MospPredicate":
         updated_mosp_data = dict(self.mosp_data)
         renamed_predicate = MospPredicate(updated_mosp_data, alias_map=self.alias_map)
+        renaming_performed = False
 
         left_attribute = self.parse_left_attribute()
         if left_attribute.table == from_table:
             renamed_attribute = db.AttributeRef(to_table, left_attribute.attribute)
             renamed_predicate.left = str(renamed_attribute)
+            renaming_performed = True
 
         if self.is_join_predicate():
             right_attribute = self.parse_right_attribute()
             if right_attribute.table == from_table:
                 renamed_attribute = db.AttributeRef(to_table, right_attribute.attribute)
                 renamed_predicate.right = str(renamed_attribute)
+                renaming_performed = True
 
         renamed_predicate.mosp_data = renamed_predicate.to_mosp()
+
+        if renaming_performed:
+            self.alias_map[to_table.alias] = to_table
+
         return renamed_predicate
 
     def _extract_table(self, op: str) -> str:
@@ -428,10 +435,30 @@ class CompoundMospFilterPredicate:
         return self.operation == "and"
 
     def parse_left_attribute(self) -> db.AttributeRef:
+        """Returns the attribute which is being filtered.
+
+        This does not work, if the compound predicate is specified over multiple attributes (e.g. as in
+        `R.a = 1 AND R.b = 2`). If such a predicate is given, a `ValueError` will be raised.
+
+        In that case, this most likely hints to some wrong assumptions by the client about the query structure.
+        A fix is necessary on the client side.
+
+        See `collect_left_attributes` to query for all attributes in the predicate.
+        """
         left_attributes = set(child.parse_left_attribute() for child in self.children)
         if len(left_attributes) != 1:
             raise ValueError("Left is undefined for compound predicates over multiple attributes.")
         return list(left_attributes)[0]
+
+    def collect_left_attributes(self) -> Set[db.AttributeRef]:
+        """In contrast to `parse_left_attribute` this method returns all attributes that are being filtered."""
+        attributes = set()
+        for child in self.children:
+            if child.is_compound():
+                attributes |= child.collect_left_attributes()
+            else:
+                attributes.add(child.parse_left_attribute())
+        return attributes
 
     def parse_tables(self) -> List[db.TableRef]:
         return util.flatten([child.parse_tables() for child in self.children], recursive=True)
