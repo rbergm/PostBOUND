@@ -984,7 +984,8 @@ def _rename_predicate_if_necessary(predicate: Union[mosp.MospPredicate, mosp.Com
                                    ) -> Union[mosp.MospPredicate, mosp.CompoundMospFilterPredicate]:
     for table in util.enlist(predicate.parse_tables(), strict=False):
         if table in table_renamings:
-            predicate = predicate.rename_table(from_table=table, to_table=table_renamings[table])
+            predicate = predicate.rename_table(from_table=table, to_table=table_renamings[table],
+                                               prefix_attribute=True)
     return predicate
 
 
@@ -1028,7 +1029,11 @@ def _generate_mosp_data_for_sequence(join_sequence: List[dict], *,
             select_clause_with_attributes = []
             for subquery_table in subquery_tables:
                 select_clause_with_attributes.extend(referenced_attributes[subquery_table])
-            subquery_mosp["select"] = [str(attr) for attr in select_clause_with_attributes]
+            renamed_select_attributes = []
+            for attribute in select_clause_with_attributes:
+                renamed_attribute = f"{attribute.table.alias}_{attribute.attribute}"
+                renamed_select_attributes.append({"value": str(attribute), "name": renamed_attribute})
+            subquery_mosp["select"] = renamed_select_attributes
 
             # generate the virtual table name of the subquery
             subquery_target_name = db.TableRef("", "_".join(sorted(table.alias for table in subquery_tables)),

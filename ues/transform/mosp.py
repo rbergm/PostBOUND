@@ -332,21 +332,26 @@ class MospPredicate:
         mosp_query = _expand_predicate_to_mosp_query(self.parse_left_attribute().table, self.mosp_data)
         return dbs.pg_estimate(mosp.format(mosp_query))
 
-    def rename_table(self, from_table: db.TableRef, to_table: db.TableRef) -> "MospPredicate":
+    def rename_table(self, from_table: db.TableRef, to_table: db.TableRef, *,
+                     prefix_attribute: bool = False) -> "MospPredicate":
         updated_mosp_data = dict(self.mosp_data)
         renamed_predicate = MospPredicate(updated_mosp_data, alias_map=self.alias_map)
         renaming_performed = False
 
         left_attribute = self.parse_left_attribute()
         if left_attribute.table == from_table:
-            renamed_attribute = db.AttributeRef(to_table, left_attribute.attribute)
+            attribute_name = (f"{from_table.alias}_{left_attribute.attribute}" if prefix_attribute
+                              else left_attribute.attribute)
+            renamed_attribute = db.AttributeRef(to_table, attribute_name)
             renamed_predicate.left = str(renamed_attribute)
             renaming_performed = True
 
         if self.is_join_predicate():
             right_attribute = self.parse_right_attribute()
             if right_attribute.table == from_table:
-                renamed_attribute = db.AttributeRef(to_table, right_attribute.attribute)
+                attribute_name = (f"{from_table.alias}_{right_attribute.attribute}" if prefix_attribute
+                                  else right_attribute.attribute)
+                renamed_attribute = db.AttributeRef(to_table, attribute_name)
                 renamed_predicate.right = str(renamed_attribute)
                 renaming_performed = True
 
@@ -463,8 +468,10 @@ class CompoundMospFilterPredicate:
     def parse_tables(self) -> List[db.TableRef]:
         return util.flatten([child.parse_tables() for child in self.children], recursive=True)
 
-    def rename_table(self, from_table: db.TableRef, to_table: db.TableRef) -> "CompoundMospFilterPredicate":
-        renamed_children = [child.rename_table(from_table, to_table) for child in self.children]
+    def rename_table(self, from_table: db.TableRef, to_table: db.TableRef, *,
+                     prefix_attribute: bool = False) -> "CompoundMospFilterPredicate":
+        renamed_children = [child.rename_table(from_table, to_table, prefix_attribute=prefix_attribute) for child
+                            in self.children]
         return CompoundMospFilterPredicate(renamed_children, self.operation)
 
     def base_table(self) -> db.TableRef:
