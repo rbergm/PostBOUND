@@ -1092,10 +1092,15 @@ def _generate_mosp_data_for_sequence(join_sequence: List[dict], *,
 
 
 def optimize_query(query: mosp.MospQuery, *,
+                   table_cardinality_estimation: str = "explain",
                    join_cardinality_estimation: str = "basic",
                    subquery_generation: str = "defensive",
                    dbs: db.DBSchema = db.DBSchema.get_instance(),
                    visualize: bool = False, visualize_args: dict = None, verbose: bool = False) -> mosp.MospQuery:
+    # if there are no joins in the query, there is nothing to do
+    if not util.contains_multiple(query.from_clause()):
+        return query
+
     if join_cardinality_estimation == "basic":
         cardinality_estimator = DefaultUESCardinalityEstimator(query)
     elif join_cardinality_estimation == "advanced":
