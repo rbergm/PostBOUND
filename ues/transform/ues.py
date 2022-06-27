@@ -1049,6 +1049,9 @@ def _generate_mosp_data_for_sequence(join_sequence: List[dict], *,
 
             subquery_predicate = [_rename_predicate_if_necessary(predicate, table_renamings).to_mosp() for predicate
                                   in applicable_join_predicates]
+            if join_idx == 0:
+                subquery_predicate += util.enlist(predicate_map[base_table])
+
             if util.contains_multiple(subquery_predicate):
                 subquery_predicate = {"and": subquery_predicate}
             else:
