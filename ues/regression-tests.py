@@ -31,7 +31,7 @@ def execute_query(data, conn, cursor, *, col):
         cursor.execute(query)
         cardinality = cursor.fetchone()[0]
     except psycopg2.Error as err:
-        cardinality = -1
+        cardinality = -1 * abs(hash(col))  # use hash(col) to identify the column, multiply by -1 to designate error
         conn.rollback()
         err_msg = (f"Received psycopg2 error on query with label {label} (index {data.name}): {err}" if label
                    else f"Received psycopg2 error on query {query} (index {data.name}): {err}")
