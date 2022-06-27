@@ -115,11 +115,11 @@ def main():
                         "estimate the upper bound of join cardinalities. If 'basic', use the Most frequent value as "
                         "detailed in the fundamental paper [0]. If 'fine', use the Top-K lists as detailed in the "
                         "Diploma thesis. Defaults to 'basic'.")
-    parser.add_argument("--subqueries", action="store", choices=["always", "none", "defensive"], default="defensive",
-                        help="When to pull PK/FK joins into subqueries. If 'always' all possible PK/FK joins will "
-                        "be executed as subqueries. If 'none', never filter via subqueries. If 'defensive' (as "
-                        "described in [0]), only generate subqueries if an improvement is guaranteed. Defaults to "
-                        "'defensive'.")
+    parser.add_argument("--subqueries", action="store", choices=["greedy", "disabled", "defensive"],
+                        default="defensive", help="When to pull PK/FK joins into subqueries. If 'greedy' all "
+                        "possible PK/FK joins will be executed as subqueries. If 'disabled', never filter via "
+                        "subqueries. If 'defensive' (as described in [0]), only generate subqueries if an improvement "
+                        "is guaranteed. Defaults to 'defensive'.")
     parser.add_argument("--out", "-o", action="store", help="Enter output CSV-mode and store the output in file "
                         "rather than writing to stdout.")
     parser.add_argument("--pg-con", action="store", default="", help="Connect string to the Postgres instance "
