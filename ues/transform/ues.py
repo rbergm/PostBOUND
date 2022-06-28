@@ -2,6 +2,7 @@
 import abc
 import collections
 from typing import Dict, List, Set, Union, Tuple
+import warnings
 
 import matplotlib.pyplot as plt
 import networkx as nx
@@ -1109,11 +1110,15 @@ def optimize_query(query: mosp.MospQuery, *,
     if not util.contains_multiple(query.from_clause()):
         return query
 
+    if table_cardinality_estimation == "sample":
+        warnings.warn("Sampling-based table estimation is not supported yet. Falling back to EXPLAIN-based "
+                      "estimation.")
+
     if join_cardinality_estimation == "basic":
         cardinality_estimator = DefaultUESCardinalityEstimator(query)
     elif join_cardinality_estimation == "advanced":
-        # TODO
-        pass
+        warnings.warn("Advanced join estimation is not supported yet. Falling back to basic estimation.")
+        cardinality_estimator = DefaultUESCardinalityEstimator(query)
     else:
         raise ValueError("Unknown cardinality estimation strategy: '{}'".format(join_cardinality_estimation))
 
