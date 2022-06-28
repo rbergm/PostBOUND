@@ -26,14 +26,19 @@ def read_workload_csv(src_file: str) -> pd.DataFrame:
     return pd.read_csv(src_file)
 
 
-def read_workload_pattern(src_directory: str, pattern: str = "*.sql") -> pd.DataFrame:
+def read_workload_pattern(src_directory: str, pattern: str = "*.sql", *, load_labels: bool = False) -> pd.DataFrame:
     query_directory = pathlib.Path(src_directory)
     queries = []
+    labels = []
     for src_file in query_directory.glob(pattern):
         with open(src_file, "r") as query_file:
             query = " ".join(query_file.readlines())
         queries.append(query)
-    return pd.DataFrame({DEFAULT_QUERY_COL: queries})
+        labels.append(src_file.stem)
+    workload = pd.DataFrame({DEFAULT_QUERY_COL: queries})
+    if load_labels:
+        workload["label"] = labels
+    return workload
 
 
 def connect_postgres(parser: argparse.ArgumentParser, conn_str: str = None):
@@ -105,6 +110,8 @@ def main():
                         "containing the raw query.")
     parser.add_argument("--timing", "-t", action="store_true", help="In (output) CSV-mode, also measure optimization"
                         "time. This setting is ignored if the results are not written to CSV.")
+    parser.add_argument("--generate-labels", action="store_true", help="In (output) CSV-mode when loading from "
+                        "pattern, use the file names as query labels.")
     parser.add_argument("--out-col", action="store", default=DEFAULT_UES_COL, help="In CSV-mode, name of the output "
                         "column (defaults to query_ues).")
     parser.add_argument("--table-estimation", action="store", choices=["explain", "sample"], default="explain",
@@ -136,7 +143,7 @@ def main():
     if args.csv:
         workload = read_workload_csv(args.input)
     elif args.pattern:
-        workload = read_workload_pattern(args.input, args.pattern)
+        workload = read_workload_pattern(args.input, args.pattern, load_labels=args.generate_labels)
     else:
         workload = read_workload_raw(args.input)
 
