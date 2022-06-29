@@ -139,6 +139,7 @@ def main():
         parsed_query = mosp.MospQuery.parse(args.input)
         optimized_query = ues.optimize_query(parsed_query, dbs=dbs)
         print(str(optimized_query))
+        return
 
     if args.csv:
         workload = read_workload_csv(args.input)
