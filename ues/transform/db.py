@@ -105,7 +105,7 @@ class DBSchema:
         _dbschema_instance = DBSchema(conn.cursor(), connection=conn)
         return _dbschema_instance
 
-    def __init__(self, cursor: "psycopg2.cursor", *, connection: "psycopg2.connection"):
+    def __init__(self, cursor: "psycopg2.cursor", *, connection: "psycopg2.connection" = None):
         self.cursor = cursor
         self.connection = connection
 
