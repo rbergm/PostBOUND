@@ -12,7 +12,7 @@ import numpy as np
 import pandas as pd
 import psycopg2
 
-from transform import flatten, db
+from transform import flatten, db, util
 
 
 def read_workload(directory: str) -> pd.DataFrame:
@@ -29,33 +29,33 @@ def read_workload(directory: str) -> pd.DataFrame:
     return df_queries
 
 
-def connect_postgres(parser: argparse.ArgumentParser, conn_str: str = None):
-    if not conn_str:
-        if not os.path.exists(".psycopg_connection"):
-            parser.error("No connect string for psycopg given.")
-        with open(".psycopg_connection", "r") as conn_file:
-            conn_str = conn_file.readline().strip()
-    conn = psycopg2.connect(conn_str)
-    return conn
-
-
 def transform_queries(df_queries: pd.DataFrame, dbschema: db.DBSchema) -> pd.DataFrame:
     df_queries = df_queries.copy()
     flattener = functools.partial(flatten.flatten_query, dbschema=dbschema)
-    df_queries["flattened_mosp"] = df_queries["query"].apply(flattener)
-    df_queries["flattened_query"] = df_queries.flattened_mosp.apply(mosp.format)
-    return df_queries[["label", "query", "flattened_query"]]
+    df_queries["mosp_linearized"] = df_queries["query"].apply(flattener)
+    df_queries["query_linearized"] = df_queries.mosp_linearized.apply(mosp.format)
+    return df_queries[["label", "query", "query_linearized"]].copy()
 
 
 def main():
-    parser = argparse.ArgumentParser(description="UES transformation tool to replace subqueries with linear join paths.")
-    parser.add_argument("--workload", "-w", action="store", required=True, help="Path to the directory which contains the input queries (one query per file)")
-    parser.add_argument("--out", "-o", action="store", required=True, help="Name of the output file containing the transformed queries")
-    parser.add_argument("--pg-con", action="store", default="", help="Connect string to the postgres instance (psycopg2 format). If omitted, the string will be read from the file .psycopg_connection")
+    parser = argparse.ArgumentParser(description="UES transformation tool to replace subqueries with linear join "
+                                     "paths.")
+    parser.add_argument("input", action="store",
+                        help="Path to the file or directory which contains the input queries (depending on the mode)")
+    parser.add_argument("--csv", action="store_true", default=False, help="Enters CSV-mode, reading a CSV file.")
+    parser.add_argument("--out", "-o", action="store", required=True,
+                        help="Output file to write the transformed queries to")
+    parser.add_argument("--pg-con", action="store", default="", help="Connect string to the postgres instance "
+                        "(psycopg2 format). If omitted, the string will be read from the file .psycopg_connection")
 
     args = parser.parse_args()
-    df_queries = read_workload(args.workload)
-    pg_conn = connect_postgres(parser, args.pg_con)
+
+    if not args.csv:
+        parser.error("Only CSV mode is currently supported")
+
+    df_queries = pd.read_csv(args.input)
+
+    pg_conn = util.connect_postgres(parser, args.pg_con)
     pg_cursor = pg_conn.cursor()
     dbschema = db.DBSchema(pg_cursor)
 
