@@ -34,7 +34,7 @@ class MospQuery:
         return self.query.get("from", [])
 
     def where_clause(self):
-        return self.query.get("where", [])
+        return self.query.get("where", {})
 
     def base_table(self) -> "db.TableRef":
         tab = next(tab for tab in self.from_clause() if "value" in tab)
@@ -53,7 +53,19 @@ class MospQuery:
         else:
             return joins
 
-    def predicates(self) -> List[Union["MospPredicate", "CompoundMospFilterPredicate"]]:
+    def predicates(self, *,
+                   include_joins: bool = False) -> List[Union["MospPredicate", "CompoundMospFilterPredicate"]]:
+        if include_joins:
+            join_predicates = []
+            for join in self.joins():
+                if join.is_subquery():
+                    join_predicates.extend(join.subquery.predicates(include_joins=True))
+                join_predicates.extend(MospPredicate.break_compound(join.join_predicate))
+            return join_predicates + self.predicates(include_joins=False)
+
+        if not self.where_clause():
+            return []
+
         return CompoundMospFilterPredicate.parse(self.where_clause(), skip_initial_level=True,
                                                  alias_map=self._build_alias_map())
 
@@ -156,6 +168,9 @@ class MospJoin:
             return join_predicates[0]
         else:
             return join_predicates
+
+    def parse_all_predicates(self):
+        return MospPredicate.break_compound(self.join_predicate)
 
     def name(self) -> str:
         return self.join_data["name"]

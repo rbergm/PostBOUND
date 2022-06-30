@@ -8,14 +8,12 @@ from datetime import datetime
 
 import pandas as pd
 
+from transform import util
+
 import importlib
 executor = importlib.import_module("workload-executor")
 
 DEFAULT_N_REPETITIONS = 3
-
-
-def log(*args, **kwargs):
-    print("..", *args, file=sys.stderr, **kwargs)
 
 
 def main():
@@ -39,9 +37,12 @@ def main():
                         "hints to apply on a per-query basis (as specified by the pg_hint_plan extension).")
     parser.add_argument("--randomized", action="store_true", default=False, help="Execute the queries in a random "
                         "order.")
-    parser.add_argument("--verbose", action="store_true", default=False, help="Produce more debugging output")
+    parser.add_argument("--verbose", action="store_true", default=False, help="Produce progress output")
+    parser.add_argument("--trace", action="store_true", default=False, help="Produce more debugging output")
 
     args = parser.parse_args()
+    verbose = args.verbose or args.trace
+    log = util.make_logger(verbose, file=sys.stderr)
     log("Invocation:", " ".join(['"{}"'.format(arg) if isinstance(arg, str) and " " in arg else arg
                                  for arg in sys.argv]))
     signal.signal(signal.SIGINT, functools.partial(executor.exit_handler, logger=log))
@@ -68,7 +69,7 @@ def main():
         df_results = executor.run_workload(workload, workload_col, pg_cursor,
                                            pg_args=args.pg_param, query_mod=query_mod, hint_col=args.hint_col,
                                            shuffle=args.randomized,
-                                           logger=executor.make_logger(args.verbose))
+                                           logger=executor.make_logger(args.trace))
         df_results["run"] = run
         workload_results.append(df_results)
 

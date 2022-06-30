@@ -184,6 +184,16 @@ class PlanNode:
             return True
         return any(child.any_pruned() for child in self.children)
 
+    def join_path(self) -> str:
+        if self.is_scan():
+            return " ".join([self.source_table, self.alias_name])
+
+        ordered_children = sorted(self.children, key=PlanNode.depth, reverse=True)
+        child_paths = " ⋈ ".join(child.join_path() for child in ordered_children)
+        if self.is_subquery():
+            child_paths = f"({child_paths})"
+        return child_paths
+
     def inspect_node(self) -> str:
         node_label = f"{self.node.value}"
         if self.is_scan():

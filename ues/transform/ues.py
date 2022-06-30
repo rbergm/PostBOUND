@@ -1,6 +1,7 @@
 
 import abc
 import collections
+import pprint
 from typing import Dict, List, Set, Union, Tuple
 import warnings
 
@@ -246,7 +247,8 @@ class _JoinGraph:
         """
         join_partners: List[Tuple[db.TableRef, List[mosp.MospPredicate]]] = [
             (partner, join["predicate"]) for partner, join in self.graph.adj[table].items()
-            if join["pk_fk_join"] and partner == join["primary_key"].table and self.is_free(partner)]
+            if join["pk_fk_join"] and partner == join["primary_key"].table
+            and self.is_free(partner) and self.is_pk_fk_table(partner)]
         return self._explode_compound_predicate_edges(table, join_partners)
 
     def free_n_m_join_partners(self, tables: Union[db.TableRef, List[db.TableRef]]) -> List[_EqualityJoinView]:
@@ -287,6 +289,10 @@ class _JoinGraph:
         """Checks, whether the given table is not inserted into the join tree, yet."""
         return self.graph.nodes[table]["free"]
 
+    def is_pk_fk_table(self, table: db.TableRef) -> bool:
+        """Checks, whether the given table is exclusively joined via PK/FK joins."""
+        return self.graph.nodes[table]["pk_fk_node"]
+
     def is_free_fk_table(self, table: db.TableRef) -> bool:
         """
         Checks, whether the given table only takes part in PK/FK joins and acts as a FK partner in at least one of
@@ -322,7 +328,7 @@ class _JoinGraph:
     def contains_free_tables(self) -> bool:
         return any(free for (__, free) in self.graph.nodes.data("free"))
 
-    def mark_joined(self, table: db.TableRef, *, n_m_join: bool = False):
+    def mark_joined(self, table: db.TableRef, *, n_m_join: bool = False, trace: bool = False):
         """Annotates the given table as joined in the graph.
 
         Setting `n_m_join` to `True` will trigger an invalidation pass setting all free joins to Foreign Key tables (
@@ -332,7 +338,7 @@ class _JoinGraph:
         self.graph.nodes[table]["free"] = False
 
         if n_m_join:
-            self._invalidate_pk_joins()
+            self._invalidate_pk_joins(trace=trace)
 
     def count_free_joins(self, table: db.TableRef) -> int:
         return len([partner for partner, __ in self.graph.adj[table].items() if self.is_free(partner)])
@@ -384,8 +390,9 @@ class _JoinGraph:
                 shell.add(tab1)
         return shell
 
-    def _invalidate_pk_joins(self):
+    def _invalidate_pk_joins(self, *, trace: bool = False):
         # TODO: extensive documentation
+        trace_logger = util.make_logger(trace)
         shell_fk_neighbors = []
         for shell_node in self._current_shell():
             shell_fk_neighbors += [(shell_node, neighbor) for neighbor, join_data in self.graph.adj[shell_node].items()
@@ -398,6 +405,7 @@ class _JoinGraph:
             node_data = self.graph.nodes[fk_neighbor]
             node_data["pk_fk_node"] = False
             node_data["n_m_node"] = True
+            trace_logger(".. Marking FK neighbor", fk_neighbor, "as n:m joined")
 
             edge_data = self.graph.edges[(shell_node, fk_neighbor)]
             edge_data["pk_fk_join"] = False
@@ -554,29 +562,53 @@ class JoinTree:
             right_label = str(self.right)
 
         join_str = f"{right_label} ⋈ {left_label}"  # let's read joins from left to right!
-        if self.predicate:
-            join_str += f" [{self.predicate}]"
         return join_str
 
 
-class _AttributeFrequenciesLoader:
-    def __init__(self, dbs: db.DBSchema = db.DBSchema.get_instance()):
+class _BaseAttributeFrequenciesLoader:
+    def __init__(self, base_estimates: Dict[db.TableRef, int], dbs: db.DBSchema = db.DBSchema.get_instance()):
         self.dbs = dbs
+        self.base_estimates = base_estimates
         self.attribute_frequencies = {}
 
     def __getitem__(self, key: db.AttributeRef) -> int:
         if key not in self.attribute_frequencies:
             top1 = self.dbs.load_most_common_values(key, k=1)
             if not top1:
-                top1 = 1
+                top1 = min(1, self.base_estimates[key.table])
             else:
                 __, top1 = top1[0]
                 top1 = round(top1 * self.dbs.load_tuple_count(key.table))
             self.attribute_frequencies[key] = top1
         return self.attribute_frequencies[key]
 
-    def __setitem__(self, key: Tuple[Union[db.TableRef, JoinTree], db.AttributeRef], value: int):
+    def __repr__(self) -> str:
+        return str(self)
+
+    def __str__(self) -> str:
+        return str(self.attribute_frequencies)
+
+
+class _JoinAttributeFrequenciesLoader:
+    def __init__(self, base_frequencies: _BaseAttributeFrequenciesLoader):
+        self.base_frequencies = base_frequencies
+        self.attribute_frequencies = {}
+        self.current_multiplier = 1
+
+    def __getitem__(self, key: db.AttributeRef) -> int:
+        if key not in self.attribute_frequencies:
+            base_frequency = self.base_frequencies[key]
+            self.attribute_frequencies[key] = base_frequency * self.current_multiplier
+        return self.attribute_frequencies[key]
+
+    def __setitem__(self, key: db.AttributeRef, value: int):
         self.attribute_frequencies[key] = value
+
+    def __repr__(self) -> str:
+        return str(self)
+
+    def __str__(self) -> str:
+        return str(self.attribute_frequencies)
 
 
 class _TableBoundStatistics:
@@ -587,8 +619,8 @@ class _TableBoundStatistics:
         self.query = query
         self.base_estimates = _estimate_filtered_cardinalities(predicate_map, base_cardinality_estimator,
                                                                dbs=dbs)
-        self.base_frequencies = _AttributeFrequenciesLoader()
-        self.joined_frequencies = collections.defaultdict(lambda: 1)
+        self.base_frequencies = _BaseAttributeFrequenciesLoader(self.base_estimates)
+        self.joined_frequencies = _JoinAttributeFrequenciesLoader(self.base_frequencies)
         self.upper_bounds = {}
         self.dbs = dbs
 
@@ -600,14 +632,24 @@ class _TableBoundStatistics:
         assert not util.contains_multiple(join_predicate)
         join_predicate: mosp.MospPredicate = util.simplify(join_predicate)
 
-        join_attribute = join_predicate.attribute_of(joined_table)
-        partner_attribute = join_predicate.join_partner(joined_table)
-        new_attribute_frequency = self.base_frequencies[join_attribute]
+        new_join_attribute = join_predicate.attribute_of(joined_table)
+        existing_partner_attribute = join_predicate.join_partner(joined_table)
+        new_attribute_frequency = self.base_frequencies[new_join_attribute]
 
-        for existing_attribute in join_tree.all_attributes():
+        for existing_attribute in [attr for attr in join_tree.all_attributes() if attr != new_join_attribute]:
             self.joined_frequencies[existing_attribute] *= new_attribute_frequency
 
-        self.joined_frequencies[join_attribute] = self.joined_frequencies[partner_attribute]
+        self.joined_frequencies[new_join_attribute] = self.joined_frequencies[existing_partner_attribute]
+        self.joined_frequencies.current_multiplier *= new_attribute_frequency
+
+    def base_bounds(self) -> Dict[db.TableRef, int]:
+        return {tab: bound for tab, bound in self.upper_bounds.items() if isinstance(tab, db.TableRef)}
+
+    def __repr__(self) -> str:
+        return str(self)
+
+    def __str__(self) -> str:
+        return str(self.upper_bounds)
 
 
 class SubqueryGenerationStrategy(abc.ABC):
@@ -694,11 +736,14 @@ def _estimate_filtered_cardinalities(predicate_map: dict, estimator: BaseCardina
 def _absorb_pk_fk_hull_of(table: db.TableRef, *, join_graph: _JoinGraph, join_tree: JoinTree,
                           subquery_generator: SubqueryGenerationStrategy,
                           base_table_estimates: Dict[db.TableRef, int],
-                          pk_only: bool = False) -> JoinTree:
+                          pk_only: bool = False, verbose: bool = False, trace: bool = False) -> JoinTree:
     # TODO: the choice of estimates and the iteration itself are actually not optimal. We do not consider filters at
     # all!
     # A better strategy would be: always merge PKs in first (since they can only reduce the intermediate size)
     # Thereby we would effectively treat FK tables as n:m tables! Why did we make that distinction in the first place?
+
+    logger = util.make_logger(verbose)
+    trace_logger = util.make_logger(trace)
 
     if pk_only:
         join_paths = collections.defaultdict(list)
@@ -720,6 +765,8 @@ def _absorb_pk_fk_hull_of(table: db.TableRef, *, join_graph: _JoinGraph, join_tr
         next_pk_fk_join = util.argmin(candidate_estimates)
         pk_fk_join_sequence.append(next_pk_fk_join)
         join_graph.mark_joined(next_pk_fk_join)
+
+        logger(".. Also including PK/FK join from hull:", next_pk_fk_join)
 
         # after inserting the join into our join tree, new join paths may become available
         if pk_only:
@@ -748,7 +795,8 @@ def _calculate_join_order(query: mosp.MospQuery, *,
                           join_estimator: JoinCardinalityEstimator = None,
                           base_estimator: BaseCardinalityEstimator = PostgresCardinalityEstimator(),
                           subquery_generator: SubqueryGenerationStrategy = DefensiveSubqueryGeneration(),
-                          visualize: bool = False, visualize_args: dict = None, verbose: bool = False,
+                          visualize: bool = False, visualize_args: dict = None,
+                          verbose: bool = False, trace: bool = False,
                           dbs: db.DBSchema = db.DBSchema.get_instance()
                           ) -> Union[JoinTree, List[JoinTree]]:
     join_estimator = join_estimator if join_estimator else DefaultUESCardinalityEstimator(query)
@@ -763,7 +811,8 @@ def _calculate_join_order(query: mosp.MospQuery, *,
                                                                        join_cardinality_estimator=join_estimator,
                                                                        base_cardinality_estimator=base_estimator,
                                                                        subquery_generator=subquery_generator,
-                                                                       verbose=verbose, visualize=visualize,
+                                                                       verbose=verbose, trace=trace,
+                                                                       visualize=visualize,
                                                                        visualize_args=visualize_args,
                                                                        dbs=dbs)
                               for partition in join_graph.join_components()]
@@ -777,9 +826,10 @@ def _calculate_join_order_for_join_partition(query: mosp.MospQuery, join_graph: 
                                              base_cardinality_estimator: BaseCardinalityEstimator,
                                              subquery_generator: SubqueryGenerationStrategy,
                                              visualize: bool = False, visualize_args: dict = None,
-                                             verbose: bool = False,
+                                             verbose: bool = False, trace: bool = False,
                                              dbs: db.DBSchema = db.DBSchema.get_instance()) -> JoinTree:
-    logger = util.make_logger(verbose)
+    trace_logger = util.make_logger(trace)
+    logger = util.make_logger(verbose or trace)
 
     join_tree = JoinTree.empty_join_tree()
     stats = _TableBoundStatistics(query, predicate_map, base_cardinality_estimator=base_cardinality_estimator, dbs=dbs)
@@ -801,7 +851,9 @@ def _calculate_join_order_for_join_partition(query: mosp.MospQuery, join_graph: 
         visualize_args = {} if not visualize_args else visualize_args
         n_iterations = len(join_graph.free_n_m_joined_tables())
         current_iteration = 0
-        plt.figure(figsize=(8, 5 * n_iterations))  # 8 and 5 are magic numbers which normally produce well-sized plots
+        figsize = visualize_args.pop("figsize", (8, 5))  # magic numbers which normally produce well-sized plots
+        width, height = figsize
+        plt.figure(figsize=(width, height * n_iterations))
 
     # The UES algorithm will iteratively expand the join order one join at a time. In each iteration, the best n:m
     # join (after/before being potentially filtered via PK/FK joins) is selected. In the join graph, we keep track of
@@ -831,6 +883,10 @@ def _calculate_join_order_for_join_partition(query: mosp.MospQuery, join_graph: 
             pk_fk_bounds = [stats.base_frequencies[attribute] * stats.base_estimates[partner]
                             for (partner, attribute) in pk_joins]  # Formula: MF(candidate, fk_attr) * |pk_table|
             candidate_min_bound = min([filter_estimate] + pk_fk_bounds)  # this is concatenation, not addition!
+
+            trace_logger(".. Bounds for candidate", candidate_table, ":: Filter:", filter_estimate,
+                         "| PKs:", pk_fk_bounds)
+
             stats.upper_bounds[candidate_table] = candidate_min_bound
 
             # If the bound we just calculated is less than our current best bound, we found an improved candidate
@@ -841,7 +897,7 @@ def _calculate_join_order_for_join_partition(query: mosp.MospQuery, join_graph: 
         # If we are choosing the base table, just insert it right away and continue with the next table
         if join_tree.is_empty():
             join_tree = join_tree.with_base_table(lowest_bound_table)
-            join_graph.mark_joined(lowest_bound_table)
+            join_graph.mark_joined(lowest_bound_table, trace=trace)
 
             # FIXME: should this also include all PK/FK joins on the base table?!
             pk_joins = sorted(join_graph.free_pk_joins_with(lowest_bound_table),
@@ -855,7 +911,7 @@ def _calculate_join_order_for_join_partition(query: mosp.MospQuery, join_graph: 
                 join_tree = _absorb_pk_fk_hull_of(pk_table, join_graph=join_graph, join_tree=join_tree,
                                                   subquery_generator=NoSubqueryGeneration(),
                                                   base_table_estimates=stats.base_estimates,
-                                                  pk_only=True)
+                                                  pk_only=True, verbose=verbose, trace=trace)
 
             stats.upper_bounds[join_tree] = lowest_min_bound
 
@@ -865,11 +921,17 @@ def _calculate_join_order_for_join_partition(query: mosp.MospQuery, join_graph: 
                 plt.subplot(n_iterations, 1, current_iteration)
                 join_graph.print(title=f"Join graph after base table selection, selected table: {lowest_bound_table}",
                                  **visualize_args)
+            trace_logger(".. Base estimates:", stats.base_estimates)
+            trace_logger("")
+            continue
+
+        trace_logger(".. Current frequencies:", stats.joined_frequencies)
 
         # Now that the bounds are up-to-date for each relation, we can select the next table to join based on the
         # number of outgoing tuples after including the relation in our current join tree.
         lowest_min_bound = np.inf
         selected_candidate = None
+        candidate_bounds = {}
         for candidate_view in join_graph.free_n_m_join_partners(join_tree.all_tables()):
             # We examine the join between the candidate table and a table that is already part of the join tree.
             # To do so, we need to figure out on which attributes the join takes place. There is one attribute
@@ -890,9 +952,22 @@ def _calculate_join_order_for_join_partition(query: mosp.MospQuery, join_graph: 
             candidate_bound = (min(n_values_tree, n_values_candidate)
                                * stats.joined_frequencies[tree_attribute]
                                * stats.base_frequencies[candidate_attribute])
+
+            trace_logger(".. Checking candidate", candidate_view, "with bound", candidate_bound)
+
             if candidate_bound < lowest_min_bound:
                 lowest_min_bound = candidate_bound
                 selected_candidate = candidate_table
+
+            if candidate_table in candidate_bounds:
+                curr_bound = candidate_bounds[candidate_table]
+                if curr_bound > candidate_bound:
+                    candidate_bounds[candidate_table] = candidate_bound
+            else:
+                candidate_bounds[candidate_table] = candidate_bound
+
+        trace_logger(".. Base frequencies:", stats.base_frequencies)
+        trace_logger(".. Current bounds:", candidate_bounds)
 
         # We have now selected the next n:m join to execute. But before we can actually include this join in our join
         # tree, we have to figure out one last thing: what to with the Primary Key/Foreign Key joins on the selected
@@ -905,7 +980,7 @@ def _calculate_join_order_for_join_partition(query: mosp.MospQuery, join_graph: 
 
         # TODO: for now we just always use the first predicate available. Is this sufficient or does the choice of
         # predicate matter?
-        join_graph.mark_joined(selected_candidate, n_m_join=True)
+        join_graph.mark_joined(selected_candidate, n_m_join=True, trace=trace)
         join_predicate = util.dict_value(join_graph.used_join_paths(selected_candidate), pull_any=True)
         pk_joins = sorted(join_graph.free_pk_joins_with(selected_candidate),
                           key=lambda fk_join_view: stats.base_estimates[fk_join_view.partner])
@@ -945,7 +1020,10 @@ def _calculate_join_order_for_join_partition(query: mosp.MospQuery, join_graph: 
             join_graph.print(title=f"Join graph after iteration {current_iteration}, "
                              f"selected table: {selected_candidate}", **visualize_args)
 
+        trace_logger("")
+
     assert not join_graph.contains_free_tables()
+    trace_logger("Final join ordering:", join_tree)
 
     return join_tree
 
@@ -1105,7 +1183,8 @@ def optimize_query(query: mosp.MospQuery, *,
                    join_cardinality_estimation: str = "basic",
                    subquery_generation: str = "defensive",
                    dbs: db.DBSchema = db.DBSchema.get_instance(),
-                   visualize: bool = False, visualize_args: dict = None, verbose: bool = False) -> mosp.MospQuery:
+                   visualize: bool = False, visualize_args: dict = None,
+                   verbose: bool = False, trace: bool = False) -> mosp.MospQuery:
     # if there are no joins in the query, there is nothing to do
     if not util.contains_multiple(query.from_clause()):
         return query
@@ -1136,7 +1215,8 @@ def optimize_query(query: mosp.MospQuery, *,
     join_order = _calculate_join_order(query, dbs=dbs, predicate_map=predicate_map,
                                        join_estimator=cardinality_estimator,
                                        subquery_generator=subquery_generator,
-                                       visualize=visualize, visualize_args=visualize_args, verbose=verbose)
+                                       visualize=visualize, visualize_args=visualize_args,
+                                       verbose=verbose, trace=trace)
 
     if util.contains_multiple(join_order):
         # query contains a cross-product

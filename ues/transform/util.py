@@ -1,8 +1,9 @@
 
 import itertools
 import numbers
+import sys
 import typing
-from typing import List, Dict, Sized, Union, Callable
+from typing import List, Dict, Sized, Union, Callable, IO
 
 
 _T = typing.TypeVar("_T")
@@ -131,13 +132,11 @@ def contains_multiple(obj: Sized):
     return len(obj) > 1
 
 
-def _log(*args, **kwargs):
-    print(*args, **kwargs)
+def make_logger(enabled: bool = True, *, file: IO[str] = sys.stderr):
+    def _log(*args, **kwargs):
+        print(*args, file=file, **kwargs)
 
+    def _dummy_log(*args, **kwargs):
+        pass
 
-def _dummy_log(*args, **kwargs):
-    pass
-
-
-def make_logger(enabled: bool = True):
     return _log if enabled else _dummy_log
