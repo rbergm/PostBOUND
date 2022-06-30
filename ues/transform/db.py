@@ -113,6 +113,7 @@ class DBSchema:
         self.estimates_cache = {}
         self.mcvs_cache = {}
         self.tuple_count_cache = {}
+        # don't forget reset_caches when adding new caches!!
 
         # FIXME: saving does not seem to work correctly, deactivating query cache for now
         if os.path.isfile(".dbschema_query_cache.json") and False:
@@ -224,6 +225,12 @@ class DBSchema:
             self.tuple_count_cache[table] = stats_count
 
         return stats_count
+
+    def reset_caches(self):
+        self.index_map = {}
+        self.estimates_cache = {}
+        self.mcvs_cache = {}
+        self.tuple_count_cache = {}
 
     def _fetch_columns(self, table_name):
         base_query = "SELECT column_name FROM information_schema.columns WHERE table_name = %s"
