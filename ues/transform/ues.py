@@ -661,26 +661,27 @@ class SubqueryGenerationStrategy(abc.ABC):
     """
 
     @abc.abstractmethod
-    def execute_as_subquery(self, candidate: db.TableRef, join_graph: _JoinGraph, *,
+    def execute_as_subquery(self, candidate: db.TableRef, join_graph: _JoinGraph, join_tree: JoinTree, *,
                             stats: _TableBoundStatistics) -> bool:
         return NotImplemented
 
 
 class DefensiveSubqueryGeneration(SubqueryGenerationStrategy):
-    def execute_as_subquery(self, candidate: db.TableRef, join_graph: _JoinGraph, *,
+    def execute_as_subquery(self, candidate: db.TableRef, join_graph: _JoinGraph, join_tree: JoinTree, *,
                             stats: _TableBoundStatistics) -> bool:
         return (stats.upper_bounds[candidate] < stats.base_estimates[candidate]
+                and stats.base_estimates[candidate] < stats.upper_bounds[join_tree]
                 and join_graph.count_selected_joins() > 2)
 
 
 class GreedySubqueryGeneration(SubqueryGenerationStrategy):
-    def execute_as_subquery(self, candidate: db.TableRef, join_graph: _JoinGraph, *,
+    def execute_as_subquery(self, candidate: db.TableRef, join_graph: _JoinGraph, join_tree: JoinTree, *,
                             stats: _TableBoundStatistics) -> bool:
         return True
 
 
 class NoSubqueryGeneration(SubqueryGenerationStrategy):
-    def execute_as_subquery(self, candidate: db.TableRef, join_graph: _JoinGraph, *,
+    def execute_as_subquery(self, candidate: db.TableRef, join_graph: _JoinGraph, join_tree: JoinTree, *,
                             stats: _TableBoundStatistics) -> bool:
         return False
 
@@ -990,7 +991,7 @@ def _calculate_join_order_for_join_partition(query: mosp.MospQuery, join_graph: 
         logger("Selected next table:", selected_candidate, "with PK/FK joins",
                [pk_table.partner for pk_table in pk_joins], "on predicate", join_predicate)
 
-        if pk_joins and subquery_generator.execute_as_subquery(selected_candidate, join_graph,
+        if pk_joins and subquery_generator.execute_as_subquery(selected_candidate, join_graph, join_tree,
                                                                stats=stats):
             subquery_join = JoinTree().with_base_table(selected_candidate)
             for pk_join in pk_joins:
