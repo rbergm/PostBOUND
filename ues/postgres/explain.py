@@ -548,4 +548,15 @@ def traverse_pg_plan_until(plan: dict, condition: Callable[[dict], bool]) -> Uni
 
 
 def print_pg_plan(plan: dict):
+    """Writes a pretty representation of the given plan to stdout."""
     print(json.dumps(plan, indent=2))
+
+
+def pg_plan_planning_time(raw_plan: dict) -> float:
+    """Extracts the planning time from a given (non-parsed!) plan."""
+    return raw_plan[0].get("Planning Time", -1000) / 1000
+
+
+def pg_plan_execution_time(raw_plan: dict) -> float:
+    """Extracts the execution time from a given (non-parsed!) plan."""
+    return raw_plan[0].get("Execution Time", -1000) / 10000
