@@ -342,6 +342,9 @@ class _JoinGraph:
     def count_free_joins(self, table: db.TableRef) -> int:
         return len([partner for partner, __ in self.graph.adj[table].items() if self.is_free(partner)])
 
+    def count_selected_joins(self) -> int:
+        return len([node for node, free in self.graph.nodes.data("free") if not free])
+
     def print(self, title: str = "", *, annotate_fk: bool = True, node_size: int = 1500, layout: str = "shell"):
         """Writes the current join graph structure to a matplotlib device."""
         node_labels = {node: node.alias for node in self.graph.nodes}
@@ -658,25 +661,26 @@ class SubqueryGenerationStrategy(abc.ABC):
     """
 
     @abc.abstractmethod
-    def execute_as_subquery(self, candidate: db.TableRef, join_graph: nx.Graph, *,
+    def execute_as_subquery(self, candidate: db.TableRef, join_graph: _JoinGraph, *,
                             stats: _TableBoundStatistics) -> bool:
         return NotImplemented
 
 
 class DefensiveSubqueryGeneration(SubqueryGenerationStrategy):
-    def execute_as_subquery(self, candidate: db.TableRef, join_graph: nx.Graph, *,
+    def execute_as_subquery(self, candidate: db.TableRef, join_graph: _JoinGraph, *,
                             stats: _TableBoundStatistics) -> bool:
-        return stats.upper_bounds[candidate] < stats.base_estimates[candidate]
+        return (stats.upper_bounds[candidate] < stats.base_estimates[candidate]
+                and join_graph.count_selected_joins() > 2)
 
 
 class GreedySubqueryGeneration(SubqueryGenerationStrategy):
-    def execute_as_subquery(self, candidate: db.TableRef, join_graph: nx.Graph, *,
+    def execute_as_subquery(self, candidate: db.TableRef, join_graph: _JoinGraph, *,
                             stats: _TableBoundStatistics) -> bool:
         return True
 
 
 class NoSubqueryGeneration(SubqueryGenerationStrategy):
-    def execute_as_subquery(self, candidate: db.TableRef, join_graph: nx.Graph, *,
+    def execute_as_subquery(self, candidate: db.TableRef, join_graph: _JoinGraph, *,
                             stats: _TableBoundStatistics) -> bool:
         return False
 
@@ -904,6 +908,7 @@ def _calculate_join_order_for_join_partition(query: mosp.MospQuery, join_graph: 
                    [pk_table.partner for pk_table in pk_joins])
 
             for pk_table, join_predicate in [(pk_join.partner, pk_join.predicate) for pk_join in pk_joins]:
+                trace_logger(".. Adding PK join with", pk_table, "on", join_predicate)
                 join_tree = join_tree.joined_with_base_table(pk_table, predicate=join_predicate)
                 join_graph.mark_joined(pk_table)
                 join_tree = _absorb_pk_fk_hull_of(pk_table, join_graph=join_graph, join_tree=join_tree,
@@ -989,6 +994,7 @@ def _calculate_join_order_for_join_partition(query: mosp.MospQuery, join_graph: 
                                                                stats=stats):
             subquery_join = JoinTree().with_base_table(selected_candidate)
             for pk_join in pk_joins:
+                trace_logger(".. Adding PK join with", pk_join.partner, "on", pk_join.predicate)
                 subquery_join = subquery_join.joined_with_base_table(pk_join.partner, predicate=pk_join.predicate)
                 join_graph.mark_joined(pk_join.partner)
                 subquery_join = _absorb_pk_fk_hull_of(pk_join.partner, join_graph=join_graph, join_tree=subquery_join,
@@ -1000,6 +1006,7 @@ def _calculate_join_order_for_join_partition(query: mosp.MospQuery, join_graph: 
         else:
             join_tree = join_tree.joined_with_base_table(selected_candidate, predicate=join_predicate)
             for pk_join in pk_joins:
+                trace_logger(".. Adding PK join with", pk_join.partner, "on", pk_join.predicate)
                 join_tree = join_tree.joined_with_base_table(pk_join.partner, predicate=pk_join.predicate)
                 join_graph.mark_joined(pk_join.partner)
                 join_tree = _absorb_pk_fk_hull_of(pk_join.partner, join_graph=join_graph, join_tree=join_tree,
