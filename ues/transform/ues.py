@@ -1,7 +1,6 @@
 
 import abc
 import collections
-import pprint
 from typing import Dict, List, Set, Union, Tuple
 import warnings
 
@@ -51,13 +50,13 @@ class BaseCardinalityEstimator(abc.ABC):
 class PostgresCardinalityEstimator(BaseCardinalityEstimator):
     def estimate_rows(self, predicate: Union[mosp.MospPredicate, mosp.CompoundMospFilterPredicate], *,
                       dbs: db.DBSchema = db.DBSchema.get_instance()) -> int:
-        return predicate.estimate_result_rows(sampling=False)
+        return predicate.estimate_result_rows(sampling=False, dbs=dbs)
 
 
 class SamplingCardinalityEstimator(BaseCardinalityEstimator):
     def estimate_rows(self, predicate: Union[mosp.MospPredicate, mosp.CompoundMospFilterPredicate], *,
                       dbs: db.DBSchema = db.DBSchema.get_instance()) -> int:
-        return predicate.estimate_result_rows(sampling=True)
+        return predicate.estimate_result_rows(sampling=True, sampling_pct=25, dbs=dbs)
 
 
 def _is_pk_fk_join(join: mosp.MospPredicate, *, dbs: db.DBSchema = db.DBSchema.get_instance()) -> bool:
@@ -743,7 +742,6 @@ def _absorb_pk_fk_hull_of(table: db.TableRef, *, join_graph: _JoinGraph, join_tr
     # Thereby we would effectively treat FK tables as n:m tables! Why did we make that distinction in the first place?
 
     logger = util.make_logger(verbose)
-    trace_logger = util.make_logger(trace)
 
     if pk_only:
         join_paths = collections.defaultdict(list)
@@ -1190,14 +1188,17 @@ def optimize_query(query: mosp.MospQuery, *,
         return query
 
     if table_cardinality_estimation == "sample":
-        warnings.warn("Sampling-based table estimation is not supported yet. Falling back to EXPLAIN-based "
-                      "estimation.")
+        base_estimator = SamplingCardinalityEstimator()
+    elif table_cardinality_estimation == "explain":
+        base_estimator = PostgresCardinalityEstimator()
+    else:
+        raise ValueError("Unknown base table estimation strategy: '{}'".format(table_cardinality_estimation))
 
     if join_cardinality_estimation == "basic":
-        cardinality_estimator = DefaultUESCardinalityEstimator(query)
+        join_estimator = DefaultUESCardinalityEstimator(query)
     elif join_cardinality_estimation == "advanced":
         warnings.warn("Advanced join estimation is not supported yet. Falling back to basic estimation.")
-        cardinality_estimator = DefaultUESCardinalityEstimator(query)
+        join_estimator = DefaultUESCardinalityEstimator(query)
     else:
         raise ValueError("Unknown cardinality estimation strategy: '{}'".format(join_cardinality_estimation))
 
@@ -1213,7 +1214,7 @@ def optimize_query(query: mosp.MospQuery, *,
     predicate_map = _build_predicate_map(query)
     join_predicates = _build_join_map(query)
     join_order = _calculate_join_order(query, dbs=dbs, predicate_map=predicate_map,
-                                       join_estimator=cardinality_estimator,
+                                       base_estimator=base_estimator, join_estimator=join_estimator,
                                        subquery_generator=subquery_generator,
                                        visualize=visualize, visualize_args=visualize_args,
                                        verbose=verbose, trace=trace)

@@ -205,9 +205,10 @@ CompoundOperations = {
 }
 
 
-def _expand_predicate_to_mosp_query(base_table: db.TableRef, mosp_data):
+def _expand_predicate_to_mosp_query(base_table: db.TableRef, mosp_data, *, count_query: bool = False):
+    proj = {"count": "*"} if count_query else "*"
     return {
-        "select": "*",
+        "select": proj,
         "from": {"value": base_table.full_name, "name": base_table.alias},
         "where": mosp_data
     }
@@ -339,13 +340,25 @@ class MospPredicate:
             return {self.operation: self.left}
         return {self.operation: [self.left, self.right]}
 
-    def estimate_result_rows(self, *, sampling: bool = False, dbs: db.DBSchema = None) -> int:
-        # TODO: sampling variant
+    def estimate_result_rows(self, *, sampling: bool = False, sampling_pct: int = 25,
+                             dbs: db.DBSchema = db.DBSchema.get_instance()) -> int:
         if self.is_join_predicate():
             raise ValueError("Can only estimate filters, not joins")
-        dbs = db.DBSchema.get_instance() if not dbs else dbs
-        mosp_query = _expand_predicate_to_mosp_query(self.parse_left_attribute().table, self.mosp_data)
-        return dbs.pg_estimate(mosp.format(mosp_query))
+
+        base_table = self.parse_left_attribute().table
+        mosp_query = _expand_predicate_to_mosp_query(base_table, self.mosp_data, count_query=sampling)
+        formatted_query = mosp.format(mosp_query)
+
+        # the trick to support sampling is incredibly dirty but sadly mo_sql_parsing does not support formatting with
+        # tablesample, yet
+        if sampling:
+            table_sampled = f"FROM {base_table.full_name} AS {base_table.alias} TABLESAMPLE bernoulli ({sampling_pct})"
+            original_from = f"FROM {base_table.full_name} AS {base_table.alias}"
+            formatted_query = formatted_query.replace(original_from, table_sampled)
+            result = dbs.execute_query(formatted_query)
+            return result
+
+        return dbs.pg_estimate(formatted_query)
 
     def rename_table(self, from_table: db.TableRef, to_table: db.TableRef, *,
                      prefix_attribute: bool = False) -> "MospPredicate":
@@ -496,11 +509,22 @@ class CompoundMospFilterPredicate:
     def to_mosp(self):
         return {self.operation: [child.to_mosp() for child in self.children]}
 
-    def estimate_result_rows(self, *, sampling: bool = False, dbs: db.DBSchema = None) -> int:
-        # TODO: sampling variant
-        dbs = db.DBSchema.get_instance() if not dbs else dbs
-        mosp_query = _expand_predicate_to_mosp_query(self.base_table(), self.to_mosp())
-        return dbs.pg_estimate(mosp.format(mosp_query))
+    def estimate_result_rows(self, *, sampling: bool = False, sampling_pct: int = 25,
+                             dbs: db.DBSchema = db.DBSchema.get_instance()) -> int:
+        base_table = self.base_table()
+        mosp_query = _expand_predicate_to_mosp_query(base_table, self.to_mosp(), count_query=sampling)
+        formatted_query = mosp.format(mosp_query)
+
+        # the trick to support sampling is incredibly dirty but sadly mo_sql_parsing does not support formatting with
+        # tablesample, yet
+        if sampling:
+            table_sampled = f"FROM {base_table.full_name} AS {base_table.alias} TABLESAMPLE bernoulli ({sampling_pct})"
+            original_from = f"FROM {base_table.full_name} AS {base_table.alias}"
+            formatted_query = formatted_query.replace(original_from, table_sampled)
+            result = dbs.execute_query(formatted_query)
+            return result
+
+        return dbs.pg_estimate(formatted_query)
 
     def __hash__(self) -> int:
         return hash(str(self))
