@@ -5,7 +5,7 @@ import os
 import textwrap
 import warnings
 from dataclasses import dataclass
-from typing import List
+from typing import List, Dict
 
 import psycopg2
 
@@ -58,8 +58,20 @@ class TableRef:
         return f"{self.full_name} AS {self.alias}"
 
 
+UnboundTable = TableRef("", "", virtual=True)
+
+
 @dataclass
 class AttributeRef:
+    @staticmethod
+    def parse(attribute_data: str, *, alias_map: Dict[str, TableRef]) -> "AttributeRef":
+        try:
+            table, attribute = attribute_data.split(".")
+        except ValueError:
+            table, attribute = "", attribute_data
+        parsed_table = alias_map[table] if table else UnboundTable
+        return AttributeRef(parsed_table, attribute)
+
     table: TableRef
     attribute: str
 

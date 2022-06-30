@@ -30,6 +30,9 @@ class MospQuery:
         self.query = mosp_data
         self.alias_map = None
 
+    def select_clause(self):
+        return self.query["select"]
+
     def from_clause(self):
         return self.query.get("from", [])
 
@@ -41,10 +44,13 @@ class MospQuery:
         return db.TableRef(tab["value"], tab["name"])
 
     def collect_tables(self) -> List["db.TableRef"]:
-        tables = [db.TableRef(tab["value"], tab["name"]) for tab in self.from_clause() if "value" in tab]
+        tables = [db.TableRef(tab["value"], tab["name"]) for tab in util.enlist(self.from_clause()) if "value" in tab]
         for join in self.joins():
             tables.extend(join.collect_tables())
         return tables
+
+    def projection(self) -> "MospProjection":
+        return MospProjection(self.select_clause(), table_alias_map=self._build_alias_map())
 
     def joins(self, simplify=False) -> List["MospJoin"]:
         joins = [MospJoin(tab) for tab in self.from_clause() if "join" in tab]
@@ -126,6 +132,43 @@ class MospQuery:
 
     def __str__(self) -> str:
         return mosp.format(self.query)
+
+
+class MospProjection:
+    def __init__(self, mosp_data, *, table_alias_map):
+        self.mosp_data = mosp_data
+        self.table_alias_map = table_alias_map
+        self.alias_map = dict()
+        self.attributes = dict()
+
+        self._inflate_alias_map(self.mosp_data)
+
+    def resolve(self, attribute_alias: str) -> db.AttributeRef:
+        if attribute_alias in self.alias_map:
+            return self.alias_map[attribute_alias]
+        return self.attributes[attribute_alias]
+
+    def _inflate_alias_map(self, mosp_data):
+        if isinstance(mosp_data, list):
+            for mosp_attribute in mosp_data:
+                self._inflate_alias_map(mosp_attribute)
+        elif isinstance(mosp_data, dict):
+            attribute = mosp_data["value"]
+            parsed_attribute = db.AttributeRef.parse(attribute, alias_map=self.table_alias_map)
+            alias = mosp_data["name"]
+            self.alias_map[alias] = parsed_attribute
+            self.attributes[attribute] = parsed_attribute
+        elif isinstance(mosp_data, str):
+            parsed_attribute = db.AttributeRef.parse(mosp_data, alias_map=self.table_alias_map)
+            self.attributes[mosp_data] = parsed_attribute
+        else:
+            warnings.warn("Unknown attribute structure: {}".format(mosp_data))
+
+    def __repr__(self) -> str:
+        return str(self)
+
+    def __str__(self) -> str:
+        return f"Attributes: {self.attributes} || Aliases: {self.alias_map}"
 
 
 class MospJoin:
