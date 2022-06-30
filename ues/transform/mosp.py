@@ -100,6 +100,12 @@ class MospQuery:
                 return subquery
         return None
 
+    def join_path(self) -> str:
+        path = [f"({join.subquery.join_path()})" if join.is_subquery() else str(join.base_table())
+                for join in self.joins()]
+        path.insert(0, str(self.base_table()))
+        return " ⋈ ".join(path)
+
     def count_result_tuples(self) -> int:
         count_query = dict(self.query)
         count_query["select"] = {"value": {"count": "*"}}
