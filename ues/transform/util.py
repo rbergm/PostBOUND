@@ -1,10 +1,13 @@
 
+import argparse
 import itertools
 import numbers
+import os
 import sys
 import typing
 from typing import List, Dict, Sized, Union, Callable, IO
 
+import psycopg2
 
 _T = typing.TypeVar("_T")
 _K = typing.TypeVar("_K")
@@ -140,3 +143,13 @@ def make_logger(enabled: bool = True, *, file: IO[str] = sys.stderr):
         pass
 
     return _log if enabled else _dummy_log
+
+
+def connect_postgres(parser: argparse.ArgumentParser, conn_str: str = None):
+    if not conn_str:
+        if not os.path.exists(".psycopg_connection"):
+            parser.error("No connect string for psycopg given.")
+        with open(".psycopg_connection", "r") as conn_file:
+            conn_str = conn_file.readline().strip()
+    conn = psycopg2.connect(conn_str)
+    return conn
