@@ -66,6 +66,8 @@ def _is_pk_fk_join(join: mosp.MospPredicate, *, dbs: db.DBSchema = db.DBSchema.g
     if dbs.is_primary_key(first_attr):
         pk = first_attr
     elif dbs.is_primary_key(second_attr):
+        if pk:
+            warnings.warn("PK/PK join found: {}".format(join))
         pk = second_attr
 
     if dbs.has_secondary_idx_on(first_attr):
@@ -670,7 +672,6 @@ class DefensiveSubqueryGeneration(SubqueryGenerationStrategy):
     def execute_as_subquery(self, candidate: db.TableRef, join_graph: _JoinGraph, join_tree: JoinTree, *,
                             stats: _TableBoundStatistics) -> bool:
         return (stats.upper_bounds[candidate] < stats.base_estimates[candidate]
-                and stats.base_estimates[candidate] < stats.upper_bounds[join_tree]
                 and join_graph.count_selected_joins() > 2)
 
 
