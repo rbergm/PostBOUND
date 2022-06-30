@@ -16,13 +16,19 @@ executor = importlib.import_module("workload-executor")
 DEFAULT_N_REPETITIONS = 3
 
 
+def evaluate_result(result_df: pd.DataFrame, query_col: str, *, exclusive: bool = True):
+    if not exclusive:
+        print("Results:")
+    print(result_df.groupby("run")[f"{query_col}_rt_total"].sum())
+
+
 def main():
     parser = argparse.ArgumentParser(description="Utility to create reliable results from workloads in a "
                                      "reproducible manner.")
     parser.add_argument("input", action="store", help="File containing the workload to run")
     parser.add_argument("--csv", action="store_true", default=False, help="Parse input data as CSV file")
-    parser.add_argument("--csv-col", action="store", default="query", help="In CSV mode, name of the column "
-                        "containing the queries")
+    parser.add_argument("--csv-col", action="store", default="query", help="In CSV mode or eval mode, name of the "
+                        "column containing the queries")
     parser.add_argument("--repetitions", "-r", action="store", default=DEFAULT_N_REPETITIONS, type=int, help="The "
                         "number of times the workload should be executed.")
     parser.add_argument("--out", "-o", action="store", help="Name of the output file to write the results to.")
@@ -35,6 +41,8 @@ def main():
                         "queries respectively.")
     parser.add_argument("--hint-col", action="store", default="", help="In CSV mode, an optional column containing "
                         "hints to apply on a per-query basis (as specified by the pg_hint_plan extension).")
+    parser.add_argument("--eval", action="store_true", default=False, help="Don't run a new experiment, but evaluate"
+                        "the results given by the input result file.")
     parser.add_argument("--randomized", action="store_true", default=False, help="Execute the queries in a random "
                         "order.")
     parser.add_argument("--verbose", action="store_true", default=False, help="Produce progress output")
@@ -42,10 +50,16 @@ def main():
 
     args = parser.parse_args()
     verbose = args.verbose or args.trace
-    log = util.make_logger(verbose, file=sys.stderr)
+    log = util.make_logger(verbose, file=sys.stdout)
     log("Invocation:", " ".join(['"{}"'.format(arg) if isinstance(arg, str) and " " in arg else arg
                                  for arg in sys.argv]))
     signal.signal(signal.SIGINT, functools.partial(executor.exit_handler, logger=log))
+
+    if args.eval:
+        result_df = pd.read_csv(args.input)
+        query_col = args.csv_col if args.csv_col else executor.DEFAULT_WORKLOAD_COL
+        evaluate_result(result_df, query_col, exclusive=True)
+        return
 
     out_file = args.out if args.out else executor.generate_default_out_name("experiment")
 
@@ -76,6 +90,9 @@ def main():
     log("Exporting results")
     df_results = pd.concat(workload_results)
     df_results.to_csv(out_file, index=False)
+
+    if verbose:
+        evaluate_result(df_results, workload_col, exclusive=False)
 
 
 if __name__ == "__main__":
