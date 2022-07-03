@@ -124,6 +124,7 @@ class DBSchema:
         self.index_map = {}
         self.estimates_cache = {}
         self.mcvs_cache = {}
+        self.mcvs_online_cache = {}
         self.tuple_count_cache = {}
         # don't forget reset_caches when adding new caches!!
 
@@ -224,6 +225,37 @@ class DBSchema:
             self.mcvs_cache[attribute] = mcvs
         return mcvs[:k] if k else mcvs
 
+    def calculate_most_common_values(self, attribute: AttributeRef, *, k: int = 10,
+                                     cache_enabled: bool = True) -> list:
+        """
+        In contrast to `load_most_common_values`, this function does not query the pg_stats view, but calculates the
+        common values live from the actual data. This also means that `k` always has to be set to a value.
+        Other than that, both functions work exactly the same.
+
+        This process will probably take way longer than querying the stats view, but is guaranteed to always be
+        exact and to always return a value.
+
+        If any number of attributes occur with equal frequency, their order is defined by the order of the values
+        themselves.
+        """
+
+        if cache_enabled and attribute in self.mcvs_online_cache:
+            mcvs = self.mcsvs_online_cache[(attribute, k)]
+            return mcvs
+
+        query_template = textwrap.dedent(f"""
+                                         SELECT {attribute}, COUNT(*)
+                                         FROM {attribute.table}
+                                         GROUPY BY {attribute}
+                                         ORDER BY count DESC, {attribute}
+                                         LIMIT {k}""")
+        self.cursor.execute(query_template)
+        mcvs = self.cursor.fetchall()
+
+        if cache_enabled:
+            self.mcvs_online_cache[(attribute, k)] = mcvs
+        return mcvs
+
     def load_tuple_count(self, table: TableRef, *, cache_enabled: bool = True) -> int:
         """Retrieves the total number of tuples from Postgres statistics, rather than executing a count query."""
         if cache_enabled and table in self.tuple_count_cache:
@@ -242,6 +274,7 @@ class DBSchema:
         self.index_map = {}
         self.estimates_cache = {}
         self.mcvs_cache = {}
+        self.mcvs_online_cache = {}
         self.tuple_count_cache = {}
 
     def _fetch_columns(self, table_name):
