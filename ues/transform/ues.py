@@ -678,7 +678,7 @@ class DefensiveSubqueryGeneration(SubqueryGenerationStrategy):
 class GreedySubqueryGeneration(SubqueryGenerationStrategy):
     def execute_as_subquery(self, candidate: db.TableRef, join_graph: _JoinGraph, join_tree: JoinTree, *,
                             stats: _TableBoundStatistics) -> bool:
-        return True
+        return join_graph.count_selected_joins() > 2
 
 
 class NoSubqueryGeneration(SubqueryGenerationStrategy):
