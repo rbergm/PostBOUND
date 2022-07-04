@@ -25,7 +25,7 @@ def evaluate_result(result_df: pd.DataFrame, query_col: str, *, exclusive: bool 
 def main():
     parser = argparse.ArgumentParser(description="Utility to create reliable results from workloads in a "
                                      "reproducible manner.")
-    parser.add_argument("input", action="store", help="File containing the workload to run")
+    parser.add_argument("input", action="store", nargs="+", help="File containing the workload to run")
     parser.add_argument("--csv", action="store_true", default=False, help="Parse input data as CSV file")
     parser.add_argument("--csv-col", action="store", default="query", help="In CSV mode or eval mode, name of the "
                         "column containing the queries")
@@ -56,10 +56,17 @@ def main():
     signal.signal(signal.SIGINT, functools.partial(executor.exit_handler, logger=log))
 
     if args.eval:
-        result_df = pd.read_csv(args.input)
-        query_col = args.csv_col if args.csv_col else executor.DEFAULT_WORKLOAD_COL
-        evaluate_result(result_df, query_col, exclusive=True)
+        files_to_analyze = util.enlist(args.input)
+        for input_file in files_to_analyze:
+            if util.contains_multiple(args.input):
+                print(f"===> {input_file} <===")
+            result_df = pd.read_csv(input_file)
+            query_col = args.csv_col if args.csv_col else executor.DEFAULT_WORKLOAD_COL
+            evaluate_result(result_df, query_col, exclusive=True)
+            if util.contains_multiple(args.input):
+                print()
         return
+    args.input = util.simplify(args.input)
 
     out_file = args.out if args.out else executor.generate_default_out_name("experiment")
 
