@@ -1,5 +1,4 @@
 
-import logging
 from typing import Any, List, Tuple, Union
 
 from transform import db, mosp, util
@@ -54,7 +53,8 @@ class _TableReferences:
 
 
 class _FlattenedQueryBuilder:
-    def __init__(self, base_table: db.TableRef, dbschema: db.DBSchema):
+    def __init__(self, query: mosp.MospQuery, base_table: db.TableRef, dbschema: db.DBSchema):
+        self.query = query
         self.base_table = base_table
         self.dbschema = dbschema
         self.joins: List[Tuple[db.TableRef, Any]] = []
@@ -120,7 +120,7 @@ class _FlattenedQueryBuilder:
 
 def flatten_query(query, dbschema):
     query_tree = mosp.MospQuery.parse(query)
-    flattened_query = _FlattenedQueryBuilder(query_tree.base_table(), dbschema)
+    flattened_query = _FlattenedQueryBuilder(query_tree, query_tree.base_table(), dbschema)
     for join in query_tree.joins():
         flattened_query.include_join(join)
     return flattened_query.to_mosp()
