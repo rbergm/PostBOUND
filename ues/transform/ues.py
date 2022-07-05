@@ -636,7 +636,8 @@ class _TableBoundStatistics:
         # (i.e. JOIN R.a = S.b AND R.c = S.d is not supported!)
         # However, our formulas can be easily expanded to work with multiple predicates by choosing the smaller
         # bound. This should be fixed soon-ish.
-        assert not util.contains_multiple(join_predicate)
+        if util.contains_multiple(join_predicate):
+            raise ValueError("Compound join predicates are not yet supported.")
         join_predicate: mosp.MospPredicate = util.simplify(join_predicate)
 
         new_join_attribute = join_predicate.attribute_of(joined_table)
