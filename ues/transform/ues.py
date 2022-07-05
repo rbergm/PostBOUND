@@ -632,8 +632,10 @@ class _TableBoundStatistics:
     def update_frequencies(self, joined_table: db.TableRef,
                            join_predicate: Union[mosp.MospPredicate, List[mosp.MospPredicate]], *,
                            join_tree: JoinTree):
-        # TODO: for now, we only support single join predicates (i.e. JOIN R.a = S.b AND R.c = S.d is not supported!)
-        # This is b/c multiple attributes mess with our formulas..
+        # FIXME: the current implementation only works for single join predicates
+        # (i.e. JOIN R.a = S.b AND R.c = S.d is not supported!)
+        # However, our formulas can be easily expanded to work with multiple predicates by choosing the smaller
+        # bound. This should be fixed soon-ish.
         assert not util.contains_multiple(join_predicate)
         join_predicate: mosp.MospPredicate = util.simplify(join_predicate)
 
