@@ -9,7 +9,7 @@ from datetime import datetime
 import pandas as pd
 import psycopg2
 
-from transform import db, mosp, ues
+from transform import db, mosp, ues, util
 
 
 DEFAULT_QUERY_COL = "query"
@@ -63,17 +63,25 @@ def write_queries_stdout(result_data: pd.DataFrame, query_col: str = "query_ues"
 def optimize_workload(workload: pd.DataFrame, query_col: str, out_col: str, *,
                       table_estimation: str = "explain", join_estimation: str = "basic", subqueries: str = "defensive",
                       timing: bool = False, dbs: db.DBSchema = db.DBSchema.get_instance()) -> pd.DataFrame:
+    logger = util.make_logger()
     optimized_queries = []
     optimization_time = []
+    optimization_success = []
     parsed_queries = workload[query_col].apply(mosp.MospQuery.parse)
 
     for query in parsed_queries:
         optimization_start = datetime.now()
-        optimized_query = ues.optimize_query(query,
-                                             table_cardinality_estimation=table_estimation,
-                                             join_cardinality_estimation=join_estimation,
-                                             subquery_generation=subqueries,
-                                             dbs=dbs)
+        try:
+            optimized_query = ues.optimize_query(query,
+                                                 table_cardinality_estimation=table_estimation,
+                                                 join_cardinality_estimation=join_estimation,
+                                                 subquery_generation=subqueries,
+                                                 dbs=dbs)
+            optimization_success.append(True)
+        except Exception as e:
+            optimized_query = query
+            optimization_success.append(False)
+            logger("Could not optimize query '", query, "': ", e, sep="")
         optimization_end = datetime.now()
         optimization_duration = optimization_end - optimization_start
         optimized_queries.append(optimized_query)
@@ -81,6 +89,7 @@ def optimize_workload(workload: pd.DataFrame, query_col: str, out_col: str, *,
 
     optimized_workload = workload.copy()
     optimized_workload[out_col] = optimized_queries
+    optimized_workload["optimization_success"] = optimization_success
     if timing:
         optimized_workload["optimization_time"] = optimization_time
     return optimized_workload
@@ -129,16 +138,33 @@ def main():
                         "is guaranteed. Defaults to 'defensive'.")
     parser.add_argument("--out", "-o", action="store", help="Enter output CSV-mode and store the output in file "
                         "rather than writing to stdout.")
+    parser.add_argument("--exec", "-e", action="store_true", default=False, help="If optimizing a single query, also "
+                        "execute it.")
     parser.add_argument("--pg-con", action="store", default="", help="Connect string to the Postgres instance "
                         "(psycopg2 format). If omitted, the string will be read from the file .psycopg_connection")
 
     args = parser.parse_args()
-    dbs = db.DBSchema.get_instance(connect_postgres(args.pg_con))
+    db_connection = connect_postgres(args.pg_con)
+    dbs = db.DBSchema.get_instance(db_connection)
 
     if args.query:
         parsed_query = mosp.MospQuery.parse(args.input)
         optimized_query = ues.optimize_query(parsed_query, dbs=dbs)
-        print(str(optimized_query))
+        if not args.exec:
+            print(str(optimized_query))
+        else:
+            # TODO: this is a bit messy, refactor
+            print(".. Optimized query:")
+            print(str(optimized_query))
+            print(".. Executing")
+            cursor = db_connection.cursor()
+            cursor.execute("set join_collapse_limit = 1; set enable_memoize = 'off'; set enable_nestloop = 'off';")
+            exec_start = datetime.now()
+            cursor.execute(str(optimized_query))
+            exec_end = datetime.now()
+            print(".. Result set:")
+            print(cursor.fetchall())
+            print(".. Query took", exec_end - exec_start, "seconds")
         return
 
     if args.csv:
