@@ -579,10 +579,11 @@ class _BaseAttributeFrequenciesLoader:
         if key not in self.attribute_frequencies:
             top1 = self.dbs.load_most_common_values(key, k=1)
             if not top1:
-                top1 = min(1, self.base_estimates[key.table])
+                top1 = self.base_estimates[key.table]
             else:
                 __, top1 = top1[0]
                 top1 = round(top1 * self.dbs.load_tuple_count(key.table))
+            top1 = min(top1, self.base_estimates[key.table])
             self.attribute_frequencies[key] = top1
         return self.attribute_frequencies[key]
 
