@@ -68,7 +68,9 @@ def _is_pk_fk_join(join: mosp.MospPredicate, *, dbs: db.DBSchema = db.DBSchema.g
         pk = first_attr
     elif dbs.is_primary_key(second_attr):
         if pk:
-            warnings.warn("PK/PK join found: {}".format(join))
+            warnings.warn("PK/PK join found: {}. Treating {} as Foreign Key.".format(join, second_attr))
+            fk = second_attr
+            return {"pk_fk_join": True, "pk": pk, "fk": fk}
         pk = second_attr
 
     if dbs.has_secondary_idx_on(first_attr):
