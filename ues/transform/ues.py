@@ -299,11 +299,15 @@ class _JoinGraph:
 
     def is_free_fk_table(self, table: db.TableRef) -> bool:
         """
-        Checks, whether the given table only takes part in PK/FK joins and acts as a FK partner in at least one of
-        them.
+        Checks, whether the given table is free and takes part in at least one PK/FK join, acting as the FK partner.
         """
         return self.is_free(table) and any(True for join_data in self.graph.adj[table].values()
                                            if join_data["foreign_key"].table == table)
+
+    def is_fk_table(self, table: db.TableRef) -> bool:
+        """Checks, whether the given table takes part in at least one PK/FK join as the FK partner."""
+        return any(True for join_data in self.graph.adj[table].values()
+                   if join_data["foreign_key"].table == table)
 
     def available_join_paths(self, table: db.TableRef) -> Dict[db.TableRef, List[mosp.MospPredicate]]:
         """Searches for all tables that are already joined and have a valid join predicate with the given table."""
@@ -859,8 +863,10 @@ def _calculate_join_order_for_join_partition(query: mosp.MospQuery, join_graph: 
         join_tree = _absorb_pk_fk_hull_of(first_fk_table, join_graph=join_graph, join_tree=join_tree,
                                           subquery_generator=NoSubqueryGeneration(),
                                           base_table_estimates=stats.base_estimates)
+        final_bound = max(stats.base_estimates[fk_tab] for fk_tab in join_tree.all_tables()
+                          if join_graph.is_fk_table(fk_tab))
         assert not join_graph.contains_free_tables()
-        return JoinOrderOptimizationResult(join_tree, None, None, False)
+        return JoinOrderOptimizationResult(join_tree, final_bound=final_bound, intermediate_bounds=None, regular=False)
 
     # This has nothing to do with the actual algorithm is merely some technical code for visualizations
     if visualize:
