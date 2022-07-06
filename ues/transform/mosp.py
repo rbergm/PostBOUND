@@ -72,8 +72,8 @@ class MospQuery:
         if not self.where_clause():
             return []
 
-        return CompoundMospFilterPredicate.parse(self.where_clause(), skip_initial_level=True,
-                                                 alias_map=self._build_alias_map())
+        return util.enlist(CompoundMospFilterPredicate.parse(self.where_clause(), skip_initial_level=True,
+                                                             alias_map=self._build_alias_map()))
 
     def subqueries(self, simplify=False) -> List["MospJoin"]:
         subqueries = [sq for sq in self.joins() if sq.is_subquery()]

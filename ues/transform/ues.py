@@ -1249,8 +1249,10 @@ def optimize_query(query: mosp.MospQuery, *,
             partial_query["select"] = {"value": "*"}
             first_set["from"].append({"join": {"value": partial_query}})
         return mosp.MospQuery(first_set)
-    else:
+    elif optimization_result:
         join_sequence = optimization_result.final_order.traverse_right_deep()
         mosp_data = _generate_mosp_data_for_sequence(join_sequence, predicate_map=predicate_map,
                                                      join_predicates=join_predicates)
         return mosp.MospQuery(mosp_data)
+    else:
+        return query

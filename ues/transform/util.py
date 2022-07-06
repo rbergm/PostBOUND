@@ -130,7 +130,7 @@ def argmin(mapping: Dict[_K, numbers.Number]) -> _K:
 
 def contains_multiple(obj: Sized):
     """Checks whether an object is list-like (i.e. has a length) and contains more than 1 entries."""
-    if "__len__" not in dir(obj) or isinstance(obj, str):
+    if "__len__" not in dir(obj) or isinstance(obj, str) or isinstance(obj, tuple):
         return False
     return len(obj) > 1
 
