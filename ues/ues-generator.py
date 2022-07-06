@@ -95,13 +95,40 @@ def optimize_workload(workload: pd.DataFrame, query_col: str, out_col: str, *,
     return optimized_workload
 
 
+def optimize_single(query: str, *, table_estimation: str = "explain", join_estimation: str = "basic",
+                    subqueries: str = "defensive", exec: bool = False, dbs: db.DBSchema = db.DBSchema.get_instance()):
+    parsed_query = mosp.MospQuery.parse(query)
+    optimized_query = ues.optimize_query(parsed_query,
+                                         table_cardinality_estimation=table_estimation,
+                                         join_cardinality_estimation=join_estimation,
+                                         subquery_generation=subqueries,
+                                         dbs=dbs)
+    db_connection = dbs.connection
+
+    if not exec:
+        # without execution we simply print the optimized query
+        print(str(optimized_query))
+    else:
+        # with execution we need a bit more structure: output the optimized query as well as its execution time
+        # separately
+        print(".. Optimized query:")
+        print(str(optimized_query))
+        print(".. Executing query")
+        cursor = db_connection.cursor()
+        cursor.execute("set join_collapse_limit = 1; set enable_memoize = 'off'; set enable_nestloop = 'off';")
+        exec_start = datetime.now()
+        cursor.execute(str(optimized_query))
+        exec_end = datetime.now()
+        print(".. Query took", exec_end - exec_start, "seconds")
+
+
 def main():
     description = """Optimizes SQL queries or batches of queries according to the UES algorithm.
 
     Incoming queries currently have to specify all joins inplicitly (i.e via SELECT * FROM R, S WHERE ...), explicit
-    joins via the JOIN statement are not supported. Furthermore, all joins have to be specified over a single join
-    predicate to prevent unexpected behaviour. (i.e. SELECT * FROM R JOIN S on R.a = S.b AND R.c = S.d is not
-    supported). In some cases, these queries might still work.
+    joins via the JOIN statement are not supported (yet). Furthermore, all joins have to be specified over a single
+    join predicate to prevent unexpected behaviour. (i.e. SELECT * FROM R JOIN S on R.a = S.b AND R.c = S.d is not
+    supported, yet). In some cases however, these queries might still work.
 
     [0] Hertzschuch et al.: Simplicity Done Right for Join Ordering. CIDR'21."""
     parser = argparse.ArgumentParser(description=textwrap.dedent(description),
@@ -147,26 +174,16 @@ def main():
     db_connection = connect_postgres(args.pg_con)
     dbs = db.DBSchema.get_instance(db_connection)
 
+    # if the query param is given, we switch to single optimization mode: we only optimize this one query
+    # in this case, we might also run the query online
     if args.query:
-        parsed_query = mosp.MospQuery.parse(args.input)
-        optimized_query = ues.optimize_query(parsed_query, dbs=dbs)
-        if not args.exec:
-            print(str(optimized_query))
-        else:
-            # TODO: this is a bit messy, refactor
-            print(".. Optimized query:")
-            print(str(optimized_query))
-            print(".. Executing")
-            cursor = db_connection.cursor()
-            cursor.execute("set join_collapse_limit = 1; set enable_memoize = 'off'; set enable_nestloop = 'off';")
-            exec_start = datetime.now()
-            cursor.execute(str(optimized_query))
-            exec_end = datetime.now()
-            print(".. Result set:")
-            print(cursor.fetchall())
-            print(".. Query took", exec_end - exec_start, "seconds")
+        optimize_single(args.input, exec=args.exec,
+                        table_estimation=args.table_estimation,
+                        join_estimation=args.join_estimation,
+                        subqueries=args.subqueries, dbs=dbs)
         return
 
+    # otherwise we need to read our workload depending on the input mode
     if args.csv:
         workload = read_workload_csv(args.input)
     elif args.pattern:
