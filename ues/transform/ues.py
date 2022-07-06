@@ -797,6 +797,10 @@ def _absorb_pk_fk_hull_of(table: db.TableRef, *, join_graph: _JoinGraph, join_tr
     return join_tree
 
 
+JoinOrderOptimizationResult = collections.namedtuple("JoinOrderOptimizationResult",
+                                                     ["final_order", "intermediate_bounds", "final_bound", "regular"])
+
+
 def _calculate_join_order(query: mosp.MospQuery, *,
                           predicate_map: Dict[db.TableRef, Union[mosp.MospPredicate,
                                                                  mosp.CompoundMospFilterPredicate]],
@@ -806,7 +810,7 @@ def _calculate_join_order(query: mosp.MospQuery, *,
                           visualize: bool = False, visualize_args: dict = None,
                           verbose: bool = False, trace: bool = False,
                           dbs: db.DBSchema = db.DBSchema.get_instance()
-                          ) -> Union[JoinTree, List[JoinTree]]:
+                          ) -> Union[JoinOrderOptimizationResult, List[JoinOrderOptimizationResult]]:
     join_estimator = join_estimator if join_estimator else DefaultUESCardinalityEstimator(query)
     join_graph = _JoinGraph.build_for(query)
 
@@ -835,7 +839,8 @@ def _calculate_join_order_for_join_partition(query: mosp.MospQuery, join_graph: 
                                              subquery_generator: SubqueryGenerationStrategy,
                                              visualize: bool = False, visualize_args: dict = None,
                                              verbose: bool = False, trace: bool = False,
-                                             dbs: db.DBSchema = db.DBSchema.get_instance()) -> JoinTree:
+                                             dbs: db.DBSchema = db.DBSchema.get_instance()
+                                             ) -> JoinOrderOptimizationResult:
     trace_logger = util.make_logger(trace)
     logger = util.make_logger(verbose or trace)
 
@@ -852,7 +857,7 @@ def _calculate_join_order_for_join_partition(query: mosp.MospQuery, join_graph: 
                                           subquery_generator=NoSubqueryGeneration(),
                                           base_table_estimates=stats.base_estimates)
         assert not join_graph.contains_free_tables()
-        return join_tree
+        return JoinOrderOptimizationResult(join_tree, None, None, False)
 
     # This has nothing to do with the actual algorithm is merely some technical code for visualizations
     if visualize:
@@ -1036,7 +1041,7 @@ def _calculate_join_order_for_join_partition(query: mosp.MospQuery, join_graph: 
     assert not join_graph.contains_free_tables()
     trace_logger("Final join ordering:", join_tree)
 
-    return join_tree
+    return JoinOrderOptimizationResult(join_tree, stats.upper_bounds, stats.upper_bounds[join_tree], True)
 
 
 def _determine_referenced_attributes(join_sequence: List[dict]) -> Dict[db.TableRef, Set[db.AttributeRef]]:
@@ -1226,24 +1231,24 @@ def optimize_query(query: mosp.MospQuery, *,
 
     predicate_map = _build_predicate_map(query)
     join_predicates = _build_join_map(query)
-    join_order = _calculate_join_order(query, dbs=dbs, predicate_map=predicate_map,
-                                       base_estimator=base_estimator, join_estimator=join_estimator,
-                                       subquery_generator=subquery_generator,
-                                       visualize=visualize, visualize_args=visualize_args,
-                                       verbose=verbose, trace=trace)
+    optimization_result = _calculate_join_order(query, dbs=dbs, predicate_map=predicate_map,
+                                                base_estimator=base_estimator, join_estimator=join_estimator,
+                                                subquery_generator=subquery_generator,
+                                                visualize=visualize, visualize_args=visualize_args,
+                                                verbose=verbose, trace=trace)
 
-    if util.contains_multiple(join_order):
+    if util.contains_multiple(optimization_result):
         # query contains a cross-product
-        mosp_datasets = [_generate_mosp_data_for_sequence(order, predicate_map=predicate_map,
+        mosp_datasets = [_generate_mosp_data_for_sequence(optimizer_run.final_order, predicate_map=predicate_map,
                                                           join_predicates=join_predicates)
-                         for order in join_order]
+                         for optimizer_run in optimization_result]
         first_set, *remaining_sets = mosp_datasets
         for partial_query in remaining_sets:
             partial_query["select"] = {"value": "*"}
             first_set["from"].append({"join": {"value": partial_query}})
         return mosp.MospQuery(first_set)
     else:
-        join_sequence = join_order.traverse_right_deep()
+        join_sequence = optimization_result.final_order.traverse_right_deep()
         mosp_data = _generate_mosp_data_for_sequence(join_sequence, predicate_map=predicate_map,
                                                      join_predicates=join_predicates)
         return mosp.MospQuery(mosp_data)
