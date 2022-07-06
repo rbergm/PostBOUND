@@ -1,6 +1,7 @@
 
 import abc
 import collections
+import operator
 from typing import Dict, List, Set, Union, Tuple
 import warnings
 
@@ -1239,9 +1240,10 @@ def optimize_query(query: mosp.MospQuery, *,
 
     if util.contains_multiple(optimization_result):
         # query contains a cross-product
+        ordered_join_trees = sorted(optimization_result, key=operator.attrgetter("final_bound"))
         mosp_datasets = [_generate_mosp_data_for_sequence(optimizer_run.final_order, predicate_map=predicate_map,
                                                           join_predicates=join_predicates)
-                         for optimizer_run in optimization_result]
+                         for optimizer_run in ordered_join_trees]
         first_set, *remaining_sets = mosp_datasets
         for partial_query in remaining_sets:
             partial_query["select"] = {"value": "*"}
