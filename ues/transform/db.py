@@ -128,13 +128,20 @@ class DBSchema:
         self.tuple_count_cache = {}
         # don't forget reset_caches when adding new caches!!
 
-        # FIXME: saving does not seem to work correctly, deactivating query cache for now
-        if os.path.isfile(".dbschema_query_cache.json") and False:
-            self.query_cache_file = open(".dbschema_query_cache.json", "r+")
+        # load query cache
+        # if we can reload previous results, we need to be a bit careful with the file handling:
+        # The query file must be opened for writing in every case in order to store the cache when the script
+        # terminates. However, if we also must read previous content. This cannot take place in r+ mode, since this
+        # would append the new data while keeping the previous data intact, leaving two JSON objects in the file
+        # (which is illegal). Therefore, the file is first opened for reading, the cache is inflated and the file is
+        # closed again.
+        if os.path.isfile(".dbschema_query_cache.json"):
+            self.query_cache_file = open(".dbschema_query_cache.json", "r")
             self.query_cache = json.load(self.query_cache_file)
+            self.query_cache_file.close()
         else:
-            self.query_cache_file = open(".dbschema_query_cache.json", "w")
             self.query_cache = {}
+        self.query_cache_file = open(".dbschema_query_cache.json", "w")
         atexit.register(self._save_query_cache)
 
     def count_tuples(self, table: TableRef, *, cache_enabled=True) -> int:
