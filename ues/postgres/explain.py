@@ -104,7 +104,8 @@ class PlanNode:
         else:
             return subqueries
 
-    def lookup_subquery(self, join_filter: str) -> mosp.MospQuery:
+    def lookup_subquery(self, join_filter: str = "") -> mosp.MospQuery:
+        join_filter = self.join_pred if not join_filter else join_filter
         subqueries = [sq.subquery for sq in self.associated_query.subqueries()]
         return _lookup_join_predicate(join_filter, subqueries)
 
