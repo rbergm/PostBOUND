@@ -24,5 +24,6 @@ def best_query_repetition(data: pd.DataFrame, group_cols: Union[Iterable[str], s
     best_repetition = data.groupby(group_cols)[performance_col].idxmin().to_frame().reset_index()
     return data.loc[best_repetition[performance_col]].reset_index(drop=True).copy()
 
+
 def reorder(data: pd.DataFrame, by_col: str = "label") -> pd.DataFrame:
     return data.sort_values(by=by_col, key=lambda _: np.argsort(natsort.index_natsorted(data[by_col])))
