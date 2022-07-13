@@ -11,7 +11,7 @@ def best_total_run(data: pd.DataFrame, group_cols: Union[Iterable[str], str], *,
 
     total_performance = data.groupby(group_cols + run_col)[performance_col].sum()
     best_runs = total_performance.loc[total_performance.groupby].reset_index().drop(columns=performance_col)
-    return data.merge(best_runs, how="inner", on=group_cols)
+    return data.merge(best_runs, how="inner", on=group_cols).copy()
 
 
 def best_query_repetition(data: pd.DataFrame, group_cols: Union[Iterable[str], str], *,
@@ -20,4 +20,4 @@ def best_query_repetition(data: pd.DataFrame, group_cols: Union[Iterable[str], s
         group_cols = [group_cols]
 
     best_repetition = data.groupby(group_cols)[performance_col].idxmin().to_frame().reset_index()
-    return data.loc[best_repetition[performance_col]].reset_index(drop=True)
+    return data.loc[best_repetition[performance_col]].reset_index(drop=True).copy()
