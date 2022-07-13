@@ -59,21 +59,21 @@ class MospQuery:
         else:
             return joins
 
-    def predicates(self, *,
-                   include_joins: bool = False) -> List[Union["MospPredicate", "CompoundMospFilterPredicate"]]:
-        if include_joins:
-            join_predicates = []
-            for join in self.joins():
-                if join.is_subquery():
-                    join_predicates.extend(join.subquery.predicates(include_joins=True))
-                join_predicates.extend(MospPredicate.break_compound(join.join_predicate))
-            return join_predicates + self.predicates(include_joins=False)
+    # def predicates(self, *,
+    #                include_joins: bool = False) -> List[Union["MospPredicate", "CompoundMospFilterPredicate"]]:
+    #     if include_joins:
+    #         join_predicates = []
+    #         for join in self.joins():
+    #             if join.is_subquery():
+    #                 join_predicates.extend(join.subquery.predicates(include_joins=True))
+    #             join_predicates.extend(MospPredicate.break_compound(join.join_predicate))
+    #         return join_predicates + self.predicates(include_joins=False)
 
-        if not self.where_clause():
-            return []
+    #     if not self.where_clause():
+    #         return []
 
-        return util.enlist(CompoundMospFilterPredicate.parse(self.where_clause(), skip_initial_level=True,
-                                                             alias_map=self._build_alias_map()))
+    #     return util.enlist(CompoundMospFilterPredicate.parse(self.where_clause(), skip_initial_level=True,
+    #                                                          alias_map=self._build_alias_map()))
 
     def subqueries(self, simplify=False) -> List["MospJoin"]:
         subqueries = [sq for sq in self.joins() if sq.is_subquery()]
@@ -263,331 +263,398 @@ def _expand_predicate_to_mosp_query(base_table: db.TableRef, mosp_data, *, count
     }
 
 
-class MospPredicate:
-    @staticmethod
-    def break_compound(mosp_data: dict, *, alias_map: dict = None) -> List["MospPredicate"]:
-        operation = util.dict_key(mosp_data)
-        if operation not in CompoundOperations:
-            return MospPredicate(mosp_data, alias_map=alias_map)
-        return util.flatten([MospPredicate.break_compound(sub_predicate, alias_map=alias_map)
-                             for sub_predicate in mosp_data[operation]])
-
-    def __init__(self, mosp_data, *, alias_map=None):
+class MospWhereClause:
+    def __init__(self, mosp_data):
         self.mosp_data = mosp_data
-        self.alias_map = alias_map
-        if not isinstance(mosp_data, dict):
-            raise TypeError("Predicate type not supported: " + str(mosp_data))
-        self.operation = util.dict_key(mosp_data)
-        if self.operation in CompoundOperations:
-            raise ValueError("Predicate may not be compound: " + str(mosp_data))
-        self.left, *self.right = util.dict_value(mosp_data)
-        if len(self.right) == 1:
-            self.right = self.right[0]
-        elif self.operation == "exists" or self.operation == "missing":
-            self.left = self.left + "".join(self.right)
-            self.right = ""
 
-    def has_literal_op(self) -> bool:
-        if self.right is None or not isinstance(self.right, str):
-            return True
-        if self.operation == "like" or self.operation == "exists" or self.operation == "missing":
-            return True
-        # FIXME: this heuristic is incomplete: a predicate like a.date (25, b.date) fails the tests
-        return False
+    def break_conjunction(self) -> list:
+        if not isinstance(self.mosp_data, dict):
+            raise ValueError("Unknown predicate format: {}".format(self.mosp_data))
+        operation = util.dict_key(self.mosp_data)
+        if operation == "or":
+            raise ValueError("Where predicate must be a conjunction, not a disjunction: {}".format(self.mosp_data))
+        elif operation == "not":
+            raise ValueError("Where predicate must be a conjunction, not a negation: {}".format(self.mosp_data))
+        elif operation != "and":
+            raise ValueError("Unknown predicate format: {}".format(self.mosp_data))
 
-    def is_join_predicate(self) -> bool:
-        return not self.has_literal_op()
+        # at this point we are sure that we indeed received a conjunction of some kind of predicates and we can continue
+        # the parsing process
+        mosp_predicates = self.mosp_data[operation]
+        parsed_predicates = []
 
-    def is_compound(self) -> bool:
-        return False
+        for predicate in mosp_predicates:
+            predicate_op = util.dict_key(predicate)
+            if predicate_op in CompoundOperations:
+                parsed_predicates.extend(self._parse_compound_predicate(predicate))
+            else:
+                parsed_predicates.append(MospBasePredicate(predicate))
 
-    def is_join_predicate_over(self, table: db.TableRef) -> bool:
-        return self.is_join_predicate() and table in self.parse_tables()
+        return parsed_predicates
 
-    def left_op(self) -> str:
-        return self.left
+    def _parse_compound_predicate(self, predicate) -> list:
+        operation = util.dict_key(predicate)
 
-    def left_table(self) -> str:
-        return self._extract_table(self.left)
+        if operation not in CompoundOperations:
+            return [MospBasePredicate[predicate]]
 
-    def left_attribute(self) -> str:
-        return self._extract_attribute(self.left)
+        if operation == "and":
+            parsed_predicates = []
+            for sub_predicate in predicate[operation]:
+                parsed_predicates.extend(self._parse_compound_predicate(sub_predicate))
+            return parsed_predicates
 
-    def parse_left_attribute(self) -> db.AttributeRef:
-        if not self.alias_map:
-            raise ValueError("Cannot parse without alias map")
-        table = self.alias_map[self.left_table()]
-        return db.AttributeRef(table, self.left_attribute())
-
-    def right_op(self) -> str:
-        if self.has_literal_op():
-            return util.dict_value(self.right) if isinstance(self.right, dict) else self.right
-        return self.right
-
-    def right_table(self) -> str:
-        return None if self.has_literal_op() else self._extract_table(self.right)
-
-    def right_attribute(self) -> str:
-        return None if self.has_literal_op() else self._extract_attribute(self.right)
-
-    def parse_right_attribute(self) -> db.AttributeRef:
-        if self.has_literal_op():
-            raise ValueError("Can only parse attributes, not literal values")
-        if not self.alias_map:
-            raise ValueError("Cannot parse without alias map")
-        table = self.alias_map[self.right_table()]
-        return db.AttributeRef(table, self.right_attribute())
-
-    def parse_attributes(self) -> Tuple[db.AttributeRef]:
-        if not self.is_join_predicate():
-            raise ValueError("Filter predicates only have a left attribute")
-        return self.parse_left_attribute(), self.parse_right_attribute()
-
-    def join_partner(self, table: db.TableRef) -> db.AttributeRef:
-        if not self.is_join_predicate():
-            raise ValueError("Filter predicates have no join partner")
-        left, right = self.parse_attributes()
-        if left.table == table:
-            return right
-        elif right.table == table:
-            return left
-        else:
-            raise ValueError("Not in predicate: {}".format(table))
-
-    def attribute_of(self, table: db.TableRef) -> db.AttributeRef:
-        left, right = self.parse_attributes()
-        if left.table == table:
-            return left
-        elif right.table == table:
-            return right
-        else:
-            raise ValueError("Not in predicate: {}".format(table))
-
-    def operands(self) -> Tuple[str, Union[str, Any]]:
-        return (self.left, self.right)
-
-    def tables(self) -> Tuple[str, Union[str, Any]]:
-        return (self.left_table(), self.right_table())
-
-    def parse_tables(self) -> Union[db.TableRef, Tuple[db.TableRef, db.TableRef]]:
-        left_table = self.parse_left_attribute().table
-        if self.is_join_predicate():
-            right_table = self.parse_right_attribute().table
-            return left_table, right_table
-        return left_table
-
-    def attributes(self) -> Tuple[str, Union[str, Any]]:
-        return (self.left_attribute(), self.right_attribute())
-
-    def pretty_operation(self) -> str:
-        return _OperationPrinting.get(self.operation, self.operation)
-
-    def to_mosp(self):
-        if self.operation == "between":
-            return {"between": [self.left, *self.right]}
-        elif self.operation == "exists" or self.operation == "missing":
-            return {self.operation: self.left}
-        return {self.operation: [self.left, self.right]}
-
-    def estimate_result_rows(self, *, sampling: bool = False, sampling_pct: int = 25,
-                             dbs: db.DBSchema = db.DBSchema.get_instance()) -> int:
-        if self.is_join_predicate():
-            raise ValueError("Can only estimate filters, not joins")
-
-        base_table = self.parse_left_attribute().table
-        mosp_query = _expand_predicate_to_mosp_query(base_table, self.mosp_data, count_query=sampling)
-        formatted_query = mosp.format(mosp_query)
-
-        # the trick to support sampling is incredibly dirty but sadly mo_sql_parsing does not support formatting with
-        # tablesample, yet
-        if sampling:
-            table_sampled = f"FROM {base_table.full_name} AS {base_table.alias} TABLESAMPLE bernoulli ({sampling_pct})"
-            original_from = f"FROM {base_table.full_name} AS {base_table.alias}"
-            formatted_query = formatted_query.replace(original_from, table_sampled)
-            result = dbs.execute_query(formatted_query)
-            return result
-
-        return dbs.pg_estimate(formatted_query)
-
-    def rename_table(self, from_table: db.TableRef, to_table: db.TableRef, *,
-                     prefix_attribute: bool = False) -> "MospPredicate":
-        updated_mosp_data = dict(self.mosp_data)
-        renamed_predicate = MospPredicate(updated_mosp_data, alias_map=self.alias_map)
-        renaming_performed = False
-
-        left_attribute = self.parse_left_attribute()
-        if left_attribute.table == from_table:
-            attribute_name = (f"{from_table.alias}_{left_attribute.attribute}" if prefix_attribute
-                              else left_attribute.attribute)
-            renamed_attribute = db.AttributeRef(to_table, attribute_name)
-            renamed_predicate.left = str(renamed_attribute)
-            renaming_performed = True
-
-        if self.is_join_predicate():
-            right_attribute = self.parse_right_attribute()
-            if right_attribute.table == from_table:
-                attribute_name = (f"{from_table.alias}_{right_attribute.attribute}" if prefix_attribute
-                                  else right_attribute.attribute)
-                renamed_attribute = db.AttributeRef(to_table, attribute_name)
-                renamed_predicate.right = str(renamed_attribute)
-                renaming_performed = True
-
-        renamed_predicate.mosp_data = renamed_predicate.to_mosp()
-
-        if renaming_performed:
-            self.alias_map[to_table.alias] = to_table
-
-        return renamed_predicate
-
-    def _extract_table(self, op: str) -> str:
-        return op.split(".")[0]
-
-    def _extract_attribute(self, op: str) -> str:
-        return ".".join(op.split(".")[1:])
-
-    def __hash__(self) -> int:
-        return hash(str(self))
-
-    def __eq__(self, other: object) -> bool:
-        if not isinstance(other, MospPredicate):
-            return False
-        return str(self) == str(other)
-
-    def __repr__(self) -> str:
-        return str(self)
-
-    def __str__(self) -> str:
-        if self.operation == "exists":
-            return self.left + " IS NOT NULL"
-        elif self.operation == "missing":
-            return self.left + " IS NULL"
-
-        op_str = _OperationPrinting.get(self.operation, self.operation)
-        right = self.right_op()
-
-        right_is_str_value = not isinstance(right, list) and not util.represents_number(right)
-        if self.has_literal_op() and right_is_str_value:
-            right = f"'{right}'"
-
-        return f"{self.left} {op_str} {right}"
+        return [MospCompoundPredicate.parse(predicate)]
 
 
-class CompoundMospFilterPredicate:
+class MospCompoundPredicate:
     @staticmethod
-    def is_compound_predicate(mosp_data) -> bool:
-        operation = util.dict_key(mosp_data)
-        return operation in CompoundOperations
-
-    @staticmethod
-    def parse(mosp_data, *, skip_initial_level: bool = False,
-              alias_map: dict = None) -> Union["MospPredicate", "CompoundMospFilterPredicate"]:
-        operation = util.dict_key(mosp_data)
-        if not CompoundMospFilterPredicate.is_compound_predicate(mosp_data):
-            return MospPredicate(mosp_data, alias_map=alias_map)
-        parsed_children = [CompoundMospFilterPredicate.parse(child, alias_map=alias_map)
-                           for child in mosp_data[operation]]
-        if skip_initial_level:
-            return parsed_children
-        return CompoundMospFilterPredicate(parsed_children, operation)
-
-    @staticmethod
-    def build_and_predicate(children: List[Union["MospPredicate", "CompoundMospFilterPredicate"]]
-                            ) -> Union["MospPredicate", "CompoundMospFilterPredicate"]:
-        if len(children) == 1:
-            return children[0]
-
-        return CompoundMospFilterPredicate(children, "and")
-
-    def __init__(self, children: List[Union["MospPredicate", "CompoundMospFilterPredicate"]], operation: str):
-        if not children:
-            raise ValueError("Empty child list")
-        for child in children:
-            if isinstance(child, MospPredicate) and child.is_join_predicate():
-                raise ValueError("CompoundFILTERPredicate can only be built over filters, not join '{}'".format(child))
-        self.children = children
-        self.operation = operation
+    def parse(mosp_data):
+        pass
 
     def is_compound(self) -> bool:
         return True
 
-    def is_join_predicate(self) -> bool:
+    def is_base(self) -> bool:
         return False
 
-    def is_and_compound(self) -> bool:
-        return self.operation == "and"
 
-    def parse_left_attribute(self) -> db.AttributeRef:
-        """Returns the attribute which is being filtered.
+class MospBasePredicate:
+    def __init__(self, mosp_data):
+        self.mosp_data = mosp_data
 
-        This does not work, if the compound predicate is specified over multiple attributes (e.g. as in
-        `R.a = 1 AND R.b = 2`). If such a predicate is given, a `ValueError` will be raised.
+    def is_compound(self) -> bool:
+        return False
 
-        In that case, this most likely hints to some wrong assumptions by the client about the query structure.
-        A fix is necessary on the client side.
+    def is_base(self) -> bool:
+        return True
 
-        See `collect_left_attributes` to query for all attributes in the predicate.
-        """
-        left_attributes = set(child.parse_left_attribute() for child in self.children)
-        if len(left_attributes) != 1:
-            raise ValueError("Left is undefined for compound predicates over multiple attributes.")
-        return list(left_attributes)[0]
 
-    def collect_left_attributes(self) -> Set[db.AttributeRef]:
-        """In contrast to `parse_left_attribute` this method returns all attributes that are being filtered."""
-        attributes = set()
-        for child in self.children:
-            if child.is_compound():
-                attributes |= child.collect_left_attributes()
-            else:
-                attributes.add(child.parse_left_attribute())
-        return attributes
+# class MospPredicate:
+#     @staticmethod
+#     def break_compound(mosp_data: dict, *, alias_map: dict = None) -> List["MospPredicate"]:
+#         operation = util.dict_key(mosp_data)
+#         if operation not in CompoundOperations:
+#             return MospPredicate(mosp_data, alias_map=alias_map)
+#         return util.flatten([MospPredicate.break_compound(sub_predicate, alias_map=alias_map)
+#                              for sub_predicate in mosp_data[operation]])
 
-    def parse_tables(self) -> List[db.TableRef]:
-        return util.flatten([child.parse_tables() for child in self.children], recursive=True)
+#     def __init__(self, mosp_data, *, alias_map=None):
+#         self.mosp_data = mosp_data
+#         self.alias_map = alias_map
+#         if not isinstance(mosp_data, dict):
+#             raise TypeError("Predicate type not supported: " + str(mosp_data))
+#         self.operation = util.dict_key(mosp_data)
+#         if self.operation in CompoundOperations:
+#             raise ValueError("Predicate may not be compound: " + str(mosp_data))
+#         self.left, *self.right = util.dict_value(mosp_data)
+#         if len(self.right) == 1:
+#             self.right = self.right[0]
+#         elif self.operation == "exists" or self.operation == "missing":
+#             self.left = self.left + "".join(self.right)
+#             self.right = ""
 
-    def rename_table(self, from_table: db.TableRef, to_table: db.TableRef, *,
-                     prefix_attribute: bool = False) -> "CompoundMospFilterPredicate":
-        renamed_children = [child.rename_table(from_table, to_table, prefix_attribute=prefix_attribute) for child
-                            in self.children]
-        return CompoundMospFilterPredicate(renamed_children, self.operation)
+#     def has_literal_op(self) -> bool:
+#         if self.right is None or not isinstance(self.right, str):
+#             return True
+#         if self.operation == "like" or self.operation == "exists" or self.operation == "missing":
+#             return True
+#         # FIXME: this heuristic is incomplete: a predicate like a.date (25, b.date) fails the tests
+#         return False
 
-    def base_table(self) -> db.TableRef:
-        # we know this is not a join so there may only be one base table
-        return self.children[0].parse_left_attribute().table
+#     def is_join_predicate(self) -> bool:
+#         return not self.has_literal_op()
 
-    def to_mosp(self):
-        return {self.operation: [child.to_mosp() for child in self.children]}
+#     def is_compound(self) -> bool:
+#         return False
 
-    def estimate_result_rows(self, *, sampling: bool = False, sampling_pct: int = 25,
-                             dbs: db.DBSchema = db.DBSchema.get_instance()) -> int:
-        base_table = self.base_table()
-        mosp_query = _expand_predicate_to_mosp_query(base_table, self.to_mosp(), count_query=sampling)
-        formatted_query = mosp.format(mosp_query)
+#     def is_join_predicate_over(self, table: db.TableRef) -> bool:
+#         return self.is_join_predicate() and table in self.parse_tables()
 
-        # the trick to support sampling is incredibly dirty but sadly mo_sql_parsing does not support formatting with
-        # tablesample, yet
-        if sampling:
-            table_sampled = f"FROM {base_table.full_name} AS {base_table.alias} TABLESAMPLE bernoulli ({sampling_pct})"
-            original_from = f"FROM {base_table.full_name} AS {base_table.alias}"
-            formatted_query = formatted_query.replace(original_from, table_sampled)
-            result = dbs.execute_query(formatted_query)
-            return result
+#     def left_op(self) -> str:
+#         return self.left
 
-        return dbs.pg_estimate(formatted_query)
+#     def left_table(self) -> str:
+#         return self._extract_table(self.left)
 
-    def __hash__(self) -> int:
-        return hash(str(self))
+#     def left_attribute(self) -> str:
+#         return self._extract_attribute(self.left)
 
-    def __eq__(self, other: object) -> bool:
-        if not isinstance(other, CompoundMospFilterPredicate):
-            return str(self) == str(other)
+#     def parse_left_attribute(self) -> db.AttributeRef:
+#         if not self.alias_map:
+#             raise ValueError("Cannot parse without alias map")
+#         table = self.alias_map[self.left_table()]
+#         return db.AttributeRef(table, self.left_attribute())
 
-    def __repr__(self):
-        return str(self)
+#     def right_op(self) -> str:
+#         if self.has_literal_op():
+#             return util.dict_value(self.right) if isinstance(self.right, dict) else self.right
+#         return self.right
 
-    def __str__(self):
-        op_str = _OperationPrinting.get(self.operation, self.operation)
-        return f" {op_str} ".join(str(child) for child in self.children)
+#     def right_table(self) -> str:
+#         return None if self.has_literal_op() else self._extract_table(self.right)
+
+#     def right_attribute(self) -> str:
+#         return None if self.has_literal_op() else self._extract_attribute(self.right)
+
+#     def parse_right_attribute(self) -> db.AttributeRef:
+#         if self.has_literal_op():
+#             raise ValueError("Can only parse attributes, not literal values")
+#         if not self.alias_map:
+#             raise ValueError("Cannot parse without alias map")
+#         table = self.alias_map[self.right_table()]
+#         return db.AttributeRef(table, self.right_attribute())
+
+#     def parse_attributes(self) -> Tuple[db.AttributeRef]:
+#         if not self.is_join_predicate():
+#             raise ValueError("Filter predicates only have a left attribute")
+#         return self.parse_left_attribute(), self.parse_right_attribute()
+
+#     def join_partner(self, table: db.TableRef) -> db.AttributeRef:
+#         if not self.is_join_predicate():
+#             raise ValueError("Filter predicates have no join partner")
+#         left, right = self.parse_attributes()
+#         if left.table == table:
+#             return right
+#         elif right.table == table:
+#             return left
+#         else:
+#             raise ValueError("Not in predicate: {}".format(table))
+
+#     def attribute_of(self, table: db.TableRef) -> db.AttributeRef:
+#         left, right = self.parse_attributes()
+#         if left.table == table:
+#             return left
+#         elif right.table == table:
+#             return right
+#         else:
+#             raise ValueError("Not in predicate: {}".format(table))
+
+#     def operands(self) -> Tuple[str, Union[str, Any]]:
+#         return (self.left, self.right)
+
+#     def tables(self) -> Tuple[str, Union[str, Any]]:
+#         return (self.left_table(), self.right_table())
+
+#     def parse_tables(self) -> Union[db.TableRef, Tuple[db.TableRef, db.TableRef]]:
+#         left_table = self.parse_left_attribute().table
+#         if self.is_join_predicate():
+#             right_table = self.parse_right_attribute().table
+#             return left_table, right_table
+#         return left_table
+
+#     def attributes(self) -> Tuple[str, Union[str, Any]]:
+#         return (self.left_attribute(), self.right_attribute())
+
+#     def pretty_operation(self) -> str:
+#         return _OperationPrinting.get(self.operation, self.operation)
+
+#     def to_mosp(self):
+#         if self.operation == "between":
+#             return {"between": [self.left, *self.right]}
+#         elif self.operation == "exists" or self.operation == "missing":
+#             return {self.operation: self.left}
+#         return {self.operation: [self.left, self.right]}
+
+#     def estimate_result_rows(self, *, sampling: bool = False, sampling_pct: int = 25,
+#                              dbs: db.DBSchema = db.DBSchema.get_instance()) -> int:
+#         if self.is_join_predicate():
+#             raise ValueError("Can only estimate filters, not joins")
+
+#         base_table = self.parse_left_attribute().table
+#         mosp_query = _expand_predicate_to_mosp_query(base_table, self.mosp_data, count_query=sampling)
+#         formatted_query = mosp.format(mosp_query)
+
+#         # the trick to support sampling is incredibly dirty but sadly mo_sql_parsing does not support formatting with
+#         # tablesample, yet
+#         if sampling:
+#             table_sampled = f"FROM {base_table.full_name} AS {base_table.alias} TABLESAMPLE bernoulli ({sampling_pct})"
+#             original_from = f"FROM {base_table.full_name} AS {base_table.alias}"
+#             formatted_query = formatted_query.replace(original_from, table_sampled)
+#             result = dbs.execute_query(formatted_query)
+#             return result
+
+#         return dbs.pg_estimate(formatted_query)
+
+#     def rename_table(self, from_table: db.TableRef, to_table: db.TableRef, *,
+#                      prefix_attribute: bool = False) -> "MospPredicate":
+#         updated_mosp_data = dict(self.mosp_data)
+#         renamed_predicate = MospPredicate(updated_mosp_data, alias_map=self.alias_map)
+#         renaming_performed = False
+
+#         left_attribute = self.parse_left_attribute()
+#         if left_attribute.table == from_table:
+#             attribute_name = (f"{from_table.alias}_{left_attribute.attribute}" if prefix_attribute
+#                               else left_attribute.attribute)
+#             renamed_attribute = db.AttributeRef(to_table, attribute_name)
+#             renamed_predicate.left = str(renamed_attribute)
+#             renaming_performed = True
+
+#         if self.is_join_predicate():
+#             right_attribute = self.parse_right_attribute()
+#             if right_attribute.table == from_table:
+#                 attribute_name = (f"{from_table.alias}_{right_attribute.attribute}" if prefix_attribute
+#                                   else right_attribute.attribute)
+#                 renamed_attribute = db.AttributeRef(to_table, attribute_name)
+#                 renamed_predicate.right = str(renamed_attribute)
+#                 renaming_performed = True
+
+#         renamed_predicate.mosp_data = renamed_predicate.to_mosp()
+
+#         if renaming_performed:
+#             self.alias_map[to_table.alias] = to_table
+
+#         return renamed_predicate
+
+#     def _extract_table(self, op: str) -> str:
+#         return op.split(".")[0]
+
+#     def _extract_attribute(self, op: str) -> str:
+#         return ".".join(op.split(".")[1:])
+
+#     def __hash__(self) -> int:
+#         return hash(str(self))
+
+#     def __eq__(self, other: object) -> bool:
+#         if not isinstance(other, MospPredicate):
+#             return False
+#         return str(self) == str(other)
+
+#     def __repr__(self) -> str:
+#         return str(self)
+
+#     def __str__(self) -> str:
+#         if self.operation == "exists":
+#             return self.left + " IS NOT NULL"
+#         elif self.operation == "missing":
+#             return self.left + " IS NULL"
+
+#         op_str = _OperationPrinting.get(self.operation, self.operation)
+#         right = self.right_op()
+
+#         right_is_str_value = not isinstance(right, list) and not util.represents_number(right)
+#         if self.has_literal_op() and right_is_str_value:
+#             right = f"'{right}'"
+
+#         return f"{self.left} {op_str} {right}"
+
+
+# class CompoundMospFilterPredicate:
+#     @staticmethod
+#     def is_compound_predicate(mosp_data) -> bool:
+#         operation = util.dict_key(mosp_data)
+#         return operation in CompoundOperations
+
+#     @staticmethod
+#     def parse(mosp_data, *, skip_initial_level: bool = False,
+#               alias_map: dict = None) -> Union["MospPredicate", "CompoundMospFilterPredicate"]:
+#         operation = util.dict_key(mosp_data)
+#         if not CompoundMospFilterPredicate.is_compound_predicate(mosp_data):
+#             return MospPredicate(mosp_data, alias_map=alias_map)
+#         parsed_children = [CompoundMospFilterPredicate.parse(child, alias_map=alias_map)
+#                            for child in mosp_data[operation]]
+#         if skip_initial_level:
+#             return parsed_children
+#         return CompoundMospFilterPredicate(parsed_children, operation)
+
+#     @staticmethod
+#     def build_and_predicate(children: List[Union["MospPredicate", "CompoundMospFilterPredicate"]]
+#                             ) -> Union["MospPredicate", "CompoundMospFilterPredicate"]:
+#         if len(children) == 1:
+#             return children[0]
+
+#         return CompoundMospFilterPredicate(children, "and")
+
+#     def __init__(self, children: List[Union["MospPredicate", "CompoundMospFilterPredicate"]], operation: str):
+#         if not children:
+#             raise ValueError("Empty child list")
+#         for child in children:
+#             if isinstance(child, MospPredicate) and child.is_join_predicate():
+#                 raise ValueError("CompoundFILTERPredicate can only be built over filters, not join '{}'".format(child))
+#         self.children = children
+#         self.operation = operation
+
+#     def is_compound(self) -> bool:
+#         return True
+
+#     def is_join_predicate(self) -> bool:
+#         return False
+
+#     def is_and_compound(self) -> bool:
+#         return self.operation == "and"
+
+#     def parse_left_attribute(self) -> db.AttributeRef:
+#         """Returns the attribute which is being filtered.
+
+#         This does not work, if the compound predicate is specified over multiple attributes (e.g. as in
+#         `R.a = 1 AND R.b = 2`). If such a predicate is given, a `ValueError` will be raised.
+
+#         In that case, this most likely hints to some wrong assumptions by the client about the query structure.
+#         A fix is necessary on the client side.
+
+#         See `collect_left_attributes` to query for all attributes in the predicate.
+#         """
+#         left_attributes = set(child.parse_left_attribute() for child in self.children)
+#         if len(left_attributes) != 1:
+#             raise ValueError("Left is undefined for compound predicates over multiple attributes.")
+#         return list(left_attributes)[0]
+
+#     def collect_left_attributes(self) -> Set[db.AttributeRef]:
+#         """In contrast to `parse_left_attribute` this method returns all attributes that are being filtered."""
+#         attributes = set()
+#         for child in self.children:
+#             if child.is_compound():
+#                 attributes |= child.collect_left_attributes()
+#             else:
+#                 attributes.add(child.parse_left_attribute())
+#         return attributes
+
+#     def parse_tables(self) -> List[db.TableRef]:
+#         return util.flatten([child.parse_tables() for child in self.children], recursive=True)
+
+#     def rename_table(self, from_table: db.TableRef, to_table: db.TableRef, *,
+#                      prefix_attribute: bool = False) -> "CompoundMospFilterPredicate":
+#         renamed_children = [child.rename_table(from_table, to_table, prefix_attribute=prefix_attribute) for child
+#                             in self.children]
+#         return CompoundMospFilterPredicate(renamed_children, self.operation)
+
+#     def base_table(self) -> db.TableRef:
+#         # we know this is not a join so there may only be one base table
+#         return self.children[0].parse_left_attribute().table
+
+#     def to_mosp(self):
+#         return {self.operation: [child.to_mosp() for child in self.children]}
+
+#     def estimate_result_rows(self, *, sampling: bool = False, sampling_pct: int = 25,
+#                              dbs: db.DBSchema = db.DBSchema.get_instance()) -> int:
+#         base_table = self.base_table()
+#         mosp_query = _expand_predicate_to_mosp_query(base_table, self.to_mosp(), count_query=sampling)
+#         formatted_query = mosp.format(mosp_query)
+
+#         # the trick to support sampling is incredibly dirty but sadly mo_sql_parsing does not support formatting with
+#         # tablesample, yet
+#         if sampling:
+#             table_sampled = f"FROM {base_table.full_name} AS {base_table.alias} TABLESAMPLE bernoulli ({sampling_pct})"
+#             original_from = f"FROM {base_table.full_name} AS {base_table.alias}"
+#             formatted_query = formatted_query.replace(original_from, table_sampled)
+#             result = dbs.execute_query(formatted_query)
+#             return result
+
+#         return dbs.pg_estimate(formatted_query)
+
+#     def __hash__(self) -> int:
+#         return hash(str(self))
+
+#     def __eq__(self, other: object) -> bool:
+#         if not isinstance(other, CompoundMospFilterPredicate):
+#             return str(self) == str(other)
+
+#     def __repr__(self):
+#         return str(self)
+
+#     def __str__(self):
+#         op_str = _OperationPrinting.get(self.operation, self.operation)
+#         return f" {op_str} ".join(str(child) for child in self.children)
 
 
 def flatten_and_predicate(predicates: List[Union[MospPredicate, CompoundMospFilterPredicate]]
