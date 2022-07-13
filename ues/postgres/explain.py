@@ -164,8 +164,8 @@ class PlanNode:
         int
             Number of tuples the operator received. For Index Scans, the size of the base table.
         """
-        trigger_idx_fallback = fallback_live or (self.node.is_idxscan() and fallback_live_idxscan)
-        trigger_seq_fallback = fallback_live or (self.node == QueryNode.SEQ_SCAN and fallback_live_seqscan)
+        trigger_idx_fallback = self.node.is_idxscan() and (fallback_live and fallback_live_idxscan)
+        trigger_seq_fallback = self.node == QueryNode.SEQ_SCAN and (fallback_live or fallback_live_seqscan)
         if trigger_idx_fallback or trigger_seq_fallback:
             dbschema = db.DBSchema.get_instance()
             return dbschema.count_tuples(db.TableRef(self.source_table))
