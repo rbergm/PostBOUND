@@ -224,7 +224,7 @@ class PlanNode:
                                                filter_rows, out_rows,
                                                runtime])
 
-        return "\n".join([node_label, sep, join_cond, filter_cond, sep, in_rows, filter_rows, out_rows, sep, runtime])
+        print("\n".join([node_label, sep, join_cond, filter_cond, sep, in_rows, filter_rows, out_rows, sep, runtime]))
 
     def pretty_print(self, *, include_filter=False, indent=0):
         indent_str = " " * indent
@@ -253,7 +253,10 @@ class PlanNode:
         for child in self.children:
             child_labels.append(child.pretty_print(include_filter=include_filter, indent=indent+2))
         child_content = "".join(child_labels)
-        return node_label + child_content
+        if indent:
+            return node_label + child_content
+        else:
+            print(node_label + child_content)
 
     def _traverse_leaf_join(self, *, curr_depth=0) -> Tuple["PlanNode", int]:
         if not self.left.is_join() and not self.right.is_join():
