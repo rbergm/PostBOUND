@@ -3,7 +3,7 @@
 
 # Setup ====
 library(readr)
-library(dplyr)
+library(dplyr, warn.conflicts = FALSE)
 library(tidyr)
 library(stringr)
 
@@ -12,7 +12,11 @@ library(viridis)
 library(scales)
 
 # Data loading ====
-df_full <- read_csv("workloads/job-ues-results-idxnlj.csv")
+df_base <- read_csv("workloads/job-ues-results-rebuild.csv")
+df_base$workload <- "ues"
+df_idxnlj <- read_csv("workloads/job-ues-results-idxnlj-fk-first.csv")
+df_idxnlj$workload <- "ues_idxnlj"
+df_full <- bind_rows(df_base, df_idxnlj) %>% rename(rt_total = query_rt_total)
 
 # # Select the fastest runs as representatives for each workload
 # best_runs <- df_full %>%
@@ -46,12 +50,14 @@ df_queries <- inner_join(
 ) %>% mutate(runtime_diff = rt_orig - rt_hinted,
              n_subqueries = str_count(query, regex("select ", ignore_case = TRUE)) - 1)
 
-df_features <- read_csv("workloads/job-ues-eval-idxnlj-queryopt.csv")
+df_features <- read_csv("workloads/job-ues-eval-idxnlj.csv") %>% filter(indexed == "foreign_key", nlj_scope == "inner")
 df_features <- full_join(df_features,
                          df_features %>%
                            group_by(label) %>%
                            tally(name = "n_subqueries"),
                          on = "label")
+df_features$query_runtime_diff <- df_features$rt_total_ues - df_features$rt_total_idxnlj
+df_features$subquery_runtime_diff <- df_features$subquery_duration_ues - df_features$subquery_duration_idxnlj
 
 # Workload overview ====
 
@@ -86,8 +92,16 @@ ggplot(df_plt, aes(x = n_subqueries, y = runtime_diff, color = faster_setting)) 
 # Subquery analysis ====
 df_plt <- df_features %>% mutate(n_subqueries = as.factor(n_subqueries))
 
+# Influence of subquery speedup on the total query speedup
+ggplot(df_plt, aes(x = query_runtime_diff, y = subquery_runtime_diff)) +
+  geom_smooth(method = lm, se = FALSE, color = "grey") +
+  geom_point() +
+  labs(title = "Correlation between subquery speedup and total query speedup",
+       x = "Speedup of IdxNLJ query [seconds]", y = "Speedup within IdxNLJ subquery [seconds]") +
+  theme_bw()
+
 # Runtime differences depending on the number of outgoing tuples
-ggplot(df_plt, aes(x = subquery_rows, y = runtime_diff, color = n_subqueries)) +
+ggplot(df_plt, aes(x = subquery_outgoing_tuples, y = query_runtime_diff, color = n_subqueries)) +
   geom_point() + 
   labs(x = "Number of tuples emitted from the subquery", y = "IdxNLJ speedup [seconds]",
        color = "Number of subqueries\nin the query") +
@@ -131,13 +145,9 @@ ggplot(df_plt, aes(x = subquery_pk_rows, y = runtime_diff, color = n_subqueries)
 df_2sqs <- df_features %>%
   semi_join(df_queries %>% filter(n_subqueries == 2), by = "label") %>%
   group_by(label) %>%
-  summarise(runtime_diff = unique(runtime_diff),
-           rows_max = max(subquery_rows),
-           rows_min = min(subquery_rows),
-           pk_rows_max = max(subquery_pk_rows),
-           pk_rows_min = min(subquery_pk_rows),
-           fk_rows_max = max(subquery_fk_rows),
-           fk_rows_min = min(subquery_fk_rows))
+  summarise(runtime_diff = unique(query_runtime_diff),
+           rows_max = max(subquery_outgoing_tuples),
+           rows_min = min(subquery_outgoing_tuples))
 
 # Influence of subquery cardinality
 ggplot(df_2sqs, aes(x = rows_min, y = rows_max, color = runtime_diff)) +
@@ -209,14 +219,17 @@ ggplot(df_plt, aes(x = subquery_pk_rows, y = subquery_fk_rows, color = runtime_d
   scale_y_log10(breaks = 10^(1:7)) +
   labs(title = "Influence of the primary key / foreign key cardinality",
        subtitle = paste("Shown are only queries with just one subquery",
-                        "0 FK/PK situations are removed",
+                        "Cases with 0 FK/PK rows are removed",
                         sep = "\n"),
        x = "Primary key cardinality", y = "Foreign key cardinality",
        color = "Hint speedup") +
   theme_bw() +
   scale_color_viridis(option = "viridis")
 
-ggplot(df_plt, aes(x = 1:nrow(df_plt), y = runtime_diff,
+df_plt <- df_1sq %>%
+  mutate(faster_setting = ifelse(query_runtime_diff > 0, "UES w/ IdxNLJ", "Pure UES")) %>%
+  arrange(desc(query_runtime_diff))
+ggplot(df_plt, aes(x = 1:nrow(df_plt), y = query_runtime_diff,
                    color = faster_setting, fill = faster_setting)) +
   geom_line() +
   geom_area() +
