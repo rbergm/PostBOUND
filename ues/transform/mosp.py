@@ -1,4 +1,6 @@
 
+import abc
+from ast import alias
 import re
 import warnings
 from typing import Any, List, Dict, Set, Union, Tuple
@@ -58,6 +60,9 @@ class MospQuery:
             return joins[0]
         else:
             return joins
+
+    def parse_where_clause(self):
+        return MospWhereClause(self.where_clause(), alias_map=self._build_alias_map())
 
     # def predicates(self, *,
     #                include_joins: bool = False) -> List[Union["MospPredicate", "CompoundMospFilterPredicate"]]:
@@ -264,39 +269,42 @@ def _expand_predicate_to_mosp_query(base_table: db.TableRef, mosp_data, *, count
 
 
 class MospWhereClause:
-    def __init__(self, mosp_data):
+    def __init__(self, mosp_data, *, alias_map: dict = None):
         self.mosp_data = mosp_data
+        self.alias_map = alias_map
 
     def break_conjunction(self) -> list:
         if not isinstance(self.mosp_data, dict):
             raise ValueError("Unknown predicate format: {}".format(self.mosp_data))
         operation = util.dict_key(self.mosp_data)
-        if operation == "or":
-            raise ValueError("Where predicate must be a conjunction, not a disjunction: {}".format(self.mosp_data))
-        elif operation == "not":
-            raise ValueError("Where predicate must be a conjunction, not a negation: {}".format(self.mosp_data))
+        if operation == "or" or operation == "not":
+            parsed = MospCompoundPredicate.parse(self.mosp_data, alias_map=self.alias_map)
+            if not parsed.is_filter():
+                raise ValueError("Where clause cannot contain disjunctions or negations of "
+                                 "join predicates: {}".format(self.mosp_data))
+            return [parsed]
         elif operation != "and":
-            raise ValueError("Unknown predicate format: {}".format(self.mosp_data))
+            return [MospBasePredicate(self.mosp_data, alias_map=self.alias_map)]
 
-        # at this point we are sure that we indeed received a conjunction of some kind of predicates and we can continue
-        # the parsing process
+        # at this point we are sure that we indeed received a conjunction of some kind of predicates and we can
+        # continue the parsing process
         mosp_predicates = self.mosp_data[operation]
         parsed_predicates = []
 
         for predicate in mosp_predicates:
             predicate_op = util.dict_key(predicate)
-            if predicate_op in CompoundOperations:
+            if AbstractMospPredicate.is_compound_operation(predicate_op):
                 parsed_predicates.extend(self._parse_compound_predicate(predicate))
             else:
-                parsed_predicates.append(MospBasePredicate(predicate))
+                parsed_predicates.append(MospBasePredicate(predicate, alias_map=self.alias_map))
 
         return parsed_predicates
 
     def _parse_compound_predicate(self, predicate) -> list:
         operation = util.dict_key(predicate)
 
-        if operation not in CompoundOperations:
-            return [MospBasePredicate[predicate]]
+        if not AbstractMospPredicate.is_compound_operation(operation):
+            return [MospBasePredicate(predicate, alias_map=self.alias_map)]
 
         if operation == "and":
             parsed_predicates = []
@@ -304,30 +312,142 @@ class MospWhereClause:
                 parsed_predicates.extend(self._parse_compound_predicate(sub_predicate))
             return parsed_predicates
 
-        return [MospCompoundPredicate.parse(predicate)]
+        return [MospCompoundPredicate.parse(predicate, alias_map=self.alias_map)]
 
 
-class MospCompoundPredicate:
+# TODO: in the end, this should be renamed to MospPredicate. Currently we still need the Abstract prefix to ensure
+# our wrecking-ball refactoring actually works and does not reuse this class accidentally
+class AbstractMospPredicate(abc.ABC):
     @staticmethod
-    def parse(mosp_data):
-        pass
+    def is_compound_operation(operation: str) -> bool:
+        return operation in CompoundOperations
+
+    @abc.abstractmethod
+    def is_compound(self) -> bool:
+        return NotImplemented
+
+    def is_base(self) -> bool:
+        return not self.is_compound()
+
+    @abc.abstractmethod
+    def is_join(self) -> bool:
+        return NotImplemented
+
+    def is_filter(self) -> bool:
+        return not self.is_join()
+
+
+class MospCompoundPredicate(AbstractMospPredicate):
+    @staticmethod
+    def parse(mosp_data, *, alias_map: dict = None):
+        operation = util.dict_key(mosp_data)
+        if not AbstractMospPredicate.is_compound_operation(operation):
+            return MospBasePredicate(mosp_data, alias_map=alias_map)
+
+        if operation == "not":
+            actual_predicate = MospCompoundPredicate.parse(mosp_data[operation], alias_map=alias_map)
+            return MospCompoundPredicate(operation, actual_predicate, alias_map=alias_map)
+        elif operation == "or":
+            child_predicates = [MospCompoundPredicate.parse(child, alias_map=alias_map)
+                                for child in mosp_data[operation]]
+            return MospCompoundPredicate(operation, child_predicates, alias_map=alias_map)
+        else:
+            raise ValueError("Unknown compound predicate: {}".format(mosp_data))
+
+    def __init__(self, operator, children, *, alias_map: dict = None):
+        self.alias_map = alias_map
+
+        self.operation = operator
+        self.children = util.enlist(children)
+        self.negated = operator == "not"
 
     def is_compound(self) -> bool:
         return True
 
-    def is_base(self) -> bool:
-        return False
+    def is_join(self) -> bool:
+        return any(child.is_join() for child in self.children)
+
+    def __repr__(self):
+        return str(self)
+
+    def __str__(self):
+        if self.negated:
+            return "NOT (" + str(self.children[0]) + ")"
+        op_str = _OperationPrinting.get(self.operation, self.operation)
+        return f" {op_str} ".join(str(child) for child in self.children)
 
 
-class MospBasePredicate:
-    def __init__(self, mosp_data):
+class MospBasePredicate(AbstractMospPredicate):
+    def __init__(self, mosp_data, *, alias_map: dict = None):
         self.mosp_data = mosp_data
+        self.alias_map = alias_map
+
+        if not isinstance(mosp_data, dict):
+            raise ValueError("Unknown predicate type: {}".format(mosp_data))
+        self.operation = util.dict_key(mosp_data)
+
+        if AbstractMospPredicate.is_compound_operation(self.operation):
+            raise ValueError("Predicate may not be compound: {}".format(mosp_data))
+
+        if self.operation == "exists" or self.operation == "missing":
+            # exists and missing have no right-hand side, we need to improvise
+            self.mosp_left = mosp_data[self.operation]
+            self.mosp_right = None
+        else:
+            self.mosp_left, *self.mosp_right = mosp_data[self.operation]
+            self.mosp_right = util.simplify(self.mosp_right)
+
+        if alias_map:
+            # if we received an alias map, we can actually parse the attributes
+            left_table_alias, left_attribute = self._break_attribute(self.mosp_left)
+            self.left_attribute = db.AttributeRef(alias_map[left_table_alias], left_attribute)
+            if self._right_is_attribute():
+                right_table_alias, right_attribute = self._break_attribute(self.mosp_right)
+                self.right_attribute = db.AttributeRef(alias_map[right_table_alias], right_attribute)
+            else:
+                self.right_attribute = None
+        else:
+            warnings.warn("No alias map!")
+            self.left_attribute, self.right_attribute = None
 
     def is_compound(self) -> bool:
         return False
 
-    def is_base(self) -> bool:
-        return True
+    def is_join(self) -> bool:
+        return isinstance(self.right_attribute, db.AttributeRef)
+
+    def _break_attribute(self, raw_attribute: str) -> Tuple[str, str]:
+        return raw_attribute.split(".")
+
+    def _right_is_attribute(self) -> bool:
+        # Just to make sure we are making the right decision, this test is a little more verbose than necessary.
+        # Theoretically, applying only the last check should suffice. However, some weird cases might fail the test:
+        # the predicate a.value IN (b.value, 42) will fail the test. But in such a case, the correct decision is up to
+        # debate anyway and such query structures are currently also unsupported by our framework.
+        if not self.mosp_right:
+            return False
+        if self.operation == "exists" or self.operation == "missing":
+            return False
+        return isinstance(self.mosp_right, str)
+
+    def __repr__(self) -> str:
+        return str(self)
+
+    def __str__(self) -> str:
+        if self.operation == "exists":
+            return self.mosp_left + " IS NOT NULL"
+        elif self.operation == "missing":
+            return self.mosp_left + " IS NULL"
+
+        op_str = _OperationPrinting.get(self.operation, self.operation)
+
+        right_is_str_value = not isinstance(self.mosp_right, list) and not util.represents_number(self.mosp_right)
+        if self.is_filter() and right_is_str_value:
+            right = f"'{right}'"
+        else:
+            right = self.mosp_right
+
+        return f"{self.left_attribute} {op_str} {right}"
 
 
 # class MospPredicate:
@@ -657,22 +777,22 @@ class MospBasePredicate:
 #         return f" {op_str} ".join(str(child) for child in self.children)
 
 
-def flatten_and_predicate(predicates: List[Union[MospPredicate, CompoundMospFilterPredicate]]
-                          ) -> List[Union[MospPredicate, CompoundMospFilterPredicate]]:
-    """Simplifies a predicate tree, pulling all nested AND statements to the top level if possible.
+# def flatten_and_predicate(predicates: List[Union[MospPredicate, CompoundMospFilterPredicate]]
+#                           ) -> List[Union[MospPredicate, CompoundMospFilterPredicate]]:
+#     """Simplifies a predicate tree, pulling all nested AND statements to the top level if possible.
 
-    A predicate like `R.a = 1 AND R.b = 2 AND (R.c = 3 AND R.d = 4)` will be flattened to
-    `R.a = 1 AND R.b = 2 AND R.c = 3 AND R.d = 4`. However, this transformation does not apply if the compound
-    predicate contains another conjunction higher up. E.g. `R.a = 1 AND R.b = 2 OR (R.c = 3 AND R.d = 4)` will not
-    be transformed.
-    """
-    flattened_predicates = []
-    for pred in predicates:
-        if pred.is_compound() and pred.is_and_compound():
-            flattened_predicates.extend(flatten_and_predicate(pred.children))
-        else:
-            flattened_predicates.append(pred)
-    return flattened_predicates
+#     A predicate like `R.a = 1 AND R.b = 2 AND (R.c = 3 AND R.d = 4)` will be flattened to
+#     `R.a = 1 AND R.b = 2 AND R.c = 3 AND R.d = 4`. However, this transformation does not apply if the compound
+#     predicate contains another conjunction higher up. E.g. `R.a = 1 AND R.b = 2 OR (R.c = 3 AND R.d = 4)` will not
+#     be transformed.
+#     """
+#     flattened_predicates = []
+#     for pred in predicates:
+#         if pred.is_compound() and pred.is_and_compound():
+#             flattened_predicates.extend(flatten_and_predicate(pred.children))
+#         else:
+#             flattened_predicates.append(pred)
+#     return flattened_predicates
 
 
 def parse(query):
