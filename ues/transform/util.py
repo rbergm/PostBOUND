@@ -5,7 +5,7 @@ import numbers
 import os
 import sys
 import typing
-from typing import List, Dict, Sized, Union, Callable, IO
+from typing import List, Dict, Any, Iterable, Union, Callable, IO
 
 import psycopg2
 
@@ -72,17 +72,20 @@ def dict_merge(a: Dict[_K, _V], b: Dict[_K, _V], *, update: Callable[[_K, _V, _V
         return merged
 
 
-def flatten(deep_lst: List[Union[List[_T], _T]], *, recursive=False) -> List[_T]:
+def flatten(deep_lst: List[Union[List[_T], _T]], *, recursive: bool = False, flatten_set: bool = False) -> List[_T]:
     """Unwraps all nested lists, leaving scalar values untouched.
 
     E.g. for a deep list `[[1, 2, 3], 4, [5, 6]]` will return `[1, 2, 3, 4, 5, 6]` (mind the scalar 4).
 
     If `recursive` is `True`, this process will continue until all nested lists are flattened (e.g. in the case of
     `[[[1,2]]]`).
+
+    If `flatten_set` is `True`, sets will be flattened just the same as lists will.
     """
     deep_lst = [[deep_elem] if not isinstance(deep_elem, list) else deep_elem for deep_elem in deep_lst]
     flattened = list(itertools.chain(*deep_lst))
-    if recursive and any(isinstance(deep_elem, list) for deep_elem in flattened):
+    if recursive and any(isinstance(deep_elem, list) or (flatten_set and isinstance(deep_elem, set))
+                         for deep_elem in flattened):
         return flatten(flattened, recursive=True)
     return flattened
 
@@ -128,11 +131,21 @@ def argmin(mapping: Dict[_K, numbers.Number]) -> _K:
     return min(mapping, key=mapping.get)
 
 
-def contains_multiple(obj: Sized):
-    """Checks whether an object is list-like (i.e. has a length) and contains more than 1 entries."""
+def contains_multiple(obj: Any):
+    """Checks whether an object is list-like (i.e. has a length) and contains more than 1 entries.
+
+    Note that strings and tuples are treated as scalar objects.
+    """
     if "__len__" not in dir(obj) or isinstance(obj, str) or isinstance(obj, tuple):
         return False
     return len(obj) > 1
+
+
+def pull_any(iterable: Iterable[_T]) -> _T:
+    """Retrieves any element from the iterable."""
+    if not iterable:
+        raise ValueError("Empty iterable")
+    return next(iter(iterable), None)
 
 
 def make_logger(enabled: bool = True, *, file: IO[str] = sys.stderr):
