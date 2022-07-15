@@ -345,16 +345,18 @@ class MospCompoundPredicate(AbstractMospPredicate):
             return MospBasePredicate(mosp_data, alias_map=alias_map)
 
         if operation == "not":
-            actual_predicate = MospCompoundPredicate.parse(mosp_data[operation], alias_map=alias_map)
+            actual_predicate = MospCompoundPredicate.parse(mosp_data[operation], mosp_data=mosp_data,
+                                                           alias_map=alias_map)
             return MospCompoundPredicate(operation, actual_predicate, alias_map=alias_map)
         elif operation == "or" or operation == "and":
             child_predicates = [MospCompoundPredicate.parse(child, alias_map=alias_map)
                                 for child in mosp_data[operation]]
-            return MospCompoundPredicate(operation, child_predicates, alias_map=alias_map)
+            return MospCompoundPredicate(operation, child_predicates, mosp_data=mosp_data, alias_map=alias_map)
         else:
             raise ValueError("Unknown compound predicate: {}".format(mosp_data))
 
-    def __init__(self, operator, children, *, alias_map: dict = None):
+    def __init__(self, operator, children, *, mosp_data: dict = None, alias_map: dict = None):
+        self.mosp_data = mosp_data
         self.alias_map = alias_map
 
         self.operation = operator
