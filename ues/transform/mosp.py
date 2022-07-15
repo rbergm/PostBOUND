@@ -347,7 +347,7 @@ class MospCompoundPredicate(AbstractMospPredicate):
         if operation == "not":
             actual_predicate = MospCompoundPredicate.parse(mosp_data[operation], alias_map=alias_map)
             return MospCompoundPredicate(operation, actual_predicate, alias_map=alias_map)
-        elif operation == "or":
+        elif operation == "or" or operation == "and":
             child_predicates = [MospCompoundPredicate.parse(child, alias_map=alias_map)
                                 for child in mosp_data[operation]]
             return MospCompoundPredicate(operation, child_predicates, alias_map=alias_map)
