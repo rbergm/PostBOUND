@@ -22,6 +22,10 @@ class JoinCardinalityEstimator(abc.ABC):
     def calculate_upper_bound(self) -> int:
         return NotImplemented
 
+    @abc.abstractmethod
+    def stats(self) -> "_TableBoundStatistics":
+        return NotImplemented
+
 
 class DefaultUESCardinalityEstimator(JoinCardinalityEstimator):
     def __init__(self, query: mosp.MospQuery):
@@ -30,7 +34,10 @@ class DefaultUESCardinalityEstimator(JoinCardinalityEstimator):
 
     def calculate_upper_bound(self) -> int:
         # TODO: implementation
-        return 0
+        return NotImplemented
+
+    def stats(self) -> "_TableBoundStatistics":
+        return NotImplemented
 
 
 class TopkUESCardinalityEstimator(JoinCardinalityEstimator):
