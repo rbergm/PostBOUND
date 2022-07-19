@@ -145,12 +145,26 @@ class DBSchema:
         atexit.register(self._save_query_cache)
 
     def count_tuples(self, table: TableRef, *, cache_enabled=True) -> int:
+        """Retrieves the current number of tuples in the table by executing a COUNT(*) query."""
         count_query = "SELECT COUNT(*) FROM {}".format(table.full_name)
         if cache_enabled and count_query in self.query_cache:
             return self.query_cache[count_query]
 
         if table.is_virtual:
             raise ValueError("Cannot count tuples of virtual table")
+
+        self.cursor.execute(count_query)
+        count = self.cursor.fetchone()[0]
+
+        if cache_enabled:
+            self.query_cache[count_query] = count
+        return count
+
+    def count_distinct_values(self, attribute: AttributeRef, *, cache_enabled=True) -> int:
+        """Retrieves the current number of distinct values for a specific attribute, executing a COUNT() query."""
+        count_query = f"SELECT DISTINCT COUNT({attribute.attribute} FROM {attribute.table.full_name}"
+        if cache_enabled and count_query in self.query_cache:
+            return self.query_cache[count_query]
 
         self.cursor.execute(count_query)
         count = self.cursor.fetchone()[0]
@@ -265,6 +279,9 @@ class DBSchema:
 
     def load_tuple_count(self, table: TableRef, *, cache_enabled: bool = True) -> int:
         """Retrieves the total number of tuples from Postgres statistics, rather than executing a count query."""
+        if table.is_virtual:
+            raise ValueError("Cannot count tuples of virtual table")
+
         if cache_enabled and table in self.tuple_count_cache:
             return self.tuple_count_cache[table]
 
@@ -276,6 +293,9 @@ class DBSchema:
             self.tuple_count_cache[table] = stats_count
 
         return stats_count
+
+    def load_distinct_value_count(self, attribute: AttributeRef, *, cache_enabled: bool = True) -> int:
+        return NotImplemented
 
     def reset_caches(self):
         self.index_map = {}
