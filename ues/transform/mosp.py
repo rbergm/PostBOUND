@@ -511,7 +511,7 @@ class MospCompoundPredicate(AbstractMospPredicate):
         return any(child.is_join() for child in self.children)
 
     def collect_attributes(self) -> Set[db.AttributeRef]:
-        return Set(util.flatten([child.collect_attributes() for child in self.children], flatten_set=True))
+        return set(util.flatten([child.collect_attributes() for child in self.children], flatten_set=True))
 
     def join_partner(self, table: db.TableRef) -> Union[db.AttributeRef, Set[db.AttributeRef]]:
         if not self.is_join():
