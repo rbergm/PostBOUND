@@ -105,12 +105,12 @@ def enlist(obj: _T, strict: bool = True) -> List[_T]:
 
 
 def simplify(lst: List[_T]) -> Union[_T, List[_T]]:
-    """Unwraps single scalar values from list-like (i.e. list or tuple) containers.
+    """Unwraps single scalar values from list-like (i.e. list or tuple or set) containers.
 
     E.g. `simplify([42])` will return 42, whereas `simplify([24, 42])` will return `[24, 42]`.
     """
-    while (isinstance(lst, list) or isinstance(lst, tuple)) and len(lst) == 1:
-        lst = lst[0]
+    while (isinstance(lst, list) or isinstance(lst, tuple) or isinstance(lst, set)) and len(lst) == 1:
+        lst = list(lst)[0]
     return lst
 
 
