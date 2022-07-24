@@ -1,8 +1,10 @@
 
 import abc
+import collections
+import collections.abc
 import re
 import warnings
-from typing import List, Dict, Set, Any, Union, Tuple
+from typing import Iterator, List, Dict, Set, Any, Union, Tuple
 
 import mo_sql_parsing as mosp
 
@@ -245,12 +247,92 @@ CompoundOperations = {
 }
 
 
+class MospFilterMap(collections.abc.Mapping):
+    def __init__(self, filter_predicates: List["AbstractMospPredicate"], *, alias_map: dict = None):
+        self._predicates = filter_predicates
+        self._filter_by_table = collections.defaultdict(list)
+        for filter_predicate in filter_predicates:
+            filtered_table = util.simplify(filter_predicate.collect_tables())
+            self._filter_by_table[filtered_table].append(filter_predicate)
+
+        self._merged_filters = []
+        for filter_predicates in self._filter_by_table.values():
+            self._merged_filters.append(MospCompoundPredicate.merge_and(filter_predicates, alias_map=alias_map))
+
+    def __len__(self) -> int:
+        return len(self._merged_filters)
+
+    def __iter__(self) -> Iterator["AbstractMospPredicate"]:
+        return self._merged_filters.__iter__()
+
+    def __getitem__(self, key: db.TableRef) -> List["AbstractMospPredicate"]:
+        return self._filter_by_table[key]
+
+
+class MospJoinMap(collections.abc.Mapping):
+    def __init__(self, join_predicates: List["AbstractMospPredicate"], *, alias_map: dict = None):
+        self._predicates = join_predicates
+        self._join_by_tables = collections.defaultdict(list)
+        self._denormalized_join_by_tables = collections.defaultdict(lambda: collections.defaultdict(list))
+
+        for join_predicate in join_predicates:
+            join_tables = join_predicate.collect_tables()
+            self._join_by_tables[frozenset(join_tables)].append(join_predicate)
+            tab1, tab2 = join_tables
+            self._denormalized_join_by_tables[tab1][tab2].append(join_predicate)
+            self._denormalized_join_by_tables[tab2][tab1].append(join_predicate)
+
+        self._merged_joins = []
+        for join_predicates in self._join_by_tables.values():
+            self._merged_joins.append(MospCompoundPredicate.merge_and(join_predicates, alias_map=alias_map))
+
+    def __len__(self) -> int:
+        return len(self._merged_joins)
+
+    def __iter__(self) -> Iterator["AbstractMospPredicate"]:
+        return self._merged_joins.__iter__()
+
+    def __getitem__(self, key: Union[db.TableRef, Tuple[db.TableRef, db.TableRef]]) -> List["AbstractMospPredicate"]:
+        if isinstance(key, db.TableRef):
+            return self._join_by_tables[key]
+        tab1, tab2 = key
+        return self._denormalized_join_by_tables[tab1][tab2]
+
+
+class MospPredicateMap:
+    def __init__(self, predicates: List["AbstractMospPredicate"], *, alias_map: dict = None):
+        self.alias_map = alias_map
+
+        filter_predicates = [pred for pred in predicates if pred.is_filter()]
+        join_predicates = [pred for pred in predicates if pred.is_join()]
+
+        self._join_map = MospJoinMap(join_predicates, alias_map=alias_map)
+        self._filter_map = MospFilterMap(filter_predicates, alias_map=alias_map)
+
+    def filters(self) -> MospFilterMap:
+        return self._filter_map
+
+    def joins(self) -> MospJoinMap:
+        return self._join_map
+
+    def __getitem__(self, key: Tuple[str, Union[db.TableRef, Tuple[db.TableRef]]]) -> List["AbstractMospPredicate"]:
+        predicate_type, predicate_key = key
+        if isinstance(predicate_type, db.TableRef):
+            return self._join_map[(predicate_type, predicate_type)]
+        elif predicate_type == "filter":
+            return self._filter_map[predicate_key]
+        elif predicate_type == "join":
+            return self._join_map[predicate_key]
+        else:
+            raise ValueError("Unknown predicate type: {}".format(predicate_type))
+
+
 class MospWhereClause:
     def __init__(self, mosp_data, *, alias_map: dict = None):
         self.mosp_data = mosp_data
         self.alias_map = alias_map
 
-    def break_conjunction(self) -> list:
+    def break_conjunction(self) -> List["AbstractMospPredicate"]:
         if not isinstance(self.mosp_data, dict):
             raise ValueError("Unknown predicate format: {}".format(self.mosp_data))
         operation = util.dict_key(self.mosp_data)
@@ -276,6 +358,9 @@ class MospWhereClause:
                 parsed_predicates.append(MospBasePredicate(predicate, alias_map=self.alias_map))
 
         return parsed_predicates
+
+    def predicate_map(self) -> MospPredicateMap:
+        return MospPredicateMap(self.break_conjunction(), alias_map=self.alias_map)
 
     def _parse_compound_predicate(self, predicate) -> list:
         operation = util.dict_key(predicate)
@@ -400,6 +485,16 @@ class MospCompoundPredicate(AbstractMospPredicate):
             return MospCompoundPredicate(operation, child_predicates, mosp_data=mosp_data, alias_map=alias_map)
         else:
             raise ValueError("Unknown compound predicate: {}".format(mosp_data))
+
+    @staticmethod
+    def merge_and(predicates: List[AbstractMospPredicate], *, alias_map: dict = None) -> AbstractMospPredicate:
+        flattened_predicates = []
+        for predicate in predicates:
+            if predicate.is_compound() and predicate.operation == "and":
+                flattened_predicates.extend(predicate.children)
+            else:
+                flattened_predicates.append(predicate)
+        return MospCompoundPredicate.parse({"and": flattened_predicates}, alias_map=alias_map)
 
     def __init__(self, operator, children: List[AbstractMospPredicate], *,
                  mosp_data: dict = None, alias_map: dict = None):
