@@ -27,7 +27,7 @@ def dict_key(dictionary: Dict[_K, _V], *, pull_any: bool = False) -> _K:
     If multiple entries exist and pull_any is `True`, provides any of the keys. Otherwise raises a ValueError.
     """
     if not isinstance(dictionary, dict):
-        raise TypeError("Not a dict: " + str(dictionary))
+        raise TypeError("Not a dict: " + str(dictionary) + f" ({type(dictionary)})")
     if not dictionary:
         raise ValueError("No entries")
     keys = list(dictionary.keys())
@@ -42,7 +42,7 @@ def dict_value(dictionary: Dict[_K, _V], *, pull_any: bool = False) -> _V:
     If multiple entries exist and pull_any is `True`, provides any of the values. Otherwise raises a ValueError.
     """
     if not isinstance(dictionary, dict):
-        raise TypeError("Not a dict: " + str(dictionary))
+        raise TypeError("Not a dict: " + str(dictionary) + f" ({type(dictionary)})")
     if not dictionary:
         raise ValueError("No entries")
     vals = list(dictionary.values())
@@ -82,10 +82,12 @@ def flatten(deep_lst: List[Union[List[_T], _T]], *, recursive: bool = False, fla
 
     If `flatten_set` is `True`, sets will be flattened just the same as lists will.
     """
-    deep_lst = [[deep_elem] if not isinstance(deep_elem, list) else deep_elem for deep_elem in deep_lst]
+    def check_flattenable(elem, flatten_sets: bool = False):
+        return isinstance(elem, list) or (flatten_sets and isinstance(elem, set))
+
+    deep_lst = [[deep_elem] if not check_flattenable(deep_elem, flatten_set) else deep_elem for deep_elem in deep_lst]
     flattened = list(itertools.chain(*deep_lst))
-    if recursive and any(isinstance(deep_elem, list) or (flatten_set and isinstance(deep_elem, set))
-                         for deep_elem in flattened):
+    if recursive and any(check_flattenable(deep_elem, flatten_set) for deep_elem in flattened):
         return flatten(flattened, recursive=True)
     return flattened
 
