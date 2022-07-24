@@ -1,9 +1,8 @@
 
 import abc
-from ast import alias
 import re
 import warnings
-from typing import Any, List, Dict, Set, Union, Tuple
+from typing import List, Dict, Set, Any, Union, Tuple
 
 import mo_sql_parsing as mosp
 
@@ -61,7 +60,9 @@ class MospQuery:
         else:
             return joins
 
-    def parse_where_clause(self):
+    def predicates(self, *, include_where_clause: bool = True, include_join_on: bool = False,
+                   recurse_subqueries: bool = False) -> List["AbstractMospPredicate"]:
+        # TODO: include predicates from JOIN ON and potentially subqueries
         return MospWhereClause(self.where_clause(), alias_map=self._build_alias_map())
 
     # def predicates(self, *,
@@ -208,23 +209,8 @@ class MospJoin:
     def is_subquery(self):
         return self.subquery
 
-    def predicate(self):
-        return self.join_predicate
-
-    def parse_predicate(self):
-        all_predicates = MospPredicate.break_compound(self.join_predicate)
-        if isinstance(all_predicates, MospPredicate):
-            return all_predicates
-        join_predicates = [pred for pred in all_predicates if not pred.has_literal_op()]
-        if len(join_predicates) == 0:
-            return None
-        elif len(join_predicates) == 1:
-            return join_predicates[0]
-        else:
-            return join_predicates
-
-    def parse_all_predicates(self):
-        return MospPredicate.break_compound(self.join_predicate)
+    def predicate(self) -> List["AbstractMospPredicate"]:
+        return MospWhereClause.break_conjunction(self.join_predicate)
 
     def name(self) -> str:
         return self.join_data["name"]
@@ -513,6 +499,11 @@ class MospBasePredicate(AbstractMospPredicate):
         else:
             raise ValueError("Table is not joined")
 
+    def literal_value(self) -> Any:
+        if self.is_join():
+            raise ValueError("Join predicate has no literal value")
+        return self._unwrap_literal()
+
     def rename_table(self, from_table: db.TableRef, to_table: db.TableRef, *,
                      prefix_attribute: bool = False) -> "AbstractMospPredicate":
         updated_mosp_data = dict(self.mosp_data)
@@ -556,6 +547,11 @@ class MospBasePredicate(AbstractMospPredicate):
         if not self.alias_map:
             raise ValueError("No alias map given")
 
+    def _unwrap_literal(self):
+        if not isinstance(self.mosp_right, dict) or "literal" not in self.mosp_right:
+            return None
+        return self.mosp_right["literal"]
+
     def __repr__(self) -> str:
         return str(self)
 
@@ -567,11 +563,12 @@ class MospBasePredicate(AbstractMospPredicate):
 
         op_str = _OperationPrinting.get(self.operation, self.operation)
 
-        right_is_str_value = not isinstance(self.mosp_right, list) and not util.represents_number(self.mosp_right)
+        right_is_str_value = (not isinstance(self.mosp_right, list)
+                              and not util.represents_number(self._unwrap_literal()))
         if self.is_filter() and right_is_str_value:
-            right = f"'{right}'"
+            right = f"'{self._unwrap_literal()}'"
         else:
-            right = self.mosp_right
+            right = self._unwrap_literal()
 
         return f"{self.left_attribute} {op_str} {right}"
 
