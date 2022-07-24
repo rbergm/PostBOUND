@@ -657,6 +657,8 @@ class MospBasePredicate(AbstractMospPredicate):
             return self.mosp_left + " IS NULL"
 
         op_str = _OperationPrinting.get(self.operation, self.operation)
+        if self.is_join():
+            return f"{self.left_attribute} {op_str} {self.right_attribute}"
 
         right_is_str_value = (not isinstance(self.mosp_right, list)
                               and not util.represents_number(self._unwrap_literal()))
