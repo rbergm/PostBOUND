@@ -51,7 +51,10 @@ class JobWorkloadParsingTests(unittest.TestCase):
             self.assertIn(str(join), expected_joins, "Join not found!")
 
         mc_table = db.TableRef("movie_companies", "mc")
-        mc_filters = predicate_map.filters
+        mc_filters = ["mc.note NOT LIKE '%(as Metro-Goldwyn-Mayer Pictures)%'",
+                      r"mc.note LIKE '%(co-production)%' OR mc.note LIKE '%(presents)%'"]
+        for filter in predicate_map.filters[mc_table]:
+            self.assertIn(str(filter), mc_filters)
 
 
 if __name__ == "__main__":
