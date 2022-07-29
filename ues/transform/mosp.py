@@ -2,6 +2,7 @@
 import abc
 import collections
 import collections.abc
+import copy
 import re
 import warnings
 from typing import Iterator, List, Dict, Set, Any, Union, Tuple
@@ -296,6 +297,9 @@ class MospJoinMap(collections.abc.Mapping):
         self._merged_joins = []
         for join_predicates in self._join_by_tables.values():
             self._merged_joins.append(MospCompoundPredicate.merge_and(join_predicates, alias_map=alias_map))
+
+    def contents(self) -> dict:
+        return copy.deepcopy(self._denormalized_join_by_tables)
 
     def __len__(self) -> int:
         return len(self._merged_joins)

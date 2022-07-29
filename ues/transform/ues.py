@@ -631,8 +631,7 @@ class _JoinAttributeFrequenciesLoader:
 
 
 class _TableBoundStatistics:
-    def __init__(self, query: mosp.MospQuery,
-                 predicate_map: Dict[db.TableRef, Union[mosp.MospPredicate, mosp.CompoundMospFilterPredicate]], *,
+    def __init__(self, query: mosp.MospQuery, *,
                  base_cardinality_estimator: BaseCardinalityEstimator,
                  dbs: db.DBSchema = db.DBSchema.get_instance()):
         self.query = query
@@ -816,8 +815,6 @@ JoinOrderOptimizationResult = collections.namedtuple("JoinOrderOptimizationResul
 
 
 def _calculate_join_order(query: mosp.MospQuery, *,
-                          predicate_map: Dict[db.TableRef, Union[mosp.MospPredicate,
-                                                                 mosp.CompoundMospFilterPredicate]],
                           join_estimator: JoinCardinalityEstimator = None,
                           base_estimator: BaseCardinalityEstimator = PostgresCardinalityEstimator(),
                           subquery_generator: SubqueryGenerationStrategy = DefensiveSubqueryGeneration(),
@@ -833,7 +830,7 @@ def _calculate_join_order(query: mosp.MospQuery, *,
     # multiple independent join trees very well. Therefore, we are going to return either a single join tree (which
     # should be the case for most queries), or a list of join trees (one for each closed/connected part of the join
     # graph).
-    partitioned_join_trees = [_calculate_join_order_for_join_partition(query, partition, predicate_map=predicate_map,
+    partitioned_join_trees = [_calculate_join_order_for_join_partition(query, partition,
                                                                        join_cardinality_estimator=join_estimator,
                                                                        base_cardinality_estimator=base_estimator,
                                                                        subquery_generator=subquery_generator,
@@ -846,8 +843,6 @@ def _calculate_join_order(query: mosp.MospQuery, *,
 
 
 def _calculate_join_order_for_join_partition(query: mosp.MospQuery, join_graph: _JoinGraph, *,
-                                             predicate_map: Dict[db.TableRef, Union[mosp.MospPredicate,
-                                                                                    mosp.CompoundMospFilterPredicate]],
                                              join_cardinality_estimator: JoinCardinalityEstimator,
                                              base_cardinality_estimator: BaseCardinalityEstimator,
                                              subquery_generator: SubqueryGenerationStrategy,
@@ -859,7 +854,7 @@ def _calculate_join_order_for_join_partition(query: mosp.MospQuery, join_graph: 
     logger = util.make_logger(verbose or trace)
 
     join_tree = JoinTree.empty_join_tree()
-    stats = _TableBoundStatistics(query, predicate_map, base_cardinality_estimator=base_cardinality_estimator, dbs=dbs)
+    stats = _TableBoundStatistics(query, base_cardinality_estimator=base_cardinality_estimator, dbs=dbs)
 
     if not join_graph.free_n_m_joined_tables():
         # TODO: documentation
@@ -1067,11 +1062,11 @@ def _determine_referenced_attributes(join_sequence: List[dict]) -> Dict[db.Table
             subquery_referenced_attributes = _determine_referenced_attributes(join["children"])
             for table, attributes in subquery_referenced_attributes.items():
                 referenced_attributes[table] |= attributes
-            for left, right in [predicate.parse_attributes() for predicate in util.enlist(join["predicate"])]:
+            for left, right in [predicate.collect_attributes() for predicate in util.enlist(join["predicate"])]:
                 referenced_attributes[left.table].add(left)
                 referenced_attributes[right.table].add(right)
         elif "predicate" in join or join["subquery"]:
-            for left, right in [predicate.parse_attributes() for predicate in util.enlist(join["predicate"])]:
+            for left, right in [predicate.collect_attributes() for predicate in util.enlist(join["predicate"])]:
                 referenced_attributes[left.table].add(left)
                 referenced_attributes[right.table].add(right)
         else:
@@ -1100,17 +1095,19 @@ def _rename_predicate_if_necessary(predicate: Union[mosp.MospPredicate, mosp.Com
     return predicate
 
 
-def _generate_mosp_data_for_sequence(join_sequence: List[dict], *,
-                                     predicate_map: Dict[db.TableRef,
-                                                         Union[mosp.MospPredicate, mosp.CompoundMospFilterPredicate]],
+def _generate_mosp_data_for_sequence(original_query: mosp.MospQuery, join_sequence: List[dict], *,
                                      join_predicates: Dict[db.TableRef,
-                                                           Dict[db.TableRef, List[mosp.MospPredicate]]],
+                                                           Dict[db.TableRef, List[mosp.MospPredicate]]] = None,
                                      referenced_attributes: Dict[db.TableRef, Set[db.AttributeRef]] = None,
                                      table_renamings: Dict[db.TableRef, db.TableRef] = None,
                                      joined_tables: Set[db.TableRef] = None,
                                      in_subquery: bool = False):
 
     # TODO: lots and lots of documentation
+
+    predicate_map = original_query.predicates().predicate_map().filters
+    join_predicates = (join_predicates if join_predicates
+                       else original_query.predicates().predicate_map().joins.contents())
 
     if not referenced_attributes:
         referenced_attributes = _determine_referenced_attributes(join_sequence)
@@ -1127,8 +1124,7 @@ def _generate_mosp_data_for_sequence(join_sequence: List[dict], *,
     for join_idx, join in enumerate(joins):
         applicable_join_predicates: List[mosp.MospPredicate] = []
         if join["subquery"]:
-            subquery_mosp = _generate_mosp_data_for_sequence(join["children"],
-                                                             predicate_map=predicate_map,
+            subquery_mosp = _generate_mosp_data_for_sequence(original_query, join["children"],
                                                              referenced_attributes=referenced_attributes,
                                                              table_renamings=table_renamings,
                                                              join_predicates=join_predicates,
@@ -1245,9 +1241,7 @@ def optimize_query(query: mosp.MospQuery, *,
     else:
         raise ValueError("Unknown subquery generation: '{}'".format(subquery_generation))
 
-    predicate_map = _build_predicate_map(query)
-    join_predicates = _build_join_map(query)
-    optimization_result = _calculate_join_order(query, dbs=dbs, predicate_map=predicate_map,
+    optimization_result = _calculate_join_order(query, dbs=dbs,
                                                 base_estimator=base_estimator, join_estimator=join_estimator,
                                                 subquery_generator=subquery_generator,
                                                 visualize=visualize, visualize_args=visualize_args,
@@ -1256,8 +1250,7 @@ def optimize_query(query: mosp.MospQuery, *,
     if util.contains_multiple(optimization_result):
         # query contains a cross-product
         ordered_join_trees = sorted(optimization_result, key=operator.attrgetter("final_bound"))
-        mosp_datasets = [_generate_mosp_data_for_sequence(optimizer_run.final_order, predicate_map=predicate_map,
-                                                          join_predicates=join_predicates)
+        mosp_datasets = [_generate_mosp_data_for_sequence(query, optimizer_run.final_order)
                          for optimizer_run in ordered_join_trees]
         first_set, *remaining_sets = mosp_datasets
         for partial_query in remaining_sets:
