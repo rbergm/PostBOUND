@@ -1,11 +1,13 @@
 
 import argparse
+import collections.abc
 import itertools
 import numbers
 import os
 import sys
 import typing
-from typing import List, Dict, Any, Iterable, Union, Callable, IO
+import warnings
+from typing import List, Dict, Any, Iterable, Tuple, Union, Callable, IO
 
 import psycopg2
 
@@ -72,6 +74,37 @@ def dict_merge(a: Dict[_K, _V], b: Dict[_K, _V], *, update: Callable[[_K, _V, _V
         return merged
 
 
+def dict_update(dictionary: Dict[_K, _V], update: Callable[[_K, _V], _T]) -> Dict[_K, _T]:
+    """Creates a new dict by calling update on each key/value pair on the old dict, retaining its keys."""
+    return {key: update(val) for key, val in dictionary.items()}
+
+
+def dict_explode(dictionary: Dict[_K, List[_V]]) -> List[Tuple[_K, _V]]:
+    """Transforms dicts mapping keys to lists of values to a list of key/value pairs."""
+    values = []
+    for key, dict_values in dictionary.items():
+        values.extend(zip(itertools.cycle([key]), dict_values))
+    return values
+
+
+def dict_hash(dictionary: Dict[_K, _V]) -> int:
+    """Calculates a hash value based on the current dict contents (keys and values)."""
+    keys = list(dictionary.keys())
+    values = []
+    for val in dictionary.values():
+        if isinstance(val, collections.abc.Hashable):
+            values.append(hash(val))
+        elif isinstance(val, list) or isinstance(val, set):
+            values.append(hash(tuple(val)))
+        elif isinstance(val, dict):
+            values.append(dict_hash(val))
+        else:
+            warnings.warn("Unhashable type: " + type(val))
+    keys_hash = hash(tuple(keys))
+    values_hash = hash(tuple(values))
+    return hash((keys_hash, values_hash))
+
+
 def flatten(deep_lst: List[Union[List[_T], _T]], *, recursive: bool = False, flatten_set: bool = False) -> List[_T]:
     """Unwraps all nested lists, leaving scalar values untouched.
 
@@ -92,7 +125,7 @@ def flatten(deep_lst: List[Union[List[_T], _T]], *, recursive: bool = False, fla
     return flattened
 
 
-def enlist(obj: _T, strict: bool = True) -> List[_T]:
+def enlist(obj: _T, *, strict: bool = True) -> List[_T]:
     """Turns a scalar value into a list, if it is not one already.
 
     E.g. `enlist(42)` will return `[42]`, whereas `enlist([24])` returns `[24]`.

@@ -57,5 +57,9 @@ class JobWorkloadParsingTests(unittest.TestCase):
             self.assertIn(str(filter), mc_filters)
 
 
+class PredicateMospReconstructionTests(unittest.TestCase):
+    pass
+
+
 if __name__ == "__main__":
     unittest.main()
