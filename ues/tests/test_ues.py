@@ -20,6 +20,16 @@ class BeningQueryOptimizationTests(unittest.TestCase):
         optimized = ues.optimize_query(query)
 
 
+class JobWorkloadOptimizationTests(unittest.TestCase):
+    def test_workload(self):
+        for label, query in job_workload.items():
+            try:
+                parsed = mosp.MospQuery.parse(query)
+                ues.optimize_query(parsed)
+            except Exception as e:
+                self.fail(f"Exception raised on query {label} with exception {e}")
+
+
 class SnowflaxeQueryOptimizationTests(unittest.TestCase):
     def test_base_query(self):
         pass

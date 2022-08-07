@@ -369,6 +369,8 @@ class JoinTree:
     def __init__(self, *, predicate: mosp.AbstractMospPredicate = None):
         self.left: Union["JoinTree", db.TableRef] = None
         self.right: Union["JoinTree", db.TableRef] = None
+        if isinstance(predicate, list):
+            raise ValueError()
         self.predicate: mosp.AbstractMospPredicate = predicate
 
     def is_empty(self) -> bool:
@@ -702,7 +704,9 @@ def _absorb_pk_fk_hull_of(table: db.TableRef, *, join_graph: _JoinGraph, join_tr
     while candidate_estimates:
         # always insert the table with minimum cardinality next
         next_pk_fk_join = util.argmin(candidate_estimates)
-        pk_fk_join_sequence.append(JoinEdge(table=next_pk_fk_join, predicate=join_paths[next_pk_fk_join]))
+        pk_fk_join_sequence.append(
+            JoinEdge(table=next_pk_fk_join,
+                     predicates=mosp.MospCompoundPredicate.merge_and(join_paths[next_pk_fk_join])))
         join_graph.mark_joined(next_pk_fk_join)
 
         logger(".. Also including PK/FK join from hull:", next_pk_fk_join)
@@ -999,10 +1003,9 @@ def _determine_referenced_attributes(join_sequence: List[dict]) -> Dict[db.Table
             for attribute in predicate.collect_attributes():
                 referenced_attributes[attribute.table].add(attribute)
         elif "predicate" in join or join["subquery"]:
-            predicates: List[mosp.AbstractMospPredicate] = util.enlist(join["predicate"])
-            for left, right in [predicate.collect_attributes() for predicate in predicates]:
-                referenced_attributes[left.table].add(left)
-                referenced_attributes[right.table].add(right)
+            predicate: mosp.AbstractMospPredicate = join["predicate"]
+            for attribute in predicate.collect_attributes():
+                referenced_attributes[attribute.table].add(attribute)
         else:
             continue
     referenced_attributes = dict(referenced_attributes)
