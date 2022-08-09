@@ -37,7 +37,7 @@ class MospQuery:
         return MospQuery(mosp.parse(query))
 
     def __init__(self, mosp_data):
-        self.query = mosp_data
+        self.query: dict = mosp_data
         self.alias_map = None
 
     def select_clause(self):
@@ -53,17 +53,20 @@ class MospQuery:
         tab = next(tab for tab in self.from_clause() if "value" in tab)
         return db.TableRef(tab["value"], tab["name"])
 
-    def collect_tables(self) -> List["db.TableRef"]:
+    def collect_tables(self, *, _include_subquery_targets: bool = False) -> List["db.TableRef"]:
         tables = [db.TableRef(tab["value"], tab["name"]) for tab in util.enlist(self.from_clause()) if "value" in tab]
-        for join in self.joins():
+        for join in self.joins(_skip_alias_map=True):
             tables.extend(join.collect_tables())
+            if _include_subquery_targets and join.is_subquery() and join.join_target_table:
+                tables.append(db.TableRef.virtual(join.join_target_table))
         return tables
 
     def projection(self) -> "MospProjection":
         return MospProjection(self.select_clause(), table_alias_map=self._build_alias_map())
 
-    def joins(self, simplify=False) -> List["MospJoin"]:
-        joins = [MospJoin(tab, alias_map=self._build_alias_map()) for tab in self.from_clause() if "join" in tab]
+    def joins(self, simplify=False, *, _skip_alias_map: bool = False) -> List["MospJoin"]:
+        alias_map = self._build_alias_map() if not _skip_alias_map else None
+        joins = [MospJoin(tab, alias_map=alias_map) for tab in self.from_clause() if "join" in tab]
         if simplify and len(joins) == 1:
             return joins[0]
         else:
@@ -83,22 +86,6 @@ class MospQuery:
                                                                 recurse_subqueries=recurse_subqueries))
 
         return MospWhereClause({"and": mosp_predicates}, alias_map=self._build_alias_map())
-
-    # def predicates(self, *,
-    #                include_joins: bool = False) -> List[Union["MospPredicate", "CompoundMospFilterPredicate"]]:
-    #     if include_joins:
-    #         join_predicates = []
-    #         for join in self.joins():
-    #             if join.is_subquery():
-    #                 join_predicates.extend(join.subquery.predicates(include_joins=True))
-    #             join_predicates.extend(MospPredicate.break_compound(join.join_predicate))
-    #         return join_predicates + self.predicates(include_joins=False)
-
-    #     if not self.where_clause():
-    #         return []
-
-    #     return util.enlist(CompoundMospFilterPredicate.parse(self.where_clause(), skip_initial_level=True,
-    #                                                          alias_map=self._build_alias_map()))
 
     def subqueries(self, simplify=False) -> List["MospJoin"]:
         subqueries = [sq for sq in self.joins() if sq.is_subquery()]
@@ -149,7 +136,7 @@ class MospQuery:
         if self.alias_map:
             return self.alias_map
         self.alias_map = {}
-        for tab in self.collect_tables():
+        for tab in self.collect_tables(_include_subquery_targets=True):
             self.alias_map[tab.alias] = tab
         return self.alias_map
 
@@ -210,8 +197,9 @@ class MospJoin:
         self.mosp_data = mosp_data
         self.alias_map = alias_map
 
-        self.join_data = self.mosp_data["join"]
-        self.join_predicate = self.mosp_data["on"]
+        self.join_data: dict = self.mosp_data["join"]
+        self.join_predicate: dict = self.mosp_data["on"]
+        self.join_target_table: str = self.join_data.get("name", "")
 
         join_value = self.mosp_data["join"]["value"]
         if isinstance(join_value, dict) and "select" in join_value:
@@ -228,8 +216,8 @@ class MospJoin:
         else:
             return db.TableRef(self.join_data["value"], self.join_data["name"])
 
-    def is_subquery(self):
-        return self.subquery
+    def is_subquery(self) -> bool:
+        return isinstance(self.subquery, MospQuery)
 
     def predicate(self) -> "MospWhereClause":
         return MospWhereClause(self.join_predicate, alias_map=self.alias_map)
@@ -248,7 +236,7 @@ class MospJoin:
 
     def __str__(self) -> str:
         join_body = f"({self.subquery})" if self.subquery else extract_tableref(self.join_data)
-        return f"JOIN {join_body} ON {self.parse_predicate()}"
+        return f"JOIN {join_body} ON {self.predicate()}"
 
 
 _OperationPrinting = {
@@ -301,6 +289,12 @@ class MospFilterMap(collections.abc.Mapping):
     def __getitem__(self, key: db.TableRef) -> List["AbstractMospPredicate"]:
         return self._filter_by_table[key]
 
+    def __repr__(self) -> str:
+        return str(self)
+
+    def __str__(self) -> str:
+        return " AND ".join([str(pred) for pred in self._merged_filters])
+
 
 class MospJoinMap(collections.abc.Mapping):
     def __init__(self, join_predicates: List["AbstractMospPredicate"], *, alias_map: dict = None):
@@ -343,6 +337,12 @@ class MospJoinMap(collections.abc.Mapping):
         tab1, tab2 = key
         return self._denormalized_join_by_tables[tab1][tab2]
 
+    def __repr__(self) -> str:
+        return str(self)
+
+    def __str__(self) -> str:
+        return " AND ".join([str(pred) for pred in self._merged_joins])
+
 
 class MospPredicateMap:
     def __init__(self, predicates: List["AbstractMospPredicate"], *, alias_map: dict = None):
@@ -373,6 +373,19 @@ class MospPredicateMap:
             return self._join_map[predicate_key]
         else:
             raise ValueError("Unknown predicate type: {}".format(predicate_type))
+
+    def __repr__(self) -> str:
+        return str(self)
+
+    def __str__(self) -> str:
+        filters_str = str(self._filter_map) if self._filter_map else ""
+        joins_str = str(self._join_map) if self._join_map else ""
+        if filters_str and joins_str:
+            return f"{filters_str} AND {joins_str}"
+        elif filters_str:
+            return filters_str
+        else:
+            return joins_str
 
 
 class MospWhereClause:
@@ -440,6 +453,13 @@ class MospWhereClause:
     def _inflate_predicate_map(self):
         if not self._predicate_map:
             self._predicate_map = MospPredicateMap(self.break_conjunction(), alias_map=self.alias_map)
+
+    def __repr__(self) -> str:
+        return str(self)
+
+    def __str__(self) -> str:
+        self._inflate_predicate_map()
+        return str(self._predicate_map)
 
 
 # TODO: in the end, this should be renamed to MospPredicate. Currently we still need the Abstract prefix to ensure
@@ -512,8 +532,8 @@ class AbstractMospPredicate(abc.ABC):
         tables = self.collect_tables()
         if util.contains_multiple(tables):
             raise ValueError("Can only estimate filters with a single table")
-        base_table = util.simplify(tables)
-        count_query = self._expand_predicate_to_mosp_query(base_table, count_query=True)
+        base_table: db.TableRef = util.simplify(tables)
+        count_query = self._expand_predicate_to_mosp_query(base_table)
 
         formatted_query = mosp.format(count_query)
 
@@ -636,6 +656,8 @@ class MospCompoundPredicate(AbstractMospPredicate):
                                      alias_map=self.alias_map)
 
     def to_mosp(self) -> dict:
+        if self.negated:
+            return {"not": self.children[0].to_mosp()}
         return {self.operation: [child.to_mosp() for child in self.children]}
 
     def __repr__(self):

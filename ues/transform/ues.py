@@ -92,7 +92,7 @@ def _is_pk_fk_join(join: mosp.MospBasePredicate, *, dbs: db.DBSchema = db.DBSche
     return {"pk_fk_join": True, "pk": pk, "fk": fk}
 
 
-class   _JoinGraph:
+class _JoinGraph:
     """The join graph provides a nice interface for querying information about the joins we have to execute.
 
     The graph is treated mutable in that tables will subsequently be marked as included in the join. Many methods
@@ -689,7 +689,7 @@ def _absorb_pk_fk_hull_of(table: db.TableRef, *, join_graph: _JoinGraph, join_tr
     # A better strategy would be: always merge PKs in first (since they can only reduce the intermediate size)
     # Thereby we would effectively treat FK tables as n:m tables! Why did we make that distinction in the first place?
 
-    logger = util.make_logger(verbose)
+    logger = util.make_logger(verbose or trace)
     JoinEdge = collections.namedtuple("JoinEdge", ["table", "predicates"])
 
     if pk_only:
