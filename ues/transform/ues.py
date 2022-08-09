@@ -12,40 +12,7 @@ import numpy as np
 from transform import db, mosp, util
 
 
-class JoinCardinalityEstimator(abc.ABC):
-    """A cardinality estimator is capable of calculating an upper bound of the number result tuples for a given join.
-
-    How this is achieved precisely is up to the concrete estimator.
-    """
-
-    @abc.abstractmethod
-    def calculate_upper_bound(self) -> int:
-        return NotImplemented
-
-    @abc.abstractmethod
-    def stats(self) -> "_MFVTableBoundStatistics":
-        return NotImplemented
-
-
-class DefaultUESCardinalityEstimator(JoinCardinalityEstimator):
-    def __init__(self, query: mosp.MospQuery):
-        # TODO: determine maximum frequency values for each attribute
-        self.query = query
-
-    def calculate_upper_bound(self) -> int:
-        # TODO: implementation
-        return NotImplemented
-
-    def stats(self) -> "_MFVTableBoundStatistics":
-        return NotImplemented
-
-
-class TopkUESCardinalityEstimator(JoinCardinalityEstimator):
-    pass
-
-
 class BaseCardinalityEstimator(abc.ABC):
-
     @abc.abstractmethod
     def estimate_rows(self, predicate: Union[mosp.AbstractMospPredicate, List[mosp.AbstractMospPredicate]], *,
                       dbs: db.DBSchema = db.DBSchema.get_instance()) -> int:
@@ -67,6 +34,48 @@ class SamplingCardinalityEstimator(BaseCardinalityEstimator):
                       dbs: db.DBSchema = db.DBSchema.get_instance()) -> int:
         predicate = mosp.MospCompoundPredicate.merge_and(predicate)
         return predicate.estimate_result_rows(sampling=True, sampling_pct=25, dbs=dbs)
+
+
+class JoinCardinalityEstimator(abc.ABC):
+    """A cardinality estimator is capable of calculating an upper bound of the number result tuples for a given join.
+
+    How this is achieved precisely is up to the concrete estimator.
+    """
+
+    @abc.abstractmethod
+    def calculate_upper_bound(self) -> int:
+        return NotImplemented
+
+    @abc.abstractmethod
+    def stats(self) -> "_MFVTableBoundStatistics":
+        return NotImplemented
+
+
+class DefaultUESCardinalityEstimator(JoinCardinalityEstimator):
+    def __init__(self, query: mosp.MospQuery, base_cardinality_estimator: BaseCardinalityEstimator, *,
+                 dbs: db.DBSchema = db.DBSchema.get_instance()):
+        self.query = query
+        self.stats_container = _MFVTableBoundStatistics(query, base_cardinality_estimator=base_cardinality_estimator,
+                                                        dbs=dbs)
+
+    def calculate_upper_bound(self) -> int:
+        # TODO: implementation
+        return NotImplemented
+
+    def stats(self) -> "_MFVTableBoundStatistics":
+        return self.stats_container
+
+
+class TopkUESCardinalityEstimator(JoinCardinalityEstimator):
+    def __init(self, query: mosp.MospQuery):
+        self.query = query
+
+    def calculate_upper_bound(self) -> int:
+        return NotImplemented
+
+    def stats(self) -> "_MFVTableBoundStatistics":
+        # TODO
+        return NotImplemented
 
 
 def _is_pk_fk_join(join: mosp.MospBasePredicate, *, dbs: db.DBSchema = db.DBSchema.get_instance()) -> bool:
