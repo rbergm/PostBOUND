@@ -1144,7 +1144,7 @@ def optimize_query(query: mosp.MospQuery, *,
                    visualize: bool = False, visualize_args: dict = None,
                    verbose: bool = False, trace: bool = False) -> mosp.MospQuery:
     # if there are no joins in the query, there is nothing to do
-    if not util.contains_multiple(query.from_clause()):
+    if not isinstance(query.from_clause(), list) or not util.contains_multiple(query.from_clause()):
         return query
 
     if table_cardinality_estimation == "sample":
