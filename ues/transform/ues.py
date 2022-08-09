@@ -273,6 +273,15 @@ class _JoinGraph:
     def count_selected_joins(self) -> int:
         return len([node for node, free in self.graph.nodes.data("free") if not free])
 
+    def count_tables(self) -> int:
+        return len(self.graph.nodes)
+
+    def contains_table(self, table: db.TableRef) -> bool:
+        return table in self.graph.nodes
+
+    def pull_any_table(self) -> db.TableRef:
+        return next(iter(self.graph.nodes))
+
     def print(self, title: str = "", *, annotate_fk: bool = True, node_size: int = 1500, layout: str = "shell"):
         """Writes the current join graph structure to a matplotlib device."""
         node_labels = {node: node.alias for node in self.graph.nodes}
@@ -376,6 +385,9 @@ class JoinTree:
     def is_empty(self) -> bool:
         return self.right is None
 
+    def is_singular(self) -> bool:
+        return self.left is None
+
     def all_tables(self) -> List[db.TableRef]:
         left_tables = []
         if self.left_is_base_table():
@@ -398,7 +410,7 @@ class JoinTree:
         return right_attributes | left_attributes | own_attributes
 
     def left_is_base_table(self) -> bool:
-        return isinstance(self.left, db.TableRef)
+        return isinstance(self.left, db.TableRef) and self.left is not None
 
     def right_is_base_table(self) -> bool:
         return isinstance(self.right, db.TableRef)
@@ -437,7 +449,13 @@ class JoinTree:
         new_root.right = self
         return new_root
 
-    def traverse_right_deep(self) -> dict:
+    def traverse_right_deep(self) -> List[dict]:
+        if self.is_empty():
+            return []
+
+        if self.is_singular():
+            return [{"subquery": False, "table": self.right}]
+
         if self.right_is_base_table():
             yield_right = [{"subquery": False, "table": self.right}]
         else:
@@ -451,6 +469,12 @@ class JoinTree:
         return yield_right + yield_left
 
     def pretty_print(self, *, _indentation=0, _inner=False):
+        if self.is_empty():
+            return ""
+
+        if self.is_singular():
+            return self.right
+
         indent_str = (" " * _indentation) + "<- "
 
         if self.left_is_base_table():
@@ -480,6 +504,12 @@ class JoinTree:
         return str(self)
 
     def __str__(self) -> str:
+        if self.is_empty():
+            return "[EMPTY]"
+
+        if self.is_singular():
+            return str(self.right)
+
         if not self.left:
             left_label = "[NONE]"
         elif self.left_is_base_table():
@@ -779,10 +809,16 @@ def _calculate_join_order_for_join_partition(query: mosp.MospQuery, join_graph: 
     stats = _MFVTableBoundStatistics(query, base_cardinality_estimator=base_cardinality_estimator, dbs=dbs)
     DirectedJoinEdge = collections.namedtuple("DirectedJoinEdge", ["partner", "predicate"])
 
+    if join_graph.count_tables() == 1:
+        only_table = join_graph.pull_any_table()
+        join_tree = join_tree.with_base_table(only_table)
+        final_bound = stats.base_estimates[only_table]
+        return JoinOrderOptimizationResult(join_tree, final_bound=final_bound, intermediate_bounds=None, regular=False)
+
     if not join_graph.free_n_m_joined_tables():
         # TODO: documentation
         first_fk_table = util.argmin({table: estimate for table, estimate in stats.base_estimates.items()
-                                      if join_graph.is_free_fk_table(table)})
+                                      if join_graph.contains_table(table) and join_graph.is_free_fk_table(table)})
         join_tree = join_tree.with_base_table(first_fk_table)
         join_graph.mark_joined(first_fk_table)
         join_tree = _absorb_pk_fk_hull_of(first_fk_table, join_graph=join_graph, join_tree=join_tree,
@@ -1180,7 +1216,7 @@ def optimize_query(query: mosp.MospQuery, *,
     if util.contains_multiple(optimization_result):
         # query contains a cross-product
         ordered_join_trees = sorted(optimization_result, key=operator.attrgetter("final_bound"))
-        mosp_datasets = [_generate_mosp_data_for_sequence(query, optimizer_run.final_order)
+        mosp_datasets = [_generate_mosp_data_for_sequence(query, optimizer_run.final_order.traverse_right_deep())
                          for optimizer_run in ordered_join_trees]
         first_set, *remaining_sets = mosp_datasets
         for partial_query in remaining_sets:

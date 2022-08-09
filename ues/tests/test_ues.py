@@ -37,7 +37,10 @@ class SnowflaxeQueryOptimizationTests(unittest.TestCase):
 
 class CrossProductQueryOptimizationTests(unittest.TestCase):
     def test_base_query(self):
-        pass
+        raw_query = """SELECT * FROM info_type it, company_type ct
+                       WHERE it.info = 'top 250 rank' AND ct.kind = 'production companies'"""
+        query = mosp.MospQuery.parse(raw_query)
+        ues.optimize_query(query)
 
     def test_base_with_snowflake(self):
         pass
