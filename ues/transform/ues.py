@@ -715,48 +715,6 @@ class NoSubqueryGeneration(SubqueryGenerationStrategy):
         return False
 
 
-def _build_predicate_map(query: mosp.MospQuery
-                         ) -> Dict[db.TableRef, mosp.AbstractMospPredicate]:
-    """The predicate map is a dictionary which maps each table to the filter predicates that apply to this table."""
-    all_filter_predicates = [pred for pred in query.predicates() if not pred.is_join_predicate()]
-    raw_predicate_map = collections.defaultdict(list)
-
-    for filter_pred in all_filter_predicates:
-        if filter_pred.is_compound():
-            for pred in filter_pred.collect_left_attributes():
-                raw_predicate_map[pred.table].append(filter_pred)
-        else:
-            raw_predicate_map[filter_pred.parse_left_attribute().table].append(filter_pred)
-
-    aggregated_predicate_map = {table: mosp.CompoundMospFilterPredicate.build_and_predicate(predicate)
-                                for table, predicate in raw_predicate_map.items()}
-
-    for tab in query.collect_tables():
-        if tab not in aggregated_predicate_map:
-            aggregated_predicate_map[tab] = []
-
-    return aggregated_predicate_map
-
-
-def _build_join_map(query: mosp.MospQuery) -> Dict[db.TableRef, Dict[db.TableRef, Set[mosp.AbstractMospPredicate]]]:
-    """The join map is a dictionary which maps each table to the join predicates that apply to this table."""
-    all_join_predicates = [pred for pred in query.predicates() if pred.is_join_predicate()]
-    predicate_map = collections.defaultdict(lambda: collections.defaultdict(set))
-
-    for join_pred in all_join_predicates:
-        left_attribute, right_attribute = join_pred.parse_attributes()
-        predicate_map[left_attribute.table][right_attribute.table].add(join_pred)
-        predicate_map[right_attribute.table][left_attribute.table].add(join_pred)
-
-    # castings
-    predicate_map.default_factory = lambda: collections.defaultdict(list)
-    for table, partners in predicate_map.items():
-        predicate_map[table].default_factory = list
-        for partner in partners:
-            predicate_map[table][partner] = list(predicate_map[table][partner])
-    return predicate_map
-
-
 def _estimate_filtered_cardinalities(query: mosp.MospQuery, estimator: BaseCardinalityEstimator, *,
                                      dbs: db.DBSchema = db.DBSchema.get_instance()) -> Dict[db.TableRef, int]:
     """Fetches the PG estimates for all tables in the predicate_map according to their associated filters."""
