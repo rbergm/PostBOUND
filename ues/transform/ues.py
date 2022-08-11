@@ -13,6 +13,7 @@ from transform import db, mosp, util
 
 
 class BaseCardinalityEstimator(abc.ABC):
+    """Estimator responsible for the number of rows of a potentially filtered base table."""
     @abc.abstractmethod
     def estimate_rows(self, predicate: Union[mosp.AbstractMospPredicate, List[mosp.AbstractMospPredicate]], *,
                       dbs: db.DBSchema = db.DBSchema.get_instance()) -> int:
@@ -43,7 +44,21 @@ class JoinCardinalityEstimator(abc.ABC):
     """
 
     @abc.abstractmethod
-    def calculate_upper_bound(self) -> int:
+    def calculate_upper_bound(self, predicate: mosp.AbstractMospPredicate, *,
+                              pk_fk_join: bool = False, fk_table: db.TableRef = None,
+                              join_tree: "JoinTree" = None) -> int:
+        """
+        Determines the upper bound (i.e. the maximum number of result tuples) when executing the join as specified
+        by the given predicate. There are two possible modes:
+
+        For an n:m join, the current join_tree has to be specified in addition to the predicate itself. This is
+        necessary to look up the current bound of the partially executed query, as well as to determine the join
+        directionality.
+
+        For a PK/FK join, the Foreign Key table has to be specified in addition to setting `pk_fk_join` to `True`.
+        This is once again necessary to figure out join directions without creating dependencies to the schema or
+        join graph.
+        """
         return NotImplemented
 
     @abc.abstractmethod
@@ -58,9 +73,38 @@ class DefaultUESCardinalityEstimator(JoinCardinalityEstimator):
         self.stats_container = _MFVTableBoundStatistics(query, base_cardinality_estimator=base_cardinality_estimator,
                                                         dbs=dbs)
 
-    def calculate_upper_bound(self) -> int:
-        # TODO: implementation
-        return NotImplemented
+    def calculate_upper_bound(self, predicate: mosp.AbstractMospPredicate, *,
+                              pk_fk_join: bool = False, fk_table: db.TableRef = None,
+                              join_tree: "JoinTree" = None) -> int:
+        if pk_fk_join:
+            # Use simplified formula
+            pk_table = util.pull_any(predicate.join_partner_of(fk_table), strict=False).table
+            pk_cardinality = self.stats_container.base_estimates[pk_table]
+
+            fk_attributes = util.enlist(predicate.attribute_of(fk_table), strict=False)
+            lowest_frequency = min(self.stats_container.base_frequencies[attr] for attr in fk_attributes)
+
+            return lowest_frequency * pk_cardinality
+
+        # use full-fledged formula
+        lowest_bound = np.inf
+        join_tree_bound = self.stats_container.upper_bounds[join_tree]
+        for attr1, attr2 in util.enlist(predicate.join_partners()):
+            joined_attr = attr1 if join_tree.contains_table(attr1.table) else attr2
+            candidate_attr = attr1 if joined_attr == attr2 else attr2
+
+            distinct_values_tree = (join_tree_bound
+                                    / self.stats_container.joined_frequencies[joined_attr])
+            distinct_values_candidate = (self.stats_container.upper_bounds[candidate_attr.table]
+                                         / self.stats_container.base_frequencies[candidate_attr])
+            candidate_bound = (min(distinct_values_tree, distinct_values_candidate)
+                               * self.stats_container.joined_frequencies[joined_attr]
+                               * self.stats_container.base_frequencies[candidate_attr])
+
+            if candidate_bound < lowest_bound:
+                lowest_bound = candidate_bound
+
+        return lowest_bound
 
     def stats(self) -> "_MFVTableBoundStatistics":
         return self.stats_container
@@ -70,7 +114,9 @@ class TopkUESCardinalityEstimator(JoinCardinalityEstimator):
     def __init(self, query: mosp.MospQuery):
         self.query = query
 
-    def calculate_upper_bound(self) -> int:
+    def calculate_upper_bound(self, predicate: mosp.AbstractMospPredicate, *,
+                              pk_fk_join: bool = False, fk_table: db.TableRef = None,
+                              join_tree: "JoinTree" = None) -> int:
         return NotImplemented
 
     def stats(self) -> "_MFVTableBoundStatistics":
@@ -418,6 +464,9 @@ class JoinTree:
         own_attributes = set(self.predicate.collect_attributes()) if self.predicate else set()
         return right_attributes | left_attributes | own_attributes
 
+    def contains_table(self, table: db.TableRef) -> bool:
+        return table in self.all_tables()
+
     def left_is_base_table(self) -> bool:
         return isinstance(self.left, db.TableRef) and self.left is not None
 
@@ -620,7 +669,7 @@ class _MFVTableBoundStatistics:
 
     def _update_base_predicate_frequency(self, joined_table: db.TableRef, join_predicate: mosp.MospBasePredicate):
         new_join_attribute = join_predicate.attribute_of(joined_table)
-        existing_partner_attribute = join_predicate.join_partner(joined_table)
+        existing_partner_attribute = join_predicate.join_partner_of(joined_table)
         new_attribute_frequency = self.base_frequencies[new_join_attribute]
 
         return {"new_attribute": new_join_attribute,
@@ -815,7 +864,7 @@ def _calculate_join_order_for_join_partition(query: mosp.MospQuery, join_graph: 
     logger = util.make_logger(verbose or trace)
 
     join_tree = JoinTree.empty_join_tree()
-    stats = _MFVTableBoundStatistics(query, base_cardinality_estimator=base_cardinality_estimator, dbs=dbs)
+    stats = join_cardinality_estimator.stats()
     DirectedJoinEdge = collections.namedtuple("DirectedJoinEdge", ["partner", "predicate"])
 
     if join_graph.count_tables() == 1:
@@ -870,16 +919,13 @@ def _calculate_join_order_for_join_partition(query: mosp.MospQuery, join_graph: 
 
             # Now, let's look at all remaining PK/FK joins with the candidate table. We can get these easily via
             # join_graph.free_pk_joins.
-            pk_joins = [(partner, util.enlist(predicate.attribute_of(candidate_table), strict=False))
-                        for partner, predicate in join_graph.free_pk_joins_with(candidate_table).items()]
+            pk_joins = join_graph.free_pk_joins_with(candidate_table).values()
 
             # For these Primary Key Joins we need to determine the upper bound of the join to use as a potential filter
             # The Bound formula is: MF(candidate, fk_attr) * |pk_table|
-            # For each available join table and each of its (possibly compound) Primary Key joins, the bound has
-            # to be calculated. This is achieved via a nested list comprehension
-            pk_fk_bounds = util.flatten([[stats.base_frequencies[attribute] * stats.base_estimates[partner]
-                                          for attribute in join_attributes]
-                                         for (partner, join_attributes) in pk_joins])
+            pk_fk_bounds = [join_cardinality_estimator.calculate_upper_bound(predicate, pk_fk_join=True,
+                                                                             fk_table=candidate_table)
+                            for predicate in pk_joins]
             candidate_min_bound = min([filter_estimate] + pk_fk_bounds)  # this is concatenation, not addition!
 
             trace_logger(".. Bounds for candidate", candidate_table, ":: Filter:", filter_estimate,
@@ -942,25 +988,14 @@ def _calculate_join_order_for_join_partition(query: mosp.MospQuery, join_graph: 
             # min(upper(T) / MF(T, a), upper(C) / MF(C, b)) * MF(T, a) * MF(C, b)
             # for join tree T with join attribute a and candidate table C with join attribute b.
             # TODO: this should be subject to the join cardinality estimation strategy, not hard-coded.
-            for base_predicate in predicate.base_predicates():
-                candidate_attribute = predicate.attribute_of(candidate_table)
-                tree_attribute = predicate.join_partner(candidate_table)
-                tree_table = tree_attribute.table
-                n_values_tree = (stats.upper_bounds[join_tree]
-                                 /
-                                 stats.joined_frequencies[tree_attribute])
-                n_values_candidate = (stats.upper_bounds[candidate_table]
-                                      / stats.base_frequencies[candidate_attribute])
-                candidate_bound = (min(n_values_tree, n_values_candidate)
-                                   * stats.joined_frequencies[tree_attribute]
-                                   * stats.base_frequencies[candidate_attribute])
+            candidate_bound = join_cardinality_estimator.calculate_upper_bound(predicate, join_tree=join_tree)
+            tree_table = util.pull_any(predicate.join_partner_of(candidate_table), strict=False).table
+            trace_logger(f".. Checking candidate {predicate} between {tree_table}/{candidate_table} with "
+                         f"bound {candidate_bound}")
 
-                trace_logger(f".. Checking candidate {base_predicate} between {tree_table}/{candidate_table} with "
-                             f"bound {candidate_bound}")
-
-                if candidate_bound < lowest_min_bound:
-                    lowest_min_bound = candidate_bound
-                    selected_candidate = candidate_table
+            if candidate_bound < lowest_min_bound:
+                lowest_min_bound = candidate_bound
+                selected_candidate = candidate_table
 
             if candidate_table in candidate_bounds:
                 curr_bound = candidate_bounds[candidate_table]
@@ -981,8 +1016,6 @@ def _calculate_join_order_for_join_partition(query: mosp.MospQuery, join_graph: 
         # Which idea is the right one in the current situation is not decided by the algorithm itself. Instead, the
         # decision is left to a policy (the subquery_generator), which decides the appropriate action.
 
-        # TODO: for now we just always use the first predicate available. Is this sufficient or does the choice of
-        # predicate matter?
         join_graph.mark_joined(selected_candidate, n_m_join=True, trace=trace)
         join_predicate = (mosp.MospCompoundPredicate.merge_and(
             util.flatten(list(
@@ -1200,10 +1233,10 @@ def optimize_query(query: mosp.MospQuery, *,
         raise ValueError("Unknown base table estimation strategy: '{}'".format(table_cardinality_estimation))
 
     if join_cardinality_estimation == "basic":
-        join_estimator = DefaultUESCardinalityEstimator(query)
+        join_estimator = DefaultUESCardinalityEstimator(query, base_cardinality_estimator=base_estimator)
     elif join_cardinality_estimation == "advanced":
         warnings.warn("Advanced join estimation is not supported yet. Falling back to basic estimation.")
-        join_estimator = DefaultUESCardinalityEstimator(query)
+        join_estimator = DefaultUESCardinalityEstimator(query, base_cardinality_estimator=base_estimator)
     else:
         raise ValueError("Unknown cardinality estimation strategy: '{}'".format(join_cardinality_estimation))
 

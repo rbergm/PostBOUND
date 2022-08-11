@@ -176,9 +176,15 @@ def contains_multiple(obj: Any):
     return len(obj) > 1
 
 
-def pull_any(iterable: Iterable[_T]) -> _T:
-    """Retrieves any element from the iterable."""
-    if not iterable:
+def pull_any(iterable: Iterable[_T], *, strict: bool = True) -> _T:
+    """Retrieves any element from the iterable.
+
+    If `strict` is `False` and a scalar object is provided, this object will be returned as-is. In addition, in
+    non-strict mode, `None` will be returned for empty iterables.
+    """
+    if not strict and not contains_multiple(iterable):
+        return iterable
+    if strict and not iterable:
         raise ValueError("Empty iterable")
     return next(iter(iterable), None)
 
@@ -201,3 +207,9 @@ def connect_postgres(parser: argparse.ArgumentParser, conn_str: str = None):
             conn_str = conn_file.readline().strip()
     conn = psycopg2.connect(conn_str)
     return conn
+
+
+class StateError(RuntimeError):
+    """Indicates that an object is not in the right state to perform an opteration."""
+    def __init__(self, msg: str = ""):
+        super.__init__(msg)

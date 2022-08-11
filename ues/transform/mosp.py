@@ -1,5 +1,6 @@
 
 import abc
+from ast import alias
 import collections
 import collections.abc
 import copy
@@ -462,6 +463,16 @@ class MospWhereClause:
         return str(self._predicate_map)
 
 
+class NoJoinPredicateError(util.StateError):
+    def __init__(self, msg: str = ""):
+        super.__init__(msg)
+
+
+class NoFilterPredicateError(util.StateError):
+    def __init__(self, msg: str = ""):
+        super.__init__(msg)
+
+
 # TODO: in the end, this should be renamed to MospPredicate. Currently we still need the Abstract prefix to ensure
 # our wrecking-ball refactoring actually works and does not reuse this class accidentally
 class AbstractMospPredicate(abc.ABC):
@@ -469,7 +480,7 @@ class AbstractMospPredicate(abc.ABC):
     def is_compound_operation(operation: str) -> bool:
         return operation in CompoundOperations
 
-    def __init__(self, mosp_data: dict, alias_map: dict):
+    def __init__(self, mosp_data: dict, *, alias_map: dict):
         self.mosp_data = mosp_data
         self.alias_map = alias_map
 
@@ -516,12 +527,16 @@ class AbstractMospPredicate(abc.ABC):
             return util.pull_any(attributes)
 
     @abc.abstractmethod
-    def join_partner(self, table: db.TableRef) -> Union[db.AttributeRef, Set[db.AttributeRef]]:
+    def join_partner_of(self, table: db.TableRef) -> Union[db.AttributeRef, Set[db.AttributeRef]]:
         """Retrieves the attributes that are joined with the given table.
 
         This assumes that this predicate actually is a join. If it's a base predicate, a single attribute will be
         returned, otherwise all matching attributes will be wrapped in a set.
         """
+        return NotImplemented
+
+    @abc.abstractmethod
+    def join_partners(self) -> List[Tuple[db.AttributeRef, db.AttributeRef]]:
         return NotImplemented
 
     def base_predicates(self) -> List["MospBasePredicate"]:
@@ -535,7 +550,7 @@ class AbstractMospPredicate(abc.ABC):
         base_table: db.TableRef = util.simplify(tables)
         count_query = self._expand_predicate_to_mosp_query(base_table)
 
-        formatted_query = mosp.format(count_query)
+        formatted_query: str = mosp.format(count_query)
 
         # the trick to support sampling is incredibly dirty but sadly mo_sql_parsing does not support formatting with
         # tablesample, yet
@@ -562,6 +577,18 @@ class AbstractMospPredicate(abc.ABC):
             "from": {"value": base_table.full_name, "name": base_table.alias},
             "where": self.mosp_data
         }
+
+    def _assert_alias_map(self):
+        if not self.alias_map:
+            raise ValueError("No alias map given")
+
+    def _assert_join_predicate(self):
+        if not self.is_join():
+            raise NoJoinPredicateError()
+
+    def _assert_filter_predicate(self):
+        if not self.is_filter():
+            raise NoFilterPredicateError()
 
     def __hash__(self) -> int:
         return util.dict_hash(self.mosp_data)
@@ -618,7 +645,7 @@ class MospCompoundPredicate(AbstractMospPredicate):
 
     def __init__(self, operator, children: List[AbstractMospPredicate], *, alias_map: dict = None):
         mosp_data = {operator: [child.mosp_data for child in children]}
-        super().__init__(mosp_data, alias_map)
+        super().__init__(mosp_data, alias_map=alias_map)
 
         self.operation = operator
         self.children: List[AbstractMospPredicate] = util.enlist(children)
@@ -633,10 +660,10 @@ class MospCompoundPredicate(AbstractMospPredicate):
     def collect_attributes(self) -> Set[db.AttributeRef]:
         return set(util.flatten([child.collect_attributes() for child in self.children], flatten_set=True))
 
-    def join_partner(self, table: db.TableRef) -> Union[db.AttributeRef, Set[db.AttributeRef]]:
+    def join_partner_of(self, table: db.TableRef) -> Union[db.AttributeRef, Set[db.AttributeRef]]:
         if not self.is_join():
-            raise ValueError("Not a join predicate")
-        partners = util.flatten([child.join_partner(table) for child in self.children], flatten_set=True)
+            raise NoJoinPredicateError()
+        partners = util.flatten([child.join_partner_of(table) for child in self.children], flatten_set=True)
         return set(partners)
 
     def base_predicates(self) -> List["MospBasePredicate"]:
@@ -644,6 +671,12 @@ class MospCompoundPredicate(AbstractMospPredicate):
         for child in self.children:
             predicates.extend(child.base_predicates())
         return predicates
+
+    def join_partners(self) -> List[Tuple[db.AttributeRef, db.AttributeRef]]:
+        partners = []
+        for child in self.children:
+            partners.extend(child.join_partners())
+        return partners
 
     def rename_table(self, from_table: db.TableRef, to_table: db.TableRef, *,
                      prefix_attribute: bool = False) -> "AbstractMospPredicate":
@@ -672,7 +705,7 @@ class MospCompoundPredicate(AbstractMospPredicate):
 
 class MospBasePredicate(AbstractMospPredicate):
     def __init__(self, mosp_data, *, alias_map: dict = None):
-        super().__init__(mosp_data, alias_map)
+        super().__init__(mosp_data, alias_map=alias_map)
 
         if not isinstance(mosp_data, dict):
             raise ValueError("Unknown predicate type: {}".format(mosp_data))
@@ -716,10 +749,10 @@ class MospBasePredicate(AbstractMospPredicate):
             return set([self.left_attribute])
         return set([self.left_attribute, self.right_attribute])
 
-    def join_partner(self, table: db.TableRef) -> Union[db.AttributeRef, Set[db.AttributeRef]]:
+    def join_partner_of(self, table: db.TableRef) -> Union[db.AttributeRef, Set[db.AttributeRef]]:
         self._assert_alias_map()
         if self.is_filter():
-            raise ValueError("Not a join predicate")
+            raise NoJoinPredicateError()
         if self.left_attribute.table == table:
             return self.right_attribute
         elif self.right_attribute.table == table:
@@ -727,9 +760,13 @@ class MospBasePredicate(AbstractMospPredicate):
         else:
             raise ValueError("Table is not joined")
 
+    def join_partners(self) -> List[Tuple[db.AttributeRef, db.AttributeRef]]:
+        self._assert_join_predicate()
+        return (self.left_attribute, self.right_attribute)
+
     def literal_value(self) -> Any:
         if self.is_join():
-            raise ValueError("Join predicate has no literal value")
+            raise NoFilterPredicateError("Join predicates have no literal value!")
         return self._unwrap_literal()
 
     def base_predicates(self) -> List["MospBasePredicate"]:
@@ -779,10 +816,6 @@ class MospBasePredicate(AbstractMospPredicate):
         if self.operation == "exists" or self.operation == "missing":
             return False
         return isinstance(self.mosp_right, str)
-
-    def _assert_alias_map(self):
-        if not self.alias_map:
-            raise ValueError("No alias map given")
 
     def _unwrap_literal(self):
         if not isinstance(self.mosp_right, dict) or "literal" not in self.mosp_right:
