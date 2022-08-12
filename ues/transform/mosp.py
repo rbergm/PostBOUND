@@ -762,7 +762,7 @@ class MospBasePredicate(AbstractMospPredicate):
 
     def join_partners(self) -> List[Tuple[db.AttributeRef, db.AttributeRef]]:
         self._assert_join_predicate()
-        return (self.left_attribute, self.right_attribute)
+        return [(self.left_attribute, self.right_attribute)]
 
     def literal_value(self) -> Any:
         if self.is_join():

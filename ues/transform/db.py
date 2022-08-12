@@ -249,7 +249,7 @@ class DBSchema:
     def calculate_most_common_values(self, attribute: AttributeRef, *, k: int = 10,
                                      cache_enabled: bool = True) -> list:
         """
-        In contrast to `load_most_common_values`, this function does not query the pg_stats view, but calculates the
+        In contrast to `load_most_common_values`, this function does not query the `pg_stats` view, but calculates the
         common values live from the actual data. This also means that `k` always has to be set to a value.
         Other than that, both functions work exactly the same.
 
@@ -267,7 +267,7 @@ class DBSchema:
         query_template = textwrap.dedent(f"""
                                          SELECT {attribute}, COUNT(*)
                                          FROM {attribute.table}
-                                         GROUPY BY {attribute}
+                                         GROUP BY {attribute}
                                          ORDER BY count DESC, {attribute}
                                          LIMIT {k}""")
         self.cursor.execute(query_template)

@@ -2,7 +2,7 @@
 import abc
 import collections
 import operator
-from typing import Dict, List, Set, Union, Tuple
+from typing import Any, Dict, List, Set, Union, Tuple
 import warnings
 
 import matplotlib.pyplot as plt
@@ -89,7 +89,7 @@ class DefaultUESCardinalityEstimator(JoinCardinalityEstimator):
         # use full-fledged formula
         lowest_bound = np.inf
         join_tree_bound = self.stats_container.upper_bounds[join_tree]
-        for attr1, attr2 in util.enlist(predicate.join_partners()):
+        for attr1, attr2 in predicate.join_partners():
             joined_attr = attr1 if join_tree.contains_table(attr1.table) else attr2
             candidate_attr = attr1 if joined_attr == attr2 else attr2
 
@@ -110,18 +110,99 @@ class DefaultUESCardinalityEstimator(JoinCardinalityEstimator):
         return self.stats_container
 
 
+class _MCVListAccessor:
+    def __init__(self, mcv_list: List[Tuple[Any, int]], *, remainder_frequency: int = None):
+        self.mcv_list = mcv_list
+        self.mcv_data = dict(mcv_list)
+        self.remainder_frequency = min(self.mcv_data.values()) if not remainder_frequency else remainder_frequency
+
+    def count_common_elements(self, other_mcv: "_MCVListAccessor") -> int:
+        own_values = set(self.mcv_data.keys())
+        other_values = set(other_mcv.mcv_data.keys())
+        return len(own_values & other_values)
+
+    def contents(self) -> List[Tuple[Any, int]]:
+        return self.mcv_list
+
+    def max_frequency(self) -> int:
+        return max([freq for __, freq in self.mcv_list])
+
+    def __getitem__(self, value: Any) -> int:
+        return self.mcv_data.get(value, self.remainder_frequency)
+
+    def __contains__(self, value: Any) -> bool:
+        return value in self.mcv_data
+
+    def __len__(self) -> int:
+        return len(self.mcv_list)
+
+    def __iter__(self) -> Any:
+        return list(self.mcv_data.keys()).__iter__()
+
+    def __repr__(self) -> str:
+        return str(self)
+
+    def __str__(self) -> str:
+        return str(self.mcv_list)
+
+
 class TopkUESCardinalityEstimator(JoinCardinalityEstimator):
-    def __init(self, query: mosp.MospQuery):
+    def __init__(self, query: mosp.MospQuery, base_cardinality_estimator: BaseCardinalityEstimator, *,
+                 k: int, dbs: db.DBSchema = db.DBSchema.get_instance()):
         self.query = query
+        self.k = k
+        self.stats_container = _TopKTableBoundStatistics(query, k,
+                                                         base_cardinality_estimator=base_cardinality_estimator,
+                                                         dbs=dbs)
+        self.dbs = dbs
 
     def calculate_upper_bound(self, predicate: mosp.AbstractMospPredicate, *,
                               pk_fk_join: bool = False, fk_table: db.TableRef = None,
                               join_tree: "JoinTree" = None) -> int:
-        return NotImplemented
+        lowest_bound = np.inf
+        for (attr1, attr2) in predicate.join_partners():
+            if pk_fk_join:
+                mcv_a = self.stats_container.fetch_mcv_list(attr1)
+                mcv_b = self.stats_container.fetch_mcv_list(attr2)
+                total_a, total_b = self.dbs.count_tuples(attr1.table), self.dbs.count_tuples(attr2.table)
+            else:
+                joined_attr = attr1 if join_tree.contains_table(attr1.table) else attr2
+                candidate_attr = attr1 if joined_attr == attr2 else attr2
+                mcv_a = self.stats_container.fetch_mcv_list(joined_attr, joined_table=True)
+                mcv_b = self.stats_container.fetch_mcv_list(candidate_attr)
+                total_a = self.dbs.count_tuples(joined_attr.table)
+                total_b = self.dbs.count_tuples(candidate_attr.table)
 
-    def stats(self) -> "_MFVTableBoundStatistics":
-        # TODO
-        return NotImplemented
+            cardinality = self._calculate_cardinality(mcv_a, mcv_b, total_a, total_b)
+            if pk_fk_join:
+                pk_table = attr1.table if attr2.table == fk_table else attr2.table
+                max_cardinality = self.dbs.count_tuples(pk_table)
+                cardinality = min(cardinality, max_cardinality)
+
+            if cardinality < lowest_bound:
+                lowest_bound = cardinality
+
+        return lowest_bound
+
+    def stats(self) -> "_TopKTableBoundStatistics":
+        return self.stats_container
+
+    def _calculate_cardinality(self, mcv_a: _MCVListAccessor, mcv_b: _MCVListAccessor,
+                               total_a: int, total_b: int) -> int:
+        cardinality_sum = 0
+
+        for value in mcv_a:
+            cardinality_sum += mcv_a[value] * mcv_b[value]
+
+        for value in [value for value in mcv_b if value not in mcv_a]:
+            cardinality_sum += mcv_a[value] * mcv_b[value]
+
+        total_values_in_mcvs = len(mcv_a) + len(mcv_b) - mcv_a.count_common_elements(mcv_b)
+        remaining_values_not_in_mcvs = min(total_a, total_b) - total_values_in_mcvs
+        remaining_values_frequency = max(mcv_a.remainder_frequency, mcv_b.remainder_frequency)
+        cardinality_sum += remaining_values_not_in_mcvs * remaining_values_frequency
+
+        return cardinality_sum
 
 
 def _is_pk_fk_join(join: mosp.MospBasePredicate, *, dbs: db.DBSchema = db.DBSchema.get_instance()) -> bool:
@@ -435,6 +516,7 @@ class JoinTree:
         self.right: Union["JoinTree", db.TableRef] = None
         if isinstance(predicate, list):
             raise ValueError()
+        self.checkpoint: bool = False
         self.predicate: mosp.AbstractMospPredicate = predicate
 
     def is_empty(self) -> bool:
@@ -442,6 +524,13 @@ class JoinTree:
 
     def is_singular(self) -> bool:
         return self.left is None
+
+    def previous_checkpoint(self, *, _inner: bool = False) -> "JoinTree":
+        if self.is_singular() or self.is_empty():
+            return None
+        if _inner and self.checkpoint:
+            return self
+        return self.right.previous_checkpoint(_inner=True)
 
     def all_tables(self) -> List[db.TableRef]:
         left_tables = []
@@ -457,6 +546,13 @@ class JoinTree:
             right_tables = self.right.all_tables()
 
         return util.flatten([left_tables, right_tables])
+
+    def at_base_table(self) -> "JoinTree":
+        if self.is_empty():
+            raise util.StateError("Empty join tree")
+        if self.is_singular():
+            return self
+        return self.right.at_base_table()
 
     def all_attributes(self) -> Set[db.AttributeRef]:
         right_attributes = self.right.all_attributes() if self.right_is_tree() else set()
@@ -484,23 +580,28 @@ class JoinTree:
         return self
 
     def joined_with_base_table(self, table: db.TableRef, *,
-                               predicate: mosp.AbstractMospPredicate = None) -> "JoinTree":
+                               predicate: mosp.AbstractMospPredicate = None,
+                               checkpoint: bool = False) -> "JoinTree":
         if not self.left:
             self.left = table
             self.predicate = predicate
             return self
 
+        self.checkpoint = checkpoint
         new_root = JoinTree(predicate=predicate)
         new_root.left = table
         new_root.right = self
         return new_root
 
     def joined_with_subquery(self, subquery: "JoinTree", *,
-                             predicate: mosp.AbstractMospPredicate = None) -> "JoinTree":
+                             predicate: mosp.AbstractMospPredicate = None,
+                             checkpoint: bool = False) -> "JoinTree":
         if not self.left:
             self.left = subquery
             self.predicate = predicate
             return self
+
+        self.checkpoint = checkpoint
 
         new_root = JoinTree(predicate=predicate)
         new_root.left = subquery
@@ -545,8 +646,10 @@ class JoinTree:
         else:
             right_str = self.right.pretty_print(_indentation=_indentation+2, _inner=True)
 
+        checkpoint_str = "[C]" if self.checkpoint else ""
+
         if _inner:
-            return "\n".join([left_str, right_str])
+            return "\n".join([checkpoint_str + left_str, right_str])
         else:
             print(left_str, right_str, sep="\n")
 
@@ -583,10 +686,12 @@ class JoinTree:
             right_label = str(self.right)
 
         join_str = f"{right_label} ⋈ {left_label}"  # let's read joins from left to right!
+        if self.checkpoint:
+            join_str += " [C]"
         return join_str
 
 
-class _BaseAttributeFrequenciesLoader:
+class _MVFBaseAttributeFrequenciesLoader:
     def __init__(self, base_estimates: Dict[db.TableRef, int], dbs: db.DBSchema = db.DBSchema.get_instance()):
         self.dbs = dbs
         self.base_estimates = base_estimates
@@ -611,8 +716,8 @@ class _BaseAttributeFrequenciesLoader:
         return str(self.attribute_frequencies)
 
 
-class _JoinAttributeFrequenciesLoader:
-    def __init__(self, base_frequencies: _BaseAttributeFrequenciesLoader):
+class _MFVJoinAttributeFrequenciesLoader:
+    def __init__(self, base_frequencies: _MVFBaseAttributeFrequenciesLoader):
         self.base_frequencies = base_frequencies
         self.attribute_frequencies = {}
         self.current_multiplier = 1
@@ -633,16 +738,110 @@ class _JoinAttributeFrequenciesLoader:
         return str(self.attribute_frequencies)
 
 
-class _MFVTableBoundStatistics:
+class _TableBoundStatistics(abc.ABC):
+    def __init__(self, base_estimates, base_frequencies, joined_frequencies, upper_bounds):
+        self._base_estimates = base_estimates
+        self._base_frequencies = base_frequencies
+        self._joined_frequencies = joined_frequencies
+        self._upper_bounds = upper_bounds
+
+    @abc.abstractmethod
+    def update_frequencies(self, joined_table: db.TableRef, join_predicate: mosp.AbstractMospPredicate, *,
+                           join_tree: JoinTree):
+        return NotImplemented
+
+    def _get_base_estimates(self):
+        return self._base_estimates
+
+    def _get_base_frequencies(self):
+        return self._base_frequencies
+
+    def _get_joined_frequencies(self):
+        return self._joined_frequencies
+
+    def _get_upper_bounds(self):
+        return self._upper_bounds
+
+    base_estimates: Dict[db.TableRef, int] = property(_get_base_estimates)
+    """Base estimates provide an estimate of the number of tuples in a base table."""
+
+    base_frequencies: Dict[db.AttributeRef, Any] = property(_get_base_frequencies)
+    """
+    Base frequencies provide a statistic-dependent estimate of the value distribution for attributes of
+    base tables.
+    """
+
+    joined_frequencies: Dict[db.AttributeRef, Any] = property(_get_joined_frequencies)
+    """
+    Joined frequencies provide a statistic-dependent estimate of the value distribution for attributes of
+    joined tables.
+    """
+
+    upper_bounds: Dict[Union[db.TableRef, "JoinTree"], int] = property(_get_upper_bounds)
+    """Upper bounds provide a theoretical bound on the number of tuples in a base table or a join tree."""
+
+
+class _TopKBaseAttributeFrequenciesLoader:
+    def __init__(self, k: int, base_estimates: Dict[db.TableRef, int], dbs: db.DBSchema = db.DBSchema.get_instance()):
+        self.k = k
+        self.dbs = dbs
+        self.base_estimates = base_estimates
+        self.attribute_mcvs = {}
+
+    def __getitem__(self, key: db.AttributeRef) -> _MCVListAccessor:
+        if key not in self.attribute_mcvs:
+            top_k = _MCVListAccessor(self.dbs.calculate_most_common_values(key, k=self.k))
+            self.attribute_mcvs[key] = top_k
+            return top_k
+        return self.attribute_mcvs[key]
+
+    def __repr__(self) -> str:
+        return str(self)
+
+    def __str__(self) -> str:
+        return str(self.attribute_mcvs)
+
+
+class _TopKJoinAttributeFrequenciesLoader:
+    def __init__(self, base_frequencies: _TopKBaseAttributeFrequenciesLoader):
+        self.base_mcvs = base_frequencies
+        self.attribute_mvcs = {}
+        self.current_multiplier = 1
+
+    def adjust_frequencies(self, mcv_list: List[Tuple[Any, int]], adjustment_factor: int) -> List[Tuple[Any, int]]:
+        return [(val, freq * adjustment_factor) for val, freq in mcv_list]
+
+    def __getitem__(self, key: db.AttributeRef) -> _MCVListAccessor:
+        if key not in self.attribute_mvcs:
+            base_mcv = self.base_mcvs[key]
+            adjusted_mcv = _MCVListAccessor(self.adjust_frequencies(base_mcv.contents(), self.current_multiplier))
+            self.attribute_mvcs[key] = adjusted_mcv
+            return adjusted_mcv
+        return self.attribute_mvcs[key]
+
+    def __setitem__(self, key: db.AttributeRef, value: _MCVListAccessor):
+        self.attribute_mvcs[key] = value
+
+    def __repr__(self) -> str:
+        return str(self)
+
+    def __str__(self) -> str:
+        return str(self.attribute_mvcs)
+
+
+class _MFVTableBoundStatistics(_TableBoundStatistics):
+    """Most Frequent Value bound statistics operate on the most frequent value (i.e. Top-1) per attribute."""
     def __init__(self, query: mosp.MospQuery, *,
                  base_cardinality_estimator: BaseCardinalityEstimator,
                  dbs: db.DBSchema = db.DBSchema.get_instance()):
         self.query = query
-        self.base_estimates = _estimate_filtered_cardinalities(query, base_cardinality_estimator, dbs=dbs)
-        self.base_frequencies = _BaseAttributeFrequenciesLoader(self.base_estimates)
-        self.joined_frequencies = _JoinAttributeFrequenciesLoader(self.base_frequencies)
-        self.upper_bounds = {}
         self.dbs = dbs
+
+        base_estimates = _estimate_filtered_cardinalities(query, base_cardinality_estimator, dbs=dbs)
+        base_frequencies = _MVFBaseAttributeFrequenciesLoader(base_estimates)
+        joined_frequencies = _MFVJoinAttributeFrequenciesLoader(base_frequencies)
+        upper_bounds = {}
+        super().__init__(base_estimates, base_frequencies, joined_frequencies, upper_bounds)
 
     def update_frequencies(self, joined_table: db.TableRef, join_predicate: mosp.AbstractMospPredicate, *,
                            join_tree: JoinTree):
@@ -682,6 +881,64 @@ class _MFVTableBoundStatistics:
 
     def __str__(self) -> str:
         return str(self.upper_bounds)
+
+
+class _TopKTableBoundStatistics(_TableBoundStatistics):
+    def __init__(self, query: mosp.MospQuery, k, *,
+                 base_cardinality_estimator: BaseCardinalityEstimator,
+                 dbs: db.DBSchema = db.DBSchema.get_instance()):
+        self.query = query
+        self.k = k
+        self.dbs = dbs
+
+        base_estimates = _estimate_filtered_cardinalities(query, base_cardinality_estimator, dbs=dbs)
+        base_frequencies = _TopKBaseAttributeFrequenciesLoader(self.k, base_estimates, dbs=dbs)
+        joined_frequencies = _TopKJoinAttributeFrequenciesLoader(base_frequencies)
+        self._jf = joined_frequencies
+        upper_bounds = {}
+        super().__init__(base_estimates, base_frequencies, joined_frequencies, upper_bounds)
+
+    def fetch_mcv_list(self, attribute: db.AttributeRef, *, joined_table: bool = False) -> _MCVListAccessor:
+        return self.joined_frequencies[attribute] if joined_table else self.base_frequencies[attribute]
+
+    def update_frequencies(self, joined_table: db.TableRef, join_predicate: mosp.AbstractMospPredicate, *,
+                           join_tree: JoinTree):
+        join_tree_before_update = (join_tree.previous_checkpoint() if not join_tree.is_singular()
+                                   else join_tree.at_base_table())
+        bound_after_update = self.upper_bounds[join_tree]
+        bound_before_update = self.upper_bounds[join_tree_before_update]
+        cardinality_increase_factor = bound_after_update / bound_before_update
+
+        max_new_cardinality = -np.inf
+        for (attr1, attr2) in join_predicate.join_partners():
+            attr1_joined = join_tree_before_update.contains_table(attr1.table)  # joined means joined _before_ here!!
+            mcv_a = self.fetch_mcv_list(attr1, joined_table=attr1_joined)
+            mcv_b = self.fetch_mcv_list(attr2, joined_table=not attr1_joined)
+
+            merged_mcv = self._merge_mcv_lists(mcv_a, mcv_b)
+            self.joined_frequencies[attr1] = merged_mcv
+            self.joined_frequencies[attr2] = merged_mcv
+
+            candidate_cardinality = mcv_a.max_frequency() if not attr1_joined else mcv_b.max_frequency()
+            if candidate_cardinality > max_new_cardinality:
+                max_new_cardinality = candidate_cardinality
+
+        for attr in join_tree_before_update.all_attributes():
+            mcv: List[Tuple[Any, int]] = self._jf[attr].contents()
+            updated_mcv = _MCVListAccessor(self._jf.adjust_frequencies(mcv, max_new_cardinality))
+            self.joined_frequencies[attr] = updated_mcv
+
+        self._jf.current_multiplier *= max_new_cardinality
+
+    def _merge_mcv_lists(self, mcv_a: _MCVListAccessor, mcv_b: _MCVListAccessor) -> _MCVListAccessor:
+        merged_list = []
+        for value in mcv_a:
+            merged_list.append((value, mcv_a[value] * mcv_b[value]))
+        for value in [value for value in mcv_b if value not in mcv_a]:
+            merged_list.append((value, mcv_a[value] * mcv_a[value]))
+        merged_list.sort(key=operator.itemgetter(1))
+        remainder_freq = mcv_a.remainder_frequency * mcv_b.remainder_frequency
+        return _MCVListAccessor(merged_list, remainder_frequency=remainder_freq)
 
 
 class SubqueryGenerationStrategy(abc.ABC):
@@ -996,10 +1253,10 @@ def _calculate_join_order_for_join_partition(query: mosp.MospQuery, join_graph: 
                                                       subquery_generator=NoSubqueryGeneration(),
                                                       base_table_estimates=stats.base_estimates,
                                                       pk_only=True)
-            join_tree = join_tree.joined_with_subquery(subquery_join, predicate=join_predicate)
+            join_tree = join_tree.joined_with_subquery(subquery_join, predicate=join_predicate, checkpoint=True)
             logger(".. Creating subquery for PK joins", subquery_join)
         else:
-            join_tree = join_tree.joined_with_base_table(selected_candidate, predicate=join_predicate)
+            join_tree = join_tree.joined_with_base_table(selected_candidate, predicate=join_predicate, checkpoint=True)
             for pk_join in pk_joins:
                 trace_logger(".. Adding PK join with", pk_join.partner, "on", pk_join.predicate)
                 join_tree = join_tree.joined_with_base_table(pk_join.partner, predicate=pk_join.predicate)
@@ -1192,9 +1449,8 @@ def optimize_query(query: mosp.MospQuery, *,
 
     if join_cardinality_estimation == "basic":
         join_estimator = DefaultUESCardinalityEstimator(query, base_cardinality_estimator=base_estimator)
-    elif join_cardinality_estimation == "advanced":
-        warnings.warn("Advanced join estimation is not supported yet. Falling back to basic estimation.")
-        join_estimator = DefaultUESCardinalityEstimator(query, base_cardinality_estimator=base_estimator)
+    elif join_cardinality_estimation == "topk":
+        join_estimator = TopkUESCardinalityEstimator(query, k=15, base_cardinality_estimator=base_estimator)
     else:
         raise ValueError("Unknown cardinality estimation strategy: '{}'".format(join_cardinality_estimation))
 

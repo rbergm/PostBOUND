@@ -154,9 +154,9 @@ def main():
                         help="How cardinalities of (filtered) base tables should be estimated. If 'explain', use the"
                         "Postgres internal optimizer (as obtained via EXPLAIN output). If 'sample', draw a 20 percent"
                         "sample of rows and count the result cardinality. Defaults to 'explain'.")
-    parser.add_argument("--join-estimation", action="store", choices=["basic", "fine"], default="basic", help="How to"
+    parser.add_argument("--join-estimation", action="store", choices=["basic", "topk"], default="basic", help="How to"
                         "estimate the upper bound of join cardinalities. If 'basic', use the Most frequent value as "
-                        "detailed in the fundamental paper [0]. If 'fine', use the Top-K lists as detailed in the "
+                        "detailed in the fundamental paper [0]. If 'topk', use the Top-K lists as detailed in the "
                         "Diploma thesis. Defaults to 'basic'.")
     parser.add_argument("--subqueries", action="store", choices=["greedy", "disabled", "defensive"],
                         default="defensive", help="When to pull PK/FK joins into subqueries. If 'greedy' all "
