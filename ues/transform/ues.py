@@ -228,7 +228,7 @@ def _is_pk_fk_join(join: mosp.MospBasePredicate, *, dbs: db.DBSchema = db.DBSche
     return {"pk_fk_join": True, "pk": pk, "fk": fk}
 
 
-class _JoinGraph:
+class JoinGraph:
     """The join graph provides a nice interface for querying information about the joins we have to execute.
 
     The graph is treated mutable in that tables will subsequently be marked as included in the join. Many methods
@@ -237,7 +237,7 @@ class _JoinGraph:
     """
 
     @staticmethod
-    def build_for(query: mosp.MospQuery, *, dbs: db.DBSchema = db.DBSchema.get_instance()) -> "_JoinGraph":
+    def build_for(query: mosp.MospQuery, *, dbs: db.DBSchema = db.DBSchema.get_instance()) -> "JoinGraph":
         # For easy implementation of graph-theoretical functions, we represent the join graph as an actual graph
         # Nodes correspond to tables and edges correspond to joins between the tables.
         #
@@ -281,12 +281,12 @@ class _JoinGraph:
             graph.nodes[node]["pk_fk_node"] = all_pk_fk_joins
             graph.nodes[node]["n_m_node"] = not all_pk_fk_joins
 
-        return _JoinGraph(graph)
+        return JoinGraph(graph)
 
     def __init__(self, graph: nx.Graph):
         self.graph: nx.Graph = graph
 
-    def join_components(self) -> Set["_JoinGraph"]:
+    def join_components(self) -> Set["JoinGraph"]:
         """
         A join component is a subset of all of the joins of a query, s.t. each table in the component is joined with
         at least one other table in the component.
@@ -294,7 +294,7 @@ class _JoinGraph:
         This implies that no join predicates exist that span multiple components. When executing the query, a cross
         product will have to be performed between the components.
         """
-        return set(_JoinGraph(self.graph.subgraph(component).copy())
+        return set(JoinGraph(self.graph.subgraph(component).copy())
                    for component in nx.connected_components(self.graph))
 
     def free_n_m_joined_tables(self) -> Set[db.TableRef]:
@@ -948,26 +948,26 @@ class SubqueryGenerationStrategy(abc.ABC):
     """
 
     @abc.abstractmethod
-    def execute_as_subquery(self, candidate: db.TableRef, join_graph: _JoinGraph, join_tree: JoinTree, *,
+    def execute_as_subquery(self, candidate: db.TableRef, join_graph: JoinGraph, join_tree: JoinTree, *,
                             stats: _MFVTableBoundStatistics) -> bool:
         return NotImplemented
 
 
 class DefensiveSubqueryGeneration(SubqueryGenerationStrategy):
-    def execute_as_subquery(self, candidate: db.TableRef, join_graph: _JoinGraph, join_tree: JoinTree, *,
+    def execute_as_subquery(self, candidate: db.TableRef, join_graph: JoinGraph, join_tree: JoinTree, *,
                             stats: _MFVTableBoundStatistics) -> bool:
         return (stats.upper_bounds[candidate] < stats.base_estimates[candidate]
                 and join_graph.count_selected_joins() > 2)
 
 
 class GreedySubqueryGeneration(SubqueryGenerationStrategy):
-    def execute_as_subquery(self, candidate: db.TableRef, join_graph: _JoinGraph, join_tree: JoinTree, *,
+    def execute_as_subquery(self, candidate: db.TableRef, join_graph: JoinGraph, join_tree: JoinTree, *,
                             stats: _MFVTableBoundStatistics) -> bool:
         return join_graph.count_selected_joins() > 2
 
 
 class NoSubqueryGeneration(SubqueryGenerationStrategy):
-    def execute_as_subquery(self, candidate: db.TableRef, join_graph: _JoinGraph, join_tree: JoinTree, *,
+    def execute_as_subquery(self, candidate: db.TableRef, join_graph: JoinGraph, join_tree: JoinTree, *,
                             stats: _MFVTableBoundStatistics) -> bool:
         return False
 
@@ -983,7 +983,7 @@ def _estimate_filtered_cardinalities(query: mosp.MospQuery, estimator: BaseCardi
     return cardinality_dict
 
 
-def _absorb_pk_fk_hull_of(table: db.TableRef, *, join_graph: _JoinGraph, join_tree: JoinTree,
+def _absorb_pk_fk_hull_of(table: db.TableRef, *, join_graph: JoinGraph, join_tree: JoinTree,
                           subquery_generator: SubqueryGenerationStrategy,
                           base_table_estimates: Dict[db.TableRef, int],
                           pk_only: bool = False, verbose: bool = False, trace: bool = False) -> JoinTree:
@@ -1048,7 +1048,7 @@ def _calculate_join_order(query: mosp.MospQuery, *,
                           dbs: db.DBSchema = db.DBSchema.get_instance()
                           ) -> Union[JoinOrderOptimizationResult, List[JoinOrderOptimizationResult]]:
     join_estimator = join_estimator if join_estimator else DefaultUESCardinalityEstimator(query)
-    join_graph = _JoinGraph.build_for(query)
+    join_graph = JoinGraph.build_for(query)
 
     # In principle it could be that our query involves a cross-product between some of its relations. If that is the
     # case, we cannot simply build a single join tree b/c a tree cannot capture the semantics of cross-product of
@@ -1067,7 +1067,7 @@ def _calculate_join_order(query: mosp.MospQuery, *,
     return util.simplify(partitioned_join_trees)
 
 
-def _calculate_join_order_for_join_partition(query: mosp.MospQuery, join_graph: _JoinGraph, *,
+def _calculate_join_order_for_join_partition(query: mosp.MospQuery, join_graph: JoinGraph, *,
                                              join_cardinality_estimator: JoinCardinalityEstimator,
                                              base_cardinality_estimator: BaseCardinalityEstimator,
                                              subquery_generator: SubqueryGenerationStrategy,
