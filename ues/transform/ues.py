@@ -121,6 +121,9 @@ class _TopKList:
         other_values = set(other_mcv.mcv_data.keys())
         return len(own_values & other_values)
 
+    def frequency_sum(self) -> int:
+        return sum(self.mcv_data.values())
+
     def contents(self) -> List[Tuple[Any, int]]:
         return self.mcv_list
 
