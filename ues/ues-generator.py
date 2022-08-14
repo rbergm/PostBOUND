@@ -10,6 +10,7 @@ import pandas as pd
 import psycopg2
 
 from transform import db, mosp, ues, util
+from analysis import selection
 
 
 DEFAULT_QUERY_COL = "query"
@@ -69,7 +70,7 @@ def optimize_workload(workload: pd.DataFrame, query_col: str, out_col: str, *,
     optimization_success = []
     parsed_queries = workload[query_col].apply(mosp.MospQuery.parse)
 
-    for query in parsed_queries:
+    for query_idx, query in enumerate(parsed_queries):
         optimization_start = datetime.now()
         try:
             optimized_query = ues.optimize_query(query,
@@ -81,7 +82,8 @@ def optimize_workload(workload: pd.DataFrame, query_col: str, out_col: str, *,
         except Exception as e:
             optimized_query = query
             optimization_success.append(False)
-            logger("Could not optimize query '", query, "': ", e, sep="")
+            query_text = workload["label"].iloc[query_idx] if "label" in workload else f"'{query}'"
+            logger("Could not optimize query ", query_text, ": ", type(e).__name__, " (", e, ")", sep="")
         optimization_end = datetime.now()
         optimization_duration = optimization_end - optimization_start
         optimized_queries.append(optimized_query)
@@ -190,6 +192,9 @@ def main():
         workload = read_workload_pattern(args.input, args.pattern, load_labels=args.generate_labels)
     else:
         workload = read_workload_raw(args.input)
+
+    if args.generate_labels:
+        workload = selection.reorder(workload)
 
     optimized_workload = optimize_workload(workload, args.query_col, args.out_col,
                                            table_estimation=args.table_estimation,
