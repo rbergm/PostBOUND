@@ -17,7 +17,7 @@ class JoinGraphTests(unittest.TestCase):
 class BeningQueryOptimizationTests(unittest.TestCase):
     def test_base_query(self):
         query = mosp.MospQuery.parse(job_workload["1a"])
-        optimized = ues.optimize_query(query)
+        optimized = ues.optimize_query(query, trace=True)
 
 
 class JobWorkloadOptimizationTests(unittest.TestCase):
