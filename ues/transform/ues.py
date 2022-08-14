@@ -806,9 +806,13 @@ class _TopKBaseAttributeFrequenciesLoader:
         self.base_estimates = base_estimates
         self.attribute_mcvs = {}
 
+    def _snap_frequencies_to_max(self, frequencies: List[Tuple[Any, int]], max_freq: int) -> List[Tuple[Any, int]]:
+        return [(val, min(freq, max_freq)) for val, freq in frequencies]
+
     def __getitem__(self, key: db.AttributeRef) -> _TopKList:
         if key not in self.attribute_mcvs:
-            top_k = _TopKList(self.dbs.calculate_most_common_values(key, k=self.k))
+            frequencies = self.dbs.calculate_most_common_values(key, k=self.k)
+            top_k = _TopKList(self._snap_frequencies_to_max(frequencies, self.base_estimates[key.table]))
             self.attribute_mcvs[key] = top_k
             return top_k
         return self.attribute_mcvs[key]
