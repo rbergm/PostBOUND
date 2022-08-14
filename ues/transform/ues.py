@@ -811,13 +811,16 @@ class _TopKJoinAttributeFrequenciesLoader:
         self.attribute_mvcs = {}
         self.current_multiplier = 1
 
-    def adjust_frequencies(self, mcv_list: List[Tuple[Any, int]], adjustment_factor: int) -> List[Tuple[Any, int]]:
-        return [(val, freq * adjustment_factor) for val, freq in mcv_list]
+    def adjust_frequencies(self, mcv_list: _TopKList, adjustment_factor: int) -> _TopKList:
+        mcv_entries = mcv_list.contents()
+        adjusted_values = [(val, freq * adjustment_factor) for val, freq in mcv_entries]
+        adjusted_remainder = mcv_list.remainder_frequency * adjustment_factor
+        return _TopKList(adjusted_values, remainder_frequency=adjusted_remainder)
 
     def __getitem__(self, key: db.AttributeRef) -> _TopKList:
         if key not in self.attribute_mvcs:
             base_mcv = self.base_mcvs[key]
-            adjusted_mcv = _TopKList(self.adjust_frequencies(base_mcv.contents(), self.current_multiplier))
+            adjusted_mcv = self.adjust_frequencies(base_mcv, self.current_multiplier)
             self.attribute_mvcs[key] = adjusted_mcv
             return adjusted_mcv
         return self.attribute_mvcs[key]
@@ -910,7 +913,8 @@ class _TopKTableBoundStatistics(_TableBoundStatistics):
                                    else join_tree.at_base_table())
         bound_after_update = self.upper_bounds[join_tree]
         bound_before_update = self.upper_bounds[join_tree_before_update]
-        cardinality_increase_factor = bound_after_update / bound_before_update
+        cardinality_increase_factor = bound_after_update / bound_before_update  # noqa: F841
+        absolute_cardinality_increase = bound_after_update - bound_before_update  # noqa: F841
 
         max_new_cardinality = -np.inf
         for (attr1, attr2) in join_predicate.join_partners():
@@ -928,7 +932,7 @@ class _TopKTableBoundStatistics(_TableBoundStatistics):
 
         for attr in join_tree_before_update.all_attributes():
             mcv: List[Tuple[Any, int]] = self._jf[attr].contents()
-            updated_mcv = _TopKList(self._jf.adjust_frequencies(mcv, max_new_cardinality))
+            updated_mcv = self._jf.adjust_frequencies(mcv, max_new_cardinality)
             self.joined_frequencies[attr] = updated_mcv
 
         self._jf.current_multiplier *= max_new_cardinality
