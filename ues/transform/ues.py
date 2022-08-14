@@ -110,13 +110,13 @@ class DefaultUESCardinalityEstimator(JoinCardinalityEstimator):
         return self.stats_container
 
 
-class _MCVListAccessor:
+class _TopKList:
     def __init__(self, mcv_list: List[Tuple[Any, int]], *, remainder_frequency: int = None):
         self.mcv_list = mcv_list
         self.mcv_data = dict(mcv_list)
         self.remainder_frequency = min(self.mcv_data.values()) if not remainder_frequency else remainder_frequency
 
-    def count_common_elements(self, other_mcv: "_MCVListAccessor") -> int:
+    def count_common_elements(self, other_mcv: "_TopKList") -> int:
         own_values = set(self.mcv_data.keys())
         other_values = set(other_mcv.mcv_data.keys())
         return len(own_values & other_values)
@@ -187,7 +187,7 @@ class TopkUESCardinalityEstimator(JoinCardinalityEstimator):
     def stats(self) -> "_TopKTableBoundStatistics":
         return self.stats_container
 
-    def _calculate_cardinality(self, mcv_a: _MCVListAccessor, mcv_b: _MCVListAccessor,
+    def _calculate_cardinality(self, mcv_a: _TopKList, mcv_b: _TopKList,
                                total_a: int, total_b: int) -> int:
         cardinality_sum = 0
 
@@ -788,9 +788,9 @@ class _TopKBaseAttributeFrequenciesLoader:
         self.base_estimates = base_estimates
         self.attribute_mcvs = {}
 
-    def __getitem__(self, key: db.AttributeRef) -> _MCVListAccessor:
+    def __getitem__(self, key: db.AttributeRef) -> _TopKList:
         if key not in self.attribute_mcvs:
-            top_k = _MCVListAccessor(self.dbs.calculate_most_common_values(key, k=self.k))
+            top_k = _TopKList(self.dbs.calculate_most_common_values(key, k=self.k))
             self.attribute_mcvs[key] = top_k
             return top_k
         return self.attribute_mcvs[key]
@@ -811,15 +811,15 @@ class _TopKJoinAttributeFrequenciesLoader:
     def adjust_frequencies(self, mcv_list: List[Tuple[Any, int]], adjustment_factor: int) -> List[Tuple[Any, int]]:
         return [(val, freq * adjustment_factor) for val, freq in mcv_list]
 
-    def __getitem__(self, key: db.AttributeRef) -> _MCVListAccessor:
+    def __getitem__(self, key: db.AttributeRef) -> _TopKList:
         if key not in self.attribute_mvcs:
             base_mcv = self.base_mcvs[key]
-            adjusted_mcv = _MCVListAccessor(self.adjust_frequencies(base_mcv.contents(), self.current_multiplier))
+            adjusted_mcv = _TopKList(self.adjust_frequencies(base_mcv.contents(), self.current_multiplier))
             self.attribute_mvcs[key] = adjusted_mcv
             return adjusted_mcv
         return self.attribute_mvcs[key]
 
-    def __setitem__(self, key: db.AttributeRef, value: _MCVListAccessor):
+    def __setitem__(self, key: db.AttributeRef, value: _TopKList):
         self.attribute_mvcs[key] = value
 
     def __repr__(self) -> str:
@@ -898,7 +898,7 @@ class _TopKTableBoundStatistics(_TableBoundStatistics):
         upper_bounds = {}
         super().__init__(base_estimates, base_frequencies, joined_frequencies, upper_bounds)
 
-    def fetch_mcv_list(self, attribute: db.AttributeRef, *, joined_table: bool = False) -> _MCVListAccessor:
+    def fetch_mcv_list(self, attribute: db.AttributeRef, *, joined_table: bool = False) -> _TopKList:
         return self.joined_frequencies[attribute] if joined_table else self.base_frequencies[attribute]
 
     def update_frequencies(self, joined_table: db.TableRef, join_predicate: mosp.AbstractMospPredicate, *,
@@ -925,12 +925,12 @@ class _TopKTableBoundStatistics(_TableBoundStatistics):
 
         for attr in join_tree_before_update.all_attributes():
             mcv: List[Tuple[Any, int]] = self._jf[attr].contents()
-            updated_mcv = _MCVListAccessor(self._jf.adjust_frequencies(mcv, max_new_cardinality))
+            updated_mcv = _TopKList(self._jf.adjust_frequencies(mcv, max_new_cardinality))
             self.joined_frequencies[attr] = updated_mcv
 
         self._jf.current_multiplier *= max_new_cardinality
 
-    def _merge_mcv_lists(self, mcv_a: _MCVListAccessor, mcv_b: _MCVListAccessor) -> _MCVListAccessor:
+    def _merge_mcv_lists(self, mcv_a: _TopKList, mcv_b: _TopKList) -> _TopKList:
         merged_list = []
         for value in mcv_a:
             merged_list.append((value, mcv_a[value] * mcv_b[value]))
@@ -938,7 +938,7 @@ class _TopKTableBoundStatistics(_TableBoundStatistics):
             merged_list.append((value, mcv_a[value] * mcv_a[value]))
         merged_list.sort(key=operator.itemgetter(1))
         remainder_freq = mcv_a.remainder_frequency * mcv_b.remainder_frequency
-        return _MCVListAccessor(merged_list, remainder_frequency=remainder_freq)
+        return _TopKList(merged_list, remainder_frequency=remainder_freq)
 
 
 class SubqueryGenerationStrategy(abc.ABC):
