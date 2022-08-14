@@ -946,7 +946,7 @@ class _TopKTableBoundStatistics(_TableBoundStatistics):
                 max_new_cardinality = candidate_cardinality
 
         for attr in join_tree_before_update.all_attributes():
-            mcv: List[Tuple[Any, int]] = self._jf[attr].contents()
+            mcv = self._jf[attr]
             updated_mcv = self._jf.adjust_frequencies(mcv, absolute_cardinality_increase)
             self.joined_frequencies[attr] = updated_mcv
 
