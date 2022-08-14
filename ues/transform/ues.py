@@ -942,7 +942,7 @@ class _TopKTableBoundStatistics(_TableBoundStatistics):
         for value in mcv_a:
             merged_list.append((value, mcv_a[value] * mcv_b[value]))
         for value in [value for value in mcv_b if value not in mcv_a]:
-            merged_list.append((value, mcv_a[value] * mcv_a[value]))
+            merged_list.append((value, mcv_a[value] * mcv_b[value]))
         merged_list.sort(key=operator.itemgetter(1))
         remainder_freq = mcv_a.remainder_frequency * mcv_b.remainder_frequency
         return _TopKList(merged_list, remainder_frequency=remainder_freq)
