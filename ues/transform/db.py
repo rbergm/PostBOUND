@@ -260,21 +260,22 @@ class DBSchema:
         themselves.
         """
 
-        if cache_enabled and attribute in self.mcvs_online_cache:
-            mcvs = self.mcsvs_online_cache[(attribute, k)]
-            return mcvs
-
         query_template = textwrap.dedent(f"""
                                          SELECT {attribute}, COUNT(*)
                                          FROM {attribute.table}
                                          GROUP BY {attribute}
                                          ORDER BY count DESC, {attribute}
                                          LIMIT {k}""")
+
+        if cache_enabled and query_template in self.query_cache:
+            mcvs = self.query_cache[query_template]
+            return mcvs
+
         self.cursor.execute(query_template)
         mcvs = self.cursor.fetchall()
 
         if cache_enabled:
-            self.mcvs_online_cache[(attribute, k)] = mcvs
+            self.query_cache[query_template] = mcvs
         return mcvs
 
     def load_tuple_count(self, table: TableRef, *, cache_enabled: bool = True) -> int:
