@@ -114,7 +114,7 @@ class _TopKList:
     def __init__(self, mcv_list: List[Tuple[Any, int]], *, remainder_frequency: int = None):
         self.mcv_list = mcv_list
         self.mcv_data = dict(mcv_list)
-        self.remainder_frequency = min(self.mcv_data.values()) if not remainder_frequency else remainder_frequency
+        self.remainder_frequency = min(self.mcv_data.values(), 1) if not remainder_frequency else remainder_frequency
 
     def count_common_elements(self, other_mcv: "_TopKList") -> int:
         own_values = set(self.mcv_data.keys())
