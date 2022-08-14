@@ -931,7 +931,7 @@ class _TopKTableBoundStatistics(_TableBoundStatistics):
         cardinality_increase_factor = bound_after_update / bound_before_update  # noqa: F841
         absolute_cardinality_increase = bound_after_update - bound_before_update  # noqa: F841
 
-        max_new_cardinality = -np.inf
+        min_new_frequency = np.inf
         for (attr1, attr2) in join_predicate.join_partners():
             attr1_joined = join_tree_before_update.contains_table(attr1.table)  # joined means joined _before_ here!!
             mcv_a = self.fetch_mcv_list(attr1, joined_table=attr1_joined)
@@ -942,15 +942,15 @@ class _TopKTableBoundStatistics(_TableBoundStatistics):
             self.joined_frequencies[attr2] = merged_mcv
 
             candidate_cardinality = mcv_a.max_frequency() if not attr1_joined else mcv_b.max_frequency()
-            if candidate_cardinality > max_new_cardinality:
-                max_new_cardinality = candidate_cardinality
+            if candidate_cardinality < min_new_frequency:
+                min_new_frequency = candidate_cardinality
 
         for attr in join_tree_before_update.all_attributes():
             mcv = self._jf[attr]
-            updated_mcv = self._jf.adjust_frequencies(mcv, absolute_cardinality_increase)
+            updated_mcv = self._jf.adjust_frequencies(mcv, min_new_frequency)
             self.joined_frequencies[attr] = updated_mcv
 
-        self._jf.current_multiplier *= absolute_cardinality_increase
+        self._jf.current_multiplier *= min_new_frequency
 
     def _merge_mcv_lists(self, mcv_a: _TopKList, mcv_b: _TopKList) -> _TopKList:
         merged_list = []
