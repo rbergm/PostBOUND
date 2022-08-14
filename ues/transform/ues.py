@@ -165,6 +165,10 @@ class TopkUESCardinalityEstimator(JoinCardinalityEstimator):
         lowest_bound = np.inf
         for (attr1, attr2) in predicate.join_partners():
             if pk_fk_join:
+                # for PK/FK join, always have attr1 be the fk_table
+                if attr2.table == fk_table:
+                    attr1, attr2 = attr2, attr1
+
                 mcv_a = self.stats_container.fetch_mcv_list(attr1)
                 mcv_b = self.stats_container.fetch_mcv_list(attr2)
                 total_a, total_b = self.dbs.count_tuples(attr1.table), self.dbs.count_tuples(attr2.table)
@@ -176,7 +180,7 @@ class TopkUESCardinalityEstimator(JoinCardinalityEstimator):
                 total_a = self.dbs.count_tuples(joined_attr.table)
                 total_b = self.dbs.count_tuples(candidate_attr.table)
 
-            cardinality = self._calculate_cardinality(mcv_a, mcv_b, total_a, total_b)
+            cardinality = self._calculate_cardinality(mcv_a, mcv_b, total_a, total_b, pk_fk_join=pk_fk_join)
             if pk_fk_join:
                 pk_table = attr1.table if attr2.table == fk_table else attr2.table
                 max_cardinality = self.dbs.count_tuples(pk_table)
@@ -191,19 +195,30 @@ class TopkUESCardinalityEstimator(JoinCardinalityEstimator):
         return self.stats_container
 
     def _calculate_cardinality(self, mcv_a: _TopKList, mcv_b: _TopKList,
-                               total_a: int, total_b: int) -> int:
+                               total_a: int, total_b: int, *, pk_fk_join: bool = False) -> int:
+        # In case of PK/FK join, mcv_a is assumed to be the FK table!!!!
+
         cardinality_sum = 0
 
+        # calculate the cardinality of values in the MCV lists
         for value in mcv_a:
             cardinality_sum += mcv_a[value] * mcv_b[value]
 
         for value in [value for value in mcv_b if value not in mcv_a]:
             cardinality_sum += mcv_a[value] * mcv_b[value]
 
-        total_values_in_mcvs = len(mcv_a) + len(mcv_b) - mcv_a.count_common_elements(mcv_b)
-        remaining_values_not_in_mcvs = min(total_a, total_b) - total_values_in_mcvs
-        remaining_values_frequency = max(mcv_a.remainder_frequency, mcv_b.remainder_frequency)
-        cardinality_sum += remaining_values_not_in_mcvs * remaining_values_frequency
+        # calculate the cardinality of all values in no MCV list. This is the same formula as pure UES uses
+        if pk_fk_join:
+            fk_freq = mcv_a.remainder_frequency
+            pk_card = total_b - mcv_b.frequency_sum()
+            cardinality_sum += fk_freq * pk_card
+        else:
+            remaining_values_a = total_a - mcv_a.frequency_sum()
+            remaining_values_b = total_b - mcv_b.frequency_sum()
+            distinct_values_a = remaining_values_a / mcv_a.remainder_frequency
+            distinct_values_b = remaining_values_b / mcv_b.remainder_frequency
+            remainder_bound = min(distinct_values_a, distinct_values_b) * remaining_values_a * remaining_values_b
+            cardinality_sum += remainder_bound
 
         return cardinality_sum
 
