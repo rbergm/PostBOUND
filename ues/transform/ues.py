@@ -932,10 +932,10 @@ class _TopKTableBoundStatistics(_TableBoundStatistics):
 
         for attr in join_tree_before_update.all_attributes():
             mcv: List[Tuple[Any, int]] = self._jf[attr].contents()
-            updated_mcv = self._jf.adjust_frequencies(mcv, max_new_cardinality)
+            updated_mcv = self._jf.adjust_frequencies(mcv, absolute_cardinality_increase)
             self.joined_frequencies[attr] = updated_mcv
 
-        self._jf.current_multiplier *= max_new_cardinality
+        self._jf.current_multiplier *= absolute_cardinality_increase
 
     def _merge_mcv_lists(self, mcv_a: _TopKList, mcv_b: _TopKList) -> _TopKList:
         merged_list = []
