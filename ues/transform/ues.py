@@ -62,7 +62,7 @@ class JoinCardinalityEstimator(abc.ABC):
         return NotImplemented
 
     @abc.abstractmethod
-    def stats(self) -> "_MFVTableBoundStatistics":
+    def stats(self) -> "_TableBoundStatistics":
         return NotImplemented
 
 
