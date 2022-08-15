@@ -169,25 +169,24 @@ class TopkUESCardinalityEstimator(JoinCardinalityEstimator):
         lowest_bound = np.inf
         for (attr1, attr2) in predicate.join_partners():
             if pk_fk_join:
-                # for PK/FK join, always have attr1 be the fk_table
-                if attr2.table == fk_table:
-                    attr1, attr2 = attr2, attr1
+                fk_attr = attr1 if attr1.table == fk_table else attr2
+                pk_attr = attr1 if fk_attr == attr2 else attr2
 
-                mcv_a = self.stats_container.fetch_mcv_list(attr1)
-                mcv_b = self.stats_container.fetch_mcv_list(attr2)
-                total_a, total_b = self.dbs.count_tuples(attr1.table), self.dbs.count_tuples(attr2.table)
+                mcv_a = self.stats_container.fetch_mcv_list(fk_attr)
+                mcv_b = self.stats_container.fetch_mcv_list(pk_attr)
+                total_a = self._load_tuple_count(fk_attr.table)
+                total_b = self._load_tuple_count(pk_attr.table)
             else:
                 joined_attr = attr1 if join_tree.contains_table(attr1.table) else attr2
                 candidate_attr = attr1 if joined_attr == attr2 else attr2
                 mcv_a = self.stats_container.fetch_mcv_list(joined_attr, joined_table=True)
                 mcv_b = self.stats_container.fetch_mcv_list(candidate_attr)
-                total_a = self.dbs.count_tuples(joined_attr.table)
-                total_b = self.dbs.count_tuples(candidate_attr.table)
+                total_a = self._load_tuple_count(joined_attr.table)
+                total_b = self._load_tuple_count(candidate_attr.table)
 
             cardinality = self._calculate_cardinality(mcv_a, mcv_b, total_a, total_b, pk_fk_join=pk_fk_join)
             if pk_fk_join:
-                pk_table = attr1.table if attr2.table == fk_table else attr2.table
-                max_cardinality = self.dbs.count_tuples(pk_table)
+                max_cardinality = self._load_tuple_count(pk_attr.table)
                 cardinality = min(cardinality, max_cardinality)
 
             if cardinality < lowest_bound:
@@ -197,6 +196,9 @@ class TopkUESCardinalityEstimator(JoinCardinalityEstimator):
 
     def stats(self) -> "_TopKTableBoundStatistics":
         return self.stats_container
+
+    def _load_tuple_count(self, table: db.TableRef) -> int:
+        return self.stats_container.upper_bounds.get(table, self.stats_container.base_estimates[table])
 
     def _calculate_cardinality(self, mcv_a: _TopKList, mcv_b: _TopKList,
                                total_a: int, total_b: int, *, pk_fk_join: bool = False) -> int:
@@ -217,8 +219,8 @@ class TopkUESCardinalityEstimator(JoinCardinalityEstimator):
             pk_card = total_b - mcv_b.frequency_sum()
             cardinality_sum += fk_freq * pk_card
         else:
-            remaining_values_a = total_a - mcv_a.frequency_sum()
-            remaining_values_b = total_b - mcv_b.frequency_sum()
+            remaining_values_a = min(total_a - mcv_a.frequency_sum(), 0)
+            remaining_values_b = min(total_b - mcv_b.frequency_sum(), 0)
             distinct_values_a = remaining_values_a / mcv_a.remainder_frequency
             distinct_values_b = remaining_values_b / mcv_b.remainder_frequency
             remainder_bound = min(distinct_values_a, distinct_values_b) * remaining_values_a * remaining_values_b
@@ -1214,6 +1216,7 @@ def _calculate_join_order_for_join_partition(query: mosp.MospQuery, join_graph: 
                 join_graph.print(title=f"Join graph after base table selection, selected table: {lowest_bound_table}",
                                  **visualize_args)
             trace_logger(".. Base estimates:", stats.base_estimates)
+            trace_logger(".. Current bounds:", stats.upper_bounds)
             trace_logger("")
             continue
 
