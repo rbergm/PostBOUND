@@ -2,8 +2,9 @@
 import abc
 import collections
 import operator
-from typing import Any, Dict, List, Set, Union, Tuple
 import warnings
+from dataclasses import dataclass
+from typing import Any, Dict, List, Set, Union, Tuple
 
 import matplotlib.pyplot as plt
 import networkx as nx
@@ -977,6 +978,47 @@ class _TopKTableBoundStatistics(_TableBoundStatistics):
         return _TopKList(merged_list, remainder_frequency=remainder_freq)
 
 
+@dataclass
+class ExceptionRule:
+    label: str = ""
+    query: str = ""
+    subquery_generation: bool = True
+
+    def __repr__(self) -> str:
+        return str(self)
+
+    def __str__(self) -> str:
+        rule = f"ExceptionRule :: label={self.label}"
+        if self.query:
+            rule += f" query='{self.query}'"
+        rule += f" subquery_generation={self.subquery_generation}"
+        return rule
+
+
+class ExceptionList:
+    def __init__(self, rules: Dict[Union[str, mosp.MospQuery], ExceptionRule]):
+        self.rules = {self._normalize_key(query): rule for query, rule in rules.items()}
+
+    def _normalize_key(self, key: Union[str, mosp.MospQuery]) -> str:
+        if isinstance(key, str):
+            return str(mosp.MospQuery.parse(key))
+        return str(key)
+
+    def __contains__(self, key: Union[str, mosp.MospQuery]) -> bool:
+        key = self._normalize_key(key)
+        return key in self.rules
+
+    def __getitem__(self, key: Union[str, mosp.MospQuery]) -> ExceptionRule:
+        key = self._normalize_key(key)
+        return self.rules.get(key, None)
+
+    def __repr__(self) -> str:
+        return str(self)
+
+    def __str__(self) -> str:
+        return str(self.rules)
+
+
 class SubqueryGenerationStrategy(abc.ABC):
     """
     A subquery generator is capable of both deciding whether a certain join should be implemented as a subquery, as
@@ -985,26 +1027,38 @@ class SubqueryGenerationStrategy(abc.ABC):
 
     @abc.abstractmethod
     def execute_as_subquery(self, candidate: db.TableRef, join_graph: JoinGraph, join_tree: JoinTree, *,
-                            stats: _MFVTableBoundStatistics) -> bool:
+                            stats: _MFVTableBoundStatistics,
+                            exceptions: ExceptionList = None, query: mosp.MospQuery = None) -> bool:
         return NotImplemented
 
 
 class DefensiveSubqueryGeneration(SubqueryGenerationStrategy):
     def execute_as_subquery(self, candidate: db.TableRef, join_graph: JoinGraph, join_tree: JoinTree, *,
-                            stats: _MFVTableBoundStatistics) -> bool:
+                            stats: _MFVTableBoundStatistics,
+                            exceptions: ExceptionList = None, query: mosp.MospQuery = None) -> bool:
+        if exceptions and query in exceptions:
+            should_generate_subquery = exceptions[query].subquery_generation
+            if not should_generate_subquery:
+                return False
         return (stats.upper_bounds[candidate] < stats.base_estimates[candidate]
                 and join_graph.count_selected_joins() > 2)
 
 
 class GreedySubqueryGeneration(SubqueryGenerationStrategy):
     def execute_as_subquery(self, candidate: db.TableRef, join_graph: JoinGraph, join_tree: JoinTree, *,
-                            stats: _MFVTableBoundStatistics) -> bool:
+                            stats: _MFVTableBoundStatistics,
+                            exceptions: ExceptionList = None, query: mosp.MospQuery = None) -> bool:
+        if exceptions and query in exceptions:
+            should_generate_subquery = exceptions[query].subquery_generation
+            if not should_generate_subquery:
+                return False
         return join_graph.count_selected_joins() > 2
 
 
 class NoSubqueryGeneration(SubqueryGenerationStrategy):
     def execute_as_subquery(self, candidate: db.TableRef, join_graph: JoinGraph, join_tree: JoinTree, *,
-                            stats: _MFVTableBoundStatistics) -> bool:
+                            stats: _MFVTableBoundStatistics,
+                            exceptions: ExceptionList = None, query: mosp.MospQuery = None) -> bool:
         return False
 
 
@@ -1079,6 +1133,7 @@ def _calculate_join_order(query: mosp.MospQuery, *,
                           join_estimator: JoinCardinalityEstimator = None,
                           base_estimator: BaseCardinalityEstimator = PostgresCardinalityEstimator(),
                           subquery_generator: SubqueryGenerationStrategy = DefensiveSubqueryGeneration(),
+                          exceptions: ExceptionList = None,
                           visualize: bool = False, visualize_args: dict = None,
                           verbose: bool = False, trace: bool = False,
                           dbs: db.DBSchema = db.DBSchema.get_instance()
@@ -1095,6 +1150,7 @@ def _calculate_join_order(query: mosp.MospQuery, *,
                                                                        join_cardinality_estimator=join_estimator,
                                                                        base_cardinality_estimator=base_estimator,
                                                                        subquery_generator=subquery_generator,
+                                                                       exceptions=exceptions,
                                                                        verbose=verbose, trace=trace,
                                                                        visualize=visualize,
                                                                        visualize_args=visualize_args,
@@ -1107,6 +1163,7 @@ def _calculate_join_order_for_join_partition(query: mosp.MospQuery, join_graph: 
                                              join_cardinality_estimator: JoinCardinalityEstimator,
                                              base_cardinality_estimator: BaseCardinalityEstimator,
                                              subquery_generator: SubqueryGenerationStrategy,
+                                             exceptions: ExceptionList = None,
                                              visualize: bool = False, visualize_args: dict = None,
                                              verbose: bool = False, trace: bool = False,
                                              dbs: db.DBSchema = db.DBSchema.get_instance()
@@ -1280,7 +1337,7 @@ def _calculate_join_order_for_join_partition(query: mosp.MospQuery, join_graph: 
                [pk_table.partner for pk_table in pk_joins], "on predicate", join_predicate)
 
         if pk_joins and subquery_generator.execute_as_subquery(selected_candidate, join_graph, join_tree,
-                                                               stats=stats):
+                                                               stats=stats, exceptions=exceptions, query=query):
             subquery_join = JoinTree().with_base_table(selected_candidate)
             for pk_join in pk_joins:
                 trace_logger(".. Adding PK join with", pk_join.partner, "on", pk_join.predicate)
@@ -1473,6 +1530,7 @@ def optimize_query(query: mosp.MospQuery, *,
                    table_cardinality_estimation: str = "explain",
                    join_cardinality_estimation: str = "basic",
                    subquery_generation: str = "defensive",
+                   exceptions: ExceptionList = None,
                    dbs: db.DBSchema = db.DBSchema.get_instance(),
                    visualize: bool = False, visualize_args: dict = None,
                    verbose: bool = False, trace: bool = False,
@@ -1507,6 +1565,7 @@ def optimize_query(query: mosp.MospQuery, *,
     optimization_result = _calculate_join_order(query, dbs=dbs,
                                                 base_estimator=base_estimator, join_estimator=join_estimator,
                                                 subquery_generator=subquery_generator,
+                                                exceptions=exceptions,
                                                 visualize=visualize, visualize_args=visualize_args,
                                                 verbose=verbose, trace=trace)
 

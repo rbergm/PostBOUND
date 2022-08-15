@@ -2,11 +2,13 @@
 
 import argparse
 import json
-import pathlib
 import os
+import pathlib
+import pprint
+import sys
 import textwrap
 from datetime import datetime
-from typing import Dict
+from typing import Dict, List
 
 import pandas as pd
 import psycopg2
@@ -44,6 +46,40 @@ def read_workload_pattern(src_directory: str, pattern: str = "*.sql", *, load_la
     return workload
 
 
+def parse_exception_list(path: str) -> List[dict]:
+    with open(path, "r") as exceptions_file:
+        raw_exception_content = json.load(exceptions_file)
+
+    rules = []
+    for raw_exception_rule in util.enlist(raw_exception_content):
+        label = raw_exception_rule.get("label", "")
+        query = raw_exception_rule.get("query", "")
+        subquery_generation = raw_exception_rule.get("subquery_generation", True)
+        if query:
+            rules.append({"query": query, "subquery_generation": subquery_generation})
+        else:
+            rules.append({"label": label, "subquery_generation": subquery_generation})
+
+    return rules
+
+
+def resolve_exception_rule_labels(exception_rules: List[dict], workload: pd.DataFrame,
+                                  query_col: str) -> ues.ExceptionList:
+    resolved_rules = []
+
+    for rule in exception_rules:
+        if "query" in rule or "label" not in workload:
+            query = rule["query"]
+            resolved_rules.append((query,
+                                   ues.ExceptionRule(query=query, subquery_generation=rule["subquery_generation"])))
+        else:
+            resolved_query = workload[workload.label == rule["label"]].iloc[0][query_col]
+            resolved_rules.append((resolved_query, ues.ExceptionRule(rule["label"], resolved_query,
+                                                                     rule["subquery_generation"])))
+
+    return ues.ExceptionList(dict(resolved_rules))
+
+
 def connect_postgres(parser: argparse.ArgumentParser, conn_str: str = None):
     if not conn_str:
         if not os.path.exists(".psycopg_connection"):
@@ -74,7 +110,8 @@ def jsonize_join_bounds(bounds: Dict[ues.JoinTree, int]) -> dict:
 
 def optimize_workload(workload: pd.DataFrame, query_col: str, out_col: str, *,
                       table_estimation: str = "explain", join_estimation: str = "basic", subqueries: str = "defensive",
-                      timing: bool = False, dbs: db.DBSchema = db.DBSchema.get_instance()) -> pd.DataFrame:
+                      timing: bool = False, exceptions: ues.ExceptionList = None,
+                      dbs: db.DBSchema = db.DBSchema.get_instance()) -> pd.DataFrame:
     logger = util.make_logger()
     optimized_queries = []
     optimization_time = []
@@ -89,6 +126,7 @@ def optimize_workload(workload: pd.DataFrame, query_col: str, out_col: str, *,
                                                                table_cardinality_estimation=table_estimation,
                                                                join_cardinality_estimation=join_estimation,
                                                                subquery_generation=subqueries,
+                                                               exceptions=exceptions,
                                                                dbs=dbs, return_bounds=True)
             optimization_success.append(True)
             intermediate_bounds.append(jsonize_join_bounds(query_bounds))
@@ -113,12 +151,14 @@ def optimize_workload(workload: pd.DataFrame, query_col: str, out_col: str, *,
 
 
 def optimize_single(query: str, *, table_estimation: str = "explain", join_estimation: str = "basic",
-                    subqueries: str = "defensive", exec: bool = False, dbs: db.DBSchema = db.DBSchema.get_instance()):
+                    subqueries: str = "defensive", exec: bool = False, exceptions: ues.ExceptionList,
+                    dbs: db.DBSchema = db.DBSchema.get_instance()):
     parsed_query = mosp.MospQuery.parse(query)
     optimized_query = ues.optimize_query(parsed_query,
                                          table_cardinality_estimation=table_estimation,
                                          join_cardinality_estimation=join_estimation,
                                          subquery_generation=subqueries,
+                                         exceptions=exceptions,
                                          dbs=dbs)
     db_connection = dbs.connection
 
@@ -180,16 +220,21 @@ def main():
                         "possible PK/FK joins will be executed as subqueries. If 'disabled', never filter via "
                         "subqueries. If 'defensive' (as described in [0]), only generate subqueries if an improvement "
                         "is guaranteed. Defaults to 'defensive'.")
+    parser.add_argument("--exception-list", action="store", help="JSON-File containing exceptions from the default"
+                        "optimization settings.")
     parser.add_argument("--out", "-o", action="store", help="Enter output CSV-mode and store the output in file "
                         "rather than writing to stdout.")
     parser.add_argument("--exec", "-e", action="store_true", default=False, help="If optimizing a single query, also "
                         "execute it.")
     parser.add_argument("--pg-con", action="store", default="", help="Connect string to the Postgres instance "
                         "(psycopg2 format). If omitted, the string will be read from the file .psycopg_connection")
+    parser.add_argument("--verbose", action="store_true", default=False, help="Print debugging output")
 
     args = parser.parse_args()
     db_connection = connect_postgres(args.pg_con)
     dbs = db.DBSchema.get_instance(db_connection)
+
+    exceptions = parse_exception_list(args.exception_list) if args.exception_list else None
 
     # if the query param is given, we switch to single optimization mode: we only optimize this one query
     # in this case, we might also run the query online
@@ -197,7 +242,7 @@ def main():
         optimize_single(args.input, exec=args.exec,
                         table_estimation=args.table_estimation,
                         join_estimation=args.join_estimation,
-                        subqueries=args.subqueries, dbs=dbs)
+                        subqueries=args.subqueries, exceptions=exceptions, dbs=dbs)
         return
 
     # otherwise we need to read our workload depending on the input mode
@@ -211,10 +256,19 @@ def main():
     if args.generate_labels:
         workload = selection.reorder(workload)
 
+    if args.exception_list:
+        exceptions = resolve_exception_rule_labels(exceptions, workload, args.query_col)
+        if args.verbose:
+            rule_printing = [ues.ExceptionRule(label=rule.label, subquery_generation=rule.subquery_generation)
+                             for rule in exceptions.rules.values()]
+            util.print_stderr("Exception rules:")
+            pprint.pprint(rule_printing, stream=sys.stderr)
+
     optimized_workload = optimize_workload(workload, args.query_col, args.out_col,
                                            table_estimation=args.table_estimation,
                                            join_estimation=args.join_estimation,
                                            subqueries=args.subqueries,
+                                           exceptions=exceptions,
                                            timing=args.timing,
                                            dbs=dbs)
 

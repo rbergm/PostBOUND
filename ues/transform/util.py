@@ -209,6 +209,11 @@ def connect_postgres(parser: argparse.ArgumentParser, conn_str: str = None):
     return conn
 
 
+def print_stderr(*args, **kwargs):
+    kwargs.pop("file", None)
+    print(*args, file=sys.stderr, **kwargs)
+
+
 class StateError(RuntimeError):
     """Indicates that an object is not in the right state to perform an opteration."""
     def __init__(self, msg: str = ""):
