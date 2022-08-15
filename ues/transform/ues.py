@@ -216,11 +216,11 @@ class TopkUESCardinalityEstimator(JoinCardinalityEstimator):
         # calculate the cardinality of all values in no MCV list. This is the same formula as pure UES uses
         if pk_fk_join:
             fk_freq = mcv_a.remainder_frequency
-            pk_card = total_b - mcv_b.frequency_sum()
+            pk_card = max(total_b - mcv_b.frequency_sum(), 0)
             cardinality_sum += fk_freq * pk_card
         else:
-            remaining_values_a = min(total_a - mcv_a.frequency_sum(), 0)
-            remaining_values_b = min(total_b - mcv_b.frequency_sum(), 0)
+            remaining_values_a = max(total_a - mcv_a.frequency_sum(), 0)
+            remaining_values_b = max(total_b - mcv_b.frequency_sum(), 0)
             distinct_values_a = remaining_values_a / mcv_a.remainder_frequency
             distinct_values_b = remaining_values_b / mcv_b.remainder_frequency
             remainder_bound = min(distinct_values_a, distinct_values_b) * remaining_values_a * remaining_values_b
