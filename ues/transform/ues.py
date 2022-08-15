@@ -111,7 +111,9 @@ class DefaultUESCardinalityEstimator(JoinCardinalityEstimator):
 
 
 class _TopKList:
-    def __init__(self, mcv_list: List[Tuple[Any, int]], *, remainder_frequency: int = None):
+    def __init__(self, mcv_list: List[Tuple[Any, int]], *, associated_attribute: db.AttributeRef = None,
+                 remainder_frequency: int = None):
+        self.associated_attribute = associated_attribute
         self.mcv_list = mcv_list
         self.mcv_data = dict(mcv_list)
         self.remainder_frequency = (min(self.mcv_data.values(), default=1) if not remainder_frequency
@@ -147,7 +149,8 @@ class _TopKList:
         return str(self)
 
     def __str__(self) -> str:
-        return str(self.mcv_list)
+        prefix = str(self.associated_attribute) if self.associated_attribute else ""
+        return prefix + str(self.mcv_list)
 
 
 class TopkUESCardinalityEstimator(JoinCardinalityEstimator):
@@ -813,7 +816,8 @@ class _TopKBaseAttributeFrequenciesLoader:
     def __getitem__(self, key: db.AttributeRef) -> _TopKList:
         if key not in self.attribute_mcvs:
             frequencies = self.dbs.calculate_most_common_values(key, k=self.k)
-            top_k = _TopKList(self._snap_frequencies_to_max(frequencies, self.base_estimates[key.table]))
+            top_k = _TopKList(self._snap_frequencies_to_max(frequencies, self.base_estimates[key.table]),
+                              associated_attribute=key)
             self.attribute_mcvs[key] = top_k
             return top_k
         return self.attribute_mcvs[key]
@@ -835,7 +839,8 @@ class _TopKJoinAttributeFrequenciesLoader:
         mcv_entries = mcv_list.contents()
         adjusted_values = [(val, freq * adjustment_factor) for val, freq in mcv_entries]
         adjusted_remainder = mcv_list.remainder_frequency * adjustment_factor
-        return _TopKList(adjusted_values, remainder_frequency=adjusted_remainder)
+        return _TopKList(adjusted_values, remainder_frequency=adjusted_remainder,
+                         associated_attribute=mcv_list.associated_attribute)
 
     def __getitem__(self, key: db.AttributeRef) -> _TopKList:
         if key not in self.attribute_mvcs:
