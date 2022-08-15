@@ -726,7 +726,6 @@ class _MVFBaseAttributeFrequenciesLoader:
                 top1 = 1
             else:
                 __, top1 = top1[0]
-                top1 = round(top1 * self.dbs.count_tuples(key.table))
             top1 = min(top1, self.base_estimates[key.table])
             self.attribute_frequencies[key] = top1
         return self.attribute_frequencies[key]
