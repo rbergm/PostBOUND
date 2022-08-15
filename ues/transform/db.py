@@ -136,12 +136,13 @@ class DBSchema:
         # (which is illegal). Therefore, the file is first opened for reading, the cache is inflated and the file is
         # closed again.
         if os.path.isfile(".dbschema_query_cache.json"):
-            self.query_cache_file = open(".dbschema_query_cache.json", "r")
-            self.query_cache = json.load(self.query_cache_file)
-            self.query_cache_file.close()
+            with open(".dbschema_query_cache.json", "r") as query_cache_file:
+                try:
+                    self.query_cache = json.load(query_cache_file)
+                except json.JSONDecodeError:
+                    self.query_cache = {}
         else:
             self.query_cache = {}
-        self.query_cache_file = open(".dbschema_query_cache.json", "w")
         atexit.register(self._save_query_cache)
 
     def count_tuples(self, table: TableRef, *, cache_enabled=True) -> int:
@@ -345,5 +346,5 @@ class DBSchema:
         return self.cursor.fetchall()
 
     def _save_query_cache(self):
-        json.dump(self.query_cache, self.query_cache_file)
-        self.query_cache_file.close()
+        with open(".dbschema_query_cache.json", "w") as query_cache_file:
+            json.dump(self.query_cache, query_cache_file)
