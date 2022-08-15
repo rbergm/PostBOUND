@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
 
 import argparse
+import json
 import pathlib
 import os
 import textwrap
 from datetime import datetime
+from typing import Dict
 
 import pandas as pd
 import psycopg2
@@ -61,6 +63,15 @@ def write_queries_stdout(result_data: pd.DataFrame, query_col: str = "query_ues"
         print(f"{query};")
 
 
+def jsonize_join_bounds(bounds: Dict[ues.JoinTree, int]) -> dict:
+    jsonized_bounds = []
+    for tree, bound in bounds.items():
+        join_key = tree.all_tables()
+        jsonized = {"join": join_key, "bound": bound}
+        jsonized_bounds.append(jsonized)
+    return jsonized_bounds
+
+
 def optimize_workload(workload: pd.DataFrame, query_col: str, out_col: str, *,
                       table_estimation: str = "explain", join_estimation: str = "basic", subqueries: str = "defensive",
                       timing: bool = False, dbs: db.DBSchema = db.DBSchema.get_instance()) -> pd.DataFrame:
@@ -68,20 +79,23 @@ def optimize_workload(workload: pd.DataFrame, query_col: str, out_col: str, *,
     optimized_queries = []
     optimization_time = []
     optimization_success = []
+    intermediate_bounds = []
     parsed_queries = workload[query_col].apply(mosp.MospQuery.parse)
 
     for query_idx, query in enumerate(parsed_queries):
         optimization_start = datetime.now()
         try:
-            optimized_query = ues.optimize_query(query,
-                                                 table_cardinality_estimation=table_estimation,
-                                                 join_cardinality_estimation=join_estimation,
-                                                 subquery_generation=subqueries,
-                                                 dbs=dbs)
+            optimized_query, query_bounds = ues.optimize_query(query,
+                                                               table_cardinality_estimation=table_estimation,
+                                                               join_cardinality_estimation=join_estimation,
+                                                               subquery_generation=subqueries,
+                                                               dbs=dbs, return_bounds=True)
             optimization_success.append(True)
+            intermediate_bounds.append(jsonize_join_bounds(query_bounds))
         except Exception as e:
             optimized_query = query
             optimization_success.append(False)
+            intermediate_bounds.append(None)
             query_text = workload["label"].iloc[query_idx] if "label" in workload else f"'{query}'"
             logger("Could not optimize query ", query_text, ": ", type(e).__name__, " (", e, ")", sep="")
         optimization_end = datetime.now()
@@ -92,6 +106,7 @@ def optimize_workload(workload: pd.DataFrame, query_col: str, out_col: str, *,
     optimized_workload = workload.copy()
     optimized_workload[out_col] = optimized_queries
     optimized_workload["optimization_success"] = optimization_success
+    optimized_workload["ues_bounds"] = intermediate_bounds
     if timing:
         optimized_workload["optimization_time"] = optimization_time
     return optimized_workload

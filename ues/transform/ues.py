@@ -773,6 +773,12 @@ class _TableBoundStatistics(abc.ABC):
                            join_tree: JoinTree):
         return NotImplemented
 
+    def base_bounds(self) -> Dict[db.TableRef, int]:
+        return {tab: bound for tab, bound in self.upper_bounds.items() if isinstance(tab, db.TableRef)}
+
+    def join_bounds(self) -> Dict["JoinTree", int]:
+        return {join: bound for join, bound in self.upper_bounds.items() if isinstance(join, JoinTree)}
+
     def _get_base_estimates(self):
         return self._base_estimates
 
@@ -894,9 +900,6 @@ class _MFVTableBoundStatistics(_TableBoundStatistics):
 
         self.joined_frequencies[new_join_attribute] = self.joined_frequencies[existing_partner_attribute]
         self.joined_frequencies.current_multiplier *= new_attribute_frequency
-
-    def base_bounds(self) -> Dict[db.TableRef, int]:
-        return {tab: bound for tab, bound in self.upper_bounds.items() if isinstance(tab, db.TableRef)}
 
     def _update_base_predicate_frequency(self, joined_table: db.TableRef, join_predicate: mosp.MospBasePredicate):
         new_join_attribute = join_predicate.attribute_of(joined_table)
@@ -1316,7 +1319,7 @@ def _calculate_join_order_for_join_partition(query: mosp.MospQuery, join_graph: 
     assert not join_graph.contains_free_tables()
     trace_logger("Final join ordering:", join_tree)
 
-    return JoinOrderOptimizationResult(join_tree, stats.upper_bounds, stats.upper_bounds[join_tree], True)
+    return JoinOrderOptimizationResult(join_tree, stats.join_bounds(), stats.upper_bounds[join_tree], True)
 
 
 def _determine_referenced_attributes(join_sequence: List[dict]) -> Dict[db.TableRef, Set[db.AttributeRef]]:
@@ -1463,13 +1466,17 @@ def _generate_mosp_data_for_sequence(original_query: mosp.MospQuery, join_sequen
     return mosp_data
 
 
+OptimizationResult = collections.namedtuple("OptimizationResult", ["query", "bounds"])
+
+
 def optimize_query(query: mosp.MospQuery, *,
                    table_cardinality_estimation: str = "explain",
                    join_cardinality_estimation: str = "basic",
                    subquery_generation: str = "defensive",
                    dbs: db.DBSchema = db.DBSchema.get_instance(),
                    visualize: bool = False, visualize_args: dict = None,
-                   verbose: bool = False, trace: bool = False) -> mosp.MospQuery:
+                   verbose: bool = False, trace: bool = False,
+                   return_bounds: bool = False) -> Union[mosp.MospQuery, OptimizationResult]:
     # if there are no joins in the query, there is nothing to do
     if not isinstance(query.from_clause(), list) or not util.contains_multiple(query.from_clause()):
         return query
@@ -1512,10 +1519,20 @@ def optimize_query(query: mosp.MospQuery, *,
         for partial_query in remaining_sets:
             partial_query["select"] = {"value": "*"}
             first_set["from"].append({"join": {"value": partial_query}})
-        return mosp.MospQuery(first_set)
+        final_query = mosp.MospQuery(first_set)
     elif optimization_result:
         join_sequence = optimization_result.final_order.traverse_right_deep()
         mosp_data = _generate_mosp_data_for_sequence(query, join_sequence)
-        return mosp.MospQuery(mosp_data)
+        final_query = mosp.MospQuery(mosp_data)
     else:
-        return query
+        warnings.warn("No optimization result")
+        final_query = query
+
+    if return_bounds:
+        bounds = {}
+        for intermediate_bounds in [partial_result.intermediate_bounds for partial_result
+                                    in util.enlist(optimization_result) if partial_result.intermediate_bounds]:
+            bounds = util.dict_merge(bounds, intermediate_bounds)
+        return OptimizationResult(final_query, bounds)
+    else:
+        return final_query
