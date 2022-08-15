@@ -66,10 +66,10 @@ def write_queries_stdout(result_data: pd.DataFrame, query_col: str = "query_ues"
 def jsonize_join_bounds(bounds: Dict[ues.JoinTree, int]) -> dict:
     jsonized_bounds = []
     for tree, bound in bounds.items():
-        join_key = tree.all_tables()
+        join_key = [str(tab) for tab in tree.all_tables()]
         jsonized = {"join": join_key, "bound": bound}
         jsonized_bounds.append(jsonized)
-    return jsonized_bounds
+    return json.dumps(jsonized_bounds)
 
 
 def optimize_workload(workload: pd.DataFrame, query_col: str, out_col: str, *,
