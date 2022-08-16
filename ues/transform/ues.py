@@ -1539,7 +1539,7 @@ def optimize_query(query: mosp.MospQuery, *,
                    dbs: db.DBSchema = db.DBSchema.get_instance(),
                    visualize: bool = False, visualize_args: dict = None,
                    verbose: bool = False, trace: bool = False,
-                   return_bounds: bool = False) -> Union[mosp.MospQuery, OptimizationResult]:
+                   introspective: bool = False) -> Union[mosp.MospQuery, OptimizationResult]:
     # if there are no joins in the query, there is nothing to do
     if not isinstance(query.from_clause(), list) or not util.contains_multiple(query.from_clause()):
         return query
@@ -1592,7 +1592,7 @@ def optimize_query(query: mosp.MospQuery, *,
         warnings.warn("No optimization result")
         final_query = query
 
-    if return_bounds:
+    if introspective:
         bounds = {}
         for intermediate_bounds in [partial_result.intermediate_bounds for partial_result
                                     in util.enlist(optimization_result) if partial_result.intermediate_bounds]:
