@@ -32,7 +32,8 @@ class JobWorkloadOptimizationTests(unittest.TestCase):
 
 class SnowflaxeQueryOptimizationTests(unittest.TestCase):
     def test_base_query(self):
-        pass
+        query = mosp.MospQuery.parse(job_workload["32a"])
+        optimized = ues.optimize_query(query)
 
 
 class CrossProductQueryOptimizationTests(unittest.TestCase):

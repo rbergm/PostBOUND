@@ -1176,6 +1176,7 @@ def _calculate_join_order_for_join_partition(query: mosp.MospQuery, join_graph: 
     DirectedJoinEdge = collections.namedtuple("DirectedJoinEdge", ["partner", "predicate"])
 
     if join_graph.count_tables() == 1:
+        trace_logger(".. No joins found")
         only_table = join_graph.pull_any_table()
         join_tree = join_tree.with_base_table(only_table)
         final_bound = stats.base_estimates[only_table]
@@ -1183,6 +1184,7 @@ def _calculate_join_order_for_join_partition(query: mosp.MospQuery, join_graph: 
 
     if not join_graph.free_n_m_joined_tables():
         # TODO: documentation
+        trace_logger(".. No n:m joins found, calculating snowflake-query order")
         first_fk_table = util.argmin({table: estimate for table, estimate in stats.base_estimates.items()
                                       if join_graph.contains_table(table) and join_graph.is_free_fk_table(table)})
         join_tree = join_tree.with_base_table(first_fk_table)
