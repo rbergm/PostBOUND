@@ -117,8 +117,7 @@ class _TopKList:
         self.associated_attribute = associated_attribute
         self.mcv_list = mcv_list
         self.mcv_data = dict(mcv_list)
-        self.remainder_frequency = (min(self.mcv_data.values(), default=1) if not remainder_frequency
-                                    else remainder_frequency)
+        self.remainder_frequency = self.min_frequency() if remainder_frequency is None else remainder_frequency
 
     def count_common_elements(self, other_mcv: "_TopKList") -> int:
         own_values = set(self.mcv_data.keys())
@@ -132,7 +131,18 @@ class _TopKList:
         return self.mcv_list
 
     def max_frequency(self) -> int:
-        return max([freq for __, freq in self.mcv_list])
+        return max(self.mcv_data.values(), default=1)
+
+    def min_frequency(self) -> int:
+        return min(self.mcv_data.values(), default=1)
+
+    def join_cardinality_with(self, other: "_TopKList") -> int:
+        cardinality_sum = 0
+        for value in self:
+            cardinality_sum += self[value] * other[value]
+        for value in [value for value in other if value not in self]:
+            cardinality_sum += self[value] * other[value]
+        return cardinality_sum
 
     def __getitem__(self, value: Any) -> int:
         return self.mcv_data.get(value, self.remainder_frequency)
@@ -150,7 +160,7 @@ class _TopKList:
         return str(self)
 
     def __str__(self) -> str:
-        prefix = str(self.associated_attribute) if self.associated_attribute else ""
+        prefix = str(self.associated_attribute) + " :: " if self.associated_attribute else ""
         return prefix + str(self.mcv_list)
 
 
@@ -172,23 +182,11 @@ class TopkUESCardinalityEstimator(JoinCardinalityEstimator):
             if pk_fk_join:
                 fk_attr = attr1 if attr1.table == fk_table else attr2
                 pk_attr = attr1 if fk_attr == attr2 else attr2
-
-                mcv_a = self.stats_container.fetch_mcv_list(fk_attr)
-                mcv_b = self.stats_container.fetch_mcv_list(pk_attr)
-                total_a = self._load_tuple_count(fk_attr.table)
-                total_b = self._load_tuple_count(pk_attr.table)
+                cardinality = self._calculate_pk_fk_bound(fk_attr, pk_attr)
             else:
                 joined_attr = attr1 if join_tree.contains_table(attr1.table) else attr2
                 candidate_attr = attr1 if joined_attr == attr2 else attr2
-                mcv_a = self.stats_container.fetch_mcv_list(joined_attr, joined_table=True)
-                mcv_b = self.stats_container.fetch_mcv_list(candidate_attr)
-                total_a = self._load_tuple_count(joined_attr.table)
-                total_b = self._load_tuple_count(candidate_attr.table)
-
-            cardinality = self._calculate_cardinality(mcv_a, mcv_b, total_a, total_b, pk_fk_join=pk_fk_join)
-            if pk_fk_join:
-                max_cardinality = self._load_tuple_count(pk_attr.table)
-                cardinality = min(cardinality, max_cardinality)
+                cardinality = self._calculate_n_m_bound(joined_attr, candidate_attr, join_tree)
 
             if cardinality < lowest_bound:
                 lowest_bound = cardinality
@@ -201,33 +199,37 @@ class TopkUESCardinalityEstimator(JoinCardinalityEstimator):
     def _load_tuple_count(self, table: db.TableRef) -> int:
         return self.stats_container.upper_bounds.get(table, self.stats_container.base_estimates[table])
 
-    def _calculate_cardinality(self, mcv_a: _TopKList, mcv_b: _TopKList,
-                               total_a: int, total_b: int, *, pk_fk_join: bool = False) -> int:
-        # In case of PK/FK join, mcv_a is assumed to be the FK table!!!!
+    def _calculate_pk_fk_bound(self, fk_attr: db.AttributeRef, pk_attr: db.AttributeRef) -> int:
+        fk_mcv = self.stats_container.fetch_mcv_list(fk_attr)
+        pk_mcv = self.stats_container.fetch_mcv_list(pk_attr)
+        mcv_card = fk_mcv.join_cardinality_with(pk_mcv)
 
-        cardinality_sum = 0
+        fk_remainder_freq = fk_mcv.remainder_frequency
+        pk_remainder_card = self.stats_container.base_estimates[pk_attr.table] - pk_mcv.frequency_sum()
+        pk_remainder_card = max(pk_remainder_card, 0)
+        remainder_cardinality = fk_remainder_freq * pk_remainder_card
 
-        # calculate the cardinality of values in the MCV lists
-        for value in mcv_a:
-            cardinality_sum += mcv_a[value] * mcv_b[value]
+        cardinality = mcv_card + remainder_cardinality
+        max_cardinality = self.stats_container.base_estimates[pk_attr.table]
+        return min(cardinality, max_cardinality)
 
-        for value in [value for value in mcv_b if value not in mcv_a]:
-            cardinality_sum += mcv_a[value] * mcv_b[value]
+    def _calculate_n_m_bound(self, joined_attr: db.AttributeRef, candidate_attr: db.AttributeRef,
+                             join_tree: "JoinTree") -> int:
+        joined_mcv = self.stats_container.fetch_mcv_list(joined_attr, joined_table=True)
+        candidate_mcv = self.stats_container.fetch_mcv_list(candidate_attr)
+        mcv_bound = joined_mcv.join_cardinality_with(candidate_mcv)
 
-        # calculate the cardinality of all values in no MCV list. This is the same formula as pure UES uses
-        if pk_fk_join:
-            fk_freq = mcv_a.remainder_frequency
-            pk_card = max(total_b - mcv_b.frequency_sum(), 0)
-            cardinality_sum += fk_freq * pk_card
-        else:
-            remaining_values_a = max(total_a - mcv_a.frequency_sum(), 0)
-            remaining_values_b = max(total_b - mcv_b.frequency_sum(), 0)
-            distinct_values_a = remaining_values_a / mcv_a.remainder_frequency
-            distinct_values_b = remaining_values_b / mcv_b.remainder_frequency
-            remainder_bound = min(distinct_values_a, distinct_values_b) * remaining_values_a * remaining_values_b
-            cardinality_sum += remainder_bound
+        total_bound_joined = self.stats_container.upper_bounds[join_tree]
+        total_bound_candidate = self.stats_container.upper_bounds[candidate_attr.table]
+        remainder_card_joined = max(total_bound_joined - joined_mcv.frequency_sum(), 0)
+        remainder_card_candidate = max(total_bound_candidate - candidate_mcv.frequency_sum(), 0)
+        distinct_values_joined = remainder_card_joined / joined_mcv.remainder_frequency
+        distinct_values_candidate = remainder_card_candidate / candidate_mcv.remainder_frequency
+        remainder_bound = (min(distinct_values_joined, distinct_values_candidate)
+                           * joined_mcv.remainder_frequency
+                           * candidate_mcv.remainder_frequency)
 
-        return cardinality_sum
+        return mcv_bound + remainder_bound
 
 
 def _is_pk_fk_join(join: mosp.MospBasePredicate, *, dbs: db.DBSchema = db.DBSchema.get_instance()) -> bool:
@@ -824,8 +826,8 @@ class _TopKBaseAttributeFrequenciesLoader:
     def __getitem__(self, key: db.AttributeRef) -> _TopKList:
         if key not in self.attribute_mcvs:
             frequencies = self.dbs.calculate_most_common_values(key, k=self.k)
-            top_k = _TopKList(self._snap_frequencies_to_max(frequencies, self.base_estimates[key.table]),
-                              associated_attribute=key)
+            snapped_freqs = self._snap_frequencies_to_max(frequencies, self.base_estimates[key.table])
+            top_k = _TopKList(snapped_freqs, associated_attribute=key)
             self.attribute_mcvs[key] = top_k
             return top_k
         return self.attribute_mcvs[key]
@@ -865,7 +867,7 @@ class _TopKJoinAttributeFrequenciesLoader:
         return str(self)
 
     def __str__(self) -> str:
-        return str(self.attribute_mvcs)
+        return "Join frequencies: " + str(self.attribute_mvcs) + f" (current multiplier = {self.current_multiplier})"
 
 
 class _MFVTableBoundStatistics(_TableBoundStatistics):
@@ -906,6 +908,8 @@ class _MFVTableBoundStatistics(_TableBoundStatistics):
         new_join_attribute = join_predicate.attribute_of(joined_table)
         existing_partner_attribute = join_predicate.join_partner_of(joined_table)
         new_attribute_frequency = self.base_frequencies[new_join_attribute]
+
+        # FIXME: wrong formula to calculate resulting cardinality. But no consequences for JOB (b/c no compound preds)
 
         return {"new_attribute": new_join_attribute,
                 "partner_attribute": existing_partner_attribute,
@@ -963,7 +967,7 @@ class _TopKTableBoundStatistics(_TableBoundStatistics):
             joined_attributes.add(attr1)
             joined_attributes.add(attr2)
 
-        for attr in [attr for attr in join_tree_before_update.all_attributes() if attr not in joined_attributes]:
+        for attr in [attr for attr in join_tree.all_attributes() if attr not in joined_attributes]:
             mcv = self._jf[attr]
             updated_mcv = self._jf.adjust_frequencies(mcv, min_new_frequency)
             self.joined_frequencies[attr] = updated_mcv
@@ -1319,7 +1323,7 @@ def _calculate_join_order_for_join_partition(query: mosp.MospQuery, join_graph: 
                 candidate_bounds[candidate_table] = candidate_bound
 
         trace_logger(".. Base frequencies:", stats.base_frequencies)
-        trace_logger(".. Current bounds:", candidate_bounds)
+        trace_logger(".. Candidate bounds:", candidate_bounds)
 
         # We have now selected the next n:m join to execute. But before we can actually include this join in our join
         # tree, we have to figure out one last thing: what to with the Primary Key/Foreign Key joins on the selected
@@ -1379,6 +1383,7 @@ def _calculate_join_order_for_join_partition(query: mosp.MospQuery, join_graph: 
         trace_logger("")
 
     assert not join_graph.contains_free_tables()
+    trace_logger("Final upper bounds:", stats.join_bounds())
     trace_logger("Final join ordering:", join_tree)
 
     return JoinOrderOptimizationResult(join_tree, stats.join_bounds(), stats.upper_bounds[join_tree], True)
