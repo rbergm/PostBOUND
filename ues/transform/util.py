@@ -214,6 +214,10 @@ def print_stderr(*args, **kwargs):
     print(*args, file=sys.stderr, **kwargs)
 
 
+def print_if(should_print: bool, *args, **kwargs):
+    if should_print:
+        print(*args, **kwargs)
+
 class StateError(RuntimeError):
     """Indicates that an object is not in the right state to perform an opteration."""
     def __init__(self, msg: str = ""):
