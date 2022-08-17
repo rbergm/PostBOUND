@@ -93,8 +93,8 @@ class UpperBoundTests(unittest.TestCase):
             if not np.isnan(topk_bound) or not np.isnan(top1_bound):
                 self.assertLessEqual(topk_bound, top1_bound,
                                      msg=f"Top-K bound must be less than Top-1 bound at query {label}!")
-            self.failIf(np.isnan(topk_bound) != np.isnan(top1_bound),
-                        msg=f"Both queries must agree on existence of bounds at query {label}!")
+            self.assertTrue(np.isnan(topk_bound) == np.isnan(top1_bound),
+                            msg=f"Both queries must agree on existence of bounds at query {label}!")
 
 
 if "__name__" == "__main__":

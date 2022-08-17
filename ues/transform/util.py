@@ -210,13 +210,16 @@ def connect_postgres(parser: argparse.ArgumentParser, conn_str: str = None):
 
 
 def print_stderr(*args, **kwargs):
+    """Prints to stderr rather than stdout."""
     kwargs.pop("file", None)
     print(*args, file=sys.stderr, **kwargs)
 
 
 def print_if(should_print: bool, *args, **kwargs):
+    """Prints, only if the first argument is True-like."""
     if should_print:
         print(*args, **kwargs)
+
 
 class StateError(RuntimeError):
     """Indicates that an object is not in the right state to perform an opteration."""

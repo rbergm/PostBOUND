@@ -4,7 +4,7 @@ import sys
 
 sys.path.append("../")
 import regression_suite  # noqa: E402
-from transform import db, mosp, ues  # noqa: E402
+from transform import db, mosp, ues  # noqa: E402, F401
 
 
 job_workload = regression_suite.load_job_workload()
@@ -17,7 +17,7 @@ class JoinGraphTests(unittest.TestCase):
 class BeningQueryOptimizationTests(unittest.TestCase):
     def test_base_query(self):
         query = mosp.MospQuery.parse(job_workload["1a"])
-        optimized = ues.optimize_query(query, trace=True)
+        optimized = ues.optimize_query(query, trace=True)  # noqa: F841
 
 
 class JobWorkloadOptimizationTests(unittest.TestCase):
@@ -25,7 +25,7 @@ class JobWorkloadOptimizationTests(unittest.TestCase):
         for label, query in job_workload.items():
             try:
                 parsed = mosp.MospQuery.parse(query)
-                ues.optimize_query(parsed)
+                optimized = ues.optimize_query(parsed)  # noqa: F841
             except Exception as e:
                 self.fail(f"Exception raised on query {label} with exception {e}")
 
@@ -33,7 +33,7 @@ class JobWorkloadOptimizationTests(unittest.TestCase):
 class SnowflaxeQueryOptimizationTests(unittest.TestCase):
     def test_base_query(self):
         query = mosp.MospQuery.parse(job_workload["32a"])
-        optimized = ues.optimize_query(query)
+        optimized = ues.optimize_query(query)  # noqa: F841
 
 
 class CrossProductQueryOptimizationTests(unittest.TestCase):
@@ -41,7 +41,7 @@ class CrossProductQueryOptimizationTests(unittest.TestCase):
         raw_query = """SELECT * FROM info_type it, company_type ct
                        WHERE it.info = 'top 250 rank' AND ct.kind = 'production companies'"""
         query = mosp.MospQuery.parse(raw_query)
-        ues.optimize_query(query)
+        optimized = ues.optimize_query(query)  # noqa: F841
 
     def test_base_with_snowflake(self):
         pass
@@ -51,7 +51,7 @@ class WeirdQueriesOptimizationTests(unittest.TestCase):
     def test_no_joins_query(self):
         raw_query = "SELECT * FROM company_type ct WHERE ct.kind = 'production companies'"
         query = mosp.MospQuery.parse(raw_query)
-        optimized_query = ues.optimize_query(query)
+        optimized_query = ues.optimize_query(query)  # noqa: F841
 
 
 class CompoundJoinPredicateOptimizationTests(unittest.TestCase):
@@ -73,7 +73,7 @@ class CompoundJoinPredicateOptimizationTests(unittest.TestCase):
             AND mc.movie_id = mi_idx.movie_id
             AND it.id = mi_idx.info_type_id;"""
         query = mosp.MospQuery.parse(raw_query)
-        optimized_query = ues.optimize_query(query)
+        optimized_query = ues.optimize_query(query)  # noqa: F841
 
 
 if "__name__" == "__main__":
