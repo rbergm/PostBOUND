@@ -1566,6 +1566,7 @@ def _generate_mosp_data_for_sequence(original_query: mosp.MospQuery, join_sequen
 class OptimizationResult:
     query: mosp.MospQuery
     bounds: Dict[JoinTree, int]
+    final_bound: int
 
 
 def optimize_query(query: mosp.MospQuery, *,
@@ -1651,7 +1652,7 @@ def optimize_query(query: mosp.MospQuery, *,
         cross_product_bound = functools.reduce(operator.mul, [res.final_bound for res in ordered_join_trees])
         merged_bounds[cross_product_tree] = cross_product_bound
 
-        return OptimizationResult(final_query, merged_bounds)
+        return OptimizationResult(final_query, merged_bounds, cross_product_bound)
     elif optimization_result:
         # If our query does not contain cross-products, our job is singificantly easier - just extract the necessary
         # data and supply it in a nice format.
@@ -1659,7 +1660,9 @@ def optimize_query(query: mosp.MospQuery, *,
         join_sequence = single_optimization_result.final_order.traverse_right_deep()
         mosp_data = _generate_mosp_data_for_sequence(query, join_sequence)
         final_query = mosp.MospQuery(mosp_data)
-        return (OptimizationResult(final_query, single_optimization_result.intermediate_bounds) if introspective
-                else final_query)
+        if introspective:
+            return OptimizationResult(final_query, single_optimization_result.intermediate_bounds,
+                                      single_optimization_result.final_bound)
+        return final_query
     else:
         raise util.StateError("No optimization result")
