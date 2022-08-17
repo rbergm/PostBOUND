@@ -1,6 +1,7 @@
 
 import abc
 import collections
+import functools
 import operator
 import warnings
 from dataclasses import dataclass
@@ -557,6 +558,14 @@ class JoinTree:
                 predicate = join.predicate().joins.as_and_clause()
                 join_tree = join_tree.joined_with_base_table(join.base_table(), predicate=predicate)
         return join_tree
+
+    @staticmethod
+    def for_cross_product(sub_trees: List["JoinTree"]) -> "JoinTree":
+        initial_tree, *remainder_trees = sub_trees
+        cross_product_tree = initial_tree
+        for remaining_tree in remainder_trees:
+            cross_product_tree = cross_product_tree.joined_with_subquery(remaining_tree)
+        return cross_product_tree
 
     def __init__(self, *, predicate: mosp.AbstractMospPredicate = None):
         self.left: Union["JoinTree", db.TableRef] = None
@@ -1148,8 +1157,12 @@ def _absorb_pk_fk_hull_of(table: db.TableRef, *, join_graph: JoinGraph, join_tre
     return join_tree
 
 
-JoinOrderOptimizationResult = collections.namedtuple("JoinOrderOptimizationResult",
-                                                     ["final_order", "intermediate_bounds", "final_bound", "regular"])
+@dataclass
+class JoinOrderOptimizationResult:
+    final_order: JoinTree
+    intermediate_bounds: Dict[JoinTree, int]
+    final_bound: int
+    regular: bool
 
 
 def _calculate_join_order(query: mosp.MospQuery, *,
@@ -1549,7 +1562,10 @@ def _generate_mosp_data_for_sequence(original_query: mosp.MospQuery, join_sequen
     return mosp_data
 
 
-OptimizationResult = collections.namedtuple("OptimizationResult", ["query", "bounds"])
+@dataclass
+class OptimizationResult:
+    query: mosp.MospQuery
+    bounds: Dict[JoinTree, int]
 
 
 def optimize_query(query: mosp.MospQuery, *,
@@ -1596,28 +1612,54 @@ def optimize_query(query: mosp.MospQuery, *,
                                                 verbose=verbose, trace=trace)
 
     if util.contains_multiple(optimization_result):
-        # query contains a cross-product
-        ordered_join_trees = sorted(optimization_result, key=operator.attrgetter("final_bound"))
+        # If our query contains a cross-product, we need to carry out some additional final steps:
+        # First up, the join order will contain not one entry, but multiple entries - one for each part of the query.
+        # In the end, all cross-products will be implemented as subqueries, joining the initial query without any
+        # predicate
+        multiple_optimization_results: List[JoinOrderOptimizationResult] = optimization_result
+
+        # In order to construct an efficient final query, these partial join orders have to be sorted such that
+        # each additional partial order introduces as few new tuples as possible
+        ordered_join_trees = sorted(multiple_optimization_results, key=operator.attrgetter("final_bound"))
+
+        # Based on this sorted sequence of join orders, the corresponding queries can be generated
         mosp_datasets = [_generate_mosp_data_for_sequence(query, optimizer_run.final_order.traverse_right_deep())
                          for optimizer_run in ordered_join_trees]
+
+        # The queries than need to be stitched together to form a final result query
         first_set, *remaining_sets = mosp_datasets
         for partial_query in remaining_sets:
             partial_query["select"] = {"value": "*"}
             first_set["from"].append({"join": {"value": partial_query}})
         final_query = mosp.MospQuery(first_set)
+
+        if not introspective:
+            # If introspection is off, we are done now.
+            return final_query
+
+        # But we do not only need the query if introspection is on. In addition, we need to inform the user of the
+        # optimization method about the upper bounds that have been calculated along the way.
+        # In order to do so, we need to merge the partial upper bounds of all the subqueries/cross product parts
+        merged_bounds = {}
+        for intermediate_bounds in [partial_result.intermediate_bounds for partial_result
+                                    in ordered_join_trees if partial_result.intermediate_bounds]:
+            merged_bounds = util.dict_merge(merged_bounds, intermediate_bounds)
+
+        # And lastly, we also need to include the final join tree in the bounds. For this tree the bound is calculated
+        # on-the-fly
+        cross_product_tree = JoinTree.for_cross_product([res.final_order for res in ordered_join_trees])
+        cross_product_bound = functools.reduce(operator.mul, [res.final_bound for res in ordered_join_trees])
+        merged_bounds[cross_product_tree] = cross_product_bound
+
+        return OptimizationResult(final_query, merged_bounds)
     elif optimization_result:
-        join_sequence = optimization_result.final_order.traverse_right_deep()
+        # If our query does not contain cross-products, our job is singificantly easier - just extract the necessary
+        # data and supply it in a nice format.
+        single_optimization_result: JoinOrderOptimizationResult = optimization_result
+        join_sequence = single_optimization_result.final_order.traverse_right_deep()
         mosp_data = _generate_mosp_data_for_sequence(query, join_sequence)
         final_query = mosp.MospQuery(mosp_data)
+        return (OptimizationResult(final_query, single_optimization_result.intermediate_bounds) if introspective
+                else final_query)
     else:
-        warnings.warn("No optimization result")
-        final_query = query
-
-    if introspective:
-        bounds = {}
-        for intermediate_bounds in [partial_result.intermediate_bounds for partial_result
-                                    in util.enlist(optimization_result) if partial_result.intermediate_bounds]:
-            bounds = util.dict_merge(bounds, intermediate_bounds)
-        return OptimizationResult(final_query, bounds)
-    else:
-        return final_query
+        raise util.StateError("No optimization result")

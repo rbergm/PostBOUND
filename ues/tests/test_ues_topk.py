@@ -87,7 +87,9 @@ class UpperBoundTests(unittest.TestCase):
     def test_topk_tighter_top1(self):
         for label, raw_query in job_workload.items():
             query = mosp.MospQuery.parse(raw_query)
-            optimized_query, bounds = ues.optimize_query(query, join_cardinality_estimation="topk", introspective=True)
+            optimization_res: ues.OptimizationResult = ues.optimize_query(query, join_cardinality_estimation="topk",
+                                                                          introspective=True)
+            optimized_query, bounds = optimization_res.query, optimization_res.bounds  # noqa: F841
             topk_bound = max(bounds.values(), default=np.nan)
             top1_bound = self.top1_bounds.loc[label]["final_bound"]
             if not np.isnan(topk_bound) or not np.isnan(top1_bound):
