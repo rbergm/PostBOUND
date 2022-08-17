@@ -161,7 +161,12 @@ class _TopKList:
 
     def __str__(self) -> str:
         prefix = str(self.associated_attribute) + " :: " if self.associated_attribute else ""
-        return prefix + str(self.mcv_list)
+        if self.mcv_list:
+            contents = f"max_freq = {self.max_frequency()}, min_freq = {self.min_frequency()}, "
+        else:
+            contents = "(no MCV data)"
+        contents += f"remainder_freq = {self.remainder_frequency}"
+        return prefix + contents
 
 
 class TopkUESCardinalityEstimator(JoinCardinalityEstimator):
