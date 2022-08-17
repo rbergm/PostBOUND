@@ -215,7 +215,6 @@ class TopkUESCardinalityEstimator(JoinCardinalityEstimator):
             if pk_val in fk_mcv:
                 values_in_both_mcvs.add(pk_val)
 
-        fk_remainder_freq = fk_mcv.remainder_frequency
         pk_remainder_card = self.stats_container.base_estimates[pk_attr.table] - pk_mcv.frequency_sum()
         pk_remainder_card = max(pk_remainder_card, 0)
         fk_remainder_freq = max([freq for val, freq in fk_mcv.contents() if val not in values_in_both_mcvs],
@@ -230,12 +229,20 @@ class TopkUESCardinalityEstimator(JoinCardinalityEstimator):
                              join_tree: "JoinTree") -> int:
         joined_mcv = self.stats_container.fetch_mcv_list(joined_attr, joined_table=True)
         candidate_mcv = self.stats_container.fetch_mcv_list(candidate_attr)
-        mcv_bound = joined_mcv.join_cardinality_with(candidate_mcv)
+        mcv_bound, topk_frequency_joined, topk_frequency_candidate = 0, 0, 0
+        for joined_val in joined_mcv:
+            mcv_bound += joined_mcv[joined_val] * candidate_mcv[joined_val]
+            topk_frequency_joined += joined_mcv[joined_val]
+            topk_frequency_candidate += candidate_mcv[joined_val]
+        for candidate_val in [cand_val for cand_val in candidate_mcv if cand_val not in joined_mcv]:
+            mcv_bound += joined_mcv[candidate_val] * candidate_mcv[candidate_val]
+            topk_frequency_joined += joined_mcv[candidate_val]
+            topk_frequency_candidate += candidate_mcv[candidate_val]
 
         total_bound_joined = self.stats_container.upper_bounds[join_tree]
         total_bound_candidate = self.stats_container.upper_bounds[candidate_attr.table]
-        remainder_card_joined = max(total_bound_joined - joined_mcv.frequency_sum(), 0)
-        remainder_card_candidate = max(total_bound_candidate - candidate_mcv.frequency_sum(), 0)
+        remainder_card_joined = max(total_bound_joined - topk_frequency_joined, 0)
+        remainder_card_candidate = max(total_bound_candidate - topk_frequency_candidate, 0)
         distinct_values_joined = remainder_card_joined / joined_mcv.remainder_frequency
         distinct_values_candidate = remainder_card_candidate / candidate_mcv.remainder_frequency
         remainder_bound = (min(distinct_values_joined, distinct_values_candidate)
