@@ -894,40 +894,36 @@ class _MFVTableBoundStatistics(_TableBoundStatistics):
         base_estimates = _estimate_filtered_cardinalities(query, base_cardinality_estimator, dbs=dbs)
         base_frequencies = _MVFBaseAttributeFrequenciesLoader(base_estimates)
         joined_frequencies = _MFVJoinAttributeFrequenciesLoader(base_frequencies)
+        self._jf = joined_frequencies
         upper_bounds = {}
         super().__init__(base_estimates, base_frequencies, joined_frequencies, upper_bounds)
 
     def update_frequencies(self, joined_table: db.TableRef, join_predicate: mosp.AbstractMospPredicate, *,
                            join_tree: JoinTree):
 
-        if join_predicate.is_compound():
-            candidate_updates = [self._update_base_predicate_frequency(joined_table, child)
-                                 for child in join_predicate.children]
-            update_data = min(candidate_updates, key=operator.itemgetter("resulting_cardinality"))
-        else:
-            update_data = self._update_base_predicate_frequency(joined_table, join_predicate)
+        join_tree_before_update = (join_tree.previous_checkpoint() if not join_tree.is_singular()
+                                   else join_tree.at_base_table())
 
-        new_join_attribute = update_data["new_attribute"]
-        new_attribute_frequency = update_data["new_frequency"]
-        existing_partner_attribute = update_data["partner_attribute"]
+        min_new_frequency = np.inf
+        joined_attributes = set()
+        for (attr1, attr2) in join_predicate.join_partners():
+            joined_attr = attr1 if join_tree_before_update.contains_table(attr1.table) else attr2
+            candidate_attr = attr1 if joined_attr == attr2 else attr2
+            candidate_frequency = self.base_frequencies[candidate_attr]
 
-        for existing_attribute in [attr for attr in join_tree.all_attributes() if attr != new_join_attribute]:
-            self.joined_frequencies[existing_attribute] *= new_attribute_frequency
+            updated_freq = self.joined_frequencies[joined_attr] * candidate_frequency
+            self.joined_frequencies[attr1] = updated_freq
+            self.joined_frequencies[attr2] = updated_freq
 
-        self.joined_frequencies[new_join_attribute] = self.joined_frequencies[existing_partner_attribute]
-        self.joined_frequencies.current_multiplier *= new_attribute_frequency
+            if candidate_frequency < min_new_frequency:
+                min_new_frequency = candidate_frequency
+            joined_attributes.add(joined_attr)
+            joined_attributes.add(candidate_attr)
 
-    def _update_base_predicate_frequency(self, joined_table: db.TableRef, join_predicate: mosp.MospBasePredicate):
-        new_join_attribute = join_predicate.attribute_of(joined_table)
-        existing_partner_attribute = join_predicate.join_partner_of(joined_table)
-        new_attribute_frequency = self.base_frequencies[new_join_attribute]
+        for attr in [attr for attr in join_tree.all_attributes() if attr not in joined_attributes]:
+            self.joined_frequencies[attr] *= min_new_frequency
 
-        # FIXME: wrong formula to calculate resulting cardinality. But no consequences for JOB (b/c no compound preds)
-
-        return {"new_attribute": new_join_attribute,
-                "partner_attribute": existing_partner_attribute,
-                "new_frequency": new_attribute_frequency,
-                "resulting_cardinality": self.joined_frequencies[existing_partner_attribute] * new_attribute_frequency}
+        self._jf.current_multiplier *= min_new_frequency
 
     def __repr__(self) -> str:
         return str(self)
