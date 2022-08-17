@@ -207,15 +207,23 @@ class TopkUESCardinalityEstimator(JoinCardinalityEstimator):
     def _calculate_pk_fk_bound(self, fk_attr: db.AttributeRef, pk_attr: db.AttributeRef) -> int:
         fk_mcv = self.stats_container.fetch_mcv_list(fk_attr)
         pk_mcv = self.stats_container.fetch_mcv_list(pk_attr)
-        mcv_card = fk_mcv.join_cardinality_with(pk_mcv)
+
+        mcv_card = 0
+        values_in_both_mcvs = set()
+        for pk_val in pk_mcv:
+            mcv_card += pk_mcv[pk_val] * fk_mcv[pk_val]
+            if pk_val in fk_mcv:
+                values_in_both_mcvs.add(pk_val)
 
         fk_remainder_freq = fk_mcv.remainder_frequency
         pk_remainder_card = self.stats_container.base_estimates[pk_attr.table] - pk_mcv.frequency_sum()
         pk_remainder_card = max(pk_remainder_card, 0)
+        fk_remainder_freq = max([freq for val, freq in fk_mcv.contents() if val not in values_in_both_mcvs],
+                                default=fk_mcv.remainder_frequency)
         remainder_cardinality = fk_remainder_freq * pk_remainder_card
 
         cardinality = mcv_card + remainder_cardinality
-        max_cardinality = self.stats_container.base_estimates[pk_attr.table]
+        max_cardinality = self.stats_container.base_estimates[fk_attr.table]
         return min(cardinality, max_cardinality)
 
     def _calculate_n_m_bound(self, joined_attr: db.AttributeRef, candidate_attr: db.AttributeRef,
