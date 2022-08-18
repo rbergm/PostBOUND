@@ -95,13 +95,14 @@ class DefaultUESCardinalityEstimator(JoinCardinalityEstimator):
             joined_attr = attr1 if join_tree.contains_table(attr1.table) else attr2
             candidate_attr = attr1 if joined_attr == attr2 else attr2
 
-            distinct_values_tree = (join_tree_bound
-                                    / self.stats_container.joined_frequencies[joined_attr])
-            distinct_values_candidate = (self.stats_container.upper_bounds[candidate_attr.table]
-                                         / self.stats_container.base_frequencies[candidate_attr])
-            candidate_bound = (min(distinct_values_tree, distinct_values_candidate)
-                               * self.stats_container.joined_frequencies[joined_attr]
-                               * self.stats_container.base_frequencies[candidate_attr])
+            candidate_bound = self.stats_container.upper_bounds[candidate_attr.table]
+            joined_freq = self.stats_container.joined_frequencies[joined_attr]
+            candidate_freq = self.stats_container.base_frequencies[candidate_attr]
+
+            distinct_values_joined = join_tree_bound / joined_freq
+            distinct_values_candidate = candidate_bound / candidate_freq
+            candidate_bound = min(distinct_values_joined, distinct_values_candidate) * joined_freq * candidate_freq
+            candidate_bound = round(candidate_bound)
 
             if candidate_bound < lowest_bound:
                 lowest_bound = candidate_bound
@@ -194,6 +195,7 @@ class TopkUESCardinalityEstimator(JoinCardinalityEstimator):
                 candidate_attr = attr1 if joined_attr == attr2 else attr2
                 cardinality = self._calculate_n_m_bound(joined_attr, candidate_attr, join_tree)
 
+            cardinality = round(cardinality)
             if cardinality < lowest_bound:
                 lowest_bound = cardinality
 
@@ -230,20 +232,36 @@ class TopkUESCardinalityEstimator(JoinCardinalityEstimator):
                              join_tree: "JoinTree") -> int:
         joined_mcv = self.stats_container.fetch_mcv_list(joined_attr, joined_table=True)
         candidate_mcv = self.stats_container.fetch_mcv_list(candidate_attr)
-        mcv_bound, topk_frequency_joined, topk_frequency_candidate = 0, 0, 0
-        for joined_val in joined_mcv:
-            mcv_bound += joined_mcv[joined_val] * candidate_mcv[joined_val]
-            topk_frequency_joined += joined_mcv[joined_val]
-            topk_frequency_candidate += candidate_mcv[joined_val]
-        for candidate_val in [cand_val for cand_val in candidate_mcv if cand_val not in joined_mcv]:
-            mcv_bound += joined_mcv[candidate_val] * candidate_mcv[candidate_val]
-            topk_frequency_joined += joined_mcv[candidate_val]
-            topk_frequency_candidate += candidate_mcv[candidate_val]
 
         total_bound_joined = self.stats_container.upper_bounds[join_tree]
         total_bound_candidate = self.stats_container.upper_bounds[candidate_attr.table]
-        remainder_card_joined = max(total_bound_joined - topk_frequency_joined, 0)
-        remainder_card_candidate = max(total_bound_candidate - topk_frequency_candidate, 0)
+
+        mcv_bound, processed_tuples_joined, processed_tuples_candidate = 0, 0, 0
+        remainder_hits_joined, remainder_hits_candidate = 0, 0
+        for joined_value in joined_mcv:
+            joined_freq, candidate_freq = joined_mcv[joined_value], candidate_mcv[joined_value]
+            mcv_bound += joined_freq * candidate_freq
+            processed_tuples_joined += joined_freq
+            processed_tuples_candidate += candidate_freq
+            remainder_hits_candidate += 1 if joined_value not in candidate_mcv else 0
+        for candidate_value in [value for value in candidate_mcv if value not in joined_mcv]:
+            joined_freq, candidate_freq = joined_mcv[candidate_value], candidate_mcv[candidate_value]
+            mcv_bound += joined_freq * candidate_freq
+            processed_tuples_joined += joined_freq
+            processed_tuples_candidate += candidate_freq
+            remainder_hits_joined += 1
+
+        if processed_tuples_joined > total_bound_joined:
+            joined_adjustment_factor = self._calculate_adjustment_factor(joined_mcv, total_bound_joined,
+                                                                         remainder_hits_joined)
+            mcv_bound *= joined_adjustment_factor
+        if processed_tuples_candidate > total_bound_candidate:
+            candidate_adjustment_factor = self._calculate_adjustment_factor(candidate_mcv, total_bound_candidate,
+                                                                            remainder_hits_candidate)
+            mcv_bound *= candidate_adjustment_factor
+
+        remainder_card_joined = max(total_bound_joined - processed_tuples_joined, 0)
+        remainder_card_candidate = max(total_bound_candidate - processed_tuples_candidate, 0)
         distinct_values_joined = remainder_card_joined / joined_mcv.remainder_frequency
         distinct_values_candidate = remainder_card_candidate / candidate_mcv.remainder_frequency
         remainder_bound = (min(distinct_values_joined, distinct_values_candidate)
@@ -251,6 +269,11 @@ class TopkUESCardinalityEstimator(JoinCardinalityEstimator):
                            * candidate_mcv.remainder_frequency)
 
         return mcv_bound + remainder_bound
+
+    def _calculate_adjustment_factor(self, mcv_list: _TopKList, total_bound: int, remainder_hits: int) -> int:
+        factor = ((total_bound - mcv_list.frequency_sum() + mcv_list.remainder_frequency)
+                  / ((remainder_hits+1) * mcv_list.remainder_frequency))
+        return min(factor, 1) if factor > 0 else 1
 
 
 def _is_pk_fk_join(join: mosp.MospBasePredicate, *, dbs: db.DBSchema = db.DBSchema.get_instance()) -> bool:
@@ -1592,7 +1615,7 @@ def optimize_query(query: mosp.MospQuery, *,
     if join_cardinality_estimation == "basic":
         join_estimator = DefaultUESCardinalityEstimator(query, base_cardinality_estimator=base_estimator)
     elif join_cardinality_estimation == "topk":
-        join_estimator = TopkUESCardinalityEstimator(query, k=15, base_cardinality_estimator=base_estimator)
+        join_estimator = TopkUESCardinalityEstimator(query, k=1, base_cardinality_estimator=base_estimator)
     else:
         raise ValueError("Unknown cardinality estimation strategy: '{}'".format(join_cardinality_estimation))
 
