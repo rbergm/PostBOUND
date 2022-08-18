@@ -2,15 +2,15 @@
 import unittest
 import sys
 
-import numpy as np
 import pandas as pd
 
 sys.path.append("../")
 import regression_suite  # noqa: E402
-from transform import db, mosp, ues  # noqa: E402, F401
+from transform import db, mosp, ues, util  # noqa: E402, F401
 
 
 job_workload = regression_suite.load_job_workload()
+dbs = db.DBSchema.get_instance()
 
 
 class JoinGraphTests(unittest.TestCase):
@@ -84,19 +84,28 @@ class UpperBoundTests(unittest.TestCase):
         super().__init__(methodName)
         self.top1_bounds = pd.read_csv("top1_bounds.csv", index_col="label")
 
-    def test_topk_tighter_top1(self):
+    def test_top1_tighter_ues(self):
+        for label, raw_query in job_workload.items():
+            query = mosp.MospQuery.parse(raw_query)
+            topk_res: ues.OptimizationResult = ues.optimize_query(query, join_cardinality_estimation="topk",
+                                                                  introspective=True)
+            topk_bound = topk_res.final_bound
+            top1_res: ues.OptimizationResult = ues.optimize_query(query, introspective=True)
+            top1_bound = top1_res.final_bound
+            self.assertLessEqual(topk_bound, top1_bound,
+                                 msg=f"Top-K bound must be less than Top-1 bound at query {label}!")
+
+    def test_top1_is_true_upper_bound(self):
         for label, raw_query in job_workload.items():
             query = mosp.MospQuery.parse(raw_query)
             optimization_res: ues.OptimizationResult = ues.optimize_query(query, join_cardinality_estimation="topk",
                                                                           introspective=True)
-            optimized_query, bounds = optimization_res.query, optimization_res.bounds  # noqa: F841
-            topk_bound = max(bounds.values(), default=np.nan)
-            top1_bound = self.top1_bounds.loc[label]["final_bound"]
-            if not np.isnan(topk_bound) or not np.isnan(top1_bound):
-                self.assertLessEqual(topk_bound, top1_bound,
-                                     msg=f"Top-K bound must be less than Top-1 bound at query {label}!")
-            self.assertTrue(np.isnan(topk_bound) == np.isnan(top1_bound),
-                            msg=f"Both queries must agree on existence of bounds at query {label}!")
+            upper_bound = optimization_res.final_bound
+            true_cardinality = dbs.execute_query(raw_query)
+            self.assertGreaterEqual(upper_bound, true_cardinality,
+                                    msg=f"Top-K bound must be a true upper bound at query {label}!")
+
+
 
 
 if "__name__" == "__main__":
