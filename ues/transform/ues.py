@@ -271,8 +271,7 @@ class TopkUESCardinalityEstimator(JoinCardinalityEstimator):
         return mcv_bound + remainder_bound
 
     def _calculate_adjustment_factor(self, mcv_list: _TopKList, total_bound: int, remainder_hits: int) -> int:
-        factor = ((total_bound - mcv_list.frequency_sum() + mcv_list.remainder_frequency)
-                  / ((remainder_hits+1) * mcv_list.remainder_frequency))
+        factor = total_bound / ((remainder_hits+1) * mcv_list.remainder_frequency + mcv_list.frequency_sum())
         return min(factor, 1) if factor > 0 else 1
 
 
