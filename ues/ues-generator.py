@@ -111,7 +111,7 @@ def jsonize_join_bounds(bounds: Dict[ues.JoinTree, int]) -> dict:
 
 def optimize_workload(workload: pd.DataFrame, query_col: str, out_col: str, *,
                       table_estimation: str = "explain", join_estimation: str = "basic", subqueries: str = "defensive",
-                      timing: bool = False, exceptions: ues.ExceptionList = None,
+                      topk_length: int = None, timing: bool = False, exceptions: ues.ExceptionList = None,
                       dbs: db.DBSchema = db.DBSchema.get_instance()) -> pd.DataFrame:
     logger = util.make_logger()
     optimized_queries = []
@@ -128,7 +128,7 @@ def optimize_workload(workload: pd.DataFrame, query_col: str, out_col: str, *,
                                                                  table_cardinality_estimation=table_estimation,
                                                                  join_cardinality_estimation=join_estimation,
                                                                  subquery_generation=subqueries,
-                                                                 exceptions=exceptions,
+                                                                 topk_list_length=topk_length, exceptions=exceptions,
                                                                  dbs=dbs, introspective=True)
             optimized_query, query_bounds = opt_res.query, opt_res.bounds
             optimization_success.append(True)
@@ -157,13 +157,14 @@ def optimize_workload(workload: pd.DataFrame, query_col: str, out_col: str, *,
 
 
 def optimize_single(query: str, *, table_estimation: str = "explain", join_estimation: str = "basic",
-                    subqueries: str = "defensive", exec: bool = False, exceptions: ues.ExceptionList,
-                    dbs: db.DBSchema = db.DBSchema.get_instance()):
+                    subqueries: str = "defensive", topk_length: int = None, exec: bool = False,
+                    exceptions: ues.ExceptionList, dbs: db.DBSchema = db.DBSchema.get_instance()):
     parsed_query = mosp.MospQuery.parse(query)
     optimized_query = ues.optimize_query(parsed_query,
                                          table_cardinality_estimation=table_estimation,
                                          join_cardinality_estimation=join_estimation,
                                          subquery_generation=subqueries,
+                                         topk_list_length=topk_length,
                                          exceptions=exceptions,
                                          dbs=dbs)
     db_connection = dbs.connection
@@ -226,6 +227,8 @@ def main():
                         "possible PK/FK joins will be executed as subqueries. If 'disabled', never filter via "
                         "subqueries. If 'defensive' (as described in [0]), only generate subqueries if an improvement "
                         "is guaranteed. Defaults to 'defensive'.")
+    parser.add_argument("--topk-length", action="store", type=int, default=None, help="For Top-k join estimation, the"
+                        "size of the MCV list (i.e. the k parameter).")
     parser.add_argument("--exception-list", action="store", help="JSON-File containing exceptions from the default"
                         "optimization settings.")
     parser.add_argument("--out", "-o", action="store", help="Enter output CSV-mode and store the output in file "
@@ -248,7 +251,9 @@ def main():
         optimize_single(args.input, exec=args.exec,
                         table_estimation=args.table_estimation,
                         join_estimation=args.join_estimation,
-                        subqueries=args.subqueries, exceptions=exceptions, dbs=dbs)
+                        topk_length=args.topk_length,
+                        subqueries=args.subqueries,
+                        exceptions=exceptions, dbs=dbs)
         return
 
     # otherwise we need to read our workload depending on the input mode
@@ -274,6 +279,7 @@ def main():
                                            table_estimation=args.table_estimation,
                                            join_estimation=args.join_estimation,
                                            subqueries=args.subqueries,
+                                           topk_length=args.topk_length,
                                            exceptions=exceptions,
                                            timing=args.timing,
                                            dbs=dbs)

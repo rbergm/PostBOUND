@@ -87,25 +87,45 @@ class UpperBoundTests(unittest.TestCase):
     def test_top1_tighter_ues(self):
         for label, raw_query in job_workload.items():
             query = mosp.MospQuery.parse(raw_query)
-            topk_res: ues.OptimizationResult = ues.optimize_query(query, join_cardinality_estimation="topk",
-                                                                  introspective=True)
-            topk_bound = topk_res.final_bound
-            top1_res: ues.OptimizationResult = ues.optimize_query(query, introspective=True)
+            top1_res: ues.OptimizationResult = ues.optimize_query(query, join_cardinality_estimation="topk",
+                                                                  topk_list_length=1, introspective=True)
             top1_bound = top1_res.final_bound
-            self.assertLessEqual(topk_bound, top1_bound,
+            ues_res: ues.OptimizationResult = ues.optimize_query(query, introspective=True)
+            ues_bound = ues_res.final_bound
+            self.assertLessEqual(top1_bound, ues_bound,
                                  msg=f"Top-K bound must be less than Top-1 bound at query {label}!")
 
     def test_top1_is_true_upper_bound(self):
         for label, raw_query in job_workload.items():
             query = mosp.MospQuery.parse(raw_query)
             optimization_res: ues.OptimizationResult = ues.optimize_query(query, join_cardinality_estimation="topk",
-                                                                          introspective=True)
+                                                                          topk_list_length=1, introspective=True)
             upper_bound = optimization_res.final_bound
             true_cardinality = dbs.execute_query(raw_query)
             self.assertGreaterEqual(upper_bound, true_cardinality,
                                     msg=f"Top-K bound must be a true upper bound at query {label}!")
 
+    def test_top15_tighter_top1(self):
+        for label, raw_query in job_workload.items():
+            query = mosp.MospQuery.parse(raw_query)
+            topk_res: ues.OptimizationResult = ues.optimize_query(query, join_cardinality_estimation="topk",
+                                                                  topk_list_length=15, introspective=True)
+            topk_bound = topk_res.final_bound
+            top1_res: ues.OptimizationResult = ues.optimize_query(query, join_cardinality_estimation="topk",
+                                                                  topk_list_length=1, introspective=True)
+            top1_bound = top1_res.final_bound
+            self.assertLessEqual(topk_bound, top1_bound,
+                                 msg=f"Top-K bound must be less than Top-1 bound at query {label}!")
 
+    def test_top15_is_true_upper_bound(self):
+        for label, raw_query in job_workload.items():
+            query = mosp.MospQuery.parse(raw_query)
+            optimization_res: ues.OptimizationResult = ues.optimize_query(query, join_cardinality_estimation="topk",
+                                                                          topk_list_length=15, introspective=True)
+            upper_bound = optimization_res.final_bound
+            true_cardinality = dbs.execute_query(raw_query)
+            self.assertGreaterEqual(upper_bound, true_cardinality,
+                                    msg=f"Top-K bound must be a true upper bound at query {label}!")
 
 
 if "__name__" == "__main__":

@@ -1595,6 +1595,7 @@ def optimize_query(query: mosp.MospQuery, *,
                    table_cardinality_estimation: str = "explain",
                    join_cardinality_estimation: str = "basic",
                    subquery_generation: str = "defensive",
+                   topk_list_length: int = None,
                    exceptions: ExceptionList = None,
                    dbs: db.DBSchema = db.DBSchema.get_instance(),
                    visualize: bool = False, visualize_args: dict = None,
@@ -1614,7 +1615,8 @@ def optimize_query(query: mosp.MospQuery, *,
     if join_cardinality_estimation == "basic":
         join_estimator = DefaultUESCardinalityEstimator(query, base_cardinality_estimator=base_estimator)
     elif join_cardinality_estimation == "topk":
-        join_estimator = TopkUESCardinalityEstimator(query, k=1, base_cardinality_estimator=base_estimator)
+        k = topk_list_length if topk_list_length else 15
+        join_estimator = TopkUESCardinalityEstimator(query, k=k, base_cardinality_estimator=base_estimator)
     else:
         raise ValueError("Unknown cardinality estimation strategy: '{}'".format(join_cardinality_estimation))
 
