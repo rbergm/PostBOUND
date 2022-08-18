@@ -812,7 +812,9 @@ class _MFVJoinAttributeFrequenciesLoader:
         return str(self)
 
     def __str__(self) -> str:
-        return str(self.attribute_frequencies)
+        freq_str = "Join frequencies: " + str(self.attribute_frequencies)
+        mult_str = f" (current multiplier = {self.current_multiplier})"
+        return freq_str + mult_str
 
 
 class _TableBoundStatistics(abc.ABC):
@@ -1000,19 +1002,20 @@ class _TopKTableBoundStatistics(_TableBoundStatistics):
         min_new_frequency = np.inf
         joined_attributes = set()
         for (attr1, attr2) in join_predicate.join_partners():
-            attr1_joined = join_tree_before_update.contains_table(attr1.table)  # joined means joined _before_ here!!
-            mcv_a = self.fetch_mcv_list(attr1, joined_table=attr1_joined)
-            mcv_b = self.fetch_mcv_list(attr2, joined_table=not attr1_joined)
+            joined_attr = attr1 if join_tree_before_update.contains_table(attr1.table) else attr2
+            candidate_attr = attr1 if joined_attr == attr2 else attr2
+            joined_mcv = self.fetch_mcv_list(joined_attr, joined_table=True)
+            candidate_mcv = self.fetch_mcv_list(candidate_attr)
 
-            merged_mcv = self._merge_mcv_lists(mcv_a, mcv_b)
-            self.joined_frequencies[attr1] = merged_mcv
-            self.joined_frequencies[attr2] = merged_mcv
+            merged_mcv = self._merge_mcv_lists(joined_mcv, candidate_mcv)
+            self.joined_frequencies[joined_attr] = merged_mcv
+            self.joined_frequencies[candidate_attr] = merged_mcv
 
-            candidate_cardinality = mcv_b.max_frequency() if attr1_joined else mcv_a.max_frequency()
+            candidate_cardinality = candidate_mcv.max_frequency()
             if candidate_cardinality < min_new_frequency:
                 min_new_frequency = candidate_cardinality
-            joined_attributes.add(attr1)
-            joined_attributes.add(attr2)
+            joined_attributes.add(joined_attr)
+            joined_attributes.add(candidate_attr)
 
         for attr in [attr for attr in join_tree.all_attributes() if attr not in joined_attributes]:
             mcv = self._jf[attr]
