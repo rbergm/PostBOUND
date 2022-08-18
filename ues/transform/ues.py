@@ -6,6 +6,7 @@ import operator
 import warnings
 from dataclasses import dataclass
 from typing import Any, Dict, List, Set, Union, Tuple
+from xml.etree.ElementPath import prepare_predicate
 
 import matplotlib.pyplot as plt
 import networkx as nx
@@ -1011,9 +1012,9 @@ class _TopKTableBoundStatistics(_TableBoundStatistics):
             self.joined_frequencies[joined_attr] = merged_mcv
             self.joined_frequencies[candidate_attr] = merged_mcv
 
-            candidate_cardinality = candidate_mcv.max_frequency()
-            if candidate_cardinality < min_new_frequency:
-                min_new_frequency = candidate_cardinality
+            candidate_frequency = candidate_mcv.max_frequency()
+            if candidate_frequency < min_new_frequency:
+                min_new_frequency = candidate_frequency
             joined_attributes.add(joined_attr)
             joined_attributes.add(candidate_attr)
 
