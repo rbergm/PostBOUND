@@ -212,6 +212,8 @@ class TopkUESCardinalityEstimator(JoinCardinalityEstimator):
         fk_mcv = self.stats_container.fetch_mcv_list(fk_attr)
         pk_mcv = self.stats_container.fetch_mcv_list(pk_attr)
 
+        # TODO: documentation
+
         mcv_card = 0
         values_in_both_mcvs = set()
         for pk_val in pk_mcv:
@@ -234,24 +236,49 @@ class TopkUESCardinalityEstimator(JoinCardinalityEstimator):
         joined_mcv = self.stats_container.fetch_mcv_list(joined_attr, joined_table=True)
         candidate_mcv = self.stats_container.fetch_mcv_list(candidate_attr)
 
+        # How many tuples are in each "relation"?
         total_bound_joined = self.stats_container.upper_bounds[join_tree]
         total_bound_candidate = self.stats_container.upper_bounds[candidate_attr.table]
 
+        # Calculate the MCV bound
+        # This involves keeping track of some bookkeeping information later:
+        # - the total number of tuples that have been processed (or are assumed to be processed) per relation
+        # - the number of times the remainder/star frequency had to be used per relation
+        #
+        # MCV bound calculation happens in two phases: first up the bound based on the MCV of the attribute in the
+        # join tree is calculated and secondly, the bound based on the MCV of the new attribute is added. This second
+        # step is only performed with values that have not been processed during the first phase already.
         mcv_bound, processed_tuples_joined, processed_tuples_candidate = 0, 0, 0
         remainder_hits_joined, remainder_hits_candidate = 0, 0
+
+        # Phase 1
         for joined_value in joined_mcv:
+            # bound calculation
             joined_freq, candidate_freq = joined_mcv[joined_value], candidate_mcv[joined_value]
             mcv_bound += joined_freq * candidate_freq
+
+            # bookkeeping
             processed_tuples_joined += joined_freq
             processed_tuples_candidate += candidate_freq
             remainder_hits_candidate += 1 if joined_value not in candidate_mcv else 0
+
+        # Phase 2
         for candidate_value in [value for value in candidate_mcv if value not in joined_mcv]:
+            # bound calculation
             joined_freq, candidate_freq = joined_mcv[candidate_value], candidate_mcv[candidate_value]
             mcv_bound += joined_freq * candidate_freq
+
+            # bookkeeping
             processed_tuples_joined += joined_freq
             processed_tuples_candidate += candidate_freq
             remainder_hits_joined += 1
 
+        # After the MCV bound has been calculated, one special case may occur: the total number of tuples processed
+        # for a relation may surpass the actual total number of tuples in that relation. This may happen, if the
+        # bounds follow a skewed distribution and the star frequency is rather high. It may also happen, if the
+        # base table has been filtered heavily, and the most frequent values are likely not even part of it anymore.
+        # In any way, the overestimation of tuples has to be compensated. To do so, we calculate an adjustment factor
+        # that will normalize tuples counts again.
         if processed_tuples_joined > total_bound_joined:
             joined_adjustment_factor = self._calculate_adjustment_factor(joined_mcv, total_bound_joined,
                                                                          remainder_hits_joined)
@@ -261,6 +288,8 @@ class TopkUESCardinalityEstimator(JoinCardinalityEstimator):
                                                                             remainder_hits_candidate)
             mcv_bound *= candidate_adjustment_factor
 
+        # Finally, we have to calculate a bound on all values that are in neither MCV list. To do so, we fall back
+        # to an UES estimation, but with much lower starting values.
         remainder_card_joined = max(total_bound_joined - processed_tuples_joined, 0)
         remainder_card_candidate = max(total_bound_candidate - processed_tuples_candidate, 0)
         distinct_values_joined = remainder_card_joined / joined_mcv.remainder_frequency
