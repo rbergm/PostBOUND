@@ -6,7 +6,6 @@ import operator
 import warnings
 from dataclasses import dataclass
 from typing import Any, Dict, List, Set, Union, Tuple
-from xml.etree.ElementPath import prepare_predicate
 
 import matplotlib.pyplot as plt
 import networkx as nx
@@ -830,12 +829,18 @@ class _MFVJoinAttributeFrequenciesLoader:
     def __init__(self, base_frequencies: _MVFBaseAttributeFrequenciesLoader):
         self.base_frequencies = base_frequencies
         self.attribute_frequencies = {}
-        self.current_multiplier = 1
+        self.current_multipliers = {}
+
+    def store_multiplier(self, table: db.TableRef, multiplier: int):
+        self.current_multipliers[table] = max(multiplier, self.current_multipliers.get(table, -np.inf))
 
     def __getitem__(self, key: db.AttributeRef) -> int:
         if key not in self.attribute_frequencies:
             base_frequency = self.base_frequencies[key]
-            self.attribute_frequencies[key] = base_frequency * self.current_multiplier
+            multiplier = functools.reduce(operator.mul, (multiplier for table, multiplier
+                                                         in self.current_multipliers.items() if table != key.table),
+                                          1)
+            self.attribute_frequencies[key] = base_frequency * multiplier
         return self.attribute_frequencies[key]
 
     def __setitem__(self, key: db.AttributeRef, value: int):
@@ -846,7 +851,7 @@ class _MFVJoinAttributeFrequenciesLoader:
 
     def __str__(self) -> str:
         freq_str = "Join frequencies: " + str(self.attribute_frequencies)
-        mult_str = f" (current multiplier = {self.current_multiplier})"
+        mult_str = f" (current multiplier = {self.current_multipliers})"
         return freq_str + mult_str
 
 
@@ -929,7 +934,10 @@ class _TopKJoinAttributeFrequenciesLoader:
     def __init__(self, base_frequencies: _TopKBaseAttributeFrequenciesLoader):
         self.base_mcvs = base_frequencies
         self.attribute_mvcs = {}
-        self.current_multiplier = 1
+        self.current_multipliers = {}
+
+    def store_multiplier(self, table: db.TableRef, multiplier: int):
+        self.current_multipliers[table] = max(multiplier, self.current_multipliers.get(table, -np.inf))
 
     def adjust_frequencies(self, mcv_list: _TopKList, adjustment_factor: int) -> _TopKList:
         mcv_entries = mcv_list.contents()
@@ -941,7 +949,10 @@ class _TopKJoinAttributeFrequenciesLoader:
     def __getitem__(self, key: db.AttributeRef) -> _TopKList:
         if key not in self.attribute_mvcs:
             base_mcv = self.base_mcvs[key]
-            adjusted_mcv = self.adjust_frequencies(base_mcv, self.current_multiplier)
+            multiplier = functools.reduce(operator.mul, (multiplier for table, multiplier
+                                                         in self.current_multipliers.items() if table != key.table),
+                                          1)
+            adjusted_mcv = self.adjust_frequencies(base_mcv, multiplier)
             self.attribute_mvcs[key] = adjusted_mcv
             return adjusted_mcv
         return self.attribute_mvcs[key]
@@ -953,7 +964,7 @@ class _TopKJoinAttributeFrequenciesLoader:
         return str(self)
 
     def __str__(self) -> str:
-        return "Join frequencies: " + str(self.attribute_mvcs) + f" (current multiplier = {self.current_multiplier})"
+        return "Join frequencies: " + str(self.attribute_mvcs) + f" (current multiplier = {self.current_multipliers})"
 
 
 class _MFVTableBoundStatistics(_TableBoundStatistics):
@@ -990,13 +1001,15 @@ class _MFVTableBoundStatistics(_TableBoundStatistics):
 
             if candidate_frequency < min_new_frequency:
                 min_new_frequency = candidate_frequency
+
+            self._jf.store_multiplier(candidate_attr.table, candidate_frequency)
+            if join_tree_before_update.is_singular():
+                self._jf.store_multiplier(joined_attr.table, self.base_frequencies[joined_attr])
             joined_attributes.add(joined_attr)
             joined_attributes.add(candidate_attr)
 
         for attr in [attr for attr in join_tree.all_attributes() if attr not in joined_attributes]:
             self.joined_frequencies[attr] *= min_new_frequency
-
-        self._jf.current_multiplier *= min_new_frequency
 
     def __repr__(self) -> str:
         return str(self)
@@ -1047,6 +1060,9 @@ class _TopKTableBoundStatistics(_TableBoundStatistics):
             candidate_frequency = candidate_mcv.max_frequency()
             if candidate_frequency < min_new_frequency:
                 min_new_frequency = candidate_frequency
+            self._jf.store_multiplier(candidate_attr.table, candidate_frequency)
+            if join_tree_before_update.is_singular():
+                self._jf.store_multiplier(joined_attr.table, joined_mcv.max_frequency())
             joined_attributes.add(joined_attr)
             joined_attributes.add(candidate_attr)
 
@@ -1054,8 +1070,6 @@ class _TopKTableBoundStatistics(_TableBoundStatistics):
             mcv = self._jf[attr]
             updated_mcv = self._jf.adjust_frequencies(mcv, min_new_frequency)
             self.joined_frequencies[attr] = updated_mcv
-
-        self._jf.current_multiplier *= min_new_frequency
 
     def _merge_mcv_lists(self, mcv_a: _TopKList, mcv_b: _TopKList) -> _TopKList:
         merged_list = []
