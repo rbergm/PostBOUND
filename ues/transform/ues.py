@@ -1054,8 +1054,8 @@ class _MFVTableBoundStatistics(_TableBoundStatistics[int]):
         for attr in [attr for attr in join_tree.all_attributes() if attr not in joined_attributes]:
             self.joined_frequencies[attr] *= max_new_frequency
 
-        for attr, multiplier in multipliers:
-            self._jf.store_multiplier(attr, multiplier)
+        for tab, multiplier in multipliers:
+            self._jf.store_multiplier(tab, multiplier)
         for attr, updated_mcv in update_set:
             self.joined_frequencies[attr] = updated_mcv
 
@@ -1117,8 +1117,8 @@ class _TopKTableBoundStatistics(_TableBoundStatistics[_TopKList]):
             updated_mcv = self._jf.adjust_frequencies(mcv, max_new_frequency)
             self.joined_frequencies[attr] = updated_mcv
 
-        for attr, multiplier in multipliers:
-            self._jf.store_multiplier(attr, multiplier)
+        for tab, multiplier in multipliers:
+            self._jf.store_multiplier(tab, multiplier)
         for attr, updated_mcv in update_set:
             self.joined_frequencies[attr] = updated_mcv
 
