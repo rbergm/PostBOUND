@@ -3,15 +3,19 @@ import abc
 import collections
 import functools
 import operator
+import typing
 import warnings
 from dataclasses import dataclass
-from typing import Any, Dict, List, Set, Union, Tuple
+from typing import Any, Dict, Generic, Iterator, List, Set, Union, Tuple
 
 import matplotlib.pyplot as plt
 import networkx as nx
 import numpy as np
 
 from transform import db, mosp, util
+
+
+_T = typing.TypeVar("_T")
 
 
 class BaseCardinalityEstimator(abc.ABC):
@@ -816,7 +820,7 @@ class JoinTree:
         return join_str
 
 
-class _MVFBaseAttributeFrequenciesLoader:
+class _MVFBaseAttributeFrequenciesLoader(Dict[db.AttributeRef, int]):
     def __init__(self, base_estimates: Dict[db.TableRef, int], dbs: db.DBSchema = db.DBSchema.get_instance()):
         self.dbs = dbs
         self.base_estimates = base_estimates
@@ -840,7 +844,7 @@ class _MVFBaseAttributeFrequenciesLoader:
         return str(self.attribute_frequencies)
 
 
-class _MFVJoinAttributeFrequenciesLoader:
+class _MFVJoinAttributeFrequenciesLoader(Dict[db.AttributeRef, int]):
     def __init__(self, base_frequencies: _MVFBaseAttributeFrequenciesLoader):
         self.base_frequencies = base_frequencies
         self.attribute_frequencies = {}
@@ -870,7 +874,7 @@ class _MFVJoinAttributeFrequenciesLoader:
         return freq_str + mult_str
 
 
-class _TopKBaseAttributeFrequenciesLoader:
+class _TopKBaseAttributeFrequenciesLoader(Dict[db.AttributeRef, _TopKList]):
     def __init__(self, k: int, base_estimates: Dict[db.TableRef, int], dbs: db.DBSchema = db.DBSchema.get_instance()):
         self.k = k
         self.dbs = dbs
@@ -896,7 +900,7 @@ class _TopKBaseAttributeFrequenciesLoader:
         return str(self.attribute_mcvs)
 
 
-class _TopKJoinAttributeFrequenciesLoader:
+class _TopKJoinAttributeFrequenciesLoader(Dict[db.AttributeRef, _TopKList]):
     def __init__(self, base_frequencies: _TopKBaseAttributeFrequenciesLoader):
         self.base_mcvs = base_frequencies
         self.attribute_mvcs = {}
@@ -933,7 +937,30 @@ class _TopKJoinAttributeFrequenciesLoader:
         return "Join frequencies: " + str(self.attribute_mvcs) + f" (current multiplier = {self.current_multipliers})"
 
 
-class _TableBoundStatistics(abc.ABC):
+class _AttributeUpdateSet(Generic[_T]):
+    def __init__(self):
+        self.candidate_updates: Dict[db.AttributeRef, _T] = {}
+        self.update_evaluations: Dict[db.AttributeRef, int] = {}
+
+    def register_update(self, attribute: db.AttributeRef, update_data: _T, update_evaluation: int):
+        if attribute not in self.candidate_updates:
+            self.candidate_updates[attribute] = update_data
+            self.update_evaluations[attribute] = update_evaluation
+            return
+        current_evaluation = self.update_evaluations[attribute]
+        if current_evaluation > update_evaluation:
+            self.candidate_updates[attribute] = update_data
+            self.update_evaluations[attribute] = update_evaluation
+
+    def __iter__(self) -> Iterator[Tuple[db.AttributeRef, _T]]:
+        return list(self.candidate_updates.items()).__iter__()
+
+    def __setitem__(self, key: db.AttributeRef, update_data: Tuple[_T, int]):
+        update_contents, update_evaluation = update_data
+        self.register_update(key, update_contents, update_evaluation)
+
+
+class _TableBoundStatistics(abc.ABC, Generic[_T]):
     def __init__(self, base_estimates, base_frequencies, joined_frequencies, upper_bounds):
         self._base_estimates = base_estimates
         self._base_frequencies = base_frequencies
@@ -966,13 +993,13 @@ class _TableBoundStatistics(abc.ABC):
     base_estimates: Dict[db.TableRef, int] = property(_get_base_estimates)
     """Base estimates provide an estimate of the number of tuples in a base table."""
 
-    base_frequencies: Dict[db.AttributeRef, Any] = property(_get_base_frequencies)
+    base_frequencies: Dict[db.AttributeRef, _T] = property(_get_base_frequencies)
     """
     Base frequencies provide a statistic-dependent estimate of the value distribution for attributes of
     base tables.
     """
 
-    joined_frequencies: Dict[db.AttributeRef, Any] = property(_get_joined_frequencies)
+    joined_frequencies: Dict[db.AttributeRef, _T] = property(_get_joined_frequencies)
     """
     Joined frequencies provide a statistic-dependent estimate of the value distribution for attributes of
     joined tables.
@@ -982,7 +1009,7 @@ class _TableBoundStatistics(abc.ABC):
     """Upper bounds provide a theoretical bound on the number of tuples in a base table or a join tree."""
 
 
-class _MFVTableBoundStatistics(_TableBoundStatistics):
+class _MFVTableBoundStatistics(_TableBoundStatistics[int]):
     """Most Frequent Value bound statistics operate on the most frequent value (i.e. Top-1) per attribute."""
     def __init__(self, query: mosp.MospQuery, *,
                  base_cardinality_estimator: BaseCardinalityEstimator,
@@ -1004,26 +1031,33 @@ class _MFVTableBoundStatistics(_TableBoundStatistics):
 
         max_new_frequency = -np.inf
         joined_attributes = set()
+        multipliers = []
+        update_set: _AttributeUpdateSet[int] = _AttributeUpdateSet()
         for (attr1, attr2) in join_predicate.join_partners():
             joined_attr = attr1 if join_tree_before_update.contains_table(attr1.table) else attr2
             candidate_attr = attr1 if joined_attr == attr2 else attr2
             candidate_frequency = self.base_frequencies[candidate_attr]
 
             updated_freq = self.joined_frequencies[joined_attr] * candidate_frequency
-            self.joined_frequencies[joined_attr] = updated_freq
-            self.joined_frequencies[candidate_attr] = updated_freq
+            update_set[joined_attr] = (updated_freq, updated_freq)
+            update_set[candidate_attr] = (updated_freq, updated_freq)
 
             if candidate_frequency > max_new_frequency:
                 max_new_frequency = candidate_frequency
 
-            self._jf.store_multiplier(candidate_attr.table, candidate_frequency)
+            multipliers.append((candidate_attr.table, candidate_frequency))
             if join_tree_before_update.count_checkpoints() == 1:
-                self._jf.store_multiplier(joined_attr.table, self.base_frequencies[joined_attr])
+                multipliers.append((joined_attr.table, self.base_frequencies[joined_attr]))
             joined_attributes.add(joined_attr)
             joined_attributes.add(candidate_attr)
 
         for attr in [attr for attr in join_tree.all_attributes() if attr not in joined_attributes]:
             self.joined_frequencies[attr] *= max_new_frequency
+
+        for attr, multiplier in multipliers:
+            self._jf.store_multiplier(attr, multiplier)
+        for attr, updated_mcv in update_set:
+            self.joined_frequencies[attr] = updated_mcv
 
     def __repr__(self) -> str:
         return str(self)
@@ -1032,7 +1066,7 @@ class _MFVTableBoundStatistics(_TableBoundStatistics):
         return str(self.upper_bounds)
 
 
-class _TopKTableBoundStatistics(_TableBoundStatistics):
+class _TopKTableBoundStatistics(_TableBoundStatistics[_TopKList]):
     def __init__(self, query: mosp.MospQuery, k, *,
                  base_cardinality_estimator: BaseCardinalityEstimator,
                  dbs: db.DBSchema = db.DBSchema.get_instance()):
@@ -1057,6 +1091,8 @@ class _TopKTableBoundStatistics(_TableBoundStatistics):
 
         max_new_frequency = -np.inf
         joined_attributes = set()
+        multipliers = []
+        update_set: _AttributeUpdateSet[_TopKList] = _AttributeUpdateSet()
         for (attr1, attr2) in join_predicate.join_partners():
             joined_attr = attr1 if join_tree_before_update.contains_table(attr1.table) else attr2
             candidate_attr = attr1 if joined_attr == attr2 else attr2
@@ -1064,21 +1100,26 @@ class _TopKTableBoundStatistics(_TableBoundStatistics):
             candidate_mcv = self.fetch_mcv_list(candidate_attr)
 
             merged_mcv = self._merge_mcv_lists(joined_mcv, candidate_mcv)
-            self.joined_frequencies[joined_attr] = merged_mcv
-            self.joined_frequencies[candidate_attr] = merged_mcv
+            update_set[joined_attr] = (merged_mcv, merged_mcv.max_frequency())
+            update_set[candidate_attr] = (merged_mcv, merged_mcv.max_frequency())
 
             candidate_frequency = candidate_mcv.max_frequency()
             if candidate_frequency > max_new_frequency:
                 max_new_frequency = candidate_frequency
-            self._jf.store_multiplier(candidate_attr.table, candidate_frequency)
+            multipliers.append((candidate_attr.table, candidate_frequency))
             if join_tree_before_update.count_checkpoints() == 1:
-                self._jf.store_multiplier(joined_attr.table, joined_mcv.max_frequency())
+                multipliers.append((joined_attr.table, joined_mcv.max_frequency()))
             joined_attributes.add(joined_attr)
             joined_attributes.add(candidate_attr)
 
         for attr in [attr for attr in join_tree.all_attributes() if attr not in joined_attributes]:
             mcv = self._jf[attr]
             updated_mcv = self._jf.adjust_frequencies(mcv, max_new_frequency)
+            self.joined_frequencies[attr] = updated_mcv
+
+        for attr, multiplier in multipliers:
+            self._jf.store_multiplier(attr, multiplier)
+        for attr, updated_mcv in update_set:
             self.joined_frequencies[attr] = updated_mcv
 
     def _merge_mcv_lists(self, mcv_a: _TopKList, mcv_b: _TopKList) -> _TopKList:
