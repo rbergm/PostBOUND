@@ -1000,7 +1000,7 @@ class _TopKTableBoundStatistics(_TableBoundStatistics):
         cardinality_increase_factor = bound_after_update / bound_before_update  # noqa: F841
         absolute_cardinality_increase = bound_after_update - bound_before_update  # noqa: F841
 
-        min_new_frequency = np.inf
+        min_new_frequency = absolute_cardinality_increase
         joined_attributes = set()
         for (attr1, attr2) in join_predicate.join_partners():
             joined_attr = attr1 if join_tree_before_update.contains_table(attr1.table) else attr2
