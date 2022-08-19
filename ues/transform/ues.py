@@ -213,12 +213,17 @@ class TopkUESCardinalityEstimator(JoinCardinalityEstimator):
 
         # TODO: documentation
 
-        mcv_card = 0
+        total_bound_pk = self.stats_container.base_estimates[pk_attr.table]
+        mcv_card, processed_pk_tuples = 0, 0
         values_in_both_mcvs = set()
         for pk_val in pk_mcv:
             mcv_card += pk_mcv[pk_val] * fk_mcv[pk_val]
+            processed_pk_tuples += pk_mcv[pk_val]
             if pk_val in fk_mcv:
                 values_in_both_mcvs.add(pk_val)
+
+        if processed_pk_tuples > total_bound_pk:
+            mcv_card *= self._calculate_adjustment_factor(pk_mcv, total_bound_pk, 0)
 
         pk_remainder_card = self.stats_container.base_estimates[pk_attr.table] - pk_mcv.frequency_sum()
         pk_remainder_card = max(pk_remainder_card, 0)
