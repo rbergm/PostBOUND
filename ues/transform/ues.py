@@ -870,55 +870,6 @@ class _MFVJoinAttributeFrequenciesLoader:
         return freq_str + mult_str
 
 
-class _TableBoundStatistics(abc.ABC):
-    def __init__(self, base_estimates, base_frequencies, joined_frequencies, upper_bounds):
-        self._base_estimates = base_estimates
-        self._base_frequencies = base_frequencies
-        self._joined_frequencies = joined_frequencies
-        self._upper_bounds = upper_bounds
-
-    @abc.abstractmethod
-    def update_frequencies(self, joined_table: db.TableRef, join_predicate: mosp.AbstractMospPredicate, *,
-                           join_tree: JoinTree):
-        return NotImplemented
-
-    def base_bounds(self) -> Dict[db.TableRef, int]:
-        return {tab: bound for tab, bound in self.upper_bounds.items() if isinstance(tab, db.TableRef)}
-
-    def join_bounds(self) -> Dict["JoinTree", int]:
-        return {join: bound for join, bound in self.upper_bounds.items() if isinstance(join, JoinTree)}
-
-    def _get_base_estimates(self):
-        return self._base_estimates
-
-    def _get_base_frequencies(self):
-        return self._base_frequencies
-
-    def _get_joined_frequencies(self):
-        return self._joined_frequencies
-
-    def _get_upper_bounds(self):
-        return self._upper_bounds
-
-    base_estimates: Dict[db.TableRef, int] = property(_get_base_estimates)
-    """Base estimates provide an estimate of the number of tuples in a base table."""
-
-    base_frequencies: Dict[db.AttributeRef, Any] = property(_get_base_frequencies)
-    """
-    Base frequencies provide a statistic-dependent estimate of the value distribution for attributes of
-    base tables.
-    """
-
-    joined_frequencies: Dict[db.AttributeRef, Any] = property(_get_joined_frequencies)
-    """
-    Joined frequencies provide a statistic-dependent estimate of the value distribution for attributes of
-    joined tables.
-    """
-
-    upper_bounds: Dict[Union[db.TableRef, "JoinTree"], int] = property(_get_upper_bounds)
-    """Upper bounds provide a theoretical bound on the number of tuples in a base table or a join tree."""
-
-
 class _TopKBaseAttributeFrequenciesLoader:
     def __init__(self, k: int, base_estimates: Dict[db.TableRef, int], dbs: db.DBSchema = db.DBSchema.get_instance()):
         self.k = k
@@ -980,6 +931,55 @@ class _TopKJoinAttributeFrequenciesLoader:
 
     def __str__(self) -> str:
         return "Join frequencies: " + str(self.attribute_mvcs) + f" (current multiplier = {self.current_multipliers})"
+
+
+class _TableBoundStatistics(abc.ABC):
+    def __init__(self, base_estimates, base_frequencies, joined_frequencies, upper_bounds):
+        self._base_estimates = base_estimates
+        self._base_frequencies = base_frequencies
+        self._joined_frequencies = joined_frequencies
+        self._upper_bounds = upper_bounds
+
+    @abc.abstractmethod
+    def update_frequencies(self, joined_table: db.TableRef, join_predicate: mosp.AbstractMospPredicate, *,
+                           join_tree: JoinTree):
+        return NotImplemented
+
+    def base_bounds(self) -> Dict[db.TableRef, int]:
+        return {tab: bound for tab, bound in self.upper_bounds.items() if isinstance(tab, db.TableRef)}
+
+    def join_bounds(self) -> Dict["JoinTree", int]:
+        return {join: bound for join, bound in self.upper_bounds.items() if isinstance(join, JoinTree)}
+
+    def _get_base_estimates(self):
+        return self._base_estimates
+
+    def _get_base_frequencies(self):
+        return self._base_frequencies
+
+    def _get_joined_frequencies(self):
+        return self._joined_frequencies
+
+    def _get_upper_bounds(self):
+        return self._upper_bounds
+
+    base_estimates: Dict[db.TableRef, int] = property(_get_base_estimates)
+    """Base estimates provide an estimate of the number of tuples in a base table."""
+
+    base_frequencies: Dict[db.AttributeRef, Any] = property(_get_base_frequencies)
+    """
+    Base frequencies provide a statistic-dependent estimate of the value distribution for attributes of
+    base tables.
+    """
+
+    joined_frequencies: Dict[db.AttributeRef, Any] = property(_get_joined_frequencies)
+    """
+    Joined frequencies provide a statistic-dependent estimate of the value distribution for attributes of
+    joined tables.
+    """
+
+    upper_bounds: Dict[Union[db.TableRef, "JoinTree"], int] = property(_get_upper_bounds)
+    """Upper bounds provide a theoretical bound on the number of tuples in a base table or a join tree."""
 
 
 class _MFVTableBoundStatistics(_TableBoundStatistics):
@@ -1498,6 +1498,7 @@ def _calculate_join_order_for_join_partition(query: mosp.MospQuery, join_graph: 
         trace_logger("")
 
     assert not join_graph.contains_free_tables()
+    trace_logger("Final join frequencies:", stats.joined_frequencies)
     trace_logger("Final upper bounds:", stats.join_bounds())
     trace_logger("Final join ordering:", join_tree)
 
