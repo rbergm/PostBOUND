@@ -1,5 +1,6 @@
 
 import argparse
+import collections
 import collections.abc
 import itertools
 import numbers
@@ -103,6 +104,22 @@ def dict_hash(dictionary: Dict[_K, _V]) -> int:
     keys_hash = hash(tuple(keys))
     values_hash = hash(tuple(values))
     return hash((keys_hash, values_hash))
+
+
+def dict_generate_multi(entries: List[Tuple[_K, _V]]) -> Dict[_K, List[_V]]:
+    """Generates a dict based on its entries.
+
+    Each key can occur multiple times and values will be aggregated in a list.
+    """
+    collector = collections.defaultdict(list)
+    for key, value in entries:
+        collector[key].append(value)
+    return dict(collector)
+
+
+def dict_reduce_multi(multi_dict: Dict[_K, List[_V]], reduction: Callable[[_K, List[_V]], _V]) -> Dict[_K, _V]:
+    """De-groups a multi-dict by aggregating the values based on key and values."""
+    return {key: reduction(key, values) for key, values in multi_dict.items()}
 
 
 def flatten(deep_lst: List[Union[List[_T], _T]], *, recursive: bool = False, flatten_set: bool = False) -> List[_T]:

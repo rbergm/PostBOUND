@@ -1031,7 +1031,7 @@ class _MFVTableBoundStatistics(_TableBoundStatistics[int]):
 
         max_new_frequency = -np.inf
         joined_attributes = set()
-        multipliers = []
+        multipliers: List[db.AttributeRef, int] = []
         update_set: _AttributeUpdateSet[int] = _AttributeUpdateSet()
         for (attr1, attr2) in join_predicate.join_partners():
             joined_attr = attr1 if join_tree_before_update.contains_table(attr1.table) else attr2
@@ -1054,7 +1054,9 @@ class _MFVTableBoundStatistics(_TableBoundStatistics[int]):
         for attr in [attr for attr in join_tree.all_attributes() if attr not in joined_attributes]:
             self.joined_frequencies[attr] *= max_new_frequency
 
-        for tab, multiplier in multipliers:
+        multipliers_grouped = util.dict_generate_multi(multipliers)
+        multipliers_reduced = util.dict_reduce_multi(multipliers_grouped, lambda __, frequencies: min(frequencies))
+        for tab, multiplier in multipliers_reduced.items():
             self._jf.store_multiplier(tab, multiplier)
         for attr, updated_mcv in update_set:
             self.joined_frequencies[attr] = updated_mcv
@@ -1091,7 +1093,7 @@ class _TopKTableBoundStatistics(_TableBoundStatistics[_TopKList]):
 
         max_new_frequency = -np.inf
         joined_attributes = set()
-        multipliers = []
+        multipliers: List[Tuple[db.AttributeRef, int]] = []
         update_set: _AttributeUpdateSet[_TopKList] = _AttributeUpdateSet()
         for (attr1, attr2) in join_predicate.join_partners():
             joined_attr = attr1 if join_tree_before_update.contains_table(attr1.table) else attr2
@@ -1117,7 +1119,9 @@ class _TopKTableBoundStatistics(_TableBoundStatistics[_TopKList]):
             updated_mcv = self._jf.adjust_frequencies(mcv, max_new_frequency)
             self.joined_frequencies[attr] = updated_mcv
 
-        for tab, multiplier in multipliers:
+        multipliers_grouped = util.dict_generate_multi(multipliers)
+        multipliers_reduced = util.dict_reduce_multi(multipliers_grouped, lambda __, frequencies: min(frequencies))
+        for tab, multiplier in multipliers_reduced.items():
             self._jf.store_multiplier(tab, multiplier)
         for attr, updated_mcv in update_set:
             self.joined_frequencies[attr] = updated_mcv
