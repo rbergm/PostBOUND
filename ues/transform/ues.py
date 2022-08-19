@@ -647,6 +647,16 @@ class JoinTree:
             return self
         return self.right.previous_checkpoint(_inner=True)
 
+    def count_checkpoints(self) -> int:
+        counter = 1 if self.checkpoint else 0
+
+        if self.left_is_subquery():
+            counter += self.left.count_checkpoints()
+        if self.right_is_tree():
+            counter += self.right.count_checkpoints()
+
+        return counter
+
     def all_tables(self) -> List[db.TableRef]:
         left_tables = []
         if self.left_is_base_table():
@@ -989,7 +999,6 @@ class _MFVTableBoundStatistics(_TableBoundStatistics):
 
     def update_frequencies(self, joined_table: db.TableRef, join_predicate: mosp.AbstractMospPredicate, *,
                            join_tree: JoinTree):
-
         join_tree_before_update = (join_tree.previous_checkpoint() if not join_tree.is_singular()
                                    else join_tree.at_base_table())
 
@@ -1001,14 +1010,14 @@ class _MFVTableBoundStatistics(_TableBoundStatistics):
             candidate_frequency = self.base_frequencies[candidate_attr]
 
             updated_freq = self.joined_frequencies[joined_attr] * candidate_frequency
-            self.joined_frequencies[attr1] = updated_freq
-            self.joined_frequencies[attr2] = updated_freq
+            self.joined_frequencies[joined_attr] = updated_freq
+            self.joined_frequencies[candidate_attr] = updated_freq
 
             if candidate_frequency < min_new_frequency:
                 min_new_frequency = candidate_frequency
 
             self._jf.store_multiplier(candidate_attr.table, candidate_frequency)
-            if join_tree_before_update.is_singular():
+            if join_tree_before_update.count_checkpoints() == 1:
                 self._jf.store_multiplier(joined_attr.table, self.base_frequencies[joined_attr])
             joined_attributes.add(joined_attr)
             joined_attributes.add(candidate_attr)
@@ -1066,7 +1075,7 @@ class _TopKTableBoundStatistics(_TableBoundStatistics):
             if candidate_frequency < min_new_frequency:
                 min_new_frequency = candidate_frequency
             self._jf.store_multiplier(candidate_attr.table, candidate_frequency)
-            if join_tree_before_update.is_singular():
+            if join_tree_before_update.count_checkpoints() == 1:
                 self._jf.store_multiplier(joined_attr.table, joined_mcv.max_frequency())
             joined_attributes.add(joined_attr)
             joined_attributes.add(candidate_attr)
