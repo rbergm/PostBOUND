@@ -92,8 +92,8 @@ class UpperBoundTests(unittest.TestCase):
             top1_bound = top1_res.final_bound
             ues_res: ues.OptimizationResult = ues.optimize_query(query, introspective=True)
             ues_bound = ues_res.final_bound
-            self.assertLessEqual(top1_bound, ues_bound,
-                                 msg=f"Top-K bound must be less than Top-1 bound at query {label}!")
+            regression_suite.assert_less_equal(top1_bound, ues_bound,
+                                               msg=f"Top-K bound must be less than Top-1 bound at query {label}!")
 
     def test_top1_is_true_upper_bound(self):
         for label, raw_query in job_workload.items():
@@ -114,8 +114,8 @@ class UpperBoundTests(unittest.TestCase):
             top1_res: ues.OptimizationResult = ues.optimize_query(query, join_cardinality_estimation="topk",
                                                                   topk_list_length=1, introspective=True)
             top1_bound = top1_res.final_bound
-            self.assertLessEqual(topk_bound, top1_bound,
-                                 msg=f"Top-K bound must be less than Top-1 bound at query {label}!")
+            regression_suite.assert_less_equal(topk_bound, top1_bound,
+                                               msg=f"Top-K bound must be less than Top-1 bound at query {label}!")
 
     def test_top15_is_true_upper_bound(self):
         for label, raw_query in job_workload.items():

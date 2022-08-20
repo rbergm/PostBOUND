@@ -1,4 +1,5 @@
 
+import numbers
 import pathlib
 
 from typing import Dict
@@ -15,3 +16,17 @@ def load_job_workload(path: str = "../../simplicity-done-right/JOB-Queries/impli
             single_line = " ".join(line.strip() for line in lines)
             queries[query_file.stem] = single_line
     return queries
+
+
+def assert_less_equal(smaller: numbers.Number, larger: numbers.Number, msg: str = "", tolerance: float = 0.99):
+    """Asserts that the smaller <= larger, but allowing a certain tolerance.
+
+    `tolerance` should be a value <= 1 and will shift the smaller number accordingly. For example, if the smaller
+    number is allowed to be up to 1% larger than the larger number (which also is the default setting), tolerance
+    should be set to 0.99. If no tolerance is allowed, use 1.
+    """
+    try:
+        assert smaller * tolerance <= larger
+    except AssertionError as e:
+        user_msg = f" : {msg}" if msg else ""
+        raise AssertionError(f"AssertionError: {smaller} not less than or equal to {larger}" + user_msg)
