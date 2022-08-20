@@ -1730,9 +1730,15 @@ def optimize_query(query: mosp.MospQuery, *,
                    visualize: bool = False, visualize_args: dict = None,
                    verbose: bool = False, trace: bool = False,
                    introspective: bool = False) -> Union[mosp.MospQuery, OptimizationResult]:
+
+    logger = util.make_logger(verbose or trace)
+
     # if there are no joins in the query, there is nothing to do
     if not isinstance(query.from_clause(), list) or not util.contains_multiple(query.from_clause()):
+        logger("Query contains no joins, nothing to do.")
         return query
+
+    logger("Input query:", query)
 
     if table_cardinality_estimation == "sample":
         base_estimator = SamplingCardinalityEstimator()
@@ -1745,6 +1751,7 @@ def optimize_query(query: mosp.MospQuery, *,
         join_estimator = DefaultUESCardinalityEstimator(query, base_cardinality_estimator=base_estimator)
     elif join_cardinality_estimation == "topk":
         k = topk_list_length if topk_list_length else 15
+        logger("Running TopK cardinality estimation with k =", k)
         join_estimator = TopkUESCardinalityEstimator(query, k=k, base_cardinality_estimator=base_estimator)
     else:
         raise ValueError("Unknown cardinality estimation strategy: '{}'".format(join_cardinality_estimation))
