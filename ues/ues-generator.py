@@ -155,7 +155,7 @@ def optimize_workload(workload: pd.DataFrame, query_col: str, out_col: str, *,
     optimized_workload[out_col] = optimized_queries
     optimized_workload["optimization_success"] = optimization_success
     optimized_workload["ues_bounds"] = intermediate_bounds
-    optimized_workload["ues_final_bounds"] = final_bounds
+    optimized_workload["ues_final_bound"] = final_bounds
     if timing:
         optimized_workload["optimization_time"] = optimization_time
     return optimized_workload
