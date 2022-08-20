@@ -101,6 +101,9 @@ def write_queries_stdout(result_data: pd.DataFrame, query_col: str = "query_ues"
 
 
 def jsonize_join_bounds(bounds: Dict[ues.JoinTree, int]) -> dict:
+    if not bounds:
+        return {}
+
     jsonized_bounds = []
     for tree, bound in bounds.items():
         join_key = [str(tab) for tab in tree.all_tables()]
@@ -133,7 +136,7 @@ def optimize_workload(workload: pd.DataFrame, query_col: str, out_col: str, *,
             optimized_query, query_bounds = opt_res.query, opt_res.bounds
             optimization_success.append(True)
             intermediate_bounds.append(jsonize_join_bounds(query_bounds))
-            final_bounds.append(max(query_bounds.values(), default=np.nan))
+            final_bounds.append(opt_res.final_bound)
         except Exception as e:
             optimized_query = query
             optimization_success.append(False)
@@ -282,7 +285,7 @@ def main():
                                            topk_length=args.topk_length,
                                            exceptions=exceptions,
                                            timing=args.timing,
-                                           dbs=dbs)
+                                           verbose=args.verbose, dbs=dbs)
 
     if args.out:
         write_queries_csv(optimized_workload, args.out)
