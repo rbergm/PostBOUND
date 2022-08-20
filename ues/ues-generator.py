@@ -115,6 +115,7 @@ def jsonize_join_bounds(bounds: Dict[ues.JoinTree, int]) -> dict:
 def optimize_workload(workload: pd.DataFrame, query_col: str, out_col: str, *,
                       table_estimation: str = "explain", join_estimation: str = "basic", subqueries: str = "defensive",
                       topk_length: int = None, timing: bool = False, exceptions: ues.ExceptionList = None,
+                      verbose: bool = False, trace: bool = False,
                       dbs: db.DBSchema = db.DBSchema.get_instance()) -> pd.DataFrame:
     logger = util.make_logger()
     optimized_queries = []
@@ -132,7 +133,8 @@ def optimize_workload(workload: pd.DataFrame, query_col: str, out_col: str, *,
                                                                  join_cardinality_estimation=join_estimation,
                                                                  subquery_generation=subqueries,
                                                                  topk_list_length=topk_length, exceptions=exceptions,
-                                                                 dbs=dbs, introspective=True)
+                                                                 verbose=trace, introspective=True,
+                                                                 dbs=dbs)
             optimized_query, query_bounds = opt_res.query, opt_res.bounds
             optimization_success.append(True)
             intermediate_bounds.append(jsonize_join_bounds(query_bounds))
@@ -161,7 +163,8 @@ def optimize_workload(workload: pd.DataFrame, query_col: str, out_col: str, *,
 
 def optimize_single(query: str, *, table_estimation: str = "explain", join_estimation: str = "basic",
                     subqueries: str = "defensive", topk_length: int = None, exec: bool = False,
-                    exceptions: ues.ExceptionList, dbs: db.DBSchema = db.DBSchema.get_instance()):
+                    exceptions: ues.ExceptionList, verbose: bool = False, trace: bool = False,
+                    dbs: db.DBSchema = db.DBSchema.get_instance()) -> None:
     parsed_query = mosp.MospQuery.parse(query)
     optimized_query = ues.optimize_query(parsed_query,
                                          table_cardinality_estimation=table_estimation,
@@ -169,6 +172,7 @@ def optimize_single(query: str, *, table_estimation: str = "explain", join_estim
                                          subquery_generation=subqueries,
                                          topk_list_length=topk_length,
                                          exceptions=exceptions,
+                                         verbose=verbose, trace=trace,
                                          dbs=dbs)
     db_connection = dbs.connection
 
@@ -240,7 +244,9 @@ def main():
                         "execute it.")
     parser.add_argument("--pg-con", action="store", default="", help="Connect string to the Postgres instance "
                         "(psycopg2 format). If omitted, the string will be read from the file .psycopg_connection")
-    parser.add_argument("--verbose", action="store_true", default=False, help="Print debugging output")
+    parser.add_argument("--verbose", action="store_true", default=False, help="Print debugging output for generator.")
+    parser.add_argument("--trace", action="store_true", default=False, help="Generate more debugging output for "
+                        "optimization.")
 
     args = parser.parse_args()
     db_connection = connect_postgres(args.pg_con)
@@ -256,7 +262,8 @@ def main():
                         join_estimation=args.join_estimation,
                         topk_length=args.topk_length,
                         subqueries=args.subqueries,
-                        exceptions=exceptions, dbs=dbs)
+                        exceptions=exceptions,
+                        verbose=args.verbose, trace=args.trace, dbs=dbs)
         return
 
     # otherwise we need to read our workload depending on the input mode
@@ -285,7 +292,7 @@ def main():
                                            topk_length=args.topk_length,
                                            exceptions=exceptions,
                                            timing=args.timing,
-                                           verbose=args.verbose, dbs=dbs)
+                                           verbose=args.verbose, trace=args.trace, dbs=dbs)
 
     if args.out:
         write_queries_csv(optimized_workload, args.out)
