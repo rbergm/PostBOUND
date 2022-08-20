@@ -969,7 +969,11 @@ class _TableBoundStatistics(abc.ABC, Generic[_T]):
 
     @abc.abstractmethod
     def update_frequencies(self, joined_table: db.TableRef, join_predicate: mosp.AbstractMospPredicate, *,
-                           join_tree: JoinTree):
+                           join_tree: JoinTree) -> None:
+        return NotImplemented
+
+    @abc.abstractmethod
+    def init_pk_join(self, fk_table: db.TableRef, join_predicate: mosp.AbstractMospPredicate) -> None:
         return NotImplemented
 
     def base_bounds(self) -> Dict[db.TableRef, int]:
@@ -1025,7 +1029,7 @@ class _MFVTableBoundStatistics(_TableBoundStatistics[int]):
         super().__init__(base_estimates, base_frequencies, joined_frequencies, upper_bounds)
 
     def update_frequencies(self, joined_table: db.TableRef, join_predicate: mosp.AbstractMospPredicate, *,
-                           join_tree: JoinTree):
+                           join_tree: JoinTree) -> None:
         join_tree_before_update = (join_tree.previous_checkpoint() if not join_tree.is_singular()
                                    else join_tree.at_base_table())
 
@@ -1037,8 +1041,9 @@ class _MFVTableBoundStatistics(_TableBoundStatistics[int]):
             joined_attr = attr1 if join_tree_before_update.contains_table(attr1.table) else attr2
             candidate_attr = attr1 if joined_attr == attr2 else attr2
             candidate_frequency = self.base_frequencies[candidate_attr]
+            joined_frequency = self.joined_frequencies[joined_attr]
 
-            updated_freq = self.joined_frequencies[joined_attr] * candidate_frequency
+            updated_freq = joined_frequency * candidate_frequency
             update_set[joined_attr] = (updated_freq, updated_freq)
             update_set[candidate_attr] = (updated_freq, updated_freq)
 
@@ -1046,8 +1051,6 @@ class _MFVTableBoundStatistics(_TableBoundStatistics[int]):
                 max_new_frequency = candidate_frequency
 
             multipliers.append((candidate_attr.table, candidate_frequency))
-            if join_tree_before_update.count_checkpoints() == 1:
-                multipliers.append((joined_attr.table, self.base_frequencies[joined_attr]))
             joined_attributes.add(joined_attr)
             joined_attributes.add(candidate_attr)
 
@@ -1058,8 +1061,18 @@ class _MFVTableBoundStatistics(_TableBoundStatistics[int]):
         multipliers_reduced = util.dict_reduce_multi(multipliers_grouped, lambda __, frequencies: min(frequencies))
         for tab, multiplier in multipliers_reduced.items():
             self._jf.store_multiplier(tab, multiplier)
+
         for attr, updated_mcv in update_set:
             self.joined_frequencies[attr] = updated_mcv
+
+    def init_pk_join(self, fk_table: db.TableRef, join_predicate: mosp.AbstractMospPredicate) -> None:
+        max_fk_freq = -np.inf
+        for (attr1, attr2) in join_predicate.join_partners():
+            fk_attr = attr1 if attr1.table == fk_table else attr2
+            fk_frequency = self.base_frequencies[fk_attr]
+            if fk_frequency > max_fk_freq:
+                max_fk_freq = fk_frequency
+        self._jf.store_multiplier(fk_table, max_fk_freq)
 
     def __repr__(self) -> str:
         return str(self)
@@ -1087,7 +1100,7 @@ class _TopKTableBoundStatistics(_TableBoundStatistics[_TopKList]):
         return self.joined_frequencies[attribute] if joined_table else self.base_frequencies[attribute]
 
     def update_frequencies(self, joined_table: db.TableRef, join_predicate: mosp.AbstractMospPredicate, *,
-                           join_tree: JoinTree):
+                           join_tree: JoinTree) -> None:
         join_tree_before_update = (join_tree.previous_checkpoint() if not join_tree.is_singular()
                                    else join_tree.at_base_table())
 
@@ -1108,9 +1121,8 @@ class _TopKTableBoundStatistics(_TableBoundStatistics[_TopKList]):
             candidate_frequency = candidate_mcv.max_frequency()
             if candidate_frequency > max_new_frequency:
                 max_new_frequency = candidate_frequency
+
             multipliers.append((candidate_attr.table, candidate_frequency))
-            if join_tree_before_update.count_checkpoints() == 1:
-                multipliers.append((joined_attr.table, joined_mcv.max_frequency()))
             joined_attributes.add(joined_attr)
             joined_attributes.add(candidate_attr)
 
@@ -1123,8 +1135,18 @@ class _TopKTableBoundStatistics(_TableBoundStatistics[_TopKList]):
         multipliers_reduced = util.dict_reduce_multi(multipliers_grouped, lambda __, frequencies: min(frequencies))
         for tab, multiplier in multipliers_reduced.items():
             self._jf.store_multiplier(tab, multiplier)
+
         for attr, updated_mcv in update_set:
             self.joined_frequencies[attr] = updated_mcv
+
+    def init_pk_join(self, fk_table: db.TableRef, join_predicate: mosp.AbstractMospPredicate) -> None:
+        max_fk_freq = -np.inf
+        for (attr1, attr2) in join_predicate.join_partners():
+            fk_attr = attr1 if attr1.table == fk_table else attr2
+            fk_frequency = self.base_frequencies[fk_attr].max_frequency()
+            if fk_frequency > max_fk_freq:
+                max_fk_freq = fk_frequency
+        self._jf.store_multiplier(fk_table, max_fk_freq)
 
     def _merge_mcv_lists(self, mcv_a: _TopKList, mcv_b: _TopKList) -> _TopKList:
         merged_list = []
@@ -1431,6 +1453,7 @@ def _calculate_join_order_for_join_partition(query: mosp.MospQuery, join_graph: 
                                                   subquery_generator=NoSubqueryGeneration(),
                                                   base_table_estimates=stats.base_estimates,
                                                   pk_only=True, verbose=verbose, trace=trace)
+                stats.init_pk_join(lowest_bound_table, pk_join.predicate)
 
             stats.upper_bounds[join_tree] = lowest_min_bound
 
