@@ -1,7 +1,7 @@
 import enum
-from typing import Dict, List
+from typing import Dict, FrozenSet, List
 
-from transform import db, mosp
+from transform import db, mosp, util
 
 
 class QueryNode(enum.Enum):
@@ -77,6 +77,12 @@ class HintedMospQuery:
         self.cardinality_bounds[jid] = nrows
         self.join_contents[jid] = join
 
+    def merge_with(self, other_query: "HintedMospQuery") -> None:
+        self.scan_hints = util.dict_merge(self.scan_hints, other_query.scan_hints)
+        self.join_hints = util.dict_merge(self.join_hints, other_query.join_hints)
+        self.cardinality_bounds = util.dict_merge(self.cardinality_bounds, other_query.cardinality_bounds)
+        self.join_contents = util.dict_merge(self.join_contents, other_query.join_contents)
+
     def generate_sqlcomment(self, *, strip_empty: bool = False) -> str:
         if strip_empty and not self.scan_hints and not self.join_hints and not self.cardinality_bounds:
             return ""
@@ -117,7 +123,7 @@ class HintedMospQuery:
         return self.generate_sqlcomment()
 
 
-def idxnlj_subqueries(query: mosp.MospQuery, *, nestloop="first", idxscan="fk"):
+def idxnlj_subqueries(query: mosp.MospQuery, *, nestloop="first", idxscan="fk") -> HintedMospQuery:
     if idxscan not in ["pk", "fk"]:
         raise ValueError("idxscan must be either 'pk' or 'fk', not '{}'".format(idxscan))
     if nestloop not in ["first", "all"]:
@@ -143,4 +149,18 @@ def idxnlj_subqueries(query: mosp.MospQuery, *, nestloop="first", idxscan="fk"):
                 if idxscan == "pk" or join_idx > 0:
                     pk_table = join.base_table()
                     hinted_query.force_idxscan(pk_table)
+    return hinted_query
+
+
+def bound_hints(query: mosp.MospQuery, bounds_data: Dict[FrozenSet[db.TableRef], int]) -> HintedMospQuery:
+    hinted_query = HintedMospQuery(query)
+    visited_tables = [query.base_table()]
+    for join in query.joins():
+        if join.is_subquery():
+            subquery_hints = bound_hints(join.subquery, bounds_data)
+            hinted_query.merge_with(subquery_hints)
+        visited_tables.extend(join.collect_tables())
+        tables_key = frozenset(visited_tables)
+        if tables_key in bounds_data:
+            hinted_query.set_upperbound(join, bounds_data[tables_key])
     return hinted_query
