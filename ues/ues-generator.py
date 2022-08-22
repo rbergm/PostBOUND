@@ -102,7 +102,7 @@ def write_queries_stdout(result_data: pd.DataFrame, query_col: str = "query_ues"
 
 def jsonize_join_bounds(bounds: Dict[ues.JoinTree, Dict[str, int]]) -> dict:
     if not bounds:
-        return {}
+        return []
 
     jsonized_bounds = []
     for tree, bounds_data in bounds.items():
@@ -142,8 +142,8 @@ def optimize_workload(workload: pd.DataFrame, query_col: str, out_col: str, *,
         except Exception as e:
             optimized_query = query
             optimization_success.append(False)
-            intermediate_bounds.append(None)
-            final_bounds.append(None)
+            intermediate_bounds.append([])
+            final_bounds.append(np.nan)
             query_text = workload["label"].iloc[query_idx] if "label" in workload else f"'{query}'"
             logger("Could not optimize query ", query_text, ": ", type(e).__name__, " (", e, ")", sep="")
         optimization_end = datetime.now()

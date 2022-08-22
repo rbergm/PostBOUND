@@ -2,7 +2,8 @@
 import enum
 import math
 import warnings
-from typing import Dict, FrozenSet, List
+from dataclasses import dataclass
+from typing import Dict, FrozenSet, List, Tuple
 
 from transform import db, mosp, util
 
@@ -165,7 +166,13 @@ def idxnlj_subqueries(query: mosp.MospQuery, *, nestloop="first", idxscan="fk") 
     return hinted_query
 
 
-def bound_hints(query: mosp.MospQuery, bounds_data: Dict[FrozenSet[db.TableRef], int]) -> HintedMospQuery:
+@dataclass
+class JoinBoundsData:
+    upper_bound: int
+    input_bounds: Tuple[int, int]
+
+
+def bound_hints(query: mosp.MospQuery, bounds_data: Dict[FrozenSet[db.TableRef], JoinBoundsData]) -> HintedMospQuery:
     hinted_query = HintedMospQuery(query)
     visited_tables = [query.base_table()]
     for join in query.joins():
@@ -174,12 +181,13 @@ def bound_hints(query: mosp.MospQuery, bounds_data: Dict[FrozenSet[db.TableRef],
             hinted_query.merge_with(subquery_hints)
         visited_tables.extend(join.collect_tables())
         tables_key = frozenset(visited_tables)
-        if tables_key in bounds_data:
-            hinted_query.set_upperbound(join, bounds_data[tables_key])
+        join_bounds = bounds_data.get(tables_key, None)
+        if join_bounds:
+            hinted_query.set_upperbound(join, join_bounds.upper_bound)
     return hinted_query
 
 
-def operator_hints(query: mosp.MospQuery, bounds_data: Dict[FrozenSet[db.TableRef], int]) -> HintedMospQuery:
+def operator_hints(query: mosp.MospQuery, bounds_data: Dict[FrozenSet[db.TableRef], JoinBoundsData]) -> HintedMospQuery:
     hinted_query = HintedMospQuery(query)
     visited_tables = [query.base_table()]
     for join in query.joins():
@@ -188,19 +196,22 @@ def operator_hints(query: mosp.MospQuery, bounds_data: Dict[FrozenSet[db.TableRe
             hinted_query.merge_with(subquery_hints)
         visited_tables.extend(join.collect_tables())
         tables_key = frozenset(visited_tables)
-        upper_bound = bounds_data.get(tables_key, None)
-        if upper_bound:
-            nlj_bound = upper_bound ** 2
-            hashjoin_bound = 2 * upper_bound
-            mergejoin_bound = upper_bound * math.log(upper_bound)
+        join_bounds = bounds_data.get(tables_key, None)
+        if join_bounds and join_bounds.input_bounds:
+            upper_bound = join_bounds.upper_bound
+            input_bound1, input_bound2 = join_bounds.input_bounds
+            input_max = max(input_bound1, input_bound2)
+
+            # TODO: improve operator selection formulas
+            nlj_bound = input_bound1 * input_bound2
+            hashjoin_bound = input_bound1 + input_bound2
+            mergejoin_bound = input_max * math.log(input_max)
 
             if nlj_bound <= hashjoin_bound and nlj_bound <= mergejoin_bound:
-                warnings.warn("Choosing NLJ")
                 hinted_query.force_nestloop(join)
             elif hashjoin_bound <= nlj_bound and hashjoin_bound <= mergejoin_bound:
                 hinted_query.force_hashjoin(join)
             elif mergejoin_bound <= nlj_bound and mergejoin_bound <= hashjoin_bound:
-                warnings.warn("Choosing MergeJoin")
                 hinted_query.force_mergejoin(join)
             else:
                 raise util.StateError("The universe dissolves..")

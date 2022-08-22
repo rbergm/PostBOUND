@@ -5,7 +5,7 @@ import json
 import operator
 import re
 import warnings
-from typing import Dict, FrozenSet, List, Union
+from typing import Dict, FrozenSet, List, Tuple, Union
 
 import pandas as pd
 
@@ -29,11 +29,12 @@ def parse_table_list(raw_tables: List[str]) -> FrozenSet[db.TableRef]:
     return frozenset(parsed)
 
 
-def parse_query_bounds(raw_bounds: List[Dict[str, Union[List[str], int]]]) -> Dict[FrozenSet[db.TableRef], int]:
+def parse_query_bounds(raw_bounds: List[Dict[str, Union[List[str], int]]]
+                       ) -> Dict[FrozenSet[db.TableRef], hint.JoinBoundsData]:
     parsed = {}
     for bounds_dict in raw_bounds:
         tables = parse_table_list(bounds_dict["join"])
-        parsed[tables] = bounds_dict["bound"]
+        parsed[tables] = hint.JoinBoundsData(bounds_dict["bound"], bounds_dict["input_bounds"])
     return parsed
 
 
