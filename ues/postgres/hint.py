@@ -58,6 +58,7 @@ class HintedMospQuery:
         self.join_hints: Dict[int, QueryNode] = dict()
         self.cardinality_bounds: Dict[int, int] = dict()
         self.join_contents: Dict[int, mosp.MospJoin] = dict()
+        self.bounds_stats: Dict[FrozenSet[db.TableRef], Dict[str, int]] = dict()
 
     def force_nestloop(self, join: mosp.MospJoin):
         jid = _join_id(join)
@@ -91,6 +92,9 @@ class HintedMospQuery:
         self.join_hints = util.dict_merge(self.join_hints, other_query.join_hints)
         self.cardinality_bounds = util.dict_merge(self.cardinality_bounds, other_query.cardinality_bounds)
         self.join_contents = util.dict_merge(self.join_contents, other_query.join_contents)
+
+    def store_bounds_stats(self, join: FrozenSet[db.TableRef], bounds: Dict[str, int]) -> None:
+        self.bounds_stats[join] = bounds
 
     def generate_sqlcomment(self, *, strip_empty: bool = False) -> str:
         if strip_empty and not self.scan_hints and not self.join_hints and not self.cardinality_bounds:
@@ -200,5 +204,10 @@ def operator_hints(query: mosp.MospQuery, bounds_data: Dict[FrozenSet[db.TableRe
                 hinted_query.force_mergejoin(join)
             else:
                 raise util.StateError("The universe dissolves..")
+
+            hinted_query.store_bounds_stats(tables_key, {"ues": upper_bound,
+                                                         "nlj": nlj_bound,
+                                                         "hashjoin": hashjoin_bound,
+                                                         "mergejoin": mergejoin_bound})
 
     return hinted_query

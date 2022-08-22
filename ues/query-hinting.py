@@ -2,6 +2,7 @@
 
 import argparse
 import json
+import operator
 import re
 import warnings
 from typing import Dict, FrozenSet, List, Union
@@ -36,6 +37,22 @@ def parse_query_bounds(raw_bounds: List[Dict[str, Union[List[str], int]]]) -> Di
     return parsed
 
 
+def stringify_operator_bounds(bounds: Dict[FrozenSet[db.TableRef], Dict[str, int]]
+                              ) -> List[Dict[str, Union[List[str], int]]]:
+    stringified_bounds = []
+    for join, operator_bounds in bounds.items():
+        stringified_join = [str(table) for table in join]
+        stringified = {
+            "join": stringified_join,
+            "ues_bound": operator_bounds["ues"],
+            "nlj_bound": operator_bounds["nlj"],
+            "hashjoin_bound": operator_bounds["hashjoin"],
+            "mergejoin_bound": operator_bounds["mergejoin"]
+        }
+        stringified_bounds.append(stringified)
+    return stringified_bounds
+
+
 def read_input(src: str, query_col: str, *, bound_col: str = "", parse_bounds: bool = False) -> pd.DataFrame:
     df = pd.read_csv(src)
     df[query_col] = df[query_col].apply(mosp.MospQuery.parse)
@@ -67,11 +84,14 @@ def bound_hints(input_df: pd.DataFrame, query_col: str, bound_col: str, hint_col
 
 def operator_hints(input_df: pd.DataFrame, query_col: str, bound_col: str, hint_col: str) -> pd.DataFrame:
     df = input_df.copy()
-    df[hint_col] = (df
-                    .apply(lambda query_row: hint.operator_hints(query_row[query_col],
-                                                                 query_row[f"{bound_col}_internal"]),
-                           axis="columns")
-                    .apply(hint.HintedMospQuery.generate_sqlcomment, strip_empty=True))
+    hinted_queries = df.apply(lambda query_row: hint.operator_hints(query_row[query_col],
+                                                                    query_row[f"{bound_col}_internal"]),
+                              axis="columns")
+    df[hint_col] = hinted_queries.apply(hint.HintedMospQuery.generate_sqlcomment, strip_empty=True)
+    df["operator_bounds"] = (hinted_queries
+                             .apply(operator.attrgetter("bounds_stats"))
+                             .apply(stringify_operator_bounds)
+                             .apply(json.dumps))
     return df
 
 
