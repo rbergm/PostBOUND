@@ -100,14 +100,14 @@ def write_queries_stdout(result_data: pd.DataFrame, query_col: str = "query_ues"
         print(f"{query};")
 
 
-def jsonize_join_bounds(bounds: Dict[ues.JoinTree, int]) -> dict:
+def jsonize_join_bounds(bounds: Dict[ues.JoinTree, Dict[str, int]]) -> dict:
     if not bounds:
         return {}
 
     jsonized_bounds = []
-    for tree, bound in bounds.items():
+    for tree, bounds_data in bounds.items():
         join_key = [str(tab) for tab in tree.all_tables()]
-        jsonized = {"join": join_key, "bound": bound}
+        jsonized = {"join": join_key, "bound": bounds_data["bound"], "input_bounds": bounds_data["input_bounds"]}
         jsonized_bounds.append(jsonized)
     return json.dumps(jsonized_bounds)
 

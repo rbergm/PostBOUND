@@ -1331,7 +1331,7 @@ def _absorb_pk_fk_hull_of(table: db.TableRef, *, join_graph: JoinGraph, join_tre
 @dataclass
 class JoinOrderOptimizationResult:
     final_order: JoinTree
-    intermediate_bounds: Dict[JoinTree, int]
+    intermediate_bounds: Dict[JoinTree, Dict[str, int]]
     final_bound: int
     regular: bool
 
@@ -1381,6 +1381,8 @@ def _calculate_join_order_for_join_partition(query: mosp.MospQuery, join_graph: 
     join_tree = JoinTree.empty_join_tree()
     stats = join_cardinality_estimator.stats()
     DirectedJoinEdge = collections.namedtuple("DirectedJoinEdge", ["partner", "predicate"])
+
+    bounds_tracker: Dict[JoinTree, Dict[str, int]] = {}
 
     if join_graph.count_tables() == 1:
         trace_logger(".. No joins found")
@@ -1478,6 +1480,7 @@ def _calculate_join_order_for_join_partition(query: mosp.MospQuery, join_graph: 
                 stats.init_pk_join(lowest_bound_table, pk_join.predicate)
 
             stats.upper_bounds[join_tree] = lowest_min_bound
+            bounds_tracker[join_tree] = {"bound": lowest_min_bound, "input_bounds": []}
 
             # This has nothing to do with the actual algorithm and is merely some technical code for visualization
             if visualize:
@@ -1572,6 +1575,10 @@ def _calculate_join_order_for_join_partition(query: mosp.MospQuery, join_graph: 
 
         # Update our statistics based on the join(s) we just executed.
         stats.upper_bounds[join_tree] = lowest_min_bound
+        bounds_tracker[join_tree] = {"bound": lowest_min_bound,
+                                     "input_bounds": [stats.base_estimates[selected_candidate],
+                                                      stats.upper_bounds[join_tree.previous_checkpoint()]]
+                                     }
         stats.update_frequencies(selected_candidate, join_predicate, join_tree=join_tree)
 
         # This has nothing to do with the actual algorithm and is merely some technical code for visualization
@@ -1588,7 +1595,7 @@ def _calculate_join_order_for_join_partition(query: mosp.MospQuery, join_graph: 
     trace_logger("Final upper bounds:", stats.join_bounds())
     trace_logger("Final join ordering:", join_tree)
 
-    return JoinOrderOptimizationResult(join_tree, stats.join_bounds(), stats.upper_bounds[join_tree], True)
+    return JoinOrderOptimizationResult(join_tree, bounds_tracker, stats.upper_bounds[join_tree], True)
 
 
 def _determine_referenced_attributes(join_sequence: List[dict]) -> Dict[db.TableRef, Set[db.AttributeRef]]:
@@ -1734,6 +1741,9 @@ def _generate_mosp_data_for_sequence(original_query: mosp.MospQuery, join_sequen
     mosp_data = {"select": select_clause, "from": from_list}
     return mosp_data
 
+
+# TODO: should not only return final bounds after join, but also the bounds of each input side
+# implementing this for cross-product queries is a bit more work
 
 @dataclass
 class OptimizationResult:
