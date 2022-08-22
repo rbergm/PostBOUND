@@ -241,4 +241,4 @@ def print_if(should_print: bool, *args, **kwargs):
 class StateError(RuntimeError):
     """Indicates that an object is not in the right state to perform an opteration."""
     def __init__(self, msg: str = ""):
-        super.__init__(msg)
+        super().__init__(msg)

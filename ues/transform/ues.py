@@ -150,6 +150,12 @@ class _TopKList:
             cardinality_sum += self[value] * other[value]
         return cardinality_sum
 
+    def snap_to(self, snap_value: int) -> "_TopKList":
+        snapped_mcv = [(val, min(freq, snap_value)) for val, freq in self.mcv_list]
+        snapped_remainder = min(self.remainder_frequency, snap_value)
+        return _TopKList(snapped_mcv, remainder_frequency=snapped_remainder,
+                         associated_attribute=self.associated_attribute)
+
     def __getitem__(self, value: Any) -> int:
         return self.mcv_data.get(value, self.remainder_frequency)
 
@@ -1032,6 +1038,12 @@ class _MFVTableBoundStatistics(_TableBoundStatistics[int]):
                            join_tree: JoinTree) -> None:
         join_tree_before_update = (join_tree.previous_checkpoint() if not join_tree.is_singular()
                                    else join_tree.at_base_table())
+        bound_before_update = self.upper_bounds[join_tree_before_update]
+        current_bound = self.upper_bounds[join_tree]
+        absolute_cardinality_increase = current_bound - bound_before_update
+        if absolute_cardinality_increase < 0:
+            raise util.StateError(f"Bounds should only increase, never decrease: "
+                                  "{current_bound} from {bound_before_update}")
 
         min_new_frequency = np.inf
         joined_attributes = set()
@@ -1040,7 +1052,7 @@ class _MFVTableBoundStatistics(_TableBoundStatistics[int]):
         for (attr1, attr2) in join_predicate.join_partners():
             joined_attr = attr1 if join_tree_before_update.contains_table(attr1.table) else attr2
             candidate_attr = attr1 if joined_attr == attr2 else attr2
-            candidate_frequency = self.base_frequencies[candidate_attr]
+            candidate_frequency = min(self.base_frequencies[candidate_attr], absolute_cardinality_increase)
             joined_frequency = self.joined_frequencies[joined_attr]
 
             updated_freq = joined_frequency * candidate_frequency
@@ -1096,13 +1108,21 @@ class _TopKTableBoundStatistics(_TableBoundStatistics[_TopKList]):
         upper_bounds = {}
         super().__init__(base_estimates, base_frequencies, joined_frequencies, upper_bounds)
 
-    def fetch_mcv_list(self, attribute: db.AttributeRef, *, joined_table: bool = False) -> _TopKList:
-        return self.joined_frequencies[attribute] if joined_table else self.base_frequencies[attribute]
+    def fetch_mcv_list(self, attribute: db.AttributeRef, *, joined_table: bool = False,
+                       snap_value: int = None) -> _TopKList:
+        mcv_list = self.joined_frequencies[attribute] if joined_table else self.base_frequencies[attribute]
+        return mcv_list.snap_to(snap_value) if snap_value is not None else mcv_list
 
     def update_frequencies(self, joined_table: db.TableRef, join_predicate: mosp.AbstractMospPredicate, *,
                            join_tree: JoinTree) -> None:
         join_tree_before_update = (join_tree.previous_checkpoint() if not join_tree.is_singular()
                                    else join_tree.at_base_table())
+        bound_before_update = self.upper_bounds[join_tree_before_update]
+        current_bound = self.upper_bounds[join_tree]
+        absolute_cardinality_increase = current_bound - bound_before_update
+        if absolute_cardinality_increase < 0:
+            raise util.StateError(f"Bounds should only increase, never decrease: "
+                                  "{current_bound} from {bound_before_update}")
 
         min_new_frequency = np.inf
         joined_attributes = set()
@@ -1112,13 +1132,15 @@ class _TopKTableBoundStatistics(_TableBoundStatistics[_TopKList]):
             joined_attr = attr1 if join_tree_before_update.contains_table(attr1.table) else attr2
             candidate_attr = attr1 if joined_attr == attr2 else attr2
             joined_mcv = self.fetch_mcv_list(joined_attr, joined_table=True)
-            candidate_mcv = self.fetch_mcv_list(candidate_attr)
+
+            # TODO: snap to absolute cardinality increase?
+            candidate_mcv = self.fetch_mcv_list(candidate_attr, snap_value=absolute_cardinality_increase)
 
             merged_mcv = self._merge_mcv_lists(joined_mcv, candidate_mcv)
             update_set[joined_attr] = (merged_mcv, merged_mcv.max_frequency())
             update_set[candidate_attr] = (merged_mcv, merged_mcv.max_frequency())
 
-            candidate_frequency = candidate_mcv.max_frequency()
+            candidate_frequency = min(candidate_mcv.max_frequency(), absolute_cardinality_increase)
             if candidate_frequency < min_new_frequency:
                 min_new_frequency = candidate_frequency
 
