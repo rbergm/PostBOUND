@@ -1042,8 +1042,8 @@ class _MFVTableBoundStatistics(_TableBoundStatistics[int]):
         current_bound = self.upper_bounds[join_tree]
         absolute_cardinality_increase = current_bound - bound_before_update
         if absolute_cardinality_increase < 0:
-            raise util.StateError(f"Bounds should only increase, never decrease: "
-                                  "{current_bound} from {bound_before_update}")
+            raise util.StateError("Bounds should only increase, never decrease: "
+                                  f"{current_bound} from {bound_before_update}")
 
         min_new_frequency = np.inf
         joined_attributes = set()
@@ -1121,8 +1121,8 @@ class _TopKTableBoundStatistics(_TableBoundStatistics[_TopKList]):
         current_bound = self.upper_bounds[join_tree]
         absolute_cardinality_increase = current_bound - bound_before_update
         if absolute_cardinality_increase < 0:
-            raise util.StateError(f"Bounds should only increase, never decrease: "
-                                  "{current_bound} from {bound_before_update}")
+            raise util.StateError("Bounds should only increase, never decrease: "
+                                  f"{current_bound} from {bound_before_update}")
 
         min_new_frequency = np.inf
         joined_attributes = set()
