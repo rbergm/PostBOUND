@@ -851,7 +851,7 @@ class _MFVJoinAttributeFrequenciesLoader(Dict[db.AttributeRef, int]):
         self.current_multipliers = {}
 
     def store_multiplier(self, table: db.TableRef, multiplier: int):
-        self.current_multipliers[table] = max(multiplier, self.current_multipliers.get(table, -np.inf))
+        self.current_multipliers[table] = min(multiplier, self.current_multipliers.get(table, np.inf))
 
     def __getitem__(self, key: db.AttributeRef) -> int:
         if key not in self.attribute_frequencies:
@@ -907,7 +907,7 @@ class _TopKJoinAttributeFrequenciesLoader(Dict[db.AttributeRef, _TopKList]):
         self.current_multipliers = {}
 
     def store_multiplier(self, table: db.TableRef, multiplier: int):
-        self.current_multipliers[table] = max(multiplier, self.current_multipliers.get(table, -np.inf))
+        self.current_multipliers[table] = min(multiplier, self.current_multipliers.get(table, np.inf))
 
     def adjust_frequencies(self, mcv_list: _TopKList, adjustment_factor: int) -> _TopKList:
         mcv_entries = mcv_list.contents()
@@ -948,7 +948,7 @@ class _AttributeUpdateSet(Generic[_T]):
             self.update_evaluations[attribute] = update_evaluation
             return
         current_evaluation = self.update_evaluations[attribute]
-        if current_evaluation > update_evaluation:
+        if current_evaluation < update_evaluation:
             self.candidate_updates[attribute] = update_data
             self.update_evaluations[attribute] = update_evaluation
 
@@ -1033,7 +1033,7 @@ class _MFVTableBoundStatistics(_TableBoundStatistics[int]):
         join_tree_before_update = (join_tree.previous_checkpoint() if not join_tree.is_singular()
                                    else join_tree.at_base_table())
 
-        max_new_frequency = -np.inf
+        min_new_frequency = np.inf
         joined_attributes = set()
         multipliers: List[db.AttributeRef, int] = []
         update_set: _AttributeUpdateSet[int] = _AttributeUpdateSet()
@@ -1047,15 +1047,15 @@ class _MFVTableBoundStatistics(_TableBoundStatistics[int]):
             update_set[joined_attr] = (updated_freq, updated_freq)
             update_set[candidate_attr] = (updated_freq, updated_freq)
 
-            if candidate_frequency > max_new_frequency:
-                max_new_frequency = candidate_frequency
+            if candidate_frequency < min_new_frequency:
+                min_new_frequency = candidate_frequency
 
             multipliers.append((candidate_attr.table, candidate_frequency))
             joined_attributes.add(joined_attr)
             joined_attributes.add(candidate_attr)
 
         for attr in [attr for attr in join_tree.all_attributes() if attr not in joined_attributes]:
-            self.joined_frequencies[attr] *= max_new_frequency
+            self.joined_frequencies[attr] *= min_new_frequency
 
         multipliers_grouped = util.dict_generate_multi(multipliers)
         multipliers_reduced = util.dict_reduce_multi(multipliers_grouped, lambda __, frequencies: min(frequencies))
@@ -1066,13 +1066,13 @@ class _MFVTableBoundStatistics(_TableBoundStatistics[int]):
             self.joined_frequencies[attr] = updated_mcv
 
     def init_pk_join(self, fk_table: db.TableRef, join_predicate: mosp.AbstractMospPredicate) -> None:
-        max_fk_freq = -np.inf
+        min_fk_freq = np.inf
         for (attr1, attr2) in join_predicate.join_partners():
             fk_attr = attr1 if attr1.table == fk_table else attr2
             fk_frequency = self.base_frequencies[fk_attr]
-            if fk_frequency > max_fk_freq:
-                max_fk_freq = fk_frequency
-        self._jf.store_multiplier(fk_table, max_fk_freq)
+            if fk_frequency < min_fk_freq:
+                min_fk_freq = fk_frequency
+        self._jf.store_multiplier(fk_table, min_fk_freq)
 
     def __repr__(self) -> str:
         return str(self)
@@ -1104,7 +1104,7 @@ class _TopKTableBoundStatistics(_TableBoundStatistics[_TopKList]):
         join_tree_before_update = (join_tree.previous_checkpoint() if not join_tree.is_singular()
                                    else join_tree.at_base_table())
 
-        max_new_frequency = -np.inf
+        min_new_frequency = np.inf
         joined_attributes = set()
         multipliers: List[Tuple[db.AttributeRef, int]] = []
         update_set: _AttributeUpdateSet[_TopKList] = _AttributeUpdateSet()
@@ -1119,8 +1119,8 @@ class _TopKTableBoundStatistics(_TableBoundStatistics[_TopKList]):
             update_set[candidate_attr] = (merged_mcv, merged_mcv.max_frequency())
 
             candidate_frequency = candidate_mcv.max_frequency()
-            if candidate_frequency > max_new_frequency:
-                max_new_frequency = candidate_frequency
+            if candidate_frequency < min_new_frequency:
+                min_new_frequency = candidate_frequency
 
             multipliers.append((candidate_attr.table, candidate_frequency))
             joined_attributes.add(joined_attr)
@@ -1128,7 +1128,7 @@ class _TopKTableBoundStatistics(_TableBoundStatistics[_TopKList]):
 
         for attr in [attr for attr in join_tree.all_attributes() if attr not in joined_attributes]:
             mcv = self._jf[attr]
-            updated_mcv = self._jf.adjust_frequencies(mcv, max_new_frequency)
+            updated_mcv = self._jf.adjust_frequencies(mcv, min_new_frequency)
             self.joined_frequencies[attr] = updated_mcv
 
         multipliers_grouped = util.dict_generate_multi(multipliers)
@@ -1140,13 +1140,13 @@ class _TopKTableBoundStatistics(_TableBoundStatistics[_TopKList]):
             self.joined_frequencies[attr] = updated_mcv
 
     def init_pk_join(self, fk_table: db.TableRef, join_predicate: mosp.AbstractMospPredicate) -> None:
-        max_fk_freq = -np.inf
+        min_fk_freq = np.inf
         for (attr1, attr2) in join_predicate.join_partners():
             fk_attr = attr1 if attr1.table == fk_table else attr2
             fk_frequency = self.base_frequencies[fk_attr].max_frequency()
-            if fk_frequency > max_fk_freq:
-                max_fk_freq = fk_frequency
-        self._jf.store_multiplier(fk_table, max_fk_freq)
+            if fk_frequency < min_fk_freq:
+                min_fk_freq = fk_frequency
+        self._jf.store_multiplier(fk_table, min_fk_freq)
 
     def _merge_mcv_lists(self, mcv_a: _TopKList, mcv_b: _TopKList) -> _TopKList:
         merged_list = []
