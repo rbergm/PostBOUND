@@ -65,20 +65,32 @@ def bound_hints(input_df: pd.DataFrame, query_col: str, bound_col: str, hint_col
     return df
 
 
+def operator_hints(input_df: pd.DataFrame, query_col: str, bound_col: str, hint_col: str) -> pd.DataFrame:
+    df = input_df.copy()
+    df[hint_col] = (df
+                    .apply(lambda query_row: hint.operator_hints(query_row[query_col],
+                                                                 query_row[f"{bound_col}_internal"]),
+                           axis="columns")
+                    .apply(hint.HintedMospQuery.generate_sqlcomment, strip_empty=True))
+    return df
+
+
 def main():
     parser = argparse.ArgumentParser(description="Generates SQL query hints for various workloads.")
     parser.add_argument("input", action="store", help="CSV file containing the workload queries")
-    parser.add_argument("--mode", "-m", action="store", default="ues-idxnlj", choices=["ues-idxnlj", "ues-bounds"],
+    parser.add_argument("--mode", "-m", action="store", default="ues-idxnlj", choices=["ues-idxnlj", "ues-bounds",
+                                                                                       "ues-operators"],
                         help="The kind of hints to produce. Mode 'ues-idxnlj' (the default) is supported  enforces an "
                         "Index-NestedLoopJoin in UES subqueries queries. Mode 'ues-bounds' adds cardinality bound "
-                        "hints for all available joins.")
+                        "hints for all available joins. Mode 'ues-operators' adds operator hints based on upper "
+                        "bounds.")
     parser.add_argument("--idx-target", action="store", default="fk", choices=["pk", "fk"], help="For "
                         "'ues-idxnlj'-mode: The subquery join-partner that should be implemented as IndexScan. Can be "
                         "either 'pk' or 'fk', denoting the Primary key table and Foreign key table, respectively.")
     parser.add_argument("--nlj-scope", action="store", default="first", choices=["first", "all"], help="For "
                         "'ues-idxnlj'-mode: How many Index-Nested loop joins should be generated. Can be either "
                         "'first' denoting only the innermost join, or 'all', denoting all joins.")
-    parser.add_argument("--bounds-col", action="store", default="ues_bounds", help="For 'ues-bounds'-mode: the column"
+    parser.add_argument("--bounds-col", action="store", default="ues_bounds", help="For bounds modes: the column"
                         "which contains the bound information. Should be formatted as produced by ues-generator.py.")
     parser.add_argument("--out", "-o", action="store", default="out.csv", help="Name of the CSV file to store the "
                         "output")
@@ -88,13 +100,18 @@ def main():
                         "generated hints to")
 
     args = parser.parse_args()
-    df = read_input(args.input, args.query_col, parse_bounds=args.mode == "ues-bounds", bound_col=args.bounds_col)
+    bounds_modes = ["ues-bounds", "ues-operators"]
+    df = read_input(args.input, args.query_col, parse_bounds=args.mode in bounds_modes, bound_col=args.bounds_col)
 
     if args.mode == "ues-idxnlj":
         df = idxnlj_subqueries(df, args.query_col, args.hint_col,
                                nlj_scope=args.nlj_scope, idxscan_target=args.idx_target)
     elif args.mode == "ues-bounds":
         df = bound_hints(df, args.query_col, args.bounds_col, args.hint_col)
+    elif args.mode == "ues-operators":
+        df = operator_hints(df, args.query_col, args.bounds_col, args.hint_col)
+
+    if args.mode in bounds_modes:
         df.drop(columns=f"{args.bounds_col}_internal", inplace=True)
 
     df.to_csv(args.out, index=False)

@@ -1,4 +1,7 @@
+
 import enum
+import math
+import warnings
 from typing import Dict, FrozenSet, List
 
 from transform import db, mosp, util
@@ -10,6 +13,7 @@ class QueryNode(enum.Enum):
     IndexOnlyScan = "IndexOnlyScan"
     NestLoop = "NestLoop"
     HashJoin = "HashJoin"
+    SortMergeJoin = "MergeJoin"
 
     def is_join(self) -> bool:
         return self == QueryNode.NestLoop or self == QueryNode.HashJoin
@@ -63,6 +67,11 @@ class HintedMospQuery:
     def force_hashjoin(self, join: mosp.MospJoin):
         jid = _join_id(join)
         self.join_hints[jid] = QueryNode.HashJoin
+        self.join_contents[jid] = join
+
+    def force_mergejoin(self, join: mosp.MospJoin) -> None:
+        jid = _join_id(join)
+        self.join_hints[jid] = QueryNode.SortMergeJoin
         self.join_contents[jid] = join
 
     def force_seqscan(self, table: db.TableRef):
@@ -163,4 +172,33 @@ def bound_hints(query: mosp.MospQuery, bounds_data: Dict[FrozenSet[db.TableRef],
         tables_key = frozenset(visited_tables)
         if tables_key in bounds_data:
             hinted_query.set_upperbound(join, bounds_data[tables_key])
+    return hinted_query
+
+
+def operator_hints(query: mosp.MospQuery, bounds_data: Dict[FrozenSet[db.TableRef], int]) -> HintedMospQuery:
+    hinted_query = HintedMospQuery(query)
+    visited_tables = [query.base_table()]
+    for join in query.joins():
+        if join.is_subquery():
+            subquery_hints = operator_hints(join.subquery, bounds_data)
+            hinted_query.merge_with(subquery_hints)
+        visited_tables.extend(join.collect_tables())
+        tables_key = frozenset(visited_tables)
+        upper_bound = bounds_data.get(tables_key, None)
+        if upper_bound:
+            nlj_bound = upper_bound ** 2
+            hashjoin_bound = 2 * upper_bound
+            mergejoin_bound = upper_bound * math.log(upper_bound)
+
+            if nlj_bound <= hashjoin_bound and nlj_bound <= mergejoin_bound:
+                warnings.warn("Choosing NLJ")
+                hinted_query.force_nestloop(join)
+            elif hashjoin_bound <= nlj_bound and hashjoin_bound <= mergejoin_bound:
+                hinted_query.force_hashjoin(join)
+            elif mergejoin_bound <= nlj_bound and mergejoin_bound <= hashjoin_bound:
+                warnings.warn("Choosing MergeJoin")
+                hinted_query.force_mergejoin(join)
+            else:
+                raise util.StateError("The universe dissolves..")
+
     return hinted_query
