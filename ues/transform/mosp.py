@@ -282,9 +282,9 @@ class MospFilterMap(collections.abc.Mapping):
             self._merged_filters.append(MospCompoundPredicate.merge_and(filter_predicates, alias_map=alias_map))
 
     def as_and_clause(self) -> "AbstractMospPredicate":
-        return MospCompoundPredicate.merge_and(self._merged_filters)
+        return MospCompoundPredicate.merge_and(self._merged_filters, alias_map=self.alias_map)
 
-    def items(self) -> List[Tuple[db.TableRef, "AbstractMospPredicate"]]:
+    def contents(self) -> Dict[db.TableRef, "AbstractMospPredicate"]:
         return {table: MospCompoundPredicate.merge_and(filter_predicates, alias_map=self.alias_map)
                 for table, filter_predicates in self._filter_by_table.items()}
 
@@ -836,7 +836,7 @@ class MospBasePredicate(AbstractMospPredicate):
 
     def _unwrap_literal(self):
         if not isinstance(self.mosp_right, dict) or "literal" not in self.mosp_right:
-            return None
+            return self.mosp_right
         return self.mosp_right["literal"]
 
     def _refresh_mosp(self):
