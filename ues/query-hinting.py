@@ -5,7 +5,7 @@ import json
 import operator
 import re
 import warnings
-from typing import Dict, FrozenSet, List, Tuple, Union
+from typing import Dict, FrozenSet, List, Union
 
 import pandas as pd
 
@@ -83,10 +83,12 @@ def bound_hints(input_df: pd.DataFrame, query_col: str, bound_col: str, hint_col
     return df
 
 
-def operator_hints(input_df: pd.DataFrame, query_col: str, bound_col: str, hint_col: str) -> pd.DataFrame:
+def operator_hints(input_df: pd.DataFrame, query_col: str, bound_col: str, hint_col: str, *,
+                   verbose: bool = False) -> pd.DataFrame:
     df = input_df.copy()
     hinted_queries = df.apply(lambda query_row: hint.operator_hints(query_row[query_col],
-                                                                    query_row[f"{bound_col}_internal"]),
+                                                                    query_row[f"{bound_col}_internal"],
+                                                                    verbose=verbose),
                               axis="columns")
     df[hint_col] = hinted_queries.apply(hint.HintedMospQuery.generate_sqlcomment, strip_empty=True)
     df["operator_bounds"] = (hinted_queries
@@ -119,6 +121,8 @@ def main():
                         "workload")
     parser.add_argument("--hint-col", action="store", default="hint", help="Name of the CSV column to write the "
                         "generated hints to")
+    parser.add_argument("--verbose", action="store_true", default=False, help="Produce debugging output (actual "
+                        "output depends on the mode).")
 
     args = parser.parse_args()
     bounds_modes = ["ues-bounds", "ues-operators"]
@@ -130,7 +134,7 @@ def main():
     elif args.mode == "ues-bounds":
         df = bound_hints(df, args.query_col, args.bounds_col, args.hint_col)
     elif args.mode == "ues-operators":
-        df = operator_hints(df, args.query_col, args.bounds_col, args.hint_col)
+        df = operator_hints(df, args.query_col, args.bounds_col, args.hint_col, verbose=args.verbose)
 
     if args.mode in bounds_modes:
         df.drop(columns=f"{args.bounds_col}_internal", inplace=True)

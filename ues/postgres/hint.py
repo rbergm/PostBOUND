@@ -1,9 +1,11 @@
 
+import collections
 import enum
-import math
-import warnings
+import pprint
 from dataclasses import dataclass
-from typing import Dict, FrozenSet, List, Tuple
+from typing import Dict, FrozenSet, List, Callable, Tuple
+
+import numpy as np
 
 from transform import db, mosp, util
 
@@ -187,9 +189,15 @@ def bound_hints(query: mosp.MospQuery, bounds_data: Dict[FrozenSet[db.TableRef],
     return hinted_query
 
 
-def operator_hints(query: mosp.MospQuery, bounds_data: Dict[FrozenSet[db.TableRef], JoinBoundsData]) -> HintedMospQuery:
+def operator_hints(query: mosp.MospQuery, bounds_data: Dict[FrozenSet[db.TableRef], JoinBoundsData], *,
+                   hashjoin_penalty: float = 0.15, indexlookup_penalty: float = 0.1,
+                   hashjoin_estimator: Callable[[int, int], float] = None,
+                   nlj_estimator: Callable[[int, int], float] = None,
+                   verbose: bool = False) -> HintedMospQuery:
     hinted_query = HintedMospQuery(query)
     visited_tables = [query.base_table()]
+    selection_stats = collections.defaultdict(int)
+
     for join in query.joins():
         if join.is_subquery():
             subquery_hints = operator_hints(join.subquery, bounds_data)
@@ -200,25 +208,50 @@ def operator_hints(query: mosp.MospQuery, bounds_data: Dict[FrozenSet[db.TableRe
         if join_bounds and join_bounds.input_bounds:
             upper_bound = join_bounds.upper_bound
             input_bound1, input_bound2 = join_bounds.input_bounds
-            input_max = max(input_bound1, input_bound2)
+            max_bound, min_bound = max(input_bound1, input_bound2), min(input_bound1, input_bound2)
 
-            # TODO: improve operator selection formulas
-            nlj_bound = input_bound1 * input_bound2
-            hashjoin_bound = input_bound1 + input_bound2
-            mergejoin_bound = input_max * math.log(input_max)
+            # Choose the "optimal" operators. The formulas to estimate operator costs are _very_ _very_ coarse
+            # grained and heuristic in nature. If more complex formulas are required, they can be supplied as arguments
 
-            if nlj_bound <= hashjoin_bound and nlj_bound <= mergejoin_bound:
+            if nlj_estimator:
+                nlj_cost = nlj_estimator(min_bound, max_bound)
+            else:
+                # For NLJ we assume Index-NLJ and use its simplified formula:
+                # The smaller relation will become the outer loop and the larger relation the inner loop to profit the
+                # most from index lookups. Therefore the inner relation will be penalized according to the indexlookup
+                # penalty.
+                nlj_cost = min_bound + (1 + indexlookup_penalty) * max_bound
+
+            if hashjoin_estimator:
+                hashjoin_cost = hashjoin_estimator(min_bound, max_bound)
+            else:
+                # For HashJoin we again use a simplified formula:
+                # The smaller relation will be used to construct the hash table. Construction of the table is penalized
+                # according to the hashjoin penalty. The larger relation will be used to perform the hash table
+                # lookups. Hash table lookups are rather cheap but still not for free. Therefore we penalize usage
+                # of the inner (larger) relation by 0.5 * penalty.
+                hashjoin_cost = (1 + hashjoin_penalty) * min_bound + (1 + (hashjoin_penalty/2)) * max_bound
+
+            mergejoin_cost = np.inf  # don't consider Sort-Merge join for now
+
+            if nlj_cost <= hashjoin_cost and nlj_cost <= mergejoin_cost:
+                selection_stats["NLJ"] += 1
                 hinted_query.force_nestloop(join)
-            elif hashjoin_bound <= nlj_bound and hashjoin_bound <= mergejoin_bound:
+            elif hashjoin_cost <= nlj_cost and hashjoin_cost <= mergejoin_cost:
+                selection_stats["HashJoin"] += 1
                 hinted_query.force_hashjoin(join)
-            elif mergejoin_bound <= nlj_bound and mergejoin_bound <= hashjoin_bound:
+            elif mergejoin_cost <= nlj_cost and mergejoin_cost <= hashjoin_cost:
+                selection_stats["MergeJoin"] += 1
                 hinted_query.force_mergejoin(join)
             else:
                 raise util.StateError("The universe dissolves..")
 
             hinted_query.store_bounds_stats(tables_key, {"ues": upper_bound,
-                                                         "nlj": nlj_bound,
-                                                         "hashjoin": hashjoin_bound,
-                                                         "mergejoin": mergejoin_bound})
+                                                         "nlj": nlj_cost,
+                                                         "hashjoin": hashjoin_cost,
+                                                         "mergejoin": mergejoin_cost})
+
+    if verbose:
+        pprint.pprint(dict(selection_stats))
 
     return hinted_query
