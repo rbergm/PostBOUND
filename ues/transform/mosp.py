@@ -132,7 +132,9 @@ class MospQuery:
             path.insert(0, self.base_table().alias)
         else:
             path.insert(0, str(self.base_table()))
-        return " ⋈ ".join(path)
+
+        join_separator = " " if short else " ⋈ "
+        return join_separator.join(path)
 
     def count_result_tuples(self) -> int:
         count_query = dict(self.query)
