@@ -181,9 +181,14 @@ class DBSchema:
                 return table
         raise KeyError(f"Attribute not found: {attribute_name} in candidates {candidate_tables}")
 
-    def execute_query(self, query: str, *, cache_enabled=True):
+    def execute_query(self, query: str, *, cache_enabled=True, analyze_mode: bool = False, explain_mode: bool = False):
         if cache_enabled and query in self.query_cache:
             return self.query_cache[query]
+
+        if explain_mode and not query.lower().startswith("explain (format json)"):
+            query = f"EXPLAIN (FORMAT JSON) {query}"
+        elif analyze_mode and not query.lower().startswith("explain (analyze, format json)"):
+            query = f"EXPLAIN (ANALYZE, FORMAT JSON) {query}"
 
         self.cursor.execute(query)
         result = util.simplify(self.cursor.fetchall())
