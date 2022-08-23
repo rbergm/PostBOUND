@@ -120,10 +120,18 @@ class MospQuery:
                 return subquery
         return None
 
-    def join_path(self) -> str:
-        path = [f"({join.subquery.join_path()})" if join.is_subquery() else str(join.base_table())
-                for join in self.joins()]
-        path.insert(0, str(self.base_table()))
+    def join_path(self, short: bool = False) -> str:
+        path = []
+        for join in self.joins():
+            if join.is_subquery():
+                path.append(f"({join.subquery.join_path(short=short)})")
+            else:
+                path.append(join.base_table().alias if short else str(join.base_table()))
+
+        if short:
+            path.insert(0, self.base_table().alias)
+        else:
+            path.insert(0, str(self.base_table()))
         return " ⋈ ".join(path)
 
     def count_result_tuples(self) -> int:

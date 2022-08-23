@@ -219,6 +219,8 @@ def main():
                         "time. This setting is ignored if the results are not written to CSV.")
     parser.add_argument("--generate-labels", action="store_true", help="In (output) CSV-mode when loading from "
                         "pattern, use the file names as query labels.")
+    parser.add_argument("--join-paths", action="store_true", help="In (output) CSV mode, also store the final join "
+                        "path per query. This setting is ignored if the results are not written to CSV.")
     parser.add_argument("--out-col", action="store", default=DEFAULT_UES_COL, help="In CSV-mode, name of the output "
                         "column (defaults to query_ues).")
     parser.add_argument("--table-estimation", action="store", choices=["explain", "sample"], default="explain",
@@ -293,6 +295,10 @@ def main():
                                            exceptions=exceptions,
                                            timing=args.timing,
                                            verbose=args.verbose, trace=args.trace, dbs=dbs)
+
+    if args.join_paths:
+        optimized_workload["ues_join_path"] = optimized_workload[args.out_col].apply(mosp.MospQuery.join_path,
+                                                                                   short=True)
 
     if args.out:
         write_queries_csv(optimized_workload, args.out)
