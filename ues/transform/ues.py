@@ -305,9 +305,9 @@ class TopkUESCardinalityEstimator(JoinCardinalityEstimator):
             # After the MCV bound has been calculated, one special case may occur: the total number of tuples processed
             # for a relation may surpass the actual total number of tuples in that relation. This may happen, if the
             # bounds follow a skewed distribution and the star frequency is rather high. It may also happen, if the
-            # base table has been filtered heavily, and the most frequent values are likely not even part of it anymore.
-            # In any way, the overestimation of tuples has to be compensated. To do so, we calculate an adjustment factor
-            # that will normalize tuples counts again.
+            # base table has been filtered heavily, and the most frequent values are likely not even part of it
+            # anymore. In any way, the overestimation of tuples has to be compensated. To do so, we calculate an
+            # adjustment factor that will normalize tuples counts again.
             if processed_tuples_joined > total_bound_joined:
                 joined_adjustment_factor = self._calculate_adjustment_factor(joined_mcv, total_bound_joined,
                                                                              remainder_hits_joined)
