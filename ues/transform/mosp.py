@@ -558,7 +558,7 @@ class AbstractMospPredicate(abc.ABC):
         if util.contains_multiple(tables):
             raise ValueError("Can only estimate filters with a single table")
         base_table: db.TableRef = util.simplify(tables)
-        count_query = self._expand_predicate_to_mosp_query(base_table)
+        count_query = self._as_mosp_query(base_table)
 
         formatted_query: str = mosp.format(count_query)
 
@@ -580,12 +580,19 @@ class AbstractMospPredicate(abc.ABC):
     def to_mosp(self) -> dict:
         return NotImplemented
 
-    def _expand_predicate_to_mosp_query(self, base_table: db.TableRef, *, count_query: bool = False):
+    def as_full_query(self, *, count_query: bool = True) -> MospQuery:
+        return MospQuery(self._as_mosp_query(self.collect_tables(), count_query=count_query))
+
+    def _as_mosp_query(self, base_table: Union[db.TableRef, List[db.TableRef]], *, count_query: bool = False):
         proj = {"count": "*"} if count_query else "*"
+        base_table = util.simplify(base_table)
+        from_clause = ([{"value": tab.full_name, "name": tab.alias} for tab in base_table]
+                       if util.contains_multiple(base_table)
+                       else {"value": base_table.full_name, "name": base_table.alias})
         return {
             "select": proj,
-            "from": {"value": base_table.full_name, "name": base_table.alias},
-            "where": self.mosp_data
+            "from": from_clause,
+            "where": self.to_mosp()
         }
 
     def _assert_alias_map(self):
