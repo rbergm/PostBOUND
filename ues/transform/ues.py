@@ -260,12 +260,13 @@ class TopkUESCardinalityEstimator(JoinCardinalityEstimator):
 
     def _calculate_n_m_bound(self, joined_attr: db.AttributeRef, candidate_attr: db.AttributeRef,
                              join_tree: "JoinTree") -> int:
-        joined_mcv = self.stats_container.fetch_mcv_list(joined_attr, joined_table=True)
-        candidate_mcv = self.stats_container.fetch_mcv_list(candidate_attr)
-
         # How many tuples are in each "relation"?
         total_bound_joined = self.stats_container.upper_bounds[join_tree]
         total_bound_candidate = self.stats_container.upper_bounds[candidate_attr.table]
+
+        # Fetch the MCVs per attribute
+        joined_mcv = self.stats_container.fetch_mcv_list(joined_attr, joined_table=True, snap_value=total_bound_joined)
+        candidate_mcv = self.stats_container.fetch_mcv_list(candidate_attr, snap_value=total_bound_candidate)
 
         # Calculate the MCV bound
         # This involves keeping track of some bookkeeping information later:
