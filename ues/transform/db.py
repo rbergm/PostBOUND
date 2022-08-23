@@ -305,11 +305,21 @@ class DBSchema:
         return NotImplemented
 
     def reset_caches(self):
+        """Removes all cached content."""
         self.index_map = {}
         self.estimates_cache = {}
         self.mcvs_cache = {}
         self.mcvs_online_cache = {}
         self.tuple_count_cache = {}
+
+    def reset_cursor(self):
+        """Obtains a new database cursor while resetting the current connection. Requires a connection to be set."""
+        if self.connection:
+            self.cursor.close()
+            self.connection.reset()
+            self.cursor = self.connection.cursor()
+        else:
+            warnings.warn("Cannot reset cursor - schema instance has no connection specified.")
 
     def _fetch_columns(self, table_name):
         base_query = "SELECT column_name FROM information_schema.columns WHERE table_name = %s"
