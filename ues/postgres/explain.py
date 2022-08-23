@@ -3,7 +3,8 @@ import enum
 import json
 import re
 import warnings
-from typing import Any, Callable, List, Tuple, Union
+from dataclasses import dataclass
+from typing import Any, Dict, List, Callable, Sequence, Tuple, Union
 
 import numpy as np
 
@@ -564,3 +565,35 @@ def pg_plan_planning_time(raw_plan: dict) -> float:
 def pg_plan_execution_time(raw_plan: dict) -> float:
     """Extracts the execution time from a given (non-parsed!) plan."""
     return raw_plan[0].get("Execution Time", -1000) / 10000
+
+
+@dataclass
+class FilterEstimationAccuracy:
+    expected: int
+    actual: int
+    accuracy_score: float
+
+    def __repr__(self) -> str:
+        return str(self)
+
+    def __str__(self) -> str:
+        return f"expected = {self.expected}, actual = {self.actual}, accuracy = {self.accuracy_score}"
+
+
+def evaluate_filter_estimate_accuracy(query: mosp.MospQuery, *,
+                                      dbs: db.DBSchema = db.DBSchema.get_instance()
+                                      ) -> Dict[db.TableRef, FilterEstimationAccuracy]:
+    estimation_evaluations = {}
+    for table, predicate in query.predicates().filters.contents().items():
+        pg_estimate = predicate.estimate_result_rows(dbs=dbs)
+        predicate_query = predicate.as_full_query(count_query=True)
+        actual_rows = dbs.execute_query(str(predicate_query))
+        score = (pg_estimate+1) / (actual_rows+1)
+        estimation_evaluations[table] = FilterEstimationAccuracy(pg_estimate, actual_rows, score)
+    return estimation_evaluations
+
+
+def max_filter_estimation_deviation(estimates: Sequence[FilterEstimationAccuracy]) -> float:
+    max_overestimation = max(estimate.accuracy_score for estimate in estimates)
+    max_underestimation = min(estimate.accuracy_score for estimate in estimates)
+    return max(max_overestimation, 1 / max_underestimation)

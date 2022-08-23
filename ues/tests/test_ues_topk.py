@@ -1,12 +1,15 @@
 
 import unittest
 import sys
+import warnings
 
+import numpy as np
 import pandas as pd
 
 sys.path.append("../")
 import regression_suite  # noqa: E402
 from transform import db, mosp, ues, util  # noqa: E402, F401
+from postgres import explain  # noqa: E402
 
 
 job_workload = regression_suite.load_job_workload()
@@ -102,8 +105,9 @@ class UpperBoundTests(unittest.TestCase):
                                                                           topk_list_length=1, introspective=True)
             upper_bound = optimization_res.final_bound
             true_cardinality = dbs.execute_query(raw_query)
-            self.assertGreaterEqual(upper_bound, true_cardinality,
-                                    msg=f"Top-K bound must be a true upper bound at query {label}!")
+            if upper_bound < true_cardinality:
+                self._assertFilterEstimationMismatch(query, label=label,
+                                                     true_cardinality=true_cardinality, upper_bound=upper_bound)
 
     def test_top15_tighter_top1(self):
         for label, raw_query in job_workload.items():
@@ -124,8 +128,18 @@ class UpperBoundTests(unittest.TestCase):
                                                                           topk_list_length=15, introspective=True)
             upper_bound = optimization_res.final_bound
             true_cardinality = dbs.execute_query(raw_query)
-            self.assertGreaterEqual(upper_bound, true_cardinality,
-                                    msg=f"Top-K bound must be a true upper bound at query {label}!")
+            if upper_bound < true_cardinality:
+                self._assertFilterEstimationMismatch(query, label=label,
+                                                     true_cardinality=true_cardinality, upper_bound=upper_bound)
+
+    def _assertFilterEstimationMismatch(self, query: mosp.MospQuery, *, label: str = "", dev_treshold: float = 0.3,
+                                        true_cardinality: int = np.nan, upper_bound: int = np.nan):
+        filter_accuracy_evaluation = explain.evaluate_filter_estimate_accuracy(query)
+        max_deviation = explain.max_filter_estimation_deviation(filter_accuracy_evaluation.values())
+        if max_deviation < dev_treshold:
+            self.fail(f"Not a true upper bound at query '{label}': {true_cardinality} > {upper_bound}")
+        else:
+            warnings.warn(f"Not a true upper bound at query '{label}', but filter estimates are inaccurate.")
 
 
 if "__name__" == "__main__":
