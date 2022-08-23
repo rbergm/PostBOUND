@@ -1366,6 +1366,18 @@ def _calculate_join_order(query: mosp.MospQuery, *,
     return util.simplify(partitioned_join_trees)
 
 
+@dataclass
+class _DirectedJoinEdge:
+    partner: db.AttributeRef
+    predicate: mosp.AbstractMospPredicate
+
+    def __repr__(self) -> str:
+        return str(self)
+
+    def __str__(self) -> str:
+        return str(self.partner)
+
+
 def _calculate_join_order_for_join_partition(query: mosp.MospQuery, join_graph: JoinGraph, *,
                                              join_cardinality_estimator: JoinCardinalityEstimator,
                                              base_cardinality_estimator: BaseCardinalityEstimator,
@@ -1380,7 +1392,6 @@ def _calculate_join_order_for_join_partition(query: mosp.MospQuery, join_graph: 
 
     join_tree = JoinTree.empty_join_tree()
     stats = join_cardinality_estimator.stats()
-    DirectedJoinEdge = collections.namedtuple("DirectedJoinEdge", ["partner", "predicate"])
 
     bounds_tracker: Dict[JoinTree, Dict[str, int]] = {}
 
@@ -1463,7 +1474,7 @@ def _calculate_join_order_for_join_partition(query: mosp.MospQuery, join_graph: 
             join_graph.mark_joined(lowest_bound_table, trace=trace)
 
             # FIXME: should this also include all PK/FK joins on the base table?!
-            pk_joins = sorted([DirectedJoinEdge(partner=partner, predicate=predicate) for partner, predicate
+            pk_joins = sorted([_DirectedJoinEdge(partner=partner, predicate=predicate) for partner, predicate
                                in join_graph.free_pk_joins_with(lowest_bound_table).items()],
                               key=lambda fk_join_view: stats.base_estimates[fk_join_view.partner])
             logger("Selected first table:", lowest_bound_table, "with PK/FK joins",
@@ -1543,7 +1554,7 @@ def _calculate_join_order_for_join_partition(query: mosp.MospQuery, join_graph: 
             util.flatten(list(
                 join_graph.used_join_paths(selected_candidate).values())),
             alias_map=query._build_alias_map()))
-        pk_joins = sorted([DirectedJoinEdge(partner=partner, predicate=predicate) for partner, predicate
+        pk_joins = sorted([_DirectedJoinEdge(partner=partner, predicate=predicate) for partner, predicate
                            in join_graph.free_pk_joins_with(selected_candidate).items()],
                           key=lambda fk_join_view: stats.base_estimates[fk_join_view.partner])
         logger("Selected next table:", selected_candidate, "with PK/FK joins",
