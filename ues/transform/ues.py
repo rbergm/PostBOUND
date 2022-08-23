@@ -142,6 +142,15 @@ class _TopKList:
     def min_frequency(self) -> int:
         return min(self.mcv_data.values(), default=1)
 
+    def snap_to(self, snap_value: int) -> "_TopKList":
+        snapped_mcv = [(val, min(freq, snap_value)) for val, freq in self.mcv_list]
+        snapped_remainder = min(self.remainder_frequency, snap_value)
+        return _TopKList(snapped_mcv, remainder_frequency=snapped_remainder,
+                         associated_attribute=self.associated_attribute)
+
+    def intersects_with(self, other: "_TopKList") -> bool:
+        return not self.mcv_data.keys().isdisjoint(other.mcv_data.keys())
+
     def join_cardinality_with(self, other: "_TopKList") -> int:
         cardinality_sum = 0
         for value in self:
@@ -150,11 +159,15 @@ class _TopKList:
             cardinality_sum += self[value] * other[value]
         return cardinality_sum
 
-    def snap_to(self, snap_value: int) -> "_TopKList":
-        snapped_mcv = [(val, min(freq, snap_value)) for val, freq in self.mcv_list]
-        snapped_remainder = min(self.remainder_frequency, snap_value)
-        return _TopKList(snapped_mcv, remainder_frequency=snapped_remainder,
-                         associated_attribute=self.associated_attribute)
+    def merge_with(self, other: "_TopKList") -> "_TopKList":
+        merged_list = []
+        for value in self:
+            merged_list.append((value, self[value] * other[value]))
+        for value in [value for value in other if value not in self]:
+            merged_list.append((value, self[value] * other[value]))
+        merged_list.sort(key=operator.itemgetter(1))
+        remainder_freq = self.remainder_frequency * other.remainder_frequency
+        return _TopKList(merged_list, remainder_frequency=remainder_freq)
 
     def __getitem__(self, value: Any) -> int:
         return self.mcv_data.get(value, self.remainder_frequency)
@@ -265,42 +278,46 @@ class TopkUESCardinalityEstimator(JoinCardinalityEstimator):
         mcv_bound, processed_tuples_joined, processed_tuples_candidate = 0, 0, 0
         remainder_hits_joined, remainder_hits_candidate = 0, 0
 
-        # Phase 1
-        for joined_value in joined_mcv:
-            # bound calculation
-            joined_freq, candidate_freq = joined_mcv[joined_value], candidate_mcv[joined_value]
-            mcv_bound += joined_freq * candidate_freq
+        if joined_mcv.intersects_with(candidate_mcv):
 
-            # bookkeeping
-            processed_tuples_joined += joined_freq
-            processed_tuples_candidate += candidate_freq
-            remainder_hits_candidate += 1 if joined_value not in candidate_mcv else 0
+            # Phase 1
+            for joined_value in joined_mcv:
+                # bound calculation
+                joined_freq, candidate_freq = joined_mcv[joined_value], candidate_mcv[joined_value]
+                mcv_bound += joined_freq * candidate_freq
 
-        # Phase 2
-        for candidate_value in [value for value in candidate_mcv if value not in joined_mcv]:
-            # bound calculation
-            joined_freq, candidate_freq = joined_mcv[candidate_value], candidate_mcv[candidate_value]
-            mcv_bound += joined_freq * candidate_freq
+                # bookkeeping
+                processed_tuples_joined += joined_freq
+                processed_tuples_candidate += candidate_freq
+                remainder_hits_candidate += 1 if joined_value not in candidate_mcv else 0
 
-            # bookkeeping
-            processed_tuples_joined += joined_freq
-            processed_tuples_candidate += candidate_freq
-            remainder_hits_joined += 1
+            # Phase 2
+            for candidate_value in [value for value in candidate_mcv if value not in joined_mcv]:
+                # bound calculation
+                joined_freq, candidate_freq = joined_mcv[candidate_value], candidate_mcv[candidate_value]
+                mcv_bound += joined_freq * candidate_freq
 
-        # After the MCV bound has been calculated, one special case may occur: the total number of tuples processed
-        # for a relation may surpass the actual total number of tuples in that relation. This may happen, if the
-        # bounds follow a skewed distribution and the star frequency is rather high. It may also happen, if the
-        # base table has been filtered heavily, and the most frequent values are likely not even part of it anymore.
-        # In any way, the overestimation of tuples has to be compensated. To do so, we calculate an adjustment factor
-        # that will normalize tuples counts again.
-        if processed_tuples_joined > total_bound_joined:
-            joined_adjustment_factor = self._calculate_adjustment_factor(joined_mcv, total_bound_joined,
-                                                                         remainder_hits_joined)
-            mcv_bound *= joined_adjustment_factor
-        if processed_tuples_candidate > total_bound_candidate:
-            candidate_adjustment_factor = self._calculate_adjustment_factor(candidate_mcv, total_bound_candidate,
-                                                                            remainder_hits_candidate)
-            mcv_bound *= candidate_adjustment_factor
+                # bookkeeping
+                processed_tuples_joined += joined_freq
+                processed_tuples_candidate += candidate_freq
+                remainder_hits_joined += 1
+
+            # After the MCV bound has been calculated, one special case may occur: the total number of tuples processed
+            # for a relation may surpass the actual total number of tuples in that relation. This may happen, if the
+            # bounds follow a skewed distribution and the star frequency is rather high. It may also happen, if the
+            # base table has been filtered heavily, and the most frequent values are likely not even part of it anymore.
+            # In any way, the overestimation of tuples has to be compensated. To do so, we calculate an adjustment factor
+            # that will normalize tuples counts again.
+            if processed_tuples_joined > total_bound_joined:
+                joined_adjustment_factor = self._calculate_adjustment_factor(joined_mcv, total_bound_joined,
+                                                                             remainder_hits_joined)
+                mcv_bound *= joined_adjustment_factor
+            if processed_tuples_candidate > total_bound_candidate:
+                candidate_adjustment_factor = self._calculate_adjustment_factor(candidate_mcv, total_bound_candidate,
+                                                                                remainder_hits_candidate)
+                mcv_bound *= candidate_adjustment_factor
+        else:
+            pass
 
         # Finally, we have to calculate a bound on all values that are in neither MCV list. To do so, we fall back
         # to an UES estimation, but with much lower starting values.
@@ -319,7 +336,7 @@ class TopkUESCardinalityEstimator(JoinCardinalityEstimator):
         factor = total_bound / (remainder_hits * mcv_list.remainder_frequency + mcv_list.frequency_sum())
 
         # some sanity, mostly to quickly try other formulas without breaking too much
-        return min(factor, 1) if factor > 0 else 1
+        return min(factor, 1) if factor > 0 else 1  # ensure 0 < factor <= 1
 
 
 def _is_pk_fk_join(join: mosp.MospBasePredicate, *, dbs: db.DBSchema = db.DBSchema.get_instance()) -> bool:
@@ -1136,7 +1153,7 @@ class _TopKTableBoundStatistics(_TableBoundStatistics[_TopKList]):
             # TODO: snap to absolute cardinality increase?
             candidate_mcv = self.fetch_mcv_list(candidate_attr, snap_value=absolute_cardinality_increase)
 
-            merged_mcv = self._merge_mcv_lists(joined_mcv, candidate_mcv)
+            merged_mcv = joined_mcv.merge_with(candidate_mcv).snap_to(current_bound)
             update_set[joined_attr] = (merged_mcv, merged_mcv.max_frequency())
             update_set[candidate_attr] = (merged_mcv, merged_mcv.max_frequency())
 
@@ -1169,16 +1186,6 @@ class _TopKTableBoundStatistics(_TableBoundStatistics[_TopKList]):
             if fk_frequency < min_fk_freq:
                 min_fk_freq = fk_frequency
         self._jf.store_multiplier(fk_table, min_fk_freq)
-
-    def _merge_mcv_lists(self, mcv_a: _TopKList, mcv_b: _TopKList) -> _TopKList:
-        merged_list = []
-        for value in mcv_a:
-            merged_list.append((value, mcv_a[value] * mcv_b[value]))
-        for value in [value for value in mcv_b if value not in mcv_a]:
-            merged_list.append((value, mcv_a[value] * mcv_b[value]))
-        merged_list.sort(key=operator.itemgetter(1))
-        remainder_freq = mcv_a.remainder_frequency * mcv_b.remainder_frequency
-        return _TopKList(merged_list, remainder_frequency=remainder_freq)
 
 
 @dataclass
