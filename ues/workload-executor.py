@@ -34,7 +34,7 @@ def make_logger(logging_enabled: bool = True):
 
 
 def exit_handler(sig, frame, logger=dummy_logger):
-    logger("Ctl+C received, exiting")
+    logger("\nCtl+C received, exiting")
     sys.exit(1)
 
 
