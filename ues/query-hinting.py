@@ -84,10 +84,14 @@ def bound_hints(input_df: pd.DataFrame, query_col: str, bound_col: str, hint_col
 
 
 def operator_hints(input_df: pd.DataFrame, query_col: str, bound_col: str, hint_col: str, *,
+                   indexlookup_penalty: float = hint.DEFAULT_IDXLOOKUP_PENALTY,
+                   hashjoin_penalty: float = hint.DEFAULT_HASHJOIN_PENALTY,
                    verbose: bool = False) -> pd.DataFrame:
     df = input_df.copy()
     hinted_queries = df.apply(lambda query_row: hint.operator_hints(query_row[query_col],
                                                                     query_row[f"{bound_col}_internal"],
+                                                                    indexlookup_penalty=indexlookup_penalty,
+                                                                    hashjoin_penalty=hashjoin_penalty,
                                                                     verbose=verbose),
                               axis="columns")
     df[hint_col] = hinted_queries.apply(hint.HintedMospQuery.generate_sqlcomment, strip_empty=True)
@@ -113,6 +117,11 @@ def main():
     parser.add_argument("--nlj-scope", action="store", default="first", choices=["first", "all"], help="For "
                         "'ues-idxnlj'-mode: How many Index-Nested loop joins should be generated. Can be either "
                         "'first' denoting only the innermost join, or 'all', denoting all joins.")
+    parser.add_argument("--hashjoin-penalty", action="store", type=float, default=hint.DEFAULT_HASHJOIN_PENALTY,
+                        help="For operator bounds mode: value in (0, 1] to penalize hash-joined tuples.")
+    parser.add_argument("--idxlookup-penalty", action="store", type=float, default=hint.DEFAULT_IDXLOOKUP_PENALTY,
+                        help="For operator bounds mode: value in (0, 1] to penalize each tuple in the index part of "
+                        "an Index NLJ.")
     parser.add_argument("--bounds-col", action="store", default="ues_bounds", help="For bounds modes: the column"
                         "which contains the bound information. Should be formatted as produced by ues-generator.py.")
     parser.add_argument("--out", "-o", action="store", default="out.csv", help="Name of the CSV file to store the "
@@ -134,7 +143,9 @@ def main():
     elif args.mode == "ues-bounds":
         df = bound_hints(df, args.query_col, args.bounds_col, args.hint_col)
     elif args.mode == "ues-operators":
-        df = operator_hints(df, args.query_col, args.bounds_col, args.hint_col, verbose=args.verbose)
+        df = operator_hints(df, args.query_col, args.bounds_col, args.hint_col,
+                            indexlookup_penalty=args.idxlookup_penalty, hashjoin_penalty=args.hashjoin_penalty,
+                            verbose=args.verbose)
 
     if args.mode in bounds_modes:
         df.drop(columns=f"{args.bounds_col}_internal", inplace=True)
