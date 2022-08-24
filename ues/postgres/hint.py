@@ -198,12 +198,13 @@ def operator_hints(query: mosp.MospQuery, bounds_data: Dict[FrozenSet[db.TableRe
                    indexlookup_penalty: float = DEFAULT_IDXLOOKUP_PENALTY,
                    hashjoin_estimator: Callable[[int, int], float] = None,
                    nlj_estimator: Callable[[int, int], float] = None,
+                   stats_collector: Dict[str, int] = None,
                    verbose: bool = False) -> HintedMospQuery:
     indexlookup_penalty = DEFAULT_IDXLOOKUP_PENALTY if indexlookup_penalty is None else indexlookup_penalty
     hashjoin_penalty = DEFAULT_HASHJOIN_PENALTY if hashjoin_penalty is None else hashjoin_penalty
     hinted_query = HintedMospQuery(query)
     visited_tables = [query.base_table()]
-    selection_stats = collections.defaultdict(int)
+    selection_stats = stats_collector if stats_collector is not None else collections.defaultdict(int)
 
     for join in query.joins():
         if join.is_subquery():

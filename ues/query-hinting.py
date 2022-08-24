@@ -1,15 +1,18 @@
 #!/usr/bin/env python3
 
 import argparse
+import collections
 import json
 import operator
+import pprint
 import re
+import sys
 import warnings
 from typing import Dict, FrozenSet, List, Union
 
 import pandas as pd
 
-from transform import db, mosp
+from transform import db, mosp, util
 from postgres import hint
 
 
@@ -87,18 +90,27 @@ def operator_hints(input_df: pd.DataFrame, query_col: str, bound_col: str, hint_
                    indexlookup_penalty: float = hint.DEFAULT_IDXLOOKUP_PENALTY,
                    hashjoin_penalty: float = hint.DEFAULT_HASHJOIN_PENALTY,
                    verbose: bool = False) -> pd.DataFrame:
+    log = util.make_logger(verbose)
+    log_pretty = util.make_logger(verbose, pretty=True)
+
+    log("IdxLookup penalty:", indexlookup_penalty, "|| HashJoin penalty:", hashjoin_penalty)
+
     df = input_df.copy()
+    stats_collector = collections.defaultdict(int) if verbose else None
     hinted_queries = df.apply(lambda query_row: hint.operator_hints(query_row[query_col],
                                                                     query_row[f"{bound_col}_internal"],
                                                                     indexlookup_penalty=indexlookup_penalty,
                                                                     hashjoin_penalty=hashjoin_penalty,
-                                                                    verbose=verbose),
+                                                                    stats_collector=stats_collector),
                               axis="columns")
     df[hint_col] = hinted_queries.apply(hint.HintedMospQuery.generate_sqlcomment, strip_empty=True)
     df["operator_bounds"] = (hinted_queries
                              .apply(operator.attrgetter("bounds_stats"))
                              .apply(stringify_operator_bounds)
                              .apply(json.dumps))
+
+    log("Applied operators:")
+    log_pretty(dict(stats_collector))
     return df
 
 

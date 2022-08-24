@@ -2,9 +2,11 @@
 import argparse
 import collections
 import collections.abc
+import functools
 import itertools
 import numbers
 import os
+import pprint
 import sys
 import typing
 import warnings
@@ -206,12 +208,15 @@ def pull_any(iterable: Iterable[_T], *, strict: bool = True) -> _T:
     return next(iter(iterable), None)
 
 
-def make_logger(enabled: bool = True, *, file: IO[str] = sys.stderr):
+def make_logger(enabled: bool = True, *, file: IO[str] = sys.stderr, pretty: bool = False):
     def _log(*args, **kwargs):
         print(*args, file=file, **kwargs)
 
     def _dummy_log(*args, **kwargs):
         pass
+
+    if pretty and enabled:
+        return functools.partial(pprint.pprint, stream=file)
 
     return _log if enabled else _dummy_log
 
