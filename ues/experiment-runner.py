@@ -143,7 +143,7 @@ def main():
         df_results = executor.run_workload(workload, workload_col, pg_cursor,
                                            pg_args=postgres_params, query_mod=query_mod, hint_col=args.hint_col,
                                            shuffle=args.randomized,
-                                           logger=executor.make_logger(args.trace))
+                                           log_progress=args.trace)
         df_results["run"] = run
         workload_results.append(df_results)
 

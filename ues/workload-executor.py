@@ -12,13 +12,19 @@ import warnings
 from datetime import datetime
 from typing import List
 
+import numpy as np
 import pandas as pd
 import psycopg2
+
+from transform import util
 
 SQL_COMMENT_PREFIX = "--"
 DEFAULT_WORKLOAD_COL = "query"
 EXPLAIN_PREFIX = "explain"
 ANALYZE_PREFIX = re.compile(r"explain ((\(.*analyze.*\))|(analyze))")
+
+
+executed_queries_counter = util.AtomicInt()
 
 
 def log(*args, **kwargs):
@@ -36,6 +42,18 @@ def make_logger(logging_enabled: bool = True):
 def exit_handler(sig, frame, logger=dummy_logger):
     logger("\nCtl+C received, exiting")
     sys.exit(1)
+
+
+def progress_logger(log, total_queries):
+    global executed_queries_counter
+
+    def _logger():
+        global executed_queries_counter
+        executed_queries_counter.increment()
+        current_value = executed_queries_counter.value()
+        if current_value % (total_queries // 10) == 0 and current_value:
+            log("Now executing query", current_value, "of", total_queries)
+    return _logger
 
 
 class QueryMod:
@@ -140,19 +158,23 @@ def execute_query(query, workload_prefix: str, cursor: "psycopg2.cursor", *,
 
 
 def execute_query_wrapper(workload_row: pd.Series, workload_col: str, cursor: "psycopg2.cursor", *,
-                          pg_args: List[str], query_mod: QueryMod = None, hint_col: str = "", logger=dummy_logger):
+                          pg_args: List[str], query_mod: QueryMod = None, hint_col: str = "",
+                          progress_logger=None, logger=dummy_logger):
     if hint_col:
         hint = workload_row[hint_col]
     else:
         hint = None
+    if progress_logger:
+        progress_logger()
     return execute_query(workload_row[workload_col], workload_prefix=workload_col, cursor=cursor,
                          pg_args=pg_args, query_mod=query_mod, query_hint=hint, logger=logger)
 
 
 def run_workload(workload: pd.DataFrame, workload_col: str, cursor: "psycopg2.cursor", *,
                  pg_args: List[str], query_mod: QueryMod = None, hint_col: str = "", shuffle: bool = False,
-                 logger=dummy_logger):
+                 log_progress: bool = False, logger=dummy_logger):
     logger(len(workload), "queries total")
+    log_progress = progress_logger(log, len(workload)) if log_progress else progress_logger(dummy_logger, np.inf)
 
     if shuffle:
         workload = shuffle_workload(workload)
@@ -160,7 +182,7 @@ def run_workload(workload: pd.DataFrame, workload_col: str, cursor: "psycopg2.cu
     workload_res_df = workload.apply(execute_query_wrapper,
                                      workload_col=workload_col, cursor=cursor,
                                      pg_args=pg_args, query_mod=query_mod, hint_col=hint_col,
-                                     logger=logger,
+                                     logger=logger, progress_logger=log_progress,
                                      axis="columns")
     result_df = pd.merge(workload, workload_res_df, left_index=True, right_index=True, how="outer")
     return result_df
@@ -185,6 +207,8 @@ def main():
                         "hints to apply on a per-query basis (as specified by the pg_hint_plan extension).")
     parser.add_argument("--randomized", action="store_true", default=False, help="Execute the queries in a random "
                         "order.")
+    parser.add_argument("--log-progess", action="store_true", default=False, help="Write a progress message to stdout "
+                        "every 1/10th of the total workload.")
     parser.add_argument("--verbose", action="store_true", default=False, help="Produce more debugging output")
 
     args = parser.parse_args()
@@ -203,7 +227,7 @@ def main():
     result_df = run_workload(df_workload, workload_col, pg_cursor, pg_args=args.pg_param,
                              query_mod=query_mod, hint_col=args.hint_col,
                              shuffle=args.randomized,
-                             logger=logger)
+                             log_progress=args.log_progress, logger=logger)
 
     out_file = args.out if args.out else generate_default_out_name()
     result_df.to_csv(out_file, index=False)

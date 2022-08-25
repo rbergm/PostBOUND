@@ -4,10 +4,12 @@ import collections
 import collections.abc
 import functools
 import itertools
+import math
 import numbers
 import os
 import pprint
 import sys
+import threading
 import typing
 import warnings
 from typing import List, Dict, Any, Iterable, Tuple, Union, Callable, IO
@@ -247,3 +249,206 @@ class StateError(RuntimeError):
     """Indicates that an object is not in the right state to perform an opteration."""
     def __init__(self, msg: str = ""):
         super().__init__(msg)
+
+
+class AtomicInt(numbers.Integral):
+    def __init__(self, value: int = 0):
+        self._value = value
+        self._lock = threading.Lock()
+
+    def value(self) -> int:
+        with self._lock:
+            return self._value
+
+    def increment(self, by: int = 1) -> None:
+        with self._lock:
+            self._value += by
+
+    def _assert_integral(self, other: Any):
+        if not isinstance(other, numbers.Integral):
+            raise TypeError(f"Cannot add argument of type {type(other)} to object of type AtomicInt")
+
+    def _unwrap_atomic(self, other: Any):
+        return other._value if isinstance(other, AtomicInt) else other
+
+    def __abs__(self) -> int:
+        with self._lock:
+            return abs(self._value)
+
+    def __add__(self, other: Any) -> "AtomicInt":
+        self._assert_integral(other)
+        other = self._unwrap_atomic(other)
+        with self._lock:
+            return AtomicInt(self._value + other)
+
+    def __and__(self, other: Any) -> Any:
+        other = self._unwrap_atomic(other)
+        with self._lock:
+            return self._value & other
+
+    def __ceil__(self) -> int:
+        with self._lock:
+            return math.ceil(self._value)
+
+    def __eq__(self, other: object) -> bool:
+        other = self._unwrap_atomic(other)
+        with self._lock:
+            return self._value == other
+
+    def __floor__(self) -> int:
+        with self._lock:
+            return math.floor(self._value)
+
+    def __floordiv__(self, other: Any) -> int:
+        other = self._unwrap_atomic(other)
+        with self._lock:
+            return AtomicInt(self._value // other)
+
+    def __int__(self) -> int:
+        with self._lock:
+            return int(self._value)
+
+    def __invert__(self) -> Any:
+        with self._lock:
+            return ~self._value
+
+    def __le__(self, other: Any) -> bool:
+        other = self._unwrap_atomic(other)
+        with self._lock:
+            return self._value <= other
+
+    def __lshift__(self, other: Any) -> Any:
+        other = self._unwrap_atomic(other)
+        with self._lock:
+            return self._value << other
+
+    def __lt__(self, other: Any) -> bool:
+        other = self._unwrap_atomic(other)
+        with self._lock:
+            return self._value < other
+
+    def __mod__(self, other: Any) -> Any:
+        other = self._unwrap_atomic(other)
+        with self._lock:
+            return self._value % other
+
+    def __mul__(self, other: Any) -> "AtomicInt":
+        self._assert_integral(other)
+        other = self._unwrap_atomic(other)
+        with self._lock:
+            return AtomicInt(self._value * other)
+
+    def __neg__(self) -> "AtomicInt":
+        with self._lock:
+            return AtomicInt(-self._value)
+
+    def __or__(self, other: Any) -> Any:
+        other = self._unwrap_atomic(other)
+        with self._lock:
+            return self._value | other
+
+    def __pos__(self) -> Any:
+        with self._lock:
+            return +self.value
+
+    def __pow__(self, exponent: Any, modulus: Union[Any, None] = ...) -> "AtomicInt":
+        with self._lock:
+            res = self._value ** exponent
+            if res != int(res):
+                raise ValueError(f"Power not support for type AtomicInt with argument {exponent}")
+            return AtomicInt(res)
+
+    def __radd__(self, other: Any) -> Any:
+        other = self._unwrap_atomic(other)
+        with self._lock:
+            return other + self._value
+
+    def __rand__(self, other: Any) -> Any:
+        other = self._unwrap_atomic(other)
+        with self._lock:
+            return other + self._value
+
+    def __rfloordiv__(self, other: Any) -> "AtomicInt":
+        other = self._unwrap_atomic(other)
+        with self._lock:
+            return other // self._value
+
+    def __rlshift__(self, other: Any) -> Any:
+        other = self._unwrap_atomic(other)
+        with self._lock:
+            return other << self._value
+
+    def __rmod__(self, other: Any) -> Any:
+        other = self._unwrap_atomic(other)
+        with self._lock:
+            return other % self._value
+
+    def __rmod__(self, other: Any) -> Any:
+        other = self._unwrap_atomic(other)
+        with self._lock:
+            return other * self._value
+
+    def __rmul__(self, other: Any) -> Any:
+        other = self._unwrap_atomic(other)
+        with self._lock:
+            return other * self._value
+
+    def __ror__(self, other: Any) -> Any:
+        other = self._unwrap_atomic(other)
+        with self._lock:
+            return other | self._value
+
+    def __round__(self, ndigits: Union[int, None] = None) -> int:
+        with self._lock:
+            return self._value
+
+    def __rpow__(self, base: Any) -> Any:
+        base = self._unwrap_atomic(base)
+        with self._lock:
+            return base ** self._value
+
+    def __rrshift__(self, other: Any) -> Any:
+        other = self._unwrap_atomic(other)
+        with self._lock:
+            return other >> self._value
+
+    def __rshift__(self, other: Any) -> Any:
+        other = self._unwrap_atomic(other)
+        with self._lock:
+            return self._value << other
+
+    def __rtruediv__(self, other: Any) -> Any:
+        other = self._unwrap_atomic(other)
+        with self._lock:
+            return other / self._value
+
+    def __rxor__(self, other: Any) -> Any:
+        other = self._unwrap_atomic(other)
+        with self._lock:
+            return other ^ self._value
+
+    def __truediv__(self, other: Any) -> Any:
+        other = self._unwrap_atomic(other)
+        with self._lock:
+            return self._value / other
+
+    def __trunc__(self) -> int:
+        with self._lock:
+            return math.trunc(self._value)
+
+    def __xor__(self, other: Any) -> Any:
+        other = self._unwrap_atomic(other)
+        with self._lock:
+            return self._value ^ other
+
+    def __hash__(self) -> int:
+        with self._lock:
+            return hash(self._value)
+
+    def __repr__(self) -> str:
+        with self._lock:
+            return f"AtomicInt({self._value})"
+
+    def __str__(self) -> str:
+        with self._lock:
+            return str(self._value)
