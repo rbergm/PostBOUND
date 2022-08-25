@@ -1,6 +1,7 @@
 
 import collections
 import enum
+import math
 import pprint
 from dataclasses import dataclass
 from typing import Dict, FrozenSet, List, Callable, Tuple
@@ -189,8 +190,8 @@ def bound_hints(query: mosp.MospQuery, bounds_data: Dict[FrozenSet[db.TableRef],
     return hinted_query
 
 
-DEFAULT_IDXLOOKUP_PENALTY: float = 0.1
-DEFAULT_HASHJOIN_PENALTY: float = 0.15
+DEFAULT_IDXLOOKUP_PENALTY: float = 0.8
+DEFAULT_HASHJOIN_PENALTY: float = 0.05
 
 
 def operator_hints(query: mosp.MospQuery, bounds_data: Dict[FrozenSet[db.TableRef], JoinBoundsData], *,
@@ -228,7 +229,7 @@ def operator_hints(query: mosp.MospQuery, bounds_data: Dict[FrozenSet[db.TableRe
                 # The smaller relation will become the outer loop and the larger relation the inner loop to profit the
                 # most from index lookups. Therefore the inner relation will be penalized according to the indexlookup
                 # penalty.
-                nlj_cost = min_bound + (1 + indexlookup_penalty) * max_bound
+                nlj_cost = min_bound * (1 + indexlookup_penalty) * math.log(max_bound)
 
             if hashjoin_estimator:
                 hashjoin_cost = hashjoin_estimator(min_bound, max_bound)
@@ -238,7 +239,7 @@ def operator_hints(query: mosp.MospQuery, bounds_data: Dict[FrozenSet[db.TableRe
                 # according to the hashjoin penalty. The larger relation will be used to perform the hash table
                 # lookups. Hash table lookups are rather cheap but still not for free. Therefore we penalize usage
                 # of the inner (larger) relation by 0.5 * penalty.
-                hashjoin_cost = (1 + hashjoin_penalty) * min_bound + (1 + (hashjoin_penalty/2)) * max_bound
+                hashjoin_cost = (1 + hashjoin_penalty) * min_bound + max_bound
 
             mergejoin_cost = np.inf  # don't consider Sort-Merge join for now
 
