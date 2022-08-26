@@ -39,6 +39,10 @@ def make_logger(logging_enabled: bool = True):
     return log if logging_enabled else dummy_logger
 
 
+def time():
+    return datetime.now().strftime("%y-%m-%d, %H:%M")
+
+
 def exit_handler(sig, frame, logger=dummy_logger):
     logger("\nCtl+C received, exiting")
     sys.exit(1)
@@ -52,7 +56,7 @@ def progress_logger(log, total_queries):
         executed_queries_counter.increment()
         current_value = executed_queries_counter.value()
         if current_value % (total_queries // 10) == 0 and current_value:
-            log("Now executing query", current_value, "of", total_queries)
+            log(f"Now executing query {current_value} of {total_queries} at {time()}")
     return _logger
 
 
