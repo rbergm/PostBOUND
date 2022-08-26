@@ -256,13 +256,21 @@ class AtomicInt(numbers.Integral):
         self._value = value
         self._lock = threading.Lock()
 
-    def value(self) -> int:
-        with self._lock:
-            return self._value
-
     def increment(self, by: int = 1) -> None:
         with self._lock:
             self._value += by
+
+    def reset(self) -> None:
+        with self._lock:
+            self._value = 0
+
+    def _get_value(self) -> int:
+        with self._lock:
+            return self._value
+
+    def _set_value(self, value: int) -> None:
+        with self._lock:
+            self._value = value
 
     def _assert_integral(self, other: Any):
         if not isinstance(other, numbers.Integral):
@@ -270,6 +278,8 @@ class AtomicInt(numbers.Integral):
 
     def _unwrap_atomic(self, other: Any):
         return other._value if isinstance(other, AtomicInt) else other
+
+    value = property(_get_value, _set_value)
 
     def __abs__(self) -> int:
         with self._lock:

@@ -54,7 +54,7 @@ def progress_logger(log, total_queries):
     def _logger():
         global executed_queries_counter
         executed_queries_counter.increment()
-        current_value = executed_queries_counter.value()
+        current_value = executed_queries_counter.value
         if current_value % (total_queries // 10) == 0 and current_value:
             log(f"Now executing query {current_value} of {total_queries} at {time()}")
     return _logger
@@ -177,8 +177,11 @@ def execute_query_wrapper(workload_row: pd.Series, workload_col: str, cursor: "p
 def run_workload(workload: pd.DataFrame, workload_col: str, cursor: "psycopg2.cursor", *,
                  pg_args: List[str], query_mod: QueryMod = None, hint_col: str = "", shuffle: bool = False,
                  log_progress: bool = False, logger=dummy_logger):
+    global executed_queries_counter
+
     logger(len(workload), "queries total")
     log_progress = progress_logger(log, len(workload)) if log_progress else progress_logger(dummy_logger, np.inf)
+    executed_queries_counter.reset()
 
     if shuffle:
         workload = shuffle_workload(workload)
