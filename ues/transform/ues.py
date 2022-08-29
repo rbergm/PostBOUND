@@ -703,7 +703,7 @@ class JoinTree:
     def at_base_table(self) -> "JoinTree":
         if self.is_empty():
             raise util.StateError("Empty join tree")
-        if self.is_singular():
+        if self.right_is_base_table():
             return self
         return self.right.at_base_table()
 
@@ -1344,6 +1344,11 @@ class JoinOrderOptimizationResult:
     regular: bool
 
 
+class BoundsTracker:
+    def __init__(self, query: mosp.MospQuery):
+        self.query = query
+
+
 def _calculate_join_order(query: mosp.MospQuery, *,
                           join_estimator: JoinCardinalityEstimator = None,
                           base_estimator: BaseCardinalityEstimator = PostgresCardinalityEstimator(),
@@ -1480,6 +1485,7 @@ def _calculate_join_order_for_join_partition(query: mosp.MospQuery, join_graph: 
         if join_tree.is_empty():
             join_tree = join_tree.with_base_table(lowest_bound_table)
             join_graph.mark_joined(lowest_bound_table, trace=trace)
+            bounds_tracker[join_tree] = {"bound": lowest_min_bound, "input_bounds": []}
 
             # FIXME: should this also include all PK/FK joins on the base table?!
             pk_joins = sorted([_DirectedJoinEdge(partner=partner, predicate=predicate) for partner, predicate
@@ -1499,7 +1505,6 @@ def _calculate_join_order_for_join_partition(query: mosp.MospQuery, join_graph: 
                 stats.init_pk_join(lowest_bound_table, pk_join.predicate)
 
             stats.upper_bounds[join_tree] = lowest_min_bound
-            bounds_tracker[join_tree] = {"bound": lowest_min_bound, "input_bounds": []}
 
             # This has nothing to do with the actual algorithm and is merely some technical code for visualization
             if visualize:
@@ -1571,6 +1576,7 @@ def _calculate_join_order_for_join_partition(query: mosp.MospQuery, join_graph: 
         if pk_joins and subquery_generator.execute_as_subquery(selected_candidate, join_graph, join_tree,
                                                                stats=stats, exceptions=exceptions, query=query):
             subquery_join = JoinTree().with_base_table(selected_candidate)
+            bounds_tracker[subquery_join] = {"bound": stats.base_estimates[selected_candidate], "input_bounds": []}
             for pk_join in pk_joins:
                 trace_logger(".. Adding PK join with", pk_join.partner, "on", pk_join.predicate)
                 subquery_join = subquery_join.joined_with_base_table(pk_join.partner, predicate=pk_join.predicate)

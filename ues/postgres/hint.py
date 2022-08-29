@@ -175,7 +175,33 @@ class JoinBoundsData:
     input_bounds: Tuple[int, int]
 
 
+def _fill_missing_bounds(query: mosp.MospQuery, bounds_data: Dict[FrozenSet[db.TableRef], JoinBoundsData]
+                         ) -> Dict[FrozenSet[db.TableRef], JoinBoundsData]:
+    if not bounds_data:
+        return {}
+
+    filled_bounds = dict(bounds_data)
+    visited_tables = [query.base_table()]
+    previous_working_set = []
+
+    for join in query.joins():
+        if join.is_subquery():
+            subquery_bounds = _fill_missing_bounds(join.subquery, bounds_data)
+            filled_bounds = util.dict_merge(subquery_bounds, filled_bounds)
+
+        previous_working_set = list(visited_tables)
+        visited_tables.extend(join.collect_tables())
+
+        tables_key = frozenset(visited_tables)
+        if tables_key not in filled_bounds:
+            previous_key = frozenset(previous_working_set)
+            filled_bounds[tables_key] = filled_bounds[previous_key]
+
+    return filled_bounds
+
+
 def bound_hints(query: mosp.MospQuery, bounds_data: Dict[FrozenSet[db.TableRef], JoinBoundsData]) -> HintedMospQuery:
+    bounds_data = _fill_missing_bounds(query, bounds_data)
     hinted_query = HintedMospQuery(query)
     visited_tables = [query.base_table()]
     for join in query.joins():
@@ -203,6 +229,7 @@ def operator_hints(query: mosp.MospQuery, bounds_data: Dict[FrozenSet[db.TableRe
                    verbose: bool = False) -> HintedMospQuery:
     indexlookup_penalty = DEFAULT_IDXLOOKUP_PENALTY if indexlookup_penalty is None else indexlookup_penalty
     hashjoin_penalty = DEFAULT_HASHJOIN_PENALTY if hashjoin_penalty is None else hashjoin_penalty
+    bounds_data = _fill_missing_bounds(query, bounds_data)
     hinted_query = HintedMospQuery(query)
     visited_tables = [query.base_table()]
     selection_stats = stats_collector if stats_collector is not None else collections.defaultdict(int)
