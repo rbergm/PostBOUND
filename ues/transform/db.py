@@ -2,6 +2,7 @@
 import atexit
 import json
 import os
+import re
 import textwrap
 import warnings
 from dataclasses import dataclass
@@ -12,10 +13,23 @@ import psycopg2
 from transform import util
 
 
+# see https://regex101.com/r/HdKzQg/1
+TableReferencePattern = re.compile(r"(?P<full_name>\S+) (AS (?P<alias>\S+))?")
+
+
 class TableRef:
     @staticmethod
     def virtual(alias: str) -> "TableRef":
         return TableRef(None, alias, True)
+
+    @staticmethod
+    def parse(raw_table_ref: str) -> "TableRef":
+        match = TableReferencePattern.match(raw_table_ref)
+        if not match:
+            raise ValueError(f"Could not parse table reference for '{raw_table_ref}'")
+        full_name, alias = match.group("full_name", "alias")
+        alias = "" if not alias else alias
+        return TableRef(full_name, alias)
 
     def __init__(self, full_name: str, alias: str = "", virtual: bool = False):
         self.full_name = full_name

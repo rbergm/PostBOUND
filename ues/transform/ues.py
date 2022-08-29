@@ -6,7 +6,7 @@ import operator
 import typing
 import warnings
 from dataclasses import dataclass
-from typing import Any, Dict, Generic, Iterator, List, Set, Union, Tuple
+from typing import Any, Dict, FrozenSet, Generic, Iterator, List, Set, Union, Tuple
 
 import matplotlib.pyplot as plt
 import networkx as nx
@@ -1337,16 +1337,100 @@ def _absorb_pk_fk_hull_of(table: db.TableRef, *, join_graph: JoinGraph, join_tre
 
 
 @dataclass
-class JoinOrderOptimizationResult:
-    final_order: JoinTree
-    intermediate_bounds: Dict[JoinTree, Dict[str, int]]
-    final_bound: int
-    regular: bool
+class TrackerEntry:
+    full_join: List[db.TableRef]
+    candidate_table: db.TableRef
+    join_bound: int
+    candidate_bound: int
+    intermediate_bound: int
 
 
 class BoundsTracker:
-    def __init__(self, query: mosp.MospQuery):
-        self.query = query
+    @staticmethod
+    def load_from_json(json_data: list) -> "BoundsTracker":
+        parsed_entries = {}
+        current_join_path_length = -np.inf
+        current_max_join_path = None
+
+        for raw_entry in json_data:
+            parsed_entry = BoundsTracker._parse_entry(raw_entry)
+            entry_length = len(parsed_entry.full_join)
+            entry_key = frozenset(parsed_entry.full_join)
+            parsed_entries[entry_key] = parsed_entry
+
+            if entry_length > current_join_path_length:
+                current_join_path_length = entry_key
+                current_max_join_path = parsed_entry.full_join
+
+        tracker = BoundsTracker()
+        tracker._bounds_container = parsed_entries
+        tracker._current_join_path = current_max_join_path
+        return tracker
+
+    @staticmethod
+    def _parse_entry(json_data: dict) -> TrackerEntry:
+        if "join" not in json_data:
+            raise ValueError("Not a valid bounds tracker json, no join given: " + str(json_data))
+        parsed_join = [db.TableRef.parse(raw_tab) for raw_tab in json_data["join"]]
+
+        raw_candidate = json_data.get("candidate_table", None)
+        parsed_candidate = db.TableRef.parse(raw_candidate) if raw_candidate else None
+
+        join_bound = json_data.get("join_bound", -1)
+        intermediate_bound = json_data.get("intermediate_bound", -1)
+        candidate_bound = json_data.get("candidate_bound", -1)
+        return TrackerEntry(parsed_join, parsed_candidate, join_bound, candidate_bound, intermediate_bound)
+
+    def __init__(self, query: mosp.MospQuery = None):
+        self._query = query
+        self._bounds_container: Dict[FrozenSet[db.TableRef], TrackerEntry] = {}
+        self._current_join_path: List[db.TableRef] = []
+
+    def current_bound(self) -> int:
+        key = frozenset(self._current_join_path)
+        return self._bounds_container[key]
+
+    def initialize(self, first_table: db.TableRef, bound: int) -> None:
+        entry = TrackerEntry([first_table], first_table, bound, bound, 0)
+        key = frozenset([first_table])
+        self._bounds_container[key] = entry
+        self._current_join_path.append(first_table)
+
+    def store_n_m_bound(self, next_table: db.TableRef, candidate_bound: int, join_bound: int) -> None:
+        full_path = self._current_join_path + [next_table]
+        entry = TrackerEntry(full_path, next_table, join_bound, candidate_bound,
+                             self._bounds_container[self._current_join_path])
+        key = frozenset(full_path)
+        self._bounds_container[key] = entry
+        self._current_join_path.append(next_table)
+
+    def merge_with(self, other_tracker: "BoundsTracker", join_bound: int = None) -> None:
+        join_bound = self.current_bound() * other_tracker.current_bound() if not join_bound else join_bound
+        self._bounds_container = util.dict_merge(other_tracker._bounds_container, self._bounds_container)
+        full_path = self._current_join_path + other_tracker._current_join_path
+        key = frozenset(full_path)
+        self._bounds_container[key] = join_bound
+        self._current_join_path.extend(other_tracker._current_join_path)
+
+    def jsonize(self) -> list:
+        jsonized_entries = []
+        for entry in self._bounds_container.values():
+            jsonized_entries.append({
+                "join": [str(tab) for tab in entry.full_join],
+                "join_bound": entry.join_bound,
+                "intermediate_bound": entry.intermediate_bound,
+                "candidate_table": str(entry.candidate_table),
+                "candidate_bound": entry.candidate_bound
+            })
+        return jsonized_entries
+
+
+@dataclass
+class JoinOrderOptimizationResult:
+    final_order: JoinTree
+    intermediate_bounds: BoundsTracker
+    final_bound: int
+    regular: bool
 
 
 def _calculate_join_order(query: mosp.MospQuery, *,
@@ -1406,7 +1490,7 @@ def _calculate_join_order_for_join_partition(query: mosp.MospQuery, join_graph: 
     join_tree = JoinTree.empty_join_tree()
     stats = join_cardinality_estimator.stats()
 
-    bounds_tracker: Dict[JoinTree, Dict[str, int]] = {}
+    bounds_tracker = BoundsTracker(query)
 
     if join_graph.count_tables() == 1:
         trace_logger(".. No joins found")
@@ -1485,7 +1569,6 @@ def _calculate_join_order_for_join_partition(query: mosp.MospQuery, join_graph: 
         if join_tree.is_empty():
             join_tree = join_tree.with_base_table(lowest_bound_table)
             join_graph.mark_joined(lowest_bound_table, trace=trace)
-            bounds_tracker[join_tree] = {"bound": lowest_min_bound, "input_bounds": []}
 
             # FIXME: should this also include all PK/FK joins on the base table?!
             pk_joins = sorted([_DirectedJoinEdge(partner=partner, predicate=predicate) for partner, predicate
@@ -1505,6 +1588,7 @@ def _calculate_join_order_for_join_partition(query: mosp.MospQuery, join_graph: 
                 stats.init_pk_join(lowest_bound_table, pk_join.predicate)
 
             stats.upper_bounds[join_tree] = lowest_min_bound
+            bounds_tracker.initialize(lowest_bound_table, lowest_min_bound)
 
             # This has nothing to do with the actual algorithm and is merely some technical code for visualization
             if visualize:
@@ -1576,7 +1660,6 @@ def _calculate_join_order_for_join_partition(query: mosp.MospQuery, join_graph: 
         if pk_joins and subquery_generator.execute_as_subquery(selected_candidate, join_graph, join_tree,
                                                                stats=stats, exceptions=exceptions, query=query):
             subquery_join = JoinTree().with_base_table(selected_candidate)
-            bounds_tracker[subquery_join] = {"bound": stats.base_estimates[selected_candidate], "input_bounds": []}
             for pk_join in pk_joins:
                 trace_logger(".. Adding PK join with", pk_join.partner, "on", pk_join.predicate)
                 subquery_join = subquery_join.joined_with_base_table(pk_join.partner, predicate=pk_join.predicate)
@@ -1586,6 +1669,10 @@ def _calculate_join_order_for_join_partition(query: mosp.MospQuery, join_graph: 
                                                       base_table_estimates=stats.base_estimates,
                                                       pk_only=True)
             join_tree = join_tree.joined_with_subquery(subquery_join, predicate=join_predicate, checkpoint=True)
+
+            subquery_bounds_tracker = BoundsTracker()
+            subquery_bounds_tracker.initialize(selected_candidate, stats.base_estimates[selected_candidate])
+            bounds_tracker.merge_with(subquery_bounds_tracker)
             logger(".. Creating subquery for PK joins", subquery_join)
         else:
             join_tree = join_tree.joined_with_base_table(selected_candidate, predicate=join_predicate, checkpoint=True)
@@ -1600,10 +1687,7 @@ def _calculate_join_order_for_join_partition(query: mosp.MospQuery, join_graph: 
 
         # Update our statistics based on the join(s) we just executed.
         stats.upper_bounds[join_tree] = lowest_min_bound
-        bounds_tracker[join_tree] = {"bound": lowest_min_bound,
-                                     "input_bounds": [stats.base_estimates[selected_candidate],
-                                                      stats.upper_bounds[join_tree.previous_checkpoint()]]
-                                     }
+        bounds_tracker.store_n_m_bound(selected_candidate, stats.base_estimates[selected_candidate], lowest_min_bound)
         stats.update_frequencies(selected_candidate, join_predicate, join_tree=join_tree)
 
         # This has nothing to do with the actual algorithm and is merely some technical code for visualization
@@ -1858,18 +1942,11 @@ def optimize_query(query: mosp.MospQuery, *,
         # But we do not only need the query if introspection is on. In addition, we need to inform the user of the
         # optimization method about the upper bounds that have been calculated along the way.
         # In order to do so, we need to merge the partial upper bounds of all the subqueries/cross product parts
-        merged_bounds = {}
+        merged_bounds = BoundsTracker()
         for intermediate_bounds in [partial_result.intermediate_bounds for partial_result
                                     in ordered_join_trees if partial_result.intermediate_bounds]:
-            merged_bounds = util.dict_merge(merged_bounds, intermediate_bounds)
-
-        # And lastly, we also need to include the final join tree in the bounds. For this tree the bound is calculated
-        # on-the-fly
-        cross_product_tree = JoinTree.for_cross_product([res.final_order for res in ordered_join_trees])
-        cross_product_bound = functools.reduce(operator.mul, [res.final_bound for res in ordered_join_trees])
-        merged_bounds[cross_product_tree] = cross_product_bound
-
-        return OptimizationResult(final_query, merged_bounds, cross_product_bound)
+            merged_bounds.merge_with(intermediate_bounds)
+        return OptimizationResult(final_query, merged_bounds, merged_bounds.current_bound())
     elif optimization_result:
         # If our query does not contain cross-products, our job is singificantly easier - just extract the necessary
         # data and supply it in a nice format.
