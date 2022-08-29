@@ -4,6 +4,7 @@ import collections
 import collections.abc
 import functools
 import itertools
+import json
 import math
 import numbers
 import os
@@ -462,3 +463,15 @@ class AtomicInt(numbers.Integral):
     def __str__(self) -> str:
         with self._lock:
             return str(self._value)
+
+
+class JsonizeEncoder(json.JSONEncoder):
+    def default(self, obj: Any) -> Any:
+        if "jsonize" in dir(obj):
+            return obj.jsonize()
+        return json.JSONEncoder.default(self, obj)
+
+
+def jsonize(obj: Any, *args, **kwargs) -> str:
+    kwargs.pop("cls", None)
+    return json.dumps(obj, *args, cls=JsonizeEncoder, **kwargs)
