@@ -1,7 +1,7 @@
 # Simplicity++
 
 This repository modifies and extends the UES algorithm for upper bound-based join ordering of SQL queries, which was
-originally proposed by Hertzschuch et al. in [0].
+originally proposed by Hertzschuch et al.[^0].
 
 The implemented modifications have multiple goals:
 
@@ -27,4 +27,4 @@ Lorem ipsum
 
 ## Literature
 
-[0] Simplicity Done Right for Join Ordering - Hertzschuch et al., CIDR'21 ([paper](https://www.cidrdb.org/cidr2021/papers/cidr2021_paper01.pdf), [GitHub](https://github.com/axhertz/SimplicityDoneRight))
+[^0]: Simplicity Done Right for Join Ordering - Hertzschuch et al., CIDR'21 ([paper](https://www.cidrdb.org/cidr2021/papers/cidr2021_paper01.pdf), [GitHub](https://github.com/axhertz/SimplicityDoneRight))
