@@ -4,41 +4,12 @@ import argparse
 import collections
 import json
 import operator
-import pprint
-import re
-import sys
-import warnings
 from typing import Dict, FrozenSet, List, Union
 
 import pandas as pd
 
-from transform import db, mosp, util
+from transform import db, mosp, ues, util
 from postgres import hint
-
-
-# see https://regex101.com/r/HdKzQg/1
-TableReferencePattern = re.compile(r"(?P<full_name>\S+) AS (?P<alias>\S+)")
-
-
-def parse_table_list(raw_tables: List[str]) -> FrozenSet[db.TableRef]:
-    parsed = []
-    for raw_table in raw_tables:
-        table_match = TableReferencePattern.match(raw_table)
-        if not table_match:
-            warnings.warn(f"Could not parse table reference '{raw_table}'")
-            continue
-        full_name, alias = table_match.group("full_name"), table_match.group("alias")
-        parsed.append(db.TableRef(full_name, alias))
-    return frozenset(parsed)
-
-
-def parse_query_bounds(raw_bounds: List[Dict[str, Union[List[str], int]]]
-                       ) -> Dict[FrozenSet[db.TableRef], hint.JoinBoundsData]:
-    parsed = {}
-    for bounds_dict in raw_bounds:
-        tables = parse_table_list(bounds_dict["join"])
-        parsed[tables] = hint.JoinBoundsData(bounds_dict["bound"], bounds_dict["input_bounds"])
-    return parsed
 
 
 def stringify_operator_bounds(bounds: Dict[FrozenSet[db.TableRef], Dict[str, int]]
@@ -62,7 +33,11 @@ def read_input(src: str, query_col: str, *, bound_col: str = "", parse_bounds: b
     df[query_col] = df[query_col].apply(mosp.MospQuery.parse)
 
     if parse_bounds:
-        df[f"{bound_col}_internal"] = df[bound_col].apply(json.loads).apply(parse_query_bounds)
+        df[f"{bound_col}_internal"] = df[bound_col].apply(util.json_read)
+        df[f"{bound_col}_internal"] = df.apply(
+            lambda query_row: ues.BoundsTracker.load_from_json(query_row[f"{bound_col}_internal"],
+                                                               query=query_row[query_col]),
+            axis="columns")
 
     return df
 

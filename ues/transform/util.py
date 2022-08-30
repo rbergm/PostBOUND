@@ -15,6 +15,7 @@ import typing
 import warnings
 from typing import List, Dict, Any, Iterable, Tuple, Union, Callable, IO
 
+import numpy as np
 import psycopg2
 
 _T = typing.TypeVar("_T")
@@ -394,11 +395,6 @@ class AtomicInt(numbers.Integral):
         with self._lock:
             return other % self._value
 
-    def __rmod__(self, other: Any) -> Any:
-        other = self._unwrap_atomic(other)
-        with self._lock:
-            return other * self._value
-
     def __rmul__(self, other: Any) -> Any:
         other = self._unwrap_atomic(other)
         with self._lock:
@@ -473,5 +469,14 @@ class JsonizeEncoder(json.JSONEncoder):
 
 
 def jsonize(obj: Any, *args, **kwargs) -> str:
+    if obj is None:
+        return None
+
     kwargs.pop("cls", None)
     return json.dumps(obj, *args, cls=JsonizeEncoder, **kwargs)
+
+
+def json_read(obj: Any) -> Any:
+    if not obj or obj is np.nan:
+        return {}
+    return json.loads(obj)

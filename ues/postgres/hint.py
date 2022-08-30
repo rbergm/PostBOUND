@@ -3,12 +3,11 @@ import collections
 import enum
 import math
 import pprint
-from dataclasses import dataclass
-from typing import Dict, FrozenSet, List, Callable, Tuple
+from typing import Dict, FrozenSet, List, Callable
 
 import numpy as np
 
-from transform import db, mosp, util
+from transform import db, mosp, ues, util
 
 
 class QueryNode(enum.Enum):
@@ -169,39 +168,8 @@ def idxnlj_subqueries(query: mosp.MospQuery, *, nestloop="first", idxscan="fk") 
     return hinted_query
 
 
-@dataclass
-class JoinBoundsData:
-    upper_bound: int
-    input_bounds: Tuple[int, int]
-
-
-def _fill_missing_bounds(query: mosp.MospQuery, bounds_data: Dict[FrozenSet[db.TableRef], JoinBoundsData]
-                         ) -> Dict[FrozenSet[db.TableRef], JoinBoundsData]:
-    if not bounds_data:
-        return {}
-
-    filled_bounds = dict(bounds_data)
-    visited_tables = [query.base_table()]
-    previous_working_set = []
-
-    for join in query.joins():
-        if join.is_subquery():
-            subquery_bounds = _fill_missing_bounds(join.subquery, bounds_data)
-            filled_bounds = util.dict_merge(subquery_bounds, filled_bounds)
-
-        previous_working_set = list(visited_tables)
-        visited_tables.extend(join.collect_tables())
-
-        tables_key = frozenset(visited_tables)
-        if tables_key not in filled_bounds:
-            previous_key = frozenset(previous_working_set)
-            filled_bounds[tables_key] = filled_bounds[previous_key]
-
-    return filled_bounds
-
-
-def bound_hints(query: mosp.MospQuery, bounds_data: Dict[FrozenSet[db.TableRef], JoinBoundsData]) -> HintedMospQuery:
-    bounds_data = _fill_missing_bounds(query, bounds_data)
+def bound_hints(query: mosp.MospQuery, bounds_data: ues.BoundsTracker) -> HintedMospQuery:
+    bounds_data.fill_missing_bounds(query=query)
     hinted_query = HintedMospQuery(query)
     visited_tables = [query.base_table()]
     for join in query.joins():
@@ -216,11 +184,11 @@ def bound_hints(query: mosp.MospQuery, bounds_data: Dict[FrozenSet[db.TableRef],
     return hinted_query
 
 
-DEFAULT_IDXLOOKUP_PENALTY: float = 0.8
-DEFAULT_HASHJOIN_PENALTY: float = 0.05
+DEFAULT_IDXLOOKUP_PENALTY: float = 2.0
+DEFAULT_HASHJOIN_PENALTY: float = 0.2
 
 
-def operator_hints(query: mosp.MospQuery, bounds_data: Dict[FrozenSet[db.TableRef], JoinBoundsData], *,
+def operator_hints(query: mosp.MospQuery, bounds_data: ues.BoundsTracker, *,
                    hashjoin_penalty: float = DEFAULT_HASHJOIN_PENALTY,
                    indexlookup_penalty: float = DEFAULT_IDXLOOKUP_PENALTY,
                    hashjoin_estimator: Callable[[int, int], float] = None,
@@ -229,7 +197,7 @@ def operator_hints(query: mosp.MospQuery, bounds_data: Dict[FrozenSet[db.TableRe
                    verbose: bool = False) -> HintedMospQuery:
     indexlookup_penalty = DEFAULT_IDXLOOKUP_PENALTY if indexlookup_penalty is None else indexlookup_penalty
     hashjoin_penalty = DEFAULT_HASHJOIN_PENALTY if hashjoin_penalty is None else hashjoin_penalty
-    bounds_data = _fill_missing_bounds(query, bounds_data)
+    bounds_data.fill_missing_bounds(query=query)
     hinted_query = HintedMospQuery(query)
     visited_tables = [query.base_table()]
     selection_stats = stats_collector if stats_collector is not None else collections.defaultdict(int)
@@ -240,32 +208,35 @@ def operator_hints(query: mosp.MospQuery, bounds_data: Dict[FrozenSet[db.TableRe
             hinted_query.merge_with(subquery_hints)
         visited_tables.extend(join.collect_tables())
         tables_key = frozenset(visited_tables)
-        join_bounds = bounds_data.get(tables_key, None)
-        if join_bounds and join_bounds.input_bounds:
-            upper_bound = join_bounds.upper_bound
-            input_bound1, input_bound2 = join_bounds.input_bounds
-            max_bound, min_bound = max(input_bound1, input_bound2), min(input_bound1, input_bound2)
+        bound_data = bounds_data.fetch_bound(visited_tables)
+        if bound_data:
+            upper_bound = bound_data.join_bound
+            intermediate_bound, candidate_bound = bound_data.intermediate_bound, bound_data.candidate_bound
 
             # Choose the "optimal" operators. The formulas to estimate operator costs are _very_ _very_ coarse
             # grained and heuristic in nature. If more complex formulas are required, they can be supplied as arguments
 
             if nlj_estimator:
-                nlj_cost = nlj_estimator(min_bound, max_bound)
+                nlj_cost = nlj_estimator(intermediate_bound, candidate_bound)
             else:
                 # For NLJ we assume Index-NLJ and use its simplified formula:
-                # The smaller relation will become the outer loop and the larger relation the inner loop to profit the
-                # most from index lookups. Therefore the inner relation will be penalized according to the indexlookup
-                # penalty.
-                nlj_cost = min_bound * (1 + indexlookup_penalty) * math.log(max_bound)
+                # The intermediate relation will become the outer loop and the new relation the inner loop. This is
+                # because an intermediate relation will most likely not have an intact index. Further, we simply assume
+                # that there exists an applicable index on the new relation (and are thus able to calculate an IdxNLJ
+                # bound in the first place).
+                idxlookup_cost = (1 + indexlookup_penalty) * intermediate_bound * math.log(candidate_bound)
+                nlj_cost = intermediate_bound + idxlookup_cost
 
             if hashjoin_estimator:
-                hashjoin_cost = hashjoin_estimator(min_bound, max_bound)
+                hashjoin_cost = hashjoin_estimator(intermediate_bound, candidate_bound)
             else:
                 # For HashJoin we again use a simplified formula:
                 # The smaller relation will be used to construct the hash table. Construction of the table is penalized
                 # according to the hashjoin penalty. The larger relation will be used to perform the hash table
                 # lookups. Hash table lookups are rather cheap but still not for free. Therefore we penalize usage
                 # of the inner (larger) relation by 0.5 * penalty.
+                min_bound = min(intermediate_bound, candidate_bound)
+                max_bound = max(intermediate_bound, candidate_bound)
                 hashjoin_cost = (1 + hashjoin_penalty) * min_bound + max_bound
 
             mergejoin_cost = np.inf  # don't consider Sort-Merge join for now

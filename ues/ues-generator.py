@@ -8,7 +8,7 @@ import pprint
 import sys
 import textwrap
 from datetime import datetime
-from typing import Dict, List
+from typing import List
 
 import numpy as np
 import pandas as pd
@@ -100,18 +100,6 @@ def write_queries_stdout(result_data: pd.DataFrame, query_col: str = "query_ues"
         print(f"{query};")
 
 
-def jsonize_join_bounds(bounds: Dict[ues.JoinTree, Dict[str, int]]) -> dict:
-    if not bounds:
-        return []
-
-    jsonized_bounds = []
-    for tree, bounds_data in bounds.items():
-        join_key = [str(tab) for tab in tree.all_tables()]
-        jsonized = {"join": join_key, "bound": bounds_data["bound"], "input_bounds": bounds_data["input_bounds"]}
-        jsonized_bounds.append(jsonized)
-    return json.dumps(jsonized_bounds)
-
-
 def optimize_workload(workload: pd.DataFrame, query_col: str, out_col: str, *,
                       table_estimation: str = "explain", join_estimation: str = "basic", subqueries: str = "defensive",
                       topk_length: int = None, timing: bool = False, exceptions: ues.ExceptionList = None,
@@ -136,7 +124,7 @@ def optimize_workload(workload: pd.DataFrame, query_col: str, out_col: str, *,
                                                                  verbose=trace, introspective=True,
                                                                  dbs=dbs)
             optimized_query, query_bounds = opt_res.query, opt_res.bounds
-            intermediate_bounds.append(jsonize_join_bounds(query_bounds))
+            intermediate_bounds.append(util.jsonize(query_bounds))
             final_bounds.append(opt_res.final_bound)
             optimization_success.append(True)
         except Exception as e:
@@ -298,7 +286,7 @@ def main():
 
     if args.join_paths:
         optimized_workload["ues_join_path"] = optimized_workload[args.out_col].apply(mosp.MospQuery.join_path,
-                                                                                   short=True)
+                                                                                     short=True)
 
     if args.out:
         write_queries_csv(optimized_workload, args.out)

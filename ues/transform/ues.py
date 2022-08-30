@@ -1,12 +1,14 @@
 
 import abc
 import collections
+import copy
 import functools
 import operator
+import pprint
 import typing
 import warnings
 from dataclasses import dataclass
-from typing import Any, Dict, FrozenSet, Generic, Iterator, List, Set, Union, Tuple
+from typing import Any, Dict, FrozenSet, Generic, Iterable, Iterator, List, Set, Union, Tuple
 
 import matplotlib.pyplot as plt
 import networkx as nx
@@ -1339,7 +1341,7 @@ def _absorb_pk_fk_hull_of(table: db.TableRef, *, join_graph: JoinGraph, join_tre
 @dataclass
 class TrackerEntry:
     full_join: List[db.TableRef]
-    candidate_table: db.TableRef
+    candidate_table: Union[db.TableRef, List[db.TableRef]]
     join_bound: int
     candidate_bound: int
     intermediate_bound: int
@@ -1347,7 +1349,10 @@ class TrackerEntry:
 
 class BoundsTracker:
     @staticmethod
-    def load_from_json(json_data: list) -> "BoundsTracker":
+    def load_from_json(json_data: list, *, query: mosp.MospQuery = None) -> "BoundsTracker":
+        if not json_data:
+            json_data = []
+
         parsed_entries = {}
         current_join_path_length = -np.inf
         current_max_join_path = None
@@ -1359,10 +1364,10 @@ class BoundsTracker:
             parsed_entries[entry_key] = parsed_entry
 
             if entry_length > current_join_path_length:
-                current_join_path_length = entry_key
+                current_join_path_length = entry_length
                 current_max_join_path = parsed_entry.full_join
 
-        tracker = BoundsTracker()
+        tracker = BoundsTracker(query=query)
         tracker._bounds_container = parsed_entries
         tracker._current_join_path = current_max_join_path
         return tracker
@@ -1374,12 +1379,20 @@ class BoundsTracker:
         parsed_join = [db.TableRef.parse(raw_tab) for raw_tab in json_data["join"]]
 
         raw_candidate = json_data.get("candidate_table", None)
-        parsed_candidate = db.TableRef.parse(raw_candidate) if raw_candidate else None
+        if not raw_candidate:
+            parsed_candidate = None
+        elif isinstance(raw_candidate, list):
+            parsed_candidate = [db.TableRef.parse(raw_tab) for raw_tab in raw_candidate]
+        else:
+            parsed_candidate = db.TableRef.parse(raw_candidate)
 
         join_bound = json_data.get("join_bound", -1)
         intermediate_bound = json_data.get("intermediate_bound", -1)
         candidate_bound = json_data.get("candidate_bound", -1)
-        return TrackerEntry(parsed_join, parsed_candidate, join_bound, candidate_bound, intermediate_bound)
+
+        final_entry = TrackerEntry(parsed_join, parsed_candidate, join_bound, candidate_bound, intermediate_bound)
+        print(final_entry)
+        return final_entry
 
     def __init__(self, query: mosp.MospQuery = None):
         self._query = query
@@ -1387,8 +1400,12 @@ class BoundsTracker:
         self._current_join_path: List[db.TableRef] = []
 
     def current_bound(self) -> int:
-        key = frozenset(self._current_join_path)
-        return self._bounds_container[key]
+        key = self._enkey_tables(self._current_join_path)
+        return self._bounds_container[key].join_bound
+
+    def fetch_bound(self, join: Iterable[db.TableRef]) -> TrackerEntry:
+        key = self._enkey_tables(join)
+        return self._bounds_container.get(key, None)
 
     def initialize(self, first_table: db.TableRef, bound: int) -> None:
         entry = TrackerEntry([first_table], first_table, bound, bound, 0)
@@ -1398,19 +1415,33 @@ class BoundsTracker:
 
     def store_n_m_bound(self, next_table: db.TableRef, candidate_bound: int, join_bound: int) -> None:
         full_path = self._current_join_path + [next_table]
-        entry = TrackerEntry(full_path, next_table, join_bound, candidate_bound,
-                             self._bounds_container[self._current_join_path])
-        key = frozenset(full_path)
+        current_bound = self._bounds_container[self._enkey_tables(self._current_join_path)].join_bound
+        entry = TrackerEntry(full_path, next_table, join_bound, candidate_bound, current_bound)
+        key = self._enkey_tables(full_path)
         self._bounds_container[key] = entry
         self._current_join_path.append(next_table)
 
     def merge_with(self, other_tracker: "BoundsTracker", join_bound: int = None) -> None:
-        join_bound = self.current_bound() * other_tracker.current_bound() if not join_bound else join_bound
+        current_bound = self.current_bound()
+        partner_bound = other_tracker.current_bound()
+        join_bound = (current_bound * partner_bound) if not join_bound else join_bound
         self._bounds_container = util.dict_merge(other_tracker._bounds_container, self._bounds_container)
+
         full_path = self._current_join_path + other_tracker._current_join_path
-        key = frozenset(full_path)
-        self._bounds_container[key] = join_bound
+        key = self._enkey_tables(full_path)
+
+        self._bounds_container[key] = TrackerEntry(full_path, candidate_table=list(other_tracker._current_join_path),
+                                                   join_bound=join_bound,
+                                                   intermediate_bound=current_bound,
+                                                   candidate_bound=partner_bound)
         self._current_join_path.extend(other_tracker._current_join_path)
+
+    def fill_missing_bounds(self, *, query: mosp.MospQuery = None) -> None:
+        self._query = query if query else self._query
+        if not self._query:
+            raise util.StateError("Cannot fill missing bounds without an associated query!")
+
+        self._bounds_container = self._fill_missing_bounds(query=self._query, bounds_data=self._bounds_container)
 
     def jsonize(self) -> list:
         jsonized_entries = []
@@ -1423,6 +1454,47 @@ class BoundsTracker:
                 "candidate_bound": entry.candidate_bound
             })
         return jsonized_entries
+
+    def _fill_missing_bounds(self, query: mosp.MospQuery, bounds_data: Dict[FrozenSet[db.TableRef], TrackerEntry]
+                             ) -> Dict[FrozenSet[db.TableRef], TrackerEntry]:
+        if not bounds_data:
+            return {}
+
+        filled_bounds = dict(bounds_data)
+        tables_working_set = [query.base_table()]
+        previous_working_set = []
+
+        for join in query.joins():
+            if join.is_subquery():
+                subquery_bounds = self._fill_missing_bounds(join.subquery, bounds_data)
+                filled_bounds = util.dict_merge(subquery_bounds, filled_bounds)
+
+            previous_working_set = list(tables_working_set)
+            tables_working_set.extend(join.collect_tables())
+
+            tables_key = frozenset(tables_working_set)
+            if tables_key not in filled_bounds:
+                previous_key = frozenset(previous_working_set)
+                previous_entry = filled_bounds[previous_key]
+                updated_entry = copy.copy(previous_entry)
+                updated_entry.full_join = list(tables_working_set)
+                updated_entry.candidate_table = join.collect_tables()
+                filled_bounds[tables_key] = updated_entry
+
+        return filled_bounds
+
+    def _enkey_tables(self, key: Iterable[db.TableRef]) -> FrozenSet[db.TableRef]:
+        return key if isinstance(key, frozenset) else frozenset(key)
+
+    def __getitem__(self, key: Iterable[db.TableRef]) -> int:
+        key = self._enkey_tables(key)
+        return self._bounds_container[key]
+
+    def __repr__(self) -> str:
+        return str(self)
+
+    def __str__(self) -> str:
+        return str(list(self._bounds_container.values()))
 
 
 @dataclass
@@ -1672,7 +1744,7 @@ def _calculate_join_order_for_join_partition(query: mosp.MospQuery, join_graph: 
 
             subquery_bounds_tracker = BoundsTracker()
             subquery_bounds_tracker.initialize(selected_candidate, stats.base_estimates[selected_candidate])
-            bounds_tracker.merge_with(subquery_bounds_tracker)
+            bounds_tracker.merge_with(subquery_bounds_tracker, join_bound=lowest_min_bound)
             logger(".. Creating subquery for PK joins", subquery_join)
         else:
             join_tree = join_tree.joined_with_base_table(selected_candidate, predicate=join_predicate, checkpoint=True)
@@ -1857,7 +1929,7 @@ def _generate_mosp_data_for_sequence(original_query: mosp.MospQuery, join_sequen
 @dataclass
 class OptimizationResult:
     query: mosp.MospQuery
-    bounds: Dict[JoinTree, int]
+    bounds: BoundsTracker
     final_bound: int
 
 

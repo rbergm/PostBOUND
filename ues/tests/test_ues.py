@@ -4,7 +4,7 @@ import sys
 
 sys.path.append("../")
 import regression_suite  # noqa: E402
-from transform import db, mosp, ues  # noqa: E402, F401
+from transform import db, mosp, ues, util  # noqa: E402, F401
 
 
 job_workload = regression_suite.load_job_workload()
@@ -74,6 +74,19 @@ class CompoundJoinPredicateOptimizationTests(unittest.TestCase):
             AND it.id = mi_idx.info_type_id;"""
         query = mosp.MospQuery.parse(raw_query)
         optimized_query = ues.optimize_query(query)  # noqa: F841
+
+
+class BoundsTrackerTests(unittest.TestCase):
+    def test_json_serialization(self):
+        query = mosp.MospQuery.parse(job_workload["1a"])
+        optimized: ues.OptimizationResult = ues.optimize_query(query, introspective=True)
+        jsonized = util.jsonize(optimized.bounds)  # noqa: F841
+
+    def test_fill_missing_bounds(self):
+        query = mosp.MospQuery.parse(job_workload["1a"])
+        optimization_res: ues.OptimizationResult = ues.optimize_query(query, introspective=True)
+        bounds = optimization_res.bounds
+        bounds.fill_missing_bounds(query=optimization_res.query)
 
 
 if "__name__" == "__main__":
