@@ -1,0 +1,4 @@
+342c342
+<     retcode = open(fullpath, ((*mode == 'r') ? O_RDONLY : O_WRONLY) | O_CREAT);
+---
+>     retcode = open(fullpath, ((*mode == 'r') ? O_RDONLY : O_WRONLY) | O_CREAT, 0644);
