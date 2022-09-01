@@ -151,6 +151,14 @@ class SamplingCardinalityEstimator(BaseCardinalityEstimator):
         return predicate.estimate_result_rows(sampling=True, sampling_pct=25, dbs=dbs)
 
 
+class PreciseCardinalityEstimator(BaseCardinalityEstimator):
+    def estimate_rows(self, predicate: Union[mosp.AbstractMospPredicate, List[mosp.AbstractMospPredicate]], *,
+                      dbs: db.DBSchema = db.DBSchema.get_instance()) -> int:
+        predicate = mosp.MospCompoundPredicate.merge_and(predicate)
+        filter_query = predicate.as_full_query(count_query=True)
+        return dbs.execute_query(str(filter_query))
+
+
 class JoinCardinalityEstimator(abc.ABC):
     """A cardinality estimator is capable of calculating an upper bound of the number result tuples for a given join.
 
@@ -1911,6 +1919,8 @@ def optimize_query(query: mosp.MospQuery, *,
         base_estimator = SamplingCardinalityEstimator()
     elif table_cardinality_estimation == "explain":
         base_estimator = PostgresCardinalityEstimator()
+    elif table_cardinality_estimation == "precise":
+        base_estimator = PreciseCardinalityEstimator()
     else:
         raise ValueError("Unknown base table estimation strategy: '{}'".format(table_cardinality_estimation))
 
