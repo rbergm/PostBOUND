@@ -17,10 +17,16 @@ echo ".. Generating TPCH data (SF = 0.5)"
 mkdir ../tpch_data
 ssb-kit/dbgen/dbgen -vf -s 0.5 -T a
 
-echo ".. Inserting TPCH data into database"
+echo ".. TPC-H database schema"
 wget -nv --output-document ../tpch_data/pg_schema.sql https://raw.githubusercontent.com/gregrahn/ssb-kit/master/scripts/pg_schema.sql
 psql tpch -f ../tpch_data/pg_schema.sql
 
+echo ".. Inserting TPC-H data into database"
 wget -nv --output-document ../tpch_data/pg_load.sql https://raw.githubusercontent.com/gregrahn/ssb-kit/master/scripts/pg_load.sql
 patch ../tpch_data/pg_load.sql tpch_pg_load.patch
 psql tpch -f ../tpch_data/pg_load.sql
+
+
+echo ".. Creating SSB Foreign Key indices"
+psql tpch -f tpch_fk_indexes.sql
+
