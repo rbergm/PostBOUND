@@ -203,7 +203,8 @@ class DBSchema:
                 return table
         raise KeyError(f"Attribute not found: {attribute_name} in candidates {candidate_tables}")
 
-    def execute_query(self, query: str, *, cache_enabled=True, analyze_mode: bool = False, explain_mode: bool = False):
+    def execute_query(self, query: str, *, cache_enabled=True, analyze_mode: bool = False, explain_mode: bool = False,
+                      **kwargs):
         if cache_enabled and query in self.query_cache:
             return self.query_cache[query]
 
@@ -212,6 +213,9 @@ class DBSchema:
         elif analyze_mode and not query.lower().startswith("explain (analyze, format json)"):
             query = f"EXPLAIN (ANALYZE, FORMAT JSON) {query}"
 
+        pg_setttings = self._prepare_pg_settings(**kwargs)
+        if pg_setttings:
+            self.cursor.execute(pg_setttings)
         self.cursor.execute(query)
         result = util.simplify(self.cursor.fetchall())
 
@@ -342,6 +346,14 @@ class DBSchema:
             self.cursor = self.connection.cursor()
         else:
             warnings.warn("Cannot reset cursor - schema instance has no connection specified.")
+
+    def _prepare_pg_settings(self, **kwargs) -> str:
+        settings = []
+        for setting, value in kwargs.items():
+            formatted = f"SET {setting} = "
+            formatted += f"'{value}'" if isinstance(value, str) else f"{value}"
+            settings.append(formatted)
+        return "; ".join(settings)
 
     def _fetch_columns(self, table_name):
         base_query = "SELECT column_name FROM information_schema.columns WHERE table_name = %s"
