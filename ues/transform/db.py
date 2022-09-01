@@ -96,26 +96,48 @@ _DTypeArrayConverters = {
     "character varying": "text[]"
 }
 
-_dbschema_instance = None
+_dbschema_instance: "DBSchema" = None
 
 
 class DBSchema:
     @staticmethod
-    def get_instance(psycopg_connect: str = "", *, postgres_config_file: str = ".psycopg_connection"):
+    def get_instance(psycopg_connect: str = "", *, postgres_config_file: str = ".psycopg_connection",
+                     renew: bool = False):
+        """Provides access to a unified DB schema instance.
+
+        This is especially usefull to create a database connection on the fly without having to carry
+        configuration info everywhere. Unified in this context means that the schema instance is intended to be shared
+        by many clients.
+
+        Instances can be created via one of two ways: directly specifying the `psycopg_connect` string will use it
+        to open a connection to the database. If this setting is omitted, the `postgres_config_file` will be read.
+        This file is expected to create a single-line string suitable for a psycopg connection as well.
+
+        The `renew` flag can be set to force the creation of a new DBSchema instance. This is mostly intended to
+        connect to multiple databases at the same time.
+        """
         global _dbschema_instance
-        if _dbschema_instance:
+        if _dbschema_instance and not renew:
             return _dbschema_instance
 
         if not psycopg_connect:
             if not os.path.exists(postgres_config_file):
                 warnings.warn("No .psycopg_connection file found, trying empty connect string as last resort. This "
-                              "will likely not be intentional.")
+                              "is likely not intentional.")
                 psycopg_connect = ""
             with open(postgres_config_file, "r") as conn_file:
                 psycopg_connect = conn_file.readline().strip()
         conn = psycopg2.connect(psycopg_connect)
-        _dbschema_instance = DBSchema(conn.cursor(), connection=conn)
-        return _dbschema_instance
+        new_instance = DBSchema(conn.cursor(), connection=conn)
+
+        if _dbschema_instance and renew:
+            new_instance.query_cache = _dbschema_instance.query_cache
+
+        _dbschema_instance = new_instance
+
+        # return the new instance instead of _dbschema so existing db schema instances are not overwritten (b/c they
+        # received the new instance as well before)
+        return new_instance
 
     def __init__(self, cursor: "psycopg2.cursor", *, connection: "psycopg2.connection" = None):
         self.cursor = cursor
