@@ -38,6 +38,8 @@ class MospQuery:
         return MospQuery(mosp.parse(query))
 
     def __init__(self, mosp_data):
+        if not isinstance(mosp_data, dict):
+            raise TypeError("Unexpected mosp data:", mosp_data)
         self.query: dict = mosp_data
         self.alias_map = None
 
@@ -49,6 +51,9 @@ class MospQuery:
 
     def where_clause(self):
         return self.query.get("where", {})
+
+    def is_ordered(self):
+        return "orderby" in self.query
 
     def base_table(self) -> "db.TableRef":
         tab = next(tab for tab in self.from_clause() if "value" in tab)
