@@ -1389,6 +1389,18 @@ class NoSubqueryGeneration(SubqueryGenerationStrategy):
         return False
 
 
+class SmartSubqueryGeneration(SubqueryGenerationStrategy):
+    def execute_as_subquery(self, candidate: db.TableRef, join_graph: JoinGraph, join_tree: JoinTree, *,
+                            stats: _MFVTableBoundStatistics,
+                            exceptions: ExceptionList = None, query: mosp.MospQuery = None) -> bool:
+        if exceptions and query in exceptions:
+            should_generate_subquery = exceptions[query].subquery_generation
+            if not should_generate_subquery:
+                return False
+        return (stats.upper_bounds[candidate] < stats.base_estimates[candidate] / 100
+                and join_graph.count_selected_joins() > 2)
+
+
 def _estimate_filtered_cardinalities(query: mosp.MospQuery, estimator: BaseCardinalityEstimator, *,
                                      dbs: db.DBSchema = db.DBSchema.get_instance()) -> Dict[db.TableRef, int]:
     """Fetches the PG estimates for all tables in the predicate_map according to their associated filters."""
@@ -1941,6 +1953,8 @@ def optimize_query(query: mosp.MospQuery, *,
         subquery_generator = GreedySubqueryGeneration()
     elif subquery_generation == "disabled":
         subquery_generator = NoSubqueryGeneration()
+    elif subquery_generation == "smart":
+        subquery_generator = SmartSubqueryGeneration()
     else:
         raise ValueError("Unknown subquery generation: '{}'".format(subquery_generation))
 

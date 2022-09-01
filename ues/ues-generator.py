@@ -232,11 +232,12 @@ def main():
                         "estimate the upper bound of join cardinalities. If 'basic', use the Most frequent value as "
                         "detailed in the fundamental paper [0]. If 'topk', use the Top-K lists as detailed in the "
                         "Diploma thesis. Defaults to 'basic'.")
-    parser.add_argument("--subqueries", action="store", choices=["greedy", "disabled", "defensive"],
+    parser.add_argument("--subqueries", action="store", choices=["greedy", "disabled", "defensive", "smart"],
                         default="defensive", help="When to pull PK/FK joins into subqueries. If 'greedy' all "
                         "possible PK/FK joins will be executed as subqueries. If 'disabled', never filter via "
                         "subqueries. If 'defensive' (as described in [0]), only generate subqueries if an improvement "
-                        "is guaranteed. Defaults to 'defensive'.")
+                        "is guaranteed. If 'smart', only generate subqueries if a \"worthwhile\" improvement can be "
+                        "achieved (which is left intentionally ambiguous). Defaults to 'defensive'.")
     parser.add_argument("--topk-length", action="store", type=int, default=None, help="For Top-k join estimation, the"
                         "size of the MCV list (i.e. the k parameter).")
     parser.add_argument("--exception-list", action="store", help="JSON-File containing exceptions from the default"
