@@ -131,6 +131,7 @@ class DBSchema:
         new_instance = DBSchema(conn.cursor(), connection=conn)
 
         if _dbschema_instance and renew:
+            # retain the query cache so we don't loose previously cached queries from other databases
             new_instance.query_cache = _dbschema_instance.query_cache
 
         _dbschema_instance = new_instance
