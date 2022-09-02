@@ -54,7 +54,25 @@ class MospQueryPreparation:
         return mosp.MospQuery(reconstructed_query)
 
     def _drop_explicit_joins(self, query_data: dict) -> dict:
-        # TODO: implementation
+        complete_from_clause = []
+        complete_where_clause = []
+
+        if "where" in query_data:
+            complete_where_clause.append(query_data["where"])
+
+        for table in query_data["from"]:
+            if "join" in table:
+                complete_from_clause.append(table["join"])
+                if "on" in table:
+                    complete_where_clause.append(table["on"])
+            else:
+                complete_from_clause.append(table)
+
+        query_data["from"] = complete_from_clause
+        if complete_where_clause and len(complete_where_clause) == 1:
+            query_data["where"] = complete_where_clause[0]
+        elif complete_where_clause and len(complete_where_clause) > 1:
+            query_data["where"] = {"and": complete_where_clause}
         return query_data
 
     def _generate_table_aliases(self, query_data: dict) -> dict:
@@ -66,7 +84,8 @@ class MospQueryPreparation:
         query_data["from"] = util.simplify(aliased_tables)
 
         self._generated_aliases = tables_without_alias
-        query_data["where"] = self._add_aliases_to_attributes(query_data["where"])
+        if "where" in query_data:
+            query_data["where"] = self._add_aliases_to_attributes(query_data["where"])
 
         return query_data
 
