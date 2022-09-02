@@ -162,33 +162,49 @@ def optimize_workload(workload: pd.DataFrame, query_col: str, out_col: str, *,
 
 
 def optimize_single(query: str, *, table_estimation: str = "explain", join_estimation: str = "basic",
-                    subqueries: str = "defensive", topk_length: int = None, exec: bool = False,
+                    subqueries: str = "defensive", topk_length: int = None,
+                    exec: bool = False, print_join_path: bool = False, print_bounds: bool = False,
                     exceptions: ues.ExceptionList, verbose: bool = False, trace: bool = False,
                     dbs: db.DBSchema = db.DBSchema.get_instance()) -> None:
     parsed_query = mosp.MospQuery.parse(query)
-    optimized_query = ues.optimize_query(parsed_query,
-                                         table_cardinality_estimation=table_estimation,
-                                         join_cardinality_estimation=join_estimation,
-                                         subquery_generation=subqueries,
-                                         topk_list_length=topk_length,
-                                         exceptions=exceptions,
-                                         verbose=verbose, trace=trace,
-                                         dbs=dbs)
-    db_connection = dbs.connection
+    optimization_result: ues.OptimizationResult = ues.optimize_query(parsed_query,
+                                                                     table_cardinality_estimation=table_estimation,
+                                                                     join_cardinality_estimation=join_estimation,
+                                                                     subquery_generation=subqueries,
+                                                                     topk_list_length=topk_length,
+                                                                     exceptions=exceptions,
+                                                                     verbose=verbose, trace=trace,
+                                                                     introspective=True,
+                                                                     dbs=dbs)
+    optimized_query = optimization_result.query
 
-    if not exec:
-        # without execution we simply print the optimized query
+    structured_output_mode = exec or print_join_path or print_bounds
+    if not structured_output_mode:
+        # without special output, we simply print the optimized query
         print(str(optimized_query))
-    else:
-        # with execution we need a bit more structure: output the optimized query as well as its execution time
-        # separately
-        print(".. Optimized query:")
-        print(str(optimized_query))
+        return
+
+    # otherwise, we generate additional output
+    print()
+    print(".. Optimized query:")
+    print(str(optimized_query))
+
+    if print_join_path:
+        print()
+        print(".. Final join path:")
+        print(optimized_query.join_path(short=True))
+
+    if print_bounds:
+        print()
+        print(".. Calculated bounds:")
+        pprint.pprint({join_path: bounds["bound"] for join_path, bounds in optimization_result.bounds.items()})
+
+    if exec:
+        print()
         print(".. Executing query")
-        cursor = db_connection.cursor()
-        cursor.execute("set join_collapse_limit = 1; set enable_memoize = 'off'; set enable_nestloop = 'off';")
         exec_start = datetime.now()
-        cursor.execute(str(optimized_query))
+        dbs.execute_query(str(optimized_query), cache_enabled=False,
+                          join_collapse_limit=1, enable_memoize="off", enable_nestloop="off")
         exec_end = datetime.now()
         print(".. Query took", exec_end - exec_start, "seconds")
 
@@ -220,7 +236,8 @@ def main():
     parser.add_argument("--generate-labels", action="store_true", help="In (output) CSV-mode when loading from "
                         "pattern, use the file names as query labels.")
     parser.add_argument("--join-paths", action="store_true", help="In (output) CSV mode, also store the final join "
-                        "path per query. This setting is ignored if the results are not written to CSV.")
+                        "path per query. In single optimization mode the join path will be printed alongside the "
+                        "optimized query. Otherwise this setting is ignored.")
     parser.add_argument("--out-col", action="store", default=DEFAULT_UES_COL, help="In CSV-mode, name of the output "
                         "column (defaults to query_ues).")
     parser.add_argument("--table-estimation", action="store", choices=["explain", "sample", "precise"],
@@ -246,6 +263,8 @@ def main():
                         "rather than writing to stdout.")
     parser.add_argument("--exec", "-e", action="store_true", default=False, help="If optimizing a single query, also "
                         "execute it.")
+    parser.add_argument("--bounds", action="store_true", default=False, help="If optimizing a single query, print "
+                        "the resulting bounds.")
     parser.add_argument("--pg-con", action="store", default="", help="Connect string to the Postgres instance "
                         "(psycopg2 format). If omitted, the string will be read from the file .psycopg_connection")
     parser.add_argument("--verbose", action="store_true", default=False, help="Print debugging output for generator.")
@@ -261,7 +280,7 @@ def main():
     # if the query param is given, we switch to single optimization mode: we only optimize this one query
     # in this case, we might also run the query online
     if args.query:
-        optimize_single(args.input, exec=args.exec,
+        optimize_single(args.input, exec=args.exec, print_join_path=args.join_paths, print_bounds=args.bounds,
                         table_estimation=args.table_estimation,
                         join_estimation=args.join_estimation,
                         topk_length=args.topk_length,
@@ -300,7 +319,7 @@ def main():
 
     if args.join_paths:
         optimized_workload["ues_join_path"] = optimized_workload[args.out_col].apply(mosp.MospQuery.join_path,
-                                                                                   short=True)
+                                                                                     short=True)
 
     if args.out:
         write_queries_csv(optimized_workload, args.out)
