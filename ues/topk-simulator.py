@@ -11,6 +11,8 @@ from typing import Dict, List, Set, Iterator, Tuple
 
 attr_values = "abcdefghijklmnopqrstuvwxyz"
 
+DEFAULT_TOPK_ESTIMATION_VER = 1
+
 
 def print_stderr(*args, condition: bool = None, **kwargs):
     if condition is False:
@@ -101,32 +103,45 @@ def calculate_topk_bound_v1(topk_r: TopKList, topk_s: TopKList, num_tuples_r: in
                             verbose: bool = False):
     # Top-k bound
     num_proc_r, num_proc_s = 0, 0
+    fstar_hits_r, fstar_hits_s = 0, 0
     topk_bound = 0
 
     for attr_val in topk_r:
         r_freq = topk_r[attr_val]
         s_freq = topk_s[attr_val]
         topk_bound += r_freq * s_freq
+
+        # bookkeeping
         num_proc_r += r_freq
         num_proc_s += s_freq
+        fstar_hits_s += 1 if attr_val not in topk_s else 0
 
     for attr_val in [attr_val for attr_val in topk_s if attr_val not in topk_r]:
         r_freq = topk_r[attr_val]
         s_freq = topk_s[attr_val]
         topk_bound += r_freq * s_freq
+
+        # bookkeeping
         num_proc_r += r_freq
         num_proc_s += s_freq
+        fstar_hits_r += 1
 
     adjust_r, adjust_s = min(num_tuples_r / num_proc_r, 1), min(num_tuples_s / num_proc_s, 1)
     topk_bound = adjust_r * adjust_s * topk_bound
 
-    hits_r = len(topk_r) + len(topk_s.attribute_values() - topk_r.attribute_values())
-    hits_s = len(topk_s) + len(topk_r.attribute_values() - topk_s.attribute_values())
-
     # remainder UES bound
-    distinct_rem_r = max((num_tuples_r - hits_r * topk_r.star_freq()) / topk_r.star_freq(), 0)
-    distinct_rem_s = max((num_tuples_s - hits_s * topk_s.star_freq()) / topk_s.star_freq(), 0)
+    num_rem_tuples_r = max(num_tuples_r - num_proc_r, 0)
+    num_rem_tuples_s = max(num_tuples_s - num_proc_s, 0)
+    distinct_rem_r = num_rem_tuples_r / topk_r.star_freq()
+    distinct_rem_s = num_rem_tuples_s / topk_s.star_freq()
     ues_bound = min(distinct_rem_r, distinct_rem_s) * topk_r.star_freq() * topk_s.star_freq()
+
+    print_stderr(f"hits*(R.a) = {fstar_hits_r}; hits*(S.b) = {fstar_hits_s}", condition=verbose)
+    print_stderr(f"f*(R.a) = {topk_r.star_freq()}; f*(S.b) = {topk_s.star_freq()}", condition=verbose)
+    print_stderr(f"|R'| = {num_rem_tuples_r}; |S'| = {num_rem_tuples_s}", condition=verbose)
+    print_stderr(f"distinct(R.a') = {distinct_rem_r}; distinct(S.b') = {distinct_rem_s}", condition=verbose)
+    print_stderr(f"Top-k bound: {topk_bound}; UES* bound: {ues_bound}", condition=verbose)
+    print_stderr("---- ---- ---- ----", condition=verbose)
 
     return round(topk_bound + ues_bound)
 
@@ -176,7 +191,7 @@ def calculate_topk_bound_v2(topk_r: TopKList, topk_s: TopKList, num_tuples_r: in
 
 
 def calcualte_topk_bound(topk_r: TopKList, topk_s: TopKList, num_tuples_r: int, num_tuples_s: int, *,
-                         version: int = 2, verbose: bool = False):
+                         version: int = DEFAULT_TOPK_ESTIMATION_VER, verbose: bool = False):
     print_stderr(f"Top-k bound v.{version}", condition=verbose)
     if version == 1:
         bound = calculate_topk_bound_v1(topk_r, topk_s, num_tuples_r, num_tuples_s, verbose=verbose)
@@ -262,7 +277,7 @@ def main():
                         "frequencies that exceed the total number of tuples per relation.")
     parser.add_argument("--rand-seed", action="store", type=int, default=42, help="Seed for the RNG")
     parser.add_argument("--regression-mode", action="store_true", default=False)
-    parser.add_argument("--version", action="store", type=int, default=2, help="")
+    parser.add_argument("--version", action="store", type=int, default=DEFAULT_TOPK_ESTIMATION_VER, help="")
     parser.add_argument("--verbose", "-v", action="store_true", default=False, help="Produce debugging ouput")
     # TODO: Primary Key/Foreign Key joins
 
