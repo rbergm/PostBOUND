@@ -39,6 +39,9 @@ class TopKList:
     def star_freq(self) -> int:
         return min(self.topk_list.values(), default=0)
 
+    def min_value(self) -> str:
+        return self.entries[-1][0]
+
     def is_uniform(self) -> bool:
         return self.max_freq() == self.star_freq()
 
@@ -321,13 +324,14 @@ def calculate_topk_bound_v5(topk_r: TopKList, topk_s: TopKList, num_tuples_r: in
     distinct_rem_s = num_tuples_s / topk_s.star_freq()
     ues_bound = min(distinct_rem_r, distinct_rem_s) * topk_r.star_freq() * topk_s.star_freq()
 
-    topk_hits = len(topk_s.attribute_values() | topk_r.attribute_values())
+    topk_hits = len(topk_r.attribute_values() & topk_s.attribute_values())
     ues_adjust = 1 / (topk_hits * topk_r.star_freq() * topk_s.star_freq())
+    ues_bound_raw = ues_bound
     ues_bound = math.ceil(ues_adjust * ues_bound)
 
     print_stderr(f"f*(R.a) = {topk_r.star_freq()}; f*(S.b) = {topk_s.star_freq()}", condition=verbose)
     print_stderr(f"distinct(R.a') = {distinct_rem_r}; distinct(S.b') = {distinct_rem_s}", condition=verbose)
-    print_stderr(f"UES adjust: {ues_adjust}; original bound: {ues_adjust**-1 * ues_bound}", condition=verbose)
+    print_stderr(f"UES adjust: {ues_adjust}; original bound: {ues_bound_raw}", condition=verbose)
     print_stderr(f"Top-k bound: {topk_bound}; UES* bound: {ues_bound}", condition=verbose)
     print_stderr("---- ---- ---- ----", condition=verbose)
 
