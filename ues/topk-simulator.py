@@ -22,6 +22,10 @@ def print_stderr(*args, condition: bool = None, **kwargs):
 
 
 class TopKList:
+    @staticmethod
+    def empty() -> "TopKList":
+        return TopKList([])
+
     def __init__(self, value_frequencies: List[Tuple[str, int]], *, k: int = 5):
         sorted_frequencies = sorted(value_frequencies, key=operator.itemgetter(1), reverse=True)
 
@@ -30,16 +34,23 @@ class TopKList:
         self.topk_list = dict(self.entries)
 
     def max_freq(self) -> int:
-        return max(self.topk_list.values())
+        return max(self.topk_list.values(), default=0)
 
     def star_freq(self) -> int:
-        return min(self.topk_list.values())
+        return min(self.topk_list.values(), default=0)
+
+    def is_uniform(self) -> bool:
+        return self.max_freq() == self.star_freq()
 
     def attribute_values(self) -> Set[str]:
         return set(self.topk_list.keys())
 
     def overlaps_with(self, other: "TopKList") -> bool:
         return len(self.attribute_values() & other.attribute_values()) > 0
+
+    def drop_values_from(self, other: "TopKList") -> "TopKList":
+        unique_values = [(val, freq) for val, freq in self.entries if val not in other]
+        return TopKList(unique_values, k=self.k)
 
     def __contains__(self, attr: str) -> bool:
         return attr in self.topk_list
@@ -52,6 +63,9 @@ class TopKList:
 
     def __len__(self) -> int:
         return len(self.entries)
+
+    def __sub__(self, other: "TopKList") -> "TopKList":
+        return self.drop_values_from(other)
 
     def __str__(self) -> str:
         return str(self.entries)
@@ -161,7 +175,7 @@ def calculate_topk_bound_v2(topk_r: TopKList, topk_s: TopKList, num_tuples_r: in
         num_proc_r += r_freq
         num_proc_s += s_freq
 
-    for attr_val in [attr_val for attr_val in topk_s if attr_val not in topk_r]:
+    for attr_val in topk_s.drop_values_from(topk_r):
         r_freq = topk_r[attr_val]
         s_freq = topk_s[attr_val]
         topk_bound += r_freq * s_freq
@@ -190,13 +204,152 @@ def calculate_topk_bound_v2(topk_r: TopKList, topk_s: TopKList, num_tuples_r: in
     return round(topk_bound + ues_bound)
 
 
+def calculate_topk_bound_v3(topk_r: TopKList, topk_s: TopKList, num_tuples_r: int, num_tuples_s: int, *,
+                            verbose: bool = False):
+    # Top-k bound
+    num_proc_r, num_proc_s = 0, 0
+    topk_bound = 0
+
+    for attr_val in topk_r:
+        r_freq = topk_r[attr_val]
+        s_freq = topk_s[attr_val]
+        topk_bound += r_freq * s_freq
+
+        # bookkeeping
+        num_proc_r += r_freq
+        num_proc_s += s_freq
+
+    for attr_val in topk_s.drop_values_from(topk_r):
+        r_freq = topk_r[attr_val]
+        s_freq = topk_s[attr_val]
+        topk_bound += r_freq * s_freq
+
+        # bookkeeping
+        num_proc_r += r_freq
+        num_proc_s += s_freq
+
+    adjust_r, adjust_s = min(num_tuples_r / num_proc_r, 1), min(num_tuples_s / num_proc_s, 1)
+    topk_bound = adjust_r * adjust_s * topk_bound
+
+    # remainder UES bound
+    distinct_rem_r = num_tuples_r / topk_r.star_freq()
+    distinct_rem_s = num_tuples_s / topk_s.star_freq()
+    ues_bound = min(distinct_rem_r, distinct_rem_s) * topk_r.star_freq() * topk_s.star_freq()
+
+    print_stderr(f"f*(R.a) = {topk_r.star_freq()}; f*(S.b) = {topk_s.star_freq()}", condition=verbose)
+    print_stderr(f"distinct(R.a') = {distinct_rem_r}; distinct(S.b') = {distinct_rem_s}", condition=verbose)
+    print_stderr(f"Top-k bound: {topk_bound}; UES* bound: {ues_bound}", condition=verbose)
+    print_stderr("---- ---- ---- ----", condition=verbose)
+
+    return round(topk_bound + ues_bound)
+
+
+def calculate_topk_bound_v4(topk_r: TopKList, topk_s: TopKList, num_tuples_r: int, num_tuples_s: int, *,
+                            verbose: bool = False):
+    # Top-k bound
+    num_proc_r, num_proc_s = 0, 0
+    topk_bound = 0
+
+    if not topk_r.is_uniform():
+        for attr_val in topk_r:
+            r_freq = topk_r[attr_val]
+            s_freq = topk_s[attr_val]
+            topk_bound += r_freq * s_freq
+
+            # bookkeeping
+            num_proc_r += r_freq
+            num_proc_s += s_freq
+
+    unique_topk_s = TopKList.empty() if topk_r.is_uniform() else topk_s.drop_values_from(topk_r)
+    for attr_val in unique_topk_s:
+        r_freq = topk_r[attr_val]
+        s_freq = topk_s[attr_val]
+        topk_bound += r_freq * s_freq
+
+        # bookkeeping
+        num_proc_r += r_freq
+        num_proc_s += s_freq
+
+    adjust_r = min(num_tuples_r / num_proc_r, 1) if num_proc_r else 1
+    adjust_s = min(num_tuples_s / num_proc_s, 1) if num_proc_s else 1
+    topk_bound = adjust_r * adjust_s * topk_bound
+
+    # remainder UES bound
+    rem_freq_r = topk_r.star_freq()
+    rem_freq_s = topk_s.max_freq() if topk_r.is_uniform() else topk_s.star_freq()
+    distinct_rem_r = num_tuples_r / rem_freq_r
+    distinct_rem_s = num_tuples_s / rem_freq_s
+    ues_bound = min(distinct_rem_r, distinct_rem_s) * topk_r.star_freq() * rem_freq_s
+
+    print_stderr(f"f*(R.a) = {rem_freq_r}; f*(S.b) = {rem_freq_s}", condition=verbose)
+    print_stderr(f"distinct(R.a') = {distinct_rem_r}; distinct(S.b') = {distinct_rem_s}", condition=verbose)
+    print_stderr(f"Top-k bound: {topk_bound}; UES* bound: {ues_bound}", condition=verbose)
+    print_stderr("---- ---- ---- ----", condition=verbose)
+
+    return round(topk_bound + ues_bound)
+
+
+def calculate_topk_bound_v5(topk_r: TopKList, topk_s: TopKList, num_tuples_r: int, num_tuples_s: int, *,
+                            verbose: bool = False):
+    # Top-k bound
+    num_proc_r, num_proc_s = 0, 0
+    topk_bound = 0
+
+    for attr_val in topk_r:
+        r_freq = topk_r[attr_val]
+        s_freq = topk_s[attr_val]
+        topk_bound += r_freq * s_freq
+
+        # bookkeeping
+        num_proc_r += r_freq
+        num_proc_s += s_freq
+
+    for attr_val in topk_s - topk_r:
+        r_freq = topk_r[attr_val]
+        s_freq = topk_s[attr_val]
+        topk_bound += r_freq * s_freq
+
+        # bookkeeping
+        num_proc_r += r_freq
+        num_proc_s += s_freq
+
+    adjust_r, adjust_s = min(num_tuples_r / num_proc_r, 1), min(num_tuples_s / num_proc_s, 1)
+    topk_bound = math.ceil(adjust_r * adjust_s * topk_bound)
+
+    # remainder UES bound
+    distinct_rem_r = num_tuples_r / topk_r.star_freq()
+    distinct_rem_s = num_tuples_s / topk_s.star_freq()
+    ues_bound = min(distinct_rem_r, distinct_rem_s) * topk_r.star_freq() * topk_s.star_freq()
+
+    topk_hits = len(topk_s.attribute_values() | topk_r.attribute_values())
+    ues_adjust = 1 / (topk_hits * topk_r.star_freq() * topk_s.star_freq())
+    ues_bound = math.ceil(ues_adjust * ues_bound)
+
+    print_stderr(f"f*(R.a) = {topk_r.star_freq()}; f*(S.b) = {topk_s.star_freq()}", condition=verbose)
+    print_stderr(f"distinct(R.a') = {distinct_rem_r}; distinct(S.b') = {distinct_rem_s}", condition=verbose)
+    print_stderr(f"UES adjust: {ues_adjust}; original bound: {ues_adjust**-1 * ues_bound}", condition=verbose)
+    print_stderr(f"Top-k bound: {topk_bound}; UES* bound: {ues_bound}", condition=verbose)
+    print_stderr("---- ---- ---- ----", condition=verbose)
+
+    return math.ceil(topk_bound + ues_bound)
+
+
 def calcualte_topk_bound(topk_r: TopKList, topk_s: TopKList, num_tuples_r: int, num_tuples_s: int, *,
                          version: int = DEFAULT_TOPK_ESTIMATION_VER, verbose: bool = False):
     print_stderr(f"Top-k bound v.{version}", condition=verbose)
+    bound = -math.inf
     if version == 1:
         bound = calculate_topk_bound_v1(topk_r, topk_s, num_tuples_r, num_tuples_s, verbose=verbose)
     elif version == 2:
         bound = calculate_topk_bound_v2(topk_r, topk_s, num_tuples_r, num_tuples_s, verbose=verbose)
+    elif version == 3:
+        bound = calculate_topk_bound_v3(topk_r, topk_s, num_tuples_r, num_tuples_s, verbose=verbose)
+    elif version == 4:
+        bound = calculate_topk_bound_v4(topk_r, topk_s, num_tuples_r, num_tuples_s, verbose=verbose)
+    elif version == 5:
+        bound = calculate_topk_bound_v5(topk_r, topk_s, num_tuples_r, num_tuples_s, verbose=verbose)
+    else:
+        raise ValueError(f"Unknown version: {version}")
 
     return bound
 
