@@ -20,6 +20,132 @@ from transform import db, mosp, util
 _T = typing.TypeVar("_T")
 
 
+class MospQueryPreparation:
+    def __init__(self, query: mosp.MospQuery, *, dbs: db.DBSchema = db.DBSchema.get_instance()):
+        self._original_query: mosp.MospQuery = query
+        self._generated_aliases: List[str] = []
+        self._dbs = dbs
+
+    def prepare_query(self) -> mosp.MospQuery:
+        prepared = dict(self._original_query.query)
+        prepared["select"] = "*"
+        prepared.pop("groupby", None)
+        prepared.pop("orderby", None)
+        prepared.pop("having", None)
+
+        prepared = self._drop_explicit_joins(prepared)
+        prepared = self._generate_table_aliases(prepared)
+
+        return mosp.MospQuery(prepared)
+
+    def reconstruct_query(self, optimized_query: mosp.MospQuery) -> mosp.MospQuery:
+        reconstructed_query = dict(optimized_query.query)
+
+        reconstructed_query["select"] = copy.copy(self._original_query.query["select"])
+        if "groupby" in self._original_query.query:
+            reconstructed_query["groupby"] = copy.copy(self._original_query.query["groupby"])
+        if "orderby" in self._original_query.query:
+            reconstructed_query["orderby"] = copy.copy(self._original_query.query["orderby"])
+        if "having" in self._original_query.query:
+            reconstructed_query["having"] = copy.copy(self._original_query.query["having"])
+
+        if self._generated_aliases:
+            reconstructed_query = self._drop_table_aliases(reconstructed_query)
+
+        return mosp.MospQuery(reconstructed_query)
+
+    def _drop_explicit_joins(self, query_data: dict) -> dict:
+        complete_from_clause = []
+        complete_where_clause = []
+
+        if "where" in query_data:
+            complete_where_clause.append(query_data["where"])
+
+        for table in query_data["from"]:
+            if "join" in table:
+                complete_from_clause.append(table["join"])
+                if "on" in table:
+                    complete_where_clause.append(table["on"])
+            else:
+                complete_from_clause.append(table)
+
+        query_data["from"] = complete_from_clause
+        if complete_where_clause and len(complete_where_clause) == 1:
+            query_data["where"] = complete_where_clause[0]
+        elif complete_where_clause and len(complete_where_clause) > 1:
+            query_data["where"] = {"and": complete_where_clause}
+        return query_data
+
+    def _generate_table_aliases(self, query_data: dict) -> dict:
+        tables_without_alias = [tab for tab in query_data["from"] if not isinstance(tab, dict)]
+
+        # all tables without alias get themselves as alias
+        aliased_tables = [{"name": tab, "value": tab} if not isinstance(tab, dict) else tab
+                          for tab in util.enlist(query_data["from"])]
+        query_data["from"] = util.simplify(aliased_tables)
+
+        self._generated_aliases = tables_without_alias
+        if "where" in query_data:
+            query_data["where"] = self._add_aliases_to_attributes(query_data["where"])
+
+        return query_data
+
+    def _drop_table_aliases(self, query_data: dict) -> dict:
+        if not self._generated_aliases:
+            return query_data
+
+        original_from = [tab if "join" in tab or tab["value"] not in self._generated_aliases else tab["value"]
+                         for tab in query_data["from"]]
+        query_data["from"] = original_from
+
+        if "where" in query_data:
+            query_data["where"] = self._drop_aliases_from_attributes(query_data["where"])
+        for tab in query_data["from"]:
+            if isinstance(tab, dict) and "join" in tab and "on" in tab:
+                tab["on"] = self._drop_aliases_from_attributes(tab["on"])
+                joined_table = tab["join"]["value"]
+                tab["join"] = joined_table if joined_table in self._generated_aliases else tab["join"]
+
+        return query_data
+
+    def _add_aliases_to_attributes(self, predicate: Any) -> Any:
+        if isinstance(predicate, list):
+            return [self._add_aliases_to_attributes(sub_predicate) for sub_predicate in predicate]
+        elif isinstance(predicate, dict):
+            operation = util.dict_key(predicate)
+            if operation == "literal":
+                return predicate
+            predicate_value = predicate[operation]
+            return {operation: self._add_aliases_to_attributes(predicate_value)}
+        elif isinstance(predicate, str):
+            if "." in predicate:
+                # attribute is already aliased!
+                return predicate
+            else:
+                # we found a potential attribute!
+                aliased_tablerefs = [db.TableRef(tab, tab) for tab in self._generated_aliases]
+                corresponding_table = self._dbs.lookup_attribute(predicate, aliased_tablerefs)
+                aliased_attr = f"{corresponding_table.full_name}.{predicate}"  # table is aliased by its full name
+                return aliased_attr
+        else:
+            return predicate
+
+    def _drop_aliases_from_attributes(self, predicate: Any) -> Any:
+        if isinstance(predicate, list):
+            return [self._drop_aliases_from_attributes(sub_predicate) for sub_predicate in predicate]
+        elif isinstance(predicate, dict):
+            operation = util.dict_key(predicate)
+            if operation == "literal":
+                return predicate
+            predicate_value = predicate[operation]
+            return {operation: self._drop_aliases_from_attributes(predicate_value)}
+        elif isinstance(predicate, str):
+            table, attribute = predicate.split(".")
+            return attribute if table in self._generated_aliases else predicate
+        else:
+            return predicate
+
+
 class BaseCardinalityEstimator(abc.ABC):
     """Estimator responsible for the number of rows of a potentially filtered base table."""
     @abc.abstractmethod
@@ -43,6 +169,14 @@ class SamplingCardinalityEstimator(BaseCardinalityEstimator):
                       dbs: db.DBSchema = db.DBSchema.get_instance()) -> int:
         predicate = mosp.MospCompoundPredicate.merge_and(predicate)
         return predicate.estimate_result_rows(sampling=True, sampling_pct=25, dbs=dbs)
+
+
+class PreciseCardinalityEstimator(BaseCardinalityEstimator):
+    def estimate_rows(self, predicate: Union[mosp.AbstractMospPredicate, List[mosp.AbstractMospPredicate]], *,
+                      dbs: db.DBSchema = db.DBSchema.get_instance()) -> int:
+        predicate = mosp.MospCompoundPredicate.merge_and(predicate)
+        filter_query = predicate.as_full_query(count_query=True)
+        return dbs.execute_query(str(filter_query))
 
 
 class JoinCardinalityEstimator(abc.ABC):
@@ -1275,6 +1409,18 @@ class NoSubqueryGeneration(SubqueryGenerationStrategy):
         return False
 
 
+class SmartSubqueryGeneration(SubqueryGenerationStrategy):
+    def execute_as_subquery(self, candidate: db.TableRef, join_graph: JoinGraph, join_tree: JoinTree, *,
+                            stats: _MFVTableBoundStatistics,
+                            exceptions: ExceptionList = None, query: mosp.MospQuery = None) -> bool:
+        if exceptions and query in exceptions:
+            should_generate_subquery = exceptions[query].subquery_generation
+            if not should_generate_subquery:
+                return False
+        return (stats.upper_bounds[candidate] < stats.base_estimates[candidate] / 100
+                and join_graph.count_selected_joins() > 2)
+
+
 def _estimate_filtered_cardinalities(query: mosp.MospQuery, estimator: BaseCardinalityEstimator, *,
                                      dbs: db.DBSchema = db.DBSchema.get_instance()) -> Dict[db.TableRef, int]:
     """Fetches the PG estimates for all tables in the predicate_map according to their associated filters."""
@@ -1514,8 +1660,8 @@ def _calculate_join_order(query: mosp.MospQuery, *,
                           verbose: bool = False, trace: bool = False,
                           dbs: db.DBSchema = db.DBSchema.get_instance()
                           ) -> Union[JoinOrderOptimizationResult, List[JoinOrderOptimizationResult]]:
-    join_estimator = join_estimator if join_estimator else DefaultUESCardinalityEstimator(query)
-    join_graph = JoinGraph.build_for(query)
+    join_estimator = join_estimator if join_estimator else DefaultUESCardinalityEstimator(query, dbs=dbs)
+    join_graph = JoinGraph.build_for(query, dbs=dbs)
 
     # In principle it could be that our query involves a cross-product between some of its relations. If that is the
     # case, we cannot simply build a single join tree b/c a tree cannot capture the semantics of cross-product of
@@ -1952,20 +2098,26 @@ def optimize_query(query: mosp.MospQuery, *,
         return query
 
     logger("Input query:", query)
+    query_preparation = MospQueryPreparation(query, dbs=dbs)
+    prepared_query = query_preparation.prepare_query()
 
     if table_cardinality_estimation == "sample":
         base_estimator = SamplingCardinalityEstimator()
     elif table_cardinality_estimation == "explain":
         base_estimator = PostgresCardinalityEstimator()
+    elif table_cardinality_estimation == "precise":
+        base_estimator = PreciseCardinalityEstimator()
     else:
         raise ValueError("Unknown base table estimation strategy: '{}'".format(table_cardinality_estimation))
 
     if join_cardinality_estimation == "basic":
-        join_estimator = DefaultUESCardinalityEstimator(query, base_cardinality_estimator=base_estimator)
+        join_estimator = DefaultUESCardinalityEstimator(prepared_query, base_cardinality_estimator=base_estimator,
+                                                        dbs=dbs)
     elif join_cardinality_estimation == "topk":
         k = topk_list_length if topk_list_length else 15
         logger("Running TopK cardinality estimation with k =", k)
-        join_estimator = TopkUESCardinalityEstimator(query, k=k, base_cardinality_estimator=base_estimator)
+        join_estimator = TopkUESCardinalityEstimator(prepared_query, k=k, base_cardinality_estimator=base_estimator,
+                                                     dbs=dbs)
     else:
         raise ValueError("Unknown cardinality estimation strategy: '{}'".format(join_cardinality_estimation))
 
@@ -1975,10 +2127,12 @@ def optimize_query(query: mosp.MospQuery, *,
         subquery_generator = GreedySubqueryGeneration()
     elif subquery_generation == "disabled":
         subquery_generator = NoSubqueryGeneration()
+    elif subquery_generation == "smart":
+        subquery_generator = SmartSubqueryGeneration()
     else:
         raise ValueError("Unknown subquery generation: '{}'".format(subquery_generation))
 
-    optimization_result = _calculate_join_order(query, dbs=dbs,
+    optimization_result = _calculate_join_order(prepared_query, dbs=dbs,
                                                 base_estimator=base_estimator, join_estimator=join_estimator,
                                                 subquery_generator=subquery_generator,
                                                 exceptions=exceptions,
@@ -1997,7 +2151,8 @@ def optimize_query(query: mosp.MospQuery, *,
         ordered_join_trees = sorted(multiple_optimization_results, key=operator.attrgetter("final_bound"))
 
         # Based on this sorted sequence of join orders, the corresponding queries can be generated
-        mosp_datasets = [_generate_mosp_data_for_sequence(query, optimizer_run.final_order.traverse_right_deep())
+        mosp_datasets = [_generate_mosp_data_for_sequence(prepared_query,
+                                                          optimizer_run.final_order.traverse_right_deep())
                          for optimizer_run in ordered_join_trees]
 
         # The queries than need to be stitched together to form a final result query
@@ -2006,6 +2161,7 @@ def optimize_query(query: mosp.MospQuery, *,
             partial_query["select"] = {"value": "*"}
             first_set["from"].append({"join": {"value": partial_query}})
         final_query = mosp.MospQuery(first_set)
+        final_query = query_preparation.reconstruct_query(final_query)
 
         if not introspective:
             # If introspection is off, we are done now.
@@ -2024,8 +2180,9 @@ def optimize_query(query: mosp.MospQuery, *,
         # data and supply it in a nice format.
         single_optimization_result: JoinOrderOptimizationResult = optimization_result
         join_sequence = single_optimization_result.final_order.traverse_right_deep()
-        mosp_data = _generate_mosp_data_for_sequence(query, join_sequence)
+        mosp_data = _generate_mosp_data_for_sequence(prepared_query, join_sequence)
         final_query = mosp.MospQuery(mosp_data)
+        final_query = query_preparation.reconstruct_query(final_query)
         if introspective:
             return OptimizationResult(final_query, single_optimization_result.intermediate_bounds,
                                       single_optimization_result.final_bound)

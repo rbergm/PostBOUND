@@ -164,6 +164,7 @@ cython_debug/
 # Python venv
 dt-venv/
 .psycopg_connection
+.psycopg_connection_tpch
 
 # R env
 .Rproj.user
@@ -179,3 +180,6 @@ localtest*
 
 # The imdb folder contains all sources for the IMDB dataset, we don't want this in VC
 imdb/
+imdb_data/
+tpch_data/
+

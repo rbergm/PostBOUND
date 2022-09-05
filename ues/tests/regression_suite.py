@@ -1,12 +1,14 @@
 
+import collections
 import numbers
 import pathlib
+from datetime import datetime
+from typing import Any, List, Tuple
 
 from typing import Dict
 
 
-def load_job_workload(path: str = "../../simplicity-done-right/JOB-Queries/implicit",
-                      source_pattern: str = "*.sql") -> Dict[str, str]:
+def __load_workload(path: str, source_pattern: str) -> Dict[str, str]:
     root = pathlib.Path(path)
     workload_files = list(root.glob(source_pattern))
     queries = {}
@@ -18,6 +20,16 @@ def load_job_workload(path: str = "../../simplicity-done-right/JOB-Queries/impli
     return queries
 
 
+def load_job_workload(path: str = "../../workloads/JOB-Queries/implicit",
+                      source_pattern: str = "*.sql") -> Dict[str, str]:
+    return __load_workload(path, source_pattern)
+
+
+def load_ssb_workload(path: str = "../../workloads/SSB-Queries", source_pattern: str = "*.sql", *,
+                      simplified: bool = False) -> Dict[str, str]:
+    return __load_workload(path, source_pattern)
+
+
 def assert_less_equal(smaller: numbers.Number, larger: numbers.Number, msg: str = "", tolerance: float = 0.99):
     """Asserts that the smaller <= larger, but allowing a certain tolerance.
 
@@ -27,6 +39,48 @@ def assert_less_equal(smaller: numbers.Number, larger: numbers.Number, msg: str 
     """
     try:
         assert smaller * tolerance <= larger
-    except AssertionError as e:
+    except AssertionError:
         user_msg = f" : {msg}" if msg else ""
         raise AssertionError(f"AssertionError: {smaller} not less than or equal to {larger}" + user_msg)
+
+
+def assert_result_sets_equal(first_set: List[Tuple[Any]], second_set: List[Tuple[Any]], *, ordered: bool = False):
+    if type(first_set) != type(second_set):
+        raise AssertionError(f"Result sets have different types: {type(first_set)} and {type(second_set)}")
+    elif not isinstance(first_set, list):
+        if first_set != second_set:
+            raise AssertionError(f"Result sets differ: {first_set} and {second_set}")
+        return
+
+    if len(first_set) != len(second_set):
+        raise AssertionError("Result sets are not of equal length!")
+    if ordered:
+        for tuple_idx in range(0, len(first_set)):
+            first_tuple = first_set[tuple_idx]
+            second_tuple = second_set[tuple_idx]
+            if first_tuple != second_tuple:
+                raise AssertionError(f"Tuple {first_tuple} does not equal second tuple {second_tuple}!")
+    else:
+        first_set_counter = collections.defaultdict(int)
+        second_set_counter = collections.defaultdict(int)
+
+        for tuple in first_set:
+            first_set_counter[tuple] += 1
+        for tuple in second_set:
+            second_set_counter[tuple] += 1
+
+        first_set = set(first_set)
+        second_set = set(second_set)
+
+        for tuple in first_set:
+            if tuple not in second_set:
+                raise AssertionError(f"Tuple {tuple} from first set has no partner in second set!")
+        for tuple in second_set:
+            if tuple not in first_set:
+                raise AssertionError(f"Tuple {tuple} from second set has no partner in first set!")
+
+        for tuple, first_tuple_counter in first_set_counter.items():
+            second_tuple_counter = second_set_counter[tuple]
+            if first_tuple_counter != second_tuple_counter:
+                raise AssertionError(f"Tuple {tuple} appears {first_tuple_counter} times in first set, but "
+                                     f"{second_tuple_counter} times in second set!")
