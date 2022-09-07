@@ -3,6 +3,7 @@
 import argparse
 import collections
 import math
+import itertools
 import operator
 import random
 import sys
@@ -26,18 +27,25 @@ class TopKList:
     def empty() -> "TopKList":
         return TopKList([])
 
-    def __init__(self, value_frequencies: List[Tuple[str, int]], *, k: int = 5):
+    def __init__(self, value_frequencies: List[Tuple[str, int]], *, k: int = 5,
+                 total_num_tuples: int = None, smart_fstar: bool = False):
         sorted_frequencies = sorted(value_frequencies, key=operator.itemgetter(1), reverse=True)
 
         self.k = k
+        self.total_num_tuples = total_num_tuples
         self.entries = sorted_frequencies[:self.k]
         self.topk_list = dict(self.entries)
+        self.remainder_frequency = (0 if smart_fstar and k >= len(value_frequencies)
+                                    else min(self.topk_list.values(), default=0))
 
     def max_freq(self) -> int:
         return max(self.topk_list.values(), default=0)
 
     def star_freq(self) -> int:
-        return min(self.topk_list.values(), default=0)
+        return self.remainder_frequency
+
+    def total_frequency(self) -> int:
+        return sum(self.topk_list.values())
 
     def min_value(self) -> str:
         return self.entries[-1][0]
@@ -71,7 +79,7 @@ class TopKList:
         return self.drop_values_from(other)
 
     def __str__(self) -> str:
-        return str(self.entries)
+        return f"{str(self.entries)}, f* = {self.remainder_frequency}"
 
 
 def generate_tuples(num_tuples: int, distinct_values: int) -> List[str]:
@@ -294,48 +302,54 @@ def calculate_topk_bound_v4(topk_r: TopKList, topk_s: TopKList, num_tuples_r: in
 
 def calculate_topk_bound_v5(topk_r: TopKList, topk_s: TopKList, num_tuples_r: int, num_tuples_s: int, *,
                             verbose: bool = False):
-    # Top-k bound
-    num_proc_r, num_proc_s = 0, 0
-    topk_bound = 0
 
-    for attr_val in topk_r:
-        r_freq = topk_r[attr_val]
-        s_freq = topk_s[attr_val]
-        topk_bound += r_freq * s_freq
+    def topk_bound(topk_r: TopKList, topk_s: TopKList, num_tuples_r: int, num_tuples_s: int, *, verbose: bool = False):
+        topk_bound = 0
+        processed_tuples_r, processed_tuples_s = 0, 0
 
-        # bookkeeping
-        num_proc_r += r_freq
-        num_proc_s += s_freq
+        for attribute_value in topk_r:
+            topk_bound += topk_r[attribute_value] * topk_s[attribute_value]
+            processed_tuples_r += topk_r[attribute_value]
+            if attribute_value in topk_s:
+                processed_tuples_s += topk_s[attribute_value]
 
-    for attr_val in topk_s - topk_r:
-        r_freq = topk_r[attr_val]
-        s_freq = topk_s[attr_val]
-        topk_bound += r_freq * s_freq
+        for attribute_value in topk_s - topk_r:
+            topk_bound += topk_s[attribute_value] * topk_r.star_freq()
+            processed_tuples_s += topk_s[attribute_value]
 
-        # bookkeeping
-        num_proc_r += r_freq
-        num_proc_s += s_freq
+        adjustment_factor_r = min(num_tuples_r / processed_tuples_r, 1)
+        adjustment_factor_s = min(num_tuples_s / processed_tuples_s, 1)
+        adjusted_topk_bound = adjustment_factor_r * adjustment_factor_s * topk_bound
 
-    adjust_r, adjust_s = min(num_tuples_r / num_proc_r, 1), min(num_tuples_s / num_proc_s, 1)
-    topk_bound = math.ceil(adjust_r * adjust_s * topk_bound)
+        print_stderr(f"Top-k adjust: a(R) = {adjustment_factor_r}; a(S) = {adjustment_factor_s}; "
+                     f"original bound: {topk_bound}", condition=verbose)
+        print_stderr(f"Top-k processed tuples: p(R) = {processed_tuples_r}; "
+                     f"p(S) = {processed_tuples_s}", condition=verbose)
 
-    # remainder UES bound
-    distinct_rem_r = num_tuples_r / topk_r.star_freq()
-    distinct_rem_s = num_tuples_s / topk_s.star_freq()
-    ues_bound = min(distinct_rem_r, distinct_rem_s) * topk_r.star_freq() * topk_s.star_freq()
+        return adjusted_topk_bound
 
-    topk_hits = len(topk_r.attribute_values() & topk_s.attribute_values())
-    ues_adjust = 1 / (topk_hits * topk_r.star_freq() * topk_s.star_freq())
-    ues_bound_raw = ues_bound
-    ues_bound = math.ceil(ues_adjust * ues_bound)
+    def ues_bound(topk_r: TopKList, topk_s: TopKList, num_tuples_r: int, num_tuples_s: int, *, verbose: bool = False):
+        if topk_r.star_freq() == 0 or topk_s.star_freq() == 0:
+            return 0
 
-    print_stderr(f"f*(R.a) = {topk_r.star_freq()}; f*(S.b) = {topk_s.star_freq()}", condition=verbose)
-    print_stderr(f"distinct(R.a') = {distinct_rem_r}; distinct(S.b') = {distinct_rem_s}", condition=verbose)
-    print_stderr(f"UES adjust: {ues_adjust}; original bound: {ues_bound_raw}", condition=verbose)
-    print_stderr(f"Top-k bound: {topk_bound}; UES* bound: {ues_bound}", condition=verbose)
+        effective_num_tuples_r = max(num_tuples_r - len(topk_r) * topk_r.star_freq(), 0)
+        effective_num_tuples_s = max(num_tuples_s - len(topk_s) * topk_s.star_freq(), 0)
+
+        distinct_values_r = effective_num_tuples_r / topk_r.star_freq()
+        distinct_values_s = effective_num_tuples_s / topk_s.star_freq()
+        ues_bound = min(distinct_values_r, distinct_values_s) * topk_r.star_freq() * topk_s.star_freq()
+
+        print_stderr(f"|R*| = {effective_num_tuples_r}; |S*| = {effective_num_tuples_s}", condition=verbose)
+        print_stderr(f"f*(R.a) = {topk_r.star_freq()}; f*(S.b) = {topk_s.star_freq()}", condition=verbose)
+        print_stderr(f"distinct(R.a') = {distinct_values_r}; distinct(S.b') = {distinct_values_s}", condition=verbose)
+        return ues_bound
+
+    _topk_bound = topk_bound(topk_r, topk_s, num_tuples_r, num_tuples_s, verbose=verbose)
+    _ues_bound = ues_bound(topk_r, topk_s, num_tuples_r, num_tuples_s, verbose=verbose)
+    print_stderr(f"Top-k bound: {_topk_bound}; UES* bound: {_ues_bound}", condition=verbose)
     print_stderr("---- ---- ---- ----", condition=verbose)
 
-    return math.ceil(topk_bound + ues_bound)
+    return math.ceil(_topk_bound + _ues_bound)
 
 
 def calcualte_topk_bound(topk_r: TopKList, topk_s: TopKList, num_tuples_r: int, num_tuples_s: int, *,
@@ -384,11 +398,11 @@ def simulate(num_tuples_r: int, num_tuples_s: int, distinct_values_r: int, disti
 
     print_stderr(".. Using exceed value of", exceed_value, condition=verbose and (exceed_value is not None))
 
-    print_stderr("|R| =", num_tuples_r, condition=verbose)
+    print_stderr(f"|R| = {num_tuples_r}; distinct(R.a) = {len(set(tuples_r))}", condition=verbose)
     print_stderr("R.a:", sorted(tuples_r), condition=verbose)
     print_stderr("topk(R.a) =", topk_r, condition=verbose)
     print_stderr(condition=verbose)
-    print_stderr("|S| = ", num_tuples_s, condition=verbose)
+    print_stderr(f"|S| = {num_tuples_s}; distinct(S.b) = {len(set(tuples_s))}", condition=verbose)
     print_stderr("S.b:", sorted(tuples_s), condition=verbose)
     print_stderr("topk(S.b) =", topk_s, condition=verbose)
     print_stderr("---- ---- ---- ----", condition=verbose)
@@ -402,15 +416,16 @@ def simulate(num_tuples_r: int, num_tuples_s: int, distinct_values_r: int, disti
 
 
 def find_regressions(num_tuples_r: int, num_tuples_s: int, distinct_values_r: int, distinct_values_s: int, *,
-                     topk_length: int, exceed_value: int, version: int, num_seeds: int = 100):
-    for seed in range(num_seeds):
+                     exceed_value: int, version: int, topk_length: int = None, num_seeds: int = 100):
+    max_topk_length = topk_length + 1 if topk_length else max(num_tuples_r, num_tuples_s) + 1
+    for seed, topk_length in itertools.product(range(num_seeds), range(1, max_topk_length)):
         simulation_res = simulate(num_tuples_r, num_tuples_s, distinct_values_r, distinct_values_s,
                                   topk_length=topk_length, exceed_value=exceed_value, rand_seed=seed,
                                   version=version, verbose=False)
         if simulation_res.ues < simulation_res.topk:
-            print("Regression found at seed ", seed, ": UES bound is smaller Top-k bound", sep="")
+            print(f"Regression found at seed = {seed} and k = {topk_length}: UES bound is smaller Top-k bound")
         elif simulation_res.topk < simulation_res.actual:
-            print("Regression found at seed ", seed, ": Top-k bound is no upper bound", sep="")
+            print(f"Regression found at seed = {seed} and k = {topk_length}: Top-k bound is no upper bound")
 
 
 def main():
@@ -418,7 +433,7 @@ def main():
                                      "algorithms")
     parser.add_argument("-n", action="store", type=int, required=False, default=10,
                         help="Number of tuples per relation")
-    parser.add_argument("-k", action="store", type=int, default=3, help="Length of the Top-k lists")
+    parser.add_argument("-k", action="store", type=int, default=None, help="Length of the Top-k lists")
     parser.add_argument("-d", action="store", type=int, required=False, default=5,
                         help="Number of distinct values per relation")
     parser.add_argument("-nr", action="store", type=int, required=False, help="Number of tuples in the R relation. "
@@ -450,7 +465,7 @@ def main():
     distinct_values_r = args.dr if args.dr else args.d
     distinct_values_s = args.ds if args.ds else args.d
     exceed_value = args.exceed if args.exceed else None
-    topk_length = args.k
+    topk_length = args.k if args.k is not None else 3
     version = args.version if args.version else 1
 
     if distinct_values_r > len(attr_values) or distinct_values_s > len(attr_values):
@@ -458,7 +473,7 @@ def main():
 
     if args.regression_mode:
         find_regressions(num_tuples_r, num_tuples_s, distinct_values_r, distinct_values_s,
-                         topk_length=topk_length, exceed_value=exceed_value, version=version)
+                         topk_length=topk_length if args.k else None, exceed_value=exceed_value, version=version)
         return
 
     simulation_result = simulate(num_tuples_r, num_tuples_s, distinct_values_r, distinct_values_s,
