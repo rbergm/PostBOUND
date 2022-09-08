@@ -64,6 +64,9 @@ class TopKList:
         unique_values = [(val, freq) for val, freq in self.entries if val not in other]
         return TopKList(unique_values, k=self.k)
 
+    def snap_frequencies_to(self, max_frequency: int) -> "TopKList":
+        return TopKList([(val, min(freq, max_frequency)) for val, freq in self.entries], k=self.k)
+
     def __contains__(self, attr: str) -> bool:
         return attr in self.topk_list
 
@@ -363,12 +366,61 @@ def calculate_topk_bound_v5(topk_r: TopKList, topk_s: TopKList, num_tuples_r: in
     return math.ceil(_topk_bound + _ues_bound)
 
 
+def calculate_topk_bound_v6(topk_r: TopKList, topk_s: TopKList, num_tuples_r: int, num_tuples_s: int, *,
+                            verbose: bool = False):
+
+    def topk_bound(topk_r: TopKList, topk_s: TopKList, num_tuples_r: int, num_tuples_s: int, *, verbose: bool = False):
+        topk_bound = 0
+        processed_tuples_r, processed_tuples_s = 0, 0
+
+        for attribute_value in topk_r:
+            topk_bound += topk_r[attribute_value] * topk_s[attribute_value]
+            processed_tuples_r += topk_r[attribute_value]
+            if attribute_value in topk_s:
+                processed_tuples_s += topk_s[attribute_value]
+
+        for attribute_value in topk_s - topk_r:
+            topk_bound += topk_s[attribute_value] * topk_r.star_freq()
+            processed_tuples_s += topk_s[attribute_value]
+
+        adjustment_factor_r = min(num_tuples_r / processed_tuples_r, 1)
+        adjustment_factor_s = min(num_tuples_s / processed_tuples_s, 1)
+        adjusted_topk_bound = min(adjustment_factor_r, adjustment_factor_s) * topk_bound
+
+        print_stderr(f"Top-k adjust: a(R) = {adjustment_factor_r}; a(S) = {adjustment_factor_s}; "
+                     f"original bound: {topk_bound}", condition=verbose)
+        print_stderr(f"Top-k processed tuples: p(R) = {processed_tuples_r}; "
+                     f"p(S) = {processed_tuples_s}", condition=verbose)
+
+        return adjusted_topk_bound
+
+    def ues_bound(topk_r: TopKList, topk_s: TopKList, num_tuples_r: int, num_tuples_s: int, *, verbose: bool = False):
+        if topk_r.star_freq() == 0 or topk_s.star_freq() == 0:
+            return 0
+
+        distinct_values_r, distinct_values_s = num_tuples_r / topk_r.star_freq(), num_tuples_s / topk_s.star_freq()
+        ues_bound = min(distinct_values_r, distinct_values_s) * topk_r.star_freq() * topk_s.star_freq()
+
+        print_stderr(f"f*(R.a) = {topk_r.star_freq()}; f*(S.b) = {topk_s.star_freq()}", condition=verbose)
+        print_stderr(f"distinct(R.a') = {distinct_values_r}; distinct(S.b') = {distinct_values_s}", condition=verbose)
+        return ues_bound
+
+    topk_r, topk_s = topk_r.snap_frequencies_to(num_tuples_r), topk_s.snap_frequencies_to(num_tuples_s)
+    _topk_bound = topk_bound(topk_r, topk_s, num_tuples_r, num_tuples_s, verbose=verbose)
+    _ues_bound = ues_bound(topk_r, topk_s, num_tuples_r, num_tuples_s, verbose=verbose)
+    print_stderr(f"Top-k bound: {_topk_bound}; UES* bound: {_ues_bound}", condition=verbose)
+    print_stderr("---- ---- ---- ----", condition=verbose)
+
+    return math.ceil(_topk_bound + _ues_bound)
+
+
 TopkBoundVersions = {
     1: (calculate_topk_bound_v1, "The current (live) implementation"),
     2: (calculate_topk_bound_v2, "UES* pushdown: reduce distinct values based on TopK lists"),
-    3: (calculate_topk_bound_v3, "No pushdown: adjusted Topk bound + full UES* bound. Most defensive!"),
+    3: (calculate_topk_bound_v3, "No pushdown: adjusted Topk bound + full UES* bound"),
     4: (calculate_topk_bound_v4, "Short-lived experiment. Doesn't work"),
-    5: (calculate_topk_bound_v5, "UES* pushdown: |R*| := |R| - f* * k")
+    5: (calculate_topk_bound_v5, "UES* pushdown: |R*| := |R| - f* * k"),
+    6: (calculate_topk_bound_v6, "Mild TopK adjustment, no UES* pushdown")
 }
 
 
@@ -376,16 +428,9 @@ def calcualte_topk_bound(topk_r: TopKList, topk_s: TopKList, num_tuples_r: int, 
                          version: int = DEFAULT_TOPK_ESTIMATION_VER, verbose: bool = False):
     print_stderr(f"Top-k bound v.{version}", condition=verbose)
     bound = -math.inf
-    if version == 1:
-        bound = calculate_topk_bound_v1(topk_r, topk_s, num_tuples_r, num_tuples_s, verbose=verbose)
-    elif version == 2:
-        bound = calculate_topk_bound_v2(topk_r, topk_s, num_tuples_r, num_tuples_s, verbose=verbose)
-    elif version == 3:
-        bound = calculate_topk_bound_v3(topk_r, topk_s, num_tuples_r, num_tuples_s, verbose=verbose)
-    elif version == 4:
-        bound = calculate_topk_bound_v4(topk_r, topk_s, num_tuples_r, num_tuples_s, verbose=verbose)
-    elif version == 5:
-        bound = calculate_topk_bound_v5(topk_r, topk_s, num_tuples_r, num_tuples_s, verbose=verbose)
+    if version in TopkBoundVersions:
+        bound_calculator = TopkBoundVersions[version][0]
+        bound = bound_calculator(topk_r, topk_s, num_tuples_r, num_tuples_s, verbose=verbose)
     else:
         print("Available versions are:")
         pprint.pprint({num: version[1] for num, version in TopkBoundVersions.items()})
