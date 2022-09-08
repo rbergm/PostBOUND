@@ -2,7 +2,9 @@
 
 WD=$(pwd)
 
-. ./postgres-load-env.sh
+if [ "$THESIS_PG_ENV_LOADED" != "true" ] ; then
+	. ./postgres-load-env.sh
+fi
 
 cd postgres-server
 

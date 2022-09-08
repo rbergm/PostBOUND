@@ -1,10 +1,14 @@
 #!/bin/sh
 
-WD=$(pwd)
-cd postgres-server
+if [ "$THESIS_PG_ENV_LOADED" != "true" ] ; then
+	export THESIS_PG_ENV_LOADED="true"
 
-export PATH="$(pwd)/build/bin:$PATH"
-export LD_LIBRARY_PATH="$(pwd)/build/lib:$LD_LIBRARY_PATH"
+	WD=$(pwd)
+	cd postgres-server
 
-cd $WD
+	export PATH="$(pwd)/build/bin:$PATH"
+	export LD_LIBRARY_PATH="$(pwd)/build/lib:$LD_LIBRARY_PATH"
+
+	cd $WD
+fi
 
