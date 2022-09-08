@@ -422,7 +422,7 @@ class AtomicInt(numbers.Integral):
     def __rshift__(self, other: Any) -> Any:
         other = self._unwrap_atomic(other)
         with self._lock:
-            return self._value << other
+            return self._value >> other
 
     def __rtruediv__(self, other: Any) -> Any:
         other = self._unwrap_atomic(other)
