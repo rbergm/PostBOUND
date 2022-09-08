@@ -461,6 +461,183 @@ class AtomicInt(numbers.Integral):
             return str(self._value)
 
 
+class BoundedInt(numbers.Integral):
+    @staticmethod
+    def non_neg(value: int, *, allowed_max: Union[int, None] = None) -> "BoundedInt":
+        return BoundedInt(value, allowed_min=0, allowed_max=allowed_max)
+
+    def __init__(self, value: int, *, allowed_min: Union[int, None] = None, allowed_max: Union[int, None] = None):
+        if not isinstance(value, int):
+            raise TypeError(f"Only integer values allowed, but {type(value)} given!")
+        if allowed_min is not None and allowed_max is not None and allowed_min > allowed_max:
+            raise ValueError("Allowed minimum may not be larger than allowed maximum!")
+
+        self._value = value
+        self._allowed_min = allowed_min
+        self._allowed_max = allowed_max
+
+        # don't forget the first update!
+        self._snap_to_min_max()
+
+    def _snap_to_min_max(self) -> None:
+        if self._allowed_min is not None and self._value < self._allowed_min:
+            self._value = self._allowed_min
+        if self._allowed_max is not None and self._value > self._allowed_max:
+            self._value = self._allowed_max
+
+    def _unwrap_atomic(self, value: Any) -> int:
+        return value._value if isinstance(value, BoundedInt) else value
+
+    def _get_value(self) -> int:
+        return self._value
+
+    def _set_value(self, value: int) -> None:
+        if not isinstance(value, int):
+            raise TypeError(f"Only integer values allowed, but {type(value)} given!")
+        self._value = value
+        self._snap_to_min_max()
+
+    value = property(_get_value, _set_value)
+
+    def __abs__(self) -> int:
+        return abs(self._value)
+
+    def __add__(self, other: Union[int, "BoundedInt"]) -> "BoundedInt":
+        other_value = self._unwrap_atomic(other)
+        return BoundedInt(self._value + other_value, allowed_min=self._allowed_min, allowed_max=self._allowed_max)
+
+    def __and__(self, other: Any) -> Any:
+        other_value = self._unwrap_atomic(other)
+        return self._value & other_value
+
+    def __ceil__(self) -> int:
+        return self._value
+
+    def __eq__(self, other: object) -> bool:
+        other_value = self._unwrap_atomic(other)
+        return self._value == other_value
+
+    def __floor__(self) -> int:
+        return self._value
+
+    def __floordiv__(self, other: Any) -> int:
+        other_value = self._unwrap_atomic(other)
+        return self._value // other_value
+
+    def __int__(self) -> int:
+        return self._value
+
+    def __invert__(self) -> Any:
+        return ~self._value
+
+    def __le__(self, other: Any) -> bool:
+        other_value = self._unwrap_atomic(other)
+        return self._value <= other_value
+
+    def __lshift__(self, other: Any) -> Any:
+        other_value = self._unwrap_atomic(other)
+        return self.value << other_value
+
+    def __lt__(self, other: Any) -> bool:
+        other_value = self._unwrap_atomic(other)
+        return self._value < other_value
+
+    def __mod__(self, other: Any) -> Any:
+        other_value = self._unwrap_atomic(other)
+        return self._value % other_value
+
+    def __mul__(self, other: Any) -> "BoundedInt":
+        other_value = self._unwrap_atomic(other)
+        return BoundedInt(self._value * other_value, allowed_min=self._allowed_min, allowed_max=self._allowed_max)
+
+    def __neg__(self) -> "BoundedInt":
+        return BoundedInt(-self._value, allowed_min=self._allowed_min, allowed_max=self._allowed_max)
+
+    def __or__(self, other: Any) -> Any:
+        other_value = self._unwrap_atomic(other)
+        return self._value | other_value
+
+    def __pos__(self) -> Any:
+        return +self._value
+
+    def __pow__(self, exponent: Any, modulus: Union[Any, None] = ...) -> "BoundedInt":
+        res = self._value ** exponent
+        if res != int(res):
+            raise ValueError(f"Power not support for type BoundedInt with argument {exponent}")
+        return BoundedInt(res, allowed_min=self._allowed_min, allowed_max=self._allowed_max)
+
+    def __radd__(self, other: Any) -> Any:
+        other_value = self._unwrap_atomic(other)
+        return other_value + self._value
+
+    def __rand__(self, other: Any) -> Any:
+        other_value = self._unwrap_atomic(other)
+        return other_value & self._value
+
+    def __rfloordiv__(self, other: Any) -> Any:
+        other_value = self._unwrap_atomic(other)
+        return other_value // self._value
+
+    def __rlshift__(self, other: Any) -> Any:
+        other_value = self._unwrap_atomic(other)
+        return other_value << self._value
+
+    def __rmod__(self, other: Any) -> Any:
+        other_value = self._unwrap_atomic(other)
+        return other_value % self._value
+
+    def __rmul__(self, other: Any) -> Any:
+        other_value = self._unwrap_atomic(other)
+        return other_value * self._value
+
+    def __ror__(self, other: Any) -> Any:
+        other_value = self._unwrap_atomic(other)
+        return other_value | self._value
+
+    def __round__(self, ndigits: Union[int, None] = None) -> int:
+        return self._value
+
+    def __rpow__(self, base: Any) -> Any:
+        other_value = self._unwrap_atomic(base)
+        return other_value ** self._value
+
+    def __rrshift__(self, other: Any) -> Any:
+        other_value = self._unwrap_atomic(other)
+        return other_value >> self._value
+
+    def __rshift__(self, other: Any) -> Any:
+        other_value = self._unwrap_atomic(other)
+        return self._value >> other_value
+
+    def __rtruediv__(self, other: Any) -> Any:
+        other_value = self._unwrap_atomic(other)
+        return other_value / self._value
+
+    def __rxor__(self, other: Any) -> Any:
+        other_value = self._unwrap_atomic(other)
+        return other_value ^ self._value
+
+    def __truediv__(self, other: Any) -> Any:
+        other_value = self._unwrap_atomic(other)
+        return self._value / other_value
+
+    def __trunc__(self) -> int:
+        return math.trunc(self._value)
+
+    def __xor__(self, other: Any) -> Any:
+        other_value = self._unwrap_atomic(other)
+        return self._value ^ other_value
+
+    def __hash__(self) -> int:
+        return hash(self._value)
+
+    def __repr__(self) -> str:
+        return f"BoundedInt({self._value}; min={self._allowed_min}, max={self._allowed_max})"
+
+    def __str__(self) -> str:
+        return str(self._value)
+
+
 class JsonizeEncoder(json.JSONEncoder):
     def default(self, obj: Any) -> Any:
         if "jsonize" in dir(obj):
