@@ -4,7 +4,7 @@ import collections
 import copy
 import functools
 import operator
-import pprint
+import pprint  # noqa: F401
 import typing
 import warnings
 from dataclasses import dataclass
@@ -1589,7 +1589,7 @@ class BoundsTracker:
 
         self._bounds_container = self._fill_missing_bounds(query=self._query, bounds_data=self._bounds_container)
 
-    def jsonize(self) -> list:
+    def __json__(self) -> list:
         jsonized_entries = []
         for entry in self._bounds_container.values():
             jsonized_entries.append({

@@ -124,7 +124,7 @@ def optimize_workload(workload: pd.DataFrame, query_col: str, out_col: str, *,
                                                                  verbose=trace, introspective=True,
                                                                  dbs=dbs)
             optimized_query, query_bounds = opt_res.query, opt_res.bounds
-            intermediate_bounds.append(util.jsonize(query_bounds))
+            intermediate_bounds.append(util.to_json(query_bounds))
             final_bounds.append(opt_res.final_bound)
             optimization_success.append(True)
         except Exception as e:

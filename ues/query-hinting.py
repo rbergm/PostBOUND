@@ -33,7 +33,7 @@ def read_input(src: str, query_col: str, *, bound_col: str = "", parse_bounds: b
     df[query_col] = df[query_col].apply(mosp.MospQuery.parse)
 
     if parse_bounds:
-        df[f"{bound_col}_internal"] = df[bound_col].apply(util.json_read)
+        df[f"{bound_col}_internal"] = df[bound_col].apply(util.read_json)
         df[f"{bound_col}_internal"] = df.apply(
             lambda query_row: ues.BoundsTracker.load_from_json(query_row[f"{bound_col}_internal"],
                                                                query=query_row[query_col]),

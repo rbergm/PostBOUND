@@ -640,20 +640,19 @@ class BoundedInt(numbers.Integral):
 
 class JsonizeEncoder(json.JSONEncoder):
     def default(self, obj: Any) -> Any:
-        if "jsonize" in dir(obj):
-            return obj.jsonize()
+        if "__json__" in dir(obj):
+            return obj.__json__()
         return json.JSONEncoder.default(self, obj)
 
 
-def jsonize(obj: Any, *args, **kwargs) -> str:
+def to_json(obj: Any, *args, **kwargs) -> str:
     if obj is None:
         return None
-
     kwargs.pop("cls", None)
     return json.dumps(obj, *args, cls=JsonizeEncoder, **kwargs)
 
 
-def json_read(obj: Any) -> Any:
+def read_json(obj: Any) -> Any:
     if not obj or obj is np.nan:
         return {}
     return json.loads(obj)

@@ -105,7 +105,7 @@ class BoundsTrackerTests(unittest.TestCase):
     def test_json_serialization(self):
         query = mosp.MospQuery.parse(job_workload["1a"])
         optimized: ues.OptimizationResult = ues.optimize_query(query, introspective=True)
-        jsonized = util.jsonize(optimized.bounds)  # noqa: F841
+        jsonized = util.to_json(optimized.bounds)  # noqa: F841
 
     def test_fill_missing_bounds(self):
         query = mosp.MospQuery.parse(job_workload["1a"])
