@@ -1432,58 +1432,6 @@ def _estimate_filtered_cardinalities(query: mosp.MospQuery, estimator: BaseCardi
     return cardinality_dict
 
 
-def _absorb_pk_fk_hull_of(table: db.TableRef, *, join_graph: JoinGraph, join_tree: JoinTree,
-                          subquery_generator: SubqueryGenerationStrategy,
-                          base_table_estimates: Dict[db.TableRef, int],
-                          pk_only: bool = False, verbose: bool = False, trace: bool = False) -> JoinTree:
-    # TODO: the choice of estimates and the iteration itself are actually not optimal. We do not consider filters at
-    # all!
-    # A better strategy would be: always merge PKs in first (since they can only reduce the intermediate size)
-    # Thereby we would effectively treat FK tables as n:m tables! Why did we make that distinction in the first place?
-
-    logger = util.make_logger(verbose or trace)
-    JoinEdge = collections.namedtuple("JoinEdge", ["table", "predicates"])
-
-    if pk_only:
-        raw_join_paths = join_graph.free_pk_joins_with(table)
-    else:
-        raw_join_paths = join_graph.free_pk_fk_joins_with(table)
-    join_paths: Dict[db.TableRef, List[mosp.AbstractMospPredicate]] = util.dict_update(raw_join_paths, util.enlist)
-    candidate_estimates: dict = {join: base_table_estimates[join]
-                                 for join in join_paths}
-
-    pk_fk_join_sequence: List[JoinEdge] = []
-    while candidate_estimates:
-        # always insert the table with minimum cardinality next
-        next_pk_fk_join = util.argmin(candidate_estimates)
-        pk_fk_join_sequence.append(
-            JoinEdge(table=next_pk_fk_join,
-                     predicates=mosp.MospCompoundPredicate.merge_and(join_paths[next_pk_fk_join])))
-        join_graph.mark_joined(next_pk_fk_join)
-
-        logger(".. Also including PK/FK join from hull:", next_pk_fk_join)
-
-        # after inserting the join into our join tree, new join paths may become available
-        if pk_only:
-            fresh_joins = join_graph.free_pk_joins_with(next_pk_fk_join)
-        else:
-            fresh_joins = join_graph.free_pk_fk_joins_with(next_pk_fk_join)
-        join_paths = util.dict_merge(join_paths, util.dict_update(fresh_joins, util.enlist),
-                                     update=lambda __, existing_paths, new_paths: existing_paths + new_paths)
-        candidate_estimates = util.dict_merge(candidate_estimates,
-                                              {join: base_table_estimates[join] for join in fresh_joins})
-
-        candidate_estimates.pop(next_pk_fk_join)
-        # TODO: if inserting a FK join, update statistics here
-
-    # TODO: check if executed as subquery and insert into join tree
-    for join_edge in pk_fk_join_sequence:
-        # TODO: for now we just always use the first predicate available. Is this sufficient or does the choice of
-        # predicate matter?
-        join_tree = join_tree.joined_with_base_table(join_edge.table, predicate=join_edge.predicates)
-    return join_tree
-
-
 @dataclass
 class TrackerEntry:
     full_join: List[db.TableRef]
@@ -1491,6 +1439,7 @@ class TrackerEntry:
     join_bound: int
     candidate_bound: int
     intermediate_bound: int
+    index_available: bool = False
 
 
 class BoundsTracker:
@@ -1516,6 +1465,7 @@ class BoundsTracker:
         tracker = BoundsTracker(query=query)
         tracker._bounds_container = parsed_entries
         tracker._current_join_path = current_max_join_path
+        tracker._rebuild_index_data()
         return tracker
 
     @staticmethod
@@ -1535,22 +1485,24 @@ class BoundsTracker:
         join_bound = json_data.get("join_bound", -1)
         intermediate_bound = json_data.get("intermediate_bound", -1)
         candidate_bound = json_data.get("candidate_bound", -1)
+        index_available = json_data.get("index_available", False)
 
-        final_entry = TrackerEntry(parsed_join, parsed_candidate, join_bound, candidate_bound, intermediate_bound)
-        print(final_entry)
+        final_entry = TrackerEntry(parsed_join, parsed_candidate, join_bound, candidate_bound, intermediate_bound,
+                                   index_available)
         return final_entry
 
     def __init__(self, query: mosp.MospQuery = None):
         self._query = query
         self._bounds_container: Dict[FrozenSet[db.TableRef], TrackerEntry] = {}
         self._current_join_path: List[db.TableRef] = []
+        self._indexed_tables: Dict[db.TableRef, bool] = collections.defaultdict(bool)  # bool() defaults to False
 
     def current_bound(self) -> int:
-        key = self._enkey_tables(self._current_join_path)
+        key = self._to_key(self._current_join_path)
         return self._bounds_container[key].join_bound
 
     def fetch_bound(self, join: Iterable[db.TableRef]) -> TrackerEntry:
-        key = self._enkey_tables(join)
+        key = self._to_key(join)
         return self._bounds_container.get(key, None)
 
     def initialize(self, first_table: db.TableRef, bound: int) -> None:
@@ -1559,13 +1511,16 @@ class BoundsTracker:
         self._bounds_container[key] = entry
         self._current_join_path.append(first_table)
 
-    def store_n_m_bound(self, next_table: db.TableRef, candidate_bound: int, join_bound: int) -> None:
+    def store_bound(self, next_table: db.TableRef, *, candidate_bound: int, join_bound: int,
+                    indexed_table: bool = False) -> None:
         full_path = self._current_join_path + [next_table]
-        current_bound = self._bounds_container[self._enkey_tables(self._current_join_path)].join_bound
-        entry = TrackerEntry(full_path, next_table, join_bound, candidate_bound, current_bound)
-        key = self._enkey_tables(full_path)
+        current_bound = self._bounds_container[self._to_key(self._current_join_path)].join_bound
+        entry = TrackerEntry(full_path, next_table, join_bound, candidate_bound, current_bound, indexed_table)
+        key = self._to_key(full_path)
         self._bounds_container[key] = entry
         self._current_join_path.append(next_table)
+        if indexed_table:
+            self._indexed_tables[next_table] = True
 
     def merge_with(self, other_tracker: "BoundsTracker", join_bound: int = None) -> None:
         current_bound = self.current_bound()
@@ -1574,20 +1529,18 @@ class BoundsTracker:
         self._bounds_container = util.dict_merge(other_tracker._bounds_container, self._bounds_container)
 
         full_path = self._current_join_path + other_tracker._current_join_path
-        key = self._enkey_tables(full_path)
+        key = self._to_key(full_path)
 
         self._bounds_container[key] = TrackerEntry(full_path, candidate_table=list(other_tracker._current_join_path),
                                                    join_bound=join_bound,
                                                    intermediate_bound=current_bound,
-                                                   candidate_bound=partner_bound)
+                                                   candidate_bound=partner_bound,
+                                                   index_available=False)
         self._current_join_path.extend(other_tracker._current_join_path)
 
-    def fill_missing_bounds(self, *, query: mosp.MospQuery = None) -> None:
-        self._query = query if query else self._query
-        if not self._query:
-            raise util.StateError("Cannot fill missing bounds without an associated query!")
-
-        self._bounds_container = self._fill_missing_bounds(query=self._query, bounds_data=self._bounds_container)
+    def _rebuild_index_data(self) -> None:
+        self._indexed_tables = collections.defaultdict(bool, {entry.candidate_table: entry.index_available
+                                                              for entry in self._bounds_container.values()})
 
     def __json__(self) -> list:
         jsonized_entries = []
@@ -1597,43 +1550,16 @@ class BoundsTracker:
                 "join_bound": entry.join_bound,
                 "intermediate_bound": entry.intermediate_bound,
                 "candidate_table": str(entry.candidate_table),
-                "candidate_bound": entry.candidate_bound
+                "candidate_bound": entry.candidate_bound,
+                "index_available": entry.index_available
             })
         return jsonized_entries
 
-    def _fill_missing_bounds(self, query: mosp.MospQuery, bounds_data: Dict[FrozenSet[db.TableRef], TrackerEntry]
-                             ) -> Dict[FrozenSet[db.TableRef], TrackerEntry]:
-        if not bounds_data:
-            return {}
-
-        filled_bounds = dict(bounds_data)
-        tables_working_set = [query.base_table()]
-        previous_working_set = []
-
-        for join in query.joins():
-            if join.is_subquery():
-                subquery_bounds = self._fill_missing_bounds(join.subquery, bounds_data)
-                filled_bounds = util.dict_merge(subquery_bounds, filled_bounds)
-
-            previous_working_set = list(tables_working_set)
-            tables_working_set.extend(join.collect_tables())
-
-            tables_key = frozenset(tables_working_set)
-            if tables_key not in filled_bounds:
-                previous_key = frozenset(previous_working_set)
-                previous_entry = filled_bounds[previous_key]
-                updated_entry = copy.copy(previous_entry)
-                updated_entry.full_join = list(tables_working_set)
-                updated_entry.candidate_table = join.collect_tables()
-                filled_bounds[tables_key] = updated_entry
-
-        return filled_bounds
-
-    def _enkey_tables(self, key: Iterable[db.TableRef]) -> FrozenSet[db.TableRef]:
+    def _to_key(self, key: Iterable[db.TableRef]) -> FrozenSet[db.TableRef]:
         return key if isinstance(key, frozenset) else frozenset(key)
 
     def __getitem__(self, key: Iterable[db.TableRef]) -> int:
-        key = self._enkey_tables(key)
+        key = self._to_key(key)
         return self._bounds_container[key]
 
     def __repr__(self) -> str:
@@ -1641,6 +1567,63 @@ class BoundsTracker:
 
     def __str__(self) -> str:
         return str(list(self._bounds_container.values()))
+
+
+def _absorb_pk_fk_hull_of(table: db.TableRef, *, join_graph: JoinGraph, join_tree: JoinTree,
+                          subquery_generator: SubqueryGenerationStrategy,
+                          bounds_tracker: BoundsTracker = None, pk_fk_bound: int = None,
+                          base_table_estimates: Dict[db.TableRef, int], pk_only: bool = False,
+                          verbose: bool = False, trace: bool = False) -> JoinTree:
+    # TODO: the choice of estimates and the iteration itself are actually not optimal. We do not consider filters at
+    # all!
+    # A better strategy would be: always merge PKs in first (since they can only reduce the intermediate size)
+    # Thereby we would effectively treat FK tables as n:m tables! Why did we make that distinction in the first place?
+
+    logger = util.make_logger(verbose or trace)
+    JoinEdge = collections.namedtuple("JoinEdge", ["table", "predicates"])
+
+    if pk_only:
+        raw_join_paths = join_graph.free_pk_joins_with(table)
+    else:
+        raw_join_paths = join_graph.free_pk_fk_joins_with(table)
+    join_paths: Dict[db.TableRef, List[mosp.AbstractMospPredicate]] = util.dict_update(raw_join_paths, util.enlist)
+    candidate_estimates: Dict[db.TableRef, int] = {joined_table: base_table_estimates[joined_table]
+                                                   for joined_table in join_paths}
+
+    pk_fk_join_sequence: List[JoinEdge] = []
+    while candidate_estimates:
+        # always insert the table with minimum cardinality next
+        next_pk_fk_join = util.argmin(candidate_estimates)
+        pk_fk_join_sequence.append(
+            JoinEdge(table=next_pk_fk_join,
+                     predicates=mosp.MospCompoundPredicate.merge_and(join_paths[next_pk_fk_join])))
+        join_graph.mark_joined(next_pk_fk_join)
+
+        if bounds_tracker:
+            bounds_tracker.store_bound(next_pk_fk_join, candidate_bound=base_table_estimates[next_pk_fk_join],
+                                       join_bound=pk_fk_bound, indexed_table=True)
+
+        logger(".. Also including PK/FK join from hull:", next_pk_fk_join)
+
+        # after inserting the join into our join tree, new join paths may become available
+        if pk_only:
+            fresh_joins = join_graph.free_pk_joins_with(next_pk_fk_join)
+        else:
+            fresh_joins = join_graph.free_pk_fk_joins_with(next_pk_fk_join)
+        join_paths = util.dict_merge(join_paths, util.dict_update(fresh_joins, util.enlist),
+                                     update=lambda __, existing_paths, new_paths: existing_paths + new_paths)
+        candidate_estimates = util.dict_merge(candidate_estimates,
+                                              {join: base_table_estimates[join] for join in fresh_joins})
+
+        candidate_estimates.pop(next_pk_fk_join)
+        # TODO: if inserting a FK join, update statistics here
+
+    # TODO: check if executed as subquery and insert into join tree
+    for join_edge in pk_fk_join_sequence:
+        # TODO: for now we just always use the first predicate available. Is this sufficient or does the choice of
+        # predicate matter?
+        join_tree = join_tree.joined_with_base_table(join_edge.table, predicate=join_edge.predicates)
+    return join_tree
 
 
 @dataclass
@@ -1708,7 +1691,7 @@ def _calculate_join_order_for_join_partition(query: mosp.MospQuery, join_graph: 
     join_tree = JoinTree.empty_join_tree()
     stats = join_cardinality_estimator.stats()
 
-    bounds_tracker = BoundsTracker(query)
+    bounds_tracker = BoundsTracker(query)  # TODO
 
     if join_graph.count_tables() == 1:
         trace_logger(".. No joins found")
@@ -1718,19 +1701,27 @@ def _calculate_join_order_for_join_partition(query: mosp.MospQuery, join_graph: 
         return JoinOrderOptimizationResult(join_tree, final_bound=final_bound, intermediate_bounds=None, regular=False)
 
     if not join_graph.free_n_m_joined_tables():
-        # TODO: documentation
+        # If the query contains more than one table (i.e. at least one join b/c we already circumvented cross products)
+        # but none of the joins is an n:m join, than all joins have to be Primary Key/Foreign Key joins. If that is the
+        # UES algorithm is not directly applicable, but we can at least use its building blocks to derive a decent join
+        # order.
+        # TODO: documentation : Why is final_bound the pk_fk_bound, how do we iterate, ... ?
         trace_logger(".. No n:m joins found, calculating snowflake-query order")
-        first_fk_table = util.argmin({table: estimate for table, estimate in stats.base_estimates.items()
-                                      if join_graph.contains_table(table) and join_graph.is_free_fk_table(table)})
+        fk_estimates = {table: estimate for table, estimate in stats.base_estimates.items()
+                        if join_graph.contains_table(table) and join_graph.is_free_fk_table(table)}
+        first_fk_table = util.argmin(fk_estimates)
         join_tree = join_tree.with_base_table(first_fk_table)
         join_graph.mark_joined(first_fk_table)
-        join_tree = _absorb_pk_fk_hull_of(first_fk_table, join_graph=join_graph, join_tree=join_tree,
-                                          subquery_generator=NoSubqueryGeneration(),
-                                          base_table_estimates=stats.base_estimates)
+        bounds_tracker.initialize(first_fk_table, stats.base_estimates[first_fk_table])
         final_bound = max(stats.base_estimates[fk_tab] for fk_tab in join_tree.all_tables()
                           if join_graph.is_fk_table(fk_tab))
+        join_tree = _absorb_pk_fk_hull_of(first_fk_table, join_graph=join_graph, join_tree=join_tree,
+                                          subquery_generator=NoSubqueryGeneration(),
+                                          base_table_estimates=stats.base_estimates,
+                                          bounds_tracker=bounds_tracker, pk_fk_bound=final_bound)
         assert not join_graph.contains_free_tables()
-        return JoinOrderOptimizationResult(join_tree, final_bound=final_bound, intermediate_bounds=None, regular=False)
+        return JoinOrderOptimizationResult(join_tree, final_bound=final_bound, intermediate_bounds=bounds_tracker,
+                                           regular=False)
 
     # This has nothing to do with the actual algorithm is merely some technical code for visualizations
     if visualize:
@@ -1795,18 +1786,22 @@ def _calculate_join_order_for_join_partition(query: mosp.MospQuery, join_graph: 
             logger("Selected first table:", lowest_bound_table, "with PK/FK joins",
                    [pk_table.partner for pk_table in pk_joins])
 
+            bounds_tracker.initialize(lowest_bound_table, lowest_min_bound)
+
             for pk_join in pk_joins:
                 trace_logger(".. Adding PK join with", pk_join.partner, "on", pk_join.predicate)
                 join_tree = join_tree.joined_with_base_table(pk_join.partner, predicate=pk_join.predicate)
                 join_graph.mark_joined(pk_join.partner)
+                bounds_tracker.store_bound(pk_join.partner, candidate_bound=stats.base_estimates[pk_join.partner],
+                                           join_bound=lowest_min_bound, indexed_table=True)
                 join_tree = _absorb_pk_fk_hull_of(pk_join.partner, join_graph=join_graph, join_tree=join_tree,
                                                   subquery_generator=NoSubqueryGeneration(),
                                                   base_table_estimates=stats.base_estimates,
-                                                  pk_only=True, verbose=verbose, trace=trace)
+                                                  pk_only=True,
+                                                  bounds_tracker=bounds_tracker, pk_fk_bound=lowest_min_bound,
+                                                  verbose=verbose, trace=trace)
                 stats.init_pk_join(lowest_bound_table, pk_join.predicate)
-
-            stats.upper_bounds[join_tree] = lowest_min_bound
-            bounds_tracker.initialize(lowest_bound_table, lowest_min_bound)
+                stats.upper_bounds[join_tree] = lowest_min_bound
 
             # This has nothing to do with the actual algorithm and is merely some technical code for visualization
             if visualize:
@@ -1878,34 +1873,46 @@ def _calculate_join_order_for_join_partition(query: mosp.MospQuery, join_graph: 
         if pk_joins and subquery_generator.execute_as_subquery(selected_candidate, join_graph, join_tree,
                                                                stats=stats, exceptions=exceptions, query=query):
             subquery_join = JoinTree().with_base_table(selected_candidate)
+            subquery_bounds_tracker = BoundsTracker()
+            subquery_bounds_tracker.initialize(selected_candidate, stats.base_estimates[selected_candidate])
+
             for pk_join in pk_joins:
                 trace_logger(".. Adding PK join with", pk_join.partner, "on", pk_join.predicate)
                 subquery_join = subquery_join.joined_with_base_table(pk_join.partner, predicate=pk_join.predicate)
                 join_graph.mark_joined(pk_join.partner)
+                subquery_bounds_tracker.store_bound(pk_join.partner,
+                                                    candidate_bound=stats.base_estimates[pk_join.partner],
+                                                    join_bound=stats.upper_bounds[selected_candidate],
+                                                    indexed_table=True)
                 subquery_join = _absorb_pk_fk_hull_of(pk_join.partner, join_graph=join_graph, join_tree=subquery_join,
                                                       subquery_generator=NoSubqueryGeneration(),
                                                       base_table_estimates=stats.base_estimates,
-                                                      pk_only=True)
+                                                      pk_only=True,
+                                                      bounds_tracker=subquery_bounds_tracker,
+                                                      pk_fk_bound=stats.upper_bounds[selected_candidate])
             join_tree = join_tree.joined_with_subquery(subquery_join, predicate=join_predicate, checkpoint=True)
 
-            subquery_bounds_tracker = BoundsTracker()
-            subquery_bounds_tracker.initialize(selected_candidate, stats.base_estimates[selected_candidate])
             bounds_tracker.merge_with(subquery_bounds_tracker, join_bound=lowest_min_bound)
             logger(".. Creating subquery for PK joins", subquery_join)
         else:
             join_tree = join_tree.joined_with_base_table(selected_candidate, predicate=join_predicate, checkpoint=True)
+            bounds_tracker.store_bound(selected_candidate, candidate_bound=stats.base_estimates[selected_candidate],
+                                       join_bound=lowest_min_bound)
             for pk_join in pk_joins:
                 trace_logger(".. Adding PK join with", pk_join.partner, "on", pk_join.predicate)
                 join_tree = join_tree.joined_with_base_table(pk_join.partner, predicate=pk_join.predicate)
                 join_graph.mark_joined(pk_join.partner)
+                bounds_tracker.store_bound(pk_join.partner, candidate_bound=stats.base_estimates[pk_join.partner],
+                                           join_bound=stats.upper_bounds[selected_candidate], indexed_table=True)
                 join_tree = _absorb_pk_fk_hull_of(pk_join.partner, join_graph=join_graph, join_tree=join_tree,
                                                   subquery_generator=NoSubqueryGeneration(),
                                                   base_table_estimates=stats.base_estimates,
-                                                  pk_only=True)
+                                                  pk_only=True,
+                                                  bounds_tracker=bounds_tracker,
+                                                  pk_fk_bound=stats.upper_bounds[selected_candidate])
 
         # Update our statistics based on the join(s) we just executed.
         stats.upper_bounds[join_tree] = lowest_min_bound
-        bounds_tracker.store_n_m_bound(selected_candidate, stats.base_estimates[selected_candidate], lowest_min_bound)
         stats.update_frequencies(selected_candidate, join_predicate, join_tree=join_tree)
 
         # This has nothing to do with the actual algorithm and is merely some technical code for visualization
