@@ -253,23 +253,21 @@ class DefaultUESCardinalityEstimator(JoinCardinalityEstimator):
         return self.stats_container
 
 
-class _TopKList:
-    def __init__(self, mcv_list: List[Tuple[Any, int]], *, associated_attribute: db.AttributeRef = None,
+class _TopKList(Generic[_T]):
+    def __init__(self, mcv_list: List[Tuple[_T, int]], *, associated_attribute: db.AttributeRef = None,
                  remainder_frequency: int = None):
-        self.associated_attribute = associated_attribute
-        self.mcv_list = mcv_list
-        self.mcv_data = dict(mcv_list)
-        self.remainder_frequency = self.min_frequency() if remainder_frequency is None else remainder_frequency
+        self.associated_attribute: db.AttributeRef = associated_attribute
+        self.mcv_list: List[Tuple[_T, int]] = mcv_list
+        self.mcv_data: Dict[_T, int] = dict(mcv_list)
+        self.remainder_frequency: int = self.min_frequency() if remainder_frequency is None else remainder_frequency
 
-    def count_common_elements(self, other_mcv: "_TopKList") -> int:
-        own_values = set(self.mcv_data.keys())
-        other_values = set(other_mcv.mcv_data.keys())
-        return len(own_values & other_values)
+    def attribute_values(self) -> Set[_T]:
+        return set(self.mcv_data.keys())
 
     def frequency_sum(self) -> int:
         return sum(self.mcv_data.values())
 
-    def contents(self) -> List[Tuple[Any, int]]:
+    def contents(self) -> List[Tuple[_T, int]]:
         return self.mcv_list
 
     def max_frequency(self) -> int:
@@ -278,16 +276,21 @@ class _TopKList:
     def min_frequency(self) -> int:
         return min(self.mcv_data.values(), default=1)
 
-    def snap_to(self, snap_value: int) -> "_TopKList":
+    def snap_to(self, snap_value: int) -> "_TopKList[_T]":
         snapped_mcv = [(val, min(freq, snap_value)) for val, freq in self.mcv_list]
         snapped_remainder = min(self.remainder_frequency, snap_value)
         return _TopKList(snapped_mcv, remainder_frequency=snapped_remainder,
                          associated_attribute=self.associated_attribute)
 
-    def intersects_with(self, other: "_TopKList") -> bool:
+    def count_common_elements(self, other_mcv: "_TopKList[_T]") -> int:
+        own_values = set(self.mcv_data.keys())
+        other_values = set(other_mcv.mcv_data.keys())
+        return len(own_values & other_values)
+
+    def intersects_with(self, other: "_TopKList[_T]") -> bool:
         return not self.mcv_data.keys().isdisjoint(other.mcv_data.keys())
 
-    def join_cardinality_with(self, other: "_TopKList") -> int:
+    def join_cardinality_with(self, other: "_TopKList[_T]") -> int:
         cardinality_sum = 0
         for value in self:
             cardinality_sum += self[value] * other[value]
@@ -295,7 +298,7 @@ class _TopKList:
             cardinality_sum += self[value] * other[value]
         return cardinality_sum
 
-    def merge_with(self, other: "_TopKList") -> "_TopKList":
+    def merge_with(self, other: "_TopKList[_T]") -> "_TopKList[_T]":
         merged_list = []
         for value in self:
             merged_list.append((value, self[value] * other[value]))
@@ -305,16 +308,16 @@ class _TopKList:
         remainder_freq = self.remainder_frequency * other.remainder_frequency
         return _TopKList(merged_list, remainder_frequency=remainder_freq)
 
-    def __getitem__(self, value: Any) -> int:
+    def __getitem__(self, value: _T) -> int:
         return self.mcv_data.get(value, self.remainder_frequency)
 
-    def __contains__(self, value: Any) -> bool:
+    def __contains__(self, value: _T) -> bool:
         return value in self.mcv_data
 
     def __len__(self) -> int:
         return len(self.mcv_list)
 
-    def __iter__(self) -> Any:
+    def __iter__(self) -> Iterator[_T]:
         return list(self.mcv_data.keys()).__iter__()
 
     def __repr__(self) -> str:
