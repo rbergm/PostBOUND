@@ -107,11 +107,22 @@ class BoundsTrackerTests(unittest.TestCase):
         optimized: ues.OptimizationResult = ues.optimize_query(query, introspective=True)
         jsonized = util.to_json(optimized.bounds)  # noqa: F841
 
-    def test_fill_missing_bounds(self):
+    def test_no_gaps(self):
         query = mosp.MospQuery.parse(job_workload["1a"])
-        optimization_res: ues.OptimizationResult = ues.optimize_query(query, introspective=True)
-        bounds = optimization_res.bounds
-        bounds.fill_missing_bounds(query=optimization_res.query)
+        optimized: ues.OptimizationResult = ues.optimize_query(query, introspective=True)
+        optimized_query, bounds = optimized.query, optimized.bounds
+
+        current_join_path = [optimized_query.base_table()]
+        self.assertIn(current_join_path, bounds)
+        for join in optimized_query.joins():
+            if join.is_subquery():
+                subquery_join_path = [join.base_table()]
+                self.assertIn(subquery_join_path, bounds)
+                for subquery_join in join.subquery.joins():
+                    subquery_join_path.extend(subquery_join.collect_tables())
+                    self.assertIn(subquery_join_path, bounds)
+            current_join_path.extend(join.collect_tables())
+            self.assertIn(current_join_path, bounds)
 
 
 if "__name__" == "__main__":

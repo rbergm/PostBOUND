@@ -1562,6 +1562,10 @@ class BoundsTracker:
         key = self._to_key(key)
         return self._bounds_container[key]
 
+    def __contains__(self, key: Iterable[db.TableRef]) -> bool:
+        key = self._to_key(key)
+        return key in self._bounds_container
+
     def __repr__(self) -> str:
         return str(self)
 
