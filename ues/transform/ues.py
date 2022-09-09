@@ -21,12 +21,27 @@ _T = typing.TypeVar("_T")
 
 
 class MospQueryPreparation:
+    """Removes unsupported structures from an incoming query and reconstructs the query after optimization.
+
+    The removed features do  not influence join order or upper bounds and are therefore safe to be ignored while
+    optimizing. More specifically query preparation temporarily removes the following clauses and statements:
+
+    * aggregations in the SELECT clause - the prepared query will be SELECT * FROM ...
+    * explicit JOIN statements - the referenced tables will be included in the FROM clause (and WHERE clause)
+    * GROUP BY clauses - does not influence the optimal join order
+    * ORDER BY clauses - does not influence the optimal join order
+    * HAVING clauses - does not influence the optimal join order
+
+    Additionally, temporary aliases will be generated as necessary, such that each table is referenced via an alias.
+    The resulting query will be a pure SPJ (select, project, join) query.
+    """
     def __init__(self, query: mosp.MospQuery, *, dbs: db.DBSchema = db.DBSchema.get_instance()):
         self._original_query: mosp.MospQuery = query
         self._generated_aliases: List[str] = []
         self._dbs = dbs
 
     def prepare_query(self) -> mosp.MospQuery:
+        """Removes all unsupported/not important clauses and statements from the query."""
         prepared = dict(self._original_query.query)
         prepared["select"] = "*"
         prepared.pop("groupby", None)
@@ -39,6 +54,7 @@ class MospQueryPreparation:
         return mosp.MospQuery(prepared)
 
     def reconstruct_query(self, optimized_query: mosp.MospQuery) -> mosp.MospQuery:
+        """Adds all temporarily removed clauses and statements back to the freshly optimized query."""
         reconstructed_query = dict(optimized_query.query)
 
         reconstructed_query["select"] = copy.copy(self._original_query.query["select"])
