@@ -87,6 +87,7 @@ class UpperBoundTests(unittest.TestCase):
         super().__init__(methodName)
         self.top1_bounds = pd.read_csv("top1_bounds.csv", index_col="label")
 
+    @unittest.skip
     def test_top1_tighter_ues(self):
         for label, raw_query in job_workload.items():
             query = mosp.MospQuery.parse(raw_query)
@@ -109,6 +110,7 @@ class UpperBoundTests(unittest.TestCase):
                 self._assertFilterEstimationMismatch(query, label=label,
                                                      true_cardinality=true_cardinality, upper_bound=upper_bound)
 
+    @unittest.skip
     def test_top15_tighter_top1(self):
         for label, raw_query in job_workload.items():
             query = mosp.MospQuery.parse(raw_query)

@@ -275,6 +275,10 @@ class _TopKList(Generic[_T]):
         self.associated_attribute: db.AttributeRef = associated_attribute
         self.mcv_list: List[Tuple[_T, int]] = mcv_list
         self.mcv_data: Dict[_T, int] = dict(mcv_list)
+
+        # the double assignment to remainder_frequency is important for min_frequency to work properly on
+        # empty mcv_lists!
+        self.remainder_frequency: int = 1
         self.remainder_frequency: int = self.min_frequency() if remainder_frequency is None else remainder_frequency
 
     def attribute_values(self) -> Set[_T]:
@@ -287,10 +291,10 @@ class _TopKList(Generic[_T]):
         return self.mcv_list
 
     def max_frequency(self) -> int:
-        return max(self.mcv_data.values(), default=1)
+        return max(self.mcv_data.values(), default=self.remainder_frequency)
 
     def min_frequency(self) -> int:
-        return min(self.mcv_data.values(), default=1)
+        return min(self.mcv_data.values(), default=self.remainder_frequency)
 
     def snap_to(self, snap_value: int) -> "_TopKList[_T]":
         snapped_mcv = [(val, min(freq, snap_value)) for val, freq in self.mcv_list]
@@ -323,6 +327,11 @@ class _TopKList(Generic[_T]):
         merged_list.sort(key=operator.itemgetter(1))
         remainder_freq = self.remainder_frequency * other.remainder_frequency
         return _TopKList(merged_list, remainder_frequency=remainder_freq)
+
+    def drop_values_from(self, other: "_TopKList[_T]") -> "_TopKList[_T]":
+        unique_values = [(val, freq) for val, freq in self.mcv_list if val not in other]
+        return _TopKList(unique_values, remainder_frequency=self.remainder_frequency,
+                         associated_attribute=self.associated_attribute)
 
     def __getitem__(self, value: _T) -> int:
         return self.mcv_data.get(value, self.remainder_frequency)
@@ -386,53 +395,41 @@ class TopkUESCardinalityEstimator(JoinCardinalityEstimator):
         return self.stats_container.upper_bounds.get(table, self.stats_container.base_estimates[table])
 
     def _calculate_pk_fk_bound(self, fk_attr: db.AttributeRef, pk_attr: db.AttributeRef) -> int:
-        fk_mcv = self.stats_container.fetch_mcv_list(fk_attr)
-        pk_mcv = self.stats_container.fetch_mcv_list(pk_attr)
+        total_bound_fk = self.stats_container.base_estimates[fk_attr.table]
+        total_bound_pk = self.stats_container.base_estimates[pk_attr.table]
+        fk_mcv = self.stats_container.fetch_mcv_list(fk_attr, snap_value=total_bound_fk)
+        pk_mcv = self.stats_container.fetch_mcv_list(pk_attr, snap_value=total_bound_pk)
 
         # TODO: documentation
 
-        total_bound_pk = self.stats_container.base_estimates[pk_attr.table]
-        mcv_card, processed_pk_tuples = 0, 0
-        values_in_both_mcvs = set()
-        for pk_val in pk_mcv:
-            mcv_card += pk_mcv[pk_val] * fk_mcv[pk_val]
-            processed_pk_tuples += pk_mcv[pk_val]
-            if pk_val in fk_mcv:
-                values_in_both_mcvs.add(pk_val)
+        mcv_bound, processed_pk_tuples, processed_fk_tuples = 0, 0, 0
+        for pk_value in pk_mcv:
+            pk_freq, fk_freq = pk_mcv[pk_value], fk_mcv[pk_value]
+            mcv_bound += pk_freq * fk_freq
+            processed_pk_tuples += pk_freq
+            processed_fk_tuples += fk_freq if pk_value in fk_mcv else 0
 
-        if processed_pk_tuples > total_bound_pk:
-            mcv_card *= self._calculate_adjustment_factor(pk_mcv, total_bound_pk, 0)
+        adjustment_factor_pk = min(total_bound_pk / processed_pk_tuples, 1) if processed_pk_tuples else 1
+        adjustment_factor_fk = min(total_bound_fk / processed_fk_tuples, 1) if processed_fk_tuples else 1
+        mcv_adjustment_factor = min(adjustment_factor_fk, adjustment_factor_pk)
+        mcv_bound *= mcv_adjustment_factor
 
-        pk_remainder_card = self.stats_container.base_estimates[pk_attr.table] - pk_mcv.frequency_sum()
-        pk_remainder_card = max(pk_remainder_card, 0)
-        fk_remainder_freq = max([freq for val, freq in fk_mcv.contents() if val not in values_in_both_mcvs],
-                                default=fk_mcv.remainder_frequency)
-        remainder_cardinality = fk_remainder_freq * pk_remainder_card
+        fk_remainder_freq = fk_mcv.drop_values_from(pk_mcv).max_frequency()
+        remainder_cardinality = fk_remainder_freq * total_bound_pk
 
-        cardinality = mcv_card + remainder_cardinality
+        cardinality = mcv_bound + remainder_cardinality
         max_cardinality = self.stats_container.base_estimates[fk_attr.table]
         return min(cardinality, max_cardinality)
 
     def _calculate_n_m_bound(self, joined_attr: db.AttributeRef, candidate_attr: db.AttributeRef,
                              join_tree: "JoinTree") -> int:
-        # How many tuples are in each "relation"?
         total_bound_joined = self.stats_container.upper_bounds[join_tree]
         total_bound_candidate = self.stats_container.upper_bounds[candidate_attr.table]
 
-        # Fetch the MCVs per attribute
         joined_mcv = self.stats_container.fetch_mcv_list(joined_attr, joined_table=True, snap_value=total_bound_joined)
         candidate_mcv = self.stats_container.fetch_mcv_list(candidate_attr, snap_value=total_bound_candidate)
 
-        # Calculate the MCV bound
-        # This involves keeping track of some bookkeeping information later:
-        # - the total number of tuples that have been processed (or are assumed to be processed) per relation
-        # - the number of times the remainder/star frequency had to be used per relation
-        #
-        # MCV bound calculation happens in two phases: first up the bound based on the MCV of the attribute in the
-        # join tree is calculated and secondly, the bound based on the MCV of the new attribute is added. This second
-        # step is only performed with values that have not been processed during the first phase already.
         mcv_bound, processed_tuples_joined, processed_tuples_candidate = 0, 0, 0
-        remainder_hits_joined, remainder_hits_candidate = 0, 0
 
         if joined_mcv.intersects_with(candidate_mcv):
 
@@ -444,8 +441,7 @@ class TopkUESCardinalityEstimator(JoinCardinalityEstimator):
 
                 # bookkeeping
                 processed_tuples_joined += joined_freq
-                processed_tuples_candidate += candidate_freq
-                remainder_hits_candidate += 1 if joined_value not in candidate_mcv else 0
+                processed_tuples_candidate += candidate_freq if joined_value in candidate_mcv else 0
 
             # Phase 2
             for candidate_value in [value for value in candidate_mcv if value not in joined_mcv]:
@@ -455,8 +451,6 @@ class TopkUESCardinalityEstimator(JoinCardinalityEstimator):
 
                 # bookkeeping
                 processed_tuples_joined += joined_freq
-                processed_tuples_candidate += candidate_freq
-                remainder_hits_joined += 1
 
             # After the MCV bound has been calculated, one special case may occur: the total number of tuples processed
             # for a relation may surpass the actual total number of tuples in that relation. This may happen, if the
@@ -464,35 +458,25 @@ class TopkUESCardinalityEstimator(JoinCardinalityEstimator):
             # base table has been filtered heavily, and the most frequent values are likely not even part of it
             # anymore. In any way, the overestimation of tuples has to be compensated. To do so, we calculate an
             # adjustment factor that will normalize tuples counts again.
-            if processed_tuples_joined > total_bound_joined:
-                joined_adjustment_factor = self._calculate_adjustment_factor(joined_mcv, total_bound_joined,
-                                                                             remainder_hits_joined)
-                mcv_bound *= joined_adjustment_factor
-            if processed_tuples_candidate > total_bound_candidate:
-                candidate_adjustment_factor = self._calculate_adjustment_factor(candidate_mcv, total_bound_candidate,
-                                                                                remainder_hits_candidate)
-                mcv_bound *= candidate_adjustment_factor
+
+            adjustment_factor_joined = (min(total_bound_joined / processed_tuples_joined, 1)
+                                        if processed_tuples_joined else 1)
+            adjustment_factor_candidate = (min(total_bound_candidate / processed_tuples_candidate, 1)
+                                           if processed_tuples_candidate else 1)
+            mcv_adjustment_factor = min(adjustment_factor_joined, adjustment_factor_candidate)
+            mcv_bound *= mcv_adjustment_factor
         else:
             pass
 
         # Finally, we have to calculate a bound on all values that are in neither MCV list. To do so, we fall back
-        # to an UES estimation, but with much lower starting values.
-        remainder_card_joined = max(total_bound_joined - processed_tuples_joined, 0)
-        remainder_card_candidate = max(total_bound_candidate - processed_tuples_candidate, 0)
-        distinct_values_joined = remainder_card_joined / joined_mcv.remainder_frequency
-        distinct_values_candidate = remainder_card_candidate / candidate_mcv.remainder_frequency
+        # to an UES estimation, but with lower starting values.
+        distinct_values_joined = total_bound_joined / joined_mcv.remainder_frequency
+        distinct_values_candidate = total_bound_candidate / candidate_mcv.remainder_frequency
         remainder_bound = (min(distinct_values_joined, distinct_values_candidate)
                            * joined_mcv.remainder_frequency
                            * candidate_mcv.remainder_frequency)
 
         return mcv_bound + remainder_bound
-
-    def _calculate_adjustment_factor(self, mcv_list: _TopKList, total_bound: int, remainder_hits: int) -> int:
-        # formula: total number of tuples / total number of tuples processed
-        factor = total_bound / (remainder_hits * mcv_list.remainder_frequency + mcv_list.frequency_sum())
-
-        # some sanity, mostly to quickly try other formulas without breaking too much
-        return min(factor, 1) if factor > 0 else 1  # ensure 0 < factor <= 1
 
 
 def _is_pk_fk_join(join: mosp.MospBasePredicate, *, dbs: db.DBSchema = db.DBSchema.get_instance()) -> bool:
