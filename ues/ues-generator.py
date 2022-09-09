@@ -19,7 +19,7 @@ from analysis import selection
 
 
 DEFAULT_QUERY_COL = "query"
-DEFAULT_UES_COL = "query_col"
+DEFAULT_UES_COL = "query_ues"
 
 
 def read_workload_raw(src_file: str) -> pd.DataFrame:
