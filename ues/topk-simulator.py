@@ -474,8 +474,7 @@ def simulate(num_tuples_r: int, num_tuples_s: int, distinct_values_r: int, disti
     print_stderr("topk(S.b) =", topk_s, condition=verbose)
     print_stderr("---- ---- ---- ----", condition=verbose)
 
-    ues_bound = calculate_ues_bound(max_frequency(tuples_r), max_frequency(tuples_s), num_tuples_r, num_tuples_s,
-                                    verbose=verbose)
+    ues_bound = calculate_ues_bound(topk_r.max_freq(), topk_s.max_freq(), num_tuples_r, num_tuples_s, verbose=verbose)
     topk_bound = calcualte_topk_bound(topk_r, topk_s, num_tuples_r, num_tuples_s, version=version, verbose=verbose)
     actual_values = execute_join(tuples_r, tuples_s)
 
