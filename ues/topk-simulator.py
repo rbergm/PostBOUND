@@ -482,16 +482,22 @@ def simulate(num_tuples_r: int, num_tuples_s: int, distinct_values_r: int, disti
 
 
 def find_regressions(num_tuples_r: int, num_tuples_s: int, distinct_values_r: int, distinct_values_s: int, *,
-                     exceed_value: int, version: int, topk_length: int = None, num_seeds: int = 100):
+                     exceed_value: int, version: int, topk_length: int = None, num_seeds: int = 100,
+                     verbose: bool = False):
     topk_range = range(topk_length, topk_length + 1) if topk_length else range(1, max(num_tuples_r, num_tuples_s) + 1)
     for seed, topk_length in itertools.product(range(num_seeds), topk_range):
         simulation_res = simulate(num_tuples_r, num_tuples_s, distinct_values_r, distinct_values_s,
                                   topk_length=topk_length, exceed_value=exceed_value, rand_seed=seed,
                                   version=version, verbose=False)
-        if simulation_res.ues < simulation_res.topk and exceed_value is None:
+        if simulation_res.ues < simulation_res.topk:
             print(f"Regression found at seed = {seed} and k = {topk_length}: UES bound is smaller Top-k bound")
         elif simulation_res.topk < simulation_res.actual:
             print(f"Regression found at seed = {seed} and k = {topk_length}: Top-k bound is no upper bound")
+        elif verbose:
+            overestimation = simulation_res.topk - simulation_res.actual
+            tightening = simulation_res.ues - simulation_res.topk
+            print(f"At seed = {seed} and k = {topk_length}: "
+                  f"Overestimation = {overestimation}; Tightening = {tightening}")
 
 
 def main():
@@ -539,7 +545,8 @@ def main():
 
     if args.regression_mode:
         find_regressions(num_tuples_r, num_tuples_s, distinct_values_r, distinct_values_s,
-                         topk_length=topk_length if args.k else None, exceed_value=exceed_value, version=version)
+                         topk_length=topk_length if args.k else None, exceed_value=exceed_value, version=version,
+                         verbose=args.verbose)
         return
 
     simulation_result = simulate(num_tuples_r, num_tuples_s, distinct_values_r, distinct_values_s,
