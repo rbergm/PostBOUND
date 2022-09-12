@@ -178,7 +178,11 @@ dt-venv/
 LocalTest*
 localtest*
 
+# Build files
+util/bin/ 
+
 # The imdb folder contains all sources for the IMDB dataset, we don't want this in VC
+# The same applies to the TPCH data
 imdb/
 imdb_data/
 tpch_data/
