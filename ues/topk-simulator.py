@@ -8,7 +8,7 @@ import operator
 import pprint
 import random
 import sys
-from typing import Dict, List, Set, Iterator, Tuple
+from typing import Dict, List, Set, Iterator, Tuple, Union
 
 
 attr_values = "abcdefghijklmnopqrstuvwxyz"
@@ -414,13 +414,118 @@ def calculate_topk_bound_v6(topk_r: TopKList, topk_s: TopKList, num_tuples_r: in
     return math.ceil(_topk_bound + _ues_bound)
 
 
+class TopKListV7:
+    @staticmethod
+    def initialize_from(base_topk: TopKList, num_tuples: int) -> "TopKListV7":
+        return TopKListV7(base_topk.entries, num_tuples)
+
+    def __init__(self, entries: List[Tuple[str, int]], num_tuples: int, *, star_frequency: Union[int, None] = None):
+        self._entries = sorted(entries, key=operator.itemgetter(1), reverse=True) if num_tuples > 0 else []
+        self._frequencies = dict(self._entries)
+        self._total_tuples = num_tuples
+        self._star_frequency = (min(star_frequency, num_tuples) if star_frequency is not None and num_tuples > 0
+                                else star_frequency)
+        if self._entries and self._star_frequency is None:
+            self._star_frequency = self._entries[-1][1]
+        elif self._entries and self._star_frequency is not None:
+            self._star_frequency = min(self._star_frequency, self._entries[-1][1])
+        elif not self._entries and self._star_frequency is None:
+            self._star_frequency = 1
+
+    def has_contents(self) -> bool:
+        return len(self._entries) > 0
+
+    def frequency_of(self, value: str) -> int:
+        return self._frequencies.get(value, self.star_frequency)
+
+    def head(self) -> Tuple[str, int]:
+        return self._entries[0] if self._total_tuples > 0 else None
+
+    def snap_to(self, num_tuples: int) -> "TopKListV7":
+        snapped_tuples = min(self._total_tuples, num_tuples)
+        snapped_entries = [(val, min(freq, num_tuples)) for val, freq in self._entries]
+        return TopKListV7(snapped_entries, snapped_tuples, star_frequency=self.star_frequency)
+
+    def shift_according_to(self, value: str) -> "TopKListV7":
+        corresponding_frequency = self.frequency_of(value)
+        remaining_tuples = max(self._total_tuples - corresponding_frequency, 0)
+        remaining_entries = [(val, freq) for val, freq in self._entries if val != value]
+        shifted_list = TopKListV7(remaining_entries, remaining_tuples, star_frequency=self.star_frequency)
+        return shifted_list.snap_to(remaining_tuples)
+
+    def _get_num_tuples(self) -> int:
+        return self._total_tuples
+
+    def _set_num_tuples(self, value: int) -> None:
+        self._total_tuples = max(value, 0)
+
+    def _get_star_frequency(self) -> int:
+        return self._star_frequency
+
+    remaining_tuples = property(_get_num_tuples, _set_num_tuples)
+    star_frequency = property(_get_star_frequency)
+
+    def __getitem__(self, key: str) -> int:
+        return self.frequency_of(key)
+
+    def __repr__(self) -> str:
+        return str(self)
+
+    def __str__(self) -> str:
+        return f"card = {self._total_tuples}; MCV = {str(self._entries)}; f* = {self.star_frequency}"
+
+
+def calculate_topk_bound_v7(topk_r: TopKList, topk_s: TopKList, num_tuples_r: int, num_tuples_s: int, *,
+                            verbose: bool = False):
+    topk_r: TopKListV7 = TopKListV7.initialize_from(topk_r, num_tuples_r)
+    topk_s: TopKListV7 = TopKListV7.initialize_from(topk_s, num_tuples_s)
+    topk_r = topk_r.snap_to(num_tuples_r)
+    topk_s = topk_s.snap_to(num_tuples_s)
+
+    print_stderr(f"Original MCV(R): {topk_r}", condition=verbose)
+    print_stderr(f"Original MCV(S): {topk_s}", condition=verbose)
+
+    bound = 0
+    while ((topk_r.has_contents() or topk_s.has_contents())
+           and topk_r.remaining_tuples > 0
+           and topk_s.remaining_tuples > 0):
+        bound_r, bound_s = 0, 0
+        head_r, head_s = None, None
+        if topk_r.has_contents():
+            head_r, head_frequency = topk_r.head()
+            bound_r = head_frequency * topk_s[head_r]
+        if topk_s.has_contents():
+            head_s, head_frequency = topk_s.head()
+            bound_s = head_frequency * topk_r[head_s]
+
+        head_value = head_r if bound_r >= bound_s else head_s
+        bound += bound_r if bound_r >= bound_s else bound_s
+
+        topk_r = topk_r.shift_according_to(head_value)
+        topk_s = topk_s.shift_according_to(head_value)
+
+        print_stderr(f".. Selected value {head_value} (bound(R) = {bound_r}; bound(S) = {bound_s})", condition=verbose)
+        print_stderr(f".. Adjusted MCV(R): {topk_r}", condition=verbose)
+        print_stderr(f".. Adjusted MCV(S): {topk_s}", condition=verbose)
+
+    print_stderr(f"|R*| = {topk_r.remaining_tuples}; |S*| = {topk_s.remaining_tuples}", condition=verbose)
+    print_stderr("---- ---- ---- ----", condition=verbose)
+
+    bound += (min(topk_r.remaining_tuples / topk_r.star_frequency, topk_s.remaining_tuples / topk_s.star_frequency)
+              * topk_r.star_frequency
+              * topk_s.star_frequency)
+
+    return math.ceil(bound)
+
+
 TopkBoundVersions = {
     1: (calculate_topk_bound_v1, "The current (live) implementation"),
     2: (calculate_topk_bound_v2, "UES* pushdown: reduce distinct values based on TopK lists"),
     3: (calculate_topk_bound_v3, "No pushdown: adjusted Topk bound + full UES* bound"),
     4: (calculate_topk_bound_v4, "Short-lived experiment. Doesn't work"),
     5: (calculate_topk_bound_v5, "UES* pushdown: |R*| := |R| - f* * k"),
-    6: (calculate_topk_bound_v6, "Mild TopK adjustment, no UES* pushdown")
+    6: (calculate_topk_bound_v6, "Mild TopK adjustment, no UES* pushdown"),
+    7: (calculate_topk_bound_v7, "Integrated bound with inplace updates")
 }
 
 
