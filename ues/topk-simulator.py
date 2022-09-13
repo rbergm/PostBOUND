@@ -15,6 +15,7 @@ from typing import Dict, List, Set, Iterator, Tuple, Union
 attr_values = "abcdefghijklmnopqrstuvwxyz"
 
 DEFAULT_TOPK_ESTIMATION_VER = 1
+DEFAULT_NUM_REGRESSION_SEEDS = 100
 
 
 def print_stderr(*args, condition: bool = None, **kwargs):
@@ -96,21 +97,29 @@ class RelationGenerator(abc.ABC):
     def relation_contents(self) -> List[str]:
         return NotImplemented
 
+    @abc.abstractmethod
+    def reset(self) -> None:
+        return NotImplemented
+
 
 class RandomRelationGenerator(RelationGenerator):
     def __init__(self, num_tuples: int, distinct_values: int):
         self._num_tuples = num_tuples
         self._distinct_values = distinct_values
-
-        available_values = attr_values[:self._distinct_values]
-        weights = [random.randint(0, 10) for __ in range(self._distinct_values)]
-        self._contents = random.choices(available_values, weights, k=self._num_tuples)
+        self._contents = None
 
     def num_tuples(self) -> int:
         return self._num_tuples
 
     def relation_contents(self) -> List[str]:
+        if self._contents is None:
+            available_values = attr_values[:self._distinct_values]
+            weights = [random.randint(0, 10) for __ in range(self._distinct_values)]
+            self._contents = random.choices(available_values, weights, k=self._num_tuples)
         return list(self._contents)
+
+    def reset(self) -> None:
+        self._contents = None
 
 
 class ManualRelationGenerator(RelationGenerator):
@@ -123,6 +132,9 @@ class ManualRelationGenerator(RelationGenerator):
     def relation_contents(self) -> List[str]:
         return list(self._contents)
 
+    def reset(self) -> None:
+        pass
+
 
 class TopKListGenerator(abc.ABC):
     @abc.abstractmethod
@@ -130,21 +142,20 @@ class TopKListGenerator(abc.ABC):
         return NotImplemented
 
     @abc.abstractmethod
-    def build_topk_list(self, k: int) -> TopKList:
+    def build_topk_list(self, tuples: List[str], k: int) -> TopKList:
         return NotImplemented
 
 
-class DerivedBasedTopKListGenerator(TopKListGenerator):
-    def __init__(self, tuples: List[str], *, exceed_value: int = 0):
-        self._tuples = tuples
+class DistributionBasedTopKListGenerator(TopKListGenerator):
+    def __init__(self, *, exceed_value: int = 0):
         self._exceed_value = exceed_value
 
     def topk_length(self) -> int:
         return self._k
 
-    def build_topk_list(self, k: int) -> TopKList:
+    def build_topk_list(self, tuples: List[str], k: int) -> TopKList:
         exceed_value = self._exceed_value if self._exceed_value else 0
-        occurrence_counter = count_value_occurrences(self._tuples)
+        occurrence_counter = count_value_occurrences(tuples)
 
         attribute_frequencies = [(attr, freq) for attr, freq in occurrence_counter.items()]
         attribute_frequencies = [(attr, freq + random.randint(0, exceed_value))
@@ -159,7 +170,7 @@ class ManualTopKListGenerator(TopKListGenerator):
     def topk_length(self) -> int:
         return len(self._contents.split(","))
 
-    def build_topk_list(self, k: int) -> TopKList:
+    def build_topk_list(self, tuples: List[str], k: int) -> TopKList:
         topk_entries: Dict[str, int] = {}
         for entry in self._contents.split(","):
             value, frequency = entry.split(":")
@@ -631,11 +642,14 @@ def simulate(generator_r: RelationGenerator, generator_s: RelationGenerator,
              topk_length: int, exceed_value: int, topk_version: int, verbose: bool,
              rand_seed: int) -> SimulationResult:
     random.seed(rand_seed)
+    generator_r.reset()
+    generator_s.reset()
 
     tuples_r, tuples_s = generator_r.relation_contents(), generator_s.relation_contents()
+
     num_tuples_r, num_tuples_s = generator_r.num_tuples(), generator_s.num_tuples()
-    topk_r = topk_generator_r.build_topk_list(topk_length)
-    topk_s = topk_generator_s.build_topk_list(topk_length)
+    topk_r = topk_generator_r.build_topk_list(tuples_r, topk_length)
+    topk_s = topk_generator_s.build_topk_list(tuples_s, topk_length)
 
     print_stderr(".. Using exceed value of", exceed_value, condition=verbose and (exceed_value is not None))
 
@@ -669,7 +683,8 @@ def find_regressions(generator_r: RelationGenerator, generator_s: RelationGenera
         if simulation_res.ues < simulation_res.topk:
             print(f"Regression found at seed = {seed} and k = {topk_length}: UES bound is smaller Top-k bound")
         elif simulation_res.topk < simulation_res.actual:
-            print(f"Regression found at seed = {seed} and k = {topk_length}: Top-k bound is no upper bound")
+            print(f"Regression found at seed = {seed} and k = {topk_length}: Top-k bound is no upper bound",
+                  f"({simulation_res.topk} vs. {simulation_res.actual})")
         elif verbose:
             overestimation = simulation_res.topk - simulation_res.actual
             tightening = simulation_res.ues - simulation_res.topk
@@ -698,6 +713,8 @@ def main():
                         "frequencies that exceed the total number of tuples per relation.")
     parser.add_argument("--rand-seed", action="store", type=int, default=42, help="Seed for the RNG")
     parser.add_argument("--regression-mode", action="store_true", default=False)
+    parser.add_argument("--regression-seeds", action="store", type=int, default=DEFAULT_NUM_REGRESSION_SEEDS,
+                        help="How many RNG seeds should be tried")
     parser.add_argument("--version", action="store", type=int, default=DEFAULT_TOPK_ESTIMATION_VER, help="")
     parser.add_argument("--verbose", "-v", action="store_true", default=False, help="Produce debugging ouput")
     parser.add_argument("--manual-rel-r", action="store", default="", help="Use given attribute values for relation "
@@ -717,9 +734,6 @@ def main():
     if args.regression_mode and (args.manual_rel_r or args.manual_rel_s or args.manual_topk_r or args.manual_topk_s):
         parser.error("Regression mode cannot use manual tuples/top-k lists.")
 
-    # since we access the random relation before simulation, we need to initialize the RNG here already
-    random.seed(args.rand_seed)
-
     num_tuples_r = args.nr if args.nr else args.n
     num_tuples_s = args.ns if args.ns else args.n
     distinct_values_r = args.dr if args.dr else args.d
@@ -731,9 +745,9 @@ def main():
 
     exceed_value = args.exceed if args.exceed else None
     topk_generator_r = (ManualTopKListGenerator(args.manual_topk_r) if args.manual_topk_r
-                        else DerivedBasedTopKListGenerator(generator_r.relation_contents(), exceed_value=exceed_value))
+                        else DistributionBasedTopKListGenerator(exceed_value=exceed_value))
     topk_generator_s = (ManualTopKListGenerator(args.manual_topk_s) if args.manual_topk_s
-                        else DerivedBasedTopKListGenerator(generator_s.relation_contents(), exceed_value=exceed_value))
+                        else DistributionBasedTopKListGenerator(exceed_value=exceed_value))
 
     topk_length = args.k if args.k is not None else 3
     version = args.version if args.version else 1
@@ -744,7 +758,7 @@ def main():
     if args.regression_mode:
         find_regressions(generator_r, generator_s, topk_generator_r, topk_generator_s,
                          topk_length=topk_length if args.k else None, exceed_value=exceed_value, version=version,
-                         verbose=args.verbose)
+                         num_seeds=args.regression_seeds, verbose=args.verbose)
         return
 
     simulation_result = simulate(generator_r, generator_s, topk_generator_r, topk_generator_s,
