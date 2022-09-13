@@ -113,13 +113,26 @@ class RandomRelationGenerator(RelationGenerator):
 
     def relation_contents(self) -> List[str]:
         if self._contents is None:
-            available_values = attr_values[:self._distinct_values]
+            if self._distinct_values <= len(attr_values):
+                available_values = attr_values[:self._distinct_values]
+            else:
+                num_usable_values = self._largest_divisor(self._distinct_values, len(attr_values))
+                base_values = attr_values[:num_usable_values]
+                subvalues_per_base_value = int(self._distinct_values / num_usable_values)
+                available_values = [base + str(suffix) for base, suffix in
+                                    itertools.product(base_values, range(subvalues_per_base_value))]
             weights = [random.randint(0, 10) for __ in range(self._distinct_values)]
             self._contents = random.choices(available_values, weights, k=self._num_tuples)
+
         return list(self._contents)
 
     def reset(self) -> None:
         self._contents = None
+
+    def _largest_divisor(self, value: int, max_candidate: int) -> int:
+        for candidate in reversed(range(1, max_candidate+1)):
+            if value % candidate == 0:
+                return candidate
 
 
 class ManualRelationGenerator(RelationGenerator):
@@ -757,9 +770,6 @@ def main():
 
     topk_length = args.k if args.k is not None else 3
     version = args.version if args.version else 1
-
-    if distinct_values_r > len(attr_values) or distinct_values_s > len(attr_values):
-        parser.error(f"Maximum {len(attr_values)} distinct attribute values allowed")
 
     if args.regression_mode:
         find_regressions(generator_r, generator_s, topk_generator_r, topk_generator_s,
