@@ -546,6 +546,9 @@ class TopKListV7:
     def __getitem__(self, key: str) -> int:
         return self.frequency_of(key)
 
+    def __iter__(self) -> Iterator[str]:
+        return [val for val, __ in self._entries].__iter__()
+
     def __repr__(self) -> str:
         return str(self)
 
@@ -567,22 +570,25 @@ def calculate_topk_bound_v7(topk_r: TopKList, topk_s: TopKList, num_tuples_r: in
     while ((topk_r.has_contents() or topk_s.has_contents())
            and topk_r.remaining_tuples > 0
            and topk_s.remaining_tuples > 0):
-        bound_r, bound_s = 0, 0
-        head_r, head_s = None, None
-        if topk_r.has_contents():
-            head_r, head_frequency = topk_r.head()
-            bound_r = head_frequency * topk_s[head_r]
-        if topk_s.has_contents():
-            head_s, head_frequency = topk_s.head()
-            bound_s = head_frequency * topk_r[head_s]
+        highest_bound = 0
+        highest_bound_value = None
+        for attr_val in topk_r:
+            candidate_bound = topk_r[attr_val] * topk_s[attr_val]
+            if candidate_bound > highest_bound:
+                highest_bound = candidate_bound
+                highest_bound_value = attr_val
+        for attr_val in topk_s:
+            candidate_bound = topk_r[attr_val] * topk_s[attr_val]
+            if candidate_bound > highest_bound:
+                highest_bound = candidate_bound
+                highest_bound_value = attr_val
 
-        head_value = head_r if bound_r >= bound_s else head_s
-        bound += bound_r if bound_r >= bound_s else bound_s
+        bound += highest_bound
 
-        topk_r = topk_r.shift_according_to(head_value)
-        topk_s = topk_s.shift_according_to(head_value)
+        topk_r = topk_r.shift_according_to(highest_bound_value)
+        topk_s = topk_s.shift_according_to(highest_bound_value)
 
-        print_stderr(f".. Selected value {head_value} (bound(R) = {bound_r}; bound(S) = {bound_s})", condition=verbose)
+        print_stderr(f".. Selected value {highest_bound_value} (bound = {highest_bound})", condition=verbose)
         print_stderr(f".. Adjusted MCV(R): {topk_r}", condition=verbose)
         print_stderr(f".. Adjusted MCV(S): {topk_s}", condition=verbose)
 
