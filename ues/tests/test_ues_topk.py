@@ -133,8 +133,7 @@ class UpperBoundTests(unittest.TestCase):
                 predecessor_bound = bound_results[predecessor_length][raw_query]
                 tightened_bound = bound_results[topk_length][raw_query]
 
-                err_msg = f"Bound does not decrease at query {label} for k {predecessor_length} -> {topk_length} "
-                err_msg += f" (bounds {predecessor_bound} -> {tightened_bound})!"
+                err_msg = f"Bound does not decrease at query {label} for k {predecessor_length} -> {topk_length}!"
                 regression_suite.assert_less_equal(tightened_bound, predecessor_bound, msg=err_msg)
 
                 improvement_pct = round((1 - (tightened_bound / predecessor_bound)) * 100, 2)

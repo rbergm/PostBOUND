@@ -433,27 +433,24 @@ class TopkUESCardinalityEstimator(JoinCardinalityEstimator):
         while ((first_mcv.has_contents() or second_mcv.has_contents())
                and first_cardinality > 0
                and second_cardinality > 0):
-            first_bound, second_bound = 0, 0
-            first_value_candidate, second_value_candidate = None, None
-            if first_mcv.has_contents():
-                first_value_candidate, first_candidate_frequency = first_mcv.head()
-                first_bound = first_candidate_frequency * second_mcv[first_value_candidate]
-            if second_mcv.has_contents():
-                second_value_candidate, second_candidate_frequency = second_mcv.head()
-                second_bound = first_mcv[second_value_candidate] * second_candidate_frequency
+            highest_bound, highest_bound_value = 0, None
+            for candidate_value in first_mcv:
+                candidate_bound = first_mcv[candidate_value] * second_mcv[candidate_value]
+                if candidate_bound > highest_bound:
+                    highest_bound = candidate_bound
+                    highest_bound_value = candidate_value
+            for candidate_value in second_mcv:
+                candidate_bound = first_mcv[candidate_value] * second_mcv[candidate_value]
+                if candidate_bound > highest_bound:
+                    highest_bound = candidate_bound
+                    highest_bound_value = candidate_value
 
-            selected_bound, selected_candidate = 0, None
-            if first_bound >= second_bound:
-                selected_bound, selected_candidate = first_bound, first_value_candidate
-            else:
-                selected_bound, selected_candidate = second_bound, second_value_candidate
+            bound += highest_bound
 
-            bound += selected_bound
-
-            first_cardinality = max(first_cardinality - first_mcv[selected_candidate], 0)
-            second_cardinality = max(second_cardinality - second_mcv[selected_candidate], 0)
-            first_mcv = first_mcv.drop_value(selected_candidate).snap_to(first_cardinality)
-            second_mcv = second_mcv.drop_value(selected_candidate).snap_to(second_cardinality)
+            first_cardinality = max(first_cardinality - first_mcv[highest_bound_value], 0)
+            second_cardinality = max(second_cardinality - second_mcv[highest_bound_value], 0)
+            first_mcv = first_mcv.drop_value(highest_bound_value).snap_to(first_cardinality)
+            second_mcv = second_mcv.drop_value(highest_bound_value).snap_to(second_cardinality)
 
         if first_mcv.remainder_frequency > 0 and second_mcv.remainder_frequency > 0:
             bound += (min(first_cardinality / first_mcv.remainder_frequency,
