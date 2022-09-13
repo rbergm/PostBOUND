@@ -1,4 +1,5 @@
 
+import collections
 import unittest
 import sys
 import warnings
@@ -87,7 +88,6 @@ class UpperBoundTests(unittest.TestCase):
         super().__init__(methodName)
         self.top1_bounds = pd.read_csv("top1_bounds.csv", index_col="label")
 
-    @unittest.skip
     def test_top1_tighter_ues(self):
         for label, raw_query in job_workload.items():
             query = mosp.MospQuery.parse(raw_query)
@@ -110,18 +110,36 @@ class UpperBoundTests(unittest.TestCase):
                 self._assertFilterEstimationMismatch(query, label=label,
                                                      true_cardinality=true_cardinality, upper_bound=upper_bound)
 
-    @unittest.skip
-    def test_top15_tighter_top1(self):
+    def test_tight_increase(self):
+        topk_lengths = [5, 10, 20, 50, 100, 500]
+        topk_predecessors = [1, 5, 10, 20, 50, 100]
+        bound_results = collections.defaultdict(lambda: collections.defaultdict(lambda: np.inf))
+
         for label, raw_query in job_workload.items():
             query = mosp.MospQuery.parse(raw_query)
-            topk_res: ues.OptimizationResult = ues.optimize_query(query, join_cardinality_estimation="topk",
-                                                                  topk_list_length=15, introspective=True)
-            topk_bound = topk_res.final_bound
-            top1_res: ues.OptimizationResult = ues.optimize_query(query, join_cardinality_estimation="topk",
-                                                                  topk_list_length=1, introspective=True)
-            top1_bound = top1_res.final_bound
-            self.assertLessEqual(topk_bound, top1_bound,
-                                 msg=f"Top-K bound must be less than Top-1 bound at query {label}!")
+            for topk_idx, topk_length in enumerate(topk_lengths):
+                predecessor_length = topk_predecessors[topk_idx]
+                if raw_query not in bound_results[predecessor_length]:
+                    opt_res: ues.OptimizationResult = ues.optimize_query(query, join_cardinality_estimation="topk",
+                                                                         topk_list_length=predecessor_length,
+                                                                         introspective=True)
+                    bound_results[predecessor_length][raw_query] = opt_res.final_bound
+                if raw_query not in bound_results[topk_length]:
+                    opt_res: ues.OptimizationResult = ues.optimize_query(query, join_cardinality_estimation="topk",
+                                                                         topk_list_length=topk_length,
+                                                                         introspective=True)
+                    bound_results[topk_length][raw_query] = opt_res.final_bound
+
+                predecessor_bound = bound_results[predecessor_length][raw_query]
+                tightened_bound = bound_results[topk_length][raw_query]
+
+                err_msg = f"Bound does not decrease at query {label} for k {predecessor_length} -> {topk_length} "
+                err_msg += f" (bounds {predecessor_bound} -> {tightened_bound})!"
+                regression_suite.assert_less_equal(tightened_bound, predecessor_bound, msg=err_msg)
+
+                improvement_pct = round((1 - (tightened_bound / predecessor_bound)) * 100, 2)
+                util.print_stderr(f"Checked label {label} and TopKs {predecessor_length} -> {topk_length} "
+                                  f"(improv = {improvement_pct}%)")
 
     def test_top15_is_true_upper_bound(self):
         for label, raw_query in job_workload.items():

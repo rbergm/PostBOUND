@@ -3,6 +3,7 @@ import abc
 import collections
 import copy
 import functools
+import math
 import operator
 import pprint  # noqa: F401
 import typing
@@ -258,7 +259,7 @@ class DefaultUESCardinalityEstimator(JoinCardinalityEstimator):
             distinct_values_joined = join_tree_bound / joined_freq
             distinct_values_candidate = candidate_bound / candidate_freq
             candidate_bound = min(distinct_values_joined, distinct_values_candidate) * joined_freq * candidate_freq
-            candidate_bound = round(candidate_bound)
+            candidate_bound = math.ceil(candidate_bound)
 
             if candidate_bound < lowest_bound:
                 lowest_bound = candidate_bound
@@ -273,13 +274,16 @@ class _TopKList(Generic[_T]):
     def __init__(self, mcv_list: List[Tuple[_T, int]], *, associated_attribute: db.AttributeRef = None,
                  remainder_frequency: int = None):
         self.associated_attribute: db.AttributeRef = associated_attribute
-        self.mcv_list: List[Tuple[_T, int]] = mcv_list
+        self.mcv_list: List[Tuple[_T, int]] = sorted(mcv_list, key=operator.itemgetter(1), reverse=True)
         self.mcv_data: Dict[_T, int] = dict(mcv_list)
 
         # the double assignment to remainder_frequency is important for min_frequency to work properly on
         # empty mcv_lists!
         self.remainder_frequency: int = 1
         self.remainder_frequency: int = self.min_frequency() if remainder_frequency is None else remainder_frequency
+
+    def has_contents(self) -> bool:
+        return len(self.mcv_list) > 0
 
     def attribute_values(self) -> Set[_T]:
         return set(self.mcv_data.keys())
@@ -295,6 +299,11 @@ class _TopKList(Generic[_T]):
 
     def min_frequency(self) -> int:
         return min(self.mcv_data.values(), default=self.remainder_frequency)
+
+    def head(self) -> Union[Tuple[_T, int], None]:
+        if not self.has_contents():
+            return None
+        return self.mcv_list[0]
 
     def snap_to(self, snap_value: int) -> "_TopKList[_T]":
         snapped_mcv = [(val, min(freq, snap_value)) for val, freq in self.mcv_list]
@@ -333,6 +342,11 @@ class _TopKList(Generic[_T]):
         return _TopKList(unique_values, remainder_frequency=self.remainder_frequency,
                          associated_attribute=self.associated_attribute)
 
+    def drop_value(self, value: _T) -> "_TopKList[_T]":
+        remaining_values = [(val, freq) for val, freq in self.mcv_list if val != value]
+        return _TopKList(remaining_values, remainder_frequency=self.remainder_frequency,
+                         associated_attribute=self.associated_attribute)
+
     def __getitem__(self, value: _T) -> int:
         return self.mcv_data.get(value, self.remainder_frequency)
 
@@ -351,10 +365,10 @@ class _TopKList(Generic[_T]):
     def __str__(self) -> str:
         prefix = str(self.associated_attribute) + " :: " if self.associated_attribute else ""
         if self.mcv_list:
-            contents = f"max={self.max_frequency()}, min={self.min_frequency()}, "
+            contents = f"max={self.max_frequency()}, min={self.min_frequency()},"
         else:
             contents = "(no MCV data)"
-        contents += f"rem={self.remainder_frequency}"
+        contents += f" rem={self.remainder_frequency}"
         return prefix + contents
 
 
@@ -400,83 +414,54 @@ class TopkUESCardinalityEstimator(JoinCardinalityEstimator):
         fk_mcv = self.stats_container.fetch_mcv_list(fk_attr, snap_value=total_bound_fk)
         pk_mcv = self.stats_container.fetch_mcv_list(pk_attr, snap_value=total_bound_pk)
 
-        # TODO: documentation
-
-        mcv_bound, processed_pk_tuples, processed_fk_tuples = 0, 0, 0
-        for pk_value in pk_mcv:
-            pk_freq, fk_freq = pk_mcv[pk_value], fk_mcv[pk_value]
-            mcv_bound += pk_freq * fk_freq
-            processed_pk_tuples += pk_freq
-            processed_fk_tuples += fk_freq if pk_value in fk_mcv else 0
-
-        adjustment_factor_pk = min(total_bound_pk / processed_pk_tuples, 1) if processed_pk_tuples else 1
-        adjustment_factor_fk = min(total_bound_fk / processed_fk_tuples, 1) if processed_fk_tuples else 1
-        mcv_adjustment_factor = min(adjustment_factor_fk, adjustment_factor_pk)
-        mcv_bound *= mcv_adjustment_factor
-
-        fk_remainder_freq = fk_mcv.drop_values_from(pk_mcv).max_frequency()
-        remainder_cardinality = fk_remainder_freq * total_bound_pk
-
-        cardinality = mcv_bound + remainder_cardinality
-        max_cardinality = self.stats_container.base_estimates[fk_attr.table]
-        return min(cardinality, max_cardinality)
+        return self._bound_formula(fk_mcv, total_bound_fk, pk_mcv, total_bound_pk)
 
     def _calculate_n_m_bound(self, joined_attr: db.AttributeRef, candidate_attr: db.AttributeRef,
                              join_tree: "JoinTree") -> int:
         total_bound_joined = self.stats_container.upper_bounds[join_tree]
         total_bound_candidate = self.stats_container.upper_bounds[candidate_attr.table]
-
         joined_mcv = self.stats_container.fetch_mcv_list(joined_attr, joined_table=True, snap_value=total_bound_joined)
         candidate_mcv = self.stats_container.fetch_mcv_list(candidate_attr, snap_value=total_bound_candidate)
 
-        mcv_bound, processed_tuples_joined, processed_tuples_candidate = 0, 0, 0
+        return self._bound_formula(joined_mcv, total_bound_joined, candidate_mcv, total_bound_candidate)
 
-        if joined_mcv.intersects_with(candidate_mcv):
+    def _bound_formula(self, first_mcv: _TopKList, first_cardinality: int,
+                       second_mcv: _TopKList, second_cardinality: int) -> int:
+        first_mcv, second_mcv = first_mcv.snap_to(first_cardinality), second_mcv.snap_to(second_cardinality)
 
-            # Phase 1
-            for joined_value in joined_mcv:
-                # bound calculation
-                joined_freq, candidate_freq = joined_mcv[joined_value], candidate_mcv[joined_value]
-                mcv_bound += joined_freq * candidate_freq
+        bound = 0
+        while ((first_mcv.has_contents() or second_mcv.has_contents())
+               and first_cardinality > 0
+               and second_cardinality > 0):
+            first_bound, second_bound = 0, 0
+            first_value_candidate, second_value_candidate = None, None
+            if first_mcv.has_contents():
+                first_value_candidate, first_candidate_frequency = first_mcv.head()
+                first_bound = first_candidate_frequency * second_mcv[first_value_candidate]
+            if second_mcv.has_contents():
+                second_value_candidate, second_candidate_frequency = second_mcv.head()
+                second_bound = first_mcv[second_value_candidate] * second_candidate_frequency
 
-                # bookkeeping
-                processed_tuples_joined += joined_freq
-                processed_tuples_candidate += candidate_freq if joined_value in candidate_mcv else 0
+            selected_bound, selected_candidate = 0, None
+            if first_bound >= second_bound:
+                selected_bound, selected_candidate = first_bound, first_value_candidate
+            else:
+                selected_bound, selected_candidate = second_bound, second_value_candidate
 
-            # Phase 2
-            for candidate_value in [value for value in candidate_mcv if value not in joined_mcv]:
-                # bound calculation
-                joined_freq, candidate_freq = joined_mcv[candidate_value], candidate_mcv[candidate_value]
-                mcv_bound += joined_freq * candidate_freq
+            bound += selected_bound
 
-                # bookkeeping
-                processed_tuples_joined += joined_freq
+            first_cardinality = max(first_cardinality - first_mcv[selected_candidate], 0)
+            second_cardinality = max(second_cardinality - second_mcv[selected_candidate], 0)
+            first_mcv = first_mcv.drop_value(selected_candidate).snap_to(first_cardinality)
+            second_mcv = second_mcv.drop_value(selected_candidate).snap_to(second_cardinality)
 
-            # After the MCV bound has been calculated, one special case may occur: the total number of tuples processed
-            # for a relation may surpass the actual total number of tuples in that relation. This may happen, if the
-            # bounds follow a skewed distribution and the star frequency is rather high. It may also happen, if the
-            # base table has been filtered heavily, and the most frequent values are likely not even part of it
-            # anymore. In any way, the overestimation of tuples has to be compensated. To do so, we calculate an
-            # adjustment factor that will normalize tuples counts again.
+        if first_mcv.remainder_frequency > 0 and second_mcv.remainder_frequency > 0:
+            bound += (min(first_cardinality / first_mcv.remainder_frequency,
+                          second_cardinality / second_mcv.remainder_frequency)
+                      * first_mcv.remainder_frequency
+                      * second_mcv.remainder_frequency)
 
-            adjustment_factor_joined = (min(total_bound_joined / processed_tuples_joined, 1)
-                                        if processed_tuples_joined else 1)
-            adjustment_factor_candidate = (min(total_bound_candidate / processed_tuples_candidate, 1)
-                                           if processed_tuples_candidate else 1)
-            mcv_adjustment_factor = min(adjustment_factor_joined, adjustment_factor_candidate)
-            mcv_bound *= mcv_adjustment_factor
-        else:
-            pass
-
-        # Finally, we have to calculate a bound on all values that are in neither MCV list. To do so, we fall back
-        # to an UES estimation, but with lower starting values.
-        distinct_values_joined = total_bound_joined / joined_mcv.remainder_frequency
-        distinct_values_candidate = total_bound_candidate / candidate_mcv.remainder_frequency
-        remainder_bound = (min(distinct_values_joined, distinct_values_candidate)
-                           * joined_mcv.remainder_frequency
-                           * candidate_mcv.remainder_frequency)
-
-        return mcv_bound + remainder_bound
+        return math.ceil(bound)
 
 
 def _is_pk_fk_join(join: mosp.MospBasePredicate, *, dbs: db.DBSchema = db.DBSchema.get_instance()) -> bool:
@@ -1111,7 +1096,7 @@ class _AttributeUpdateSet(Generic[_T]):
             self.update_evaluations[attribute] = update_evaluation
             return
         current_evaluation = self.update_evaluations[attribute]
-        if current_evaluation < update_evaluation:
+        if update_evaluation < current_evaluation:
             self.candidate_updates[attribute] = update_data
             self.update_evaluations[attribute] = update_evaluation
 
@@ -1289,15 +1274,15 @@ class _TopKTableBoundStatistics(_TableBoundStatistics[_TopKList]):
             joined_attr = attr1 if join_tree_before_update.contains_table(attr1.table) else attr2
             candidate_attr = attr1 if joined_attr == attr2 else attr2
             joined_mcv = self.fetch_mcv_list(joined_attr, joined_table=True)
-
-            # TODO: snap to absolute cardinality increase?
-            candidate_mcv = self.fetch_mcv_list(candidate_attr, snap_value=absolute_cardinality_increase)
+            candidate_mcv = self.fetch_mcv_list(candidate_attr)
 
             merged_mcv = joined_mcv.merge_with(candidate_mcv).snap_to(current_bound)
+
+            # TODO: consider "connected" frequencies
             update_set[joined_attr] = (merged_mcv, merged_mcv.max_frequency())
             update_set[candidate_attr] = (merged_mcv, merged_mcv.max_frequency())
 
-            candidate_frequency = min(candidate_mcv.max_frequency(), absolute_cardinality_increase)
+            candidate_frequency = candidate_mcv.max_frequency()
             if candidate_frequency < min_new_frequency:
                 min_new_frequency = candidate_frequency
 
@@ -1307,7 +1292,7 @@ class _TopKTableBoundStatistics(_TableBoundStatistics[_TopKList]):
 
         for attr in [attr for attr in join_tree.all_attributes() if attr not in joined_attributes]:
             mcv = self._jf[attr]
-            updated_mcv = self._jf.adjust_frequencies(mcv, min_new_frequency)
+            updated_mcv = self._jf.adjust_frequencies(mcv, min_new_frequency).snap_to(current_bound)
             self.joined_frequencies[attr] = updated_mcv
 
         multipliers_grouped = util.dict_generate_multi(multipliers)
