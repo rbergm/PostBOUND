@@ -2,10 +2,8 @@
 import abc
 import collections
 import copy
-import functools
 import math
 import operator
-import pprint  # noqa: F401
 import typing
 import warnings
 from dataclasses import dataclass
@@ -238,10 +236,10 @@ class DefaultUESCardinalityEstimator(JoinCardinalityEstimator):
         if pk_fk_join:
             # Use simplified formula
             pk_table = util.pull_any(predicate.join_partner_of(fk_table), strict=False).table
-            pk_cardinality = self.stats_container.base_estimates[pk_table]
+            pk_cardinality = self.stats_container.base_table_estimates[pk_table]
 
             fk_attributes = util.enlist(predicate.attribute_of(fk_table), strict=False)
-            lowest_frequency = min(self.stats_container.base_frequencies[attr] for attr in fk_attributes)
+            lowest_frequency = min(self.stats_container.attribute_frequencies[attr] for attr in fk_attributes)
 
             return lowest_frequency * pk_cardinality
 
@@ -253,8 +251,8 @@ class DefaultUESCardinalityEstimator(JoinCardinalityEstimator):
             candidate_attr = attr1 if joined_attr == attr2 else attr2
 
             candidate_bound = self.stats_container.upper_bounds[candidate_attr.table]
-            joined_freq = self.stats_container.joined_frequencies[joined_attr]
-            candidate_freq = self.stats_container.base_frequencies[candidate_attr]
+            joined_freq = self.stats_container.attribute_frequencies[joined_attr]
+            candidate_freq = self.stats_container.attribute_frequencies[candidate_attr]
 
             distinct_values_joined = join_tree_bound / joined_freq
             distinct_values_candidate = candidate_bound / candidate_freq
@@ -335,7 +333,8 @@ class _TopKList(Generic[_T]):
             merged_list.append((value, self[value] * other[value]))
         merged_list.sort(key=operator.itemgetter(1))
         remainder_freq = self.remainder_frequency * other.remainder_frequency
-        return _TopKList(merged_list, remainder_frequency=remainder_freq)
+        associated_attributes = self._merge_attributes(other)
+        return _TopKList(merged_list, remainder_frequency=remainder_freq, associated_attribute=associated_attributes)
 
     def drop_values_from(self, other: "_TopKList[_T]") -> "_TopKList[_T]":
         unique_values = [(val, freq) for val, freq in self.mcv_list if val not in other]
@@ -346,6 +345,28 @@ class _TopKList(Generic[_T]):
         remaining_values = [(val, freq) for val, freq in self.mcv_list if val != value]
         return _TopKList(remaining_values, remainder_frequency=self.remainder_frequency,
                          associated_attribute=self.associated_attribute)
+
+    def increase_frequencies_by(self, factor: int) -> "_TopKList[_T]":
+        increased_values = [(val, freq * factor) for val, freq in self.mcv_list]
+        increased_remainder = self.remainder_frequency * factor
+        return _TopKList(increased_values, remainder_frequency=increased_remainder,
+                         associated_attribute=self.associated_attribute)
+
+    def _merge_attributes(self, other: "_TopKList[_T]") -> Union[db.AttributeRef, Set[db.AttributeRef]]:
+        all_attributes = set()
+        if isinstance(self.associated_attribute, db.AttributeRef):
+            all_attributes.add(self.associated_attribute)
+        elif isinstance(self.associated_attribute, set):
+            all_attributes |= self.associated_attribute
+
+        if isinstance(other.associated_attribute, db.AttributeRef):
+            all_attributes.add(other.associated_attribute)
+        elif isinstance(other.associated_attribute, set):
+            all_attributes |= other.associated_attribute
+
+        if not all_attributes:
+            return None
+        return util.simplify(all_attributes)
 
     def __getitem__(self, value: _T) -> int:
         return self.mcv_data.get(value, self.remainder_frequency)
@@ -396,7 +417,7 @@ class TopkUESCardinalityEstimator(JoinCardinalityEstimator):
                 candidate_attr = attr1 if joined_attr == attr2 else attr2
                 cardinality = self._calculate_n_m_bound(joined_attr, candidate_attr, join_tree)
 
-            cardinality = round(cardinality)
+            cardinality = math.ceil(cardinality)
             if cardinality < lowest_bound:
                 lowest_bound = cardinality
 
@@ -406,13 +427,13 @@ class TopkUESCardinalityEstimator(JoinCardinalityEstimator):
         return self.stats_container
 
     def _load_tuple_count(self, table: db.TableRef) -> int:
-        return self.stats_container.upper_bounds.get(table, self.stats_container.base_estimates[table])
+        return self.stats_container.upper_bounds.get(table, self.stats_container.base_table_estimates[table])
 
     def _calculate_pk_fk_bound(self, fk_attr: db.AttributeRef, pk_attr: db.AttributeRef) -> int:
-        total_bound_fk = self.stats_container.base_estimates[fk_attr.table]
-        total_bound_pk = self.stats_container.base_estimates[pk_attr.table]
-        fk_mcv = self.stats_container.fetch_mcv_list(fk_attr, snap_value=total_bound_fk)
-        pk_mcv = self.stats_container.fetch_mcv_list(pk_attr, snap_value=total_bound_pk)
+        total_bound_fk = self.stats_container.base_table_estimates[fk_attr.table]
+        total_bound_pk = self.stats_container.base_table_estimates[pk_attr.table]
+        fk_mcv = self.stats_container.attribute_frequencies[fk_attr]
+        pk_mcv = self.stats_container.attribute_frequencies[pk_attr]
 
         return self._bound_formula(fk_mcv, total_bound_fk, pk_mcv, total_bound_pk)
 
@@ -420,8 +441,8 @@ class TopkUESCardinalityEstimator(JoinCardinalityEstimator):
                              join_tree: "JoinTree") -> int:
         total_bound_joined = self.stats_container.upper_bounds[join_tree]
         total_bound_candidate = self.stats_container.upper_bounds[candidate_attr.table]
-        joined_mcv = self.stats_container.fetch_mcv_list(joined_attr, joined_table=True, snap_value=total_bound_joined)
-        candidate_mcv = self.stats_container.fetch_mcv_list(candidate_attr, snap_value=total_bound_candidate)
+        joined_mcv = self.stats_container.attribute_frequencies[joined_attr].snap_to(total_bound_joined)
+        candidate_mcv = self.stats_container.attribute_frequencies[candidate_attr].snap_to(total_bound_candidate)
 
         return self._bound_formula(joined_mcv, total_bound_joined, candidate_mcv, total_bound_candidate)
 
@@ -616,6 +637,11 @@ class JoinGraph:
         """Checks, whether the given table takes part in at least one PK/FK join as the FK partner."""
         return any(True for join_data in self.graph.adj[table].values()
                    if join_data["foreign_key"].table == table)
+
+    def is_only_pk_joined_table(self, table: db.TableRef) -> bool:
+        """Checks, whether the given table so far is only joined with FK tables and always acting as the PK partner."""
+        join_partners = [tab for tab in self.used_join_paths(table)]
+        return all(self.graph.adj[table][partner]["primary_key"] == table for partner in join_partners)
 
     def available_join_paths(self, table: db.TableRef) -> Dict[db.TableRef, List[mosp.AbstractMospPredicate]]:
         """
@@ -965,161 +991,78 @@ class JoinTree:
         return join_str
 
 
-class _MVFBaseAttributeFrequenciesLoader(Dict[db.AttributeRef, int]):
-    def __init__(self, base_estimates: Dict[db.TableRef, int], dbs: db.DBSchema = db.DBSchema.get_instance()):
-        self.dbs = dbs
-        self.base_estimates = base_estimates
-        self.attribute_frequencies = {}
+class _UpperBoundContainer(collections.UserDict):
+    def __init__(self, parent_stats: "_TableBoundStatistics"):
+        super().__init__()
+        self._parent_stats = parent_stats
 
-    def __getitem__(self, key: db.AttributeRef) -> int:
-        if key not in self.attribute_frequencies:
-            top1 = self.dbs.calculate_most_common_values(key, k=1)
-            if not top1:
-                top1 = 1
-            else:
-                __, top1 = top1[0]
-            top1 = min(top1, self.base_estimates[key.table])
-            self.attribute_frequencies[key] = top1
-        return self.attribute_frequencies[key]
-
-    def __repr__(self) -> str:
-        return str(self)
-
-    def __str__(self) -> str:
-        return str(self.attribute_frequencies)
-
-
-class _MFVJoinAttributeFrequenciesLoader(Dict[db.AttributeRef, int]):
-    def __init__(self, base_frequencies: _MVFBaseAttributeFrequenciesLoader):
-        self.base_frequencies = base_frequencies
-        self.attribute_frequencies = {}
-        self.current_multipliers = {}
-
-    def store_multiplier(self, table: db.TableRef, multiplier: int):
-        self.current_multipliers[table] = min(multiplier, self.current_multipliers.get(table, np.inf))
-
-    def __getitem__(self, key: db.AttributeRef) -> int:
-        if key not in self.attribute_frequencies:
-            base_frequency = self.base_frequencies[key]
-            multiplier = functools.reduce(operator.mul, (multiplier for table, multiplier
-                                                         in self.current_multipliers.items() if table != key.table),
-                                          1)
-            self.attribute_frequencies[key] = base_frequency * multiplier
-        return self.attribute_frequencies[key]
-
-    def __setitem__(self, key: db.AttributeRef, value: int):
-        self.attribute_frequencies[key] = value
-
-    def __repr__(self) -> str:
-        return str(self)
-
-    def __str__(self) -> str:
-        freq_str = "Join frequencies: " + str(self.attribute_frequencies)
-        mult_str = f" (current multiplier = {self.current_multipliers})"
-        return freq_str + mult_str
-
-
-class _TopKBaseAttributeFrequenciesLoader(Dict[db.AttributeRef, _TopKList]):
-    def __init__(self, k: int, base_estimates: Dict[db.TableRef, int], dbs: db.DBSchema = db.DBSchema.get_instance()):
-        self.k = k
-        self.dbs = dbs
-        self.base_estimates = base_estimates
-        self.attribute_mcvs = {}
-
-    def _snap_frequencies_to_max(self, frequencies: List[Tuple[Any, int]], max_freq: int) -> List[Tuple[Any, int]]:
-        return [(val, min(freq, max_freq)) for val, freq in frequencies]
-
-    def __getitem__(self, key: db.AttributeRef) -> _TopKList:
-        if key not in self.attribute_mcvs:
-            frequencies = self.dbs.calculate_most_common_values(key, k=self.k)
-            snapped_freqs = self._snap_frequencies_to_max(frequencies, self.base_estimates[key.table])
-            top_k = _TopKList(snapped_freqs, associated_attribute=key)
-            self.attribute_mcvs[key] = top_k
-            return top_k
-        return self.attribute_mcvs[key]
-
-    def __repr__(self) -> str:
-        return str(self)
-
-    def __str__(self) -> str:
-        return str(self.attribute_mcvs)
-
-
-class _TopKJoinAttributeFrequenciesLoader(Dict[db.AttributeRef, _TopKList]):
-    def __init__(self, base_frequencies: _TopKBaseAttributeFrequenciesLoader):
-        self.base_mcvs = base_frequencies
-        self.attribute_mvcs = {}
-        self.current_multipliers = {}
-
-    def store_multiplier(self, table: db.TableRef, multiplier: int):
-        self.current_multipliers[table] = min(multiplier, self.current_multipliers.get(table, np.inf))
-
-    def adjust_frequencies(self, mcv_list: _TopKList, adjustment_factor: int) -> _TopKList:
-        mcv_entries = mcv_list.contents()
-        adjusted_values = [(val, freq * adjustment_factor) for val, freq in mcv_entries]
-        adjusted_remainder = mcv_list.remainder_frequency * adjustment_factor
-        return _TopKList(adjusted_values, remainder_frequency=adjusted_remainder,
-                         associated_attribute=mcv_list.associated_attribute)
-
-    def __getitem__(self, key: db.AttributeRef) -> _TopKList:
-        if key not in self.attribute_mvcs:
-            base_mcv = self.base_mcvs[key]
-            multiplier = functools.reduce(operator.mul, (multiplier for table, multiplier
-                                                         in self.current_multipliers.items() if table != key.table),
-                                          1)
-            adjusted_mcv = self.adjust_frequencies(base_mcv, multiplier)
-            self.attribute_mvcs[key] = adjusted_mcv
-            return adjusted_mcv
-        return self.attribute_mvcs[key]
-
-    def __setitem__(self, key: db.AttributeRef, value: _TopKList):
-        self.attribute_mvcs[key] = value
-
-    def __repr__(self) -> str:
-        return str(self)
-
-    def __str__(self) -> str:
-        return "Join frequencies: " + str(self.attribute_mvcs) + f" (current multiplier = {self.current_multipliers})"
-
-
-class _AttributeUpdateSet(Generic[_T]):
-    def __init__(self):
-        self.candidate_updates: Dict[db.AttributeRef, _T] = {}
-        self.update_evaluations: Dict[db.AttributeRef, int] = {}
-
-    def register_update(self, attribute: db.AttributeRef, update_data: _T, update_evaluation: int):
-        if attribute not in self.candidate_updates:
-            self.candidate_updates[attribute] = update_data
-            self.update_evaluations[attribute] = update_evaluation
-            return
-        current_evaluation = self.update_evaluations[attribute]
-        if update_evaluation < current_evaluation:
-            self.candidate_updates[attribute] = update_data
-            self.update_evaluations[attribute] = update_evaluation
-
-    def __iter__(self) -> Iterator[Tuple[db.AttributeRef, _T]]:
-        return list(self.candidate_updates.items()).__iter__()
-
-    def __setitem__(self, key: db.AttributeRef, update_data: Tuple[_T, int]):
-        update_contents, update_evaluation = update_data
-        self.register_update(key, update_contents, update_evaluation)
+    def __setitem__(self, key: Union[db.TableRef, JoinTree], item: int) -> None:
+        if isinstance(key, JoinTree):
+            self._parent_stats._propagate_upper_bound(item)
+        return super().__setitem__(key, item)
 
 
 class _TableBoundStatistics(abc.ABC, Generic[_T]):
-    def __init__(self, base_estimates, base_frequencies, joined_frequencies, upper_bounds):
-        self._base_estimates = base_estimates
-        self._base_frequencies = base_frequencies
-        self._joined_frequencies = joined_frequencies
-        self._upper_bounds = upper_bounds
+    def __init__(self, query: mosp.MospQuery, *, base_table_estimator: BaseCardinalityEstimator,
+                 dbs: db.DBSchema = db.DBSchema.get_instance()):
+        self._query = query
+        self._base_table_estimator = base_table_estimator
+        self._dbs = dbs
 
-    @abc.abstractmethod
-    def update_frequencies(self, joined_table: db.TableRef, join_predicate: mosp.AbstractMospPredicate, *,
-                           join_tree: JoinTree) -> None:
-        return NotImplemented
+        self._joined_tables: Set[db.TableRef] = set()
 
-    @abc.abstractmethod
-    def init_pk_join(self, fk_table: db.TableRef, join_predicate: mosp.AbstractMospPredicate) -> None:
-        return NotImplemented
+        self._base_table_estimates: Dict[db.TableRef, int] = {}
+        self._attribute_frequencies: Dict[db.AttributeRef, _T] = {}
+        self._upper_bounds: Dict[Union[db.TableRef, JoinTree], int] = _UpperBoundContainer(self)
+
+        self._init_base_estimates()
+        self._init_attribute_frequencies()
+
+    def init_base_table(self, base_table: db.TableRef) -> None:
+        self._joined_tables.add(base_table)
+
+    def update_frequencies(self, joined_table: db.TableRef, join_predicate: mosp.AbstractMospPredicate,
+                           current_join_tree: JoinTree, *, pk_table: bool = False) -> None:
+        min_intermediate_frequency, min_candidate_frequency = np.inf, np.inf
+        for (attr1, attr2) in join_predicate.join_partners():
+            intermediate_attribute = attr1 if attr1.table in self._joined_tables else attr2
+            candidate_attribute = attr1 if attr2 == intermediate_attribute else attr2
+
+            intermediate_bound = self._attribute_frequency_bound(intermediate_attribute)
+            candidate_bound = self._attribute_frequency_bound(candidate_attribute)
+
+            if intermediate_bound < min_intermediate_frequency:
+                min_intermediate_frequency = intermediate_bound
+            if candidate_bound < min_candidate_frequency:
+                min_candidate_frequency = candidate_bound
+
+        for (attr1, attr2) in join_predicate.join_partners():
+            intermediate_attribute = attr1 if attr1.table in self._joined_tables else attr2
+            candidate_attribute = attr1 if attr2 == intermediate_attribute else attr2
+
+            updated_frequency = (
+                self._update_joined_attribute_frequency(intermediate_attribute, candidate_attribute,
+                                                        intermediate_frequency=min_intermediate_frequency,
+                                                        candidate_frequency=min_candidate_frequency))
+
+            self._attribute_frequencies[candidate_attribute] = updated_frequency
+            if not pk_table:
+                self._attribute_frequencies[intermediate_attribute] = updated_frequency
+
+        if not pk_table:
+            updated_attribute_frequencies = dict(self._attribute_frequencies)
+            joined_attributes = join_predicate.collect_attributes()
+            for intermediate_attribute in self._attribute_frequencies:
+                no_intermediate = intermediate_attribute.table not in self._joined_tables
+                already_updated = intermediate_attribute in joined_attributes
+                if no_intermediate or already_updated:
+                    continue
+                updated_frequency = (
+                    self._update_intermediate_attribute_frequency(intermediate_attribute, min_intermediate_frequency))
+                updated_attribute_frequencies[intermediate_attribute] = updated_frequency
+            self._attribute_frequencies = updated_attribute_frequencies
+
+        self._joined_tables.add(joined_table)
 
     def base_bounds(self) -> Dict[db.TableRef, int]:
         return {tab: bound for tab, bound in self.upper_bounds.items() if isinstance(tab, db.TableRef)}
@@ -1127,31 +1070,75 @@ class _TableBoundStatistics(abc.ABC, Generic[_T]):
     def join_bounds(self) -> Dict["JoinTree", int]:
         return {join: bound for join, bound in self.upper_bounds.items() if isinstance(join, JoinTree)}
 
+    def _init_base_estimates(self) -> None:
+        predicate_map = self._query.predicates().filters
+        for table in self._query.collect_tables():
+            if table in predicate_map:
+                self._base_table_estimates[table] = self._base_table_estimator.estimate_rows(predicate_map[table],
+                                                                                             dbs=self._dbs)
+            else:
+                self._base_table_estimates[table] = self._base_table_estimator.all_tuples(table, dbs=self._dbs)
+
+    def _init_attribute_frequencies(self) -> None:
+        join_predicates = self._query.predicates().joins
+        joined_attributes = set()
+        for predicate in join_predicates:
+            for attribute in predicate.collect_attributes():
+                if attribute in joined_attributes:
+                    continue
+                self._attribute_frequencies[attribute] = self._fetch_attribute_base_frequency(attribute)
+
+    def _propagate_upper_bound(self, upper_bound: int) -> None:
+        updated_frequencies = dict(self._attribute_frequencies)
+        for attribute in self._attribute_frequencies:
+            if attribute.table not in self._joined_tables:
+                continue
+            updated_frequency = self._enforce_bound(attribute, upper_bound)
+            updated_frequencies[attribute] = updated_frequency
+        self._attribute_frequencies = updated_frequencies
+
+    @abc.abstractmethod
+    def _fetch_attribute_base_frequency(self, attribute: db.AttributeRef) -> _T:
+        return NotImplemented
+
+    @abc.abstractmethod
+    def _attribute_frequency_bound(self, attribute: db.AttributeRef) -> int:
+        return NotImplemented
+
+    @abc.abstractmethod
+    def _update_joined_attribute_frequency(self, intermediate_attribute: db.AttributeRef,
+                                           candidate_attribute: db.AttributeRef, *,
+                                           upper_bound: Union[int, None] = None,
+                                           intermediate_frequency: Union[int, None] = None,
+                                           candidate_frequency: Union[int, None] = None
+                                           ) -> _T:
+        return NotImplemented
+
+    @abc.abstractmethod
+    def _update_intermediate_attribute_frequency(self, intermediate_attribute: db.AttributeRef, *,
+                                                 upper_bound: int, intermediate_frequency: int) -> _T:
+        return NotImplemented
+
+    @abc.abstractmethod
+    def _enforce_bound(self, attribute: db.AttributeRef, upper_bound: int) -> _T:
+        return NotImplemented
+
     def _get_base_estimates(self):
-        return self._base_estimates
+        return self._base_table_estimates
 
-    def _get_base_frequencies(self):
-        return self._base_frequencies
-
-    def _get_joined_frequencies(self):
-        return self._joined_frequencies
+    def _get_attribute_frequencies(self):
+        return self._attribute_frequencies
 
     def _get_upper_bounds(self):
         return self._upper_bounds
 
-    base_estimates: Dict[db.TableRef, int] = property(_get_base_estimates)
+    base_table_estimates: Dict[db.TableRef, int] = property(_get_base_estimates)
     """Base estimates provide an estimate of the number of tuples in a base table."""
 
-    base_frequencies: Dict[db.AttributeRef, _T] = property(_get_base_frequencies)
+    attribute_frequencies: Dict[db.AttributeRef, _T] = property(_get_attribute_frequencies)
     """
-    Base frequencies provide a statistic-dependent estimate of the value distribution for attributes of
-    base tables.
-    """
-
-    joined_frequencies: Dict[db.AttributeRef, _T] = property(_get_joined_frequencies)
-    """
-    Joined frequencies provide a statistic-dependent estimate of the value distribution for attributes of
-    joined tables.
+    Attribute frequencies provide a statistic-dependent estimate of the value distribution for attributes of
+    base tables as well as attribute of the intermediate join result.
     """
 
     upper_bounds: Dict[Union[db.TableRef, "JoinTree"], int] = property(_get_upper_bounds)
@@ -1163,151 +1150,75 @@ class _MFVTableBoundStatistics(_TableBoundStatistics[int]):
     def __init__(self, query: mosp.MospQuery, *,
                  base_cardinality_estimator: BaseCardinalityEstimator,
                  dbs: db.DBSchema = db.DBSchema.get_instance()):
-        self.query = query
-        self.dbs = dbs
+        super().__init__(query, base_table_estimator=base_cardinality_estimator, dbs=dbs)
 
-        base_estimates = _estimate_filtered_cardinalities(query, base_cardinality_estimator, dbs=dbs)
-        base_frequencies = _MVFBaseAttributeFrequenciesLoader(base_estimates)
-        joined_frequencies = _MFVJoinAttributeFrequenciesLoader(base_frequencies)
-        self._jf = joined_frequencies
-        upper_bounds = {}
-        super().__init__(base_estimates, base_frequencies, joined_frequencies, upper_bounds)
+    def _fetch_attribute_base_frequency(self, attribute: db.AttributeRef) -> int:
+        __, most_common_frequency = self._dbs.calculate_most_common_values(attribute, k=1)[0]
+        return min(most_common_frequency, self.base_table_estimates[attribute.table])
 
-    def update_frequencies(self, joined_table: db.TableRef, join_predicate: mosp.AbstractMospPredicate, *,
-                           join_tree: JoinTree) -> None:
-        join_tree_before_update = (join_tree.previous_checkpoint() if not join_tree.is_singular()
-                                   else join_tree.at_base_table())
-        bound_before_update = self.upper_bounds[join_tree_before_update]
-        current_bound = self.upper_bounds[join_tree]
-        absolute_cardinality_increase = current_bound - bound_before_update
-        if absolute_cardinality_increase < 0:
-            raise util.StateError("Bounds should only increase, never decrease: "
-                                  f"{current_bound} from {bound_before_update}")
+    def _attribute_frequency_bound(self, attribute: db.AttributeRef) -> int:
+        return self.attribute_frequencies[attribute]
 
-        min_new_frequency = np.inf
-        joined_attributes = set()
-        multipliers: List[db.AttributeRef, int] = []
-        update_set: _AttributeUpdateSet[int] = _AttributeUpdateSet()
-        for (attr1, attr2) in join_predicate.join_partners():
-            joined_attr = attr1 if join_tree_before_update.contains_table(attr1.table) else attr2
-            candidate_attr = attr1 if joined_attr == attr2 else attr2
-            candidate_frequency = min(self.base_frequencies[candidate_attr], absolute_cardinality_increase)
-            joined_frequency = self.joined_frequencies[joined_attr]
+    def _update_joined_attribute_frequency(self, intermediate_attribute: db.AttributeRef,
+                                           candidate_attribute: db.AttributeRef, *,
+                                           intermediate_frequency: Union[int, None] = None,
+                                           candidate_frequency: Union[int, None] = None
+                                           ) -> int:
+        intermediate_frequency = (intermediate_frequency if intermediate_frequency is not None
+                                  else self.attribute_frequencies[intermediate_attribute])
+        candidate_frequency = (candidate_frequency if candidate_frequency is not None
+                               else self.attribute_frequencies[candidate_attribute])
+        updated_frequency = intermediate_frequency * candidate_frequency
+        return updated_frequency
 
-            updated_freq = joined_frequency * candidate_frequency
-            update_set[joined_attr] = (updated_freq, updated_freq)
-            update_set[candidate_attr] = (updated_freq, updated_freq)
+    def _update_intermediate_attribute_frequency(self, intermediate_attribute: db.AttributeRef,
+                                                 intermediate_frequency: int) -> int:
+        current_frequency = self.attribute_frequencies[intermediate_attribute]
+        updated_frequency = current_frequency * intermediate_frequency
+        return updated_frequency
 
-            if candidate_frequency < min_new_frequency:
-                min_new_frequency = candidate_frequency
-
-            multipliers.append((candidate_attr.table, candidate_frequency))
-            joined_attributes.add(joined_attr)
-            joined_attributes.add(candidate_attr)
-
-        for attr in [attr for attr in join_tree.all_attributes() if attr not in joined_attributes]:
-            self.joined_frequencies[attr] *= min_new_frequency
-
-        multipliers_grouped = util.dict_generate_multi(multipliers)
-        multipliers_reduced = util.dict_reduce_multi(multipliers_grouped, lambda __, frequencies: min(frequencies))
-        for tab, multiplier in multipliers_reduced.items():
-            self._jf.store_multiplier(tab, multiplier)
-
-        for attr, updated_mcv in update_set:
-            self.joined_frequencies[attr] = updated_mcv
-
-    def init_pk_join(self, fk_table: db.TableRef, join_predicate: mosp.AbstractMospPredicate) -> None:
-        min_fk_freq = np.inf
-        for (attr1, attr2) in join_predicate.join_partners():
-            fk_attr = attr1 if attr1.table == fk_table else attr2
-            fk_frequency = self.base_frequencies[fk_attr]
-            if fk_frequency < min_fk_freq:
-                min_fk_freq = fk_frequency
-        self._jf.store_multiplier(fk_table, min_fk_freq)
-
-    def __repr__(self) -> str:
-        return str(self)
-
-    def __str__(self) -> str:
-        return str(self.upper_bounds)
+    def _enforce_bound(self, attribute: db.AttributeRef, upper_bound: int) -> _T:
+        current_frequency = self.attribute_frequencies[attribute]
+        return min(current_frequency, upper_bound)
 
 
 class _TopKTableBoundStatistics(_TableBoundStatistics[_TopKList]):
     def __init__(self, query: mosp.MospQuery, k, *,
                  base_cardinality_estimator: BaseCardinalityEstimator,
                  dbs: db.DBSchema = db.DBSchema.get_instance()):
-        self.query = query
-        self.k = k
-        self.dbs = dbs
+        self._k = k
+        super().__init__(query, base_table_estimator=base_cardinality_estimator, dbs=dbs)
 
-        base_estimates = _estimate_filtered_cardinalities(query, base_cardinality_estimator, dbs=dbs)
-        base_frequencies = _TopKBaseAttributeFrequenciesLoader(self.k, base_estimates, dbs=dbs)
-        joined_frequencies = _TopKJoinAttributeFrequenciesLoader(base_frequencies)
-        self._jf = joined_frequencies
-        upper_bounds = {}
-        super().__init__(base_estimates, base_frequencies, joined_frequencies, upper_bounds)
+    def _fetch_attribute_base_frequency(self, attribute: db.AttributeRef) -> _TopKList:
+        most_common_tuples = self._dbs.calculate_most_common_values(attribute, k=self._k)
+        topk_list = _TopKList(most_common_tuples, associated_attribute=attribute)
+        topk_list = topk_list.snap_to(self.base_table_estimates[attribute.table])
+        return topk_list
 
-    def fetch_mcv_list(self, attribute: db.AttributeRef, *, joined_table: bool = False,
-                       snap_value: int = None) -> _TopKList:
-        mcv_list = self.joined_frequencies[attribute] if joined_table else self.base_frequencies[attribute]
-        return mcv_list.snap_to(snap_value) if snap_value is not None else mcv_list
+    def _attribute_frequency_bound(self, attribute: db.AttributeRef) -> int:
+        topk_list = self.attribute_frequencies[attribute]
+        return topk_list.max_frequency()
 
-    def update_frequencies(self, joined_table: db.TableRef, join_predicate: mosp.AbstractMospPredicate, *,
-                           join_tree: JoinTree) -> None:
-        join_tree_before_update = (join_tree.previous_checkpoint() if not join_tree.is_singular()
-                                   else join_tree.at_base_table())
-        bound_before_update = self.upper_bounds[join_tree_before_update]
-        current_bound = self.upper_bounds[join_tree]
-        absolute_cardinality_increase = current_bound - bound_before_update
-        if absolute_cardinality_increase < 0:
-            raise util.StateError("Bounds should only increase, never decrease: "
-                                  f"{current_bound} from {bound_before_update}")
+    def _update_joined_attribute_frequency(self, intermediate_attribute: db.AttributeRef,
+                                           candidate_attribute: db.AttributeRef, *,
+                                           intermediate_frequency: Union[int, None] = None,
+                                           candidate_frequency: Union[int, None] = None
+                                           ) -> _TopKList:
+        intermediate_topk_list = self.attribute_frequencies[intermediate_attribute]
+        candidate_topk_list = self.attribute_frequencies[candidate_attribute]
 
-        min_new_frequency = np.inf
-        joined_attributes = set()
-        multipliers: List[Tuple[db.AttributeRef, int]] = []
-        update_set: _AttributeUpdateSet[_TopKList] = _AttributeUpdateSet()
-        for (attr1, attr2) in join_predicate.join_partners():
-            joined_attr = attr1 if join_tree_before_update.contains_table(attr1.table) else attr2
-            candidate_attr = attr1 if joined_attr == attr2 else attr2
-            joined_mcv = self.fetch_mcv_list(joined_attr, joined_table=True)
-            candidate_mcv = self.fetch_mcv_list(candidate_attr)
+        merged_topk_list = intermediate_topk_list.merge_with(candidate_topk_list)
+        return merged_topk_list
 
-            merged_mcv = joined_mcv.merge_with(candidate_mcv).snap_to(current_bound)
+    def _update_intermediate_attribute_frequency(self, intermediate_attribute: db.AttributeRef,
+                                                 intermediate_frequency: int) -> _TopKList:
+        intermediate_topk_list = self.attribute_frequencies[intermediate_attribute]
+        intermediate_topk_list = intermediate_topk_list.increase_frequencies_by(intermediate_frequency)
+        return intermediate_topk_list
 
-            # TODO: consider "connected" frequencies
-            update_set[joined_attr] = (merged_mcv, merged_mcv.max_frequency())
-            update_set[candidate_attr] = (merged_mcv, merged_mcv.max_frequency())
-
-            candidate_frequency = candidate_mcv.max_frequency()
-            if candidate_frequency < min_new_frequency:
-                min_new_frequency = candidate_frequency
-
-            multipliers.append((candidate_attr.table, candidate_frequency))
-            joined_attributes.add(joined_attr)
-            joined_attributes.add(candidate_attr)
-
-        for attr in [attr for attr in join_tree.all_attributes() if attr not in joined_attributes]:
-            mcv = self._jf[attr]
-            updated_mcv = self._jf.adjust_frequencies(mcv, min_new_frequency).snap_to(current_bound)
-            self.joined_frequencies[attr] = updated_mcv
-
-        multipliers_grouped = util.dict_generate_multi(multipliers)
-        multipliers_reduced = util.dict_reduce_multi(multipliers_grouped, lambda __, frequencies: min(frequencies))
-        for tab, multiplier in multipliers_reduced.items():
-            self._jf.store_multiplier(tab, multiplier)
-
-        for attr, updated_mcv in update_set:
-            self.joined_frequencies[attr] = updated_mcv
-
-    def init_pk_join(self, fk_table: db.TableRef, join_predicate: mosp.AbstractMospPredicate) -> None:
-        min_fk_freq = np.inf
-        for (attr1, attr2) in join_predicate.join_partners():
-            fk_attr = attr1 if attr1.table == fk_table else attr2
-            fk_frequency = self.base_frequencies[fk_attr].max_frequency()
-            if fk_frequency < min_fk_freq:
-                min_fk_freq = fk_frequency
-        self._jf.store_multiplier(fk_table, min_fk_freq)
+    def _enforce_bound(self, attribute: db.AttributeRef, upper_bound: int) -> _T:
+        current_frequency = self.attribute_frequencies[attribute]
+        return current_frequency.snap_to(upper_bound)
 
 
 @dataclass
@@ -1372,7 +1283,7 @@ class DefensiveSubqueryGeneration(SubqueryGenerationStrategy):
             should_generate_subquery = exceptions[query].subquery_generation
             if not should_generate_subquery:
                 return False
-        return (stats.upper_bounds[candidate] < stats.base_estimates[candidate]
+        return (stats.upper_bounds[candidate] < stats.base_table_estimates[candidate]
                 and join_graph.count_selected_joins() > 2)
 
 
@@ -1402,19 +1313,8 @@ class SmartSubqueryGeneration(SubqueryGenerationStrategy):
             should_generate_subquery = exceptions[query].subquery_generation
             if not should_generate_subquery:
                 return False
-        return (stats.upper_bounds[candidate] < stats.base_estimates[candidate] / 100
+        return (stats.upper_bounds[candidate] < stats.base_table_estimates[candidate] / 100
                 and join_graph.count_selected_joins() > 2)
-
-
-def _estimate_filtered_cardinalities(query: mosp.MospQuery, estimator: BaseCardinalityEstimator, *,
-                                     dbs: db.DBSchema = db.DBSchema.get_instance()) -> Dict[db.TableRef, int]:
-    """Fetches the PG estimates for all tables in the predicate_map according to their associated filters."""
-    cardinality_dict = {}
-    predicate_map = query.predicates().filters
-    for table in query.collect_tables():
-        cardinality_dict[table] = (estimator.estimate_rows(predicate_map[table], dbs=dbs) if table in predicate_map
-                                   else estimator.all_tuples(table, dbs=dbs))
-    return cardinality_dict
 
 
 @dataclass
@@ -1561,57 +1461,49 @@ class BoundsTracker:
 def _absorb_pk_fk_hull_of(table: db.TableRef, *, join_graph: JoinGraph, join_tree: JoinTree,
                           subquery_generator: SubqueryGenerationStrategy,
                           bounds_tracker: BoundsTracker = None, pk_fk_bound: int = None,
-                          base_table_estimates: Dict[db.TableRef, int], pk_only: bool = False,
+                          stats: _TableBoundStatistics, pk_only: bool = False,
                           verbose: bool = False, trace: bool = False) -> JoinTree:
-    # TODO: the choice of estimates and the iteration itself are actually not optimal. We do not consider filters at
-    # all!
-    # A better strategy would be: always merge PKs in first (since they can only reduce the intermediate size)
-    # Thereby we would effectively treat FK tables as n:m tables! Why did we make that distinction in the first place?
+
+    # TODO: in principle, we could consider using subqueries for part of the hull
+    # TODO: the join order is just a coarse-grained heuristic, could be improved
 
     logger = util.make_logger(verbose or trace)
-    JoinEdge = collections.namedtuple("JoinEdge", ["table", "predicates"])
 
     if pk_only:
         raw_join_paths = join_graph.free_pk_joins_with(table)
     else:
         raw_join_paths = join_graph.free_pk_fk_joins_with(table)
     join_paths: Dict[db.TableRef, List[mosp.AbstractMospPredicate]] = util.dict_update(raw_join_paths, util.enlist)
-    candidate_estimates: Dict[db.TableRef, int] = {joined_table: base_table_estimates[joined_table]
+    candidate_estimates: Dict[db.TableRef, int] = {joined_table: stats.base_table_estimates[joined_table]
                                                    for joined_table in join_paths}
 
-    pk_fk_join_sequence: List[JoinEdge] = []
     while candidate_estimates:
         # always insert the table with minimum cardinality next
-        next_pk_fk_join = util.argmin(candidate_estimates)
-        pk_fk_join_sequence.append(
-            JoinEdge(table=next_pk_fk_join,
-                     predicates=mosp.MospCompoundPredicate.merge_and(join_paths[next_pk_fk_join])))
-        join_graph.mark_joined(next_pk_fk_join)
+        next_pk_fk_table = util.argmin(candidate_estimates)
+        next_join_predicate = mosp.MospCompoundPredicate.merge_and(join_paths[next_pk_fk_table])
+        join_graph.mark_joined(next_pk_fk_table)
 
         if bounds_tracker:
-            bounds_tracker.store_bound(next_pk_fk_join, candidate_bound=base_table_estimates[next_pk_fk_join],
+            bounds_tracker.store_bound(next_pk_fk_table, candidate_bound=stats.base_table_estimates[next_pk_fk_table],
                                        join_bound=pk_fk_bound, indexed_table=True)
+        join_tree = join_tree.joined_with_base_table(next_pk_fk_table, predicate=next_join_predicate)
+        stats.update_frequencies(next_pk_fk_table, next_join_predicate, join_tree,
+                                 pk_table=join_graph.is_only_pk_joined_table(next_pk_fk_table))
 
-        logger(".. Also including PK/FK join from hull:", next_pk_fk_join)
+        logger(".. Also including PK/FK join from hull:", next_pk_fk_table)
 
         # after inserting the join into our join tree, new join paths may become available
         if pk_only:
-            fresh_joins = join_graph.free_pk_joins_with(next_pk_fk_join)
+            fresh_joins = join_graph.free_pk_joins_with(next_pk_fk_table)
         else:
-            fresh_joins = join_graph.free_pk_fk_joins_with(next_pk_fk_join)
+            fresh_joins = join_graph.free_pk_fk_joins_with(next_pk_fk_table)
         join_paths = util.dict_merge(join_paths, util.dict_update(fresh_joins, util.enlist),
                                      update=lambda __, existing_paths, new_paths: existing_paths + new_paths)
         candidate_estimates = util.dict_merge(candidate_estimates,
-                                              {join: base_table_estimates[join] for join in fresh_joins})
+                                              {join: stats.base_table_estimates[join] for join in fresh_joins})
 
-        candidate_estimates.pop(next_pk_fk_join)
-        # TODO: if inserting a FK join, update statistics here
+        candidate_estimates.pop(next_pk_fk_table)
 
-    # TODO: check if executed as subquery and insert into join tree
-    for join_edge in pk_fk_join_sequence:
-        # TODO: for now we just always use the first predicate available. Is this sufficient or does the choice of
-        # predicate matter?
-        join_tree = join_tree.joined_with_base_table(join_edge.table, predicate=join_edge.predicates)
     return join_tree
 
 
@@ -1642,13 +1534,11 @@ def _calculate_join_order(query: mosp.MospQuery, *,
     # graph).
     partitioned_join_trees = [_calculate_join_order_for_join_partition(query, partition,
                                                                        join_cardinality_estimator=join_estimator,
-                                                                       base_cardinality_estimator=base_estimator,
                                                                        subquery_generator=subquery_generator,
                                                                        exceptions=exceptions,
                                                                        verbose=verbose, trace=trace,
                                                                        visualize=visualize,
-                                                                       visualize_args=visualize_args,
-                                                                       dbs=dbs)
+                                                                       visualize_args=visualize_args)
                               for partition in join_graph.join_components()]
     return util.simplify(partitioned_join_trees)
 
@@ -1667,12 +1557,10 @@ class _DirectedJoinEdge:
 
 def _calculate_join_order_for_join_partition(query: mosp.MospQuery, join_graph: JoinGraph, *,
                                              join_cardinality_estimator: JoinCardinalityEstimator,
-                                             base_cardinality_estimator: BaseCardinalityEstimator,
                                              subquery_generator: SubqueryGenerationStrategy,
                                              exceptions: ExceptionList = None,
                                              visualize: bool = False, visualize_args: dict = None,
-                                             verbose: bool = False, trace: bool = False,
-                                             dbs: db.DBSchema = db.DBSchema.get_instance()
+                                             verbose: bool = False, trace: bool = False
                                              ) -> JoinOrderOptimizationResult:
     trace_logger = util.make_logger(trace)
     logger = util.make_logger(verbose or trace)
@@ -1686,7 +1574,7 @@ def _calculate_join_order_for_join_partition(query: mosp.MospQuery, join_graph: 
         trace_logger(".. No joins found")
         only_table = join_graph.pull_any_table()
         join_tree = join_tree.with_base_table(only_table)
-        final_bound = stats.base_estimates[only_table]
+        final_bound = stats.base_table_estimates[only_table]
         return JoinOrderOptimizationResult(join_tree, final_bound=final_bound, intermediate_bounds=None, regular=False)
 
     if not join_graph.free_n_m_joined_tables():
@@ -1696,18 +1584,18 @@ def _calculate_join_order_for_join_partition(query: mosp.MospQuery, join_graph: 
         # order.
         # TODO: documentation : Why is final_bound the pk_fk_bound, how do we iterate, ... ?
         trace_logger(".. No n:m joins found, calculating snowflake-query order")
-        fk_estimates = {table: estimate for table, estimate in stats.base_estimates.items()
+        fk_estimates = {table: estimate for table, estimate in stats.base_table_estimates.items()
                         if join_graph.contains_table(table) and join_graph.is_free_fk_table(table)}
         first_fk_table = util.argmin(fk_estimates)
         join_tree = join_tree.with_base_table(first_fk_table)
         join_graph.mark_joined(first_fk_table)
-        bounds_tracker.initialize(first_fk_table, stats.base_estimates[first_fk_table])
-        final_bound = max(stats.base_estimates[fk_tab] for fk_tab in join_tree.all_tables()
+        stats.init_base_table(first_fk_table)
+        bounds_tracker.initialize(first_fk_table, stats.base_table_estimates[first_fk_table])
+        final_bound = max(stats.base_table_estimates[fk_tab] for fk_tab in join_tree.all_tables()
                           if join_graph.is_fk_table(fk_tab))
         join_tree = _absorb_pk_fk_hull_of(first_fk_table, join_graph=join_graph, join_tree=join_tree,
                                           subquery_generator=NoSubqueryGeneration(),
-                                          base_table_estimates=stats.base_estimates,
-                                          bounds_tracker=bounds_tracker, pk_fk_bound=final_bound)
+                                          bounds_tracker=bounds_tracker, pk_fk_bound=final_bound, stats=stats)
         assert not join_graph.contains_free_tables()
         return JoinOrderOptimizationResult(join_tree, final_bound=final_bound, intermediate_bounds=bounds_tracker,
                                            regular=False)
@@ -1740,7 +1628,7 @@ def _calculate_join_order_for_join_partition(query: mosp.MospQuery, join_graph: 
             # Foreign Key (and was therefore subject to filtering by the Primary Key)
 
             # Let's start by getting the filtered estimate and calculate the PK/FK join bound next
-            filter_estimate = stats.base_estimates[candidate_table]
+            filter_estimate = stats.base_table_estimates[candidate_table]
 
             # Now, let's look at all remaining PK/FK joins with the candidate table. We can get these easily via
             # join_graph.free_pk_joins.
@@ -1768,28 +1656,28 @@ def _calculate_join_order_for_join_partition(query: mosp.MospQuery, join_graph: 
             join_tree = join_tree.with_base_table(lowest_bound_table)
             join_graph.mark_joined(lowest_bound_table, trace=trace)
 
-            # FIXME: should this also include all PK/FK joins on the base table?!
             pk_joins = sorted([_DirectedJoinEdge(partner=partner, predicate=predicate) for partner, predicate
                                in join_graph.free_pk_joins_with(lowest_bound_table).items()],
-                              key=lambda fk_join_view: stats.base_estimates[fk_join_view.partner])
+                              key=lambda fk_join_view: stats.base_table_estimates[fk_join_view.partner])
             logger("Selected first table:", lowest_bound_table, "with PK/FK joins",
                    [pk_table.partner for pk_table in pk_joins])
 
             bounds_tracker.initialize(lowest_bound_table, lowest_min_bound)
+            stats.init_base_table(lowest_bound_table)
 
             for pk_join in pk_joins:
                 trace_logger(".. Adding PK join with", pk_join.partner, "on", pk_join.predicate)
                 join_tree = join_tree.joined_with_base_table(pk_join.partner, predicate=pk_join.predicate)
                 join_graph.mark_joined(pk_join.partner)
-                bounds_tracker.store_bound(pk_join.partner, candidate_bound=stats.base_estimates[pk_join.partner],
+                bounds_tracker.store_bound(pk_join.partner,
+                                           candidate_bound=stats.base_table_estimates[pk_join.partner],
                                            join_bound=lowest_min_bound, indexed_table=True)
+                stats.update_frequencies(pk_join.partner, pk_join.predicate, join_tree, pk_table=True)
                 join_tree = _absorb_pk_fk_hull_of(pk_join.partner, join_graph=join_graph, join_tree=join_tree,
                                                   subquery_generator=NoSubqueryGeneration(),
-                                                  base_table_estimates=stats.base_estimates,
-                                                  pk_only=True,
+                                                  stats=stats, pk_only=True,
                                                   bounds_tracker=bounds_tracker, pk_fk_bound=lowest_min_bound,
                                                   verbose=verbose, trace=trace)
-                stats.init_pk_join(lowest_bound_table, pk_join.predicate)
                 stats.upper_bounds[join_tree] = lowest_min_bound
 
             # This has nothing to do with the actual algorithm and is merely some technical code for visualization
@@ -1798,12 +1686,12 @@ def _calculate_join_order_for_join_partition(query: mosp.MospQuery, join_graph: 
                 plt.subplot(n_iterations, 1, current_iteration)
                 join_graph.print(title=f"Join graph after base table selection, selected table: {lowest_bound_table}",
                                  **visualize_args)
-            trace_logger(".. Base estimates:", stats.base_estimates)
+            trace_logger(".. Base estimates:", stats.base_table_estimates)
             trace_logger(".. Current bounds:", stats.upper_bounds)
             trace_logger("")
             continue
 
-        trace_logger(".. Current frequencies:", stats.joined_frequencies)
+        trace_logger(".. Current frequencies:", stats.attribute_frequencies)
 
         # Now that the bounds are up-to-date for each relation, we can select the next table to join based on the
         # number of outgoing tuples after including the relation in our current join tree.
@@ -1836,7 +1724,6 @@ def _calculate_join_order_for_join_partition(query: mosp.MospQuery, join_graph: 
             else:
                 candidate_bounds[candidate_table] = candidate_bound
 
-        trace_logger(".. Base frequencies:", stats.base_frequencies)
         trace_logger(".. Candidate bounds:", candidate_bounds)
 
         # We have now selected the next n:m join to execute. But before we can actually include this join in our join
@@ -1855,7 +1742,7 @@ def _calculate_join_order_for_join_partition(query: mosp.MospQuery, join_graph: 
             alias_map=query._build_alias_map()))
         pk_joins = sorted([_DirectedJoinEdge(partner=partner, predicate=predicate) for partner, predicate
                            in join_graph.free_pk_joins_with(selected_candidate).items()],
-                          key=lambda fk_join_view: stats.base_estimates[fk_join_view.partner])
+                          key=lambda fk_join_view: stats.base_table_estimates[fk_join_view.partner])
         logger("Selected next table:", selected_candidate, "with PK/FK joins",
                [pk_table.partner for pk_table in pk_joins], "on predicate", join_predicate)
 
@@ -1863,21 +1750,22 @@ def _calculate_join_order_for_join_partition(query: mosp.MospQuery, join_graph: 
                                                                stats=stats, exceptions=exceptions, query=query):
             subquery_join = JoinTree().with_base_table(selected_candidate)
             subquery_bounds_tracker = BoundsTracker()
-            subquery_bounds_tracker.initialize(selected_candidate, stats.base_estimates[selected_candidate])
+            subquery_bounds_tracker.initialize(selected_candidate, stats.base_table_estimates[selected_candidate])
+            stats.update_frequencies(selected_candidate, join_predicate, join_tree)
 
             for pk_join in pk_joins:
                 trace_logger(".. Adding PK join with", pk_join.partner, "on", pk_join.predicate)
                 subquery_join = subquery_join.joined_with_base_table(pk_join.partner, predicate=pk_join.predicate)
                 join_graph.mark_joined(pk_join.partner)
                 subquery_bounds_tracker.store_bound(pk_join.partner,
-                                                    candidate_bound=stats.base_estimates[pk_join.partner],
+                                                    candidate_bound=stats.base_table_estimates[pk_join.partner],
                                                     join_bound=stats.upper_bounds[selected_candidate],
                                                     indexed_table=True)
+                stats.update_frequencies(pk_join.partner, pk_join.predicate, join_tree, pk_table=True)
                 subquery_join = _absorb_pk_fk_hull_of(pk_join.partner, join_graph=join_graph, join_tree=subquery_join,
                                                       subquery_generator=NoSubqueryGeneration(),
-                                                      base_table_estimates=stats.base_estimates,
                                                       pk_only=True,
-                                                      bounds_tracker=subquery_bounds_tracker,
+                                                      bounds_tracker=subquery_bounds_tracker, stats=stats,
                                                       pk_fk_bound=stats.upper_bounds[selected_candidate])
             join_tree = join_tree.joined_with_subquery(subquery_join, predicate=join_predicate, checkpoint=True)
 
@@ -1885,24 +1773,26 @@ def _calculate_join_order_for_join_partition(query: mosp.MospQuery, join_graph: 
             logger(".. Creating subquery for PK joins", subquery_join)
         else:
             join_tree = join_tree.joined_with_base_table(selected_candidate, predicate=join_predicate, checkpoint=True)
-            bounds_tracker.store_bound(selected_candidate, candidate_bound=stats.base_estimates[selected_candidate],
+            bounds_tracker.store_bound(selected_candidate,
+                                       candidate_bound=stats.base_table_estimates[selected_candidate],
                                        join_bound=lowest_min_bound)
+            stats.update_frequencies(selected_candidate, join_predicate, join_tree)
             for pk_join in pk_joins:
                 trace_logger(".. Adding PK join with", pk_join.partner, "on", pk_join.predicate)
                 join_tree = join_tree.joined_with_base_table(pk_join.partner, predicate=pk_join.predicate)
                 join_graph.mark_joined(pk_join.partner)
-                bounds_tracker.store_bound(pk_join.partner, candidate_bound=stats.base_estimates[pk_join.partner],
+                bounds_tracker.store_bound(pk_join.partner,
+                                           candidate_bound=stats.base_table_estimates[pk_join.partner],
                                            join_bound=stats.upper_bounds[selected_candidate], indexed_table=True)
+                stats.update_frequencies(pk_join.partner, pk_join.predicate, join_tree, pk_table=True)
                 join_tree = _absorb_pk_fk_hull_of(pk_join.partner, join_graph=join_graph, join_tree=join_tree,
                                                   subquery_generator=NoSubqueryGeneration(),
-                                                  base_table_estimates=stats.base_estimates,
                                                   pk_only=True,
-                                                  bounds_tracker=bounds_tracker,
+                                                  bounds_tracker=bounds_tracker, stats=stats,
                                                   pk_fk_bound=stats.upper_bounds[selected_candidate])
 
         # Update our statistics based on the join(s) we just executed.
         stats.upper_bounds[join_tree] = lowest_min_bound
-        stats.update_frequencies(selected_candidate, join_predicate, join_tree=join_tree)
 
         # This has nothing to do with the actual algorithm and is merely some technical code for visualization
         if visualize:
@@ -1914,8 +1804,9 @@ def _calculate_join_order_for_join_partition(query: mosp.MospQuery, join_graph: 
         trace_logger("")
 
     assert not join_graph.contains_free_tables()
-    trace_logger("Final join frequencies:", stats.joined_frequencies)
-    trace_logger("Final upper bounds:", stats.join_bounds())
+    trace_logger("Final intermediate bounds:", stats.join_bounds())
+    trace_logger("Final attribute frequencies:", stats.attribute_frequencies)
+    trace_logger("Final upper bound:", stats.upper_bounds[join_tree])
     trace_logger("Final join ordering:", join_tree)
 
     return JoinOrderOptimizationResult(join_tree, bounds_tracker, stats.upper_bounds[join_tree], True)
