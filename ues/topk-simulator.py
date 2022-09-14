@@ -204,6 +204,12 @@ def max_frequency(attribute_values: List[str]) -> int:
     return max(occurrence_counter.values())
 
 
+def histogram(attribute_values: List[str]) -> List[Tuple[str, int]]:
+    occurrences = count_value_occurrences(attribute_values)
+    hist = sorted(occurrences.items())
+    return hist
+
+
 def calculate_ues_bound(max_freq_r: int, max_freq_s: int, num_tuples_r: int, num_tuples_s: int, *,
                         verbose: bool = False):
     distinct_r = math.ceil(num_tuples_r / max_freq_r)
@@ -673,12 +679,14 @@ def simulate(generator_r: RelationGenerator, generator_s: RelationGenerator,
     print_stderr(".. Using exceed value of", exceed_value, condition=verbose and (exceed_value is not None))
 
     print_stderr(f"|R| = {num_tuples_r}; distinct(R.a) = {len(set(tuples_r))}", condition=verbose)
-    print_stderr("R.a:", sorted(tuples_r), condition=verbose)
+    print_stderr("R.a:", sorted(tuples_r), condition=verbose and len(tuples_r) <= 30)
     print_stderr("topk(R.a) =", topk_r, condition=verbose)
+    print_stderr(f"hist(R.a) = {histogram(tuples_r)}")
     print_stderr(condition=verbose)
     print_stderr(f"|S| = {num_tuples_s}; distinct(S.b) = {len(set(tuples_s))}", condition=verbose)
-    print_stderr("S.b:", sorted(tuples_s), condition=verbose)
+    print_stderr("S.b:", sorted(tuples_s), condition=verbose and len(tuples_s) <= 30)
     print_stderr("topk(S.b) =", topk_s, condition=verbose)
+    print_stderr(f"hist(S.b) = {histogram(tuples_s)}")
     print_stderr("---- ---- ---- ----", condition=verbose)
 
     ues_bound = calculate_ues_bound(topk_r.max_freq(), topk_s.max_freq(), num_tuples_r, num_tuples_s, verbose=verbose)
