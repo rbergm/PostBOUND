@@ -607,6 +607,8 @@ def calculate_topk_bound_v7(topk_r: TopKList, topk_s: TopKList, num_tuples_r: in
         topk_r = topk_r.shift_according_to(highest_bound_value)
         topk_s = topk_s.shift_according_to(highest_bound_value)
 
+        print_stderr(condition=verbose)
+        print_stderr(f".. Next iteration", condition=verbose)
         print_stderr(f".. Selected value {highest_bound_value} (bound = {highest_bound})", condition=verbose)
         print_stderr(f".. Adjusted MCV(R): {topk_r}", condition=verbose)
         print_stderr(f".. Adjusted MCV(S): {topk_s}", condition=verbose)
