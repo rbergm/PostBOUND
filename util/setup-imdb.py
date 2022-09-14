@@ -37,6 +37,8 @@ def create_fkeys(out: str, db_name: str) -> None:
     os.system(f"wget -nv --output-document {fkey_path} {fkeys_spec}")
     print(".. Creating foreign key indices")
     os.system(f"psql {db_name} -f {fkey_path}")
+    os.system(f"psql {db_name} -c \"create index if not exists subject_id_complete_cast on complete_cast(subject_id)\"")
+    os.system(f"psql {db_name} -c \"create index if not exists status_id_complete_cast on complete_cast(status_id)\"")
 
 
 def main():
