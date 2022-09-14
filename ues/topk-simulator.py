@@ -608,7 +608,7 @@ def calculate_topk_bound_v7(topk_r: TopKList, topk_s: TopKList, num_tuples_r: in
         topk_s = topk_s.shift_according_to(highest_bound_value)
 
         print_stderr(condition=verbose)
-        print_stderr(f".. Next iteration", condition=verbose)
+        print_stderr(".. Next iteration", condition=verbose)
         print_stderr(f".. Selected value {highest_bound_value} (bound = {highest_bound})", condition=verbose)
         print_stderr(f".. Adjusted MCV(R): {topk_r}", condition=verbose)
         print_stderr(f".. Adjusted MCV(S): {topk_s}", condition=verbose)
@@ -623,14 +623,32 @@ def calculate_topk_bound_v7(topk_r: TopKList, topk_s: TopKList, num_tuples_r: in
     return math.ceil(bound)
 
 
+def calculate_topk_bound_v8(topk_r: TopKList, topk_s: TopKList, num_tuples_r: int, num_tuples_s: int, *,
+                            verbose: bool = False):
+    shorter_topk = topk_r if len(topk_r) < len(topk_s) else topk_s
+
+    bound = 0
+    for topk_idx in range(len(shorter_topk)):
+        __, freq_r = topk_r.entries[topk_idx]
+        __, freq_s = topk_s.entries[topk_idx]
+
+        partial_bound = freq_r * freq_s
+        if topk_idx == len(shorter_topk) - 1:
+            partial_bound *= max(num_tuples_r / topk_r.star_freq(), num_tuples_s / topk_s.star_freq())
+        bound += partial_bound
+
+    return bound
+
+
 TopkBoundVersions = {
-    1: (calculate_topk_bound_v1, "The current (live) implementation"),
+    1: (calculate_topk_bound_v1, "The former (live) implementation"),
     2: (calculate_topk_bound_v2, "UES* pushdown: reduce distinct values based on TopK lists"),
     3: (calculate_topk_bound_v3, "No pushdown: adjusted Topk bound + full UES* bound"),
     4: (calculate_topk_bound_v4, "Short-lived experiment. Doesn't work"),
     5: (calculate_topk_bound_v5, "UES* pushdown: |R*| := |R| - f* * k"),
     6: (calculate_topk_bound_v6, "Mild TopK adjustment, no UES* pushdown"),
-    7: (calculate_topk_bound_v7, "Integrated bound with inplace updates")
+    7: (calculate_topk_bound_v7, "Integrated bound with inplace updates"),
+    8: (calculate_topk_bound_v8, "Value-independent estimation")
 }
 
 
@@ -683,12 +701,12 @@ def simulate(generator_r: RelationGenerator, generator_s: RelationGenerator,
     print_stderr(f"|R| = {num_tuples_r}; distinct(R.a) = {len(set(tuples_r))}", condition=verbose)
     print_stderr("R.a:", sorted(tuples_r), condition=verbose and len(tuples_r) <= 30)
     print_stderr("topk(R.a) =", topk_r, condition=verbose)
-    print_stderr(f"hist(R.a) = {histogram(tuples_r)}")
+    print_stderr(f"hist(R.a) = {histogram(tuples_r)}", condition=verbose)
     print_stderr(condition=verbose)
     print_stderr(f"|S| = {num_tuples_s}; distinct(S.b) = {len(set(tuples_s))}", condition=verbose)
     print_stderr("S.b:", sorted(tuples_s), condition=verbose and len(tuples_s) <= 30)
     print_stderr("topk(S.b) =", topk_s, condition=verbose)
-    print_stderr(f"hist(S.b) = {histogram(tuples_s)}")
+    print_stderr(f"hist(S.b) = {histogram(tuples_s)}", condition=verbose)
     print_stderr("---- ---- ---- ----", condition=verbose)
 
     ues_bound = calculate_ues_bound(topk_r.max_freq(), topk_s.max_freq(), num_tuples_r, num_tuples_s, verbose=verbose)
