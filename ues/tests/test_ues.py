@@ -16,10 +16,16 @@ class JoinGraphTests(unittest.TestCase):
 
 
 class BeningQueryOptimizationTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.trace_enabled = "--trace" in sys.argv
+        if self.log_enabled:
+            print()
+        return super().setUp()
+
     def test_base_query(self):
         dbs = db.DBSchema.get_instance(renew=True)
         query = mosp.MospQuery.parse(job_workload["1a"])
-        optimized = ues.optimize_query(query, dbs=dbs, trace=True)  # noqa: F841
+        optimized = ues.optimize_query(query, dbs=dbs, trace=self.trace_enabled)  # noqa: F841
 
 
 class JobWorkloadOptimizationTests(unittest.TestCase):
