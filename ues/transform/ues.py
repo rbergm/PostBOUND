@@ -325,13 +325,15 @@ class _TopKList(Generic[_T]):
             cardinality_sum += self[value] * other[value]
         return cardinality_sum
 
-    def merge_with(self, other: "_TopKList[_T]") -> "_TopKList[_T]":
+    def merge_with(self, other: "_TopKList[_T]", *, cutoff: bool = False) -> "_TopKList[_T]":
         merged_list = []
         for value in self:
             merged_list.append((value, self[value] * other[value]))
         for value in [value for value in other if value not in self]:
             merged_list.append((value, self[value] * other[value]))
         merged_list.sort(key=operator.itemgetter(1))
+        if cutoff:
+            merged_list = merged_list[:max(len(self), len(other))]
         remainder_freq = self.remainder_frequency * other.remainder_frequency
         associated_attributes = self._merge_attributes(other)
         return _TopKList(merged_list, remainder_frequency=remainder_freq, associated_attribute=associated_attributes)
