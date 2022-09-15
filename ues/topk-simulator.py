@@ -532,6 +532,9 @@ class TopKListV7:
     def has_contents(self) -> bool:
         return len(self._entries) > 0
 
+    def is_empty(self) -> bool:
+        return not self.has_contents()
+
     def frequency_of(self, value: str) -> int:
         return self._frequencies.get(value, self.star_frequency)
 
@@ -541,7 +544,8 @@ class TopKListV7:
     def snap_to(self, num_tuples: int) -> "TopKListV7":
         snapped_tuples = min(self._total_tuples, num_tuples)
         snapped_entries = [(val, min(freq, num_tuples)) for val, freq in self._entries]
-        return TopKListV7(snapped_entries, snapped_tuples, star_frequency=self.star_frequency)
+        snapped_star_freq = min(self.star_frequency, num_tuples)
+        return TopKListV7(snapped_entries, snapped_tuples, star_frequency=snapped_star_freq)
 
     def shift_according_to(self, value: str) -> "TopKListV7":
         corresponding_frequency = self.frequency_of(value)
@@ -616,9 +620,10 @@ def calculate_topk_bound_v7(topk_r: TopKList, topk_s: TopKList, num_tuples_r: in
     print_stderr(f"|R*| = {topk_r.remaining_tuples}; |S*| = {topk_s.remaining_tuples}", condition=verbose)
     print_stderr("---- ---- ---- ----", condition=verbose)
 
-    bound += (min(topk_r.remaining_tuples / topk_r.star_frequency, topk_s.remaining_tuples / topk_s.star_frequency)
-              * topk_r.star_frequency
-              * topk_s.star_frequency)
+    if topk_r.remaining_tuples > 0 and topk_s.remaining_tuples > 0:
+        bound += (min(topk_r.remaining_tuples / topk_r.star_frequency, topk_s.remaining_tuples / topk_s.star_frequency)
+                  * topk_r.star_frequency
+                  * topk_s.star_frequency)
 
     return math.ceil(bound)
 
@@ -640,6 +645,49 @@ def calculate_topk_bound_v8(topk_r: TopKList, topk_s: TopKList, num_tuples_r: in
     return bound
 
 
+def calculate_topk_bound_v9(topk_r: TopKList, topk_s: TopKList, num_tuples_r: int, num_tuples_s: int, *,
+                            verbose: bool = False):
+    bound = 0
+    for val in topk_r:
+        bound += topk_r[val] * topk_s[val]
+    for val in topk_s.drop_values_from(topk_r):
+        bound += topk_r[val] * topk_s[val]
+
+    distinct_topk_values = len(topk_r.attribute_values() | topk_s.attribute_values())
+    ues_distinct_values = min(num_tuples_r / topk_r.star_freq(), num_tuples_s / topk_s.star_freq())
+    remaining_distinct_values = max(ues_distinct_values - distinct_topk_values, 0)
+    bound += remaining_distinct_values * topk_r.star_freq() * topk_s.star_freq()
+
+    return bound
+
+
+def calculate_topk_bound_v10(topk_r: TopKList, topk_s: TopKList, num_tuples_r: int, num_tuples_s: int, *,
+                             verbose: bool = False):
+    def calculate_max_bound(topk_r: TopKListV7, topk_s: TopKListV7, *, current_bound: int = 0) -> int:
+        if topk_r.remaining_tuples == 0 or topk_s.remaining_tuples == 0:
+            return current_bound
+
+        if topk_r.is_empty() and topk_s.is_empty():
+            distinct_values = min(topk_r.remaining_tuples / topk_r.star_frequency,
+                                  topk_s.remaining_tuples / topk_s.star_frequency)
+            remainder_bound = distinct_values * topk_r.star_frequency * topk_s.star_frequency
+            return current_bound + remainder_bound
+
+        max_bound = 0
+        for value_r in topk_r:
+            for value_s in topk_s:
+                join_bound = current_bound + topk_r[value_r] * topk_s[value_s]
+                candidate_bound = calculate_max_bound(topk_r.shift_according_to(value_r),
+                                                      topk_s.shift_according_to(value_s),
+                                                      current_bound=join_bound)
+                if candidate_bound > max_bound:
+                    max_bound = candidate_bound
+        return max_bound
+
+    return calculate_max_bound(TopKListV7.initialize_from(topk_r, num_tuples_r).snap_to(num_tuples_r),
+                               TopKListV7.initialize_from(topk_s, num_tuples_s).snap_to(num_tuples_s))
+
+
 TopkBoundVersions = {
     1: (calculate_topk_bound_v1, "The former (live) implementation"),
     2: (calculate_topk_bound_v2, "UES* pushdown: reduce distinct values based on TopK lists"),
@@ -648,7 +696,9 @@ TopkBoundVersions = {
     5: (calculate_topk_bound_v5, "UES* pushdown: |R*| := |R| - f* * k"),
     6: (calculate_topk_bound_v6, "Mild TopK adjustment, no UES* pushdown"),
     7: (calculate_topk_bound_v7, "Integrated bound with inplace updates"),
-    8: (calculate_topk_bound_v8, "Value-independent estimation")
+    8: (calculate_topk_bound_v8, "Value-independent estimation"),
+    9: (calculate_topk_bound_v9, "No TopK pushdown, UES distinct value pushdown"),
+    10: (calculate_topk_bound_v10, "Greedy integrated bound with inplace updates")
 }
 
 
