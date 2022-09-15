@@ -17,6 +17,7 @@ from transform import db, mosp, util
 
 
 _T = typing.TypeVar("_T")
+DEFAULT_TOPK_LENGTH = 15
 
 
 class MospQueryPreparation:
@@ -283,6 +284,9 @@ class _TopKList(Generic[_T]):
     def has_contents(self) -> bool:
         return len(self.mcv_list) > 0
 
+    def is_empty(self) -> bool:
+        return not self.has_contents()
+
     def attribute_values(self) -> Set[_T]:
         return set(self.mcv_data.keys())
 
@@ -397,10 +401,10 @@ class _TopKList(Generic[_T]):
 
 class TopkUESCardinalityEstimator(JoinCardinalityEstimator):
     def __init__(self, query: mosp.MospQuery, base_cardinality_estimator: BaseCardinalityEstimator, *,
-                 k: int, dbs: db.DBSchema = db.DBSchema.get_instance()):
+                 k: int, enforce_topk_length: bool = True, dbs: db.DBSchema = db.DBSchema.get_instance()):
         self.query = query
         self.k = k
-        self.stats_container = _TopKTableBoundStatistics(query, k,
+        self.stats_container = _TopKTableBoundStatistics(query, k, enforce_topk_length=enforce_topk_length,
                                                          base_cardinality_estimator=base_cardinality_estimator,
                                                          dbs=dbs)
         self.dbs = dbs
@@ -437,7 +441,7 @@ class TopkUESCardinalityEstimator(JoinCardinalityEstimator):
         fk_mcv = self.stats_container.attribute_frequencies[fk_attr]
         pk_mcv = self.stats_container.attribute_frequencies[pk_attr]
 
-        return self._bound_formula(fk_mcv, total_bound_fk, pk_mcv, total_bound_pk)
+        return self._calculate_max_bound(fk_mcv, total_bound_fk, pk_mcv, total_bound_pk)
 
     def _calculate_n_m_bound(self, joined_attr: db.AttributeRef, candidate_attr: db.AttributeRef,
                              join_tree: "JoinTree") -> int:
@@ -446,42 +450,35 @@ class TopkUESCardinalityEstimator(JoinCardinalityEstimator):
         joined_mcv = self.stats_container.attribute_frequencies[joined_attr].snap_to(total_bound_joined)
         candidate_mcv = self.stats_container.attribute_frequencies[candidate_attr].snap_to(total_bound_candidate)
 
-        return self._bound_formula(joined_mcv, total_bound_joined, candidate_mcv, total_bound_candidate)
+        return self._calculate_max_bound(joined_mcv, total_bound_joined, candidate_mcv, total_bound_candidate)
 
-    def _bound_formula(self, first_mcv: _TopKList, first_cardinality: int,
-                       second_mcv: _TopKList, second_cardinality: int) -> int:
-        first_mcv, second_mcv = first_mcv.snap_to(first_cardinality), second_mcv.snap_to(second_cardinality)
+    def _calculate_max_bound(self, first_mcv: _TopKList, first_cardinality: int,
+                             second_mcv: _TopKList, second_cardinality: int, *, current_bound: int = 0) -> int:
+        if first_cardinality == 0 or second_cardinality == 0:
+            return current_bound
 
-        bound = 0
-        while ((first_mcv.has_contents() or second_mcv.has_contents())
-               and first_cardinality > 0
-               and second_cardinality > 0):
-            highest_bound, highest_bound_value = 0, None
-            for candidate_value in first_mcv:
-                candidate_bound = first_mcv[candidate_value] * second_mcv[candidate_value]
-                if candidate_bound > highest_bound:
-                    highest_bound = candidate_bound
-                    highest_bound_value = candidate_value
-            for candidate_value in second_mcv:
-                candidate_bound = first_mcv[candidate_value] * second_mcv[candidate_value]
-                if candidate_bound > highest_bound:
-                    highest_bound = candidate_bound
-                    highest_bound_value = candidate_value
+        if first_mcv.is_empty() and second_mcv.is_empty():
+            distinct_values = min(first_cardinality / first_mcv.remainder_frequency,
+                                  second_cardinality / second_mcv.remainder_frequency)
+            remainder_bound = distinct_values * first_mcv.remainder_frequency * second_mcv.remainder_frequency
+            return current_bound + remainder_bound
 
-            bound += highest_bound
+        max_bound = 0
+        for value in first_mcv.attribute_values() | second_mcv.attribute_values():
+            join_bound = current_bound + first_mcv[value] * second_mcv[value]
+            first_remaining_cardinality = max(first_cardinality - first_mcv[value], 0)
+            second_remaining_cardinality = max(second_cardinality - second_mcv[value], 0)
+            candidate_bound = (
+                self._calculate_max_bound(first_mcv.drop_value(value).snap_to(first_remaining_cardinality),
+                                          first_remaining_cardinality,
+                                          second_mcv.drop_value(value).snap_to(second_remaining_cardinality),
+                                          second_remaining_cardinality,
+                                          current_bound=join_bound))
 
-            first_cardinality = max(first_cardinality - first_mcv[highest_bound_value], 0)
-            second_cardinality = max(second_cardinality - second_mcv[highest_bound_value], 0)
-            first_mcv = first_mcv.drop_value(highest_bound_value).snap_to(first_cardinality)
-            second_mcv = second_mcv.drop_value(highest_bound_value).snap_to(second_cardinality)
+            if candidate_bound > max_bound:
+                max_bound = candidate_bound
 
-        if first_mcv.remainder_frequency > 0 and second_mcv.remainder_frequency > 0:
-            bound += (min(first_cardinality / first_mcv.remainder_frequency,
-                          second_cardinality / second_mcv.remainder_frequency)
-                      * first_mcv.remainder_frequency
-                      * second_mcv.remainder_frequency)
-
-        return math.ceil(bound)
+        return max_bound
 
 
 def _is_pk_fk_join(join: mosp.MospBasePredicate, *, dbs: db.DBSchema = db.DBSchema.get_instance()) -> bool:
@@ -1186,9 +1183,11 @@ class _MFVTableBoundStatistics(_TableBoundStatistics[int]):
 
 class _TopKTableBoundStatistics(_TableBoundStatistics[_TopKList]):
     def __init__(self, query: mosp.MospQuery, k, *,
+                 enforce_topk_length: bool = True,
                  base_cardinality_estimator: BaseCardinalityEstimator,
                  dbs: db.DBSchema = db.DBSchema.get_instance()):
         self._k = k
+        self._enforce_topk_length = enforce_topk_length
         super().__init__(query, base_table_estimator=base_cardinality_estimator, dbs=dbs)
 
     def _fetch_attribute_base_frequency(self, attribute: db.AttributeRef) -> _TopKList:
@@ -1209,7 +1208,7 @@ class _TopKTableBoundStatistics(_TableBoundStatistics[_TopKList]):
         intermediate_topk_list = self.attribute_frequencies[intermediate_attribute]
         candidate_topk_list = self.attribute_frequencies[candidate_attribute]
 
-        merged_topk_list = intermediate_topk_list.merge_with(candidate_topk_list)
+        merged_topk_list = intermediate_topk_list.merge_with(candidate_topk_list, cutoff=self._enforce_topk_length)
         return merged_topk_list
 
     def _update_intermediate_attribute_frequency(self, intermediate_attribute: db.AttributeRef,
@@ -1973,6 +1972,7 @@ def optimize_query(query: mosp.MospQuery, *,
                    join_cardinality_estimation: str = "basic",
                    subquery_generation: str = "defensive",
                    topk_list_length: int = None,
+                   optimize_topk_lists: bool = False,
                    exceptions: ExceptionList = None,
                    dbs: db.DBSchema = db.DBSchema.get_instance(),
                    visualize: bool = False, visualize_args: dict = None,
@@ -2003,10 +2003,10 @@ def optimize_query(query: mosp.MospQuery, *,
         join_estimator = DefaultUESCardinalityEstimator(prepared_query, base_cardinality_estimator=base_estimator,
                                                         dbs=dbs)
     elif join_cardinality_estimation == "topk":
-        k = topk_list_length if topk_list_length else 15
+        k = topk_list_length if topk_list_length else DEFAULT_TOPK_LENGTH
         logger("Running TopK cardinality estimation with k =", k)
-        join_estimator = TopkUESCardinalityEstimator(prepared_query, k=k, base_cardinality_estimator=base_estimator,
-                                                     dbs=dbs)
+        join_estimator = TopkUESCardinalityEstimator(prepared_query, k=k, enforce_topk_length=not optimize_topk_lists,
+                                                     base_cardinality_estimator=base_estimator, dbs=dbs)
     else:
         raise ValueError("Unknown cardinality estimation strategy: '{}'".format(join_cardinality_estimation))
 

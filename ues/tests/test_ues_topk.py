@@ -15,6 +15,8 @@ from postgres import explain  # noqa: E402
 job_workload = regression_suite.load_job_workload()
 dbs = db.DBSchema.get_instance()
 
+ues.DEFAULT_TOPK_LENGTH = 3
+
 
 class JoinGraphTests(unittest.TestCase):
     pass
@@ -23,7 +25,7 @@ class JoinGraphTests(unittest.TestCase):
 class BeningQueryOptimizationTests(unittest.TestCase):
     def setUp(self) -> None:
         self.trace_enabled = "--trace" in sys.argv
-        if self.log_enabled:
+        if self.trace_enabled:
             print()
         return super().setUp()
 
@@ -91,8 +93,8 @@ class CompoundJoinPredicateOptimizationTests(unittest.TestCase):
 
 class UpperBoundTests(unittest.TestCase):
     def setUp(self) -> None:
-        self.log_enabled = "--trace" in sys.argv
-        self.fail_eager = "--fail-late" not in sys.argv
+        self.log_enabled = "--trace" in sys.argv or True
+        self.fail_eager = "--fail-late" not in sys.argv or True
         if self.log_enabled:
             print()
         return super().setUp()
@@ -122,8 +124,8 @@ class UpperBoundTests(unittest.TestCase):
     def test_tight_increase(self):
         log = util.make_logger(self.log_enabled)
         pretty_log = util.make_logger(self.log_enabled, pretty=True)
-        topk_lengths = [5, 10, 20, 50, 100, 500]
-        topk_predecessors = [1, 5, 10, 20, 50, 100]
+        topk_lengths = [2, 3, 4, 5]
+        topk_predecessors = [1, 2, 3, 4]
         bound_results = collections.defaultdict(lambda: collections.defaultdict(lambda: np.inf))
 
         counterexamples = []
