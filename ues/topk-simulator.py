@@ -535,6 +535,9 @@ class TopKListV7:
     def is_empty(self) -> bool:
         return not self.has_contents()
 
+    def attribute_values(self) -> Set[str]:
+        return set(self._frequencies.keys())
+
     def frequency_of(self, value: str) -> int:
         return self._frequencies.get(value, self.star_frequency)
 
@@ -663,29 +666,36 @@ def calculate_topk_bound_v9(topk_r: TopKList, topk_s: TopKList, num_tuples_r: in
 
 def calculate_topk_bound_v10(topk_r: TopKList, topk_s: TopKList, num_tuples_r: int, num_tuples_s: int, *,
                              verbose: bool = False):
-    def calculate_max_bound(topk_r: TopKListV7, topk_s: TopKListV7, *, current_bound: int = 0) -> int:
+    def calculate_max_bound(topk_r: TopKListV7, topk_s: TopKListV7, *, current_bound: int = 0,
+                            initial: bool = False) -> int:
         if topk_r.remaining_tuples == 0 or topk_s.remaining_tuples == 0:
+            # if there are no tuples left, there is nothing more to do
             return current_bound
 
         if topk_r.is_empty() and topk_s.is_empty():
+            # if there are still tuples left but our Top-K lists don't contain any more information, fall back to
+            # a UES estimation
             distinct_values = min(topk_r.remaining_tuples / topk_r.star_frequency,
                                   topk_s.remaining_tuples / topk_s.star_frequency)
             remainder_bound = distinct_values * topk_r.star_frequency * topk_s.star_frequency
             return current_bound + remainder_bound
 
         max_bound = 0
-        for value_r in topk_r:
-            for value_s in topk_s:
-                join_bound = current_bound + topk_r[value_r] * topk_s[value_s]
-                candidate_bound = calculate_max_bound(topk_r.shift_according_to(value_r),
-                                                      topk_s.shift_according_to(value_s),
-                                                      current_bound=join_bound)
-                if candidate_bound > max_bound:
-                    max_bound = candidate_bound
+        for value in topk_r.attribute_values() | topk_s.attribute_values():
+            # otherwise compute for each remaining value the maximum bound that can originate from using it as the
+            # next join value
+            join_bound = current_bound + topk_r[value] * topk_s[value]
+            candidate_bound = calculate_max_bound(topk_r.shift_according_to(value),
+                                                  topk_s.shift_according_to(value),
+                                                  current_bound=join_bound)
+            if candidate_bound > max_bound:
+                max_bound = candidate_bound
+                print_stderr(f"New max bound {max_bound} based on value {value}", condition=verbose and initial)
         return max_bound
 
     return calculate_max_bound(TopKListV7.initialize_from(topk_r, num_tuples_r).snap_to(num_tuples_r),
-                               TopKListV7.initialize_from(topk_s, num_tuples_s).snap_to(num_tuples_s))
+                               TopKListV7.initialize_from(topk_s, num_tuples_s).snap_to(num_tuples_s),
+                               initial=True)
 
 
 TopkBoundVersions = {
@@ -770,10 +780,14 @@ def simulate(generator_r: RelationGenerator, generator_s: RelationGenerator,
 def find_regressions(generator_r: RelationGenerator, generator_s: RelationGenerator,
                      topk_generator_r: TopKListGenerator, topk_generator_s: TopKListGenerator, *,
                      exceed_value: int, version: int, topk_length: int = None, num_seeds: int = 100,
-                     verbose: bool = False):
+                     verbose: bool = False, progress: bool = False):
     num_tuples_r, num_tuples_s = generator_r.num_tuples(), generator_s.num_tuples()
     topk_range = range(topk_length, topk_length + 1) if topk_length else range(1, max(num_tuples_r, num_tuples_s) + 1)
-    for seed, topk_length in itertools.product(range(num_seeds), topk_range):
+    config_idx = 1
+    configs = list(itertools.product(range(num_seeds), topk_range))
+    for seed, topk_length in configs:
+        print_stderr(f"Now simulating config {config_idx} of {len(configs)} "
+                     f"(seed = {seed}, topk = {topk_length})", condition=progress)
         simulation_res = simulate(generator_r, generator_s, topk_generator_r, topk_generator_s,
                                   topk_length=topk_length, exceed_value=exceed_value, rand_seed=seed,
                                   topk_version=version, verbose=False)
@@ -814,6 +828,8 @@ def main():
                         help="How many RNG seeds should be tried")
     parser.add_argument("--version", action="store", type=int, default=DEFAULT_TOPK_ESTIMATION_VER, help="")
     parser.add_argument("--verbose", "-v", action="store_true", default=False, help="Produce debugging ouput")
+    parser.add_argument("--progress", action="store_true", default=False, help="Given progress info in regression "
+                        "mode")
     parser.add_argument("--manual-rel-r", action="store", default="", help="Use given attribute values for relation "
                         "R instead of randomly generated ones. Format a,a,b,c")
     parser.add_argument("--manual-rel-s", action="store", default="", help="Use given attribute values for relation "
@@ -852,7 +868,7 @@ def main():
     if args.regression_mode:
         find_regressions(generator_r, generator_s, topk_generator_r, topk_generator_s,
                          topk_length=topk_length if args.k else None, exceed_value=exceed_value, version=version,
-                         num_seeds=args.regression_seeds, verbose=args.verbose)
+                         num_seeds=args.regression_seeds, verbose=args.verbose, progress=args.progress)
         return
 
     simulation_result = simulate(generator_r, generator_s, topk_generator_r, topk_generator_s,
