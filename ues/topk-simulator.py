@@ -578,6 +578,12 @@ class TopKListV7:
     def __iter__(self) -> Iterator[str]:
         return [val for val, __ in self._entries].__iter__()
 
+    def __hash__(self) -> int:
+        return hash((hash((self.star_frequency, self.remaining_tuples)),) + tuple(self._entries))
+
+    def __eq__(self, __o: object) -> bool:
+        return isinstance(__o, TopKListV7) and hash(self) == hash(__o)
+
     def __repr__(self) -> str:
         return str(self)
 
@@ -669,11 +675,17 @@ def calculate_topk_bound_v9(topk_r: TopKList, topk_s: TopKList, num_tuples_r: in
 
 def calculate_topk_bound_v10(topk_r: TopKList, topk_s: TopKList, num_tuples_r: int, num_tuples_s: int, *,
                              verbose: bool = False):
+    result_cache = {}
+
     def ues_bound(card_r: int, card_s: int, max_freq_r: int, max_freq_s: int) -> int:
         return min(card_r * max_freq_s, card_s * max_freq_r)
 
     def calculate_max_bound(topk_r: TopKListV7, topk_s: TopKListV7, *, current_bound: int = 0, max_bound: int = 0,
                             initial: bool = False) -> int:
+        cached_result = result_cache.get(hash((topk_r, topk_s)), None)
+        if cached_result:
+            return cached_result
+
         gap_to_max = max(max_bound - current_bound, 0)
         max_remainder = ues_bound(topk_r.remaining_tuples, topk_s.remaining_tuples,
                                   topk_r.max_freq(), topk_s.max_freq())
@@ -706,6 +718,8 @@ def calculate_topk_bound_v10(topk_r: TopKList, topk_s: TopKList, num_tuples_r: i
                 max_candidate_bound = candidate_bound
                 print_stderr(f"New max bound {max_candidate_bound} based on value {value}",
                              condition=verbose and initial)
+
+        result_cache[hash((topk_r, topk_s))] = max_candidate_bound
         return max_candidate_bound
 
     bound = calculate_max_bound(TopKListV7.initialize_from(topk_r, num_tuples_r).snap_to(num_tuples_r),
