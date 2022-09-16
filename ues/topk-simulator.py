@@ -678,6 +678,7 @@ def calculate_topk_bound_v10(topk_r: TopKList, topk_s: TopKList, num_tuples_r: i
     result_cache = {}
 
     def ues_bound(card_r: int, card_s: int, max_freq_r: int, max_freq_s: int) -> int:
+        # optimized version of min(|R| / MF(R.a), |S| / MF(S.b)) * MF(R.a) * MF(S.b)
         return min(card_r * max_freq_s, card_s * max_freq_r)
 
     def calculate_max_bound(topk_r: TopKListV7, topk_s: TopKListV7, *, current_bound: int = 0, max_bound: int = 0,
@@ -699,14 +700,12 @@ def calculate_topk_bound_v10(topk_r: TopKList, topk_s: TopKList, num_tuples_r: i
         if topk_r.is_empty() and topk_s.is_empty():
             # if there are still tuples left but our Top-K lists don't contain any more information, fall back to
             # a UES estimation
-            distinct_values = min(topk_r.remaining_tuples / topk_r.star_frequency,
-                                  topk_s.remaining_tuples / topk_s.star_frequency)
-            remainder_bound = distinct_values * topk_r.star_frequency * topk_s.star_frequency
-            return current_bound + remainder_bound
+            return ues_bound(topk_r.remaining_tuples, topk_s.remaining_tuples,
+                             topk_r.star_frequency, topk_s.star_frequency)
 
-        max_candidate_bound = 0
         # otherwise compute for each remaining value the maximum bound that can originate from using it as the
         # next join value
+        max_candidate_bound = 0
         candidate_bounds = [(value, current_bound + topk_r[value] * topk_s[value]) for value
                             in topk_r.attribute_values() | topk_s.attribute_values()]
         for value, join_bound in sorted(candidate_bounds, key=operator.itemgetter(1), reverse=True):
