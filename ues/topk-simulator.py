@@ -544,6 +544,9 @@ class TopKListV7:
     def head(self) -> Tuple[str, int]:
         return self._entries[0] if self._total_tuples > 0 else None
 
+    def max_freq(self) -> int:
+        return self.head()[1] if self.has_contents() else self.star_frequency
+
     def snap_to(self, num_tuples: int) -> "TopKListV7":
         snapped_tuples = min(self._total_tuples, num_tuples)
         snapped_entries = [(val, min(freq, num_tuples)) for val, freq in self._entries]
@@ -666,8 +669,17 @@ def calculate_topk_bound_v9(topk_r: TopKList, topk_s: TopKList, num_tuples_r: in
 
 def calculate_topk_bound_v10(topk_r: TopKList, topk_s: TopKList, num_tuples_r: int, num_tuples_s: int, *,
                              verbose: bool = False):
-    def calculate_max_bound(topk_r: TopKListV7, topk_s: TopKListV7, *, current_bound: int = 0,
+    def ues_bound(card_r: int, card_s: int, max_freq_r: int, max_freq_s: int) -> int:
+        return min(card_r * max_freq_s, card_s * max_freq_r)
+
+    def calculate_max_bound(topk_r: TopKListV7, topk_s: TopKListV7, *, current_bound: int = 0, max_bound: int = 0,
                             initial: bool = False) -> int:
+        gap_to_max = max(max_bound - current_bound, 0)
+        max_remainder = ues_bound(topk_r.remaining_tuples, topk_s.remaining_tuples,
+                                  topk_r.max_freq(), topk_s.max_freq())
+        if max_remainder <= gap_to_max:
+            return current_bound
+
         if topk_r.remaining_tuples == 0 or topk_s.remaining_tuples == 0:
             # if there are no tuples left, there is nothing more to do
             return current_bound
@@ -680,22 +692,27 @@ def calculate_topk_bound_v10(topk_r: TopKList, topk_s: TopKList, num_tuples_r: i
             remainder_bound = distinct_values * topk_r.star_frequency * topk_s.star_frequency
             return current_bound + remainder_bound
 
-        max_bound = 0
-        for value in topk_r.attribute_values() | topk_s.attribute_values():
-            # otherwise compute for each remaining value the maximum bound that can originate from using it as the
-            # next join value
-            join_bound = current_bound + topk_r[value] * topk_s[value]
+        max_candidate_bound = 0
+        # otherwise compute for each remaining value the maximum bound that can originate from using it as the
+        # next join value
+        candidate_bounds = [(value, current_bound + topk_r[value] * topk_s[value]) for value
+                            in topk_r.attribute_values() | topk_s.attribute_values()]
+        for value, join_bound in sorted(candidate_bounds, key=operator.itemgetter(1), reverse=True):
             candidate_bound = calculate_max_bound(topk_r.shift_according_to(value),
                                                   topk_s.shift_according_to(value),
-                                                  current_bound=join_bound)
-            if candidate_bound > max_bound:
-                max_bound = candidate_bound
-                print_stderr(f"New max bound {max_bound} based on value {value}", condition=verbose and initial)
-        return max_bound
+                                                  current_bound=join_bound,
+                                                  max_bound=max(max_candidate_bound, max_bound))
+            if candidate_bound > max_candidate_bound:
+                max_candidate_bound = candidate_bound
+                print_stderr(f"New max bound {max_candidate_bound} based on value {value}",
+                             condition=verbose and initial)
+        return max_candidate_bound
 
-    return calculate_max_bound(TopKListV7.initialize_from(topk_r, num_tuples_r).snap_to(num_tuples_r),
-                               TopKListV7.initialize_from(topk_s, num_tuples_s).snap_to(num_tuples_s),
-                               initial=True)
+    bound = calculate_max_bound(TopKListV7.initialize_from(topk_r, num_tuples_r).snap_to(num_tuples_r),
+                                TopKListV7.initialize_from(topk_s, num_tuples_s).snap_to(num_tuples_s), initial=True)
+
+    print_stderr("---- ---- ---- ----", condition=verbose)
+    return bound
 
 
 TopkBoundVersions = {

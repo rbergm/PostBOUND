@@ -386,6 +386,12 @@ class _TopKList(Generic[_T]):
     def __iter__(self) -> Iterator[_T]:
         return list(self.mcv_data.keys()).__iter__()
 
+    def __hash__(self) -> int:
+        return hash(tuple(self.mcv_list) + (self.remainder_frequency,))
+
+    def __eq__(self, __o: object) -> bool:
+        return isinstance(__o, _TopKList) and hash(self) == hash(__o)
+
     def __repr__(self) -> str:
         return str(self)
 
@@ -408,6 +414,7 @@ class TopkUESCardinalityEstimator(JoinCardinalityEstimator):
                                                          base_cardinality_estimator=base_cardinality_estimator,
                                                          dbs=dbs)
         self.dbs = dbs
+        self._topk_result_cache = {}
 
     def calculate_upper_bound(self, predicate: mosp.AbstractMospPredicate, *,
                               pk_fk_join: bool = False, fk_table: db.TableRef = None,
@@ -441,7 +448,10 @@ class TopkUESCardinalityEstimator(JoinCardinalityEstimator):
         fk_mcv = self.stats_container.attribute_frequencies[fk_attr]
         pk_mcv = self.stats_container.attribute_frequencies[pk_attr]
 
-        return self._calculate_max_bound(fk_mcv, total_bound_fk, pk_mcv, total_bound_pk)
+        self._initialize_topk_result_cache()
+        bound = self._calculate_max_bound(fk_mcv, total_bound_fk, pk_mcv, total_bound_pk)
+        self._dispose_topk_result_cache()
+        return bound
 
     def _calculate_n_m_bound(self, joined_attr: db.AttributeRef, candidate_attr: db.AttributeRef,
                              join_tree: "JoinTree") -> int:
@@ -450,10 +460,23 @@ class TopkUESCardinalityEstimator(JoinCardinalityEstimator):
         joined_mcv = self.stats_container.attribute_frequencies[joined_attr].snap_to(total_bound_joined)
         candidate_mcv = self.stats_container.attribute_frequencies[candidate_attr].snap_to(total_bound_candidate)
 
-        return self._calculate_max_bound(joined_mcv, total_bound_joined, candidate_mcv, total_bound_candidate)
+        self._initialize_topk_result_cache()
+        bound = self._calculate_max_bound(joined_mcv, total_bound_joined, candidate_mcv, total_bound_candidate)
+        self._dispose_topk_result_cache()
+        return bound
 
     def _calculate_max_bound(self, first_mcv: _TopKList, first_cardinality: int,
-                             second_mcv: _TopKList, second_cardinality: int, *, current_bound: int = 0) -> int:
+                             second_mcv: _TopKList, second_cardinality: int, *,
+                             current_bound: int = 0, current_max_bound: int = 0) -> int:
+        if self._has_topk_result_cached(first_mcv, first_cardinality, second_mcv, second_cardinality):
+            return self._load_cached_topk_result(first_mcv, first_cardinality, second_mcv, second_cardinality)
+
+        gap_to_max_bound = max(current_max_bound - current_bound, 0)
+        max_remaining_cardinality = self._calculate_ues_bound(first_cardinality, first_mcv.max_frequency(),
+                                                              second_cardinality, second_mcv.max_frequency())
+        if max_remaining_cardinality < gap_to_max_bound:
+            return current_bound
+
         if first_cardinality == 0 or second_cardinality == 0:
             return current_bound
 
@@ -463,9 +486,12 @@ class TopkUESCardinalityEstimator(JoinCardinalityEstimator):
             remainder_bound = distinct_values * first_mcv.remainder_frequency * second_mcv.remainder_frequency
             return current_bound + remainder_bound
 
-        max_bound = 0
-        for value in first_mcv.attribute_values() | second_mcv.attribute_values():
-            join_bound = current_bound + first_mcv[value] * second_mcv[value]
+        max_candidate_bound = 0
+        candidate_join_cardinalities = [(value, first_mcv[value] * second_mcv[value]) for value
+                                        in first_mcv.attribute_values() | second_mcv.attribute_values()]
+        candidate_join_cardinalities.sort(key=operator.itemgetter(1), reverse=True)
+        for value, join_cardinality in candidate_join_cardinalities:
+            join_bound = current_bound + join_cardinality
             first_remaining_cardinality = max(first_cardinality - first_mcv[value], 0)
             second_remaining_cardinality = max(second_cardinality - second_mcv[value], 0)
             candidate_bound = (
@@ -473,12 +499,40 @@ class TopkUESCardinalityEstimator(JoinCardinalityEstimator):
                                           first_remaining_cardinality,
                                           second_mcv.drop_value(value).snap_to(second_remaining_cardinality),
                                           second_remaining_cardinality,
-                                          current_bound=join_bound))
+                                          current_bound=join_bound,
+                                          current_max_bound=max(max_candidate_bound, current_max_bound)))
 
-            if candidate_bound > max_bound:
-                max_bound = candidate_bound
+            if candidate_bound > max_candidate_bound:
+                max_candidate_bound = candidate_bound
 
-        return max_bound
+        self._cache_topk_result(first_mcv, first_cardinality, second_mcv, second_cardinality,
+                                result=max_candidate_bound)
+        return max_candidate_bound
+
+    def _calculate_ues_bound(self, num_tuples_first: int, max_frequency_first: int,
+                             num_tuples_second: int, max_frequency_second: int) -> int:
+        return min(num_tuples_first * max_frequency_second, num_tuples_second * max_frequency_first)
+
+    def _initialize_topk_result_cache(self) -> None:
+        self._topk_result_cache = {}
+
+    def _dispose_topk_result_cache(self) -> None:
+        self._topk_result_cache = {}
+
+    def _has_topk_result_cached(self, first_mcv: _TopKList, first_cardinality: int,
+                                second_mcv: _TopKList, second_cardinality: int) -> bool:
+        composite_hash = hash((first_mcv, first_cardinality, second_mcv, second_cardinality))
+        return composite_hash in self._topk_result_cache
+
+    def _load_cached_topk_result(self, first_mcv: _TopKList, first_cardinality: int,
+                                 second_mcv: _TopKList, second_cardinality: int) -> int:
+        composite_hash = hash((first_mcv, first_cardinality, second_mcv, second_cardinality))
+        return self._topk_result_cache[composite_hash]
+
+    def _cache_topk_result(self, first_mcv: _TopKList, first_cardinality: int,
+                           second_mcv: _TopKList, second_cardinality: int, *, result: int) -> None:
+        composite_hash = hash((first_mcv, first_cardinality, second_mcv, second_cardinality))
+        self._topk_result_cache[composite_hash] = result
 
 
 def _is_pk_fk_join(join: mosp.MospBasePredicate, *, dbs: db.DBSchema = db.DBSchema.get_instance()) -> bool:
