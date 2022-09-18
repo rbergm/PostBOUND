@@ -224,7 +224,7 @@ class JoinCardinalityEstimator(abc.ABC):
         return NotImplemented
 
 
-class DefaultUESCardinalityEstimator(JoinCardinalityEstimator):
+class UESCardinalityEstimator(JoinCardinalityEstimator):
     def __init__(self, query: mosp.MospQuery, base_cardinality_estimator: BaseCardinalityEstimator, *,
                  dbs: db.DBSchema = db.DBSchema.get_instance()):
         self.query = query
@@ -405,7 +405,7 @@ class _TopKList(Generic[_T]):
         return prefix + contents
 
 
-class TopkUESCardinalityEstimator(JoinCardinalityEstimator):
+class TopkCardinalityEstimator(JoinCardinalityEstimator):
     def __init__(self, query: mosp.MospQuery, base_cardinality_estimator: BaseCardinalityEstimator, *,
                  k: int, enforce_topk_length: bool = True, dbs: db.DBSchema = db.DBSchema.get_instance()):
         self.query = query
@@ -533,6 +533,96 @@ class TopkUESCardinalityEstimator(JoinCardinalityEstimator):
                            second_mcv: _TopKList, second_cardinality: int, *, result: int) -> None:
         composite_hash = hash((first_mcv, first_cardinality, second_mcv, second_cardinality))
         self._topk_result_cache[composite_hash] = result
+
+
+class ApproximativeTopkCardinaliyEstimator(JoinCardinalityEstimator):
+    def __init__(self, query: mosp.MospQuery, base_cardinality_estimator: BaseCardinalityEstimator, *,
+                 k: int, enforce_topk_length: bool = True, dbs: db.DBSchema = db.DBSchema.get_instance()):
+        self._query = query
+        self._k = k
+        self._stats = _TopKTableBoundStatistics(query, k, enforce_topk_length=enforce_topk_length,
+                                                base_cardinality_estimator=base_cardinality_estimator,
+                                                dbs=dbs)
+        self._dbs = dbs
+
+    def calculate_upper_bound(self, predicate: mosp.AbstractMospPredicate, *,
+                              pk_fk_join: bool = False, fk_table: db.TableRef = None,
+                              join_tree: "JoinTree" = None) -> int:
+        lowest_bound = np.inf
+        for (attr1, attr2) in predicate.join_partners():
+            if pk_fk_join:
+                fk_attr = attr1 if attr1.table == fk_table else attr2
+                pk_attr = attr1 if fk_attr == attr2 else attr2
+                cardinality = self._calculate_pk_fk_bound(fk_attr, pk_attr)
+            else:
+                joined_attr = attr1 if join_tree.contains_table(attr1.table) else attr2
+                candidate_attr = attr1 if joined_attr == attr2 else attr2
+                cardinality = self._calculate_n_m_bound(joined_attr, candidate_attr, join_tree)
+
+            cardinality = math.ceil(cardinality)
+            if cardinality < lowest_bound:
+                lowest_bound = cardinality
+
+        return lowest_bound
+
+    def stats(self) -> "_TopKTableBoundStatistics":
+        return self._stats
+
+    def _calculate_pk_fk_bound(self, fk_attr: db.AttributeRef, pk_attr: db.AttributeRef) -> int:
+        fk_bound = self._stats.base_table_estimates[fk_attr.table]
+        pk_bound = self._stats.base_table_estimates[pk_attr.table]
+        fk_topk = self._stats.attribute_frequencies[fk_attr].snap_to(fk_bound)
+        pk_topk = self._stats.attribute_frequencies[pk_attr].snap_to(pk_bound)
+
+        topk_bound, pk_processed = 0, 0
+        for attr_value in fk_topk:
+            topk_bound += fk_topk[attr_value] * pk_topk[attr_value]
+            pk_processed += pk_topk[attr_value]
+
+        fk_adjustment, pk_adjustment = min(fk_bound / fk_topk.frequency_sum(), 1), min(pk_bound / pk_processed, 1)
+        topk_bound *= fk_adjustment * pk_adjustment
+
+        remainder_bound = pk_bound * fk_topk.remainder_frequency
+
+        total_bound = topk_bound + remainder_bound
+        ues_bound = pk_bound * fk_topk.max_frequency()
+
+        return min([fk_bound, total_bound, ues_bound])
+
+    def _calculate_n_m_bound(self, intermediate_attr: db.AttributeRef, candidate_attr: db.AttributeRef,
+                             join_tree: "JoinTree") -> int:
+        intermediate_bound = self._stats.upper_bounds[join_tree]
+        candidate_bound = self._stats.upper_bounds[candidate_attr.table]
+        intermediate_topk = self._stats.attribute_frequencies[intermediate_attr]
+        candidate_topk = self._stats.attribute_frequencies[candidate_attr]
+
+        topk_bound, intermediate_processed, candidate_processed = 0, 0, 0
+        for attr_value in intermediate_topk:
+            topk_bound += intermediate_topk[attr_value] * candidate_topk[attr_value]
+            intermediate_processed += intermediate_topk[attr_value]
+            candidate_processed += candidate_topk[attr_value]
+
+        for value in candidate_topk.drop_values_from(intermediate_topk):
+            topk_bound += intermediate_topk[attr_value] * candidate_topk[attr_value]
+            intermediate_processed += intermediate_topk[attr_value]
+            candidate_processed += candidate_topk[attr_value]
+
+        intermediate_adjustment = min(intermediate_bound / intermediate_processed, 1)
+        candidate_adjustment = min(candidate_bound / candidate_processed, 1)
+        topk_bound *= intermediate_adjustment * candidate_adjustment
+
+        remainder_bound = self._calcualte_ues_bound(intermediate_bound, candidate_bound,
+                                                    intermediate_topk.remainder_frequency,
+                                                    candidate_topk.remainder_frequency)
+
+        total_bound = topk_bound + remainder_bound
+        ues_bound = self._calcualte_ues_bound(intermediate_bound, candidate_bound,
+                                              intermediate_topk.max_frequency(), candidate_topk.max_frequency())
+
+        return min(total_bound, ues_bound)
+
+    def _calcualte_ues_bound(self, first_card: int, second_card: int, first_mf: int, second_mf: int) -> int:
+        return min(first_card * second_mf, second_card * first_mf)
 
 
 def _is_pk_fk_join(join: mosp.MospBasePredicate, *, dbs: db.DBSchema = db.DBSchema.get_instance()) -> bool:
@@ -1579,7 +1669,7 @@ def _calculate_join_order(query: mosp.MospQuery, *,
                           verbose: bool = False, trace: bool = False,
                           dbs: db.DBSchema = db.DBSchema.get_instance()
                           ) -> Union[JoinOrderOptimizationResult, List[JoinOrderOptimizationResult]]:
-    join_estimator = join_estimator if join_estimator else DefaultUESCardinalityEstimator(query, dbs=dbs)
+    join_estimator = join_estimator if join_estimator else UESCardinalityEstimator(query, base_estimator, dbs=dbs)
     join_graph = JoinGraph.build_for(query, dbs=dbs)
 
     # In principle it could be that our query involves a cross-product between some of its relations. If that is the
@@ -2026,6 +2116,7 @@ def optimize_query(query: mosp.MospQuery, *,
                    join_cardinality_estimation: str = "basic",
                    subquery_generation: str = "defensive",
                    topk_list_length: int = None,
+                   topk_approximate: bool = False,
                    optimize_topk_lists: bool = False,
                    exceptions: ExceptionList = None,
                    dbs: db.DBSchema = db.DBSchema.get_instance(),
@@ -2054,13 +2145,19 @@ def optimize_query(query: mosp.MospQuery, *,
         raise ValueError("Unknown base table estimation strategy: '{}'".format(table_cardinality_estimation))
 
     if join_cardinality_estimation == "basic":
-        join_estimator = DefaultUESCardinalityEstimator(prepared_query, base_cardinality_estimator=base_estimator,
-                                                        dbs=dbs)
-    elif join_cardinality_estimation == "topk":
+        join_estimator = UESCardinalityEstimator(prepared_query, base_cardinality_estimator=base_estimator,
+                                                 dbs=dbs)
+    elif join_cardinality_estimation == "topk" and not topk_approximate:
         k = topk_list_length if topk_list_length else DEFAULT_TOPK_LENGTH
         logger("Running TopK cardinality estimation with k =", k)
-        join_estimator = TopkUESCardinalityEstimator(prepared_query, k=k, enforce_topk_length=not optimize_topk_lists,
-                                                     base_cardinality_estimator=base_estimator, dbs=dbs)
+        join_estimator = TopkCardinalityEstimator(prepared_query, k=k, enforce_topk_length=not optimize_topk_lists,
+                                                  base_cardinality_estimator=base_estimator, dbs=dbs)
+    elif (join_cardinality_estimation == "topk" and topk_approximate) or join_cardinality_estimation == "topk-approx":
+        k = topk_list_length if topk_list_length else DEFAULT_TOPK_LENGTH
+        logger("Running approximate TopK cardinality estimation with k =", k)
+        join_estimator = ApproximativeTopkCardinaliyEstimator(prepared_query, k=k,
+                                                              enforce_topk_length=not optimize_topk_lists,
+                                                              base_cardinality_estimator=base_estimator, dbs=dbs)
     else:
         raise ValueError("Unknown cardinality estimation strategy: '{}'".format(join_cardinality_estimation))
 

@@ -17,7 +17,7 @@ class JoinGraphTests(unittest.TestCase):
 
 class BeningQueryOptimizationTests(unittest.TestCase):
     def setUp(self) -> None:
-        self.trace_enabled = "--trace" in sys.argv
+        self.trace_enabled = "--verbose" in sys.argv
         if self.log_enabled:
             print()
         return super().setUp()

@@ -233,10 +233,11 @@ def main():
                         "'explain', use the Postgres internal optimizer (as obtained via EXPLAIN output). If "
                         "'sample', draw a 20 percent sample of rows and count the result cardinality. If 'precise', "
                         "actually execute the filter predicate and count the result tuples. Defaults to 'explain'.")
-    parser.add_argument("--join-estimation", action="store", choices=["basic", "topk"], default="basic", help="How to"
-                        "estimate the upper bound of join cardinalities. If 'basic', use the Most frequent value as "
-                        "detailed in the fundamental paper [0]. If 'topk', use the Top-K lists as detailed in the "
-                        "Diploma thesis. Defaults to 'basic'.")
+    parser.add_argument("--join-estimation", action="store", choices=["basic", "topk", "topk-approx"], default="basic",
+                        help="How to estimate the upper bound of join cardinalities. If 'basic', use the Most "
+                        "frequent value as detailed in the fundamental paper [0]. If 'topk', use the Top-K lists. If "
+                        "'topk-approx', also leverage the Top-k lists, but in the approximative formula. Defaults to "
+                        "'basic'.")
     parser.add_argument("--subqueries", action="store", choices=["greedy", "disabled", "defensive", "smart"],
                         default="defensive", help="When to pull PK/FK joins into subqueries. If 'greedy' all "
                         "possible PK/FK joins will be executed as subqueries. If 'disabled', never filter via "
