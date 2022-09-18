@@ -449,9 +449,11 @@ class TopkCardinalityEstimator(JoinCardinalityEstimator):
         pk_mcv = self.stats_container.attribute_frequencies[pk_attr]
 
         self._initialize_topk_result_cache()
-        bound = self._calculate_max_bound(fk_mcv, total_bound_fk, pk_mcv, total_bound_pk)
+        topk_bound = self._calculate_max_bound(fk_mcv, total_bound_fk, pk_mcv, total_bound_pk)
         self._dispose_topk_result_cache()
-        return bound
+
+        ues_bound = min(fk_mcv.max_frequency() * total_bound_pk, total_bound_fk)
+        return min(topk_bound, ues_bound)
 
     def _calculate_n_m_bound(self, joined_attr: db.AttributeRef, candidate_attr: db.AttributeRef,
                              join_tree: "JoinTree") -> int:
@@ -461,9 +463,12 @@ class TopkCardinalityEstimator(JoinCardinalityEstimator):
         candidate_mcv = self.stats_container.attribute_frequencies[candidate_attr].snap_to(total_bound_candidate)
 
         self._initialize_topk_result_cache()
-        bound = self._calculate_max_bound(joined_mcv, total_bound_joined, candidate_mcv, total_bound_candidate)
+        topk_bound = self._calculate_max_bound(joined_mcv, total_bound_joined, candidate_mcv, total_bound_candidate)
         self._dispose_topk_result_cache()
-        return bound
+
+        ues_bound = self._calculate_ues_bound(total_bound_joined, joined_mcv.max_frequency(),
+                                              total_bound_candidate, total_bound_candidate)
+        return min(topk_bound, ues_bound)
 
     def _calculate_max_bound(self, first_mcv: _TopKList, first_cardinality: int,
                              second_mcv: _TopKList, second_cardinality: int, *,
