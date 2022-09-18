@@ -214,8 +214,8 @@ def main():
                         "hints to apply on a per-query basis (as specified by the pg_hint_plan extension).")
     parser.add_argument("--randomized", action="store_true", default=False, help="Execute the queries in a random "
                         "order.")
-    parser.add_argument("--log-progess", action="store_true", default=False, help="Write a progress message to stdout "
-                        "every 1/10th of the total workload.")
+    parser.add_argument("--log-progress", action="store_true", default=False, help="Write a progress message to "
+                        "stdout every 1/10th of the total workload.")
     parser.add_argument("--verbose", action="store_true", default=False, help="Produce more debugging output")
 
     args = parser.parse_args()
