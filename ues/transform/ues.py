@@ -181,10 +181,13 @@ class PostgresCardinalityEstimator(BaseCardinalityEstimator):
 
 
 class SamplingCardinalityEstimator(BaseCardinalityEstimator):
+    def __init__(self, sampling_pct: int = 25):
+        self._sampling_pct = sampling_pct
+
     def estimate_rows(self, predicate: Union[mosp.AbstractMospPredicate, List[mosp.AbstractMospPredicate]], *,
                       dbs: db.DBSchema = db.DBSchema.get_instance()) -> int:
         predicate = mosp.MospCompoundPredicate.merge_and(predicate)
-        return predicate.estimate_result_rows(sampling=True, sampling_pct=25, dbs=dbs)
+        return predicate.estimate_result_rows(sampling=True, sampling_pct=self._sampling_pct, dbs=dbs)
 
 
 class PreciseCardinalityEstimator(BaseCardinalityEstimator):
@@ -2120,6 +2123,7 @@ def optimize_query(query: mosp.MospQuery, *,
                    table_cardinality_estimation: str = "explain",
                    join_cardinality_estimation: str = "basic",
                    subquery_generation: str = "defensive",
+                   base_table_filter_sampling_pct: int = 25,
                    topk_list_length: int = None,
                    topk_approximate: bool = False,
                    optimize_topk_lists: bool = False,
@@ -2141,7 +2145,7 @@ def optimize_query(query: mosp.MospQuery, *,
     prepared_query = query_preparation.prepare_query()
 
     if table_cardinality_estimation == "sample":
-        base_estimator = SamplingCardinalityEstimator()
+        base_estimator = SamplingCardinalityEstimator(base_table_filter_sampling_pct)
     elif table_cardinality_estimation == "explain":
         base_estimator = PostgresCardinalityEstimator()
     elif table_cardinality_estimation == "precise":
