@@ -1461,6 +1461,9 @@ class NoSubqueryGeneration(SubqueryGenerationStrategy):
 
 
 class SmartSubqueryGeneration(SubqueryGenerationStrategy):
+    def __init__(self, min_improvement_factor: float = 0.01):
+        self._improvement_factor = min_improvement_factor
+
     def execute_as_subquery(self, candidate: db.TableRef, join_graph: JoinGraph, join_tree: JoinTree, *,
                             stats: _MFVTableBoundStatistics,
                             exceptions: ExceptionList = None, query: mosp.MospQuery = None) -> bool:
@@ -1468,7 +1471,7 @@ class SmartSubqueryGeneration(SubqueryGenerationStrategy):
             should_generate_subquery = exceptions[query].subquery_generation
             if not should_generate_subquery:
                 return False
-        return (stats.upper_bounds[candidate] < stats.base_table_estimates[candidate] / 100
+        return (stats.upper_bounds[candidate] < stats.base_table_estimates[candidate] * self._improvement_factor
                 and join_graph.count_selected_joins() > 2)
 
 
@@ -2129,6 +2132,7 @@ def optimize_query(query: mosp.MospQuery, *,
                    topk_list_length: int = None,
                    topk_approximate: bool = False,
                    optimize_topk_lists: bool = False,
+                   smart_subquery_threshold_factor: float = 0.01,
                    exceptions: ExceptionList = None,
                    dbs: db.DBSchema = db.DBSchema.get_instance(),
                    visualize: bool = False, visualize_args: dict = None,
@@ -2179,7 +2183,7 @@ def optimize_query(query: mosp.MospQuery, *,
     elif subquery_generation == "disabled":
         subquery_generator = NoSubqueryGeneration()
     elif subquery_generation == "smart":
-        subquery_generator = SmartSubqueryGeneration()
+        subquery_generator = SmartSubqueryGeneration(min_improvement_factor=smart_subquery_threshold_factor)
     else:
         raise ValueError("Unknown subquery generation: '{}'".format(subquery_generation))
 
