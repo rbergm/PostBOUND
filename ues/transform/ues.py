@@ -187,7 +187,9 @@ class SamplingCardinalityEstimator(BaseCardinalityEstimator):
     def estimate_rows(self, predicate: Union[mosp.AbstractMospPredicate, List[mosp.AbstractMospPredicate]], *,
                       dbs: db.DBSchema = db.DBSchema.get_instance()) -> int:
         predicate = mosp.MospCompoundPredicate.merge_and(predicate)
-        return predicate.estimate_result_rows(sampling=True, sampling_pct=self._sampling_pct, dbs=dbs)
+        sample_result = predicate.estimate_result_rows(sampling=True, sampling_pct=self._sampling_pct, dbs=dbs)
+        sample_fraction = self._sampling_pct / 100
+        return (1 / sample_fraction) * sample_result
 
 
 class PreciseCardinalityEstimator(BaseCardinalityEstimator):
