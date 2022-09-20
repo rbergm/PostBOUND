@@ -582,14 +582,13 @@ class ApproximativeTopkCardinaliyEstimator(JoinCardinalityEstimator):
         fk_bound = self._stats.base_table_estimates[fk_attr.table]
         pk_bound = self._stats.base_table_estimates[pk_attr.table]
         fk_topk = self._stats.attribute_frequencies[fk_attr].snap_to(fk_bound)
-        pk_topk = self._stats.attribute_frequencies[pk_attr].snap_to(pk_bound)
 
-        topk_bound, pk_processed = 0, 0
+        topk_bound = 0
         for attr_value in fk_topk:
-            topk_bound += fk_topk[attr_value] * pk_topk[attr_value]
-            pk_processed += pk_topk[attr_value]
+            topk_bound += fk_topk[attr_value]  # we know the PK frequency will always be 1!
 
-        fk_adjustment, pk_adjustment = min(fk_bound / fk_topk.frequency_sum(), 1), min(pk_bound / pk_processed, 1)
+        fk_adjustment = min(fk_bound / fk_topk.frequency_sum(), 1)
+        pk_adjustment = min(pk_bound / len(fk_topk.attribute_values()), 1)
         topk_bound *= fk_adjustment * pk_adjustment
 
         remainder_bound = pk_bound * fk_topk.remainder_frequency
@@ -612,7 +611,7 @@ class ApproximativeTopkCardinaliyEstimator(JoinCardinalityEstimator):
             intermediate_processed += intermediate_topk[attr_value]
             candidate_processed += candidate_topk[attr_value]
 
-        for value in candidate_topk.drop_values_from(intermediate_topk):
+        for attr_value in candidate_topk.drop_values_from(intermediate_topk):
             topk_bound += intermediate_topk[attr_value] * candidate_topk[attr_value]
             intermediate_processed += intermediate_topk[attr_value]
             candidate_processed += candidate_topk[attr_value]
