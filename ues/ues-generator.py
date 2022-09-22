@@ -81,14 +81,13 @@ def resolve_exception_rule_labels(exception_rules: List[dict], workload: pd.Data
     return ues.ExceptionList(dict(resolved_rules))
 
 
-def connect_postgres(parser: argparse.ArgumentParser, conn_str: str = None):
+def pg_connect_str(parser: argparse.ArgumentParser, conn_str: str = None) -> str:
     if not conn_str:
         if not os.path.exists(".psycopg_connection"):
             parser.error("No connect string for psycopg given and .psycopg_connection does not exist.")
         with open(".psycopg_connection", "r") as conn_file:
             conn_str = conn_file.readline().strip()
-    conn = psycopg2.connect(conn_str)
-    return conn
+    return conn_str
 
 
 def write_queries_csv(result_data: pd.DataFrame, out_fname: str = "ues-out.csv"):
@@ -254,15 +253,15 @@ def main():
                         "execute it.")
     parser.add_argument("--bounds", action="store_true", default=False, help="If optimizing a single query, print "
                         "the resulting bounds.")
-    parser.add_argument("--pg-con", action="store", default="", help="Connect string to the Postgres instance "
+    parser.add_argument("--pg-con", action="store", default=None, help="Connect string to the Postgres instance "
                         "(psycopg2 format). If omitted, the string will be read from the file .psycopg_connection")
     parser.add_argument("--verbose", action="store_true", default=False, help="Print debugging output for generator.")
     parser.add_argument("--trace", action="store_true", default=False, help="Generate more debugging output for "
                         "optimization.")
 
     args = parser.parse_args()
-    db_connection = connect_postgres(args.pg_con)
-    dbs = db.DBSchema.get_instance(db_connection)
+    db_connect_str = pg_connect_str(parser, args.pg_con)
+    dbs = db.DBSchema.get_instance(db_connect_str, renew=True)
 
     exceptions = parse_exception_list(args.exception_list) if args.exception_list else None
 
