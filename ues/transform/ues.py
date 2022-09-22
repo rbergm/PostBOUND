@@ -38,6 +38,7 @@ class MospQueryPreparation:
     def __init__(self, query: mosp.MospQuery, *, dbs: db.DBSchema = db.DBSchema.get_instance()):
         self._original_query: mosp.MospQuery = query
         self._generated_aliases: List[str] = []
+        self._custom_attribute_names: List[str] = []
         self._dbs = dbs
 
     def prepare_query(self) -> mosp.MospQuery:
@@ -53,8 +54,12 @@ class MospQueryPreparation:
 
         return mosp.MospQuery(prepared)
 
-    def reconstruct_query(self, optimized_query: mosp.MospQuery) -> mosp.MospQuery:
-        """Adds all temporarily removed clauses and statements back to the freshly optimized query."""
+    def reconstruct_query(self, optimized_query: mosp.MospQuery, *, drop_renaming: bool = True) -> mosp.MospQuery:
+        """Adds all temporarily removed clauses and statements back to the freshly optimized query.
+
+        If `drop_renaming` is set to `True` (the default), all generated aliases for attributes and tables will be
+        dropped again.
+        """
         reconstructed_query = dict(optimized_query.query)
 
         reconstructed_query["select"] = copy.copy(self._original_query.query["select"])
@@ -65,8 +70,10 @@ class MospQueryPreparation:
         if "having" in self._original_query.query:
             reconstructed_query["having"] = copy.copy(self._original_query.query["having"])
 
-        if self._generated_aliases:
+        if self._generated_aliases and drop_renaming:
             reconstructed_query = self._drop_table_aliases(reconstructed_query)
+        elif self._generated_aliases and not drop_renaming:
+            reconstructed_query = self._complete_table_aliases(reconstructed_query)
 
         return mosp.MospQuery(reconstructed_query)
 
@@ -124,6 +131,29 @@ class MospQueryPreparation:
 
         return query_data
 
+    def _complete_table_aliases(self, query_data: dict) -> dict:
+        if not self._generated_aliases:
+            return query_data
+
+        original_select = copy.copy(self._original_query.query["select"])
+        for attribute in util.enlist(original_select):
+            if "name" in attribute:
+                self._custom_attribute_names.append(attribute["name"])
+
+        query_data["select"] = self._add_aliases_to_clause(original_select)
+
+        if "groupby" in query_data:
+            original_groupby = copy.copy(query_data["groupby"])
+            query_data["groupby"] = self._add_aliases_to_clause(original_groupby)
+        if "orderby" in query_data:
+            original_orderby = copy.copy(query_data["orderby"])
+            query_data["orderby"] = self._add_aliases_to_clause(original_orderby)
+        if "having" in query_data:
+            original_having = copy.copy(query_data["having"])
+            query_data["having"] = self._add_aliases_to_clause(original_having)
+
+        return query_data
+
     def _add_aliases_to_attributes(self, predicate: Any) -> Any:
         if isinstance(predicate, list):
             return [self._add_aliases_to_attributes(sub_predicate) for sub_predicate in predicate]
@@ -134,15 +164,7 @@ class MospQueryPreparation:
             predicate_value = predicate[operation]
             return {operation: self._add_aliases_to_attributes(predicate_value)}
         elif isinstance(predicate, str):
-            if "." in predicate:
-                # attribute is already aliased!
-                return predicate
-            else:
-                # we found a potential attribute!
-                aliased_tablerefs = [db.TableRef(tab, tab) for tab in self._generated_aliases]
-                corresponding_table = self._dbs.lookup_attribute(predicate, aliased_tablerefs)
-                aliased_attr = f"{corresponding_table.full_name}.{predicate}"  # table is aliased by its full name
-                return aliased_attr
+            return self._alias_attribute(predicate)
         else:
             return predicate
 
@@ -160,6 +182,38 @@ class MospQueryPreparation:
             return attribute if table in self._generated_aliases else predicate
         else:
             return predicate
+
+    def _add_aliases_to_clause(self, projection: Any) -> Any:
+        if isinstance(projection, dict) and "literal" in projection:
+            return projection
+        elif isinstance(projection, list):
+            return [self._add_aliases_to_clause(sub_proj) for sub_proj in projection]
+        elif isinstance(projection, dict):
+            if "value" in projection:
+                aliased_projection = dict(projection)
+                projection_target = projection["value"]
+                aliased_projection["value"] = self._add_aliases_to_clause(projection_target)
+                return aliased_projection
+            else:
+                operation = util.dict_key(projection)
+                projection_target = projection[operation]
+                return {operation: self._add_aliases_to_clause(projection_target)}
+        elif isinstance(projection, str):
+            if "*" == projection:
+                # projection does not need aliasing
+                return projection
+            return self._alias_attribute(projection)
+
+        return projection
+
+    def _alias_attribute(self, attribute: str) -> str:
+        if "." in attribute or attribute in self._custom_attribute_names:
+            # attribute is already aliased
+            return attribute
+        aliased_tablerefs = [db.TableRef(tab, tab) for tab in self._generated_aliases]
+        corresponding_table = self._dbs.lookup_attribute(attribute, aliased_tablerefs)
+        aliased_attribute = f"{corresponding_table.full_name}.{attribute}"  # table is aliased by its full name
+        return aliased_attribute
 
 
 class BaseCardinalityEstimator(abc.ABC):
@@ -2133,6 +2187,7 @@ def optimize_query(query: mosp.MospQuery, *,
                    optimize_topk_lists: bool = False,
                    smart_subquery_threshold_factor: float = 0.01,
                    exceptions: ExceptionList = None,
+                   disable_renaming: bool = False,
                    dbs: db.DBSchema = db.DBSchema.get_instance(),
                    visualize: bool = False, visualize_args: dict = None,
                    verbose: bool = False, trace: bool = False,
@@ -2143,7 +2198,9 @@ def optimize_query(query: mosp.MospQuery, *,
     # if there are no joins in the query, there is nothing to do
     if not isinstance(query.from_clause(), list) or not util.contains_multiple(query.from_clause()):
         logger("Query contains no joins, nothing to do.")
-        return query
+        query_preparation = MospQueryPreparation(query, dbs=dbs)
+        prepared_query = query_preparation.prepare_query()
+        return query_preparation.reconstruct_query(prepared_query, drop_renaming=disable_renaming)
 
     logger("Input query:", query)
     query_preparation = MospQueryPreparation(query, dbs=dbs)
@@ -2215,7 +2272,7 @@ def optimize_query(query: mosp.MospQuery, *,
             partial_query["select"] = {"value": "*"}
             first_set["from"].append({"join": {"value": partial_query}})
         final_query = mosp.MospQuery(first_set)
-        final_query = query_preparation.reconstruct_query(final_query)
+        final_query = query_preparation.reconstruct_query(final_query, drop_renaming=disable_renaming)
 
         if not introspective:
             # If introspection is off, we are done now.
@@ -2236,7 +2293,7 @@ def optimize_query(query: mosp.MospQuery, *,
         join_sequence = single_optimization_result.final_order.traverse_right_deep()
         mosp_data = _generate_mosp_data_for_sequence(prepared_query, join_sequence)
         final_query = mosp.MospQuery(mosp_data)
-        final_query = query_preparation.reconstruct_query(final_query)
+        final_query = query_preparation.reconstruct_query(final_query, drop_renaming=disable_renaming)
         if introspective:
             return OptimizationResult(final_query, single_optimization_result.intermediate_bounds,
                                       single_optimization_result.final_bound)
