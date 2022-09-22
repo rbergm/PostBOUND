@@ -63,22 +63,26 @@ def progress_logger(log, total_queries):
 class QueryMod:
     @staticmethod
     def parse(mod_str: str, error_reporter) -> "QueryMod":
-        if mod_str == "explain":
-            return QueryMod(explain=True)
-        elif mod_str == "analyze":
-            return QueryMod(analyze=True)
-        elif mod_str == "":
-            return QueryMod()
-        else:
+        explain = "explain" in mod_str
+        analyze = "analyze" in mod_str
+        count_star = "count" in mod_str
+
+        if not explain and not analyze and not count_star and mod_str != "":
             error_reporter.error(f"Unkown query mod: '{mod_str}'")
 
-    def __init__(self, explain: bool = False, analyze: bool = False):
+        return QueryMod(explain=explain, analyze=analyze, count_star=count_star)
+
+    def __init__(self, *, explain: bool = False, analyze: bool = False, count_star: bool = False):
         if explain and analyze:
             warnings.warn("Both explain and analyze given, but analyze subsumes explain. Ignoring additional explain.")
         self.explain = explain
         self.analyze = analyze
+        self.count_star = count_star
 
     def apply_mods(self, query):
+        if self.count_star:
+            query = self._apply_count_star(query)
+
         if self._needs_analyze(query):
             return f"explain (analyze, format json) {query}"
         elif self._needs_explain(query):
@@ -86,13 +90,45 @@ class QueryMod:
         else:
             return query
 
-    def _needs_explain(self, query):
+    def _needs_explain(self, query: str) -> bool:
         query = query.lower()
         return self.explain and not query.startswith(EXPLAIN_PREFIX)
 
-    def _needs_analyze(self, query):
+    def _needs_analyze(self, query: str) -> bool:
         query = query.lower()
         return self.analyze and not ANALYZE_PREFIX.match(query)
+
+    def _apply_count_star(self, query: str) -> str:
+        normalized_query = query.lower()
+
+        if "having" in query:
+            warnings.warn("Cannot transform a query with HAVING clause to SELECT COUNT(*), leaving query unmodified")
+            return query
+
+        select_idx = normalized_query.find("select")
+        from_idx = normalized_query.find("from")
+
+        select_clause = "SELECT COUNT(*) "
+        current_select_clause = query[select_idx:from_idx]
+        modified_query = query.replace(current_select_clause, select_clause, 1)
+
+        # drop ORDER BY and GROUP BY since it is now meaningless and messes things up it the ordering was derived from
+        # an aggregated attribut specified in the (now gone) SELECT clause
+        normalized_query = modified_query.lower()
+        grp_idx = normalized_query.find("group by")
+        if grp_idx > 0:
+            modified_query = modified_query[:grp_idx]
+        order_idx = normalized_query.find("order by")
+        if order_idx > 0:
+            modified_query = modified_query[:order_idx]
+
+        return modified_query
+
+    def __repr__(self) -> str:
+        str(self)
+
+    def __str__(self) -> str:
+        return f"QueryMod (explain={self.explain}, analyze={self.analyze}, count={self.count_star})"
 
 
 def connect_postgres(parser: argparse.ArgumentParser, conn_str: str = None):
@@ -149,9 +185,19 @@ def execute_query(query, workload_prefix: str, cursor: "psycopg2.cursor", *,
     cursor.execute(query)
     query_end = datetime.now()
 
-    query_res = cursor.fetchone()[0]
-    if isinstance(query_res, dict) or isinstance(query_res, list):
-        query_res = json.dumps(query_res)
+    raw_res = cursor.fetchall()
+    if len(raw_res) == 1:
+        query_res = raw_res[0]
+        complex_type = isinstance(query_res, dict) or isinstance(query_res, list)
+        multiple_attrs = isinstance(query_res, tuple) and len(query_res) > 1
+        if complex_type or multiple_attrs:
+            query_res = json.dumps(query_res)
+        else:
+            query_res = query_res[0]
+    elif raw_res:
+        query_res = json.dumps(raw_res)
+    else:
+        query_res = None
     query_duration = query_end - query_start
 
     logger("Query took", query_duration, "seconds")
@@ -207,9 +253,10 @@ def main():
                         "(psycopg2 format). If omitted, the string will be read from the file .psycopg_connection")
     parser.add_argument("--pg-param", action="extend", default=[], type=str, nargs="*", help="Parameters to be send "
                         "to the Postgres instance")
-    parser.add_argument("--query-mod", action="store", default="", help="Optional modifications of the base query. "
-                        "Can be either 'explain' or 'analyze' to turn all queries into EXPLAIN or EXPLAIN ANALYZE "
-                        "queries respectively.")
+    parser.add_argument("--query-mod", action="store", default="", help="Optional (comma separated) modifications of "
+                        "the base query. Can be either 'explain' or 'analyze' to turn all queries into EXPLAIN or "
+                        "EXPLAIN ANALYZE queries respectively, or 'count' to execute all queries as COUNT (*) "
+                        "instead of their normal projection.")
     parser.add_argument("--hint-col", action="store", default="", help="In CSV mode, an optional column containing "
                         "hints to apply on a per-query basis (as specified by the pg_hint_plan extension).")
     parser.add_argument("--randomized", action="store_true", default=False, help="Execute the queries in a random "
@@ -217,10 +264,11 @@ def main():
     parser.add_argument("--log-progress", action="store_true", default=False, help="Write a progress message to "
                         "stdout every 1/10th of the total workload.")
     parser.add_argument("--verbose", action="store_true", default=False, help="Produce more debugging output")
+    parser.add_argument("--trace", action="store_true", default=False, help="Produce even more debugging output")
 
     args = parser.parse_args()
 
-    logger = make_logger(args.verbose)
+    logger = make_logger(args.verbose or args.trace)
     signal.signal(signal.SIGINT, functools.partial(exit_handler, logger=logger))
 
     df_workload = read_workload_csv(args.input) if args.csv else read_workload_plain(args.input)
