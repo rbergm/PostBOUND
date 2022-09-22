@@ -412,3 +412,9 @@ class DBSchema:
     def _save_query_cache(self):
         with open(".dbschema_query_cache.json", "w") as query_cache_file:
             json.dump(self.query_cache, query_cache_file)
+
+    def __repr__(self) -> str:
+        return f"DBSchema (conn = {self.connection})"
+
+    def __str__(self) -> str:
+        return f"DBSchema (conn = {self.connection})"
