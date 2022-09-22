@@ -53,6 +53,10 @@ def assert_result_sets_equal(first_set: List[Tuple[Any]], second_set: List[Tuple
 
     if len(first_set) != len(second_set):
         raise AssertionError("Result sets are not of equal length!")
+
+    first_set = [tuple(tup) for tup in first_set]
+    second_set = [tuple(tup) for tup in second_set]
+
     if ordered:
         for tuple_idx in range(0, len(first_set)):
             first_tuple = first_set[tuple_idx]
@@ -63,23 +67,23 @@ def assert_result_sets_equal(first_set: List[Tuple[Any]], second_set: List[Tuple
         first_set_counter = collections.defaultdict(int)
         second_set_counter = collections.defaultdict(int)
 
-        for tuple in first_set:
-            first_set_counter[tuple] += 1
-        for tuple in second_set:
-            second_set_counter[tuple] += 1
+        for tup in first_set:
+            first_set_counter[tup] += 1
+        for tup in second_set:
+            second_set_counter[tup] += 1
 
         first_set = set(first_set)
         second_set = set(second_set)
 
-        for tuple in first_set:
-            if tuple not in second_set:
-                raise AssertionError(f"Tuple {tuple} from first set has no partner in second set!")
-        for tuple in second_set:
-            if tuple not in first_set:
-                raise AssertionError(f"Tuple {tuple} from second set has no partner in first set!")
+        for tup in first_set:
+            if tup not in second_set:
+                raise AssertionError(f"Tuple {tup} from first set has no partner in second set!")
+        for tup in second_set:
+            if tup not in first_set:
+                raise AssertionError(f"Tuple {tup} from second set has no partner in first set!")
 
-        for tuple, first_tuple_counter in first_set_counter.items():
-            second_tuple_counter = second_set_counter[tuple]
+        for tup, first_tuple_counter in first_set_counter.items():
+            second_tuple_counter = second_set_counter[tup]
             if first_tuple_counter != second_tuple_counter:
-                raise AssertionError(f"Tuple {tuple} appears {first_tuple_counter} times in first set, but "
+                raise AssertionError(f"Tuple {tup} appears {first_tuple_counter} times in first set, but "
                                      f"{second_tuple_counter} times in second set!")
