@@ -14,10 +14,11 @@ export DSS_QUERY=$DSS_CONFIG/queries
 export DSS_PATH=../tpch_data
 
 echo ".. Generating TPCH data (SF = 0.5)"
-mkdir ../tpch_data
+mkdir -p ../tpch_data
 ssb-kit/dbgen/dbgen -vf -s 0.5 -T a
 
-echo ".. TPC-H database schema"
+echo ".. Creating TPC-H database schema"
+createdb tpch
 wget -nv --output-document ../tpch_data/pg_schema.sql https://raw.githubusercontent.com/gregrahn/ssb-kit/master/scripts/pg_schema.sql
 psql tpch -f ../tpch_data/pg_schema.sql
 
