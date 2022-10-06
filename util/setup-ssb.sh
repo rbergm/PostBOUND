@@ -15,7 +15,7 @@ export DSS_PATH=../tpch_data
 
 echo ".. Generating TPCH data (SF = 0.5)"
 mkdir -p ../tpch_data
-ssb-kit/dbgen/dbgen -vf -s 0.5 -T a
+ssb-kit/dbgen/dbgen -vf -s 1 -T a
 
 echo ".. Creating TPC-H database schema"
 createdb tpch
