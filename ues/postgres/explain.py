@@ -76,7 +76,7 @@ class PlanNode:
         self.filtered_rows = filtered_rows
 
         self.parent, self.left, self.right = None, None, None
-        self.children = children if children else []
+        self.children: List["PlanNode"] = children if children else []
         for child in self.children:
             child.parent = self
         if len(self.children) == 2:
@@ -227,9 +227,9 @@ class PlanNode:
 
         print("\n".join([node_label, sep, join_cond, filter_cond, sep, in_rows, filter_rows, out_rows, sep, runtime]))
 
-    def pretty_print(self, *, include_filter=False, indent=0):
-        indent_str = " " * indent
-        if indent:
+    def pretty_print(self, *, include_filter: bool = False, include_exec_time: bool = False, _indent: int = 0):
+        indent_str = " " * _indent
+        if _indent:
             indent_str += "<- "
 
         if self.is_join():
@@ -243,6 +243,10 @@ class PlanNode:
         else:
             node_label = self.node.value
 
+        if include_exec_time:
+            exec_time = "{:.3f}".format(self.exec_time)
+            node_label += f" ({exec_time}s)"
+
         if self.pruned:
             node_label = "[PRUNED] " + node_label
 
@@ -252,9 +256,10 @@ class PlanNode:
 
         child_labels = []
         for child in self.children:
-            child_labels.append(child.pretty_print(include_filter=include_filter, indent=indent+2))
+            child_labels.append(child.pretty_print(include_filter=include_filter, include_exec_time=include_exec_time,
+                                                   _indent=_indent+2))
         child_content = "".join(child_labels)
-        if indent:
+        if _indent:
             return node_label + child_content
         else:
             print(node_label + child_content)
@@ -300,7 +305,7 @@ EXPLAIN_PREDICATE_FORMAT = re.compile(r"\(?(?P<left>[\w\.]+) (?P<op>[<>=!]+) (?P
 
 def _lookup_join_predicate(join_filter_needle: str, mosp_query_haystack: List[mosp.MospQuery]) -> mosp.MospQuery:
     for query in mosp_query_haystack:
-        predicates = [join.predicate() for join in query.joins()]
+        predicates = [join.predicate().joins.as_and_clause() for join in query.joins()]
         if _matches_any_predicate(join_filter_needle, predicates):
             return query
     return None
@@ -312,8 +317,8 @@ def _matches_any_predicate(explain_filter_needle: str, mosp_predicate_haystack: 
 
 
 def _search_matching_predicate(explain_filter_needle: str, mosp_predicate_haystack: List[Any]) -> Any:
-    parsed_candidates = util.flatten([mosp.MospPredicate.break_compound(pred)
-                                      for pred in mosp_predicate_haystack], recursive=True)
+    parsed_candidates: List[mosp.MospBasePredicate] = util.flatten(
+        [mosp.MospCompoundPredicate.extract_base_predicates(pred) for pred in mosp_predicate_haystack], recursive=True)
     explain_pred_match = EXPLAIN_PREDICATE_FORMAT.match(explain_filter_needle)
     if not explain_pred_match:
         raise ValueError("Unkown filter format: {}".format(explain_pred_match))
@@ -326,15 +331,15 @@ def _search_matching_predicate(explain_filter_needle: str, mosp_predicate_haysta
 
     for candidate in parsed_candidates:
         left_uneq_op = op in ["<>", "!="]
-        right_uneq_op = candidate.pretty_operation() in ["<>", "!="]
-        operations_match = (op == candidate.pretty_operation()) or (left_uneq_op and right_uneq_op)
+        right_uneq_op = candidate.sql_operation() in ["<>", "!="]
+        operations_match = (op == candidate.sql_operation()) or (left_uneq_op and right_uneq_op)
         if not operations_match:
             continue
 
         reflexive_operator = op in ["=", "!=", "<>"]
-        direct_operand_match = candidate.left_op() == left and candidate.right_op() == right
+        direct_operand_match = candidate.left_attribute == left and candidate.right_attribute == right
         if reflexive_operator:
-            reversed_operand_match = candidate.right_op() == left and candidate.left_op() == right
+            reversed_operand_match = candidate.right_attribute == left and candidate.left_attribute == right
         else:
             reversed_operand_match = False
         operands_match = direct_operand_match or reversed_operand_match
@@ -439,7 +444,7 @@ def parse_explain_analyze(orig_query: "mosp.MospQuery", plan, *,
 
         if with_subqueries and join_pred:
             subquery_joins = [sq.subquery.joins()[-1] for sq in orig_query.subqueries()]
-            subquery_predicates = [join.predicate() for join in util.flatten(subquery_joins)]
+            subquery_predicates = [join.predicate().joins.as_and_clause() for join in util.flatten(subquery_joins)]
             is_subquery = _matches_any_predicate(join_pred, subquery_predicates)
         else:
             is_subquery = False

@@ -525,6 +525,11 @@ class AbstractMospPredicate(abc.ABC):
         """Provides all tables that are part of any predicate."""
         return {attribute.table for attribute in self.collect_attributes()}
 
+    @abc.abstractmethod
+    def sql_operation(self) -> str:
+        """Parses the operation associated with this predicate into the equivalent SQL operation."""
+        return NotImplemented
+
     def joins_table(self, table: db.TableRef) -> bool:
         """Checks, whether this predicate describes a join and one of the join partners is the given table."""
         return self.is_join() and table in {attribute.table for attribute in self.collect_attributes()}
@@ -652,6 +657,16 @@ class MospCompoundPredicate(AbstractMospPredicate):
         return MospCompoundPredicate("and", flattened_predicates, alias_map=alias_map)
 
     @staticmethod
+    def extract_base_predicates(predicate: AbstractMospPredicate) -> List["MospBasePredicate"]:
+        if not predicate.is_compound():
+            return [predicate]
+
+        base_predicates = []
+        for child_predicate in predicate.children:
+            base_predicates.extend(MospCompoundPredicate.extract_base_predicates(child_predicate))
+        return base_predicates
+
+    @staticmethod
     def pull_children_from_and_predicate(predicate: "MospCompoundPredicate") -> List[AbstractMospPredicate]:
         if not predicate.is_compound() or not predicate.operation == "and":
             raise ValueError("Not an AND predicate: {}".format(predicate))
@@ -677,6 +692,9 @@ class MospCompoundPredicate(AbstractMospPredicate):
 
     def is_join(self) -> bool:
         return any(child.is_join() for child in self.children)
+
+    def sql_operation(self) -> str:
+        return _OperationPrinting.get(self.operation, self.operation)
 
     def collect_attributes(self) -> Set[db.AttributeRef]:
         return set(util.flatten([child.collect_attributes() for child in self.children], flatten_set=True))
@@ -720,7 +738,7 @@ class MospCompoundPredicate(AbstractMospPredicate):
     def __str__(self):
         if self.negated:
             return "NOT (" + str(util.simplify(self.children)) + ")"
-        op_str = _OperationPrinting.get(self.operation, self.operation)
+        op_str = self.sql_operation()
         return f" {op_str} ".join(str(child) if child.is_base() else f"({child})" for child in self.children)
 
 
@@ -769,6 +787,9 @@ class MospBasePredicate(AbstractMospPredicate):
         if self.is_filter():
             return set([self.left_attribute])
         return set([self.left_attribute, self.right_attribute])
+
+    def sql_operation(self) -> str:
+        return _OperationPrinting.get(self.operation, self.operation)
 
     def join_partner_of(self, table: db.TableRef) -> Union[db.AttributeRef, Set[db.AttributeRef]]:
         self._assert_alias_map()
@@ -861,7 +882,7 @@ class MospBasePredicate(AbstractMospPredicate):
         elif self.operation == "missing":
             return self.mosp_left + " IS NULL"
 
-        op_str = _OperationPrinting.get(self.operation, self.operation)
+        op_str = self.sql_operation()
         if self.is_join():
             return f"{self.left_attribute} {op_str} {self.right_attribute}"
 
