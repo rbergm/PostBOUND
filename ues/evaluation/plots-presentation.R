@@ -12,263 +12,245 @@ library(ggplot2)
 library(viridis)
 library(scales, warn.conflicts = FALSE)
 
-df_cautious <- read_csv("evaluation/job-ues-eval-topk-exhaustive.csv")
-df_cautious$setting <- factor(df_cautious$setting,
-                          levels = c("UES", str_c("Top-", 1:5)),
-                          ordered = TRUE)
-df_approx <- read_csv("evaluation/job-ues-eval-topk-approx.csv")
-df_approx$setting <- factor(df_approx$setting,
-                            levels = c("UES", str_c("Top-", c(1, 5, 10, 20, 50, 100, 500))),
-                            ordered = TRUE)
-
-
 # - - - - - - - - - - - - - - - -
-# 01: Runtime of the cautious algorithm ----
+# 00: Basic setup ----
 # - - - - - - - - - - - - - - - -
-df_plt <- df_cautious %>% group_by(setting) %>% summarise(total_runtime = sum(execution_time))
-ggplot(df_plt, aes(x = setting, y = total_runtime)) +
-  geom_col() +
-  labs(x = "Workload", y = "Total runtime [seconds]") +
-  theme_bw()
-ggsave("evaluation/plot-job-runtimes-topk-cautious.pdf")
-
-# calculate the total difference in runtime between best/worst setting
-grp_cautious <- df_cautious %>% group_by(setting) %>% summarise(total_rt = sum(execution_time))
-max(grp_cautious$total_rt) - min(grp_cautious$total_rt)
-
-
-# - - - - - - - - - - - - - - - -
-# 02: Mean upper bounds of the cautious algorithm ----
-# - - - - - - - - - - - - - - - -
-df_plt <- df_cautious %>% group_by(setting) %>% summarise(mean_bound = mean(upper_bound))
-ggplot(df_plt, aes(x = setting, y = mean_bound, group = 1)) +
-  geom_line(linetype = "dotted") +
-  geom_point() +
-  labs(x = "Workload", y = "Mean upper bound") +
-  theme_bw()
-ggsave("evaluation/plot-job-mean-bounds-topk-cautious.pdf")
-
-# calculate the ratio between mean upper bounds
-grp_cautious <- df_cautious %>% group_by(setting) %>% summarise(mean_bound = mean(upper_bound))
-min(grp_cautious$mean_bound) / max(grp_cautious$mean_bound)
-
-# determine all queries that have an updated path/structure
-join_path_updates <- inner_join(
-  df_cautious %>% rename(join_path = ues_join_path) %>% filter(setting == "UES") %>% select(label, join_path),
-  df_cautious %>% rename(join_path = ues_join_path) %>% filter(mode == "top-k") %>% select(label, setting, join_path),
-  by = "label", suffix = c("_ues", "_topk")) %>%
-  mutate(update = join_path_ues != join_path_topk)
-join_path_updates %>% filter(update)
-
-# calculate the runtime difference between UES/Top-k variant for updated queries
-cautious_updated <- semi_join(df_cautious, join_path_updates %>% filter(update), by = c("label", "setting"))
-update_runtimes <- inner_join(
-  cautious_updated %>% select(label, setting, execution_time),
-  df_cautious %>% filter(setting == "UES") %>% select(label, execution_time),
-  by = "label", suffix = c("_ues", "_topk")) %>%
-  mutate(runtime_diff = execution_time_ues - execution_time_topk)
-
-
-# - - - - - - - - - - - - - - - -
-# 03: Optimization time of the cautious algorithm ----
-# - - - - - - - - - - - - - - - -
-df_plt <- df_cautious %>% group_by(setting) %>% summarise(total_optimization_time = sum(optimization_time))
-ggplot(df_plt, aes(x = setting, y = total_optimization_time, group = 1)) +
-  geom_line(linetype = "dotted") +
-  geom_point() +
-  labs(x = "Workload", y = "Total optimization time [seconds]") +
-  theme_bw()
-
-
-# - - - - - - - - - - - - - - - -
-# 11: runtime of the approximative algorithm ----
-# - - - - - - - - - - - - - - - -
-df_plt <- df_approx %>% group_by(setting, subquery_mode) %>% summarise(total_runtime = sum(execution_time))
-ggplot(df_plt, aes(x = setting, y = total_runtime, fill = subquery_mode)) +
-  geom_col(position = "dodge") +
-  labs(x = "Workload", y = "Total runtime [seconds]",
-       fill = "Subqueries") +
-  scale_fill_viridis(option = "cividis", discrete = TRUE, end = 0.95) +
-  theme_bw()
-ggsave("evaluation/plot-job-runtimes-topk-approx.pdf")
-
-# calculate the total difference in runtime between best/worst setting
-grp_approx <- df_approx %>% group_by(setting, subquery_mode) %>% summarise(total_rt = sum(execution_time))
-grp_approx %>% group_by(subquery_mode) %>% summarise(rt_diff = max(total_rt) - min(total_rt))
-
-
-# - - - - - - - - - - - - - - - -
-# 12: Median upper bounds of the approximative algorithm ----
-# - - - - - - - - - - - - - - - -
-df_plt <- df_approx %>%
-  filter(subquery_mode == "linear") %>%
-  group_by(setting) %>%
-  summarise(median_bound = median(upper_bound), mean_bound = mean(upper_bound)) %>%
-  pivot_longer(cols = c(median_bound, mean_bound), names_to = "aggregate")
-ggplot(df_plt, aes(x = setting, y = value, color = aggregate, group = aggregate)) +
-  geom_line(linetype = "dotted") +
-  geom_point() +
-  labs(x = "Workload",  y = "Median upper bound", color = "Aggregate") +
-  scale_y_log10() +
-  theme_bw()
-
-
-# - - - - - - - - - - - - - - - -
-# 13: Upper bound distribution of the approximative algorithm ----
-# - - - - - - - - - - - - - - - -
-df_plt <- df_approx %>% filter(subquery_mode == "linear")
-ggplot(df_plt, aes(x = setting, y = upper_bound, fill = setting)) +
-  geom_boxplot() +
-  labs(x = "Workload", y = "Upper bounds") +
-  scale_y_log10() +
-  scale_fill_viridis(option = "cividis", discrete = TRUE, guide = "none", begin = 0.25) +
-  theme_bw()
-ggsave("evaluation/plot-job-box-bounds-topk-approx.pdf")
-
-# calculate the ratio between mean upper bounds
-grp_approx <- df_approx %>% filter(subquery_mode == "linear") %>% group_by(setting) %>% summarise(mean_bound = mean(upper_bound))
-max(grp_approx$mean_bound) / min(grp_approx$mean_bound)
-
-# determine all queries that have an updated path/structure
-df_top50 <- df_approx %>% rename(join_path = ues_join_path) %>% filter(setting == "Top-50", subquery_mode == "smart", true_card > 0)
-df_ues <- df_approx %>% rename(join_path = ues_join_path) %>% filter(setting == "UES", subquery_mode == "smart", true_card > 0)
-join_path_updates <- inner_join(
-  df_ues %>% select(label, join_path),
-  df_top50 %>% select(label, setting, join_path),
-  by = "label", suffix = c("_ues", "_topk")) %>%
-  mutate(update = join_path_ues != join_path_topk)
-join_path_updates %>% filter(update)
-sum(join_path_updates$update)
-
-# calculate the runtime difference between UES/Top-k variant for updated queries
-approx_updated <- semi_join(df_approx %>% filter(subquery_mode == "smart"),
-                            join_path_updates %>% filter(update),
-                            by = c("label", "setting"))
-update_runtimes <- inner_join(
-  approx_updated %>% select(label, setting, execution_time),
-  df_approx %>% filter(setting == "UES", subquery_mode == "smart") %>% select(label, execution_time),
-  by = "label", suffix = c("_ues", "_topk")) %>%
-  mutate(runtime_diff = execution_time_ues - execution_time_topk)
-hist(update_runtimes$runtime_diff)
-max(update_runtimes$runtime_diff)
-min(update_runtimes$runtime_diff)
-
-# determine the correlation between UES / Top-50 bounds and Top-50 bounds / True cardinalities
-df_top50 <- df_approx %>% filter(setting == "Top-50", subquery_mode == "smart")
-df_ues <- df_approx %>% filter(setting == "UES", subquery_mode == "smart")
-bound_comparison <- inner_join(df_top50 %>% select(label, upper_bound, true_card), df_ues %>% select(label, upper_bound),
-                               by = "label", suffix = c("_topk", "_ues"))
-bound_comparison$tightening_factor <- bound_comparison$upper_bound_ues / bound_comparison$upper_bound_topk
-max(bound_comparison$tightening_factor)
-cor(bound_comparison$upper_bound_topk, bound_comparison$upper_bound_ues)
-cor(bound_comparison$upper_bound_topk, bound_comparison$true_card)
-
-# - - - - - - - - - - - - - - - -
-# 14: Upper bounds for best approximative setting ----
-# - - - - - - - - - - - - - - - -
-df_top50 <- df_approx %>%
-  filter(setting == "Top-50", subquery_mode == "linear", true_card > 0) %>%
-  select(label, setting, upper_bound) %>%
-  arrange(upper_bound)
-df_ues <- df_approx %>%
-  filter(setting == "UES", subquery_mode == "linear", true_card > 0) %>%
-  select(label, setting, upper_bound)
-df_true <- df_approx %>%
-  filter(setting == "UES", subquery_mode == "linear", true_card > 0) %>%
-  select(label, setting, true_card) %>%
-  rename(upper_bound = true_card) %>%
-  mutate(setting = "True cardinality")
-
-df_plt <- bind_rows(df_top50, df_ues, df_true)
-df_plt$label <- factor(df_plt$label, levels = df_top50$label, ordered = TRUE)
-
-ggplot(df_plt, aes(x = label, y = upper_bound, color = setting, group = setting)) +
-  geom_line() +
-  geom_point() +
-  labs(x = "Query (ordered by Top-50 upper bound)",  y = "Upper bound", color = "Workload") +
-  scale_y_log10() +
-  scale_color_viridis(option = "cividis", discrete = TRUE, end = 0.95) +
-  theme_bw() +
-  theme(axis.text.x = element_blank(), axis.ticks.x = element_blank(), panel.grid.major.x = element_blank())
-ggsave("evaluation/plot-job-line-bounds-top50-approx.pdf")
-
-
-# - - - - - - - - - - - - - - - -
-# 15: Optimization time of the approximate algorithm ----
-# - - - - - - - - - - - - - - - -
-df_plt <- df_approx %>%
-  filter(subquery_mode == "linear") %>%
-  group_by(setting) %>%
-  summarise(total_optimization_time = sum(optimization_time))
-ggplot(df_plt, aes(x = setting, y = total_optimization_time, group = 1)) +
-  geom_line(linetype = "dotted") +
-  geom_point() +
-  labs(x = "Workload", y = "Total optimization time [seconds]") +
-  theme_bw()
-
-
-# - - - - - - - - - - - - - - - -
-# 15: Optimization time of the approximate algorithm ----
-# - - - - - - - - - - - - - - - -
-
 select_best_query_repetition <- function(result_path) {
-  df <- read_csv(result_path)
+  if(length(class(result_path)) == 1 && class(result_path) == "character") {
+    df <- read_csv(result_path)
+  } else {
+    df <- result_path
+  }
   representatives <- df %>% group_by(label) %>% arrange(query_rt_total) %>% slice_head() %>% ungroup()
   return(representatives)
 }
 
-df_ssb <- bind_rows(
-  select_best_query_repetition("workloads/ssb-results-implicit.csv") %>%
-    select(label, query_rt_total) %>%
-    rename(execution_time = query_rt_total) %>%
-    mutate(setting = "implicit"),
-  select_best_query_repetition("workloads/ssb-ues-results-base.csv") %>%
-    select(label, ues_final_bound, optimization_time, query_rt_total) %>%
-    rename(execution_time = query_rt_total, upper_bound = ues_final_bound) %>%
-    mutate(setting = "UES"),
-  select_best_query_repetition("workloads/topk-setups/ssb-ues-results-topk-15-approx.csv") %>%
-    select(label, ues_final_bound, optimization_time, query_rt_total) %>%
-    rename(execution_time = query_rt_total, upper_bound = ues_final_bound) %>%
-    mutate(setting = "Top-15")
-  )
-ssb_true_cards <- read_csv("workloads/ssb-results-true-cards.csv") %>% select(label, query_result) %>% rename(true_card = query_result)
 
-df_ssb$label <- factor(df_ssb$label, levels = unique(df_ssb$label), ordered = TRUE)
-df_ssb$setting <- factor(df_ssb$setting, levels = c("implicit", "UES", "Top-15"), ordered = TRUE)
-df_ssb <- inner_join(df_ssb, ssb_true_cards, by = "label")
+# - - - - - - - - - - - - - - - -
+# 01: UES overestimation ----
+# - - - - - - - - - - - - - - - -
+true_cards <- read_csv("workloads/job-results-true-cards.csv") %>% rename(true_card = query_result) %>% select(label, true_card)
+ues_bounds <- read_csv("workloads/job-ues-workload-base.csv") %>% rename(upper_bound = ues_final_bound) %>% select(label, upper_bound)
+ues_overestimation <- inner_join(ues_bounds, true_cards, by = "label") %>%
+  mutate(overestimation = (upper_bound+1) / (true_card+1)) %>%
+  arrange(overestimation)
 
-ggplot(df_ssb, aes(x = label, y = execution_time, fill = setting)) +
-  geom_col(position = "dodge") +
-  labs(x = "Query", y = "Execution time [seconds]", fill = "Workload") +
-  theme_bw() +
-  theme(panel.grid.major.x = element_blank())
-ggsave("evaluation/plot-ssb-runtimes.pdf")
-
-df_plt <- bind_rows(df_ssb %>%
-                      filter(setting != "implicit", true_card > 0) %>%
-                      select(label, setting, upper_bound),
-                    ssb_true_cards %>%
-                      filter(true_card > 0) %>%
-                      rename(upper_bound = true_card) %>%
-                      mutate(setting = "True cardinality"))
-ggplot(df_plt, aes(x = label, y = upper_bound, group = setting, color = setting)) +
+ggplot(ues_overestimation, aes(x = 1:nrow(ues_overestimation), y = overestimation)) +
   geom_point() +
-  geom_line(linetype = "dotted") +
-  labs(x = "Query", y = "Upper bound", color = "Workload") +
+  scale_y_log10() +
+  labs(x = "Query (ordered by overestimation)", y = "Overestimation factor") +
+  theme_bw() +
+  theme(axis.text.x = element_blank(), text = element_text(size = 14))
+ggsave("evaluation/plot-ues-overestimation.pdf")
+
+
+# - - - - - - - - - - - - - - - -
+# 01: Broad applicability ----
+# - - - - - - - - - - - - - - - -
+
+df_cautious <- read_csv("evaluation/job-ues-eval-topk-exhaustive.csv")
+df_cautious$setting <- factor(df_cautious$setting,
+                              levels = c("UES", str_c("Top-", 1:5)),
+                              ordered = TRUE)
+df_cautious <- inner_join(
+  df_cautious,
+  df_cautious %>%
+    filter(mode == "ues") %>%
+    select(label, upper_bound) %>%
+    rename(ues_bound = upper_bound),
+  by = "label") %>%
+  mutate(ues_improvement = ues_bound / upper_bound)
+
+df_approx <- read_csv("evaluation/job-ues-eval-topk-approx.csv")
+df_approx$setting <- factor(df_approx$setting,
+                            levels = c("UES", str_c("Top-", c(1, 5, 10, 20, 50, 100, 500))),
+                            ordered = TRUE)
+df_approx <- inner_join(
+  df_approx,
+  df_approx %>%
+    filter(mode == "ues", subquery_mode == "linear") %>%
+    select(label, upper_bound) %>%
+    rename(ues_bound = upper_bound),
+  by = "label") %>%
+  mutate(ues_improvement = ues_bound / upper_bound)
+
+
+
+# - - - - - - - - - - - - - - - -
+# 02: Subquery influence ----
+# - - - - - - - - - - - - - - - -
+df_lin <- read_csv("workloads/topk-setups/job-ues-results-topk-20-approx-linear.csv") %>%
+  select_best_query_repetition() %>%
+  select(label, query_rt_total) %>%
+  rename(execution_time = query_rt_total)
+df_sqs <- read_csv("workloads/topk-setups/job-ues-results-topk-20-approx-smart.csv") %>%
+  select_best_query_repetition() %>%
+  select(label, query, query_rt_total) %>%
+  rename(execution_time = query_rt_total) %>%
+  mutate(n_subqueries = str_count(query, regex("select", ignore_case = TRUE)) - 1) %>%
+  filter(n_subqueries > 0)
+subquery_speedup <- inner_join(df_lin, df_sqs, by = "label", suffix = c("_linear", "_subqueries")) %>%
+  mutate(speedup = execution_time_linear - execution_time_subqueries) %>%
+  mutate(faster_setting = ifelse(speedup >= 0, "subqueries", "linear")) %>%
+  arrange(desc(speedup))
+
+ggplot(subquery_speedup, aes(x = 1:nrow(subquery_speedup), y = speedup, fill = faster_setting, color = faster_setting)) +
+  geom_line(linetype = "dotted", size = 0.7) +
+  geom_area(alpha = 0.85) +
+  labs(x = "Query (ordered by subquery speedup)", y = "Subquery speedup [seconds]",
+       fill = "Faster setting", color = "Faster setting") +
+  scale_fill_viridis(option = "cividis", discrete = TRUE) +
+  scale_color_viridis(option = "cividis", discrete = TRUE) +
+  theme_bw() +
+  theme(axis.text.x = element_blank())
+ggsave("evaluation/plot-job-subquery-speedup.pdf")
+
+
+# - - - - - - - - - - - - - - - -
+# 03: Tighter upper bounds ----
+# - - - - - - - - - - - - - - - -
+read_gap_workload <- function(topk) {
+  return(read_csv(str_glue("workloads/topk-setups/job-ues-workload-topk-{topk}-approx-linear.csv")) %>%
+           rename(upper_bound = ues_final_bound) %>%
+           mutate(mode = "top-k", subquery_mode = "linear", setting = str_glue("Top-{topk}"),
+                  topk_length = topk, estimator = "approximate")
+         )
+}
+
+workload_settings <- c("UES", str_c("Top-", c(1:5, 10, 20, 50, 100, 500)))
+df_cautious <- read_csv("evaluation/job-ues-eval-topk-exhaustive.csv") %>% mutate(estimator = "cautious", subquery_mode = "smart")
+df_approx <- read_csv("evaluation/job-ues-eval-topk-approx.csv") %>% mutate(estimator = "approximate")
+approx_topk_gaps <- bind_rows(lapply(2:4, read_gap_workload))
+df_topk <- bind_rows(df_cautious, df_approx, approx_topk_gaps) %>%
+  mutate(setting = factor(setting, levels = workload_settings, ordered = TRUE))
+true_cards <- read_csv("workloads/job-results-true-cards.csv")
+
+# Upper bounds
+
+median_ues_bound <- df_cautious %>% filter(mode == "ues") %>% summarise(med = median(upper_bound)) %>% pull()
+median_topk_bounds <- df_topk %>%
+  filter(mode == "top-k") %>%
+  filter(subquery_mode == "linear" | estimator == "cautious") %>%
+  group_by(setting, estimator) %>%
+  summarise(median_upper_bound = median(upper_bound))
+median_true_card <- true_cards %>% summarise(med = median(query_result)) %>% pull()
+
+pdf("evaluation/plot-job-upper-bounds.pdf", width = 8, height = 5)
+ggplot(median_topk_bounds, aes(x = setting, y = median_upper_bound, color = estimator, group = estimator, linetype = estimator)) +
+  geom_point() +
+  geom_line() +
+  geom_hline(aes(yintercept = median_ues_bound, colour = "UES", linetype = "UES")) +
   scale_y_log10() +
   scale_color_viridis(option = "cividis", discrete = TRUE, end = 0.95) +
-  theme_bw()
-ggsave("evaluation/plot-ssb-bounds.pdf")
+  labs(x = "Workload", y = "Median upper bound", color = "Bound formula", linetype = "Bound formula", fill = "Bound formula") +
+  theme_bw() +
+  theme(text= element_text(size = 20), axis.text.x = element_text(angle = 25, hjust = 1))
+dev.off()
+
+# Max bound reduction
+ues_improvement <- inner_join(
+  df_topk %>%
+    filter(mode == "top-k") %>%
+    filter(subquery_mode == "linear" | estimator == "cautious") %>%
+    select(label, setting, estimator, upper_bound),
+  df_topk %>%
+    filter(mode == "ues", subquery_mode == "smart", estimator == "approximate") %>%
+    select(label, upper_bound),
+  by = "label", suffix = c("_topk", "_ues")) %>%
+  mutate(ues_improvement = upper_bound_ues / upper_bound_topk)
+ues_improvement %>% slice_max(ues_improvement)
+
+# Optimization time
+
+ues_optimization_time <- df_cautious %>% filter(mode == "ues") %>% summarise(opt = sum(optimization_time)) %>% pull()
+topk_optimization_time <- df_topk %>%
+  filter(mode == "top-k") %>%
+  filter(subquery_mode == "linear" | estimator == "cautious") %>%
+  group_by(setting, estimator) %>%
+  summarise(optimization_time = sum(optimization_time))
+
+pdf("evaluation/plot-job-optimization-time.pdf", width = 8, height = 5)
+ggplot(topk_optimization_time, aes(x = setting, y = optimization_time, group = estimator, color = estimator, linetype = estimator)) +
+  geom_point() +
+  geom_line() +
+  geom_hline(aes(yintercept = ues_optimization_time, linetype = "UES", colour = "UES")) +
+  scale_color_viridis(option = "cividis", discrete = TRUE, end = 0.95) +
+  labs(x = "Workload", y = "Optimization time [in sec.]", color = "Bound formula", linetype = "Bound formula") +
+  theme_bw() +
+  theme(text= element_text(size = 20), axis.text.x = element_text(angle = 25, hjust = 1))
+dev.off()
+
+
+# - - - - - - - - - - - - - - - -
+# 04: Operator selection influence ----
+# - - - - - - - - - - - - - - - -
+df_ues <- read_csv("workloads/job-ues-results-base.csv") %>%
+  select_best_query_repetition() %>%
+  select(label, query_rt_total) %>%
+  rename(execution_time = query_rt_total)
+df_nlj <- read_csv("workloads/job-ues-results-idxnlj.csv") %>%
+  select_best_query_repetition() %>%
+  select(label, query, query_rt_total) %>%
+  rename(execution_time = query_rt_total) %>%
+  mutate(n_subqueries = str_count(query, regex("select", ignore_case = TRUE)) - 1) %>%
+  filter(n_subqueries > 0)
+idxnlj_speedup <- inner_join(df_ues, df_nlj, by = "label", suffix = c("_base", "_idxnlj")) %>%
+  mutate(speedup = execution_time_base - execution_time_idxnlj) %>%
+  mutate(faster_setting = ifelse(speedup >= 0, "idx-NLJ", "base")) %>%
+  arrange(desc(speedup))
+
+ggplot(idxnlj_speedup, aes(x = 1:nrow(idxnlj_speedup), y = speedup, fill = faster_setting, color = faster_setting)) +
+  geom_line(linetype = "dotted", size = 0.7) +
+  geom_area(alpha = 0.85) +
+  labs(x = "Query (ordered by operator speedup)", y = "Operator speedup [seconds]",
+       fill = "Faster setting", color = "Faster setting") +
+  scale_fill_viridis(option = "cividis", discrete = TRUE) +
+  scale_color_viridis(option = "cividis", discrete = TRUE) +
+  theme_bw() +
+  theme(axis.text.x = element_blank())
+ggsave("evaluation/plot-job-idxnlj-speedup.pdf")
+
+
+# - - - - - - - - - - - - - - - -
+# 05: UES JOB improvements ----
+# - - - - - - - - - - - - - - - -
+job_base <- read_csv("workloads/job-results-implicit.csv") %>% select_best_query_repetition() %>% mutate(optimizer = "native")
+job_ues <- read_csv("workloads/job-ues-results-base.csv") %>% select_best_query_repetition() %>% mutate(optimizer = "UES")
+job_results <- bind_rows(job_base, job_ues)
+
+ggplot(job_base, aes(x = label, y = query_rt_total)) +
+  geom_col() +
+  ylim(0, ceiling(max(job_results$query_rt_total)) + 1) +
+  labs(x = "Query (ordered by label)", y = "Execution time [seconds]") +
+  theme_bw() +
+  theme(axis.text.x = element_blank(), axis.ticks.x = element_blank(),
+        panel.grid.major.x = element_blank(), text= element_text(size = 18))
+ggsave("evaluation/plot-job-implicit.pdf")
+
+ggplot(job_ues, aes(x = label, y = query_rt_total)) +
+  geom_col() +
+  ylim(0, ceiling(max(job_results$query_rt_total)) + 1) +
+  labs(x = "Query (ordered by label)", y = "Execution time [seconds]") +
+  theme_bw() +
+  theme(axis.text.x = element_blank(), axis.ticks.x = element_blank(),
+        panel.grid.major.x = element_blank(), text= element_text(size = 18))
+ggsave("evaluation/plot-job-ues.pdf")
+
 
 # - - - - - - - - - - - - - - - -
 # XX: Test area ----
 # - - - - - - - - - - - - - - - -
-df_ues <- df_approx %>% filter(setting == "UES", subquery_mode == "smart")
-df_top50 <- df_approx %>% filter(setting == "Top-50", subquery_mode == "smart")
-df_rt <- inner_join(df_ues %>% select(label, execution_time),
-                    df_top50 %>% select(label, execution_time),
-                    by = "label",
-                    suffix = c("_ues", "_top50"))
-df_rt$runtime_diff <- df_rt$execution_time_ues - df_rt$execution_time_top50
-summary(df_rt$runtime_diff)
-hist(df_rt$runtime_diff)
+df_ues <- read_csv("evaluation/job-ues-eval-topk-exhaustive.csv") %>%
+  filter(mode == "ues") %>%
+  select(label, optimization_time, execution_time, upper_bound, true_card, topk_length) %>%
+  mutate(estimator = "ues")
+df_cautious <- read_csv("evaluation/job-ues-eval-topk-exhaustive.csv") %>%
+  filter(mode == "top-k") %>%
+  select(label, optimization_time, execution_time, upper_bound, true_card, topk_length) %>%
+  mutate(estimator = "topk-cautious")
+df_approx <- read_csv("evaluation/job-ues-eval-topk-approx.csv") %>%
+  filter(mode == "top-k", subquery_mode == "linear") %>%
+  select(label, optimization_time, execution_time, upper_bound, true_card, topk_length) %>%
+  mutate(estimator = "topk-approx")
+
+bind_rows(df_ues, df_cautious, df_approx) %>% write_csv("topk-raw.csv")
