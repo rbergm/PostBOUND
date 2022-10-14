@@ -3,7 +3,7 @@ import collections
 import enum
 import math
 import pprint
-from typing import Dict, FrozenSet, List, Callable
+from typing import Any, Dict, FrozenSet, List, Callable, Union
 
 import numpy as np
 
@@ -62,13 +62,14 @@ class HintedMospQuery:
         self.cardinality_bounds: Dict[int, int] = dict()
         self.join_contents: Dict[int, mosp.MospJoin] = dict()
         self.bounds_stats: Dict[FrozenSet[db.TableRef], Dict[str, int]] = dict()
+        self.pg_parameters: Dict[str, Any] = dict()
 
-    def force_nestloop(self, join: mosp.MospJoin):
+    def force_nestloop(self, join: mosp.MospJoin) -> None:
         jid = _join_id(join)
         self.join_hints[jid] = QueryNode.NestLoop
         self.join_contents[jid] = join
 
-    def force_hashjoin(self, join: mosp.MospJoin):
+    def force_hashjoin(self, join: mosp.MospJoin) -> None:
         jid = _join_id(join)
         self.join_hints[jid] = QueryNode.HashJoin
         self.join_contents[jid] = join
@@ -78,17 +79,23 @@ class HintedMospQuery:
         self.join_hints[jid] = QueryNode.SortMergeJoin
         self.join_contents[jid] = join
 
-    def force_seqscan(self, table: db.TableRef):
+    def force_seqscan(self, table: db.TableRef) -> None:
         self.scan_hints[table] = QueryNode.SeqScan
 
-    def force_idxscan(self, table: db.TableRef):
+    def force_idxscan(self, table: db.TableRef) -> None:
         # we can use an IndexOnlyScan here, b/c IndexOnlyScan falls back to IndexScan automatically if necessary
         self.scan_hints[table] = QueryNode.IndexOnlyScan
 
-    def set_upperbound(self, join: mosp.MospJoin, nrows: int):
+    def set_upperbound(self, join: mosp.MospJoin, nrows: int) -> None:
         jid = _join_id(join)
         self.cardinality_bounds[jid] = nrows
         self.join_contents[jid] = join
+
+    def set_pg_param(self, parameter: Union[str, Dict[str, Any]], value: Any = None) -> None:
+        if isinstance(parameter, dict):
+            self.pg_parameters = dict(parameter)
+        else:
+            self.pg_parameters[parameter] = value
 
     def merge_with(self, other_query: "HintedMospQuery") -> None:
         self.scan_hints = util.dict_merge(self.scan_hints, other_query.scan_hints)
@@ -108,13 +115,15 @@ class HintedMospQuery:
         cardinality_bounds_stringified = "\n".join(self._cardinality_bound_to_str(join_id)
                                                    for join_id in self.cardinality_bounds.keys())
 
-        return "\n".join(s for s in ["/*+",
+        pg_params = self._pg_params_to_str()
+        hint = "\n".join(s for s in ["/*+",
                                      scan_hints_stringified, join_hints_stringified, cardinality_bounds_stringified,
                                      "*/"] if s)
+        return "\n".join([pg_params, hint])
 
     def generate_query(self, *, strip_empty: bool = False) -> str:
         hint = self.generate_sqlcomment(strip_empty=strip_empty)
-        return "\n".join(hint, self.query.text() + ";")
+        return "\n".join([hint, self.query.text() + ";"])
 
     def _scan_hint_to_str(self, base_table: db.TableRef) -> str:
         operator = self.scan_hints[base_table]
@@ -128,6 +137,14 @@ class HintedMospQuery:
         full_join_path = self._join_path_to_str(join_id)
         n_rows = self.cardinality_bounds[join_id]
         return f"Rows({full_join_path} #{n_rows})"
+
+    def _pg_params_to_str(self) -> str:
+        param_template = "SET {param} = {value};"
+        stringified_params = []
+        for param, value in self.pg_parameters.items():
+            stringified_value = f"'{value}'" if isinstance(value, str) else value
+            stringified_params.append(param_template.format(param=param, value=stringified_value))
+        return " ".join(stringified_params)
 
     def _join_path_to_str(self, join_id: int) -> str:
         return " ".join(tab.qualifier() for tab in self.join_paths[join_id])
