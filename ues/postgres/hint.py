@@ -91,8 +91,24 @@ class HintedMospQuery:
         self.cardinality_bounds[jid] = nrows
         self.join_contents[jid] = join
 
-    def set_pg_param(self, parameter: Union[str, Dict[str, Any]], value: Any = None) -> None:
-        if isinstance(parameter, dict):
+    def set_pg_param(self, parameter: Union[str, Dict[str, Any]] = None, value: Any = None, **kwargs) -> None:
+        """Adds planner hints that influence the Postgres optimization behaviour for the entire query.
+
+        These hints are supplied as Postgres parameters - see
+        https://www.postgresql.org/docs/current/runtime-config-query.html for all options
+
+        `set_pg_param` can be called in three different ways:
+
+        - `set_pg_param("foo", "bar")` will only set the parameter `foo` to value `'bar'` and leave all other
+        parameters untouched.
+        - `set_pg_param(foo="bar")` will do the same as `set_pg_param("foo", "bar")`, but has a nicer syntax
+        - `set_pg_param({foo: "bar"})` will replace all existing parameters and only use the parameters supplied in the
+        dictionary.
+
+        """
+        if parameter is None:
+            self.pg_parameters = util.dict_merge(self.pg_parameters, dict(kwargs))
+        elif isinstance(parameter, dict):
             self.pg_parameters = dict(parameter)
         else:
             self.pg_parameters[parameter] = value
