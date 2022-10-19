@@ -41,8 +41,8 @@ print()
 operator_hints = hint.HintedMospQuery(optimized_query)
 
 # select the actual hints
-operator_hints.set_pg_param("enable_nestloop", "off")  # emulate UES setup: no NLJ
-operator_hints.set_pg_param("join_collapse_limit", 1)  # emulate UES setup: enforce correct join ordering
+operator_hints.set_pg_param(enable_nestloop="off")  # emulate UES setup: no NLJ
+operator_hints.set_pg_param(join_collapse_limit=1)  # emulate UES setup: enforce correct join ordering
 
 hinted_query = operator_hints.generate_query()  # use query_hints.generate_sqlcomment() to get just the hints
 print("Operator hints:")
