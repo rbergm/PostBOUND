@@ -1886,6 +1886,7 @@ def _calculate_join_order_for_join_partition(query: mosp.MospQuery, join_graph: 
 
             bounds_tracker.initialize(lowest_bound_table, lowest_min_bound)
             stats.init_base_table(lowest_bound_table)
+            stats.upper_bounds[join_tree] = lowest_min_bound
 
             for pk_join in pk_joins:
                 trace_logger(".. Adding PK join with", pk_join.partner, "on", pk_join.predicate)
