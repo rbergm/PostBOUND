@@ -318,6 +318,9 @@ class UESCardinalityEstimator(JoinCardinalityEstimator):
             joined_freq = self.stats_container.attribute_frequencies[joined_attr]
             candidate_freq = self.stats_container.attribute_frequencies[candidate_attr]
 
+            if joined_freq == 0 or candidate_freq == 0:
+                return 0
+
             distinct_values_joined = join_tree_bound / joined_freq
             distinct_values_candidate = candidate_bound / candidate_freq
             candidate_bound = min(distinct_values_joined, distinct_values_candidate) * joined_freq * candidate_freq
