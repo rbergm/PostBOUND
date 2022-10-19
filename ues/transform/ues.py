@@ -1363,7 +1363,11 @@ class _MFVTableBoundStatistics(_TableBoundStatistics[int]):
         super().__init__(query, base_table_estimator=base_cardinality_estimator, dbs=dbs)
 
     def _fetch_attribute_base_frequency(self, attribute: db.AttributeRef) -> int:
-        __, most_common_frequency = self._dbs.calculate_most_common_values(attribute, k=1)[0]
+        topk_values = self._dbs.calculate_most_common_values(attribute, k=1)
+        if topk_values:
+            __, most_common_frequency = topk_values[0]
+        else:
+            most_common_frequency = 0
         return min(most_common_frequency, self.base_table_estimates[attribute.table])
 
     def _attribute_frequency_bound(self, attribute: db.AttributeRef) -> int:
