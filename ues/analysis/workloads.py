@@ -13,7 +13,7 @@ class Workload:
         self._name = name
 
         for query_file_path in self._root.glob(query_file_pattern):
-            with open(query_file_path, "r") as query_file:
+            with open(query_file_path, "r", encoding="utf-8") as query_file:
                 raw_contents = query_file.readlines()
             query_contents = " ".join([line for line in raw_contents if not line.startswith("--")])
             parsed_query = mosp.MospQuery.parse(query_contents)

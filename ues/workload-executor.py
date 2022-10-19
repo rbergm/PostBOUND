@@ -148,7 +148,7 @@ def generate_default_out_name(out_prefix="workload-out"):
 
 def read_workload_plain(input: str) -> pd.DataFrame:
     workload = []
-    with open(input, "r") as input_file:
+    with open(input, "r", encoding="utf-8") as input_file:
         workload_raw = [query.strip() for query in input_file.readlines()]
         workload = [query for query in workload_raw if not query.startswith(SQL_COMMENT_PREFIX)]
     return pd.DataFrame({DEFAULT_WORKLOAD_COL: workload})

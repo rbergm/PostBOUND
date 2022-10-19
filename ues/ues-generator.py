@@ -23,7 +23,7 @@ DEFAULT_UES_COL = "query_ues"
 
 
 def read_workload_raw(src_file: str) -> pd.DataFrame:
-    with open(src_file, "r") as query_file:
+    with open(src_file, "r", encoding="utf-8") as query_file:
         queries = [query for query in query_file.readlines() if not query.startswith("--")]
     return pd.DataFrame({DEFAULT_QUERY_COL: queries})
 
@@ -37,7 +37,7 @@ def read_workload_pattern(src_directory: str, pattern: str = "*.sql", *, load_la
     queries = []
     labels = []
     for src_file in query_directory.glob(pattern):
-        with open(src_file, "r") as query_file:
+        with open(src_file, "r", encoding="utf-8") as query_file:
             query = " ".join(query_file.readlines())
         queries.append(query)
         labels.append(src_file.stem)
