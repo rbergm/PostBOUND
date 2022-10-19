@@ -31,6 +31,7 @@ class MospQueryPreparation:
     * GROUP BY clauses - does not influence the optimal join order
     * ORDER BY clauses - does not influence the optimal join order
     * HAVING clauses - does not influence the optimal join order
+    * LIMIT clauses - does not influence the optimal join order
 
     Additionally, temporary aliases will be generated as necessary, such that each table is referenced via an alias.
     The resulting query will be a pure SPJ (select, project, join) query.
@@ -48,6 +49,7 @@ class MospQueryPreparation:
         prepared.pop("groupby", None)
         prepared.pop("orderby", None)
         prepared.pop("having", None)
+        prepared.pop("limit", None)
 
         prepared = self._drop_explicit_joins(prepared)
         prepared = self._generate_table_aliases(prepared)
@@ -69,6 +71,8 @@ class MospQueryPreparation:
             reconstructed_query["orderby"] = copy.copy(self._original_query.query["orderby"])
         if "having" in self._original_query.query:
             reconstructed_query["having"] = copy.copy(self._original_query.query["having"])
+        if "limit" in self._original_query.query:
+            reconstructed_query["limit"] = copy.copy(self._original_query.query["limit"])
 
         if self._generated_aliases and drop_renaming:
             reconstructed_query = self._drop_table_aliases(reconstructed_query)
