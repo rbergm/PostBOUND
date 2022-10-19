@@ -57,6 +57,42 @@ class SsbWorkloadOptimizationTests(unittest.TestCase):
                 self.fail(f"Exception raised on query {label} with exception {e}")
 
 
+class StackWorkloadOptimizationTests(unittest.TestCase):
+    def test_example(self):
+        dbs = db.DBSchema.get_instance(postgres_config_file=".psycopg_connection_stack", renew=True)
+        query = r"""
+            SELECT b1.name, COUNT(*)
+            FROM site AS s,
+                so_user AS u1,
+                tag AS t1,
+                tag_question AS tq1,
+                question AS q1,
+                badge AS b1,
+                account AS acc
+            WHERE s.site_id = u1.site_id
+                AND s.site_id = b1.site_id
+                AND s.site_id = t1.site_id
+                AND s.site_id = tq1.site_id
+                AND s.site_id = q1.site_id
+                AND t1.id = tq1.tag_id
+                AND q1.id = tq1.question_id
+                AND q1.owner_user_id = u1.id
+                AND acc.id = u1.account_id
+                AND b1.user_id = u1.id
+                AND (q1.score >= 1)
+                AND (q1.score <= 10)
+                AND (s.site_name in ('stackoverflow', 'superuser'))
+                AND (t1.name in ('displaytag', 'esxi', 'linq-expressions', 'ml', 'mule-component', 'osx-server', 'region', 'stackdriver', 'tv', 'wso2dss'))
+                AND (acc.website_url like ('%de'))
+            GROUP BY b1.name
+            ORDER BY COUNT(*)
+            DESC
+            LIMIT 100;
+        """
+        parsed = mosp.MospQuery.parse(query)
+        optimized = ues.optimize_query(parsed, dbs=dbs)   # noqa: F841
+
+
 class SnowflaxeQueryOptimizationTests(unittest.TestCase):
     def test_base_query(self):
         dbs = db.DBSchema.get_instance(renew=True)
