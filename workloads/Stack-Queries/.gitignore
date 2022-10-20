@@ -1,0 +1,21 @@
+# The stack benchmark consists of over 5000 queries.
+# Naturally, we don't want to store them all. Instead, we will
+# only keep those queries in VC, that are necessary for unit tests
+# because they behaved badly during testing
+
+*
+
+!.gitignore
+
+!q10
+!q10/q10-063.sql
+
+!q12
+!q12/0a5eece0e1bf374f7a08d8c249392298f06033d8.sql
+
+!q14
+!q14/0d9ca20b858c8a4ef66f79be83abac2149fa35b3.sql
+
+!q15/
+!q15/0a1a5fb7566117b53a634966e1255aa8c127fff8.sql
+

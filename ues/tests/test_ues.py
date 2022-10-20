@@ -1,6 +1,9 @@
 
 import unittest
 import sys
+import warnings
+
+import mo_parsing.exceptions
 
 sys.path.append("../")
 import regression_suite  # noqa: E402
@@ -8,7 +11,8 @@ from transform import db, mosp, ues, util  # noqa: E402, F401
 
 
 job_workload = regression_suite.load_job_workload()
-ssb_workload = regression_suite.load_ssb_workload(simplified=True)
+ssb_workload = regression_suite.load_ssb_workload()
+stack_workload = regression_suite.load_stack_workload()
 
 
 class JoinGraphTests(unittest.TestCase):
@@ -18,7 +22,7 @@ class JoinGraphTests(unittest.TestCase):
 class BeningQueryOptimizationTests(unittest.TestCase):
     def setUp(self) -> None:
         self.trace_enabled = "--verbose" in sys.argv
-        if self.log_enabled:
+        if self.trace_enabled:
             print()
         return super().setUp()
 
@@ -58,39 +62,32 @@ class SsbWorkloadOptimizationTests(unittest.TestCase):
 
 
 class StackWorkloadOptimizationTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.trace_enabled = "--verbose" in sys.argv
+        if self.trace_enabled:
+            print()
+        return super().setUp()
+
+    def test_workload(self):
+        dbs = db.DBSchema.get_instance(postgres_config_file=".psycopg_connection_stack", renew=True)
+        for label, query in stack_workload.items():
+            try:
+                parsed = mosp.MospQuery.parse(query)
+                optimized = ues.optimize_query(parsed, dbs=dbs)  # noqa: F841
+                original_result_set = dbs.execute_query(query)
+                optimized_result_set = dbs.execute_query(str(optimized), join_collapse_limit=1, enable_nestloop="off")
+                regression_suite.assert_result_sets_equal(original_result_set, optimized_result_set,
+                                                          ordered=parsed.is_ordered())
+            except mo_parsing.exceptions.ParseException as e:
+                warnings.warn(f"Parse execption at {label}: {e}")
+            except Exception as e:
+                self.fail(f"Exception raised on query {label} with exception {e}")
+
     def test_example(self):
         dbs = db.DBSchema.get_instance(postgres_config_file=".psycopg_connection_stack", renew=True)
-        query = r"""
-            SELECT b1.name, COUNT(*)
-            FROM site AS s,
-                so_user AS u1,
-                tag AS t1,
-                tag_question AS tq1,
-                question AS q1,
-                badge AS b1,
-                account AS acc
-            WHERE s.site_id = u1.site_id
-                AND s.site_id = b1.site_id
-                AND s.site_id = t1.site_id
-                AND s.site_id = tq1.site_id
-                AND s.site_id = q1.site_id
-                AND t1.id = tq1.tag_id
-                AND q1.id = tq1.question_id
-                AND q1.owner_user_id = u1.id
-                AND acc.id = u1.account_id
-                AND b1.user_id = u1.id
-                AND (q1.score >= 1)
-                AND (q1.score <= 10)
-                AND (s.site_name in ('stackoverflow', 'superuser'))
-                AND (t1.name in ('displaytag', 'esxi', 'linq-expressions', 'ml', 'mule-component', 'osx-server', 'region', 'stackdriver', 'tv', 'wso2dss'))
-                AND (acc.website_url like ('%de'))
-            GROUP BY b1.name
-            ORDER BY COUNT(*)
-            DESC
-            LIMIT 100;
-        """
+        query = stack_workload["0a1a5fb7566117b53a634966e1255aa8c127fff8"]
         parsed = mosp.MospQuery.parse(query)
-        optimized = ues.optimize_query(parsed, dbs=dbs)   # noqa: F841
+        optimized = ues.optimize_query(parsed, trace=self.trace_enabled, dbs=dbs)   # noqa: F841
 
 
 class SnowflaxeQueryOptimizationTests(unittest.TestCase):

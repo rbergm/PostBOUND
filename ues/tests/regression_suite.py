@@ -24,9 +24,17 @@ def load_job_workload(path: str = "../../workloads/JOB-Queries/implicit",
     return __load_workload(path, source_pattern)
 
 
-def load_ssb_workload(path: str = "../../workloads/SSB-Queries", source_pattern: str = "*.sql", *,
-                      simplified: bool = False) -> Dict[str, str]:
+def load_ssb_workload(path: str = "../../workloads/SSB-Queries", source_pattern: str = "*.sql") -> Dict[str, str]:
     return __load_workload(path, source_pattern)
+
+
+def load_stack_workload(path: str = "../../workloads/Stack-Queries", source_pattern: str = "*.sql") -> Dict[str, str]:
+    stack_directory = pathlib.Path(path)
+    workload = dict()
+    for workload_dir in stack_directory.glob("*/**"):
+        for label, query in __load_workload(workload_dir, source_pattern).items():
+            workload[label] = query.replace("ILIKE", "LIKE")
+    return workload
 
 
 def assert_less_equal(smaller: numbers.Number, larger: numbers.Number, msg: str = "", tolerance: float = 0.99):

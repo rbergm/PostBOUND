@@ -165,6 +165,7 @@ cython_debug/
 dt-venv/
 .psycopg_connection
 .psycopg_connection_tpch
+.psycopg_connection_stack
 
 # R env
 .Rproj.user
