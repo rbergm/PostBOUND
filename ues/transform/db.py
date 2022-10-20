@@ -139,8 +139,9 @@ class DBSchema:
                 warnings.warn("No .psycopg_connection file found, trying empty connect string as last resort. This "
                               "is likely not intentional.")
                 psycopg_connect = ""
-            with open(postgres_config_file, "r") as conn_file:
-                psycopg_connect = conn_file.readline().strip()
+            else:
+                with open(postgres_config_file, "r") as conn_file:
+                    psycopg_connect = conn_file.readline().strip()
         conn = psycopg2.connect(psycopg_connect)
         new_instance = DBSchema(conn.cursor(), connection=conn)
 
