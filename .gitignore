@@ -164,6 +164,7 @@ cython_debug/
 # Python venv
 dt-venv/
 .psycopg_connection
+.psycopg_connection_job
 .psycopg_connection_tpch
 .psycopg_connection_stack
 
