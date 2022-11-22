@@ -163,8 +163,10 @@ def shuffle_workload(df):
     return df.loc[shuffled_idx].copy()
 
 
-def execute_query(query, workload_prefix: str, cursor: "psycopg2.cursor", *,
-                  pg_args: List[str], query_mod: QueryMod = None, query_hint: str = "", logger=dummy_logger):
+def execute_query(query, workload_prefix: str, cursor: "psycopg2.cursor", *, repetitions: int = 1,
+                  pg_args: List[str] = None, query_mod: QueryMod = None, query_hint: str = "", logger=dummy_logger):
+    pg_args = [] if pg_args is None else pg_args
+
     logger("Now running query", query)
 
     for arg in pg_args:
@@ -181,9 +183,14 @@ def execute_query(query, workload_prefix: str, cursor: "psycopg2.cursor", *,
         logger("Applying query hint", query_hint)
         query = query_hint + " " + query
 
-    query_start = datetime.now()
-    cursor.execute(query)
-    query_end = datetime.now()
+    query_duration = np.inf
+    for __ in range(repetitions):
+        query_start = datetime.now()
+        cursor.execute(query)
+        query_end = datetime.now()
+        current_duration = query_end - query_start
+        if current_duration < query_duration:
+            query_duration = current_duration
 
     raw_res = cursor.fetchall()
     if len(raw_res) == 1:
@@ -198,7 +205,6 @@ def execute_query(query, workload_prefix: str, cursor: "psycopg2.cursor", *,
         query_res = json.dumps(raw_res)
     else:
         query_res = None
-    query_duration = query_end - query_start
 
     logger("Query took", query_duration, "seconds")
 
@@ -208,8 +214,10 @@ def execute_query(query, workload_prefix: str, cursor: "psycopg2.cursor", *,
 
 
 def execute_query_wrapper(workload_row: pd.Series, workload_col: str, cursor: "psycopg2.cursor", *,
-                          pg_args: List[str], query_mod: QueryMod = None, hint_col: str = "",
-                          progress_logger=None, logger=dummy_logger):
+                          query_repetitions: int = 1, pg_args: List[str] = None, query_mod: QueryMod = None,
+                          hint_col: str = "", progress_logger=None, logger=dummy_logger):
+    pg_args = [] if pg_args is None else pg_args
+
     if hint_col:
         hint = workload_row[hint_col]
     else:
@@ -217,13 +225,16 @@ def execute_query_wrapper(workload_row: pd.Series, workload_col: str, cursor: "p
     if progress_logger:
         progress_logger()
     return execute_query(workload_row[workload_col], workload_prefix=workload_col, cursor=cursor,
-                         pg_args=pg_args, query_mod=query_mod, query_hint=hint, logger=logger)
+                         repetitions=query_repetitions, pg_args=pg_args, query_mod=query_mod, query_hint=hint,
+                         logger=logger)
 
 
-def run_workload(workload: pd.DataFrame, workload_col: str, cursor: "psycopg2.cursor", *,
-                 pg_args: List[str], query_mod: QueryMod = None, hint_col: str = "", shuffle: bool = False,
+def run_workload(workload: pd.DataFrame, workload_col: str, cursor: "psycopg2.cursor", *, query_repetitions: int = 1,
+                 pg_args: List[str] = None, query_mod: QueryMod = None, hint_col: str = "", shuffle: bool = False,
                  log_progress: bool = False, logger=dummy_logger):
     global executed_queries_counter
+
+    pg_args = [] if pg_args is None else pg_args
 
     logger(len(workload), "queries total")
     log_progress = progress_logger(log, len(workload)) if log_progress else progress_logger(dummy_logger, np.inf)
@@ -235,6 +246,7 @@ def run_workload(workload: pd.DataFrame, workload_col: str, cursor: "psycopg2.cu
     workload_res_df = workload.apply(execute_query_wrapper,
                                      workload_col=workload_col, cursor=cursor,
                                      pg_args=pg_args, query_mod=query_mod, hint_col=hint_col,
+                                     query_repetitions=query_repetitions,
                                      logger=logger, progress_logger=log_progress,
                                      axis="columns")
     result_df = pd.merge(workload, workload_res_df, left_index=True, right_index=True, how="outer")
@@ -259,6 +271,8 @@ def main():
                         "instead of their normal projection.")
     parser.add_argument("--hint-col", action="store", default="", help="In CSV mode, an optional column containing "
                         "hints to apply on a per-query basis (as specified by the pg_hint_plan extension).")
+    parser.add_argument("--query-repetitions", action="store", type=int, default=1, help="The number of times each "
+                        "query within the workload should be executed. The minimum runtime is reported.")
     parser.add_argument("--randomized", action="store_true", default=False, help="Execute the queries in a random "
                         "order.")
     parser.add_argument("--log-progress", action="store_true", default=False, help="Write a progress message to "
@@ -281,7 +295,7 @@ def main():
 
     result_df = run_workload(df_workload, workload_col, pg_cursor, pg_args=args.pg_param,
                              query_mod=query_mod, hint_col=args.hint_col,
-                             shuffle=args.randomized,
+                             shuffle=args.randomized, query_repetitions=args.query_repetitions,
                              log_progress=args.log_progress, logger=logger)
 
     out_file = args.out if args.out else generate_default_out_name()

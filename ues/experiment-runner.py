@@ -15,7 +15,8 @@ from transform import util
 import importlib
 executor = importlib.import_module("workload-executor")
 
-DEFAULT_N_REPETITIONS = 3
+DEFAULT_N_REPETITIONS = 1
+DEFAULT_QUERY_REPETITIONS = 1
 
 # see https://regex101.com/r/Wzsdjq/1
 POSTGRES_PARAM_PATTERN = re.compile(r"SET (?P<param>\S+)\s?=\s?(?P<value>\S+);?", flags=re.IGNORECASE)
@@ -59,6 +60,9 @@ def main():
                         "column containing the queries")
     parser.add_argument("--repetitions", "-r", action="store", default=DEFAULT_N_REPETITIONS, type=int, help="The "
                         "number of times the workload should be executed.")
+    parser.add_argument("--per-query-repetitions", action="store", default=DEFAULT_QUERY_REPETITIONS, type=int,
+                        help="The number of times each query within the workload should be executed (the minimum "
+                        "runtime is reported).")
     parser.add_argument("--out", "-o", action="store", help="Name of the output file to write the results to.")
     parser.add_argument("--pg-con", action="store", default="", help="Connect string to the postgres instance "
                         "(psycopg2 format). If omitted, the string will be read from the file .psycopg_connection")
@@ -142,7 +146,7 @@ def main():
         log("Starting workload iteration", run, "at", datetime.now().strftime("%y-%m-%d, %H:%M"))
         df_results = executor.run_workload(workload, workload_col, pg_cursor,
                                            pg_args=postgres_params, query_mod=query_mod, hint_col=args.hint_col,
-                                           shuffle=args.randomized,
+                                           query_repetitions=args.per_query_repetitions, shuffle=args.randomized,
                                            log_progress=args.trace)
         df_results["run"] = run
         workload_results.append(df_results)
