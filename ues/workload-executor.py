@@ -9,7 +9,7 @@ import re
 import signal
 import sys
 import warnings
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import List
 
 import numpy as np
@@ -183,7 +183,7 @@ def execute_query(query, workload_prefix: str, cursor: "psycopg2.cursor", *, rep
         logger("Applying query hint", query_hint)
         query = query_hint + " " + query
 
-    query_duration = np.inf
+    query_duration = timedelta.max
     for __ in range(repetitions):
         query_start = datetime.now()
         cursor.execute(query)
