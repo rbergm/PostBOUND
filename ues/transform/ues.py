@@ -88,7 +88,7 @@ class MospQueryPreparation:
         if "where" in query_data:
             complete_where_clause.append(query_data["where"])
 
-        for table in query_data["from"]:
+        for table in util.enlist(query_data["from"]):
             if "join" in table:
                 complete_from_clause.append(table["join"])
                 if "on" in table:
@@ -2208,7 +2208,7 @@ def optimize_query(query: mosp.MospQuery, *,
     logger = util.make_logger(verbose or trace)
 
     # if there are no joins in the query, there is nothing to do
-    if not isinstance(query.from_clause(), list) or not util.contains_multiple(query.from_clause()):
+    if query.collect_tables() == 1:
         logger("Query contains no joins, nothing to do.")
         query_preparation = MospQueryPreparation(query, dbs=dbs)
         prepared_query = query_preparation.prepare_query()
