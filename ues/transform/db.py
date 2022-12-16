@@ -346,6 +346,11 @@ class DBSchema:
     def load_distinct_value_count(self, attribute: AttributeRef, *, cache_enabled: bool = True) -> int:
         return NotImplemented
 
+    def pg_version(self) -> util.Version:
+        self.cursor.execute("SELECT VERSION();")
+        pg_ver = self.cursor.fetchone()[0]
+        return util.Version(pg_ver.split(" ")[1])
+
     def reset_caches(self):
         """Removes all cached content."""
         self.index_map = {}

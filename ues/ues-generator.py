@@ -21,6 +21,9 @@ from analysis import selection
 DEFAULT_QUERY_COL = "query"
 DEFAULT_UES_COL = "query_ues"
 
+PG_ARGS = {"join_collapse_limit": 1, "enable_nestloop": "off"}
+PG_ARGS_13 = util.dict_merge(PG_ARGS, {"enable_memoize": "off"})
+
 
 def read_workload_raw(src_file: str) -> pd.DataFrame:
     with open(src_file, "r", encoding="utf-8") as query_file:
@@ -189,9 +192,10 @@ def optimize_single(query: str, *, table_estimation: str = "explain", join_estim
     if exec:
         print()
         print(".. Executing query")
+        pg_args = PG_ARGS_13 if dbs.pg_version() > "12" else PG_ARGS
         exec_start = datetime.now()
         dbs.execute_query(str(optimized_query), cache_enabled=False,
-                          join_collapse_limit=1, enable_memoize="off", enable_nestloop="off")
+                          **pg_args)
         exec_end = datetime.now()
         print(".. Query took", exec_end - exec_start, "seconds")
 
