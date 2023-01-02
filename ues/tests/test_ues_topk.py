@@ -46,7 +46,7 @@ class JobWorkloadOptimizationTests(unittest.TestCase):
                 self.fail(f"Exception raised on query {label} with exception {e}")
 
 
-class SnowflaxeQueryOptimizationTests(unittest.TestCase):
+class SnowflakeQueryOptimizationTests(unittest.TestCase):
     def test_base_query(self):
         query = mosp.MospQuery.parse(job_workload["32a"])
         optimized = ues.optimize_query(query, join_cardinality_estimation="topk")  # noqa: F841

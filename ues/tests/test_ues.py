@@ -90,7 +90,7 @@ class StackWorkloadOptimizationTests(unittest.TestCase):
         optimized = ues.optimize_query(parsed, trace=self.trace_enabled, dbs=dbs)   # noqa: F841
 
 
-class SnowflaxeQueryOptimizationTests(unittest.TestCase):
+class SnowflakeQueryOptimizationTests(unittest.TestCase):
     def test_base_query(self):
         dbs = db.DBSchema.get_instance(renew=True)
         query = mosp.MospQuery.parse(job_workload["32a"])
