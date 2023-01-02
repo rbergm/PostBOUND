@@ -41,7 +41,7 @@ def read_workload_pattern(src_directory: str, pattern: str = "*.sql", *, load_la
     labels = []
     for src_file in query_directory.glob(pattern):
         with open(src_file, "r", encoding="utf-8") as query_file:
-            query = " ".join(query_file.readlines())
+            query = " ".join(line.strip() for line in query_file.readlines() if not line.lstrip().startswith("--"))
         queries.append(query)
         labels.append(src_file.stem)
     workload = pd.DataFrame({DEFAULT_QUERY_COL: queries})
