@@ -143,6 +143,7 @@ class DBSchema:
                 with open(postgres_config_file, "r") as conn_file:
                     psycopg_connect = conn_file.readline().strip()
         conn = psycopg2.connect(psycopg_connect)
+        conn.autocommit = True
         new_instance = DBSchema(conn.cursor(), connection=conn)
 
         if _dbschema_instance and renew:
