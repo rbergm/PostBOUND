@@ -33,7 +33,7 @@ def load_stack_workload(path: str = "../../workloads/Stack-Queries", source_patt
     workload = dict()
     for workload_dir in stack_directory.glob("*/**"):
         for label, query in __load_workload(workload_dir, source_pattern).items():
-            workload[label] = query.replace("ILIKE", "LIKE")
+            workload[label] = query
     return workload
 
 
