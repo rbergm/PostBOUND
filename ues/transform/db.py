@@ -59,9 +59,9 @@ class TableRef:
         return hash((self.full_name, self.alias))
 
     def __eq__(self, other: object) -> bool:
-        if not isinstance(other, TableRef):
+        if not isinstance(other, type(self)):
             return False
-        return self.full_name == other.full_name and self.alias == other.alias and self.virtual == other.virtual
+        return self.full_name == other.full_name and self.alias == other.alias
 
     def __repr__(self):
         return str(self)
