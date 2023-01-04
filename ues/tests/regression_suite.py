@@ -14,8 +14,8 @@ def __load_workload(path: str, source_pattern: str) -> Dict[str, str]:
     for query_file in workload_files:
         with open(query_file, "r", encoding="utf-8") as raw_query:
             lines = raw_query.readlines()
-            single_line = " ".join(line.strip() for line in lines)
-            queries[query_file.stem] = single_line
+            query = "\n".join(line.strip() for line in lines)
+            queries[query_file.stem] = query
     return queries
 
 
