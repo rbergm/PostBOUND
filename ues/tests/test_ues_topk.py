@@ -168,11 +168,11 @@ class UpperBoundTests(unittest.TestCase):
             pretty_log(counterexamples)
             self.fail("Counterexamples exist")
 
-    def test_top15_is_true_upper_bound(self):
+    def test_top5_is_true_upper_bound(self):
         for label, raw_query in job_workload.items():
             query = mosp.MospQuery.parse(raw_query)
             optimization_res: ues.OptimizationResult = ues.optimize_query(query, join_cardinality_estimation="topk",
-                                                                          topk_list_length=15, introspective=True)
+                                                                          topk_list_length=5, introspective=True)
             upper_bound = optimization_res.final_bound
             true_cardinality = dbs.execute_query(raw_query)
             if upper_bound < true_cardinality:
