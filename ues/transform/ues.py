@@ -1167,10 +1167,15 @@ class JoinTree:
             print(left_str, right_str, sep="\n")
 
     def __hash__(self) -> int:
-        return hash((self.left, self.right))
+        hash_comps = []
+        if self.left:
+            hash_comps.append(self.left)
+        if self.right:
+            hash_comps.append(self.right)
+        return hash(tuple(hash_comps))
 
     def __eq__(self, other: object) -> bool:
-        if not isinstance(other, JoinTree):
+        if not isinstance(other, type(self)):
             return False
         return self.left == other.left and self.right == other.right
 
@@ -1209,10 +1214,44 @@ class _UpperBoundContainer(collections.UserDict):
         super().__init__()
         self._parent_stats = parent_stats
 
+    def items(self) -> List[Tuple[Union[db.TableRef, JoinTree], int]]:
+        return self.data.values()
+
+    def values(self) -> List[int]:
+        entries = self.data.values()  # we don't need the hash values here
+        return [bound for __, bound in entries]
+
+    def keys(self) -> List[Union[db.TableRef, JoinTree]]:
+        entries = self.data.values()  # we don't need the hash values here
+        return [entry for entry, __ in entries]
+
     def __setitem__(self, key: Union[db.TableRef, JoinTree], item: int) -> None:
         if isinstance(key, JoinTree):
             self._parent_stats._propagate_upper_bound(item)
-        return super().__setitem__(key, item)
+
+        hval = hash(key)
+        self.data[hval] = (key, item)
+
+    def __getitem__(self, key: Union[db.TableRef, JoinTree]) -> int:
+        hval = hash(key)
+        __, bound = self.data[hval]  # we don't need the table/join tree here
+        return bound
+
+    def __iter__(self) -> Iterator[Union[db.TableRef, JoinTree]]:
+        entries = self.data.values()  # we don't need the hash values here
+        return [entry for entry, __ in entries].__iter__()  # we don't need the bounds here
+
+    def __len__(self) -> int:
+        return len(self.data)
+
+    def __contains__(self, key: object) -> bool:
+        return hash(key) in self.data
+
+    def __repr__(self) -> str:
+        return str(self)
+
+    def __str__(self) -> str:
+        return str({entry: bound for entry, bound in self.data.values()})
 
 
 class _TableBoundStatistics(abc.ABC, Generic[_T]):
@@ -1226,7 +1265,7 @@ class _TableBoundStatistics(abc.ABC, Generic[_T]):
 
         self._base_table_estimates: Dict[db.TableRef, int] = {}
         self._attribute_frequencies: Dict[db.AttributeRef, _T] = {}
-        self._upper_bounds: Dict[Union[db.TableRef, JoinTree], int] = _UpperBoundContainer(self)
+        self._upper_bounds: _UpperBoundContainer = _UpperBoundContainer(self)
 
         self._init_base_estimates()
         self._init_attribute_frequencies()
@@ -1342,7 +1381,7 @@ class _TableBoundStatistics(abc.ABC, Generic[_T]):
     def _get_attribute_frequencies(self):
         return self._attribute_frequencies
 
-    def _get_upper_bounds(self):
+    def _get_upper_bounds(self) -> _UpperBoundContainer:
         return self._upper_bounds
 
     base_table_estimates: Dict[db.TableRef, int] = property(_get_base_estimates)
@@ -1354,7 +1393,7 @@ class _TableBoundStatistics(abc.ABC, Generic[_T]):
     base tables as well as attribute of the intermediate join result.
     """
 
-    upper_bounds: Dict[Union[db.TableRef, "JoinTree"], int] = property(_get_upper_bounds)
+    upper_bounds: _UpperBoundContainer = property(_get_upper_bounds)
     """Upper bounds provide a theoretical bound on the number of tuples in a base table or a join tree."""
 
 
@@ -1886,6 +1925,7 @@ def _calculate_join_order_for_join_partition(query: mosp.MospQuery, join_graph: 
 
             bounds_tracker.initialize(lowest_bound_table, lowest_min_bound)
             stats.init_base_table(lowest_bound_table)
+
             stats.upper_bounds[join_tree] = lowest_min_bound
 
             for pk_join in pk_joins:
@@ -1901,6 +1941,7 @@ def _calculate_join_order_for_join_partition(query: mosp.MospQuery, join_graph: 
                                                   stats=stats, pk_only=True,
                                                   bounds_tracker=bounds_tracker, pk_fk_bound=lowest_min_bound,
                                                   verbose=verbose, trace=trace)
+
                 stats.upper_bounds[join_tree] = lowest_min_bound
 
             # This has nothing to do with the actual algorithm and is merely some technical code for visualization
