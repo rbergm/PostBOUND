@@ -32,5 +32,9 @@ pg_ctl -D $(pwd)/data -l pg.log start
 echo "... Creating user database for $USER"
 createdb $USER
 
-echo ".. Setup done, ready to connect"
-
+if [ "$1" = "--stop" ] ; then
+    pg_ctl -D $(pwd)/postgres-server/data stop
+    echo ".. Setup done"
+else
+    echo ".. Setup done, ready to connect"
+fi
