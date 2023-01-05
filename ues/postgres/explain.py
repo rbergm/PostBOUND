@@ -227,7 +227,8 @@ class PlanNode:
 
         print("\n".join([node_label, sep, join_cond, filter_cond, sep, in_rows, filter_rows, out_rows, sep, runtime]))
 
-    def pretty_print(self, *, include_filter: bool = False, include_exec_time: bool = False, _indent: int = 0):
+    def pretty_print(self, *, as_string: bool = False, include_filter: bool = False, include_exec_time: bool = False,
+                     _indent: int = 0) -> Union[str, None]:
         indent_str = " " * _indent
         if _indent:
             indent_str += "<- "
@@ -259,7 +260,7 @@ class PlanNode:
             child_labels.append(child.pretty_print(include_filter=include_filter, include_exec_time=include_exec_time,
                                                    _indent=_indent+2))
         child_content = "".join(child_labels)
-        if _indent:
+        if _indent or as_string:
             return node_label + child_content
         else:
             print(node_label + child_content)
