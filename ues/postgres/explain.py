@@ -587,8 +587,9 @@ class FilterEstimationAccuracy:
 
 
 def evaluate_filter_estimate_accuracy(query: mosp.MospQuery, *,
-                                      dbs: db.DBSchema = db.DBSchema.get_instance()
+                                      dbs: db.DBSchema = None
                                       ) -> Dict[db.TableRef, FilterEstimationAccuracy]:
+    dbs = db.DBSchema.get_instance() if dbs is None else dbs
     estimation_evaluations = {}
     for table, predicate in query.predicates().filters.contents().items():
         pg_estimate = predicate.estimate_result_rows(dbs=dbs)

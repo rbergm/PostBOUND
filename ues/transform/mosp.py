@@ -140,11 +140,12 @@ class MospQuery:
         join_separator = " " if short else " ⋈ "
         return join_separator.join(path)
 
-    def count_result_tuples(self) -> int:
+    def count_result_tuples(self, dbs: db.DBSchema = None) -> int:
+        dbs = db.DBSchema.get_instance() if dbs is None else dbs
         count_query = dict(self.query)
         count_query["select"] = {"value": {"count": "*"}}
         query_str = mosp.format(count_query)
-        n_tuples = db.DBSchema.get_instance().execute_query(query_str)
+        n_tuples = dbs.execute_query(query_str)
         return n_tuples
 
     def _build_alias_map(self) -> Dict[str, db.TableRef]:
@@ -562,7 +563,8 @@ class AbstractMospPredicate(abc.ABC):
         return NotImplemented
 
     def estimate_result_rows(self, *, sampling: bool = False, sampling_pct: int = 25,
-                             dbs: db.DBSchema = db.DBSchema.get_instance()) -> int:
+                             dbs: db.DBSchema = None) -> int:
+        dbs = db.DBSchema.get_instance() if dbs is None else dbs
         tables = self.collect_tables()
         if util.contains_multiple(tables):
             raise ValueError("Can only estimate filters with a single table")
