@@ -1,13 +1,14 @@
-#!/bin/sh
+#!/bin/bash
 
-if [ "$THESIS_PG_ENV_LOADED" != "true" ] || [ "$1" = "--force" ] ; then
-	export THESIS_PG_ENV_LOADED="true"
+WD=$(pwd)
+cd postgres-server
+PG_CTL_PATH="$(pwd)/build/bin"
+INIT=$(echo "$PATH" | grep "$PG_CTL_PATH")
 
-	WD=$(pwd)
-	cd postgres-server
-
-	export PATH="$(pwd)/build/bin:$PATH"
+if [ -z $INIT ] ; then
+	export PG_CTL_PATH
+	export PATH="$PG_CTL_PATH:$PATH"
 	export LD_LIBRARY_PATH="$(pwd)/build/lib:$LD_LIBRARY_PATH"
-
-	cd $WD
 fi
+
+cd $WD
