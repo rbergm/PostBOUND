@@ -6,4 +6,5 @@ if [ $# -lt 2 ] || [ "$1" = "--help" ] ; then
 fi
 
 touch .psycopg_connection_$1
+USER=$(whoami)
 echo "dbname=$2 user=$USER host=localhost" >> .psycopg_connection_$1

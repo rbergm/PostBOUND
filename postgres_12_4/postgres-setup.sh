@@ -1,6 +1,7 @@
 #!/bin/bash
 
 WD=$(pwd)
+USER=$(whoami)
 
 echo ".. Cloning Postgres 12.4"
 git clone --depth 1 --branch REL_12_4 https://github.com/postgres/postgres.git postgres-server
