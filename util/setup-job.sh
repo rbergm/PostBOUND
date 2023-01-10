@@ -9,7 +9,9 @@ else
     IMDB_DIR="$1"
 fi
 
-if psql -l | grep "$DB_NAME" | wc -l ; then
+EXISTS=$(psql -l | grep "$DB_NAME")
+
+if [ ! -z "$EXISTS" ] ; then
     echo ".. IMDB exists, doing nothing"
     exit 0
 fi
