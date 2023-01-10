@@ -1,10 +1,17 @@
 #!/bin/bash
 
 PWD=$(pwd)
+DB_NAME="imdb"
+
 if [ -z "$1" ] ; then
     IMDB_DIR="../imdb_data"
 else
     IMDB_DIR="$1"
+fi
+
+if psql -l | grep "$DB_NAME" | wc -l ; then
+    echo ".. IMDB exists, doing nothing"
+    exit 0
 fi
 
 echo ".. IMDB source directory is $IMDB_DIR"
@@ -25,7 +32,7 @@ else
 fi
 
 echo ".. Creating IMDB database schema"
-createdb imdb
+createdb $DB_NAME
 psql imdb -f $IMDB_DIR/create.sql
 
 echo ".. Inserting IMDB data into database"
