@@ -194,7 +194,10 @@ def execute_query(query, workload_prefix: str, cursor: "psycopg2.cursor", *, rep
 
     raw_res = cursor.fetchall()
     if len(raw_res) == 1:
+        # in the simplest form, fetchall returns a result like [(42,)] for scalar-like values. We need to unwrap this.
         query_res = raw_res[0]
+        if isinstance(query_res, tuple) and len(query_res) == 1:
+            query_res = query_res[0]
         complex_type = isinstance(query_res, dict) or isinstance(query_res, list)
         multiple_attrs = isinstance(query_res, tuple) and len(query_res) > 1
         if complex_type or multiple_attrs:
