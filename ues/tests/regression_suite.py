@@ -7,7 +7,8 @@ from typing import Any, List, Tuple
 from typing import Dict
 
 
-def __load_workload(path: str, source_pattern: str) -> Dict[str, str]:
+def __load_workload(path: str, source_pattern: str, *,
+                    label_prefix: str = "") -> Dict[str, str]:
     root = pathlib.Path(path)
     workload_files = list(root.glob(source_pattern))
     queries = {}
@@ -15,7 +16,7 @@ def __load_workload(path: str, source_pattern: str) -> Dict[str, str]:
         with open(query_file, "r", encoding="utf-8") as raw_query:
             lines = raw_query.readlines()
             query = "\n".join(line.strip() for line in lines)
-            queries[query_file.stem] = query
+            queries[label_prefix + query_file.stem] = query
     return queries
 
 
@@ -32,7 +33,9 @@ def load_stack_workload(path: str = "../../workloads/Stack-Queries", source_patt
     stack_directory = pathlib.Path(path)
     workload = dict()
     for workload_dir in stack_directory.glob("*/**"):
-        for label, query in __load_workload(workload_dir, source_pattern).items():
+        sub_workload = __load_workload(str(workload_dir), source_pattern,
+                                       label_prefix=str(workload_dir.name) + "/")
+        for label, query in sub_workload.items():
             workload[label] = query
     return workload
 
