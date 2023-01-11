@@ -64,7 +64,8 @@ class MospQueryPreparation:
         """
         reconstructed_query = dict(optimized_query.query)
 
-        reconstructed_query["select"] = copy.copy(self._original_query.query["select"])
+        select_key = "select_distinct" if "select_distinct" in self._original_query.query else "select"
+        reconstructed_query[select_key] = copy.copy(self._original_query.query[select_key])
         if "groupby" in self._original_query.query:
             reconstructed_query["groupby"] = copy.copy(self._original_query.query["groupby"])
         if "orderby" in self._original_query.query:
@@ -139,7 +140,8 @@ class MospQueryPreparation:
         if not self._generated_aliases:
             return query_data
 
-        original_select = copy.copy(self._original_query.query["select"])
+        select_key = "select_distinct" if "select_distinct" in self._original_query.query else "select"
+        original_select = copy.copy(self._original_query.query[select_key])
         for attribute in util.enlist(original_select):
             if "name" in attribute:
                 self._custom_attribute_names.append(attribute["name"])
@@ -162,6 +164,11 @@ class MospQueryPreparation:
         if isinstance(predicate, list):
             return [self._add_aliases_to_attributes(sub_predicate) for sub_predicate in predicate]
         elif isinstance(predicate, dict):
+            if "select" in predicate or not predicate:  # FIXME
+                # If the predicate contains a `select` key, it is actually a hidden subquery. These are
+                # The `not predicate` condition is necessary to catch corner-cases with attribute casts since they
+                # are parsed weirdly by mo_sql_parsing (e.g. as `{"date": {}}` when casting to date)
+                return predicate
             operation = util.dict_key(predicate)
             if operation == "literal":
                 return predicate
@@ -1317,10 +1324,10 @@ class _TableBoundStatistics(abc.ABC, Generic[_T]):
         self._joined_tables.add(joined_table)
 
     def base_bounds(self) -> Dict[db.TableRef, int]:
-        return {tab: bound for tab, bound in self.upper_bounds.items() if isinstance(tab, db.TableRef)}
+        return {tab: bound for (tab, bound) in self.upper_bounds.items() if isinstance(tab, db.TableRef)}
 
     def join_bounds(self) -> Dict["JoinTree", int]:
-        return {join: bound for join, bound in self.upper_bounds.items() if isinstance(join, JoinTree)}
+        return {join: bound for (join, bound) in self.upper_bounds.items() if isinstance(join, JoinTree)}
 
     def _init_base_estimates(self) -> None:
         predicate_map = self._query.predicates().filters
