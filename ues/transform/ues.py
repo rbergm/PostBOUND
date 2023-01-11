@@ -20,6 +20,34 @@ _T = typing.TypeVar("_T")
 DEFAULT_TOPK_LENGTH = 15
 
 
+class UnsupportedUESQueryError(RuntimeError):
+    def __init__(self, query: mosp.MospQuery, message: str = ""):
+        message = message if message else f"Query {query} cannot be optimized by UES"
+        self.query = query
+        super().__init__(message)
+
+
+def assert_ues_optimizable(query: mosp.MospQuery) -> None:
+    # ensure there are no subqueries in the FROM clause - these correspond to "hidden" joins
+    def _assert_no_subqueries(predicate):
+        if not predicate:
+            return True
+        if isinstance(predicate, dict):
+            if "select" in predicate:
+                return False
+            return _assert_no_subqueries(util.dict_value(predicate))
+        if isinstance(predicate, list):
+            return all(_assert_no_subqueries(sub_pred) for sub_pred in predicate)
+        return True
+
+    max_query_len = 128
+
+    if not _assert_no_subqueries(query.query["where"]):
+        query_str = str(query)
+        query = query_str[:max_query_len] + "..." if len(query_str) > max_query_len + 3 else query_str
+        raise UnsupportedUESQueryError(query, f"Query '{query}' contains subqueries in the WHERE clause")
+
+
 class MospQueryPreparation:
     """Removes unsupported structures from an incoming query and reconstructs the query after optimization.
 
@@ -2253,6 +2281,7 @@ def optimize_query(query: mosp.MospQuery, *,
                    verbose: bool = False, trace: bool = False,
                    introspective: bool = False) -> Union[mosp.MospQuery, OptimizationResult]:
 
+    assert_ues_optimizable(query)
     logger = util.make_logger(verbose or trace)
 
     # if there are no joins in the query, there is nothing to do
