@@ -137,11 +137,11 @@ median_true_card <- true_cards %>% summarise(med = median(query_result)) %>% pul
 
 pdf("evaluation/plot-job-upper-bounds.pdf", width = 8, height = 5)
 ggplot(median_topk_bounds, aes(x = setting, y = median_upper_bound, color = estimator, group = estimator, linetype = estimator)) +
-  geom_point() +
-  geom_line() +
-  geom_hline(aes(yintercept = median_ues_bound, colour = "UES", linetype = "UES")) +
+  geom_point(size = 2) +
+  geom_line(size = 1.2) +
+  geom_hline(aes(yintercept = median_ues_bound, colour = "UES", linetype = "UES"), size = 1.2) +
   scale_y_log10() +
-  scale_color_viridis(option = "cividis", discrete = TRUE, end = 0.95) +
+  scale_color_viridis(option = "cividis", discrete = TRUE, begin = 0.2, end = 0.95) +
   labs(x = "Workload", y = "Median upper bound", color = "Bound formula", linetype = "Bound formula", fill = "Bound formula") +
   theme_bw() +
   theme(text= element_text(size = 20), axis.text.x = element_text(angle = 25, hjust = 1))
@@ -171,9 +171,9 @@ topk_optimization_time <- df_topk %>%
 
 pdf("evaluation/plot-job-optimization-time.pdf", width = 8, height = 5)
 ggplot(topk_optimization_time, aes(x = setting, y = optimization_time, group = estimator, color = estimator, linetype = estimator)) +
-  geom_point() +
-  geom_line() +
-  geom_hline(aes(yintercept = ues_optimization_time, linetype = "UES", colour = "UES")) +
+  geom_point(size = 2) +
+  geom_line(size = 1.2) +
+  geom_hline(aes(yintercept = ues_optimization_time, linetype = "UES", colour = "UES"), size = 1.2) +
   scale_color_viridis(option = "cividis", discrete = TRUE, end = 0.95) +
   labs(x = "Workload", y = "Optimization time [in sec.]", color = "Bound formula", linetype = "Bound formula") +
   theme_bw() +
