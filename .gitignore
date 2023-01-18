@@ -163,6 +163,7 @@ cython_debug/
 
 # Python venv
 dt-venv/
+postbound-venv/
 .psycopg_connection
 .psycopg_connection_job
 .psycopg_connection_tpch
