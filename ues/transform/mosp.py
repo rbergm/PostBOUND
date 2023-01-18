@@ -142,11 +142,16 @@ class MospQuery:
 
     def count_result_tuples(self, dbs: db.DBSchema = None) -> int:
         dbs = db.DBSchema.get_instance() if dbs is None else dbs
-        count_query = dict(self.query)
-        count_query["select"] = {"value": {"count": "*"}}
+        count_query = self.as_count_star().query
         query_str = mosp.format(count_query)
         n_tuples = dbs.execute_query(query_str)
         return n_tuples
+
+    def as_count_star(self) -> "MospQuery":
+        """Returns a new query based on this query, that counts all tuples instead of the normal projection."""
+        count_query = dict(self.query)
+        count_query["select"] = {"value": {"count": "*"}}
+        return MospQuery(count_query)
 
     def extract_fragment(self, tables: List[db.TableRef]) -> "MospQuery":
         """
