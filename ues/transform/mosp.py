@@ -148,6 +148,38 @@ class MospQuery:
         n_tuples = dbs.execute_query(query_str)
         return n_tuples
 
+    def extract_fragment(self, tables: List[db.TableRef]) -> "MospQuery":
+        """
+        Generates a new query that contains exactly those parts of the original query that touched the given tables.
+
+        The fragment includes tables in the FROM clause, as well as filter and join predicates that are completely
+        contained in the given tables.
+
+        As of now, the fragment will always be of the form SELECT * FROM ... WHERE ... and "advanced" features such as
+        groupings are not retained.
+        """
+        tables = util.enlist(tables)
+        fragment_data = {"select": "*"}
+        fragment_data["from"] = util.simplify([{"value": tab.full_name, "name": tab.alias}
+                                               for tab in self.collect_tables() if tab in tables])
+
+        predicate_map = self.predicates(include_where_clause=True, include_join_on=True, recurse_subqueries=True)
+        where_clause = []
+        for filter_pred in predicate_map.filters:
+            if any(filter_pred.contains_table(tab) for tab in tables):
+                where_clause.append(filter_pred.mosp_data)
+        for join_pred in predicate_map.joins:
+            first_table, second_table = join_pred.collect_tables()
+            if first_table in tables and second_table in tables:
+                where_clause.append(join_pred.mosp_data)
+
+        if len(where_clause) > 1:
+            fragment_data["where"] = {"and": where_clause}
+        elif len(where_clause) == 1:
+            fragment_data["where"] = where_clause[0]
+
+        return MospQuery(fragment_data)
+
     def _build_alias_map(self) -> Dict[str, db.TableRef]:
         if self.alias_map:
             return self.alias_map
@@ -315,7 +347,7 @@ class MospFilterMap(collections.abc.Mapping):
 class MospJoinMap(collections.abc.Mapping):
     def __init__(self, join_predicates: List["AbstractMospPredicate"], *, alias_map: dict = None):
         self._predicates = join_predicates
-        self._join_by_tables = collections.defaultdict(list)
+        self._join_by_tables: Dict[db.TableRef, List[AbstractMospPredicate]] = collections.defaultdict(list)
         self._denormalized_join_by_tables = collections.defaultdict(lambda: collections.defaultdict(list))
 
         for join_predicate in join_predicates:
@@ -334,6 +366,9 @@ class MospJoinMap(collections.abc.Mapping):
 
     def as_and_clause(self) -> "AbstractMospPredicate":
         return MospCompoundPredicate.merge_and(self._merged_joins)
+
+    def joins_tables(self, first: db.TableRef, second: db.TableRef) -> bool:
+        return second in self._denormalized_join_by_tables[first]
 
     def __len__(self) -> int:
         return len(self._merged_joins)
@@ -531,9 +566,13 @@ class AbstractMospPredicate(abc.ABC):
         """Parses the operation associated with this predicate into the equivalent SQL operation."""
         return NotImplemented
 
+    def contains_table(self, table: db.TableRef) -> bool:
+        """Checks, whether this predicate filters or joins an attribute of the given table."""
+        return any(table == tab for tab in self.collect_tables())
+
     def joins_table(self, table: db.TableRef) -> bool:
         """Checks, whether this predicate describes a join and one of the join partners is the given table."""
-        return self.is_join() and table in {attribute.table for attribute in self.collect_attributes()}
+        return self.is_join() and self.contains_table(table)
 
     def attribute_of(self, table: db.TableRef) -> Union[db.AttributeRef, Set[db.AttributeRef]]:
         """Retrieves all attributes of the given table."""
