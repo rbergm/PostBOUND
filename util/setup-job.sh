@@ -2,18 +2,49 @@
 
 PWD=$(pwd)
 DB_NAME="imdb"
+FORCE_CREATION="false"
+IMDB_DIR="../imdb_data"
 
-if [ -z "$1" ] ; then
-    IMDB_DIR="../imdb_data"
-else
-    IMDB_DIR="$1"
-fi
+show_help() {
+    echo "Usage: $0 <options>"
+    echo "Allowed options:"
+    echo "-d | --dir <directory> specifies the directory to store/load the IMDB data files, defaults to '../imdb_data'"
+    echo "-f | --force delete existing instance of the database if necessary"
+    echo "-t | --target <db name> name of the IMDB database, defaults to 'imdb'"
+    exit 1
+}
 
-EXISTS=$(psql -l | grep "$DB_NAME")
+while [ $# -gt 0 ] ; do
+    case $1 in
+        -d|--dir)
+            IMDB_DIR=$2
+            shift
+            shift
+            ;;
+        -f|--force)
+            FORCE_CREATION="true"
+            shift
+            ;;
+        -t|--target)
+            DB_NAME=$2
+            shift
+            shift
+            ;;
+        *)
+            show_help
+            ;;
+    esac
+done
 
-if [ ! -z "$EXISTS" ] ; then
+EXISTING_DBS=$(psql -l | grep "$DB_NAME")
+
+if [ ! -z "$EXISTING_DBS" ] && [ $FORCE_CREATION = "false" ] ; then
     echo ".. IMDB exists, doing nothing"
     exit 0
+fi
+
+if [ ! -z "$EXISTING_DBS" ] ; then
+    dropdb $DB_NAME
 fi
 
 echo ".. IMDB source directory is $IMDB_DIR"
