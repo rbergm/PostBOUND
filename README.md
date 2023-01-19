@@ -1,3 +1,10 @@
+# PostBOUND &#128119;
+
+_PostBOUND is currently undergoing a major refactoring. Part of this is creating new and more meaningful README. Below
+you can find the original README for reference. To check out the current progress, take a look at the
+`quality/grand-refactor` branch._
+
+
 # Simplicity++
 
 This repository modifies and extends the UES algorithm for upper bound-based join ordering of SQL queries, which was
