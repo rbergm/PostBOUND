@@ -1,9 +1,0 @@
--- Force the join order
-SET join_collapse_limit = 1;
-
--- Disable NLJ
-SET enable_nestloop = 'off';
-
--- Disable other "bad" operators
-SET enable_memoize = 'off';
-
