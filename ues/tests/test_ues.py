@@ -28,14 +28,14 @@ class BeningQueryOptimizationTests(unittest.TestCase):
         return super().setUp()
 
     def test_base_query(self):
-        dbs = db.DBSchema.get_instance(renew=True)
+        dbs = db.DBSchema.get_instance(postgres_config_file=".psycopg_connection_job", renew=True)
         query = mosp.MospQuery.parse(job_workload["1a"])
         optimized = ues.optimize_query(query, dbs=dbs, trace=self.trace_enabled)  # noqa: F841
 
 
 class JobWorkloadOptimizationTests(unittest.TestCase):
     def test_workload(self):
-        dbs = db.DBSchema.get_instance(renew=True)
+        dbs = db.DBSchema.get_instance(postgres_config_file=".psycopg_connection_job", renew=True)
         for label, query in job_workload.items():
             try:
                 parsed = mosp.MospQuery.parse(query)
@@ -90,21 +90,21 @@ class StackWorkloadOptimizationTests(unittest.TestCase):
 
     def test_example(self):
         dbs = db.DBSchema.get_instance(postgres_config_file=".psycopg_connection_stack", renew=True)
-        query = stack_workload["0a1a5fb7566117b53a634966e1255aa8c127fff8"]
+        query = stack_workload["q3/q3-024"]
         parsed = mosp.MospQuery.parse(query)
         optimized = ues.optimize_query(parsed, trace=self.trace_enabled, dbs=dbs)   # noqa: F841
 
 
 class SnowflakeQueryOptimizationTests(unittest.TestCase):
     def test_base_query(self):
-        dbs = db.DBSchema.get_instance(renew=True)
+        dbs = db.DBSchema.get_instance(postgres_config_file=".psycopg_connection_job", renew=True)
         query = mosp.MospQuery.parse(job_workload["32a"])
         optimized = ues.optimize_query(query, dbs=dbs)  # noqa: F841
 
 
 class CrossProductQueryOptimizationTests(unittest.TestCase):
     def test_base_query(self):
-        dbs = db.DBSchema.get_instance(renew=True)
+        dbs = db.DBSchema.get_instance(postgres_config_file=".psycopg_connection_job", renew=True)
         raw_query = """SELECT * FROM info_type it, company_type ct
                        WHERE it.info = 'top 250 rank' AND ct.kind = 'production companies'"""
         query = mosp.MospQuery.parse(raw_query)
@@ -116,7 +116,7 @@ class CrossProductQueryOptimizationTests(unittest.TestCase):
 
 class WeirdQueriesOptimizationTests(unittest.TestCase):
     def test_no_joins_query(self):
-        dbs = db.DBSchema.get_instance(renew=True)
+        dbs = db.DBSchema.get_instance(postgres_config_file=".psycopg_connection_job", renew=True)
         raw_query = "SELECT * FROM company_type ct WHERE ct.kind = 'production companies'"
         query = mosp.MospQuery.parse(raw_query)
         optimized_query = ues.optimize_query(query, dbs=dbs)  # noqa: F841
@@ -124,7 +124,7 @@ class WeirdQueriesOptimizationTests(unittest.TestCase):
 
 class CompoundJoinPredicateOptimizationTests(unittest.TestCase):
     def test_base_query(self):
-        dbs = db.DBSchema.get_instance(renew=True)
+        dbs = db.DBSchema.get_instance(postgres_config_file=".psycopg_connection_job", renew=True)
         raw_query = r"""
             SELECT COUNT(*)
             FROM company_type AS ct,
@@ -147,13 +147,15 @@ class CompoundJoinPredicateOptimizationTests(unittest.TestCase):
 
 class BoundsTrackerTests(unittest.TestCase):
     def test_json_serialization(self):
+        dbs = db.DBSchema.get_instance(postgres_config_file=".psycopg_connection_job", renew=True)
         query = mosp.MospQuery.parse(job_workload["1a"])
-        optimized: ues.OptimizationResult = ues.optimize_query(query, introspective=True)
+        optimized: ues.OptimizationResult = ues.optimize_query(query, introspective=True, dbs=dbs)
         jsonized = util.to_json(optimized.bounds)  # noqa: F841
 
     def test_no_gaps(self):
+        dbs = db.DBSchema.get_instance(postgres_config_file=".psycopg_connection_job", renew=True)
         query = mosp.MospQuery.parse(job_workload["1a"])
-        optimized: ues.OptimizationResult = ues.optimize_query(query, introspective=True)
+        optimized: ues.OptimizationResult = ues.optimize_query(query, introspective=True, dbs=dbs)
         optimized_query, bounds = optimized.query, optimized.bounds
 
         current_join_path = [optimized_query.base_table()]
