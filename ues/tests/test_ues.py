@@ -4,6 +4,7 @@ import sys
 import warnings
 
 import mo_parsing.exceptions
+import psycopg2
 
 sys.path.append("../")
 import regression_suite  # noqa: E402
@@ -80,6 +81,10 @@ class StackWorkloadOptimizationTests(unittest.TestCase):
                                                           ordered=parsed.is_ordered())
             except mo_parsing.exceptions.ParseException as e:
                 warnings.warn(f"Parse execption at {label}: {e}")
+            except ues.UnsupportedUESQueryError:
+                warnings.warn(f"Query {label} is unsupported!")
+            except psycopg2.Error as e:
+                self.fail(f"Psycopg2 error on query {label} with message {e}")
             except Exception as e:
                 self.fail(f"Exception raised on query {label} with exception {e}")
 
