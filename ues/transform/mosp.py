@@ -296,8 +296,10 @@ _OperationPrinting = {
     "eq": "=",
     "lt": "<",
     "le": "<=",
+    "lte": "<=",
     "gt": ">",
     "ge": ">=",
+    "gte": ">=",
     "like": "LIKE",
     "not_like": "NOT LIKE",
     "or": "OR",
@@ -811,8 +813,9 @@ class MospBasePredicate(AbstractMospPredicate):
             # if we received an alias map, we can actually parse the attributes
             left_table_alias, left_attribute = self._break_attribute(self.mosp_left)
             self.left_attribute = db.AttributeRef(alias_map[left_table_alias], left_attribute)
-            if self._right_is_attribute():
-                right_table_alias, right_attribute = self._break_attribute(self.mosp_right)
+            right_attr = self._extract_right_attribute()
+            if right_attr:
+                right_table_alias, right_attribute = self._break_attribute(right_attr)
                 self.right_attribute = db.AttributeRef(alias_map[right_table_alias], right_attribute)
             else:
                 self.right_attribute = None
@@ -894,16 +897,23 @@ class MospBasePredicate(AbstractMospPredicate):
     def _break_attribute(self, raw_attribute: str) -> Tuple[str, str]:
         return raw_attribute.split(".")
 
-    def _right_is_attribute(self) -> bool:
-        # Just to make sure we are making the right decision, this test is a little more verbose than necessary.
-        # Theoretically, applying only the last check should suffice. However, some weird cases might fail the test:
-        # the predicate a.value IN (b.value, 42) will fail the test. But in such a case, the correct decision is up to
-        # debate anyway and such query structures are currently also unsupported by our framework.
-        if not self.mosp_right:
+    def _extract_right_attribute(self, _current_attr = None) -> Union[str, None]:
+        _current_attr = self.mosp_right if not _current_attr else _current_attr
+        if not _current_attr:
             return False
-        if self.operation == "exists" or self.operation == "missing":
-            return False
-        return isinstance(self.mosp_right, str)
+
+        if isinstance(_current_attr, dict):
+            if "literal" in _current_attr:
+                return None
+            op = util.dict_key(_current_attr)
+            if op in ["exists", "missing"]:
+                return False
+            return self._extract_right_attribute(_current_attr=_current_attr[op])
+        elif isinstance(_current_attr, list):
+            return self._extract_right_attribute(_current_attr=util.head(_current_attr))
+        elif isinstance(_current_attr, str):
+            return _current_attr
+
 
     def _unwrap_literal(self):
         if not isinstance(self.mosp_right, dict) or "literal" not in self.mosp_right:

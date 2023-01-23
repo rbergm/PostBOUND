@@ -26,26 +26,38 @@ class UnsupportedUESQueryError(RuntimeError):
         self.query = query
         super().__init__(message)
 
-
-def assert_ues_optimizable(query: mosp.MospQuery) -> None:
-    # ensure there are no subqueries in the FROM clause - these correspond to "hidden" joins
-    def _assert_no_subqueries(predicate):
-        if not predicate:
-            return True
-        if isinstance(predicate, dict):
-            if "select" in predicate:
-                return False
-            return _assert_no_subqueries(util.dict_value(predicate))
-        if isinstance(predicate, list):
-            return all(_assert_no_subqueries(sub_pred) for sub_pred in predicate)
+# ensure there are no subqueries in the FROM clause - these correspond to "hidden" joins
+def _assert_no_subqueries(predicate: Any):
+    if not predicate:
         return True
+    if isinstance(predicate, dict):
+        if "select" in predicate:
+            return False
+        return _assert_no_subqueries(util.dict_value(predicate))
+    if isinstance(predicate, list):
+        return all(_assert_no_subqueries(sub_pred) for sub_pred in predicate)
+    return True
 
+# ensure there are only equi-joins. Others are not supported by the UES formulas
+def _assert_only_eq_join(predicates: mosp.MospPredicateMap):
+    for join_pred in predicates.joins:
+        for base_pred in join_pred.base_predicates():
+            if base_pred.operation != "eq":
+                return False
+    return True
+
+
+def assert_ues_optimizable(query: mosp.MospQuery, *, prepared_query: bool = False) -> None:
     max_query_len = 128
+    query_str = str(query)
+    query_str = query_str[:max_query_len] + "..." if len(query_str) > max_query_len + 3 else query_str
 
-    if not _assert_no_subqueries(query.query["where"]):
-        query_str = str(query)
-        query = query_str[:max_query_len] + "..." if len(query_str) > max_query_len + 3 else query_str
-        raise UnsupportedUESQueryError(query, f"Query '{query}' contains subqueries in the WHERE clause")
+    if not prepared_query:
+        if not _assert_no_subqueries(query.query["where"]):
+            raise UnsupportedUESQueryError(query, f"Query '{query_str}' contains subqueries in the WHERE clause")
+    elif prepared_query:
+        if not _assert_only_eq_join(query.predicates(include_where_clause=True, include_join_on=True, recurse_subqueries=True)):
+            raise UnsupportedUESQueryError(query, f"Query '{query_str}' contains non-equi-join predicates")
 
 
 class MospQueryPreparation:
@@ -2300,6 +2312,7 @@ def optimize_query(query: mosp.MospQuery, *,
     logger("Input query:", query)
     query_preparation = MospQueryPreparation(query, dbs=dbs)
     prepared_query = query_preparation.prepare_query()
+    assert_ues_optimizable(prepared_query, prepared_query=True)
 
     if table_cardinality_estimation == "sample":
         base_estimator = SamplingCardinalityEstimator(base_table_filter_sampling_pct)
