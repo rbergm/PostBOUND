@@ -1,51 +1,59 @@
 
+import collections
 import pathlib
-from typing import Dict, List, Tuple, Union
+from typing import Dict, List
 
-from transform import mosp
+from transform import mosp, util
 
 
-class Workload:
-    def __init__(self, root_dir: str, query_file_pattern: str = "*.sql", *, name: str = ""):
-        self._queries: Dict[str, str] = {}
-        self._root = pathlib.Path(root_dir)
-        self._query_pattern = query_file_pattern
-        self._name = name
+class Workload(collections.UserDict):
+    @staticmethod
+    def read(root_dir: str, *, query_file_pattern: str = "*.sql", name: str = "", label_prefix: str = "") -> "Workload":
+        queries: Dict[str, str] = {}
+        root = pathlib.Path(root_dir)
 
-        for query_file_path in self._root.glob(query_file_pattern):
+        for query_file_path in root.glob(query_file_pattern):
             with open(query_file_path, "r", encoding="utf-8") as query_file:
                 raw_contents = query_file.readlines()
-            query_contents = " ".join([line for line in raw_contents if not line.startswith("--")])
+            query_contents = "\n".join([line for line in raw_contents])
             parsed_query = mosp.MospQuery.parse(query_contents)
             query_label = query_file_path.stem
-            self._queries[query_label] = parsed_query
+            queries[label_prefix + query_label] = parsed_query
+
+        return Workload(queries, name=name, root=root)
+
+    def __init__(self, queries: Dict[str, str], name: str = "", root: pathlib.Path = None):
+        super().__init__(queries)
+        self._name = name
+        self._root = root
 
     def queries(self) -> List[mosp.MospQuery]:
-        return list(self._queries.values())
-
-    def items(self) -> List[Tuple[str, mosp.MospQuery]]:
-        return [(label, query) for label, query in self._queries.items()]
-
-    def contents(self) -> Dict[str, mosp.MospQuery]:
-        return dict(self._queries)
-
-    def labels(self) -> List[str]:
-        return list(self._queries.keys())
-
-    def __getitem__(self, key: str) -> Union[None, mosp.MospQuery]:
-        return self._queries.get(key, None)
+        return list(self.data.values())
 
     def __repr__(self) -> str:
         return str(self)
 
     def __str__(self) -> str:
         name = self._name if self._name else self._root.stem
-        return f"Workload: {name} ({len(self._queries)} queries)"
+        return f"Workload: {name} ({len(self)} queries)"
 
 
 def job() -> Workload:
-    return Workload("../workloads/JOB-Queries/implicit", name="JOB")
+    return Workload.read("../workloads/JOB-Queries/implicit", name="JOB")
 
 
 def ssb() -> Workload:
-    return Workload("../workloads/SSB-Queries", name="SSB")
+    return Workload.read("../workloads/SSB-Queries", name="SSB")
+
+def stack() -> Workload:
+    stack_root = pathlib.Path("../workloads/Stack-Queries")
+    merged_queries = {}
+    for query_container in stack_root.iterdir():
+        if not query_container.is_dir():
+            continue
+        print("... Reading", query_container.stem)
+        sub_workload = Workload.read(str(query_container), label_prefix=query_container.stem + "/")
+        print("... Merging")
+        merged_queries = util.dict_merge(merged_queries, sub_workload.data)
+    merged_workload = Workload(merged_queries, "Stack", stack_root)
+    return merged_workload

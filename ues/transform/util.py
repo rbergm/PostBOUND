@@ -67,7 +67,9 @@ def dict_merge(a: Dict[_K, _V], b: Dict[_K, _V], *, update: Callable[[_K, _V, _V
     If `update` is given, and `a[k] = v` and `b[k] = v'` (i.e. both `a` and `b` share a key `k`) the merged dictionary
     will contain the result of `update(k, v, v')` as entry for `k`.
 
-    Note that as of Python 3.9, such a method was added to dictionaries as well (via the `|=` syntax).
+    Note that as of Python 3.9, such a method was added to dictionaries as well (via the `|=` syntax). Our current
+    implementation is not optimized for larger dictionaries and will probably have a pretty bad performance on such
+    input data.
     """
     if not update:
         return dict([*a.items()] + [*b.items()])
