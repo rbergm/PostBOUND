@@ -233,6 +233,12 @@ class MospQueryPreparation:
                 projection_target = projection["value"]
                 aliased_projection["value"] = self._add_aliases_to_clause(projection_target)
                 return aliased_projection
+            elif "count" in projection:
+                # special handler for SELECT COUNT(DISTINCT foo.bar) which is parsed as {"value": {"distinct": True, "count": "foo.bar"}}
+                aliased_projection = dict(projection)
+                projection_target = projection["count"]
+                aliased_projection = self._add_aliases_to_clause(projection_target)
+                return aliased_projection
             else:
                 operation = util.dict_key(projection)
                 projection_target = projection[operation]
