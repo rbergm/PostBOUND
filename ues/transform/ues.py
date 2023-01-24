@@ -948,6 +948,8 @@ class JoinGraph:
         """
         self.graph.nodes[table]["free"] = False
 
+        # TODO: the fact whether the current join is an n:m join or not should be inferred from the current state of the join
+        # graph and should not be provided by the caller
         if n_m_join:
             self._invalidate_pk_joins(trace=trace)
 
@@ -1970,9 +1972,10 @@ def _calculate_join_order_for_join_partition(query: mosp.MospQuery, join_graph: 
             join_tree = join_tree.with_base_table(lowest_bound_table)
             join_graph.mark_joined(lowest_bound_table, trace=trace)
 
-            pk_joins = sorted([_DirectedJoinEdge(partner=partner, predicate=predicate) for partner, predicate
-                               in join_graph.free_pk_joins_with(lowest_bound_table).items()],
-                              key=lambda fk_join_view: stats.base_table_estimates[fk_join_view.partner])
+            pk_joins: Iterable[_DirectedJoinEdge] = sorted([_DirectedJoinEdge(partner=partner, predicate=predicate)
+                                                            for partner, predicate
+                                                            in join_graph.free_pk_joins_with(lowest_bound_table).items()],
+                                                           key=lambda fk_join_view: stats.base_table_estimates[fk_join_view.partner])
             logger("Selected first table:", lowest_bound_table, "with PK/FK joins",
                    [pk_table.partner for pk_table in pk_joins])
 
@@ -1984,7 +1987,7 @@ def _calculate_join_order_for_join_partition(query: mosp.MospQuery, join_graph: 
             for pk_join in pk_joins:
                 trace_logger(".. Adding PK join with", pk_join.partner, "on", pk_join.predicate)
                 join_tree = join_tree.joined_with_base_table(pk_join.partner, predicate=pk_join.predicate)
-                join_graph.mark_joined(pk_join.partner, trace=trace)
+                join_graph.mark_joined(pk_join.partner, n_m_join=True, trace=trace)
                 bounds_tracker.store_bound(pk_join.partner,
                                            candidate_bound=stats.base_table_estimates[pk_join.partner],
                                            join_bound=lowest_min_bound, indexed_table=True)
@@ -2073,7 +2076,7 @@ def _calculate_join_order_for_join_partition(query: mosp.MospQuery, join_graph: 
             for pk_join in pk_joins:
                 trace_logger(".. Adding PK join with", pk_join.partner, "on", pk_join.predicate)
                 subquery_join = subquery_join.joined_with_base_table(pk_join.partner, predicate=pk_join.predicate)
-                join_graph.mark_joined(pk_join.partner, trace=trace)
+                join_graph.mark_joined(pk_join.partner, n_m_join=True, trace=trace)
                 subquery_bounds_tracker.store_bound(pk_join.partner,
                                                     candidate_bound=stats.base_table_estimates[pk_join.partner],
                                                     join_bound=stats.upper_bounds[selected_candidate],
@@ -2097,7 +2100,7 @@ def _calculate_join_order_for_join_partition(query: mosp.MospQuery, join_graph: 
             for pk_join in pk_joins:
                 trace_logger(".. Adding PK join with", pk_join.partner, "on", pk_join.predicate)
                 join_tree = join_tree.joined_with_base_table(pk_join.partner, predicate=pk_join.predicate)
-                join_graph.mark_joined(pk_join.partner, trace=trace)
+                join_graph.mark_joined(pk_join.partner, n_m_join=True, trace=trace)
                 bounds_tracker.store_bound(pk_join.partner,
                                            candidate_bound=stats.base_table_estimates[pk_join.partner],
                                            join_bound=stats.upper_bounds[selected_candidate], indexed_table=True)
