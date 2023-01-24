@@ -13,7 +13,7 @@ import sys
 import threading
 import typing
 import warnings
-from typing import List, Dict, Any, Iterable, Tuple, Union, Callable, IO
+from typing import List, Dict, Set, Any, Iterable, Tuple, Union, Callable, IO
 
 import numpy as np
 import psycopg2
@@ -172,6 +172,11 @@ def simplify(lst: List[_T]) -> Union[_T, List[_T]]:
     while (isinstance(lst, list) or isinstance(lst, tuple) or isinstance(lst, set)) and len(lst) == 1:
         lst = list(lst)[0]
     return lst
+
+
+def powerset(lst: Iterable[_T]) -> Iterable[Set[_T]]:
+    """Calculates the powerset of the provided iterable."""
+    return itertools.chain.from_iterable(itertools.combinations(lst, size) for size in range(len(lst) + 1))
 
 
 def represents_number(val: str) -> bool:
