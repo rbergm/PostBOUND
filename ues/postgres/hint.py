@@ -3,7 +3,7 @@ import collections
 import enum
 import math
 import pprint
-from typing import Any, Dict, FrozenSet, List, Callable, Union
+from typing import Any, Dict, FrozenSet, List, Callable, Iterable, Union
 
 import numpy as np
 
@@ -28,8 +28,12 @@ class QueryNode(enum.Enum):
         return self.value
 
 
-def _join_id(join: mosp.MospJoin) -> int:
-    return hash(frozenset(join.collect_tables()))
+def _join_id(join: Union[mosp.MospJoin, Iterable[db.TableRef]]) -> int:
+    if isinstance(join, mosp.MospJoin):
+        tables = join.collect_tables()
+    else:
+        tables = join
+    return hash(frozenset(sorted(tables)))
 
 
 class HintedMospQuery:
@@ -64,20 +68,23 @@ class HintedMospQuery:
         self.bounds_stats: Dict[FrozenSet[db.TableRef], Dict[str, int]] = dict()
         self.pg_parameters: Dict[str, Any] = dict()
 
-    def force_nestloop(self, join: mosp.MospJoin) -> None:
+    def force_nestloop(self, join: Union[mosp.MospJoin, Iterable[db.TableRef]]) -> None:
         jid = _join_id(join)
         self.join_hints[jid] = QueryNode.NestLoop
         self.join_contents[jid] = join
+        self._update_join_paths(jid, join)
 
-    def force_hashjoin(self, join: mosp.MospJoin) -> None:
+    def force_hashjoin(self, join: Union[mosp.MospJoin, Iterable[db.TableRef]]) -> None:
         jid = _join_id(join)
         self.join_hints[jid] = QueryNode.HashJoin
         self.join_contents[jid] = join
+        self._update_join_paths(jid, join)
 
-    def force_mergejoin(self, join: mosp.MospJoin) -> None:
+    def force_mergejoin(self, join: Union[mosp.MospJoin, Iterable[db.TableRef]]) -> None:
         jid = _join_id(join)
         self.join_hints[jid] = QueryNode.SortMergeJoin
         self.join_contents[jid] = join
+        self._update_join_paths(jid, join)
 
     def force_seqscan(self, table: db.TableRef) -> None:
         self.scan_hints[table] = QueryNode.SeqScan
@@ -86,10 +93,11 @@ class HintedMospQuery:
         # we can use an IndexOnlyScan here, b/c IndexOnlyScan falls back to IndexScan automatically if necessary
         self.scan_hints[table] = QueryNode.IndexOnlyScan
 
-    def set_upperbound(self, join: mosp.MospJoin, nrows: int) -> None:
+    def set_upperbound(self, join: Union[mosp.MospJoin, Iterable[db.TableRef]], nrows: int) -> None:
         jid = _join_id(join)
         self.cardinality_bounds[jid] = nrows
         self.join_contents[jid] = join
+        self._update_join_paths(jid, join)
 
     def set_pg_param(self, parameter: Union[str, Dict[str, Any]] = None, value: Any = None, **kwargs) -> None:
         """Adds planner hints that influence the Postgres optimization behaviour for the entire query.
@@ -164,6 +172,11 @@ class HintedMospQuery:
 
     def _join_path_to_str(self, join_id: int) -> str:
         return " ".join(tab.qualifier() for tab in self.join_paths[join_id])
+
+    def _update_join_paths(self, join_id: int, join: Union[mosp.MospJoin, Iterable[db.TableRef]]) -> None:
+        if isinstance(join, mosp.MospJoin):
+            return
+        self.join_paths[join_id] = join
 
     def __repr__(self) -> str:
         return str(self)
