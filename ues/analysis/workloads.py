@@ -51,9 +51,7 @@ def stack() -> Workload:
     for query_container in stack_root.iterdir():
         if not query_container.is_dir():
             continue
-        print("... Reading", query_container.stem)
         sub_workload = Workload.read(str(query_container), label_prefix=query_container.stem + "/")
-        print("... Merging")
         merged_queries = util.dict_merge(merged_queries, sub_workload.data)
     merged_workload = Workload(merged_queries, "Stack", stack_root)
     return merged_workload
