@@ -55,6 +55,12 @@ class TableRef:
             raise ValueError("Can not convert virtual tables")
         return {"value": self.full_name, "name": self.alias}
 
+    def __lt__(self, __other: object) -> bool:
+        if not isinstance(__other, type(self)):
+            return NotImplemented(f"'<' not implemented between '{type(self)}' and '{type(__other)}'")
+        other_tab: TableRef = __other
+        return (other_tab.full_name == self.full_name and self.alias < other_tab.alias) or self.full_name < other_tab.full_name
+
     def __hash__(self) -> int:
         return hash((self.full_name, self.alias))
 
