@@ -1919,7 +1919,7 @@ def _calculate_join_order_for_join_partition(query: mosp.MospQuery, join_graph: 
     # This has nothing to do with the actual algorithm is merely some technical code for visualizations
     if visualize:
         visualize_args = {} if not visualize_args else visualize_args
-        n_iterations = len(join_graph.free_n_m_joined_tables())
+        n_iterations = len(query.collect_tables())
         current_iteration = 0
         figsize = visualize_args.pop("figsize", (8, 5))  # magic numbers which normally produce well-sized plots
         width, height = figsize
