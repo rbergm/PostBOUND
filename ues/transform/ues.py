@@ -1902,7 +1902,7 @@ def _calculate_join_order_for_join_partition(query: mosp.MospQuery, join_graph: 
                         if join_graph.contains_table(table) and join_graph.is_free_fk_table(table)}
         first_fk_table = util.argmin(fk_estimates)
         join_tree = join_tree.with_base_table(first_fk_table)
-        join_graph.mark_joined(first_fk_table)
+        join_graph.mark_joined(first_fk_table, trace=trace)
         stats.init_base_table(first_fk_table)
         bounds_tracker.initialize(first_fk_table, stats.base_table_estimates[first_fk_table])
         final_bound = max(stats.base_table_estimates[fk_tab] for fk_tab in join_tree.all_tables()
@@ -1984,7 +1984,7 @@ def _calculate_join_order_for_join_partition(query: mosp.MospQuery, join_graph: 
             for pk_join in pk_joins:
                 trace_logger(".. Adding PK join with", pk_join.partner, "on", pk_join.predicate)
                 join_tree = join_tree.joined_with_base_table(pk_join.partner, predicate=pk_join.predicate)
-                join_graph.mark_joined(pk_join.partner)
+                join_graph.mark_joined(pk_join.partner, trace=trace)
                 bounds_tracker.store_bound(pk_join.partner,
                                            candidate_bound=stats.base_table_estimates[pk_join.partner],
                                            join_bound=lowest_min_bound, indexed_table=True)
@@ -2073,7 +2073,7 @@ def _calculate_join_order_for_join_partition(query: mosp.MospQuery, join_graph: 
             for pk_join in pk_joins:
                 trace_logger(".. Adding PK join with", pk_join.partner, "on", pk_join.predicate)
                 subquery_join = subquery_join.joined_with_base_table(pk_join.partner, predicate=pk_join.predicate)
-                join_graph.mark_joined(pk_join.partner)
+                join_graph.mark_joined(pk_join.partner, trace=trace)
                 subquery_bounds_tracker.store_bound(pk_join.partner,
                                                     candidate_bound=stats.base_table_estimates[pk_join.partner],
                                                     join_bound=stats.upper_bounds[selected_candidate],
@@ -2097,7 +2097,7 @@ def _calculate_join_order_for_join_partition(query: mosp.MospQuery, join_graph: 
             for pk_join in pk_joins:
                 trace_logger(".. Adding PK join with", pk_join.partner, "on", pk_join.predicate)
                 join_tree = join_tree.joined_with_base_table(pk_join.partner, predicate=pk_join.predicate)
-                join_graph.mark_joined(pk_join.partner)
+                join_graph.mark_joined(pk_join.partner, trace=trace)
                 bounds_tracker.store_bound(pk_join.partner,
                                            candidate_bound=stats.base_table_estimates[pk_join.partner],
                                            join_bound=stats.upper_bounds[selected_candidate], indexed_table=True)
