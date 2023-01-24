@@ -26,6 +26,7 @@ class UnsupportedUESQueryError(RuntimeError):
         self.query = query
         super().__init__(message)
 
+
 # ensure there are no subqueries in the FROM clause - these correspond to "hidden" joins
 def _assert_no_subqueries(predicate: Any):
     if not predicate:
@@ -37,6 +38,7 @@ def _assert_no_subqueries(predicate: Any):
     if isinstance(predicate, list):
         return all(_assert_no_subqueries(sub_pred) for sub_pred in predicate)
     return True
+
 
 # ensure there are only equi-joins. Others are not supported by the UES formulas
 def _assert_only_eq_join(predicates: mosp.MospPredicateMap):
@@ -246,7 +248,8 @@ class MospQueryPreparation:
                 aliased_projection["value"] = self._add_aliases_to_clause(projection_target)
                 return aliased_projection
             elif "count" in projection:
-                # special handler for SELECT COUNT(DISTINCT foo.bar) which is parsed as {"value": {"distinct": True, "count": "foo.bar"}}
+                # special handler for SELECT COUNT(DISTINCT foo.bar) which is parsed as
+                # {"value": {"distinct": True, "count": "foo.bar"}}
                 aliased_projection = dict(projection)
                 projection_target = projection["count"]
                 aliased_projection = self._add_aliases_to_clause(projection_target)
@@ -1972,10 +1975,10 @@ def _calculate_join_order_for_join_partition(query: mosp.MospQuery, join_graph: 
             join_tree = join_tree.with_base_table(lowest_bound_table)
             join_graph.mark_joined(lowest_bound_table, trace=trace)
 
-            pk_joins: Iterable[_DirectedJoinEdge] = sorted([_DirectedJoinEdge(partner=partner, predicate=predicate)
-                                                            for partner, predicate
-                                                            in join_graph.free_pk_joins_with(lowest_bound_table).items()],
-                                                           key=lambda fk_join_view: stats.base_table_estimates[fk_join_view.partner])
+            pk_joins: Iterable[_DirectedJoinEdge] = sorted(
+                [_DirectedJoinEdge(partner=partner, predicate=predicate) for partner, predicate
+                 in join_graph.free_pk_joins_with(lowest_bound_table).items()],
+                key=lambda fk_join_view: stats.base_table_estimates[fk_join_view.partner])
             logger("Selected first table:", lowest_bound_table, "with PK/FK joins",
                    [pk_table.partner for pk_table in pk_joins])
 

@@ -374,8 +374,11 @@ class MospJoinMap(collections.abc.Mapping):
     def as_and_clause(self) -> "AbstractMospPredicate":
         return MospCompoundPredicate.merge_and(self._merged_joins)
 
-    def joins_tables(self, first: db.TableRef, second: db.TableRef) -> bool:
-        return second in self._denormalized_join_by_tables[first]
+    def joins_tables(self, *tables: db.TableRef) -> bool:
+        for tab in tables:
+            if not any(partner in self._denormalized_join_by_tables[tab] for partner in tables if partner != tab):
+                return False
+        return True
 
     def __len__(self) -> int:
         return len(self._merged_joins)
@@ -897,7 +900,7 @@ class MospBasePredicate(AbstractMospPredicate):
     def _break_attribute(self, raw_attribute: str) -> Tuple[str, str]:
         return raw_attribute.split(".")
 
-    def _extract_right_attribute(self, _current_attr = None) -> Union[str, None]:
+    def _extract_right_attribute(self, _current_attr=None) -> Union[str, None]:
         _current_attr = self.mosp_right if not _current_attr else _current_attr
         if not _current_attr:
             return False
@@ -913,7 +916,6 @@ class MospBasePredicate(AbstractMospPredicate):
             return self._extract_right_attribute(_current_attr=util.head(_current_attr))
         elif isinstance(_current_attr, str):
             return _current_attr
-
 
     def _unwrap_literal(self):
         if not isinstance(self.mosp_right, dict) or "literal" not in self.mosp_right:

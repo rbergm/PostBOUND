@@ -45,6 +45,7 @@ def job() -> Workload:
 def ssb() -> Workload:
     return Workload.read("../workloads/SSB-Queries", name="SSB")
 
+
 def stack() -> Workload:
     stack_root = pathlib.Path("../workloads/Stack-Queries")
     merged_queries = {}
