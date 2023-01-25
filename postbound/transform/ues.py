@@ -27,25 +27,39 @@ class UnsupportedUESQueryError(RuntimeError):
         super().__init__(message)
 
 
-def assert_ues_optimizable(query: mosp.MospQuery) -> None:
-    # ensure there are no subqueries in the FROM clause - these correspond to "hidden" joins
-    def _assert_no_subqueries(predicate):
-        if not predicate:
-            return True
-        if isinstance(predicate, dict):
-            if "select" in predicate:
-                return False
-            return _assert_no_subqueries(util.dict_value(predicate))
-        if isinstance(predicate, list):
-            return all(_assert_no_subqueries(sub_pred) for sub_pred in predicate)
+# ensure there are no subqueries in the FROM clause - these correspond to "hidden" joins
+def _assert_no_subqueries(predicate: Any):
+    if not predicate:
         return True
+    if isinstance(predicate, dict):
+        if "select" in predicate:
+            return False
+        return _assert_no_subqueries(util.dict_value(predicate))
+    if isinstance(predicate, list):
+        return all(_assert_no_subqueries(sub_pred) for sub_pred in predicate)
+    return True
 
+
+# ensure there are only equi-joins. Others are not supported by the UES formulas
+def _assert_only_eq_join(predicates: mosp.MospPredicateMap):
+    for join_pred in predicates.joins:
+        for base_pred in join_pred.base_predicates():
+            if base_pred.operation != "eq":
+                return False
+    return True
+
+
+def assert_ues_optimizable(query: mosp.MospQuery, *, prepared_query: bool = False) -> None:
     max_query_len = 128
+    query_str = str(query)
+    query_str = query_str[:max_query_len] + "..." if len(query_str) > max_query_len + 3 else query_str
 
-    if not _assert_no_subqueries(query.query["where"]):
-        query_str = str(query)
-        query = query_str[:max_query_len] + "..." if len(query_str) > max_query_len + 3 else query_str
-        raise UnsupportedUESQueryError(query, f"Query '{query}' contains subqueries in the WHERE clause")
+    if not prepared_query:
+        if not _assert_no_subqueries(query.query["where"]):
+            raise UnsupportedUESQueryError(query, f"Query '{query_str}' contains subqueries in the WHERE clause")
+    elif prepared_query:
+        if not _assert_only_eq_join(query.predicates(include_where_clause=True, include_join_on=True, recurse_subqueries=True)):
+            raise UnsupportedUESQueryError(query, f"Query '{query_str}' contains non-equi-join predicates")
 
 
 class MospQueryPreparation:
@@ -232,6 +246,13 @@ class MospQueryPreparation:
                 aliased_projection = dict(projection)
                 projection_target = projection["value"]
                 aliased_projection["value"] = self._add_aliases_to_clause(projection_target)
+                return aliased_projection
+            elif "count" in projection:
+                # special handler for SELECT COUNT(DISTINCT foo.bar) which is parsed as
+                # {"value": {"distinct": True, "count": "foo.bar"}}
+                aliased_projection = dict(projection)
+                projection_target = projection["count"]
+                aliased_projection = self._add_aliases_to_clause(projection_target)
                 return aliased_projection
             else:
                 operation = util.dict_key(projection)
@@ -930,6 +951,8 @@ class JoinGraph:
         """
         self.graph.nodes[table]["free"] = False
 
+        # TODO: the fact whether the current join is an n:m join or not should be inferred from the current state of the join
+        # graph and should not be provided by the caller
         if n_m_join:
             self._invalidate_pk_joins(trace=trace)
 
@@ -1884,7 +1907,7 @@ def _calculate_join_order_for_join_partition(query: mosp.MospQuery, join_graph: 
                         if join_graph.contains_table(table) and join_graph.is_free_fk_table(table)}
         first_fk_table = util.argmin(fk_estimates)
         join_tree = join_tree.with_base_table(first_fk_table)
-        join_graph.mark_joined(first_fk_table)
+        join_graph.mark_joined(first_fk_table, trace=trace)
         stats.init_base_table(first_fk_table)
         bounds_tracker.initialize(first_fk_table, stats.base_table_estimates[first_fk_table])
         final_bound = max(stats.base_table_estimates[fk_tab] for fk_tab in join_tree.all_tables()
@@ -1899,7 +1922,7 @@ def _calculate_join_order_for_join_partition(query: mosp.MospQuery, join_graph: 
     # This has nothing to do with the actual algorithm is merely some technical code for visualizations
     if visualize:
         visualize_args = {} if not visualize_args else visualize_args
-        n_iterations = len(join_graph.free_n_m_joined_tables())
+        n_iterations = len(query.collect_tables())
         current_iteration = 0
         figsize = visualize_args.pop("figsize", (8, 5))  # magic numbers which normally produce well-sized plots
         width, height = figsize
@@ -1952,9 +1975,10 @@ def _calculate_join_order_for_join_partition(query: mosp.MospQuery, join_graph: 
             join_tree = join_tree.with_base_table(lowest_bound_table)
             join_graph.mark_joined(lowest_bound_table, trace=trace)
 
-            pk_joins = sorted([_DirectedJoinEdge(partner=partner, predicate=predicate) for partner, predicate
-                               in join_graph.free_pk_joins_with(lowest_bound_table).items()],
-                              key=lambda fk_join_view: stats.base_table_estimates[fk_join_view.partner])
+            pk_joins: Iterable[_DirectedJoinEdge] = sorted(
+                [_DirectedJoinEdge(partner=partner, predicate=predicate) for partner, predicate
+                 in join_graph.free_pk_joins_with(lowest_bound_table).items()],
+                key=lambda fk_join_view: stats.base_table_estimates[fk_join_view.partner])
             logger("Selected first table:", lowest_bound_table, "with PK/FK joins",
                    [pk_table.partner for pk_table in pk_joins])
 
@@ -1966,7 +1990,7 @@ def _calculate_join_order_for_join_partition(query: mosp.MospQuery, join_graph: 
             for pk_join in pk_joins:
                 trace_logger(".. Adding PK join with", pk_join.partner, "on", pk_join.predicate)
                 join_tree = join_tree.joined_with_base_table(pk_join.partner, predicate=pk_join.predicate)
-                join_graph.mark_joined(pk_join.partner)
+                join_graph.mark_joined(pk_join.partner, n_m_join=True, trace=trace)
                 bounds_tracker.store_bound(pk_join.partner,
                                            candidate_bound=stats.base_table_estimates[pk_join.partner],
                                            join_bound=lowest_min_bound, indexed_table=True)
@@ -2055,7 +2079,7 @@ def _calculate_join_order_for_join_partition(query: mosp.MospQuery, join_graph: 
             for pk_join in pk_joins:
                 trace_logger(".. Adding PK join with", pk_join.partner, "on", pk_join.predicate)
                 subquery_join = subquery_join.joined_with_base_table(pk_join.partner, predicate=pk_join.predicate)
-                join_graph.mark_joined(pk_join.partner)
+                join_graph.mark_joined(pk_join.partner, n_m_join=True, trace=trace)
                 subquery_bounds_tracker.store_bound(pk_join.partner,
                                                     candidate_bound=stats.base_table_estimates[pk_join.partner],
                                                     join_bound=stats.upper_bounds[selected_candidate],
@@ -2079,7 +2103,7 @@ def _calculate_join_order_for_join_partition(query: mosp.MospQuery, join_graph: 
             for pk_join in pk_joins:
                 trace_logger(".. Adding PK join with", pk_join.partner, "on", pk_join.predicate)
                 join_tree = join_tree.joined_with_base_table(pk_join.partner, predicate=pk_join.predicate)
-                join_graph.mark_joined(pk_join.partner)
+                join_graph.mark_joined(pk_join.partner, n_m_join=True, trace=trace)
                 bounds_tracker.store_bound(pk_join.partner,
                                            candidate_bound=stats.base_table_estimates[pk_join.partner],
                                            join_bound=stats.upper_bounds[selected_candidate], indexed_table=True)
@@ -2294,6 +2318,7 @@ def optimize_query(query: mosp.MospQuery, *,
     logger("Input query:", query)
     query_preparation = MospQueryPreparation(query, dbs=dbs)
     prepared_query = query_preparation.prepare_query()
+    assert_ues_optimizable(prepared_query, prepared_query=True)
 
     if table_cardinality_estimation == "sample":
         base_estimator = SamplingCardinalityEstimator(base_table_filter_sampling_pct)
