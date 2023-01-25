@@ -62,7 +62,8 @@ class TableRef:
         if not isinstance(__other, type(self)):
             return NotImplemented(f"'<' not implemented between '{type(self)}' and '{type(__other)}'")
         other_tab: TableRef = __other
-        return (other_tab.full_name == self.full_name and self.alias < other_tab.alias) or self.full_name < other_tab.full_name
+        return ((other_tab.full_name == self.full_name and self.alias < other_tab.alias)
+                or self.full_name < other_tab.full_name)
 
     def __hash__(self) -> int:
         return hash((self.full_name, self.alias))
@@ -123,21 +124,29 @@ _dbschema_instance: "DBSchema" = None
 
 
 class DBSchema:
+    """Provides access to a database and its schema.
+
+    All instances should be accessed via the `get_instance` method.
+    """
+
     @staticmethod
     def get_instance(psycopg_connect: str = "", *, postgres_config_file: str = ".psycopg_connection",
                      renew: bool = False):
         """Provides access to a unified DB schema instance.
 
         This is especially usefull to create a database connection on the fly without having to carry
-        configuration info everywhere. Unified in this context means that the schema instance is intended to be shared
-        by many clients.
+        configuration info everywhere. "Unified" in this context means that all clients access the very same schema
+        instance and connection to the same database.
 
         Instances can be created via one of two ways: directly specifying the `psycopg_connect` string will use it
         to open a connection to the database. If this setting is omitted, the `postgres_config_file` will be read.
-        This file is expected to create a single-line string suitable for a psycopg connection as well.
+        This file is expected to contain a single-line string suitable for a psycopg connection as well.
 
         The `renew` flag can be set to force the creation of a new DBSchema instance. This is mostly intended to
         connect to multiple databases at the same time.
+
+        Notice, that usage of a DB schema should happen sequentially since the underlying data structures are not
+        thread-safe.
         """
         global _dbschema_instance
         if _dbschema_instance and not renew:
