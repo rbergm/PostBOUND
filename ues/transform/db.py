@@ -1,12 +1,15 @@
 
 import atexit
+import concurrent
+import concurrent.futures
 import json
 import os
 import re
 import textwrap
+import threading
 import warnings
 from dataclasses import dataclass
-from typing import List, Dict
+from typing import List, Dict, Any
 
 import psycopg2
 
@@ -150,7 +153,7 @@ class DBSchema:
                     psycopg_connect = conn_file.readline().strip()
         conn = psycopg2.connect(psycopg_connect, application_name="PostBOUND")
         conn.autocommit = True
-        new_instance = DBSchema(conn.cursor(), connection=conn)
+        new_instance = DBSchema(conn.cursor(), connection=conn, connect_string=psycopg_connect)
 
         if _dbschema_instance and renew:
             # retain the query cache so we don't loose previously cached queries from other databases
@@ -162,9 +165,11 @@ class DBSchema:
         # received the new instance as well before)
         return new_instance
 
-    def __init__(self, cursor: "psycopg2.cursor", *, connection: "psycopg2.connection" = None):
+    def __init__(self, cursor: "psycopg2.cursor", *, connection: "psycopg2.connection" = None,
+                 connect_string: str = ""):
         self.cursor = cursor
         self.connection = connection
+        self.connect_string = connect_string
 
         self.index_map = {}
         self.estimates_cache = {}
@@ -431,3 +436,72 @@ class DBSchema:
 
     def __str__(self) -> str:
         return f"DBSchema (conn = {self.connection})"
+
+
+def _parallel_query_initializer(connect_string: str, local_data: threading.local) -> None:
+    id = threading.get_ident()
+    connection = psycopg2.connect(connect_string, application_name=f"PostBOUND parallel worker ID {id}")
+    connection.autocommit = True
+    local_data.connection = connection
+
+
+def _parallel_query_worker(query: str, local_data: threading.local) -> Any:
+    connection: psycopg2.connection = local_data.connection
+    connection.rollback()
+    cursor = connection.cursor()
+
+    cursor.execute(query)
+
+    result_set = cursor.fetchall()
+    cursor.close()
+    while (isinstance(result_set, list) or isinstance(result_set, tuple)) and len(result_set) == 1:
+        result_set = result_set[0]
+
+    return query, result_set
+
+
+class ParallelQueryExecutor:
+    """The ParallelQueryExecutor provides mechanisms to conveniently execute queries in parallel.
+
+    The parallel execution happens by maintaining a number of worker threads that execute the incoming queries.
+    The number of input queries can exceed the worker pool size, potentially by a large margin. If that is the case,
+    input queries will be buffered until a worker is available.
+    """
+    def __init__(self, connect_string: str, n_threads: int = None) -> None:
+        self._n_threads = n_threads if n_threads > 0 else os.cpu_count()
+        self._connect_string = connect_string
+
+        self._thread_data = threading.local()
+        self._thread_pool = concurrent.futures.ThreadPoolExecutor(max_workers=self._n_threads,
+                                                                  initializer=_parallel_query_initializer,
+                                                                  initargs=(self._connect_string, self._thread_data,))
+        self._tasks: List[concurrent.futures.Future] = []
+        self._results = []
+
+    def queue_query(self, query: str) -> None:
+        """Adds a new query to the queue, to be executed as soon as possible."""
+        future = self._thread_pool.submit(_parallel_query_worker, query, self._thread_data)
+        self._tasks.append(future)
+
+    def drain_queue(self, timeout: float = None) -> None:
+        """Blocks, until all queries currently queued have terminated."""
+        for future in concurrent.futures.as_completed(self._tasks, timeout=timeout):
+            self._results.append(future.result())
+
+    def result_set(self) -> Dict[str, Any]:
+        """Provides the results of all queries that have terminated already, mapping query -> result set"""
+        return dict(self._results)
+
+    def close(self) -> None:
+        """Terminates all worker threads. The executor is essentially useless afterwards."""
+        self._thread_pool.shutdown()
+
+    def __repr__(self) -> str:
+        return str(self)
+
+    def __str__(self) -> str:
+        running_workers = [future for future in self._tasks if future.running()]
+        completed_workers = [future for future in self._tasks if future.done()]
+
+        return (f"Concurrent query pool of {self._n_threads} workers, {len(self._tasks)} tasks "
+                f"(run={len(running_workers)} fin={len(completed_workers)})")
