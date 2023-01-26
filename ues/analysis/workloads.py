@@ -1,12 +1,15 @@
 
 import collections
 import pathlib
+import random
 from typing import Dict, List
+
+import natsort
 
 from transform import mosp, util
 
 
-class Workload(collections.UserDict):
+class Workload(collections.UserDict[str, mosp.MospQuery]):
     @staticmethod
     def read(root_dir: str, *, query_file_pattern: str = "*.sql", name: str = "", label_prefix: str = "") -> "Workload":
         queries: Dict[str, str] = {}
@@ -29,6 +32,18 @@ class Workload(collections.UserDict):
 
     def queries(self) -> List[mosp.MospQuery]:
         return list(self.data.values())
+
+    def first(self, n: int) -> "Workload":
+        labels = natsort.natsorted(list(self.keys()))
+        first_n_labels = labels[:n]
+        sub_workload = {label: self.data[label] for label in first_n_labels}
+        return Workload(sub_workload, self._name, self._root)
+
+    def pick_random(self, n: int) -> "Workload":
+        labels = list(self.keys())
+        selected_labels = random.sample(labels, n)
+        sub_workload = {label: self.data[label] for label in selected_labels}
+        return Workload(sub_workload, self._name, self._root)
 
     def __repr__(self) -> str:
         return str(self)

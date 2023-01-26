@@ -13,6 +13,7 @@ import sys
 import threading
 import typing
 import warnings
+from datetime import datetime
 from typing import List, Dict, Set, Any, Iterable, Tuple, Union, Callable, IO
 
 import numpy as np
@@ -130,6 +131,18 @@ def dict_reduce_multi(multi_dict: Dict[_K, List[_V]], reduction: Callable[[_K, L
     return {key: reduction(key, values) for key, values in multi_dict.items()}
 
 
+def dict_invert(mapping: Dict[_K, List[_V]]) -> Dict[_V, List[_K]]:
+    level1 = {tuple(vs): k for k, vs in mapping.items()}
+    level2: Dict[_V, List[_K]] = {}
+    for vs, k in level1.items():
+        for v in vs:
+            if v not in level2:
+                level2[v] = [k]
+            else:
+                level2[v].append(k)
+    return level2
+
+
 def flatten(deep_lst: List[Union[List[_T], _T]], *, recursive: bool = False, flatten_set: bool = False) -> List[_T]:
     """Unwraps all nested lists, leaving scalar values untouched.
 
@@ -217,6 +230,10 @@ def pull_any(iterable: Iterable[_T], *, strict: bool = True) -> _T:
     if strict and not iterable:
         raise ValueError("Empty iterable")
     return next(iter(iterable), None)
+
+
+def timestamp() -> str:
+    return datetime.now().strftime("%y-%m-%d %H:%M:%S")
 
 
 def make_logger(enabled: bool = True, *, file: IO[str] = sys.stderr, pretty: bool = False):

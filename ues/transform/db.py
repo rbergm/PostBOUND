@@ -447,19 +447,22 @@ class DBSchema:
         return f"DBSchema (conn = {self.connection})"
 
 
-def _parallel_query_initializer(connect_string: str, local_data: threading.local) -> None:
+def _parallel_query_initializer(connect_string: str, local_data: threading.local, verbose: bool = False) -> None:
     id = threading.get_ident()
     connection = psycopg2.connect(connect_string, application_name=f"PostBOUND parallel worker ID {id}")
     connection.autocommit = True
     local_data.connection = connection
 
 
-def _parallel_query_worker(query: str, local_data: threading.local) -> Any:
+def _parallel_query_worker(query: str, local_data: threading.local, verbose: bool = False) -> Any:
+    log = util.make_logger(verbose)
     connection: psycopg2.connection = local_data.connection
     connection.rollback()
     cursor = connection.cursor()
 
+    log(f"[worker id={threading.get_ident()}, ts={util.timestamp()}] Now executing query {query}")
     cursor.execute(query)
+    log(f"[worker id={threading.get_ident()}, ts={util.timestamp()}] Executed query {query}")
 
     result_set = cursor.fetchall()
     cursor.close()
@@ -476,9 +479,10 @@ class ParallelQueryExecutor:
     The number of input queries can exceed the worker pool size, potentially by a large margin. If that is the case,
     input queries will be buffered until a worker is available.
     """
-    def __init__(self, connect_string: str, n_threads: int = None) -> None:
-        self._n_threads = n_threads if n_threads > 0 else os.cpu_count()
+    def __init__(self, connect_string: str, n_threads: int = None, *, verbose: bool = False) -> None:
+        self._n_threads = n_threads if n_threads is not None and n_threads > 0 else os.cpu_count()
         self._connect_string = connect_string
+        self._verbose = verbose
 
         self._thread_data = threading.local()
         self._thread_pool = concurrent.futures.ThreadPoolExecutor(max_workers=self._n_threads,
@@ -489,7 +493,7 @@ class ParallelQueryExecutor:
 
     def queue_query(self, query: str) -> None:
         """Adds a new query to the queue, to be executed as soon as possible."""
-        future = self._thread_pool.submit(_parallel_query_worker, query, self._thread_data)
+        future = self._thread_pool.submit(_parallel_query_worker, query, self._thread_data, self._verbose)
         self._tasks.append(future)
 
     def drain_queue(self, timeout: float = None) -> None:

@@ -8,6 +8,7 @@ import warnings
 from typing import Iterator, List, Dict, Set, Any, Union, Tuple
 
 import mo_sql_parsing as mosp
+import networkx as nx
 
 from transform import db, util
 
@@ -375,10 +376,18 @@ class MospJoinMap(collections.abc.Mapping):
         return MospCompoundPredicate.merge_and(self._merged_joins)
 
     def joins_tables(self, *tables: db.TableRef) -> bool:
+        join_graph = nx.Graph()
+        join_graph.add_nodes_from(tables)
         for tab in tables:
-            if not any(partner in self._denormalized_join_by_tables[tab] for partner in tables if partner != tab):
-                return False
-        return True
+            join_graph.add_edges_from([(tab, partner) for partner in self._denormalized_join_by_tables[tab]
+                                       if partner in tables])
+        return nx.is_connected(join_graph)
+
+    def join_predicates_of(self, table: db.TableRef) -> List["AbstractMospPredicate"]:
+        predicates = []
+        for partner_tab in self._denormalized_join_by_tables[table]:
+            predicates.extend(self._denormalized_join_by_tables[table][partner_tab])
+        return predicates
 
     def __len__(self) -> int:
         return len(self._merged_joins)
