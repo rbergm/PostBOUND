@@ -1,23 +1,80 @@
 import abc
+import numbers
+import typing
 from dataclasses import dataclass
 from collections.abc import Iterable
-from typing import Set, Tuple
+from typing import Set, Tuple, Union
 
 import mo_sql_parsing as mosp
 
 from postbound.util import errors, dicts as dict_utils
 
+_T = typing.TypeVar("_T")
+
+
+class SqlExpression(abc.ABC):
+    def __repr__(self) -> str:
+        return str(self)
+
+
+class StaticValueExpression(SqlExpression, typing.Generic[_T]):
+    def __init__(self, value: _T) -> None:
+        self._value = value
+
+    def __repr__(self) -> str:
+        return super().__repr__()
+
+    def __str__(self) -> str:
+        return f"{self._value}" if isinstance(self._value, numbers.Number) else f"'{self._value}'"
+
+
+class CastExpression(SqlExpression):
+    def __init__(self, expression: SqlExpression, target_type: str) -> None:
+        self._casted_expression = expression
+        self._target_type = target_type
+
+    def __repr__(self) -> str:
+        return super().__repr__()
+
+    def __str__(self) -> str:
+        return f"{self._casted_expression}::{self._target_type}"
+
+
+class MathematicalExpression(SqlExpression):
+    def __init__(self, operator: str, first_argument: SqlExpression, second_argument: SqlExpression = None) -> None:
+        self._operator = operator
+        self._first_arg = first_argument
+        self._second_arg = second_argument
+
+    def __repr__(self) -> str:
+        return super().__repr__()
+
+    def __str__(self) -> str:
+        return f"{self._first_arg} {self._operator} {self._second_arg}"
+
+
+class ColumnExpression(SqlExpression):
+    def __init__(self, column: "ColumnReference") -> None:
+        self._col = column
+
+    def __repr__(self) -> str:
+        return super().__repr__()
+
+    def __str__(self) -> str:
+        return str(self._col)
+
 
 @dataclass
-class Table:
+class TableReference:
     full_name: str
-    alias: str
+    alias: str = ""
 
 
 @dataclass
-class Column:
-    table: Table
+class ColumnReference:
     name: str
+    table: Union[TableReference, None] = None
+    attached_expression: Union[SqlExpression, None] = None
 
 
 class SqlQuery(abc.ABC):
@@ -30,6 +87,16 @@ class SqlQuery(abc.ABC):
 
     def is_explicit(self) -> bool:
         return not self.is_implicit()
+
+    @abc.abstractmethod
+    def tables(self) -> Iterable[TableReference]:
+        """Provides all tables that are referenced in the query."""
+        raise NotImplementedError
+
+    @abc.abstractmethod
+    def predicates(self) -> "QueryPredicates":
+        """Provides all predicates that are used in the query."""
+        raise NotImplementedError
 
 
 class ImplicitSqlQuery(SqlQuery):
@@ -50,7 +117,7 @@ class ExplicitSqlQuery(SqlQuery):
 
 @dataclass
 class BaseColumnProjection:
-    column: Column
+    column: ColumnReference
     target_name: str
 
 
@@ -95,28 +162,28 @@ class AbstractPredicate(abc.ABC):
         return not self.is_join()
 
     @abc.abstractmethod
-    def collect_columns(self) -> Set[Column]:
+    def collect_columns(self) -> Set[ColumnReference]:
         """Provides all columns that are referenced by this predicate."""
         raise NotImplementedError
 
-    def collect_tables(self) -> Set[Column]:
+    def collect_tables(self) -> Set[ColumnReference]:
         """Provides all tables that are accessed by this predicate."""
         return {attribute.table for attribute in self.collect_columns()}
 
-    def contains_table(self, table: Table) -> bool:
+    def contains_table(self, table: TableReference) -> bool:
         """Checks, whether this predicate filters or joins a column of the given table."""
         return any(table == tab for tab in self.collect_tables())
 
-    def joins_table(self, table: Table) -> bool:
+    def joins_table(self, table: TableReference) -> bool:
         """Checks, whether this predicate describes a join and one of the join partners is the given table."""
         return self.is_join() and self.contains_table(table)
 
-    def columns_of(self, table: Table) -> Set[Column]:
+    def columns_of(self, table: TableReference) -> Set[ColumnReference]:
         """Retrieves all columns of the given table that are referenced by this predicate."""
         return {attr for attr in self.collect_columns() if attr.table == table}
 
     @abc.abstractmethod
-    def join_partners_of(self, table: Table) -> Set[Column]:
+    def join_partners_of(self, table: TableReference) -> Set[ColumnReference]:
         """Retrieves all columns that are joined with the given table.
 
         If this predicate is not a join, an error will be raised.
@@ -124,7 +191,7 @@ class AbstractPredicate(abc.ABC):
         raise NotImplementedError
 
     @abc.abstractmethod
-    def join_partners(self) -> Set[Tuple[Column, Column]]:
+    def join_partners(self) -> Set[Tuple[ColumnReference, ColumnReference]]:
         """Provides all pairs of columns that are joined within this predicate.
 
         If this predicate is not a join, an error will be raised.
@@ -138,11 +205,6 @@ class AbstractPredicate(abc.ABC):
         This is most usefull to iterate over all leaves of a compound predicate, for base predicates it simply returns
         the predicate itself.
         """
-        raise NotImplementedError
-
-    @abc.abstractmethod
-    def rename_table(self, table: Table, new_name: Table, *, prefix_attributes: bool = False) -> "AbstractPredicate":
-        """Changes all occurences of `table` to reference `new_table` instead."""
         raise NotImplementedError
 
     def _assert_join_predicate(self) -> None:
@@ -183,7 +245,14 @@ class CompoundPredicate:
 
 
 class QueryPredicates:
-    pass
+    def get(self) -> AbstractPredicate:
+        pass
+
+    def filters(self) -> Iterable[AbstractPredicate]:
+        pass
+
+    def joins(self) -> Iterable[AbstractPredicate]:
+        pass
 
 
 class QueryFormatError(RuntimeError):
