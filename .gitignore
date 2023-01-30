@@ -176,6 +176,9 @@ postbound-venv/
 # VS code
 .vscode/
 
+# PyCharm
+.idea/
+
 # Project specific files
 
 LocalTest*

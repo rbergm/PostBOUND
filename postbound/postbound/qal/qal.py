@@ -66,8 +66,18 @@ class ColumnExpression(SqlExpression):
 
 @dataclass
 class TableReference:
+    """A table reference represents a database table.
+
+    It can either be a physical table, a CTE, or an entirely virtual query created via subqueries. Note that a table
+    reference is indeed just a reference and not a 1:1 "representation" since each table can be sourced multiple times
+    in a query. Therefore, in addition to the table name, each instance can optionally also contain an alias to
+    distinguish between different references to the same table.
+    """
     full_name: str
     alias: str = ""
+
+    def is_virtual(self) -> bool:
+        return not self.full_name
 
 
 @dataclass
@@ -95,7 +105,7 @@ class SqlQuery(abc.ABC):
 
     @abc.abstractmethod
     def predicates(self) -> "QueryPredicates":
-        """Provides all predicates that are used in the query."""
+        """Provides all predicates in this query."""
         raise NotImplementedError
 
 
@@ -131,12 +141,12 @@ __MospCompoundOperations = {"and", "or", "not"}
 
 class NoJoinPredicateError(errors.StateError):
     def __init__(self, msg: str = ""):
-        super.__init__(msg)
+        super().__init__(msg)
 
 
 class NoFilterPredicateError(errors.StateError):
     def __init__(self, msg: str = ""):
-        super.__init__(msg)
+        super().__init__(msg)
 
 
 class AbstractPredicate(abc.ABC):
@@ -233,11 +243,19 @@ class AbstractPredicate(abc.ABC):
         raise NotImplementedError
 
 
-class BasePredicate(AbstractPredicate):
+class BasePredicate(AbstractPredicate, abc.ABC):
     def __init__(self, mosp_data: dict) -> None:
         super().__init__(mosp_data)
 
         self._operation = dict_utils.key(mosp_data)
+
+
+class BinaryPredicate(BasePredicate):
+    pass
+
+
+class UnaryPredicate(BasePredicate):
+    pass
 
 
 class CompoundPredicate:
@@ -260,6 +278,10 @@ class QueryFormatError(RuntimeError):
         super().__init__(*args)
 
 
+def parse_table(table: str) -> TableReference:
+    pass
+
+
 def __is_implicit_query(mosp_data: dict) -> bool:
     pass
 
@@ -268,7 +290,7 @@ def __is_explicit_query(mosp_data: dict) -> bool:
     pass
 
 
-def parse(raw_query: str) -> SqlQuery:
+def parse_query(raw_query: str) -> SqlQuery:
     mosp_data = mosp.parse(raw_query)
     if __is_implicit_query(mosp_data):
         return ImplicitSqlQuery(mosp_data)
