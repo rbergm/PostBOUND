@@ -9,6 +9,7 @@ import math
 import numbers
 import os
 import pprint
+import random
 import sys
 import threading
 import typing
@@ -16,6 +17,7 @@ import warnings
 from datetime import datetime
 from typing import List, Dict, Set, Any, Iterable, Tuple, Union, Callable, IO
 
+import networkx as nx
 import numpy as np
 import psycopg2
 
@@ -742,3 +744,72 @@ class Version:
 
     def __str__(self) -> str:
         return ".".join(str(v) for v in self._version)
+
+
+def nx_random_walk(graph: nx.Graph):
+    """A modified random walk implementation for networkx graphs.
+
+    The modifications concern two specific areas: after each stop, the walk may jump to a node that is connected to one of the
+    visited nodes. This node does not necessarily have to be connected to the current node. Secondly, if the graph contains
+    multiple connected components, the walk will first explore one component before jumping to the next one.
+    """
+    shell_nodes = set()
+    visited_nodes = set()
+
+    total_n_nodes = len(graph.nodes)
+
+    current_node = random.choice(list(graph.nodes))
+    visited_nodes.add(current_node)
+    yield current_node
+
+    while len(visited_nodes) < total_n_nodes:
+        shell_nodes |= set(n for n in graph.adj[current_node].keys() if n not in visited_nodes)
+        if not shell_nodes:
+            # we have multiple connected components and need to jump into the other component
+            current_node = random.choice([n for n in graph.nodes if n not in visited_nodes])
+            visited_nodes.add(current_node)
+            yield current_node
+            continue
+
+        current_node = random.choice(list(shell_nodes))
+        shell_nodes.remove(current_node)
+        visited_nodes.add(current_node)
+        yield current_node
+
+
+class SizedQueue(typing.Iterable[_T]):
+    """A sized queue extends on the behaviour of a normal queue by restricting the number of items in the queue.
+
+    A sized queue has weak FIFO semantics: items can only be appended at the end, but the contents of the entire queue can be
+    accessed at any time.
+    If upon enqueuing a new item the queue is already at maximum capacity, the current head of the queue will be dropped.
+    """
+    def __init__(self, capacity: int) -> None:
+        self.data = []
+        self.capacity = capacity
+
+    def append(self, value: _T) -> None:
+        if len(self.data) >= self.capacity:
+            self.data.pop(0)
+        self.data.append(value)
+
+    def extend(self, values: typing.Iterable[_T]) -> None:
+        self.data = (self.data + values)[:self.capacity]
+
+    def head(self) -> _T:
+        return self.data[0]
+
+    def __contains__(self, other: _T) -> bool:
+        return other in self.data
+
+    def __iter__(self) -> typing.Iterator[_T]:
+        return self.data.__iter__()
+
+    def __len__(self) -> int:
+        return len(self.data)
+
+    def __repr__(self) -> str:
+        return str(self)
+
+    def __str__(self) -> str:
+        return str(self.data)
