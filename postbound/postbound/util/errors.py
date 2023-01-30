@@ -1,3 +1,6 @@
+"""Contains various errors that extend the base errors from Python and are not specific to certain parts of PostBOUND."""
+
+
 class StateError(RuntimeError):
     """Indicates that an object is not in the right state to perform an operation."""
     def __init__(self, msg: str = "") -> None:
