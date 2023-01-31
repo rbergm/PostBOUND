@@ -1,6 +1,6 @@
 
 import abc
-from typing import Any, List
+from typing import Any, List, Union
 
 from postbound.qal import base, qal
 
@@ -108,3 +108,23 @@ class DatabaseStatistics(abc.ABC):
 
     emulated = property(_get_emulated, _set_emulated)
 
+
+__DB_POOL: Union["DatabasePool", None] = None
+
+class DatabasePool:
+    @staticmethod
+    def get_instance():
+        global __DB_POOL
+        pass
+
+    def __init__(self):
+        self._pool = {}
+
+    def current_database(self) -> Database:
+        pass
+
+    def register_database(self, key: str, db: Database) -> None:
+        pass
+
+    def retrieve_database(self, key: str) -> Database:
+        pass
