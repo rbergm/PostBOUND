@@ -6,6 +6,8 @@ import typing
 from dataclasses import dataclass
 from typing import Union
 
+from postbound.util import errors
+
 _T = typing.TypeVar("_T")
 
 
@@ -81,3 +83,9 @@ class ColumnReference:
     name: str
     table: Union[TableReference, None] = None
     attached_expression: Union[SqlExpression, None] = None
+
+
+class UnboundColumnError(errors.StateError):
+    def __init__(self, column: ColumnReference) -> None:
+        super().__init__("Column is not bound to any table: " + str(column))
+        self.column = column
