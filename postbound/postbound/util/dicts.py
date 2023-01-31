@@ -13,11 +13,24 @@ _V = typing.TypeVar("_V")
 
 
 def key(dictionary: Dict[_K, _V]) -> _K:
-    """Provides the key of a dictionary with just 1 item."""
+    """Provides the key of a dictionary with just 1 item.
+
+    `key({'a': 1}) = 'a'`
+    """
     if not len(dictionary) == 1:
-        raise ValueError("Dictionary must contain exactly 1 entry, not " + len(dictionary))
-    for key in dictionary:
-        return key
+        raise ValueError("Dictionary must contain exactly 1 entry, not " + str(len(dictionary)))
+    for k in dictionary:
+        return k
+
+def value(dictionary: Dict[_K, _V]) -> _V:
+    """Provides the value of a dictionary with just 1 item.
+
+    `value({'a': 1}) = 1`
+    """
+    if not len(dictionary) == 1:
+        raise ValueError("Dictionary must contain exactly 1 entry, not " + str(len(dictionary)))
+    for v in dictionary.values():
+        return v
 
 
 def merge(a: Dict[_K, _V], b: Dict[_K, _V], *, update: Callable[[_K, _V, _V], _V] = None) -> Dict[_K, _V]:
