@@ -1,0 +1,3 @@
+
+class SubqueryGenerationPolicy:
+    pass

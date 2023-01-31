@@ -1,7 +1,6 @@
 """"""
 
-from postbound.qal import qal
-
+from qal import qal
 
 class OptimizationPipeline:
     def __init__(self, target_dbs=None) -> None:

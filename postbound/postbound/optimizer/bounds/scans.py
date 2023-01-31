@@ -1,0 +1,3 @@
+
+class BaseTableCardinalityEstimator:
+    pass
