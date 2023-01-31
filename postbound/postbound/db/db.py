@@ -1,5 +1,9 @@
 
 import abc
+import atexit
+import json
+import os
+import warnings
 from typing import Any, List, Union
 
 from postbound.qal import base, qal
@@ -25,8 +29,11 @@ class Database(abc.ABC):
     """
     def __init__(self, name: str, *, cache_enabled: bool = True) -> None:
         self.name = name
-        self.cache_enabled = cache_enabled
+
+        self._cache_enabled = cache_enabled
         self._query_cache = {}
+        if self._cache_enabled:
+            self.__inflate_query_cache()
 
     @abc.abstractmethod
     def schema(self) -> "DatabaseSchema":
@@ -66,6 +73,44 @@ class Database(abc.ABC):
     def reset_cache(self) -> None:
         """Removes all results from the query cache. Useful for debugging purposes."""
         self._query_cache = {}
+
+    def _get_cache_enabled(self) -> bool:
+        """Getter for the `cache_enabled` property."""
+        return self._cache_enabled
+
+    def _set_cache_enabled(self, enabled: bool) -> None:
+        """Setter for the `cache_enabled` property. Inflates the query cache if necessary."""
+        if enabled and not self._query_cache:
+            self.__inflate_query_cache()
+        self._cache_enabled =  enabled
+
+    cache_enabled = property(_get_cache_enabled, _set_cache_enabled)
+    """Controls, whether the results of executed queries should be cached to prevent future re-execution."""
+
+    def __inflate_query_cache(self) -> None:
+        """Tries to read the query cache for this database."""
+        query_cache_name = self.__query_cache_name()
+        if os.path.isfile(query_cache_name):
+            with open(query_cache_name, "r") as cache_file:
+                try:
+                    self._query_cache = json.load(cache_file)
+                except json.JSONDecodeError as e:
+                    warnings.warn("Could not read query cache: " + str(e))
+                    self._query_cache = {}
+        else:
+            warnings.warn(f"Could not read query cache: File {query_cache_name} does not exist")
+            self._query_cache = {}
+        atexit.register(self.__store_query_cache)
+
+    def __store_query_cache(self):
+        """Stores the query cache into a JSON file."""
+        query_cache_name = self.__query_cache_name()
+        with open(query_cache_name, "w") as cache_file:
+            json.dump(self._query_cache, cache_file)
+
+    def __query_cache_name(self):
+        """Provides a normalized file name for the query cache."""
+        return f".query_cache_{self.name}.json"
 
     def __repr__(self) -> str:
         return str(self)
