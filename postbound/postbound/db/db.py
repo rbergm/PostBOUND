@@ -41,7 +41,7 @@ class Database(abc.ABC):
         raise NotImplementedError
 
     @abc.abstractmethod
-    def statistics(self) -> "DatabaseStatistics":
+    def statistics(self, emulated: bool | None = None) -> "DatabaseStatistics":
         """Provides access to different tables and columns of the database."""
         raise NotImplementedError
 
@@ -73,6 +73,10 @@ class Database(abc.ABC):
     def reset_cache(self) -> None:
         """Removes all results from the query cache. Useful for debugging purposes."""
         self._query_cache = {}
+
+    @abc.abstractmethod
+    def cursor(self) -> Any:
+        raise NotImplementedError
 
     def _get_cache_enabled(self) -> bool:
         """Getter for the `cache_enabled` property."""
