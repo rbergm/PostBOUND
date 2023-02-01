@@ -1,13 +1,13 @@
-
 import abc
 import atexit
 import json
 import os
 import warnings
-from typing import Any, List, Union
+from typing import Any, Union
 
 from postbound.qal import base, qal
 from postbound.util import dicts as dict_utils
+
 
 class Database(abc.ABC):
     """A `Database` is PostBOUND's logical abstraction of physical database management systems.
@@ -27,6 +27,7 @@ class Database(abc.ABC):
     read upon creation of the `Database` instance. If this behavior is not desired, it can simply be turned off via the
     `cache_enabled` property.
     """
+
     def __init__(self, name: str, *, cache_enabled: bool = True) -> None:
         self.name = name
 
@@ -86,7 +87,7 @@ class Database(abc.ABC):
         """Setter for the `cache_enabled` property. Inflates the query cache if necessary."""
         if enabled and not self._query_cache:
             self.__inflate_query_cache()
-        self._cache_enabled =  enabled
+        self._cache_enabled = enabled
 
     cache_enabled = property(_get_cache_enabled, _set_cache_enabled)
     """Controls, whether the results of executed queries should be cached to prevent future re-execution."""
@@ -128,12 +129,13 @@ class DatabaseSchema(abc.ABC):
 
     For PostBOUND, this information is mostly limited to index structures and primary keys of different columns.
     """
+
     def __init__(self, db: "Database"):
         self._db = db
 
     @abc.abstractmethod
     def lookup_column(self, column: base.ColumnReference,
-                      candidate_tables: List[base.TableReference]) -> base.TableReference:
+                      candidate_tables: list[base.TableReference]) -> base.TableReference:
         """Searches the `candidate_tables` for the given `column`.
 
         The first table that contains a column with a similar name will be returned. If no candidate table contains the
@@ -165,7 +167,6 @@ class DatabaseSchema(abc.ABC):
         return self.is_primary_key(column) or self.has_secondary_index(column)
 
 
-
 class DatabaseStatistics(abc.ABC):
     """Database statistics provide aggregated information about specific tables and columns of the database.
 
@@ -179,6 +180,7 @@ class DatabaseStatistics(abc.ABC):
     `emulated = False` indicates that the internal metadata catalogs should be queried (and it is up to the client to
     do something useful with that information).
     """
+
     def __init__(self, db: "Database"):
         self.emulated = True
         self._db = db
@@ -247,6 +249,7 @@ class DatabaseStatistics(abc.ABC):
 
 _DB_POOL: Union["DatabasePool", None] = None
 
+
 class DatabasePool:
     """The `DatabasePool` allows different parts of the code base to easily obtain access to a database.
 
@@ -254,6 +257,7 @@ class DatabasePool:
     New database instances can be registered and retrieved via unique keys. As long as there is just a single database
     instance, it can be accessed via the `current_database` method.
     """
+
     @staticmethod
     def get_instance():
         """Provides access to the database pool, creating a new pool instance if necessary."""

@@ -1,10 +1,9 @@
-
 import concurrent
 import concurrent.futures
 import os
 import textwrap
 import threading
-from typing import Any, Dict, List
+from typing import Any
 
 import psycopg2
 
@@ -80,7 +79,7 @@ class PostgresSchemaInterface(db.DatabaseSchema):
         super().__init__(postgres_db)
 
     def lookup_column(self, column: base.ColumnReference,
-                      candidate_tables: List[base.TableReference]) -> base.TableReference:
+                      candidate_tables: list[base.TableReference]) -> base.TableReference:
         for table in candidate_tables:
             table_columns = self._fetch_columns(table)
             if column.name in table_columns:
@@ -106,13 +105,13 @@ class PostgresSchemaInterface(db.DatabaseSchema):
         # value.
         return not index_map.get(column.name, True)
 
-    def _fetch_columns(self, table: base.TableReference) -> List[str]:
+    def _fetch_columns(self, table: base.TableReference) -> list[str]:
         query_template = "SELECT column_name FROM information_schema.columns WHERE table_name = %s"
         self._db.cursor().execute(query_template, (table.full_name,))
         result_set = self._db.cursor().fetchall()
         return [col[0] for col in result_set]
 
-    def _fetch_indexes(self, table: base.TableReference) -> Dict[str, bool]:
+    def _fetch_indexes(self, table: base.TableReference) -> dict[str, bool]:
         # query adapted from https://wiki.postgresql.org/wiki/Retrieve_primary_key_columns
 
         index_query = textwrap.dedent(f"""
@@ -235,6 +234,7 @@ class ParallelQueryExecutor:
     The number of input queries can exceed the worker pool size, potentially by a large margin. If that is the case,
     input queries will be buffered until a worker is available.
     """
+
     def __init__(self, connect_string: str, n_threads: int = None, *, verbose: bool = False) -> None:
         self._n_threads = n_threads if n_threads is not None and n_threads > 0 else os.cpu_count()
         self._connect_string = connect_string
@@ -244,7 +244,7 @@ class ParallelQueryExecutor:
         self._thread_pool = concurrent.futures.ThreadPoolExecutor(max_workers=self._n_threads,
                                                                   initializer=_parallel_query_initializer,
                                                                   initargs=(self._connect_string, self._thread_data,))
-        self._tasks: List[concurrent.futures.Future] = []
+        self._tasks: list[concurrent.futures.Future] = []
         self._results = []
 
     def queue_query(self, query: str) -> None:
@@ -257,7 +257,7 @@ class ParallelQueryExecutor:
         for future in concurrent.futures.as_completed(self._tasks, timeout=timeout):
             self._results.append(future.result())
 
-    def result_set(self) -> Dict[str, Any]:
+    def result_set(self) -> dict[str, Any]:
         """Provides the results of all queries that have terminated already, mapping query -> result set"""
         return dict(self._results)
 
