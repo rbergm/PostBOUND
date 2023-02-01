@@ -245,7 +245,7 @@ class DatabaseStatistics(abc.ABC):
         raise NotImplementedError
 
 
-__DB_POOL: Union["DatabasePool", None] = None
+_DB_POOL: Union["DatabasePool", None] = None
 
 class DatabasePool:
     """The `DatabasePool` allows different parts of the code base to easily obtain access to a database.
@@ -257,10 +257,10 @@ class DatabasePool:
     @staticmethod
     def get_instance():
         """Provides access to the database pool, creating a new pool instance if necessary."""
-        global __DB_POOL
-        if __DB_POOL is None:
-            __DB_POOL = DatabasePool()
-        return __DB_POOL
+        global _DB_POOL
+        if _DB_POOL is None:
+            _DB_POOL = DatabasePool()
+        return _DB_POOL
 
     def __init__(self):
         self._pool = {}
