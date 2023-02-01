@@ -119,7 +119,7 @@ class PostgresSchemaInterface(db.DatabaseSchema):
                                         SELECT attr.attname, idx.indisprimary
                                         FROM pg_index idx
                                             JOIN pg_attribute attr
-                                            ON idx.indrelid = attr.attrlid
+                                            ON idx.indrelid = attr.attrelid
                                                 AND attr.attnum = ANY(idx.indkey)
                                         WHERE idx.indrelid = '{table.full_name}'::regclass""")
         self._db.cursor().execute(index_query)
@@ -163,8 +163,6 @@ class PostgresStatisticsInterface(db.DatabaseStatistics):
         n_rows = self._retrieve_total_rows_from_stats(column.table)
         return -1 * n_rows * dist_values
 
-
-
     def _retrieve_most_common_values_from_stats(self, column: base.ColumnReference, k: int) -> list:
         # Postgres stores the Most common values in a column of type anyarray (since in this column, many MCVs from
         # many different tables and data types are present). However, this type is not very convenient to work on.
@@ -176,17 +174,19 @@ class PostgresStatisticsInterface(db.DatabaseStatistics):
         attribute_dtype = self._db.cursor().fetchone()[0]
         attribute_converter = _DTypeArrayConverters[attribute_dtype]
 
-        # now, load the most frequent values
+        # now, load the most frequent values. Since the frequencies are expressed as a fraction of the total number of
+        # rows, we need to multiply this number again to obtain the true number of occurrences
         mcv_query = textwrap.dedent("""
-                                    SELECT UNNEST(most_common_vals::text::{conv}), UNNEST(most_common_freqs)
-                                    FROM pg_stats
-                                    WHERE tablename = %s AND attname = %s""".format(conv=attribute_converter))
+                SELECT UNNEST(most_common_vals::text::{conv}),
+                    UNNEST(most_common_freqs) * (SELECT reltuples FROM pg_class WHERE oid = '{tab}'::regclass)
+                FROM pg_stats
+                WHERE tablename = %s AND attname = %s""".format(conv=attribute_converter, tab=column.table.full_name))
         self._db.cursor().execute(mcv_query, (column.table.full_name, column.name))
         return self._db.cursor().fetchall()
 
 
-def connect(*, name: str  = "postgres", connect_string: str | None = None, config_file: str | None = None,
-            cache_enabled: bool = True) -> PostgresInterface:
+def connect(*, name: str = "postgres", connect_string: str | None = None,
+            config_file: str | None = ".psycopg_connection", cache_enabled: bool = True) -> PostgresInterface:
     db_pool = db.DatabasePool.get_instance()
     if config_file and not connect_string:
         if not os.path.exists(config_file):
