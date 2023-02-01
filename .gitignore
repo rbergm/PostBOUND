@@ -168,6 +168,7 @@ postbound-venv/
 .psycopg_connection_job
 .psycopg_connection_tpch
 .psycopg_connection_stack
+.query_cache_*.json
 
 # R env
 .Rproj.user

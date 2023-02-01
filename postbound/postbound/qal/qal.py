@@ -3,14 +3,12 @@
 It contains classes and methods to conveniently work with different parts of SQL queries.
 """
 
+from __future__ import annotations
+
 import abc
-from dataclasses import dataclass
 from collections.abc import Iterable
-from typing import List
 
-import mo_sql_parsing as mosp
-
-from postbound.qal import base, predicates as preds
+from postbound.qal import base, joins, predicates as preds, projection as proj
 
 
 class SqlQuery(abc.ABC):
@@ -30,60 +28,63 @@ class SqlQuery(abc.ABC):
         raise NotImplementedError
 
     @abc.abstractmethod
-    def predicates(self) -> preds.QueryPredicates:
+    def predicates(self) -> preds.QueryPredicates | None:
         """Provides all predicates in this query."""
         raise NotImplementedError
 
 
 class ImplicitSqlQuery(SqlQuery):
-    def __init__(self, mosp_data: dict) -> None:
+    def __init__(self, mosp_data: dict, *,
+                 select_clause: proj.QueryProjection,
+                 from_clause: list[base.TableReference] | None = None,
+                 where_clause: preds.QueryPredicates | None = None) -> None:
         super().__init__(mosp_data)
+        self.select_clause = select_clause
+        self.from_clause = from_clause
+        self.where_clause = where_clause
 
     def is_implicit(self) -> bool:
         return True
 
+    def tables(self) -> Iterable[base.TableReference]:
+        return self.from_clause
+
+    def predicates(self) -> preds.QueryPredicates | None:
+        return self.where_clause
+
 
 class ExplicitSqlQuery(SqlQuery):
-    def __init__(self, mosp_data: dict) -> None:
+    def __init__(self, mosp_data: dict, *,
+                 select_clause: proj.QueryProjection,
+                 from_clause: tuple[base.TableReference, list[joins.Join]] | None = None,
+                 where_clause: preds.QueryPredicates | None = None) -> None:
         super().__init__(mosp_data)
+        self.select_clause = select_clause
+        base_table, joined_tables = from_clause
+        self.base_table: base.TableReference = base_table
+        self.joined_tables: list[joins.Join] = joined_tables
+        self.where_clause = where_clause
 
     def is_implicit(self) -> bool:
         return False
 
+    def tables(self) -> Iterable[base.TableReference]:
+        all_tables = [self.base_table]
+        for join in self.joined_tables:
+            all_tables.extend(join.tables())
+        return all_tables
 
-@dataclass
-class BaseProjection:
-    expression: base.SqlExpression
-    target_name: str
+    def predicates(self) -> preds.QueryPredicates | None:
+        all_predicates = self.where_clause if self.where_clause else preds.QueryPredicates.empty_predicate()
+        for join in self.joined_tables:
+            if not isinstance(join, joins.SubqueryJoin):
+                continue
+            subquery_join: joins.SubqueryJoin = join
 
+            subquery_predicates = subquery_join.subquery.predicates()
+            if subquery_predicates:
+                all_predicates = all_predicates.and_(subquery_predicates)
+            if subquery_join.join_condition:
+                all_predicates = all_predicates.and_(subquery_join.join_condition)
 
-class QueryProjection:
-    def parts(self) -> List[BaseProjection]:
-        pass
-
-
-class QueryFormatError(RuntimeError):
-    def __init__(self, *args: object) -> None:
-        super().__init__(*args)
-
-
-
-def __is_implicit_query(mosp_data: dict) -> bool:
-    pass
-
-
-def __is_explicit_query(mosp_data: dict) -> bool:
-    pass
-
-
-def parse_query(raw_query: str) -> SqlQuery:
-    mosp_data = mosp.parse(raw_query)
-    if __is_implicit_query(mosp_data):
-        return ImplicitSqlQuery(mosp_data)
-    elif __is_explicit_query(mosp_data):
-        return ExplicitSqlQuery(mosp_data)
-    else:
-        raise QueryFormatError("Query must be either implicit or explicit, not a mixture of both: " + raw_query)
-
-def parse_table(table: str) -> base.TableReference:
-    pass
+        return all_predicates

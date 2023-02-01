@@ -1,8 +1,6 @@
-
 import itertools
 import typing
 from typing import List, Set, Any, Iterable, Union
-
 
 _T = typing.TypeVar("_T")
 
@@ -24,6 +22,7 @@ def flatten(deep_lst: List[Union[List[_T], _T]], *, recursive: bool = False, fla
 
     If `flatten_set` is `True`, sets will be flattened just the same as lists will.
     """
+
     def check_flattenable(elem, flatten_sets: bool = False):
         return isinstance(elem, list) or (flatten_sets and isinstance(elem, set))
 
@@ -56,11 +55,6 @@ def simplify(lst: List[_T]) -> Union[_T, List[_T]]:
     while (isinstance(lst, list) or isinstance(lst, tuple) or isinstance(lst, set)) and len(lst) == 1:
         lst = list(lst)[0]
     return lst
-
-
-def powerset(lst: Iterable[_T]) -> Iterable[Set[_T]]:
-    """Calculates the powerset of the provided iterable."""
-    return itertools.chain.from_iterable(itertools.combinations(lst, size) for size in range(len(lst) + 1))
 
 
 def contains_multiple(obj: Any):

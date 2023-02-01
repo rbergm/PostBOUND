@@ -1,65 +1,11 @@
 """Fundamental types for the query abstraction layer."""
 
-import abc
-import numbers
-import typing
+from __future__ import annotations
+
 from dataclasses import dataclass
 from typing import Union
 
 from postbound.util import errors
-
-_T = typing.TypeVar("_T")
-
-
-class SqlExpression(abc.ABC):
-    def __repr__(self) -> str:
-        return str(self)
-
-class StaticValueExpression(SqlExpression, typing.Generic[_T]):
-    def __init__(self, value: _T) -> None:
-        self._value = value
-
-    def __repr__(self) -> str:
-        return super().__repr__()
-
-    def __str__(self) -> str:
-        return f"{self._value}" if isinstance(self._value, numbers.Number) else f"'{self._value}'"
-
-
-class CastExpression(SqlExpression):
-    def __init__(self, expression: SqlExpression, target_type: str) -> None:
-        self._casted_expression = expression
-        self._target_type = target_type
-
-    def __repr__(self) -> str:
-        return super().__repr__()
-
-    def __str__(self) -> str:
-        return f"{self._casted_expression}::{self._target_type}"
-
-
-class MathematicalExpression(SqlExpression):
-    def __init__(self, operator: str, first_argument: SqlExpression, second_argument: SqlExpression = None) -> None:
-        self._operator = operator
-        self._first_arg = first_argument
-        self._second_arg = second_argument
-
-    def __repr__(self) -> str:
-        return super().__repr__()
-
-    def __str__(self) -> str:
-        return f"{self._first_arg} {self._operator} {self._second_arg}"
-
-
-class ColumnExpression(SqlExpression):
-    def __init__(self, column: "ColumnReference") -> None:
-        self._col = column
-
-    def __repr__(self) -> str:
-        return super().__repr__()
-
-    def __str__(self) -> str:
-        return str(self._col)
 
 
 @dataclass
@@ -74,15 +20,25 @@ class TableReference:
     full_name: str
     alias: str = ""
 
-    def is_virtual(self) -> bool:
-        return not self.full_name
+    def __lt__(self, other):
+        if not isinstance(other, type(self)):
+            return NotImplemented
+        if self.full_name == other.full_name:
+            return self.alias < other.alias
+        return self.full_name < other.full_name
 
 
 @dataclass
 class ColumnReference:
     name: str
     table: Union[TableReference, None] = None
-    attached_expression: Union[SqlExpression, None] = None
+
+    def __lt__(self, other):
+        if not isinstance(other, type(self)):
+            return NotImplemented
+        if self.table == other.table:
+            return self.name < other.name
+        return self.table < other.table
 
 
 class UnboundColumnError(errors.StateError):
