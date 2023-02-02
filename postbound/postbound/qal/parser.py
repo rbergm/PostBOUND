@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 import re
 from typing import Any
 
@@ -76,7 +77,14 @@ def _parse_mosp_expression(mosp_data: Any) -> expr.SqlExpression:
     if "literal" in mosp_data:
         return expr.StaticValueExpression(mosp_data["literal"])
 
+    # parse subqueries
+    if "select" in mosp_data or "select_distinct" in mosp_data:
+        subquery = _MospQueryParser(mosp_data, mosp.format(mosp_data)).parse_query()
+        return expr.SubqueryExpression(subquery)
+
     # parse value CASTs and mathematical operations (+ / - etc), including logical operations
+    mosp_data: dict = copy.copy(mosp_data)
+    distinct = mosp_data.pop("distinct") if "distinct" in mosp_data else None  # side effect is intentional!
     operation = dict_utils.key(mosp_data)
     if operation == "cast":
         cast_target, cast_type = mosp_data["cast"]
@@ -88,13 +96,16 @@ def _parse_mosp_expression(mosp_data: Any) -> expr.SqlExpression:
 
     # parse aggregate (COUNT / AVG / MIN / ...) or function call (CURRENT_DATE() etc)
     arguments = mosp_data[operation] if mosp_data[operation] else []
-    parsed_arguments = [_parse_mosp_expression(arg) for arg in arguments]
-    return expr.FunctionExpression(operation, parsed_arguments)
+    if isinstance(arguments, list):
+        parsed_arguments = [_parse_mosp_expression(arg) for arg in arguments]
+    else:
+        parsed_arguments = [_parse_mosp_expression(arguments)]
+    return expr.FunctionExpression(operation, parsed_arguments, distinct=distinct)
 
 
 def _parse_select_statement(mosp_data: dict | str) -> proj.BaseProjection:
     if isinstance(mosp_data, dict):
-        select_target = mosp_data["value"]
+        select_target = copy.copy(mosp_data["value"])
         target_name = mosp_data.get("name", None)
         return proj.BaseProjection(_parse_mosp_expression(select_target), target_name)
     target_column = _parse_column_reference(mosp_data)
@@ -118,8 +129,8 @@ def _parse_select_clause(mosp_data: dict) -> proj.QueryProjection:
     return proj.QueryProjection(parsed_targets, select_type)
 
 
-# see https://regex101.com/r/HdKzQg/1
-_TableReferencePattern = re.compile(r"(?P<full_name>\S+) (AS (?P<alias>\S+))?")
+# see https://regex101.com/r/HdKzQg/2
+_TableReferencePattern = re.compile(r"(?P<full_name>\S+)( (AS )?(?P<alias>\S+))?")
 
 
 def _parse_table_reference(table: str | dict) -> base.TableReference:
@@ -150,7 +161,10 @@ def _parse_column_reference(column: str) -> base.ColumnReference:
 def _parse_implicit_from_clause(mosp_data: dict) -> list[base.TableReference]:
     if "from" not in mosp_data:
         return []
-    return [_parse_table_reference(table) for table in mosp_data["from"]]
+    from_clause = mosp_data["from"]
+    if isinstance(from_clause, str):
+        return [_parse_table_reference(from_clause)]
+    return [_parse_table_reference(table) for table in from_clause]
 
 
 def _parse_explicit_from_clause(mosp_data: dict) -> tuple[base.TableReference, list[joins.Join]]:

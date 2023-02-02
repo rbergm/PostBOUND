@@ -165,9 +165,10 @@ class ColumnExpression(SqlExpression):
 
 
 class FunctionExpression(SqlExpression):
-    def __init__(self, function: str, arguments: list[SqlExpression] | None = None) -> None:
+    def __init__(self, function: str, arguments: list[SqlExpression] | None = None, *, distinct: bool = False) -> None:
         self.function = function
         self.arguments = [] if arguments is None else arguments
+        self.distinct = distinct
 
     def columns(self) -> set[base.ColumnReference]:
         all_columns = set()
@@ -182,10 +183,13 @@ class FunctionExpression(SqlExpression):
         return all_columns
 
     def __hash__(self) -> int:
-        return hash(tuple([self.function] + self.arguments))
+        return hash(tuple([self.function, self.distinct] + self.arguments))
 
     def __eq__(self, other) -> bool:
-        return isinstance(other, type(self)) and self.function == other.function and self.arguments == other.arguments
+        return (isinstance(other, type(self))
+                and self.function == other.function
+                and self.arguments == other.arguments
+                and self.distinct == other.distinct)
 
     def __repr__(self) -> str:
         return super().__repr__()
@@ -193,7 +197,8 @@ class FunctionExpression(SqlExpression):
     def __str__(self) -> str:
         function_str = self.function.upper()
         args_str = ", ".join(str(arg) for arg in self.arguments)
-        return f"{function_str}({args_str})"
+        distinct_str = "DISTINCT " if self.distinct else ""
+        return f"{function_str}({distinct_str}{args_str})"
 
 
 class SubqueryExpression(SqlExpression):

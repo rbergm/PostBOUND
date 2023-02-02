@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import itertools
 import typing
 from typing import Iterable, Sized
@@ -7,6 +9,12 @@ _T = typing.TypeVar("_T")
 
 def flatten(deep_list: Iterable[Iterable[_T]]) -> list[_T]:
     return list(itertools.chain(*deep_list))
+
+
+def enlist(obj: _T | list[_T]) -> list[_T]:
+    if isinstance(obj, list):
+        return obj
+    return [obj]
 
 
 def powerset(lst: (Iterable[_T], Sized)) -> Iterable[tuple[_T, ...]]:

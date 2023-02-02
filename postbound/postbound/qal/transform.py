@@ -73,6 +73,9 @@ def bind_columns(query: qal.SqlQuery, *, with_schema: bool = True, db_schema: db
             unbound_columns.append(column)
         elif not column.table.full_name and column.table.alias in alias_map:
             column.table.full_name = alias_map[column.table.alias].full_name
+        elif column.table and not column.table.full_name:
+            column.table.full_name = column.table.alias
+            column.table.alias = ""
 
     if query.predicates():
         for column in query.predicates().root().itercolumns():
@@ -80,6 +83,9 @@ def bind_columns(query: qal.SqlQuery, *, with_schema: bool = True, db_schema: db
                 unbound_columns.append(column)
             elif not column.table.full_name and column.table.alias in alias_map:
                 column.table.full_name = alias_map[column.table.alias].full_name
+            elif column.table and not column.table.full_name:
+                column.table.full_name = column.table.alias
+                column.table.alias = ""
 
     if with_schema:
         db_schema = db_schema if db_schema else db.DatabasePool.get_instance().current_database()

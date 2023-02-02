@@ -160,7 +160,8 @@ _MospOperatorsSQL = {"eq": "==", "neq": "<>",
                      "ilike": "ILIKE", "not_ilike": "NOT ILIKE",
                      "in": "IN", "between": "BETWEEN",
                      "and": "AND", "or": "OR", "not": "NOT",
-                     "add": "+", "sub": "-", "neg": "-", "mul": "*", "div": "/", "mod": "%"}
+                     "add": "+", "sub": "-", "neg": "-", "mul": "*", "div": "/", "mod": "%",
+                     "exists": "EXISTS", "missing": "MISSING"}
 
 
 class BinaryPredicate(BasePredicate):
@@ -357,11 +358,14 @@ class UnaryPredicate(BasePredicate):
         return super().__repr__()
 
     def __str__(self) -> str:
+        operator_str = _MospOperatorsSQL.get(self.operation, self.operation)
+        if isinstance(self.column, expr.SubqueryExpression):
+            return f"{operator_str} {self.column}"
+
         if self.operation == "exists":
             return f"{self.column} IS NOT NULL"
         elif self.operation == "missing":
             return f"{self.column} IS NULL"
-        operator_str = _MospOperatorsSQL.get(self.operation, self.operation)
         return f"{operator_str}{self.column}"
 
 
@@ -369,7 +373,7 @@ class CompoundPredicate(AbstractPredicate):
     def __init__(self, operation: str, children: AbstractPredicate | list[AbstractPredicate], mosp_data: dict):
         super().__init__(mosp_data)
         self.operation = operation
-        self.children = children
+        self.children = collection_utils.enlist(children)
 
     def is_compound(self) -> bool:
         return True

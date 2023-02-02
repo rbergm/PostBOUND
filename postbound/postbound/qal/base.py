@@ -71,6 +71,8 @@ class ColumnReference:
     def __str__(self) -> str:
         if self.table and self.table.alias:
             return f"{self.table.alias}.{self.name}"
+        elif self.table and self.table.full_name:
+            return f"{self.table.full_name}.{self.name}"
         return self.name
 
 
