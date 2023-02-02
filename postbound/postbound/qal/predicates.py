@@ -449,6 +449,9 @@ class QueryPredicates:
     def __init__(self, root: AbstractPredicate | None):
         self._root = root
 
+    def is_empty(self) -> bool:
+        return self._root is None
+
     def root(self) -> AbstractPredicate:
         self._assert_not_empty()
         return self._root

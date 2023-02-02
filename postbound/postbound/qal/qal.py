@@ -52,7 +52,7 @@ class ImplicitSqlQuery(SqlQuery):
         super().__init__(mosp_data)
         self.select_clause = select_clause
         self.from_clause = from_clause
-        self.where_clause = where_clause
+        self.where_clause = where_clause if where_clause and not where_clause.is_empty() else None
 
     def is_implicit(self) -> bool:
         return True
@@ -82,7 +82,7 @@ class ExplicitSqlQuery(SqlQuery):
         base_table, joined_tables = from_clause
         self.base_table: base.TableReference = base_table
         self.joined_tables: list[joins.Join] = joined_tables
-        self.where_clause = where_clause
+        self.where_clause = where_clause if where_clause and not where_clause.is_empty() else None
 
     def is_implicit(self) -> bool:
         return False
@@ -99,7 +99,9 @@ class ExplicitSqlQuery(SqlQuery):
     def predicates(self) -> preds.QueryPredicates | None:
         all_predicates = self.where_clause if self.where_clause else preds.QueryPredicates.empty_predicate()
         for join in self.joined_tables:
-            if not isinstance(join, joins.SubqueryJoin):
+            if isinstance(join, joins.TableJoin):
+                if join.join_condition:
+                    all_predicates = all_predicates.and_(join.join_condition)
                 continue
             subquery_join: joins.SubqueryJoin = join
 

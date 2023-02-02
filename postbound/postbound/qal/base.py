@@ -27,6 +27,12 @@ class TableReference:
             return self.alias < other.alias
         return self.full_name < other.full_name
 
+    def __hash__(self) -> int:
+        return hash((self.full_name, self.alias))
+
+    def __eq__(self, other) -> bool:
+        return isinstance(other, type(self)) and self.full_name == other.full_name and self.alias == other.alias
+
     def __repr__(self) -> str:
         return str(self)
 
@@ -52,6 +58,12 @@ class ColumnReference:
         if self.table == other.table:
             return self.name < other.name
         return self.table < other.table
+
+    def __hash__(self) -> int:
+        return hash(tuple([self.name, self.table]))
+
+    def __eq__(self, other) -> bool:
+        return isinstance(other, type(self)) and self.name == other.name and self.table == other.table
 
     def __repr__(self) -> str:
         return str(self)
