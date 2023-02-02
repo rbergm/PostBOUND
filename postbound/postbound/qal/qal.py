@@ -23,6 +23,10 @@ class SqlQuery(abc.ABC):
         return not self.is_implicit()
 
     @abc.abstractmethod
+    def projection(self) -> proj.QueryProjection:
+        raise NotImplementedError
+
+    @abc.abstractmethod
     def tables(self) -> Iterable[base.TableReference]:
         """Provides all tables that are referenced in the query."""
         raise NotImplementedError
@@ -30,6 +34,13 @@ class SqlQuery(abc.ABC):
     @abc.abstractmethod
     def predicates(self) -> preds.QueryPredicates | None:
         """Provides all predicates in this query."""
+        raise NotImplementedError
+
+    def __repr__(self) -> str:
+        return str(self)
+
+    @abc.abstractmethod
+    def __str__(self) -> str:
         raise NotImplementedError
 
 
@@ -46,17 +57,25 @@ class ImplicitSqlQuery(SqlQuery):
     def is_implicit(self) -> bool:
         return True
 
+    def projection(self) -> proj.QueryProjection:
+        return self.select_clause
+
     def tables(self) -> Iterable[base.TableReference]:
         return self.from_clause
 
     def predicates(self) -> preds.QueryPredicates | None:
         return self.where_clause
 
+    def __str__(self) -> str:
+        from_clause_str = ("FROM " + ", ".join(str(tab) for tab in self.from_clause)) if self.from_clause else ""
+        where_clause_str = ("WHERE " + str(self.where_clause)) if self.where_clause else ""
+        return f"{self.select_clause} {from_clause_str} {where_clause_str}".rstrip()
+
 
 class ExplicitSqlQuery(SqlQuery):
     def __init__(self, mosp_data: dict, *,
                  select_clause: proj.QueryProjection,
-                 from_clause: tuple[base.TableReference, list[joins.Join]] | None = None,
+                 from_clause: tuple[base.TableReference, list[joins.Join]],
                  where_clause: preds.QueryPredicates | None = None) -> None:
         super().__init__(mosp_data)
         self.select_clause = select_clause
@@ -67,6 +86,9 @@ class ExplicitSqlQuery(SqlQuery):
 
     def is_implicit(self) -> bool:
         return False
+
+    def projection(self) -> proj.QueryProjection:
+        return self.select_clause
 
     def tables(self) -> Iterable[base.TableReference]:
         all_tables = [self.base_table]
@@ -88,3 +110,8 @@ class ExplicitSqlQuery(SqlQuery):
                 all_predicates = all_predicates.and_(subquery_join.join_condition)
 
         return all_predicates
+
+    def __str__(self) -> str:
+        from_clause_str = f"FROM {self.base_table} " + " ".join(str(join) for join in self.joined_tables)
+        where_clause_str = ("WHERE " + str(self.where_clause)) if self.where_clause else ""
+        return f"{self.select_clause} {from_clause_str} {where_clause_str}".rstrip()
