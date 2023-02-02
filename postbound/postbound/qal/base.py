@@ -20,12 +20,25 @@ class TableReference:
     full_name: str
     alias: str = ""
 
-    def __lt__(self, other):
+    def __lt__(self, other) -> bool:
         if not isinstance(other, type(self)):
             return NotImplemented
         if self.full_name == other.full_name:
             return self.alias < other.alias
         return self.full_name < other.full_name
+
+    def __repr__(self) -> str:
+        return str(self)
+
+    def __str__(self) -> str:
+        if self.full_name and self.alias:
+            return f"{self.full_name} AS {self.alias}"
+        elif self.alias:
+            return self.alias
+        elif self.full_name:
+            return self.full_name
+        else:
+            return "[UNKNOWN TABLE]"
 
 
 @dataclass
@@ -33,12 +46,20 @@ class ColumnReference:
     name: str
     table: Union[TableReference, None] = None
 
-    def __lt__(self, other):
+    def __lt__(self, other) -> bool:
         if not isinstance(other, type(self)):
             return NotImplemented
         if self.table == other.table:
             return self.name < other.name
         return self.table < other.table
+
+    def __repr__(self) -> str:
+        return str(self)
+
+    def __str__(self) -> str:
+        if self.table and self.table.alias:
+            return f"{self.table.alias}.{self.name}"
+        return self.name
 
 
 class UnboundColumnError(errors.StateError):

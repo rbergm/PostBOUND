@@ -12,7 +12,8 @@ from postbound.util import dicts as dict_utils
 AutoBindColumns: bool = False
 
 _MospCompoundOperations = {"and", "or", "not"}
-_MospBinaryOperations = {"lt", "gt", "le", "ge", "eq", "neq", "like", "not_like", "ilike", "not_ilike", "in", "between"}
+_MospBinaryOperations = {"lt", "gt", "le", "ge", "gte", "lte", "eq", "neq", "like", "not_like", "ilike", "not_ilike",
+                         "in", "between"}
 _MospUnaryOperations = {"exists", "missing"}
 _MospAggregateOperations = {"count", "sum", "min", "max", "avg"}
 _MospMathematicalOperations = {"add", "sub", "neg", "mul", "div", "mod", "and", "or", "not"}
@@ -47,7 +48,10 @@ def _parse_mosp_predicate(mosp_data: dict) -> preds.AbstractPredicate:
     if operation == "in":
         target_column, *values = mosp_data[operation]
         parsed_column = _parse_mosp_expression(target_column)
-        parsed_values = [_parse_mosp_expression(val) for val in values]
+        if len(values) == 1 and isinstance(values[0], dict) and "literal" in values[0]:
+            parsed_values = [expr.StaticValueExpression(val) for val in values[0]["literal"]]
+        else:
+            parsed_values = [_parse_mosp_expression(val) for val in values]
         return preds.InPredicate(parsed_column, parsed_values, mosp_data)
     elif operation == "between":
         target_column, interval_start, interval_end = mosp_data[operation]
@@ -61,6 +65,8 @@ def _parse_mosp_predicate(mosp_data: dict) -> preds.AbstractPredicate:
 
 
 def _parse_mosp_expression(mosp_data: Any) -> expr.SqlExpression:
+    if mosp_data == "*":
+        return expr.StarExpression()
     if isinstance(mosp_data, str):
         return expr.ColumnExpression(_parse_column_reference(mosp_data))
     elif not isinstance(mosp_data, dict):
@@ -89,7 +95,7 @@ def _parse_mosp_expression(mosp_data: Any) -> expr.SqlExpression:
 def _parse_select_statement(mosp_data: dict | str) -> proj.BaseProjection:
     if isinstance(mosp_data, dict):
         select_target = mosp_data["value"]
-        target_name = mosp_data["name"]
+        target_name = mosp_data.get("name", None)
         return proj.BaseProjection(_parse_mosp_expression(select_target), target_name)
     target_column = _parse_column_reference(mosp_data)
     return proj.BaseProjection(expr.ColumnExpression(target_column))
@@ -163,16 +169,22 @@ def _parse_explicit_from_clause(mosp_data: dict) -> tuple[base.TableReference, l
 
         # TODO: enable USING support in addition to ON
 
-        if isinstance(join_source, dict) and ("select" in join_source or "select_distinct" in join_source):
+        if (isinstance(join_source, dict)
+                and ("select" in join_source["value"] or "select_distinct" in join_source["value"])):
             # we found a subquery
-            joined_subquery = _MospQueryParser(join_source, mosp.format(join_source)).parse_query()
+            joined_subquery = _MospQueryParser(join_source["value"], mosp.format(join_source)).parse_query()
             join_alias = joined_table.get("name", None)
             parsed_joins.append(joins.SubqueryJoin(join_type, joined_subquery, join_alias, join_condition))
-        elif isinstance(join_source, str):
-            # we found a normal table join
-            table_name = join_source
-            table_alias = joined_table.get("name", None)
+        elif isinstance(join_source, dict):
+            # we found a normal table join with an alias
+            table_name = join_source["value"]
+            table_alias = join_source.get("name", None)
             table = base.TableReference(table_name, table_alias)
+            parsed_joins.append(joins.TableJoin(join_type, table, join_condition))
+        elif isinstance(join_source, str):
+            # we found a normal table join without an alias
+            table_name = join_source
+            table = base.TableReference(table_name)
             parsed_joins.append(joins.TableJoin(join_type, table, join_condition))
         else:
             raise ValueError("Unknown JOIN format: " + str(joined_table))
@@ -201,7 +213,9 @@ def _is_explicit_query(mosp_data: dict) -> bool:
     if not isinstance(from_clause, list):
         return False
 
-    for table in from_clause:
+    base_table, *join_statements = from_clause
+
+    for table in join_statements:
         if isinstance(table, str):
             return False
         if isinstance(table, dict) and not any(join_type in table for join_type in _MospJoinTypes):
@@ -233,7 +247,7 @@ class _MospQueryParser:
         else:
             raise QueryFormatError(self._raw_query)
         select_clause = _parse_select_clause(self._mosp_data)
-        where_clause = _parse_where_clause(self._mosp_data) if "where" in self._mosp_data else None
+        where_clause = _parse_where_clause(self._mosp_data["where"]) if "where" in self._mosp_data else None
 
         # TODO: also handle GROUP BY, HAVING, ORDER BY and LIMIT
 
@@ -253,7 +267,7 @@ class _MospQueryParser:
 
 def parse_query(query: str, *,
                 bind_columns: bool = AutoBindColumns, db_schema: db.DatabaseSchema | None = None) -> qal.SqlQuery:
-    db_schema = db_schema if db_schema and bind_columns else db.DatabasePool.get_instance().current_database()
+    db_schema = db_schema if db_schema or not bind_columns else db.DatabasePool.get_instance().current_database()
     mosp_data = mosp.parse(query)
     parsed_query = _MospQueryParser(mosp_data, query).parse_query()
     if bind_columns:

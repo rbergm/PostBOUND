@@ -48,7 +48,9 @@ class TableJoin(Join):
         join_str = _MospJoinTypesSQL.get(self.join_type, self.join_type)
         join_prefix = f"{join_str} {self.joined_table}"
         if self.join_condition:
-            return join_prefix + f"ON {self.join_condition}"
+            condition_str = (f"({self.join_condition})" if self.join_condition.is_compound()
+                             else str(self.join_condition))
+            return join_prefix + f" ON {condition_str}"
         else:
             return join_prefix
 
@@ -72,5 +74,7 @@ class SubqueryJoin(Join):
         if self.alias:
             join_str += f" AS {self.alias}"
         if self.join_condition:
-            join_str += f" ON {self.join_condition}"
+            condition_str = (f"({self.join_condition})" if self.join_condition.is_compound()
+                             else str(self.join_condition))
+            join_str += f" ON {condition_str}"
         return join_str

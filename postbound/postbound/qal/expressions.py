@@ -31,6 +31,10 @@ class SqlExpression(abc.ABC):
     def __repr__(self) -> str:
         return str(self)
 
+    @abc.abstractmethod
+    def __str__(self) -> str:
+        raise NotImplementedError
+
 
 class StaticValueExpression(SqlExpression, typing.Generic[_T]):
     def __init__(self, value: _T) -> None:
@@ -183,3 +187,20 @@ class SubqueryExpression(SqlExpression):
 
     def __str__(self) -> str:
         return f"({self.query})"
+
+
+class StarExpression(SqlExpression):
+    def columns(self) -> set[base.ColumnReference]:
+        return set()
+
+    def __hash__(self) -> int:
+        return hash("*")
+
+    def __eq__(self, other) -> bool:
+        return isinstance(other, type(self))
+
+    def __repr__(self) -> str:
+        return str(self)
+
+    def __str__(self) -> str:
+        return "*"

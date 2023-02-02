@@ -20,6 +20,13 @@ def pairs(lst: Iterable[_T]) -> Iterable[tuple[_T, _T]]:
     return all_pairs
 
 
+def set_union(sets: Iterable[set]) -> set:
+    union_set = set()
+    for s in sets:
+        union_set |= s
+    return union_set
+
+
 class SizedQueue(typing.Iterable[_T]):
     """A sized queue extends on the behaviour of a normal queue by restricting the number of items in the queue.
 

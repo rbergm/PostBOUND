@@ -19,13 +19,13 @@ def _normalize_join_pair(columns: tuple[base.ColumnReference, base.ColumnReferen
 
 
 class NoJoinPredicateError(errors.StateError):
-    def __init__(self, predicate: AbstractPredicate | None = None):
+    def __init__(self, predicate: AbstractPredicate | None = None) -> None:
         super().__init__(f"For predicate {predicate}" if predicate else "")
         self.predicate = predicate
 
 
 class NoFilterPredicateError(errors.StateError):
-    def __init__(self, predicate: AbstractPredicate | None = None):
+    def __init__(self, predicate: AbstractPredicate | None = None) -> None:
         super().__init__(f"For predicate {predicate}" if predicate else "")
         self.predicate = predicate
 
@@ -98,7 +98,7 @@ class AbstractPredicate(abc.ABC):
         raise NotImplementedError
 
     @abc.abstractmethod
-    def base_predicates(self) -> Iterable["AbstractPredicate"]:
+    def base_predicates(self) -> Iterable[AbstractPredicate]:
         """Provides all base predicates that form this predicate.
 
         This is most useful to iterate over all leaves of a compound predicate, for base predicates it simply returns
@@ -121,7 +121,7 @@ class AbstractPredicate(abc.ABC):
         raise NotImplementedError
 
     @abc.abstractmethod
-    def __eq__(self, __o: object) -> bool:
+    def __eq__(self, other: object) -> bool:
         raise NotImplementedError
 
     def __repr__(self) -> str:
@@ -141,17 +141,18 @@ class BasePredicate(AbstractPredicate, abc.ABC):
     def is_compound(self) -> bool:
         return False
 
-    def base_predicates(self) -> Iterable["AbstractPredicate"]:
+    def base_predicates(self) -> Iterable[AbstractPredicate]:
         return [self]
 
 
 _MospOperatorsSQL = {"eq": "==", "neq": "<>",
-                     "lt": "<", "le": "<=",
-                     "gt": ">", "ge": ">=",
+                     "lt": "<", "le": "<=", "lte": "<=",
+                     "gt": ">", "ge": ">=", "gte": ">=",
                      "like": "LIKE", "not_like": "NOT LIKE",
                      "ilike": "ILIKE", "not_ilike": "NOT ILIKE",
                      "in": "IN", "between": "BETWEEN",
-                     "and": "AND", "or": "OR", "not": "NOT"}
+                     "and": "AND", "or": "OR", "not": "NOT",
+                     "add": "+", "sub": "-", "neg": "-", "mul": "*", "div": "/", "mod": "%"}
 
 
 class BinaryPredicate(BasePredicate):
@@ -190,11 +191,11 @@ class BinaryPredicate(BasePredicate):
     def __hash__(self) -> int:
         return hash(tuple([self.operation, self.first_argument, self.second_argument]))
 
-    def __eq__(self, __o: object) -> bool:
-        return (isinstance(__o, type(self))
-                and self.operation == __o.operation
-                and self.first_argument == __o.first_argument
-                and self.second_argument == __o.second_argument)
+    def __eq__(self, other: object) -> bool:
+        return (isinstance(other, type(self))
+                and self.operation == other.operation
+                and self.first_argument == other.first_argument
+                and self.second_argument == other.second_argument)
 
     def __repr__(self) -> str:
         return super().__repr__()
@@ -210,6 +211,46 @@ class BetweenPredicate(BasePredicate):
         super().__init__(mosp_data)
         self.column = column
         self.interval = interval
+        self.interval_start, self.interval_end = self.interval
+
+    def is_join(self) -> bool:
+        column_tables = self.column.tables()
+        interval_start_tables = self.interval_start.tables()
+        interval_end_tables = self.interval_end.tables()
+        if any(len(tabs) > 1 for tabs in [column_tables, interval_start_tables, interval_end_tables]):
+            return True
+        return len(column_tables ^ interval_start_tables ^ interval_end_tables) > 0
+
+    def columns(self) -> set[base.ColumnReference]:
+        return self.column.columns() | self.interval_start.columns() | self.interval_end.columns()
+
+    def join_partners(self) -> set[tuple[base.ColumnReference, base.ColumnReference]]:
+        self._assert_join_predicate()
+        partners = []
+        predicate_columns = self.column.columns()
+        start_columns = self.interval_start.columns()
+        end_columns = self.interval_end.columns()
+
+        partners.extend(_normalize_join_pair(join) for join in collection_utils.pairs(predicate_columns))
+        partners.extend(_normalize_join_pair(join) for join in collection_utils.pairs(start_columns))
+        partners.extend(_normalize_join_pair(join) for join in collection_utils.pairs(end_columns))
+
+        for first_col, second_col in itertools.product(predicate_columns, start_columns):
+            if first_col.table == second_col.table:
+                continue
+            partners.append(_normalize_join_pair((first_col, second_col)))
+        for first_col, second_col in itertools.product(predicate_columns, end_columns):
+            if first_col.table == second_col.table:
+                continue
+            partners.append(_normalize_join_pair((first_col, second_col)))
+
+        return set(partners)
+
+    def __hash__(self) -> int:
+        return hash(tuple(["BETWEEN", self.column, self.interval]))
+
+    def __eq__(self, other: object) -> bool:
+        return isinstance(other, type(self)) and self.column == other.column and self.interval == other.interval
 
     def __repr__(self) -> str:
         return super().__repr__()
@@ -225,6 +266,42 @@ class InPredicate(BasePredicate):
         self.column = column
         self.values = values
 
+    def is_join(self) -> bool:
+        column_tables = self.column.tables()
+        value_tables = [val.tables() for val in self.values]
+        if any(len(tabs) > 1 for tabs in [column_tables] + value_tables):
+            return True
+        return len(column_tables ^ collection_utils.set_union(value_tables)) > 0
+
+    def columns(self) -> set[base.ColumnReference]:
+        all_columns = self.column.columns()
+        for val in self.values:
+            all_columns |= val.columns()
+        return all_columns
+
+    def join_partners(self) -> set[tuple[base.ColumnReference, base.ColumnReference]]:
+        self._assert_join_predicate()
+        partners = []
+        predicate_columns = self.column.columns()
+        value_columns = [val.columns() for val in self.values]
+
+        partners.extend(_normalize_join_pair(join) for join in collection_utils.pairs(predicate_columns))
+        for cols in value_columns:
+            partners.extend(_normalize_join_pair(join) for join in collection_utils.pairs(cols))
+
+            for first_col, second_col in itertools.product(predicate_columns, cols):
+                if first_col.table == second_col.table:
+                    continue
+                partners.append(_normalize_join_pair((first_col, second_col)))
+
+        return set(partners)
+
+    def __hash__(self) -> int:
+        return hash(["IN", self.column, tuple(self.values)])
+
+    def __eq__(self, other: object) -> bool:
+        return isinstance(other, type(self)) and self.column == other.column and set(self.values) == set(other.values)
+
     def __repr__(self) -> str:
         return super().__repr__()
 
@@ -239,6 +316,32 @@ class UnaryPredicate(BasePredicate):
         self.operation = operation
         self.column = column
 
+    def is_join(self) -> bool:
+        return len(self.column.tables()) > 1
+
+    def columns(self) -> set[base.ColumnReference]:
+        return self.column.columns()
+
+    def join_partners(self) -> set[tuple[base.ColumnReference, base.ColumnReference]]:
+        return set(collection_utils.pairs(self.column.columns()))
+
+    def __hash__(self) -> int:
+        return hash(tuple([self.operation, self.column]))
+
+    def __eq__(self, other: object) -> bool:
+        return isinstance(other, type(self)) and self.operation == other.operation and self.column == other.column
+
+    def __repr__(self) -> str:
+        return super().__repr__()
+
+    def __str__(self) -> str:
+        if self.operation == "exists":
+            return f"{self.column} IS NOT NULL"
+        elif self.operation == "missing":
+            return f"{self.column} IS NULL"
+        operator_str = _MospOperatorsSQL.get(self.operation, self.operation)
+        return f"{operator_str}{self.column}"
+
 
 class CompoundPredicate(AbstractPredicate):
     def __init__(self, operation: str, children: AbstractPredicate | list[AbstractPredicate], mosp_data: dict):
@@ -246,11 +349,101 @@ class CompoundPredicate(AbstractPredicate):
         self.operation = operation
         self.children = children
 
+    def is_compound(self) -> bool:
+        return True
+
+    def is_join(self) -> bool:
+        return any(child.is_join() for child in self.children)
+
+    def columns(self) -> set[base.ColumnReference]:
+        return collection_utils.set_union(child.columns() for child in self.children)
+
+    def join_partners(self) -> set[tuple[base.ColumnReference, base.ColumnReference]]:
+        return collection_utils.set_union(child.join_partners() for child in self.children)
+
+    def base_predicates(self) -> Iterable[AbstractPredicate]:
+        return collection_utils.set_union(set(child.base_predicates()) for child in self.children)
+
+    def __hash__(self) -> int:
+        return hash(tuple([self.operation, tuple(self.children)]))
+
+    def __eq__(self, other: object) -> bool:
+        return isinstance(other, type(self)) and self.operation == other.operation and self.children == other.children
+
+    def __repr__(self) -> str:
+        return super().__repr__()
+
+    def __str__(self) -> str:
+        if self.operation == "not":
+            return f"NOT {self.children[0]}"
+        elif self.operation == "or":
+            return "(" + " OR ".join(str(child) for child in self.children) + ")"
+        elif self.operation == "and":
+            return " AND ".join(str(child) for child in self.children)
+        else:
+            raise ValueError(f"Unknown operation: '{self.operation}'")
+
+
+def _collect_filter_predicates(predicate: AbstractPredicate) -> set[AbstractPredicate]:
+    if predicate.is_base():
+        if predicate.is_join():
+            return set()
+        else:
+            return {predicate}
+    else:
+        if not isinstance(predicate, CompoundPredicate):
+            raise ValueError(f"Predicate claims to be compound but is not instance of CompoundPredicate: {predicate}")
+        compound_pred: CompoundPredicate = predicate
+        if compound_pred.operation == "or":
+            or_filter_children = [child_pred for child_pred in compound_pred.children if child_pred.is_filter()]
+            if not or_filter_children:
+                return set()
+            or_mosp_data = {"or": [child.mosp_data for child in compound_pred.children]}
+            or_filters = CompoundPredicate("or", or_filter_children, or_mosp_data)
+            return {or_filters}
+        elif compound_pred.operation == "not":
+            not_filter_children = compound_pred.children[0] if compound_pred.children[0].is_filter() else None
+            if not not_filter_children:
+                return set()
+            return {compound_pred}
+        elif compound_pred.operation == "and":
+            return collection_utils.set_union([_collect_filter_predicates(child) for child in compound_pred.children])
+        else:
+            raise ValueError(f"Unknown operation: '{compound_pred.operation}'")
+
+
+def _collect_join_predicates(predicate: AbstractPredicate) -> set[AbstractPredicate]:
+    if predicate.is_base():
+        if predicate.is_join():
+            return {predicate}
+        else:
+            return set()
+    else:
+        if not isinstance(predicate, CompoundPredicate):
+            raise ValueError(f"Predicate claims to be compound but is not instance of CompoundPredicate: {predicate}")
+        compound_pred: CompoundPredicate = predicate
+        if compound_pred.operation == "or":
+            or_join_children = [child_pred for child_pred in compound_pred.children if child_pred.is_join()]
+            if not or_join_children:
+                return set()
+            or_mosp_data = {"or": [child.mosp_data for child in compound_pred.children]}
+            or_joins = CompoundPredicate("or", or_join_children, or_mosp_data)
+            return {or_joins}
+        elif compound_pred.operation == "not":
+            not_join_children = compound_pred.children[0] if compound_pred.children[0].is_join() else None
+            if not not_join_children:
+                return set()
+            return {compound_pred}
+        elif compound_pred.operation == "and":
+            return collection_utils.set_union([_collect_join_predicates(child) for child in compound_pred.children])
+        else:
+            raise ValueError(f"Unknown operation: '{compound_pred.operation}'")
+
 
 class QueryPredicates:
 
     @staticmethod
-    def empty_predicate() -> "QueryPredicates":
+    def empty_predicate() -> QueryPredicates:
         return QueryPredicates(None)
 
     def __init__(self, root: AbstractPredicate | None):
@@ -262,13 +455,13 @@ class QueryPredicates:
 
     def filters(self) -> Iterable[AbstractPredicate]:
         self._assert_not_empty()
-        pass
+        return _collect_filter_predicates(self._root)
 
     def joins(self) -> Iterable[AbstractPredicate]:
         self._assert_not_empty()
-        pass
+        return _collect_join_predicates(self._root)
 
-    def and_(self, other_predicate: QueryPredicates | AbstractPredicate):
+    def and_(self, other_predicate: QueryPredicates | AbstractPredicate) -> QueryPredicates:
         other_predicate = other_predicate._root if isinstance(other_predicate, QueryPredicates) else other_predicate
         if self._root is None:
             return QueryPredicates(other_predicate)
@@ -280,3 +473,9 @@ class QueryPredicates:
     def _assert_not_empty(self) -> None:
         if self._root is None:
             raise errors.StateError("No query predicates!")
+
+    def __repr__(self) -> str:
+        return str(self)
+
+    def __str__(self) -> str:
+        return str(self._root)
