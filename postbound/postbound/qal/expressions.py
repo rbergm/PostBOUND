@@ -3,6 +3,7 @@ from __future__ import annotations
 import abc
 import numbers
 import typing
+from typing import Iterable
 
 from postbound.qal import base, qal
 
@@ -14,6 +15,14 @@ class SqlExpression(abc.ABC):
     @abc.abstractmethod
     def columns(self) -> set[base.ColumnReference]:
         """Provides all columns that are referenced by this expression."""
+        raise NotImplementedError
+
+    @abc.abstractmethod
+    def itercolumns(self) -> Iterable[base.ColumnReference]:
+        """Provides all columns that are referenced by this predicate.
+
+        If a column is referenced multiple times, it is also returned multiple times.
+        """
         raise NotImplementedError
 
     def tables(self) -> set[base.TableReference]:
@@ -43,6 +52,9 @@ class StaticValueExpression(SqlExpression, typing.Generic[_T]):
     def columns(self) -> set[base.ColumnReference]:
         return set()
 
+    def itercolumns(self) -> Iterable[base.ColumnReference]:
+        return []
+
     def __hash__(self) -> int:
         return hash(self.value)
 
@@ -63,6 +75,9 @@ class CastExpression(SqlExpression):
 
     def columns(self) -> set[base.ColumnReference]:
         return self.casted_expression.columns()
+
+    def itercolumns(self) -> Iterable[base.ColumnReference]:
+        return self.casted_expression.itercolumns()
 
     def __hash__(self) -> int:
         return hash(tuple([self.casted_expression, self.target_type]))
@@ -101,6 +116,9 @@ class MathematicalExpression(SqlExpression):
             all_columns |= self.second_arg.columns()
         return all_columns
 
+    def itercolumns(self) -> Iterable[base.ColumnReference]:
+        return list(self.first_arg.itercolumns()) + self.second_arg.itercolumns()
+
     def __hash__(self) -> int:
         return hash(tuple([self.operator, self.first_arg, self.second_arg]))
 
@@ -130,6 +148,9 @@ class ColumnExpression(SqlExpression):
     def columns(self) -> set[base.ColumnReference]:
         return {self.column}
 
+    def itercolumns(self) -> Iterable[base.ColumnReference]:
+        return [self.column]
+
     def __hash__(self) -> int:
         return hash(self.column)
 
@@ -154,6 +175,12 @@ class FunctionExpression(SqlExpression):
             all_columns |= arg.columns()
         return all_columns
 
+    def itercolumns(self) -> Iterable[base.ColumnReference]:
+        all_columns = []
+        for arg in self.arguments:
+            all_columns.extend(arg.itercolumns())
+        return all_columns
+
     def __hash__(self) -> int:
         return hash(tuple([self.function] + self.arguments))
 
@@ -176,6 +203,9 @@ class SubqueryExpression(SqlExpression):
     def columns(self) -> set[base.ColumnReference]:
         return self.query.predicates().root().columns()
 
+    def itercolumns(self) -> Iterable[base.ColumnReference]:
+        return self.query.predicates().root().itercolumns()
+
     def __hash__(self) -> int:
         return hash(self.query)
 
@@ -192,6 +222,9 @@ class SubqueryExpression(SqlExpression):
 class StarExpression(SqlExpression):
     def columns(self) -> set[base.ColumnReference]:
         return set()
+
+    def itercolumns(self) -> Iterable[base.ColumnReference]:
+        return []
 
     def __hash__(self) -> int:
         return hash("*")

@@ -5,6 +5,10 @@ from typing import Iterable, Sized
 _T = typing.TypeVar("_T")
 
 
+def flatten(deep_list: Iterable[Iterable[_T]]) -> list[_T]:
+    return list(itertools.chain(*deep_list))
+
+
 def powerset(lst: (Iterable[_T], Sized)) -> Iterable[tuple[_T, ...]]:
     """Calculates the powerset of the provided iterable."""
     return itertools.chain.from_iterable(itertools.combinations(lst, size) for size in range(len(lst) + 1))

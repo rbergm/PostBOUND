@@ -57,6 +57,14 @@ class AbstractPredicate(abc.ABC):
         """Provides all columns that are referenced by this predicate."""
         raise NotImplementedError
 
+    @abc.abstractmethod
+    def itercolumns(self) -> Iterable[base.ColumnReference]:
+        """Provides all columns that are referenced by this predicate.
+
+        If a column is referenced multiple times, it is also returned multiple times.
+        """
+        raise NotImplementedError
+
     def tables(self) -> set[base.ColumnReference]:
         """Provides all tables that are accessed by this predicate."""
         return {attribute.table for attribute in self.columns()}
@@ -172,6 +180,9 @@ class BinaryPredicate(BasePredicate):
     def columns(self) -> set[base.ColumnReference]:
         return self.first_argument.columns() | self.second_argument.columns()
 
+    def itercolumns(self) -> Iterable[base.ColumnReference]:
+        return list(self.first_argument.itercolumns()) + list(self.second_argument.itercolumns())
+
     def join_partners(self) -> set[tuple[base.ColumnReference, base.ColumnReference]]:
         self._assert_join_predicate()
         partners = []
@@ -223,6 +234,11 @@ class BetweenPredicate(BasePredicate):
 
     def columns(self) -> set[base.ColumnReference]:
         return self.column.columns() | self.interval_start.columns() | self.interval_end.columns()
+
+    def itercolumns(self) -> Iterable[base.ColumnReference]:
+        return (list(self.column.itercolumns())
+                + list(self.interval_start.itercolumns())
+                + list(self.interval_end.itercolumns()))
 
     def join_partners(self) -> set[tuple[base.ColumnReference, base.ColumnReference]]:
         self._assert_join_predicate()
@@ -279,6 +295,9 @@ class InPredicate(BasePredicate):
             all_columns |= val.columns()
         return all_columns
 
+    def itercolumns(self) -> Iterable[base.ColumnReference]:
+        return list(self.column.itercolumns()) + collection_utils.flatten(val.itercolumns() for val in self.values)
+
     def join_partners(self) -> set[tuple[base.ColumnReference, base.ColumnReference]]:
         self._assert_join_predicate()
         partners = []
@@ -297,7 +316,7 @@ class InPredicate(BasePredicate):
         return set(partners)
 
     def __hash__(self) -> int:
-        return hash(["IN", self.column, tuple(self.values)])
+        return hash(tuple(["IN", self.column, tuple(self.values)]))
 
     def __eq__(self, other: object) -> bool:
         return isinstance(other, type(self)) and self.column == other.column and set(self.values) == set(other.values)
@@ -321,6 +340,9 @@ class UnaryPredicate(BasePredicate):
 
     def columns(self) -> set[base.ColumnReference]:
         return self.column.columns()
+
+    def itercolumns(self) -> Iterable[base.ColumnReference]:
+        return self.column.itercolumns()
 
     def join_partners(self) -> set[tuple[base.ColumnReference, base.ColumnReference]]:
         return set(collection_utils.pairs(self.column.columns()))
@@ -357,6 +379,9 @@ class CompoundPredicate(AbstractPredicate):
 
     def columns(self) -> set[base.ColumnReference]:
         return collection_utils.set_union(child.columns() for child in self.children)
+
+    def itercolumns(self) -> Iterable[base.ColumnReference]:
+        return collection_utils.flatten(child.itercolumns() for child in self.children)
 
     def join_partners(self) -> set[tuple[base.ColumnReference, base.ColumnReference]]:
         return collection_utils.set_union(child.join_partners() for child in self.children)
