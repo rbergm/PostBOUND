@@ -12,17 +12,31 @@ from postbound.qal import qal, base, clauses
 _Q = typing.TypeVar("_Q", bound=qal.SqlQuery)
 
 
-def implicit_to_explicit(source_query: qal.ImplicitSqlQuery) -> qal.ExplicitSqlQuery:
-    pass
-
-
 def explicit_to_implicit(source_query: qal.ExplicitSqlQuery) -> qal.ImplicitSqlQuery:
     pass
 
 
 def extract_query_fragment(source_query: qal.SqlQuery,
-                           referenced_tables: Iterable[base.TableReference]) -> qal.SqlQuery:
-    pass
+                           referenced_tables: Iterable[base.TableReference]) -> qal.SqlQuery | None:
+    referenced_tables = set(referenced_tables)
+    if not referenced_tables.issubset(source_query.tables()):
+        return None
+
+    select_fragment = []
+    for target in source_query.select_clause.targets:
+        if target.tables() == referenced_tables:
+            select_fragment.append(target)
+    select_clause = clauses.Select(select_fragment, source_query.select_clause.projection_type)
+
+    if source_query.is_implicit():
+        from_clause = clauses.ImplicitFromClause([tab for tab in source_query.tables() if tab in referenced_tables])
+    else:
+        pass
+
+    if source_query.is_implicit():
+        return qal.ImplicitSqlQuery(select_clause=select_clause)
+    else:
+        return qal.ExplicitSqlQuery(select_clause=select_clause)
 
 
 def as_count_star_query(source_query: qal.SqlQuery) -> qal.SqlQuery:

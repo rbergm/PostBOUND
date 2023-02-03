@@ -12,7 +12,7 @@ from postbound.qal import base, clauses, predicates as preds
 
 
 class SqlQuery(abc.ABC):
-    def __init__(self, mosp_data: dict, select_clause: clauses.Select, *,
+    def __init__(self, *, select_clause: clauses.Select,
                  from_clause: clauses.From | None = None, where_clause: clauses.Where | None = None,
                  groupby_clause: clauses.GroupBy | None = None, having_clause: clauses.Having | None = None,
                  orderby_clause: clauses.OrderBy | None = None, limit_clause: clauses.Limit | None = None) -> None:
@@ -23,8 +23,6 @@ class SqlQuery(abc.ABC):
         self.having_clause = having_clause
         self.orderby_clause = orderby_clause
         self.limit_clause = limit_clause
-
-        self._mosp_data = mosp_data
 
     @abc.abstractmethod
     def is_implicit(self) -> bool:
@@ -71,8 +69,7 @@ class SqlQuery(abc.ABC):
 
 
 class ImplicitSqlQuery(SqlQuery):
-    def __init__(self, mosp_data: dict, *,
-                 select_clause: clauses.Select,
+    def __init__(self, *, select_clause: clauses.Select,
                  from_clause: clauses.ImplicitFromClause | None = None,
                  where_clause: preds.QueryPredicates | None = None,
                  groupby_clause: clauses.GroupBy | None = None,
@@ -80,7 +77,7 @@ class ImplicitSqlQuery(SqlQuery):
                  orderby_clause: clauses.OrderBy | None = None,
                  limit_clause: clauses.Limit | None = None
                  ) -> None:
-        super().__init__(mosp_data, select_clause, from_clause=from_clause, where_clause=where_clause,
+        super().__init__(select_clause=select_clause, from_clause=from_clause, where_clause=where_clause,
                          groupby_clause=groupby_clause, having_clause=having_clause,
                          orderby_clause=orderby_clause, limit_clause=limit_clause)
 
@@ -89,8 +86,7 @@ class ImplicitSqlQuery(SqlQuery):
 
 
 class ExplicitSqlQuery(SqlQuery):
-    def __init__(self, mosp_data: dict, *,
-                 select_clause: clauses.Select,
+    def __init__(self, *, select_clause: clauses.Select,
                  from_clause: clauses.ExplicitFromClause,
                  where_clause: preds.QueryPredicates | None = None,
                  groupby_clause: clauses.GroupBy | None = None,
@@ -98,7 +94,7 @@ class ExplicitSqlQuery(SqlQuery):
                  orderby_clause: clauses.OrderBy | None = None,
                  limit_clause: clauses.Limit | None = None
                  ) -> None:
-        super().__init__(mosp_data, select_clause, from_clause=from_clause, where_clause=where_clause,
+        super().__init__(select_clause=select_clause, from_clause=from_clause, where_clause=where_clause,
                          groupby_clause=groupby_clause, having_clause=having_clause,
                          orderby_clause=orderby_clause, limit_clause=limit_clause)
 

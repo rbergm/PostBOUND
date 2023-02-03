@@ -331,13 +331,11 @@ class _MospQueryParser:
             limit_clause = None
 
         if implicit:
-            return qal.ImplicitSqlQuery(self._mosp_data, select_clause=select_clause,
-                                        from_clause=from_clause, where_clause=where_clause,
+            return qal.ImplicitSqlQuery(select_clause=select_clause, from_clause=from_clause, where_clause=where_clause,
                                         groupby_clause=groupby_clause, having_clause=having_clause,
                                         orderby_clause=orderby_clause, limit_clause=limit_clause)
         else:
-            return qal.ExplicitSqlQuery(self._mosp_data, select_clause=select_clause,
-                                        from_clause=from_clause, where_clause=where_clause,
+            return qal.ExplicitSqlQuery(select_clause=select_clause, from_clause=from_clause, where_clause=where_clause,
                                         groupby_clause=groupby_clause, having_clause=having_clause,
                                         orderby_clause=orderby_clause, limit_clause=limit_clause)
 
