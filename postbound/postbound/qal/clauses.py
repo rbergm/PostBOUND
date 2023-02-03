@@ -108,6 +108,9 @@ class ImplicitFromClause(From):
     def tables(self) -> set[base.TableReference]:
         return set(self._tables)
 
+    def itertables(self) -> Iterable[base.TableReference]:
+        return self._tables
+
     def predicates(self) -> preds.QueryPredicates | None:
         return None
 
