@@ -8,11 +8,22 @@ from __future__ import annotations
 import abc
 from collections.abc import Iterable
 
-from postbound.qal import base, joins, predicates as preds, projection as proj
+from postbound.qal import base, clauses, predicates as preds
 
 
 class SqlQuery(abc.ABC):
-    def __init__(self, mosp_data: dict) -> None:
+    def __init__(self, mosp_data: dict, select_clause: clauses.Select, *,
+                 from_clause: clauses.From | None = None, where_clause: clauses.Where | None = None,
+                 groupby_clause: clauses.GroupBy | None = None, having_clause: clauses.Having | None = None,
+                 orderby_clause: clauses.OrderBy | None = None, limit_clause: clauses.Limit | None = None) -> None:
+        self.select_clause = select_clause
+        self.from_clause = from_clause
+        self.where_clause = where_clause
+        self.groupby_clause = groupby_clause
+        self.having_clause = having_clause
+        self.orderby_clause = orderby_clause
+        self.limit_clause = limit_clause
+
         self._mosp_data = mosp_data
 
     @abc.abstractmethod
@@ -22,98 +33,74 @@ class SqlQuery(abc.ABC):
     def is_explicit(self) -> bool:
         return not self.is_implicit()
 
-    @abc.abstractmethod
-    def projection(self) -> proj.QueryProjection:
-        raise NotImplementedError
-
-    @abc.abstractmethod
     def tables(self) -> Iterable[base.TableReference]:
         """Provides all tables that are referenced in the query."""
-        raise NotImplementedError
+        from_tables = self.from_clause.tables() if self.from_clause else set()
+        where_tables = self.where_clause.predicate.tables() if self.where_clause else set()
+        return from_tables | where_tables
 
-    @abc.abstractmethod
     def predicates(self) -> preds.QueryPredicates | None:
         """Provides all predicates in this query."""
-        raise NotImplementedError
+        where_predicates = (preds.QueryPredicates(self.where_clause.predicate) if self.where_clause is not None
+                            else preds.QueryPredicates.empty_predicate())
+        from_predicate = self.from_clause.predicates()
+        if from_predicate:
+            return where_predicates.and_(from_predicate)
+        elif where_predicates.is_empty():
+            return None
+        else:
+            return where_predicates
+
+    def clauses(self) -> list:
+        all_clauses = [self.select_clause, self.from_clause, self.where_clause,
+                       self.orderby_clause, self.having_clause,
+                       self.orderby_clause, self.limit_clause]
+        return [clause for clause in all_clauses if clause is not None]
+
+    def __hash__(self) -> int:
+        return hash(tuple(self.clauses()))
+
+    def __eq__(self, other) -> bool:
+        return isinstance(other, type(self)) and self.clauses() == other.clauses()
 
     def __repr__(self) -> str:
         return str(self)
 
-    @abc.abstractmethod
     def __str__(self) -> str:
-        raise NotImplementedError
+        return " ".join(str(clause) for clause in self.clauses())
 
 
 class ImplicitSqlQuery(SqlQuery):
     def __init__(self, mosp_data: dict, *,
-                 select_clause: proj.QueryProjection,
-                 from_clause: list[base.TableReference] | None = None,
-                 where_clause: preds.QueryPredicates | None = None) -> None:
-        super().__init__(mosp_data)
-        self.select_clause = select_clause
-        self.from_clause = from_clause
-        self.where_clause = where_clause if where_clause and not where_clause.is_empty() else None
+                 select_clause: clauses.Select,
+                 from_clause: clauses.ImplicitFromClause | None = None,
+                 where_clause: preds.QueryPredicates | None = None,
+                 groupby_clause: clauses.GroupBy | None = None,
+                 having_clause: clauses.Having | None = None,
+                 orderby_clause: clauses.OrderBy | None = None,
+                 limit_clause: clauses.Limit | None = None
+                 ) -> None:
+        super().__init__(mosp_data, select_clause, from_clause=from_clause, where_clause=where_clause,
+                         groupby_clause=groupby_clause, having_clause=having_clause,
+                         orderby_clause=orderby_clause, limit_clause=limit_clause)
 
     def is_implicit(self) -> bool:
         return True
 
-    def projection(self) -> proj.QueryProjection:
-        return self.select_clause
-
-    def tables(self) -> Iterable[base.TableReference]:
-        return self.from_clause
-
-    def predicates(self) -> preds.QueryPredicates | None:
-        return self.where_clause
-
-    def __str__(self) -> str:
-        from_clause_str = ("FROM " + ", ".join(str(tab) for tab in self.from_clause)) if self.from_clause else ""
-        where_clause_str = ("WHERE " + str(self.where_clause)) if self.where_clause else ""
-        return f"{self.select_clause} {from_clause_str} {where_clause_str}".rstrip()
-
 
 class ExplicitSqlQuery(SqlQuery):
     def __init__(self, mosp_data: dict, *,
-                 select_clause: proj.QueryProjection,
-                 from_clause: tuple[base.TableReference, list[joins.Join]],
-                 where_clause: preds.QueryPredicates | None = None) -> None:
-        super().__init__(mosp_data)
-        self.select_clause = select_clause
-        base_table, joined_tables = from_clause
-        self.base_table: base.TableReference = base_table
-        self.joined_tables: list[joins.Join] = joined_tables
-        self.where_clause = where_clause if where_clause and not where_clause.is_empty() else None
+                 select_clause: clauses.Select,
+                 from_clause: clauses.ExplicitFromClause,
+                 where_clause: preds.QueryPredicates | None = None,
+                 groupby_clause: clauses.GroupBy | None = None,
+                 having_clause: clauses.Having | None = None,
+                 orderby_clause: clauses.OrderBy | None = None,
+                 limit_clause: clauses.Limit | None = None
+                 ) -> None:
+        super().__init__(mosp_data, select_clause, from_clause=from_clause, where_clause=where_clause,
+                         groupby_clause=groupby_clause, having_clause=having_clause,
+                         orderby_clause=orderby_clause, limit_clause=limit_clause)
 
     def is_implicit(self) -> bool:
         return False
-
-    def projection(self) -> proj.QueryProjection:
-        return self.select_clause
-
-    def tables(self) -> Iterable[base.TableReference]:
-        all_tables = [self.base_table]
-        for join in self.joined_tables:
-            all_tables.extend(join.tables())
-        return all_tables
-
-    def predicates(self) -> preds.QueryPredicates | None:
-        all_predicates = self.where_clause if self.where_clause else preds.QueryPredicates.empty_predicate()
-        for join in self.joined_tables:
-            if isinstance(join, joins.TableJoin):
-                if join.join_condition:
-                    all_predicates = all_predicates.and_(join.join_condition)
-                continue
-            subquery_join: joins.SubqueryJoin = join
-
-            subquery_predicates = subquery_join.subquery.predicates()
-            if subquery_predicates:
-                all_predicates = all_predicates.and_(subquery_predicates)
-            if subquery_join.join_condition:
-                all_predicates = all_predicates.and_(subquery_join.join_condition)
-
-        return all_predicates
-
-    def __str__(self) -> str:
-        from_clause_str = f"FROM {self.base_table} " + " ".join(str(join) for join in self.joined_tables)
-        where_clause_str = ("WHERE " + str(self.where_clause)) if self.where_clause else ""
-        return f"{self.select_clause} {from_clause_str} {where_clause_str}".rstrip()

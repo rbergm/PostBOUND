@@ -6,7 +6,9 @@ from typing import Any
 
 import mo_sql_parsing as mosp
 
-from postbound.qal import base, expressions as expr, joins, qal, predicates as preds, projection as proj, transform
+import postbound.qal.clauses
+from postbound.qal import base, clauses, expressions as expr, joins, qal, predicates as preds
+from postbound.qal import transform
 from postbound.db import db
 from postbound.util import dicts as dict_utils
 
@@ -22,10 +24,10 @@ _MospJoinTypes = {"join", "cross join", "full join", "left join", "right join", 
                   "natural join", "left outer join", "right outer join", "full outer join"}
 
 
-def _parse_where_clause(mosp_data: dict) -> preds.QueryPredicates:
+def _parse_where_clause(mosp_data: dict) -> clauses.Where:
     if not isinstance(mosp_data, dict):
         raise ValueError("Unknown predicate format: " + str(mosp_data))
-    return preds.QueryPredicates(_parse_mosp_predicate(mosp_data))
+    return clauses.Where(_parse_mosp_predicate(mosp_data))
 
 
 def _parse_mosp_predicate(mosp_data: dict) -> preds.AbstractPredicate:
@@ -103,16 +105,16 @@ def _parse_mosp_expression(mosp_data: Any) -> expr.SqlExpression:
     return expr.FunctionExpression(operation, parsed_arguments, distinct=distinct)
 
 
-def _parse_select_statement(mosp_data: dict | str) -> proj.BaseProjection:
+def _parse_select_statement(mosp_data: dict | str) -> postbound.qal.clauses.BaseProjection:
     if isinstance(mosp_data, dict):
         select_target = copy.copy(mosp_data["value"])
         target_name = mosp_data.get("name", None)
-        return proj.BaseProjection(_parse_mosp_expression(select_target), target_name)
+        return postbound.qal.clauses.BaseProjection(_parse_mosp_expression(select_target), target_name)
     target_column = _parse_column_reference(mosp_data)
-    return proj.BaseProjection(expr.ColumnExpression(target_column))
+    return postbound.qal.clauses.BaseProjection(expr.ColumnExpression(target_column))
 
 
-def _parse_select_clause(mosp_data: dict) -> proj.QueryProjection:
+def _parse_select_clause(mosp_data: dict) -> clauses.Select:
     if "select" not in mosp_data and "select_distinct" not in mosp_data:
         raise ValueError("Unknown SELECT format: " + str(mosp_data))
 
@@ -126,7 +128,7 @@ def _parse_select_clause(mosp_data: dict) -> proj.QueryProjection:
     else:
         raise ValueError("Unknown SELECT format: " + str(select_targets))
 
-    return proj.QueryProjection(parsed_targets, select_type)
+    return clauses.Select(parsed_targets, select_type)
 
 
 # see https://regex101.com/r/HdKzQg/2
@@ -158,16 +160,16 @@ def _parse_column_reference(column: str) -> base.ColumnReference:
     return base.ColumnReference(column, table_ref)
 
 
-def _parse_implicit_from_clause(mosp_data: dict) -> list[base.TableReference]:
+def _parse_implicit_from_clause(mosp_data: dict) -> clauses.ImplicitFromClause:
     if "from" not in mosp_data:
-        return []
+        return clauses.ImplicitFromClause()
     from_clause = mosp_data["from"]
     if isinstance(from_clause, str):
-        return [_parse_table_reference(from_clause)]
-    return [_parse_table_reference(table) for table in from_clause]
+        return clauses.ImplicitFromClause(_parse_table_reference(from_clause))
+    return clauses.ImplicitFromClause([_parse_table_reference(table) for table in from_clause])
 
 
-def _parse_explicit_from_clause(mosp_data: dict) -> tuple[base.TableReference, list[joins.Join]]:
+def _parse_explicit_from_clause(mosp_data: dict) -> clauses.ExplicitFromClause:
     if "from" not in mosp_data:
         raise ValueError("No tables in FROM clause")
     from_clause = mosp_data["from"]
@@ -202,7 +204,51 @@ def _parse_explicit_from_clause(mosp_data: dict) -> tuple[base.TableReference, l
             parsed_joins.append(joins.TableJoin(join_type, table, join_condition))
         else:
             raise ValueError("Unknown JOIN format: " + str(joined_table))
-    return initial_table, parsed_joins
+    return clauses.ExplicitFromClause(initial_table, parsed_joins)
+
+
+def _parse_groupby_clause(mosp_data: dict | list) -> clauses.GroupBy:
+    # The format of GROUP BY clauses is a bit weird in mo-sql. Therefore, the parsing logic looks quite hacky
+    # Take a look at the MoSQLParsingTests for details.
+
+    if isinstance(mosp_data, list):
+        columns = [_parse_mosp_expression(col["value"]) for col in mosp_data]
+        distinct = False
+        return clauses.GroupBy(columns, distinct)
+
+    mosp_data = mosp_data["value"]
+    if "distinct" in mosp_data:
+        groupby_clause = _parse_groupby_clause(mosp_data["distinct"])
+        groupby_clause.distinct = True
+        return groupby_clause
+    else:
+        columns = [_parse_mosp_expression(mosp_data)]
+        distinct = False
+        return clauses.GroupBy(columns, distinct)
+
+
+def _parse_having_clause(mosp_data: dict) -> clauses.Having:
+    return clauses.Having(_parse_mosp_predicate(mosp_data))
+
+
+def _parse_orderby_expression(mosp_data: dict) -> clauses.OrderByExpression:
+    column = _parse_mosp_expression(mosp_data["value"])
+    ascending = mosp_data.get("sort", "asc") == "asc"
+    return clauses.OrderByExpression(column, ascending)
+
+
+def _parse_orderby_clause(mosp_data: dict | list) -> clauses.OrderBy:
+    if isinstance(mosp_data, list):
+        order_expressions = [_parse_orderby_expression(order_expr) for order_expr in mosp_data]
+    else:
+        order_expressions = [_parse_orderby_expression(mosp_data)]
+    return clauses.OrderBy(order_expressions)
+
+
+def _parse_limit_clause(mosp_data: dict) -> clauses.Limit:
+    limit = mosp_data.get("limit", None)
+    offset = mosp_data.get("offset", None)
+    return clauses.Limit(limit=limit, offset=offset)
 
 
 def _is_implicit_query(mosp_data: dict) -> bool:
@@ -263,14 +309,37 @@ class _MospQueryParser:
         select_clause = _parse_select_clause(self._mosp_data)
         where_clause = _parse_where_clause(self._mosp_data["where"]) if "where" in self._mosp_data else None
 
-        # TODO: also handle GROUP BY, HAVING, ORDER BY and LIMIT
+        if "groupby" in self._mosp_data:
+            groupby_clause = _parse_groupby_clause(self._mosp_data["groupby"])
+        else:
+            groupby_clause = None
+
+        if "having" in self._mosp_data:
+            having_clause = _parse_having_clause(self._mosp_data["having"])
+        else:
+            having_clause = None
+
+        if "orderby" in self._mosp_data:
+            orderby_clause = _parse_orderby_clause(self._mosp_data["orderby"])
+        else:
+            orderby_clause = None
+
+        if "limit" in self._mosp_data or "offset" in self._mosp_data:
+            # LIMIT and OFFSET are both in mosp_data, no indirection necessary
+            limit_clause = _parse_limit_clause(self._mosp_data)
+        else:
+            limit_clause = None
 
         if implicit:
-            return qal.ImplicitSqlQuery(self._mosp_data, select_clause=select_clause, from_clause=from_clause,
-                                        where_clause=where_clause)
+            return qal.ImplicitSqlQuery(self._mosp_data, select_clause=select_clause,
+                                        from_clause=from_clause, where_clause=where_clause,
+                                        groupby_clause=groupby_clause, having_clause=having_clause,
+                                        orderby_clause=orderby_clause, limit_clause=limit_clause)
         else:
-            return qal.ExplicitSqlQuery(self._mosp_data, select_clause=select_clause, from_clause=from_clause,
-                                        where_clause=where_clause)
+            return qal.ExplicitSqlQuery(self._mosp_data, select_clause=select_clause,
+                                        from_clause=from_clause, where_clause=where_clause,
+                                        groupby_clause=groupby_clause, having_clause=having_clause,
+                                        orderby_clause=orderby_clause, limit_clause=limit_clause)
 
     def _prepare_query(self) -> None:
         if "explain" in self._mosp_data:

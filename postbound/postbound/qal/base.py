@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Union
 
 from postbound.util import errors
 
@@ -50,7 +49,11 @@ class TableReference:
 @dataclass
 class ColumnReference:
     name: str
-    table: Union[TableReference, None] = None
+    table: TableReference | None = None
+    redirect: ColumnReference | None = None
+
+    def resolve(self):
+        return self.redirect.resolve() if self.redirect else self
 
     def __lt__(self, other) -> bool:
         if not isinstance(other, type(self)):

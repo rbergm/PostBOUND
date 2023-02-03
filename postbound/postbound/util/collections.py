@@ -23,6 +23,16 @@ def enlist(obj: _T | list[_T]) -> list[_T]:
     return [obj]
 
 
+def simplify(obj: (Iterable[_T], Sized)) -> _T | Iterable[_T]:
+    """Unwraps singular containers.
+
+    For example `[1]` is simplified to `1`. On the other hand, `[1,2]` is returned unmodified.
+    """
+    if len(obj) == 1:
+        return list(obj)[0]
+    return obj
+
+
 def powerset(lst: (Iterable[_T], Sized)) -> Iterable[tuple[_T, ...]]:
     """Calculates the powerset of the provided iterable."""
     return itertools.chain.from_iterable(itertools.combinations(lst, size) for size in range(len(lst) + 1))

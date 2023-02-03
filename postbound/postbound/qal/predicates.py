@@ -153,7 +153,7 @@ class BasePredicate(AbstractPredicate, abc.ABC):
         return [self]
 
 
-_MospOperatorsSQL = {"eq": "==", "neq": "<>",
+_MospOperatorsSQL = {"eq": "=", "neq": "<>",
                      "lt": "<", "le": "<=", "lte": "<=",
                      "gt": ">", "ge": ">=", "gte": ">=",
                      "like": "LIKE", "not_like": "NOT LIKE",
