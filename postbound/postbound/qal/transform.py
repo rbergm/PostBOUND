@@ -7,13 +7,57 @@ import typing
 from typing import Iterable
 
 from postbound.db import db
-from postbound.qal import qal, base, clauses, predicates as preds
+from postbound.qal import qal, base, clauses, joins, predicates as preds
 
 _Q = typing.TypeVar("_Q", bound=qal.SqlQuery)
 
 
+def flatten_and_predicate(predicate: preds.AbstractPredicate) -> preds.AbstractPredicate:
+    if not isinstance(predicate, preds.CompoundPredicate):
+        return predicate
+
+    compound_predicate: preds.CompoundPredicate = predicate
+    if compound_predicate.operation == "not" or compound_predicate.operation == "or":
+        return compound_predicate
+
+    flattened_children = []
+    for child in compound_predicate.children:
+        if child.is_compound() and child.operation == "and":
+            compound_child: preds.CompoundPredicate = child
+            flattened_child: preds.CompoundPredicate = flatten_and_predicate(compound_child)
+            flattened_children.extend(flattened_child.children)
+        else:
+            flattened_children.append(child)
+
+    return preds.CompoundPredicate("and", flattened_children)
+
+
 def explicit_to_implicit(source_query: qal.ExplicitSqlQuery) -> qal.ImplicitSqlQuery:
-    pass
+    original_from_clause: clauses.ExplicitFromClause = source_query.from_clause
+    additional_predicates = []
+    complete_from_tables = [original_from_clause.base_table]
+
+    for joined_table in original_from_clause.joined_tables:
+        if joined_table.is_subquery_join():
+            raise ValueError("Transforming joined subqueries to implicit table references is not support yet")
+        table_join: joins.TableJoin = joined_table
+        complete_from_tables.append(table_join.joined_table)
+        additional_predicates.append(table_join.join_condition)
+
+    final_from_clause = clauses.ImplicitFromClause(complete_from_tables)
+
+    if source_query.where_clause:
+        final_predicate = preds.CompoundPredicate("and", [source_query.where_clause.predicate] + additional_predicates)
+    else:
+        final_predicate = preds.CompoundPredicate("and", additional_predicates)
+
+    final_predicate = flatten_and_predicate(final_predicate)
+    final_where_clause = clauses.Where(final_predicate)
+
+    return qal.ImplicitSqlQuery(select_clause=source_query.select_clause, from_clause=final_from_clause,
+                                where_clause=final_where_clause,
+                                groupby_clause=source_query.groupby_clause, having_clause=source_query.having_clause,
+                                orderby_clause=source_query.orderby_clause, limit_clause=source_query.limit_clause)
 
 
 def query_to_mosp(source_query: qal.SqlQuery) -> dict:

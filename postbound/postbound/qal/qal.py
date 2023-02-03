@@ -71,7 +71,7 @@ class SqlQuery(abc.ABC):
 class ImplicitSqlQuery(SqlQuery):
     def __init__(self, *, select_clause: clauses.Select,
                  from_clause: clauses.ImplicitFromClause | None = None,
-                 where_clause: preds.QueryPredicates | None = None,
+                 where_clause: clauses.Where | None = None,
                  groupby_clause: clauses.GroupBy | None = None,
                  having_clause: clauses.Having | None = None,
                  orderby_clause: clauses.OrderBy | None = None,
@@ -88,7 +88,7 @@ class ImplicitSqlQuery(SqlQuery):
 class ExplicitSqlQuery(SqlQuery):
     def __init__(self, *, select_clause: clauses.Select,
                  from_clause: clauses.ExplicitFromClause,
-                 where_clause: preds.QueryPredicates | None = None,
+                 where_clause: clauses.Where | None = None,
                  groupby_clause: clauses.GroupBy | None = None,
                  having_clause: clauses.Having | None = None,
                  orderby_clause: clauses.OrderBy | None = None,
