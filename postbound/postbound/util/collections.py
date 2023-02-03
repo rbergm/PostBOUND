@@ -1,3 +1,4 @@
+"""Provides utilities to work with arbitrary collections like lists, sets and tuples."""
 from __future__ import annotations
 
 import itertools
@@ -8,10 +9,15 @@ _T = typing.TypeVar("_T")
 
 
 def flatten(deep_list: Iterable[Iterable[_T]]) -> list[_T]:
+    """Transforms a nested list into a flat list: `[[1, 2], [3]]` is turned into `[1, 2, 3]`"""
     return list(itertools.chain(*deep_list))
 
 
 def enlist(obj: _T | list[_T]) -> list[_T]:
+    """Transforms any object into a singular list, if it is not a list already.
+
+    For example, `"abc"` is turned into `["abc"]`, whereas `["abc"]` is returned unmodified.
+    """
     if isinstance(obj, list):
         return obj
     return [obj]
@@ -23,6 +29,13 @@ def powerset(lst: (Iterable[_T], Sized)) -> Iterable[tuple[_T, ...]]:
 
 
 def pairs(lst: Iterable[_T]) -> Iterable[tuple[_T, _T]]:
+    """Provides all pairs of elements of the given iterable, disregarding order and identical pairs.
+
+    This means that the resulting iterable will not contain entries `(a, a)` unless `a` itself is present multiple
+    times in the input. Likewise, tuples `(a, b)` and `(b, a)` are treated equally and only one of them will be
+    returned (Again, unless `a` or `b` are present multiple times in the input. In that case, their order is
+    unspecified.)
+    """
     all_pairs = []
     for a_idx, a in enumerate(lst):
         for b_idx, b in enumerate(lst):
@@ -33,6 +46,7 @@ def pairs(lst: Iterable[_T]) -> Iterable[tuple[_T, _T]]:
 
 
 def set_union(sets: Iterable[set]) -> set:
+    """Combines the elements of all input sets into one large set."""
     union_set = set()
     for s in sets:
         union_set |= s
@@ -42,9 +56,10 @@ def set_union(sets: Iterable[set]) -> set:
 class SizedQueue(typing.Iterable[_T]):
     """A sized queue extends on the behaviour of a normal queue by restricting the number of items in the queue.
 
-    A sized queue has weak FIFO semantics: items can only be appended at the end, but the contents of the entire queue can be
-    accessed at any time.
-    If upon enqueuing a new item the queue is already at maximum capacity, the current head of the queue will be dropped.
+    A sized queue has weak FIFO semantics: items can only be appended at the end, but the contents of the entire queue
+    can be accessed at any time.
+    If upon enqueuing a new item the queue is already at maximum capacity, the current head of the queue will be
+    dropped.
     """
 
     def __init__(self, capacity: int) -> None:
@@ -57,7 +72,7 @@ class SizedQueue(typing.Iterable[_T]):
         self.data.append(value)
 
     def extend(self, values: typing.Iterable[_T]) -> None:
-        self.data = (self.data + values)[:self.capacity]
+        self.data = (self.data + list(values))[:self.capacity]
 
     def head(self) -> _T:
         return self.data[0]
