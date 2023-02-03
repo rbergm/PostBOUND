@@ -18,6 +18,10 @@ class BaseProjection:
     def count_star() -> BaseProjection:
         return BaseProjection(expr.FunctionExpression("count", [expr.StarExpression()]))
 
+    @staticmethod
+    def star() -> BaseProjection:
+        return BaseProjection(expr.StarExpression())
+
     def columns(self) -> set[base.ColumnReference]:
         return self.expression.columns()
 

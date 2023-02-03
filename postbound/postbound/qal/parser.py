@@ -36,9 +36,9 @@ def _parse_mosp_predicate(mosp_data: dict) -> preds.AbstractPredicate:
     # parse compound statements: AND / OR / NOT
     if operation in _MospCompoundOperations and operation != "not":
         child_statements = [_parse_mosp_predicate(child) for child in mosp_data[operation]]
-        return preds.CompoundPredicate(operation, child_statements, mosp_data)
+        return preds.CompoundPredicate(operation, child_statements)
     elif operation == "not":
-        return preds.CompoundPredicate(operation, _parse_mosp_predicate(mosp_data[operation]), mosp_data)
+        return preds.CompoundPredicate(operation, _parse_mosp_predicate(mosp_data[operation]))
 
     # parse IS NULL / IS NOT NULL
     if operation in _MospUnaryOperations:

@@ -22,12 +22,13 @@ def _quick_format_explicit_from(from_clause: clauses.ExplicitFromClause) -> list
     return pretty_base + pretty_joins
 
 
-def _quick_format_predicate(predicate: preds.AbstractPredicate, indent_depth: int = 1) -> list[str]:
+def _quick_format_predicate(predicate: preds.AbstractPredicate) -> list[str]:
     if not isinstance(predicate, preds.CompoundPredicate):
         return [str(predicate)]
     compound_pred: preds.CompoundPredicate = predicate
     if compound_pred.operation == "and":
-        return ["AND " + str(child) for child in compound_pred.children]
+        first_child, *remaining_children = compound_pred.children
+        return [str(first_child)] + ["AND " + str(child) for child in remaining_children]
     return [str(compound_pred)]
 
 

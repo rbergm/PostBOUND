@@ -7,7 +7,7 @@ import typing
 from typing import Iterable
 
 from postbound.db import db
-from postbound.qal import qal, base, clauses
+from postbound.qal import qal, base, clauses, predicates as preds
 
 _Q = typing.TypeVar("_Q", bound=qal.SqlQuery)
 
@@ -16,27 +16,71 @@ def explicit_to_implicit(source_query: qal.ExplicitSqlQuery) -> qal.ImplicitSqlQ
     pass
 
 
-def extract_query_fragment(source_query: qal.SqlQuery,
-                           referenced_tables: Iterable[base.TableReference]) -> qal.SqlQuery | None:
+def query_to_mosp(source_query: qal.SqlQuery) -> dict:
+    pass
+
+
+def _get_predicate_fragment(predicate: preds.AbstractPredicate,
+                            referenced_tables: set[base.TableReference]) -> preds.AbstractPredicate | None:
+    if not isinstance(predicate, preds.CompoundPredicate):
+        return predicate if predicate.tables().issubset(referenced_tables) else None
+
+    compound_predicate: preds.CompoundPredicate = predicate
+    child_fragments = [_get_predicate_fragment(child, referenced_tables) for child in compound_predicate.children]
+    child_fragments = [fragment for fragment in child_fragments if fragment]
+    return preds.CompoundPredicate(compound_predicate.operation, child_fragments) if child_fragments else None
+
+
+def extract_query_fragment(source_query: qal.ImplicitSqlQuery,
+                           referenced_tables: Iterable[base.TableReference]) -> qal.ImplicitSqlQuery | None:
     referenced_tables = set(referenced_tables)
     if not referenced_tables.issubset(source_query.tables()):
         return None
 
     select_fragment = []
     for target in source_query.select_clause.targets:
-        if target.tables() == referenced_tables:
+        if target.tables() == referenced_tables or not target.columns():
             select_fragment.append(target)
+
     select_clause = clauses.Select(select_fragment, source_query.select_clause.projection_type)
 
-    if source_query.is_implicit():
+    if source_query.from_clause:
         from_clause = clauses.ImplicitFromClause([tab for tab in source_query.tables() if tab in referenced_tables])
     else:
-        pass
+        from_clause = None
 
-    if source_query.is_implicit():
-        return qal.ImplicitSqlQuery(select_clause=select_clause)
+    if source_query.where_clause:
+        predicate_fragment = _get_predicate_fragment(source_query.where_clause.predicate, referenced_tables)
+        where_clause = clauses.Where(predicate_fragment) if predicate_fragment else None
     else:
-        return qal.ExplicitSqlQuery(select_clause=select_clause)
+        where_clause = None
+
+    if source_query.groupby_clause:
+        group_column_fragment = [col for col in source_query.groupby_clause.group_columns
+                                 if col.tables().issubset(referenced_tables)]
+        if group_column_fragment:
+            groupby_clause = clauses.GroupBy(group_column_fragment, source_query.groupby_clause.distinct)
+        else:
+            groupby_clause = None
+    else:
+        groupby_clause = None
+
+    if source_query.having_clause:
+        having_fragment = _get_predicate_fragment(source_query.having_clause.condition, referenced_tables)
+        having_clause = clauses.Having(having_fragment) if having_fragment else None
+    else:
+        having_clause = None
+
+    if source_query.orderby_clause:
+        order_fragment = [order for order in source_query.orderby_clause.expressions
+                          if order.column.tables().issubset(referenced_tables)]
+        orderby_clause = clauses.OrderBy(order_fragment) if order_fragment else None
+    else:
+        orderby_clause = None
+
+    return qal.ImplicitSqlQuery(select_clause=select_clause, from_clause=from_clause, where_clause=where_clause,
+                                groupby_clause=groupby_clause, having_clause=having_clause,
+                                orderby_clause=orderby_clause, limit_clause=source_query.limit_clause)
 
 
 def as_count_star_query(source_query: qal.SqlQuery) -> qal.SqlQuery:
@@ -90,9 +134,13 @@ def bind_columns(query: qal.SqlQuery, *, with_schema: bool = True, db_schema: db
 
     The retrieved information includes type information for all columns and the tables that contain the columns.
     """
-    alias_map = {table.alias: table for table in query.tables() if table.alias}
+    alias_map = {table.alias: table for table in query.tables() if table.alias and table.full_name}
     unbound_tables = [table for table in query.tables() if not table.alias]
     unbound_columns = []
+
+    for table in query.tables():
+        if table.alias in alias_map and not table.full_name:
+            table.full_name = alias_map[table.alias].full_name
 
     def _update_column_binding(col: base.ColumnReference) -> None:
         if not col.table:

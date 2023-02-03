@@ -31,8 +31,8 @@ class NoFilterPredicateError(errors.StateError):
 
 
 class AbstractPredicate(abc.ABC):
-    def __init__(self, mosp_data: dict) -> None:
-        self.mosp_data = mosp_data
+    def __init__(self) -> None:
+        pass
 
     @abc.abstractmethod
     def is_compound(self) -> bool:
@@ -142,7 +142,7 @@ class AbstractPredicate(abc.ABC):
 
 class BasePredicate(AbstractPredicate, abc.ABC):
     def __init__(self, mosp_data: dict) -> None:
-        super().__init__(mosp_data)
+        super().__init__()
 
         self._operation = dict_utils.key(mosp_data)
 
@@ -370,8 +370,8 @@ class UnaryPredicate(BasePredicate):
 
 
 class CompoundPredicate(AbstractPredicate):
-    def __init__(self, operation: str, children: AbstractPredicate | list[AbstractPredicate], mosp_data: dict):
-        super().__init__(mosp_data)
+    def __init__(self, operation: str, children: AbstractPredicate | list[AbstractPredicate]):
+        super().__init__()
         self.operation = operation
         self.children = collection_utils.enlist(children)
 
@@ -427,8 +427,7 @@ def _collect_filter_predicates(predicate: AbstractPredicate) -> set[AbstractPred
             or_filter_children = [child_pred for child_pred in compound_pred.children if child_pred.is_filter()]
             if not or_filter_children:
                 return set()
-            or_mosp_data = {"or": [child.mosp_data for child in compound_pred.children]}
-            or_filters = CompoundPredicate("or", or_filter_children, or_mosp_data)
+            or_filters = CompoundPredicate("or", or_filter_children)
             return {or_filters}
         elif compound_pred.operation == "not":
             not_filter_children = compound_pred.children[0] if compound_pred.children[0].is_filter() else None
@@ -455,8 +454,7 @@ def _collect_join_predicates(predicate: AbstractPredicate) -> set[AbstractPredic
             or_join_children = [child_pred for child_pred in compound_pred.children if child_pred.is_join()]
             if not or_join_children:
                 return set()
-            or_mosp_data = {"or": [child.mosp_data for child in compound_pred.children]}
-            or_joins = CompoundPredicate("or", or_join_children, or_mosp_data)
+            or_joins = CompoundPredicate("or", or_join_children)
             return {or_joins}
         elif compound_pred.operation == "not":
             not_join_children = compound_pred.children[0] if compound_pred.children[0].is_join() else None
@@ -498,8 +496,7 @@ class QueryPredicates:
         if self._root is None:
             return QueryPredicates(other_predicate)
 
-        merged_predicate = CompoundPredicate("and", [self._root, other_predicate],
-                                             {"and": [self._root.mosp_data, other_predicate.mosp_data]})
+        merged_predicate = CompoundPredicate("and", [self._root, other_predicate])
         return QueryPredicates(merged_predicate)
 
     def _assert_not_empty(self) -> None:
