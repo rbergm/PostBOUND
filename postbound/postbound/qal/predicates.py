@@ -141,10 +141,9 @@ class AbstractPredicate(abc.ABC):
 
 
 class BasePredicate(AbstractPredicate, abc.ABC):
-    def __init__(self, mosp_data: dict) -> None:
+    def __init__(self, operation: expr.SqlOperator) -> None:
         super().__init__()
-
-        self._operation = dict_utils.key(mosp_data)
+        self.operation = operation
 
     def is_compound(self) -> bool:
         return False
@@ -153,23 +152,10 @@ class BasePredicate(AbstractPredicate, abc.ABC):
         return [self]
 
 
-_MospOperatorsSQL = {"eq": "=", "neq": "<>",
-                     "lt": "<", "le": "<=", "lte": "<=",
-                     "gt": ">", "ge": ">=", "gte": ">=",
-                     "like": "LIKE", "not_like": "NOT LIKE",
-                     "ilike": "ILIKE", "not_ilike": "NOT ILIKE",
-                     "in": "IN", "between": "BETWEEN",
-                     "and": "AND", "or": "OR", "not": "NOT",
-                     "add": "+", "sub": "-", "neg": "-", "mul": "*", "div": "/", "mod": "%",
-                     "exists": "EXISTS", "missing": "MISSING"}
-
-
 class BinaryPredicate(BasePredicate):
-    def __init__(self, operation: str, first_argument: expr.SqlExpression,
-                 second_argument: expr.SqlExpression,
-                 mosp_data: dict) -> None:
-        super().__init__(mosp_data)
-        self.operation = operation
+    def __init__(self, operation: expr.SqlOperator, first_argument: expr.SqlExpression,
+                 second_argument: expr.SqlExpression) -> None:
+        super().__init__(operation)
         self.first_argument = first_argument
         self.second_argument = second_argument
 
@@ -213,14 +199,12 @@ class BinaryPredicate(BasePredicate):
         return super().__repr__()
 
     def __str__(self) -> str:
-        operation_str = _MospOperatorsSQL.get(self.operation, self.operation)
-        return f"{self.first_argument} {operation_str} {self.second_argument}"
+        return f"{self.first_argument} {self.operation.value} {self.second_argument}"
 
 
 class BetweenPredicate(BasePredicate):
-    def __init__(self, column: expr.SqlExpression, interval: tuple[expr.SqlExpression, expr.SqlExpression],
-                 mosp_data: dict) -> None:
-        super().__init__(mosp_data)
+    def __init__(self, column: expr.SqlExpression, interval: tuple[expr.SqlExpression, expr.SqlExpression]) -> None:
+        super().__init__(expr.LogicalSqlOperators.Between)
         self.column = column
         self.interval = interval
         self.interval_start, self.interval_end = self.interval
@@ -278,8 +262,8 @@ class BetweenPredicate(BasePredicate):
 
 
 class InPredicate(BasePredicate):
-    def __init__(self, column: expr.SqlExpression, values: list[expr.SqlExpression], mosp_data: dict) -> None:
-        super().__init__(mosp_data)
+    def __init__(self, column: expr.SqlExpression, values: list[expr.SqlExpression]) -> None:
+        super().__init__(expr.LogicalSqlOperators.In)
         self.column = column
         self.values = values
 
@@ -331,8 +315,8 @@ class InPredicate(BasePredicate):
 
 
 class UnaryPredicate(BasePredicate):
-    def __init__(self, operation: str, column: expr.SqlExpression, mosp_data: dict):
-        super().__init__(mosp_data)
+    def __init__(self, operation: expr.SqlOperator, column: expr.SqlExpression):
+        super().__init__(operation)
         self.operation = operation
         self.column = column
 
@@ -358,19 +342,21 @@ class UnaryPredicate(BasePredicate):
         return super().__repr__()
 
     def __str__(self) -> str:
-        operator_str = _MospOperatorsSQL.get(self.operation, self.operation)
-        if isinstance(self.column, expr.SubqueryExpression):
-            return f"{operator_str} {self.column}"
+        if isinstance(self.column, expr.SubqueryExpression) and self.operation == expr.LogicalSqlOperators.Exists:
+            return f"EXISTS {self.column}"
+        elif isinstance(self.column, expr.SubqueryExpression) and self.operation == expr.LogicalSqlOperators.Missing:
+            return f"MISSING {self.column}"
 
-        if self.operation == "exists":
+        if self.operation == expr.LogicalSqlOperators.Exists:
             return f"{self.column} IS NOT NULL"
-        elif self.operation == "missing":
+        elif self.operation == expr.LogicalSqlOperators.Missing:
             return f"{self.column} IS NULL"
-        return f"{operator_str}{self.column}"
+        return f"{self.operation.value}{self.column}"
 
 
 class CompoundPredicate(AbstractPredicate):
-    def __init__(self, operation: str, children: AbstractPredicate | list[AbstractPredicate]):
+    def __init__(self, operation: expr.LogicalSqlCompoundOperators,
+                 children: AbstractPredicate | list[AbstractPredicate]):
         super().__init__()
         self.operation = operation
         self.children = collection_utils.enlist(children)
@@ -403,11 +389,11 @@ class CompoundPredicate(AbstractPredicate):
         return super().__repr__()
 
     def __str__(self) -> str:
-        if self.operation == "not":
+        if self.operation == expr.LogicalSqlCompoundOperators.Not:
             return f"NOT {self.children[0]}"
-        elif self.operation == "or":
+        elif self.operation == expr.LogicalSqlCompoundOperators.Or:
             return "(" + " OR ".join(str(child) for child in self.children) + ")"
-        elif self.operation == "and":
+        elif self.operation == expr.LogicalSqlCompoundOperators.And:
             return " AND ".join(str(child) for child in self.children)
         else:
             raise ValueError(f"Unknown operation: '{self.operation}'")
@@ -423,18 +409,18 @@ def _collect_filter_predicates(predicate: AbstractPredicate) -> set[AbstractPred
         if not isinstance(predicate, CompoundPredicate):
             raise ValueError(f"Predicate claims to be compound but is not instance of CompoundPredicate: {predicate}")
         compound_pred: CompoundPredicate = predicate
-        if compound_pred.operation == "or":
+        if compound_pred.operation == expr.LogicalSqlCompoundOperators.Or:
             or_filter_children = [child_pred for child_pred in compound_pred.children if child_pred.is_filter()]
             if not or_filter_children:
                 return set()
-            or_filters = CompoundPredicate("or", or_filter_children)
+            or_filters = CompoundPredicate(expr.LogicalSqlCompoundOperators.Or, or_filter_children)
             return {or_filters}
-        elif compound_pred.operation == "not":
+        elif compound_pred.operation == expr.LogicalSqlCompoundOperators.Not:
             not_filter_children = compound_pred.children[0] if compound_pred.children[0].is_filter() else None
             if not not_filter_children:
                 return set()
             return {compound_pred}
-        elif compound_pred.operation == "and":
+        elif compound_pred.operation == expr.LogicalSqlCompoundOperators.And:
             return collection_utils.set_union([_collect_filter_predicates(child) for child in compound_pred.children])
         else:
             raise ValueError(f"Unknown operation: '{compound_pred.operation}'")
@@ -450,18 +436,18 @@ def _collect_join_predicates(predicate: AbstractPredicate) -> set[AbstractPredic
         if not isinstance(predicate, CompoundPredicate):
             raise ValueError(f"Predicate claims to be compound but is not instance of CompoundPredicate: {predicate}")
         compound_pred: CompoundPredicate = predicate
-        if compound_pred.operation == "or":
+        if compound_pred.operation == expr.LogicalSqlCompoundOperators.Or:
             or_join_children = [child_pred for child_pred in compound_pred.children if child_pred.is_join()]
             if not or_join_children:
                 return set()
-            or_joins = CompoundPredicate("or", or_join_children)
+            or_joins = CompoundPredicate(expr.LogicalSqlCompoundOperators.Or, or_join_children)
             return {or_joins}
-        elif compound_pred.operation == "not":
+        elif compound_pred.operation == expr.LogicalSqlCompoundOperators.Not:
             not_join_children = compound_pred.children[0] if compound_pred.children[0].is_join() else None
             if not not_join_children:
                 return set()
             return {compound_pred}
-        elif compound_pred.operation == "and":
+        elif compound_pred.operation == expr.LogicalSqlCompoundOperators.And:
             return collection_utils.set_union([_collect_join_predicates(child) for child in compound_pred.children])
         else:
             raise ValueError(f"Unknown operation: '{compound_pred.operation}'")
@@ -496,7 +482,7 @@ class QueryPredicates:
         if self._root is None:
             return QueryPredicates(other_predicate)
 
-        merged_predicate = CompoundPredicate("and", [self._root, other_predicate])
+        merged_predicate = CompoundPredicate(expr.LogicalSqlCompoundOperators.And, [self._root, other_predicate])
         return QueryPredicates(merged_predicate)
 
     def _assert_not_empty(self) -> None:

@@ -14,14 +14,51 @@ from postbound.util import dicts as dict_utils
 
 AutoBindColumns: bool = False
 
-_MospCompoundOperations = {"and", "or", "not"}
-_MospBinaryOperations = {"lt", "gt", "le", "ge", "gte", "lte", "eq", "neq", "like", "not_like", "ilike", "not_ilike",
-                         "in", "between"}
-_MospUnaryOperations = {"exists", "missing"}
 _MospAggregateOperations = {"count", "sum", "min", "max", "avg"}
-_MospMathematicalOperations = {"add", "sub", "neg", "mul", "div", "mod", "and", "or", "not"}
 _MospJoinTypes = {"join", "cross join", "full join", "left join", "right join", "outer join", "inner join",
                   "natural join", "left outer join", "right outer join", "full outer join"}
+
+_MospCompoundOperations = {
+    "and": expr.LogicalSqlCompoundOperators.And,
+    "or": expr.LogicalSqlCompoundOperators.Or,
+    "not": expr.LogicalSqlCompoundOperators.Not
+}
+
+_MospUnaryOperations = {"exists": expr.LogicalSqlOperators.Exists, "missing": expr.LogicalSqlOperators.Missing}
+
+_MospMathematicalOperations = {
+    "add": expr.MathematicalSqlOperators.Add,
+    "sub": expr.MathematicalSqlOperators.Subtract,
+    "neg": expr.MathematicalSqlOperators.Negate,
+    "mul": expr.MathematicalSqlOperators.Multiply,
+    "div": expr.MathematicalSqlOperators.Divide,
+    "mod": expr.MathematicalSqlOperators.Modulo
+}
+
+_MospBinaryOperations = {
+    # comparison operators
+    "eq": expr.LogicalSqlOperators.Equal,
+    "neq": expr.LogicalSqlOperators.NotEqual,
+
+    "lt": expr.LogicalSqlOperators.Less,
+    "le": expr.LogicalSqlOperators.LessEqual,
+    "lte": expr.LogicalSqlOperators.LessEqual,
+
+    "gt": expr.LogicalSqlOperators.Greater,
+    "ge": expr.LogicalSqlOperators.GreaterEqual,
+    "gte": expr.LogicalSqlOperators.GreaterEqual,
+
+    # other operators:
+    "like": expr.LogicalSqlOperators.Like,
+    "not_like": expr.LogicalSqlOperators.NotLike,
+    "ilike": expr.LogicalSqlOperators.ILike,
+    "not_ilike": expr.LogicalSqlOperators.NotILike,
+
+    "in": expr.LogicalSqlOperators.In,
+    "between": expr.LogicalSqlOperators.Between
+}
+
+_MospOperationSql = _MospCompoundOperations | _MospUnaryOperations | _MospMathematicalOperations | _MospBinaryOperations
 
 
 def _parse_where_clause(mosp_data: dict) -> clauses.Where:
@@ -36,13 +73,13 @@ def _parse_mosp_predicate(mosp_data: dict) -> preds.AbstractPredicate:
     # parse compound statements: AND / OR / NOT
     if operation in _MospCompoundOperations and operation != "not":
         child_statements = [_parse_mosp_predicate(child) for child in mosp_data[operation]]
-        return preds.CompoundPredicate(operation, child_statements)
+        return preds.CompoundPredicate(_MospCompoundOperations[operation], child_statements)
     elif operation == "not":
-        return preds.CompoundPredicate(operation, _parse_mosp_predicate(mosp_data[operation]))
+        return preds.CompoundPredicate(_MospCompoundOperations[operation], _parse_mosp_predicate(mosp_data[operation]))
 
     # parse IS NULL / IS NOT NULL
     if operation in _MospUnaryOperations:
-        return preds.UnaryPredicate(operation, _parse_mosp_expression(mosp_data[operation]), mosp_data)
+        return preds.UnaryPredicate(_MospUnaryOperations[operation], _parse_mosp_expression(mosp_data[operation]))
 
     if operation not in _MospBinaryOperations:
         raise ValueError("Unknown predicate format: " + str(mosp_data))
@@ -55,16 +92,16 @@ def _parse_mosp_predicate(mosp_data: dict) -> preds.AbstractPredicate:
             parsed_values = [expr.StaticValueExpression(val) for val in values[0]["literal"]]
         else:
             parsed_values = [_parse_mosp_expression(val) for val in values]
-        return preds.InPredicate(parsed_column, parsed_values, mosp_data)
+        return preds.InPredicate(parsed_column, parsed_values)
     elif operation == "between":
         target_column, interval_start, interval_end = mosp_data[operation]
         parsed_column = _parse_mosp_expression(target_column)
         parsed_interval = (_parse_mosp_expression(interval_start), _parse_mosp_expression(interval_end))
-        return preds.BetweenPredicate(parsed_column, parsed_interval, mosp_data)
+        return preds.BetweenPredicate(parsed_column, parsed_interval)
     else:
         first_arg, second_arg = mosp_data[operation]
-        return preds.BinaryPredicate(operation, _parse_mosp_expression(first_arg),
-                                     _parse_mosp_expression(second_arg), mosp_data)
+        return preds.BinaryPredicate(_MospOperationSql[operation], _parse_mosp_expression(first_arg),
+                                     _parse_mosp_expression(second_arg))
 
 
 def _parse_mosp_expression(mosp_data: Any) -> expr.SqlExpression:
@@ -94,7 +131,7 @@ def _parse_mosp_expression(mosp_data: Any) -> expr.SqlExpression:
     elif operation in _MospMathematicalOperations:
         parsed_arguments = [_parse_mosp_expression(arg) for arg in mosp_data[operation]]
         first_arg, *remaining_args = parsed_arguments
-        return expr.MathematicalExpression(operation, first_arg, remaining_args)
+        return expr.MathematicalExpression(_MospOperationSql[operation], first_arg, remaining_args)
 
     # parse aggregate (COUNT / AVG / MIN / ...) or function call (CURRENT_DATE() etc)
     arguments = mosp_data[operation] if mosp_data[operation] else []

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import abc
+import enum
 import numbers
 import typing
 from typing import Iterable
@@ -8,6 +9,41 @@ from typing import Iterable
 from postbound.qal import base, qal
 
 _T = typing.TypeVar("_T")
+
+
+class MathematicalSqlOperators(enum.Enum):
+    Add = "+"
+    Subtract = "-"
+    Multiply = "*"
+    Divide = "/"
+    Modulo = "%"
+    Negate = "-"
+
+
+class LogicalSqlOperators(enum.Enum):
+    Equal = "="
+    NotEqual = "<>"
+    Less = "<"
+    LessEqual = "<="
+    Greater = ">"
+    GreaterEqual = ">="
+    Like = "LIKE"
+    NotLike = "NOT LIKE"
+    ILike = "ILIKE"
+    NotILike = "NOT ILIKE"
+    In = "IN"
+    Exists = "IS NULL"
+    Missing = "IS NOT NULL"
+    Between = "BETWEEN"
+
+
+class LogicalSqlCompoundOperators(enum.Enum):
+    And = "AND"
+    Or = "OR"
+    Not = "NOT"
+
+
+SqlOperator = typing.Type[MathematicalSqlOperators | LogicalSqlOperators | LogicalSqlCompoundOperators]
 
 
 class SqlExpression(abc.ABC):
@@ -94,11 +130,8 @@ class CastExpression(SqlExpression):
         return f"{self.casted_expression}::{self.target_type}"
 
 
-_MospMathFunctionsSQL = {"add": "+", "sub": "-", "neg": "-", "mul": "*", "div": "/", "mod": "%"}
-
-
 class MathematicalExpression(SqlExpression):
-    def __init__(self, operator: str, first_argument: SqlExpression,
+    def __init__(self, operator: SqlOperator, first_argument: SqlExpression,
                  second_argument: SqlExpression | list[SqlExpression] | None = None) -> None:
         self.operator = operator
         self.first_arg = first_argument
@@ -132,12 +165,12 @@ class MathematicalExpression(SqlExpression):
         return super().__repr__()
 
     def __str__(self) -> str:
-        operator_str = _MospMathFunctionsSQL.get(self.operator, self.operator)
-        if self.operator == "neg":
+        operator_str = self.operator.value
+        if self.operator == MathematicalSqlOperators.Negate:
             return f"{operator_str}{self.first_arg}"
         if isinstance(self.second_arg, list):
             all_args = [self.first_arg] + self.second_arg
-            return self.operator.join(str(arg) for arg in all_args)
+            return operator_str.join(str(arg) for arg in all_args)
         return f"{self.first_arg} {operator_str} {self.second_arg}"
 
 
