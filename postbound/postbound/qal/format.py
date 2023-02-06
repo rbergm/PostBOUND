@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from postbound.qal import qal, clauses, predicates as preds
+from postbound.qal import qal, clauses, expressions as expr, predicates as preds
 
 FORMAT_INDENT_DEPTH = 2
 
@@ -26,7 +26,7 @@ def _quick_format_predicate(predicate: preds.AbstractPredicate) -> list[str]:
     if not isinstance(predicate, preds.CompoundPredicate):
         return [str(predicate)]
     compound_pred: preds.CompoundPredicate = predicate
-    if compound_pred.operation == "and":
+    if compound_pred.operation == expr.LogicalSqlCompoundOperators.And:
         first_child, *remaining_children = compound_pred.children
         return [str(first_child)] + ["AND " + str(child) for child in remaining_children]
     return [str(compound_pred)]
