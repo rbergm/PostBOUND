@@ -61,6 +61,16 @@ class SqlExpression(abc.ABC):
         """
         raise NotImplementedError
 
+    @abc.abstractmethod
+    def iterchildren(self) -> Iterable[SqlExpression]:
+        """Provides unified access to all child expressions of the concrete expression type.
+
+        For "leaf" expressions such as static values, the iterable will not contain any elements. Otherwise, all
+        _direct_ children will be returned. For example, a mathematical expression could return both the left, as well
+        as the right operand.
+        """
+        raise NotImplementedError
+
     def tables(self) -> set[base.TableReference]:
         """Provides all tables that are accessed by this expression."""
         return {column.table for column in self.columns() if column}
@@ -91,6 +101,9 @@ class StaticValueExpression(SqlExpression, typing.Generic[_T]):
     def itercolumns(self) -> Iterable[base.ColumnReference]:
         return []
 
+    def iterchildren(self) -> Iterable[SqlExpression]:
+        return []
+
     def __hash__(self) -> int:
         return hash(self.value)
 
@@ -114,6 +127,9 @@ class CastExpression(SqlExpression):
 
     def itercolumns(self) -> Iterable[base.ColumnReference]:
         return self.casted_expression.itercolumns()
+
+    def iterchildren(self) -> Iterable[SqlExpression]:
+        return [self.casted_expression]
 
     def __hash__(self) -> int:
         return hash(tuple([self.casted_expression, self.target_type]))
@@ -152,6 +168,9 @@ class MathematicalExpression(SqlExpression):
     def itercolumns(self) -> Iterable[base.ColumnReference]:
         return list(self.first_arg.itercolumns()) + self.second_arg.itercolumns()
 
+    def iterchildren(self) -> Iterable[SqlExpression]:
+        return [self.first_arg, self.second_arg]
+
     def __hash__(self) -> int:
         return hash(tuple([self.operator, self.first_arg, self.second_arg]))
 
@@ -184,6 +203,9 @@ class ColumnExpression(SqlExpression):
     def itercolumns(self) -> Iterable[base.ColumnReference]:
         return [self.column]
 
+    def iterchildren(self) -> Iterable[SqlExpression]:
+        return []
+
     def __hash__(self) -> int:
         return hash(self.column)
 
@@ -215,6 +237,9 @@ class FunctionExpression(SqlExpression):
             all_columns.extend(arg.itercolumns())
         return all_columns
 
+    def iterchildren(self) -> Iterable[SqlExpression]:
+        return list(self.arguments)
+
     def __hash__(self) -> int:
         return hash(tuple([self.function, self.distinct] + self.arguments))
 
@@ -244,6 +269,9 @@ class SubqueryExpression(SqlExpression):
     def itercolumns(self) -> Iterable[base.ColumnReference]:
         return self.query.predicates().root().itercolumns()
 
+    def iterchildren(self) -> Iterable[SqlExpression]:
+        return []
+
     def __hash__(self) -> int:
         return hash(self.query)
 
@@ -262,6 +290,9 @@ class StarExpression(SqlExpression):
         return set()
 
     def itercolumns(self) -> Iterable[base.ColumnReference]:
+        return []
+
+    def iterchildren(self) -> Iterable[SqlExpression]:
         return []
 
     def __hash__(self) -> int:
