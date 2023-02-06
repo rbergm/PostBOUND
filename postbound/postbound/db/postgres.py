@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import concurrent
 import concurrent.futures
 import os
@@ -25,16 +27,16 @@ class PostgresInterface(db.Database):
         self._db_schema = PostgresSchemaInterface(self)
         self._db_stats = PostgresStatisticsInterface(self)
 
-    def schema(self) -> "db.DatabaseSchema":
+    def schema(self) -> db.DatabaseSchema:
         return self._db_schema
 
-    def statistics(self, emulated: bool | None = None) -> "db.DatabaseStatistics":
+    def statistics(self, emulated: bool | None = None) -> db.DatabaseStatistics:
         if emulated is not None:
             self._db_stats.emulated = emulated
         return self._db_stats
 
     def execute_query(self, query: qal.SqlQuery | str, *, cache_enabled: bool | None = None) -> Any:
-        cache_enabled = cache_enabled or (cache_enabled != False and self._cache_enabled)
+        cache_enabled = cache_enabled or self._cache_enabled
         query = str(query)
         if cache_enabled and query in self._query_cache:
             query_result = self._query_cache[query]
@@ -77,7 +79,7 @@ class PostgresInterface(db.Database):
 
 
 class PostgresSchemaInterface(db.DatabaseSchema):
-    def __int__(self, postgres_db: "PostgresInterface") -> None:
+    def __int__(self, postgres_db: PostgresInterface) -> None:
         super().__init__(postgres_db)
 
     def lookup_column(self, column: base.ColumnReference,
@@ -137,7 +139,7 @@ _DTypeArrayConverters = {
 
 
 class PostgresStatisticsInterface(db.DatabaseStatistics):
-    def __init__(self, postgres_db: "PostgresInterface") -> None:
+    def __init__(self, postgres_db: PostgresInterface) -> None:
         super().__init__(postgres_db)
 
     def _retrieve_total_rows_from_stats(self, table: base.TableReference) -> int:

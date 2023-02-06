@@ -1,9 +1,11 @@
+from __future__ import annotations
+
 import abc
 import atexit
 import json
 import os
 import warnings
-from typing import Any, Union
+from typing import Any
 
 from postbound.qal import base, qal
 from postbound.util import dicts as dict_utils
@@ -37,12 +39,12 @@ class Database(abc.ABC):
             self.__inflate_query_cache()
 
     @abc.abstractmethod
-    def schema(self) -> "DatabaseSchema":
+    def schema(self) -> DatabaseSchema:
         """Provides access to the underlying schema information of the database."""
         raise NotImplementedError
 
     @abc.abstractmethod
-    def statistics(self, emulated: bool | None = None) -> "DatabaseStatistics":
+    def statistics(self, emulated: bool | None = None) -> DatabaseStatistics:
         """Provides access to different tables and columns of the database."""
         raise NotImplementedError
 
@@ -132,7 +134,7 @@ class DatabaseSchema(abc.ABC):
     For PostBOUND, this information is mostly limited to index structures and primary keys of different columns.
     """
 
-    def __init__(self, db: "Database"):
+    def __init__(self, db: Database):
         self._db = db
 
     @abc.abstractmethod
@@ -183,30 +185,32 @@ class DatabaseStatistics(abc.ABC):
     do something useful with that information).
     """
 
-    def __init__(self, db: "Database"):
+    def __init__(self, db: Database):
         self.emulated = True
         self._db = db
 
-    def total_rows(self, table: base.TableReference, *, cache_enabled: bool | None = None) -> int:
+    def total_rows(self, table: base.TableReference, *, emulated: bool | None = None,
+                   cache_enabled: bool | None = None) -> int:
         """Provides (an estimate of) the total number of rows in a table."""
-        if self.emulated:
+        if (emulated is not None and not emulated) or self.emulated:
             return self._calculate_total_rows(table, cache_enabled=cache_enabled)
         else:
             return self._retrieve_total_rows_from_stats(table)
 
-    def distinct_values(self, column: base.ColumnReference, *, cache_enabled: bool | None = None) -> int:
+    def distinct_values(self, column: base.ColumnReference, *, emulated: bool | None = None,
+                        cache_enabled: bool | None = None) -> int:
         """Provides (an estimate of) the total number of different column values of a specific column.
 
         If the `column` is not bound to any table, an `UnboundColumnError` will be raised.
         """
         if not column.table:
             raise base.UnboundColumnError(column)
-        if self.emulated:
+        if (emulated is not None and not emulated) or self.emulated:
             return self._calculate_distinct_values(column, cache_enabled=cache_enabled)
         else:
             return self._retrieve_distinct_values_from_stats(column)
 
-    def most_common_values(self, column: base.ColumnReference, *, k: int = 10,
+    def most_common_values(self, column: base.ColumnReference, *, k: int = 10, emulated: bool | None = None,
                            cache_enabled: bool | None = None) -> list:
         """Provides (an estimate of) the total number of occurrences of the `k` most frequent values of a column.
 
@@ -217,7 +221,7 @@ class DatabaseStatistics(abc.ABC):
          """
         if not column.table:
             raise base.UnboundColumnError(column)
-        if self.emulated:
+        if (emulated is not None and not emulated) or self.emulated:
             return self._calculate_most_common_values(column, k, cache_enabled=cache_enabled)
         else:
             return self._retrieve_most_common_values_from_stats(column, k)
@@ -260,7 +264,7 @@ class DatabaseStatistics(abc.ABC):
         raise NotImplementedError
 
 
-_DB_POOL: Union["DatabasePool", None] = None
+_DB_POOL: DatabasePool | None = None
 
 
 class DatabasePool:
