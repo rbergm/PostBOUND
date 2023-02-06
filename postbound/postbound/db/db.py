@@ -170,6 +170,9 @@ class DatabaseSchema(abc.ABC):
         """
         return self.is_primary_key(column) or self.has_secondary_index(column)
 
+    def datatype(self, column: base.ColumnReference) -> str:
+        raise NotImplementedError
+
 
 class DatabaseStatistics(abc.ABC):
     """Database statistics provide aggregated information about specific tables and columns of the database.
@@ -192,7 +195,7 @@ class DatabaseStatistics(abc.ABC):
     def total_rows(self, table: base.TableReference, *, emulated: bool | None = None,
                    cache_enabled: bool | None = None) -> int:
         """Provides (an estimate of) the total number of rows in a table."""
-        if (emulated is not None and not emulated) or self.emulated:
+        if (emulated is not None and not emulated) or not self.emulated:
             return self._calculate_total_rows(table, cache_enabled=cache_enabled)
         else:
             return self._retrieve_total_rows_from_stats(table)
@@ -205,10 +208,19 @@ class DatabaseStatistics(abc.ABC):
         """
         if not column.table:
             raise base.UnboundColumnError(column)
-        if (emulated is not None and not emulated) or self.emulated:
+        if (emulated is not None and not emulated) or not self.emulated:
             return self._calculate_distinct_values(column, cache_enabled=cache_enabled)
         else:
             return self._retrieve_distinct_values_from_stats(column)
+
+    def min_max(self, column: base.ColumnReference, *, emulated: bool | None = None,
+                cache_enabled: bool | None = None) -> tuple:
+        if not column.table:
+            raise base.UnboundColumnError(column)
+        if (emulated is not None and not emulated) or not self.emulated:
+            return self._calculate_min_max_values(column, cache_enabled=cache_enabled)
+        else:
+            return self._retrieve_min_max_values_from_stats(column)
 
     def most_common_values(self, column: base.ColumnReference, *, k: int = 10, emulated: bool | None = None,
                            cache_enabled: bool | None = None) -> list:
@@ -221,7 +233,7 @@ class DatabaseStatistics(abc.ABC):
          """
         if not column.table:
             raise base.UnboundColumnError(column)
-        if (emulated is not None and not emulated) or self.emulated:
+        if (emulated is not None and not emulated) or not self.emulated:
             return self._calculate_most_common_values(column, k, cache_enabled=cache_enabled)
         else:
             return self._retrieve_most_common_values_from_stats(column, k)
@@ -235,6 +247,11 @@ class DatabaseStatistics(abc.ABC):
         query_template = "SELECT COUNT(DISTINCT {col}) FROM {tab}"
         count_query = query_template.format(col=column.name, tab=column.table.full_name)
         return self._db.execute_query(count_query, cache_enabled=cache_enabled)
+
+    def _calculate_min_max_values(self, column: base.ColumnReference, *, cache_enabled: bool | None = None) -> tuple:
+        query_template = "SELECT MIN({col}), MAX({col}) FROM {tab}"
+        min_max_query = query_template.format(col=column.name, tab=column.table.full_name)
+        return self._db.execute_query(min_max_query, cache_enabled=cache_enabled)
 
     def _calculate_most_common_values(self, column: base.ColumnReference, k: int, *,
                                       cache_enabled: bool | None = None) -> list:
@@ -253,6 +270,10 @@ class DatabaseStatistics(abc.ABC):
 
         If the `column` is not bound to any table, an `UnboundColumnError` will be raised.
         """
+        raise NotImplementedError
+
+    @abc.abstractmethod
+    def _retrieve_min_max_values_from_stats(self, column: base.ColumnReference) -> tuple:
         raise NotImplementedError
 
     @abc.abstractmethod

@@ -109,6 +109,17 @@ class PostgresSchemaInterface(db.DatabaseSchema):
         # value.
         return not index_map.get(column.name, True)
 
+    def datatype(self, column: base.ColumnReference) -> str:
+        if not column.table:
+            raise base.UnboundColumnError(column)
+        query_template = textwrap.dedent("""
+                        SELECT data_type FROM information_schema.columns
+                        WHERE table_name = {tab} AND column_name = {col}""")
+        datatype_query = query_template.format(tab=column.table.full_name, col=column.name)
+        self._db.cursor().execute(datatype_query)
+        result_set = self._db.cursor().fetchone()
+        return result_set[0]
+
     def _fetch_columns(self, table: base.TableReference) -> list[str]:
         query_template = "SELECT column_name FROM information_schema.columns WHERE table_name = %s"
         self._db.cursor().execute(query_template, (table.full_name,))
@@ -165,6 +176,10 @@ class PostgresStatisticsInterface(db.DatabaseStatistics):
         # correct negative values
         n_rows = self._retrieve_total_rows_from_stats(column.table)
         return -1 * n_rows * dist_values
+
+    def _retrieve_min_max_values_from_stats(self, column: base.ColumnReference) -> tuple:
+        # Postgres does not keep track of min/max values, so we need to determine them manually
+        return self._calculate_min_max_values(column, cache_enabled=True)
 
     def _retrieve_most_common_values_from_stats(self, column: base.ColumnReference, k: int) -> list:
         # Postgres stores the Most common values in a column of type anyarray (since in this column, many MCVs from
