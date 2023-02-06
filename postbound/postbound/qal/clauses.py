@@ -44,6 +44,20 @@ _MospSelectTypesSQL = {"select": "SELECT", "select_distinct": "SELECT DISTINCT"}
 
 
 @dataclass
+class Hint:
+    content: str
+
+    def __repr__(self) -> str:
+        return str(self)
+
+    def __str__(self) -> str:
+        return self.content
+
+
+# TODO: enable hints in SELECT and FROM clauses. Or add at expressions?
+
+
+@dataclass
 class Select:
     targets: list[BaseProjection]
     projection_type: str = "select"

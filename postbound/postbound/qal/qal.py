@@ -15,7 +15,8 @@ class SqlQuery(abc.ABC):
     def __init__(self, *, select_clause: clauses.Select,
                  from_clause: clauses.From | None = None, where_clause: clauses.Where | None = None,
                  groupby_clause: clauses.GroupBy | None = None, having_clause: clauses.Having | None = None,
-                 orderby_clause: clauses.OrderBy | None = None, limit_clause: clauses.Limit | None = None) -> None:
+                 orderby_clause: clauses.OrderBy | None = None, limit_clause: clauses.Limit | None = None,
+                 hints: clauses.Hint | None = None) -> None:
         self.select_clause = select_clause
         self.from_clause = from_clause
         self.where_clause = where_clause
@@ -23,6 +24,7 @@ class SqlQuery(abc.ABC):
         self.having_clause = having_clause
         self.orderby_clause = orderby_clause
         self.limit_clause = limit_clause
+        self.hints = hints
 
     @abc.abstractmethod
     def is_implicit(self) -> bool:
@@ -50,7 +52,8 @@ class SqlQuery(abc.ABC):
             return where_predicates
 
     def clauses(self) -> list:
-        all_clauses = [self.select_clause, self.from_clause, self.where_clause,
+        all_clauses = [self.hints,
+                       self.select_clause, self.from_clause, self.where_clause,
                        self.orderby_clause, self.having_clause,
                        self.orderby_clause, self.limit_clause]
         return [clause for clause in all_clauses if clause is not None]

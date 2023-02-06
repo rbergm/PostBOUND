@@ -1,4 +1,6 @@
 """"""
+from __future__ import annotations
+
 import abc
 import enum
 
@@ -30,15 +32,3 @@ class ColumnTypes(enum.Enum):
     TEXT = TextColumn
     VARCHAR = VarCharColumn
     TIMESTAMP = TimestampColumn
-
-
-class DatabaseSystem(abc.ABC):
-    pass
-
-
-class Postgres(DatabaseSystem):
-    pass
-
-
-class MySql(DatabaseSystem):
-    pass
