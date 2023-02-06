@@ -13,10 +13,45 @@ from postbound.db import db
 from postbound.util import dicts as dict_utils
 
 AutoBindColumns: bool = False
+_MospJoinTypes = {  # see https://www.postgresql.org/docs/current/queries-table-expressions.html#QUERIES-JOIN
+    # INNER JOIN
+    "join": joins.JoinType.InnerJoin,
+    "inner join": joins.JoinType.InnerJoin,
+
+    # CROSS JOIN
+    "cross join": joins.JoinType.CrossJoin,
+
+    # FULL OUTER JOIN
+    "full join": joins.JoinType.OuterJoin,
+    "outer join": joins.JoinType.OuterJoin,
+    "full outer join": joins.JoinType.OuterJoin,
+
+    # LEFT OUTER JOIN
+    "left join": joins.JoinType.LeftJoin,
+    "left outer join": joins.JoinType.LeftJoin,
+
+    # RIGHT OUTER JOIN
+    "right join": joins.JoinType.RightJoin,
+    "right outer join": joins.JoinType.RightJoin,
+
+    # NATURAL INNER JOIN
+    "natural join": joins.JoinType.NaturalInnerJoin,
+    "natural inner join": joins.JoinType.NaturalInnerJoin,
+
+    # NATURAL OUTER JOIN
+    "natural outer join": joins.JoinType.NaturalOuterJoin,
+    "natural full outer join": joins.JoinType.NaturalOuterJoin,
+
+    # NATURAL LEFT OUTER JOIN
+    "natural left join": joins.JoinType.NaturalLeftJoin,
+    "natural left outer join": joins.JoinType.NaturalLeftJoin,
+
+    # NATURAL RIGHT OUTER JOIN
+    "natural right join": joins.JoinType.NaturalRightJoin,
+    "natural right outer join": joins.JoinType.NaturalRightJoin
+}
 
 _MospAggregateOperations = {"count", "sum", "min", "max", "avg"}
-_MospJoinTypes = {"join", "cross join", "full join", "left join", "right join", "outer join", "inner join",
-                  "natural join", "left outer join", "right outer join", "full outer join"}
 
 _MospCompoundOperations = {
     "and": expr.LogicalSqlCompoundOperators.And,
@@ -217,7 +252,8 @@ def _parse_explicit_from_clause(mosp_data: dict) -> clauses.ExplicitFromClause:
     parsed_joins = []
     for joined_table in joined_tables:
         join_condition = _parse_mosp_predicate(joined_table["on"]) if "on" in joined_table else None
-        join_type = next(jt for jt in _MospJoinTypes if jt in joined_table)
+        join_type = next(jt for jt in _MospJoinTypes.keys() if jt in joined_table)
+        parsed_join_type = _MospJoinTypes[join_type]
         join_source = joined_table[join_type]
 
         # TODO: enable USING support in addition to ON
@@ -227,18 +263,18 @@ def _parse_explicit_from_clause(mosp_data: dict) -> clauses.ExplicitFromClause:
             # we found a subquery
             joined_subquery = _MospQueryParser(join_source["value"], mosp.format(join_source)).parse_query()
             join_alias = joined_table.get("name", None)
-            parsed_joins.append(joins.SubqueryJoin(join_type, joined_subquery, join_alias, join_condition))
+            parsed_joins.append(joins.SubqueryJoin(parsed_join_type, joined_subquery, join_alias, join_condition))
         elif isinstance(join_source, dict):
             # we found a normal table join with an alias
             table_name = join_source["value"]
             table_alias = join_source.get("name", None)
             table = base.TableReference(table_name, table_alias)
-            parsed_joins.append(joins.TableJoin(join_type, table, join_condition))
+            parsed_joins.append(joins.TableJoin(parsed_join_type, table, join_condition))
         elif isinstance(join_source, str):
             # we found a normal table join without an alias
             table_name = join_source
             table = base.TableReference(table_name)
-            parsed_joins.append(joins.TableJoin(join_type, table, join_condition))
+            parsed_joins.append(joins.TableJoin(parsed_join_type, table, join_condition))
         else:
             raise ValueError("Unknown JOIN format: " + str(joined_table))
     return clauses.ExplicitFromClause(initial_table, parsed_joins)

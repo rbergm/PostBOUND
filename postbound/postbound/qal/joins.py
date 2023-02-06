@@ -1,18 +1,34 @@
 from __future__ import annotations
 
 import abc
+import enum
 
 from typing import Iterable
 
 from postbound.qal import base, predicates as preds, qal
 
-_MospJoinTypesSQL = {join: join.upper() for join in
-                     {"join", "cross join", "full join", "left join", "right join", "outer join", "inner join",
-                      "natural join", "left outer join", "right outer join", "full outer join"}}
+
+class JoinType(enum.Enum):
+    InnerJoin = "JOIN"
+    OuterJoin = "OUTER JOIN"
+    LeftJoin = "LEFT JOIN"
+    RightJoin = "RIGHT JOIN"
+    CrossJoin = "CROSS JOIN"
+
+    NaturalInnerJoin = "NATURAL JOIN"
+    NaturalOuterJoin = "NATURAL OUTER JOIN"
+    NaturalLeftJoin = "NATURAL LEFT JOIN"
+    NaturalRightJoin = "NATURAL RIGHT JOIN"
+
+    def __repr__(self) -> str:
+        return str(self)
+
+    def __str__(self) -> str:
+        return self.value
 
 
 class Join(abc.ABC):
-    def __init__(self, join_type: str, join_condition: preds.AbstractPredicate) -> None:
+    def __init__(self, join_type: JoinType, join_condition: preds.AbstractPredicate | None = None) -> None:
         self.join_type = join_type
         self.join_condition = join_condition
 
@@ -33,8 +49,8 @@ class Join(abc.ABC):
 
 
 class TableJoin(Join):
-    def __init__(self, join_type: str, joined_table: base.TableReference,
-                 join_condition: preds.AbstractPredicate = None) -> None:
+    def __init__(self, join_type: JoinType, joined_table: base.TableReference,
+                 join_condition: preds.AbstractPredicate | None = None) -> None:
         super().__init__(join_type, join_condition)
         self.joined_table = joined_table
 
@@ -45,7 +61,7 @@ class TableJoin(Join):
         return [self.joined_table]
 
     def __str__(self) -> str:
-        join_str = _MospJoinTypesSQL.get(self.join_type, self.join_type)
+        join_str = str(self.join_type)
         join_prefix = f"{join_str} {self.joined_table}"
         if self.join_condition:
             condition_str = (f"({self.join_condition})" if self.join_condition.is_compound()
@@ -56,8 +72,8 @@ class TableJoin(Join):
 
 
 class SubqueryJoin(Join):
-    def __init__(self, join_type: str, subquery: qal.SqlQuery, alias: str = "",
-                 join_condition: preds.AbstractPredicate = None) -> None:
+    def __init__(self, join_type: JoinType, subquery: qal.SqlQuery, alias: str = "",
+                 join_condition: preds.AbstractPredicate | None = None) -> None:
         super().__init__(join_type, join_condition)
         self.subquery = subquery
         self.alias = alias
@@ -69,7 +85,7 @@ class SubqueryJoin(Join):
         return self.subquery.tables()
 
     def __str__(self) -> str:
-        join_type_str = _MospJoinTypesSQL.get(self.join_type, self.join_type)
+        join_type_str = str(self.join_type)
         join_str = f"{join_type_str} ({self.subquery})"
         if self.alias:
             join_str += f" AS {self.alias}"
