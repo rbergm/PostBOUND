@@ -33,8 +33,8 @@ class PostgresInterface(db.Database):
             self._db_stats.emulated = emulated
         return self._db_stats
 
-    def execute_query(self, query: qal.SqlQuery | str, *, __disable_cache: bool = False) -> Any:
-        cache_enabled = self._cache_enabled and not __disable_cache
+    def execute_query(self, query: qal.SqlQuery | str, *, cache_enabled: bool | None = None) -> Any:
+        cache_enabled = cache_enabled or (cache_enabled != False and self._cache_enabled)
         query = str(query)
         if cache_enabled and query in self._query_cache:
             query_result = self._query_cache[query]
@@ -44,11 +44,13 @@ class PostgresInterface(db.Database):
             if cache_enabled:
                 self._query_cache[query] = query_result
 
-        # simplify the query result as much as possible: [(42)] becomes 42
-        while (isinstance(query_result, list) or isinstance(query_result, tuple)) and len(query_result) == 1:
-            query_result = query_result[0]
-
-        return query_result
+        # simplify the query result as much as possible: [(42, 24)] becomes (42, 24) and [(1,), (2,)] becomes [1, 2]
+        if not query_result:
+            return []
+        result_structure = query_result[0]
+        if len(result_structure) == 1:
+            query_result = [row[0] for row in query_result]
+        return query_result if len(query_result) > 1 else query_result[0]
 
     def cardinality_estimate(self, query: qal.SqlQuery | str) -> int:
         query = str(query)

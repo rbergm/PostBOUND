@@ -47,17 +47,19 @@ class Database(abc.ABC):
         raise NotImplementedError
 
     @abc.abstractmethod
-    def execute_query(self, query: qal.SqlQuery | str) -> Any:
+    def execute_query(self, query: qal.SqlQuery | str, *, cache_enabled: bool | None = None) -> Any:
         """Executes the given query and returns the associated result set.
 
         The precise behaviour of this method depends on whether caching is enabled or not. If it is, the query will
         only be executed against the live database system, if it is not in the cache. Otherwise, the result will simply
-        be retrieved.
+        be retrieved. Caching can be enabled/disabled for just this one query via the `cache_enabled` switch. If this
+        is not specified, caching depends on the `cache_enabled` property.
 
         This method tries to simplify the return value of the query for more convenient use. More specifically, if the
         query returns just a single row, this row is returned directly. Furthermore, if the query returns just a single
-        row and a single column, the column value is returned directly. In all other cases, the result will be a list
-        consisting of the different result tuples.
+        column, that column is placed directly in to the encompassing list. Both simplifications will also be combined,
+        such that a result set of a single row of a single value will be returned as that single value directly. In all
+        other cases, the result will be a list consisting of the different result tuples.
         """
         raise NotImplementedError
 
@@ -185,16 +187,14 @@ class DatabaseStatistics(abc.ABC):
         self.emulated = True
         self._db = db
 
-    def total_rows(self, table: base.TableReference) -> int:
+    def total_rows(self, table: base.TableReference, *, cache_enabled: bool | None = None) -> int:
         """Provides (an estimate of) the total number of rows in a table."""
         if self.emulated:
-            query_template = "SELECT COUNT(*) FROM {tab}"
-            count_query = query_template.format(tab=table.full_name)
-            return self._db.execute_query(count_query)
+            return self._calculate_total_rows(table, cache_enabled=cache_enabled)
         else:
             return self._retrieve_total_rows_from_stats(table)
 
-    def distinct_values(self, column: base.ColumnReference) -> int:
+    def distinct_values(self, column: base.ColumnReference, *, cache_enabled: bool | None = None) -> int:
         """Provides (an estimate of) the total number of different column values of a specific column.
 
         If the `column` is not bound to any table, an `UnboundColumnError` will be raised.
@@ -202,13 +202,12 @@ class DatabaseStatistics(abc.ABC):
         if not column.table:
             raise base.UnboundColumnError(column)
         if self.emulated:
-            query_template = "SELECT COUNT(DISTINCT {col}) FROM {tab}"
-            count_query = query_template.format(col=column.name, tab=column.table.full_name)
-            return self._db.execute_query(count_query)
+            return self._calculate_distinct_values(column, cache_enabled=cache_enabled)
         else:
             return self._retrieve_distinct_values_from_stats(column)
 
-    def most_common_values(self, column: base.ColumnReference, *, k: int = 10) -> list:
+    def most_common_values(self, column: base.ColumnReference, *, k: int = 10,
+                           cache_enabled: bool | None = None) -> list:
         """Provides (an estimate of) the total number of occurrences of the `k` most frequent values of a column.
 
          By default, `k = 10`. In `emulated` mode, the result will be an ordered sequence of `(value, frequency)`
@@ -219,11 +218,25 @@ class DatabaseStatistics(abc.ABC):
         if not column.table:
             raise base.UnboundColumnError(column)
         if self.emulated:
-            query_template = "SELECT {col}, COUNT(*) AS n FROM {tab} GROUP BY {col} ORDER BY n DESC, {col} LIMIT {k}"
-            count_query = query_template.format(col=column.name, tab=column.table.full_name, k=k)
-            return self._db.execute_query(count_query)
+            return self._calculate_most_common_values(column, k, cache_enabled=cache_enabled)
         else:
             return self._retrieve_most_common_values_from_stats(column, k)
+
+    def _calculate_total_rows(self, table: base.TableReference, *, cache_enabled: bool | None = None) -> int:
+        query_template = "SELECT COUNT(*) FROM {tab}"
+        count_query = query_template.format(tab=table.full_name)
+        return self._db.execute_query(count_query, cache_enabled=cache_enabled)
+
+    def _calculate_distinct_values(self, column: base.ColumnReference, *, cache_enabled: bool | None = None) -> int:
+        query_template = "SELECT COUNT(DISTINCT {col}) FROM {tab}"
+        count_query = query_template.format(col=column.name, tab=column.table.full_name)
+        return self._db.execute_query(count_query, cache_enabled=cache_enabled)
+
+    def _calculate_most_common_values(self, column: base.ColumnReference, k: int, *,
+                                      cache_enabled: bool | None = None) -> list:
+        query_template = "SELECT {col}, COUNT(*) AS n FROM {tab} GROUP BY {col} ORDER BY n DESC, {col} LIMIT {k}"
+        count_query = query_template.format(col=column.name, tab=column.table.full_name, k=k)
+        return self._db.execute_query(count_query, cache_enabled=cache_enabled)
 
     @abc.abstractmethod
     def _retrieve_total_rows_from_stats(self, table: base.TableReference) -> int:
