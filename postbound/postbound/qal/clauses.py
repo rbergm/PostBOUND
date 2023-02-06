@@ -57,10 +57,12 @@ class Hint:
 # TODO: enable hints in SELECT and FROM clauses. Or add at expressions?
 
 
-@dataclass
 class Select:
-    targets: list[BaseProjection]
-    projection_type: str = "select"
+    def __init__(self, targets: BaseProjection | list[BaseProjection], projection_type: str = "select", *,
+                 hint: Hint | None = None) -> None:
+        self.targets = collection_utils.enlist(targets)
+        self.projection_type = projection_type
+        self.hint = hint
 
     def parts(self) -> list[BaseProjection]:
         return self.targets
@@ -85,13 +87,23 @@ class Select:
             output[projection.target_name] = collection_utils.simplify(source_columns)
         return output
 
+    def __hash__(self) -> int:
+        return hash((self.projection_type, tuple(self.targets), self.hint))
+
+    def __eq__(self, other) -> bool:
+        return (isinstance(other, type(self))
+                and self.projection_type == other.projection_type
+                and self.targets == other.targets
+                and self.hint == other.hint)
+
     def __repr__(self) -> str:
         return str(self)
 
     def __str__(self) -> str:
         select_str = _MospSelectTypesSQL.get(self.projection_type, self.projection_type)
+        hint_str = self.hint.content.rstrip() + " " if self.hint else ""
         parts_str = ", ".join(str(target) for target in self.targets)
-        return f"{select_str} {parts_str}"
+        return f"{select_str} {hint_str}{parts_str}"
 
 
 class From(abc.ABC):
