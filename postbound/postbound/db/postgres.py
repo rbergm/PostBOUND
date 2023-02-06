@@ -5,7 +5,7 @@ import textwrap
 import threading
 from typing import Any
 
-import psycopg2
+import psycopg
 
 from postbound.db import db
 from postbound.qal import qal, base
@@ -18,7 +18,7 @@ class PostgresInterface(db.Database):
     def __init__(self, connect_string: str, name: str = "postgres", *, cache_enabled: bool = True) -> None:
         super().__init__(name, cache_enabled=cache_enabled)
         self._connect_string = connect_string
-        self._connection = psycopg2.connect(connect_string)
+        self._connection = psycopg.connect(connect_string)
         self._connection.autocommit = True
         self._cursor = self._connection.cursor()
 
@@ -69,7 +69,7 @@ class PostgresInterface(db.Database):
 
     def reset_connection(self) -> None:
         self._cursor.close()
-        self._connection.reset()
+        self._connection.rollback()
         self._cursor = self._connection.cursor()
 
     def cursor(self) -> Any:
@@ -205,7 +205,7 @@ def connect(*, name: str = "postgres", connect_string: str | None = None,
 def _parallel_query_initializer(connect_string: str, local_data: threading.local, verbose: bool = False) -> None:
     log = logging.make_logger(verbose)
     tid = threading.get_ident()
-    connection = psycopg2.connect(connect_string, application_name=f"PostBOUND parallel worker ID {tid}")
+    connection = psycopg.connect(connect_string, application_name=f"PostBOUND parallel worker ID {tid}")
     connection.autocommit = True
     local_data.connection = connection
     log(f"[worker id={tid}, ts={logging.timestamp()}] Connected")
@@ -213,7 +213,7 @@ def _parallel_query_initializer(connect_string: str, local_data: threading.local
 
 def _parallel_query_worker(query: str, local_data: threading.local, verbose: bool = False) -> Any:
     log = logging.make_logger(verbose)
-    connection: psycopg2.connection = local_data.connection
+    connection: psycopg.connection.Connection = local_data.connection
     connection.rollback()
     cursor = connection.cursor()
 
