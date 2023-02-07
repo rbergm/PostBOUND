@@ -47,12 +47,13 @@ class PostgresInterface(db.Database):
                 self._query_cache[query] = query_result
 
         # simplify the query result as much as possible: [(42, 24)] becomes (42, 24) and [(1,), (2,)] becomes [1, 2]
+        # [(42, 24), (4.2, 2.4)] is left as-is
         if not query_result:
             return []
-        result_structure = query_result[0]
-        if len(result_structure) == 1:
-            query_result = [row[0] for row in query_result]
-        return query_result if len(query_result) > 1 else query_result[0]
+        result_structure = query_result[0]  # how do the result tuples look like?
+        if len(result_structure) == 1:  # do we have just one column?
+            query_result = [row[0] for row in query_result]  # if it is just one column, unwrap it
+        return query_result if len(query_result) > 1 else query_result[0]  # if it is just one row, unwrap it
 
     def cardinality_estimate(self, query: qal.SqlQuery | str) -> int:
         query = str(query)
@@ -133,8 +134,7 @@ class PostgresSchemaInterface(db.DatabaseSchema):
                                         SELECT attr.attname, idx.indisprimary
                                         FROM pg_index idx
                                             JOIN pg_attribute attr
-                                            ON idx.indrelid = attr.attrelid
-                                                AND attr.attnum = ANY(idx.indkey)
+                                            ON idx.indrelid = attr.attrelid AND attr.attnum = ANY(idx.indkey)
                                         WHERE idx.indrelid = '{table.full_name}'::regclass""")
         self._db.cursor().execute(index_query)
         result_set = self._db.cursor().fetchall()
