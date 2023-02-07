@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import itertools
 import typing
-from typing import Iterable, Sized
+from typing import Iterable, Sized, Iterator, Container
 
 _T = typing.TypeVar("_T")
 
@@ -63,7 +63,49 @@ def set_union(sets: Iterable[set]) -> set:
     return union_set
 
 
-class SizedQueue(typing.Iterable[_T]):
+class Queue(Iterable[_T], Sized, Container[_T]):
+    """Essentially, a queue is a wrapper around an underlying list of data that provides FIFO semantics."""
+
+    def __init__(self, data: Iterable[_T] | None = None) -> None:
+        self.data = list(data) if data else []
+
+    def enqueue(self, value: _T) -> None:
+        """Adds a new item at the end of the queue."""
+        self.data.append(value)
+
+    def append(self, value: _T) -> None:
+        """Adds a new item at the end of the queue.
+
+        Basically an alias for `enqueue` to enable easier interchangeability with normal lists.
+        """
+        self.enqueue(value)
+
+    def extend(self, values: Iterable[_T]) -> None:
+        """Adds all values to the end of the queue, in the order in which they are provided by the iterable."""
+        self.data.extend(values)
+
+    def head(self) -> _T | None:
+        """Provides the current first element of the queue without removing."""
+        return self.data[0] if self.data else None
+
+    def pop(self) -> _T | None:
+        """Provides the current first element of the queue and removes it."""
+        item = self.head()
+        if item:
+            self.data.pop(0)
+        return item
+
+    def __len__(self) -> int:
+        return len(self.data)
+
+    def __contains__(self, __x: object) -> bool:
+        return __x in self.data
+
+    def __iter__(self) -> Iterator[_T]:
+        return self.data.__iter__()
+
+
+class SizedQueue(Iterable[_T]):
     """A sized queue extends on the behaviour of a normal queue by restricting the number of items in the queue.
 
     A sized queue has weak FIFO semantics: items can only be appended at the end, but the contents of the entire queue

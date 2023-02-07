@@ -1,10 +1,17 @@
 """Contains additional algorithms tailored to PostBOUND to work with networkx graphs."""
 import random
+import typing
+from typing import Callable
 
 import networkx as nx
 
+from postbound.util import collections as collection_utils
 
-def nx_random_walk(graph: nx.Graph):
+NodeType = typing.TypeVar("NodeType")
+EdgeType = typing.TypeVar("EdgeType")
+
+
+def nx_random_walk(graph: nx.Graph) -> EdgeType:
     """A modified random walk implementation for networkx graphs.
 
     The modifications concern two specific areas: after each stop, the walk may jump to a node that is connected to one of the
@@ -33,3 +40,22 @@ def nx_random_walk(graph: nx.Graph):
         shell_nodes.remove(current_node)
         visited_nodes.add(current_node)
         yield current_node
+
+
+def nx_bfs_tree(graph: nx.Graph, start_node: NodeType,
+                condition: Callable[[NodeType, dict], bool]) -> tuple[NodeType, dict]:
+    """Traverses the given `graph` in breadth-first manner, beginning at `start_node`.
+
+    This function will yield all encountered nodes if they satisfy the `condition`. If no more nodes are found or the
+    condition cannot be satisfied for any more nodes, traversal terminates. Each condition check receives the
+    neighboring node along with the edge-data as arguments.
+    """
+    shell_nodes = collection_utils.Queue([(node, edge) for node, edge in graph.adj[start_node].items()])
+    visited_nodes = set(start_node)
+    while shell_nodes:
+        current_node, current_edge = shell_nodes.pop()
+        visited_nodes.add(current_node)
+        if condition(current_node, current_edge):
+            shell_nodes.extend([(node, edge) for node, edge in graph.adj[current_node].items()
+                                if node not in visited_nodes])
+            yield current_node, current_edge
