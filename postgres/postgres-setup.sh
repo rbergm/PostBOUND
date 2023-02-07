@@ -28,6 +28,8 @@ echo ".. Initializing Postgres Server environment"
 cd $WD/postgres-server
 echo "... Creating cluster"
 initdb -D $(pwd)/data
+echo "... Adding pg_hint_plan to preload libraries"
+sed -i "s/shared_preload_libraries.*/shared_preload_libraries = 'pg_hint_plan'/" $(pwd)/data/postgresql.conf
 echo "... Starting Postgres (log file is pg.log)"
 pg_ctl -D $(pwd)/data -l pg.log start
 echo "... Creating user database for $USER"
