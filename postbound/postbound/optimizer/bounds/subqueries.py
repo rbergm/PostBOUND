@@ -17,3 +17,12 @@ class SubqueryGenerationPolicy(abc.ABC):
     @abc.abstractmethod
     def generate_subquery_for(self, join: Iterable[base.TableReference]) -> bool:
         raise NotImplementedError
+
+
+class LinearSubqueryGenerationPolicy(SubqueryGenerationPolicy):
+
+    def setup_for_query(self, query: qal.ImplicitSqlQuery) -> None:
+        pass
+
+    def generate_subquery_for(self, join: Iterable[base.TableReference]) -> bool:
+        return False

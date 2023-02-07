@@ -9,6 +9,7 @@ from postbound.qal import base, qal
 class ScanOperators(enum.Enum):
     SequentialScan = "Seq. Scan"
     IndexScan = "Idx. Scan"
+    IndexOnlyScan = "Idx-only Scan"
 
 
 class JoinOperators(enum.Enum):
@@ -21,8 +22,7 @@ class JoinOperators(enum.Enum):
 class PhysicalOperatorAssignment:
     def __init__(self, query: qal.SqlQuery) -> None:
         self.query = query
-        self.global_settings: dict[ScanOperators | JoinOperators, bool] = ({op: True for op in ScanOperators}
-                                                                           | {op: True for op in JoinOperators})
+        self.global_settings: dict[ScanOperators | JoinOperators, bool] = {}
         self.join_operators: dict[frozenset[base.TableReference], JoinOperators] = {}
         self.scan_operators: dict[base.TableReference, ScanOperators] = {}
 

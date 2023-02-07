@@ -7,7 +7,7 @@ import itertools
 from typing import Iterable
 
 from postbound.qal import base, expressions as expr
-from postbound.util import errors, dicts as dict_utils, collections as collection_utils
+from postbound.util import errors, collections as collection_utils
 
 _ReflexiveOps = ["=", "!=", "<>"]
 
@@ -65,7 +65,7 @@ class AbstractPredicate(abc.ABC):
         """
         raise NotImplementedError
 
-    def tables(self) -> set[base.ColumnReference]:
+    def tables(self) -> set[base.TableReference]:
         """Provides all tables that are accessed by this predicate."""
         return {attribute.table for attribute in self.columns()}
 
@@ -355,6 +355,10 @@ class UnaryPredicate(BasePredicate):
 
 
 class CompoundPredicate(AbstractPredicate):
+    @staticmethod
+    def create_and(parts: Iterable[AbstractPredicate]) -> CompoundPredicate:
+        return CompoundPredicate(expr.LogicalSqlCompoundOperators.And, list(parts))
+
     def __init__(self, operation: expr.LogicalSqlCompoundOperators,
                  children: AbstractPredicate | list[AbstractPredicate]):
         super().__init__()
@@ -476,6 +480,10 @@ class QueryPredicates:
     def joins(self) -> Iterable[AbstractPredicate]:
         self._assert_not_empty()
         return _collect_join_predicates(self._root)
+
+    def filters_for(self, table: base.TableReference) -> Iterable[AbstractPredicate]:
+        self._assert_not_empty()
+        return [filter_pred for filter_pred in self.filters() if table in filter_pred.tables()]
 
     def and_(self, other_predicate: QueryPredicates | AbstractPredicate) -> QueryPredicates:
         other_predicate = other_predicate._root if isinstance(other_predicate, QueryPredicates) else other_predicate
