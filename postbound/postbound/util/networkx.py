@@ -1,4 +1,6 @@
 """Contains additional algorithms tailored to PostBOUND to work with networkx graphs."""
+from __future__ import annotations
+
 import random
 import typing
 from typing import Callable
@@ -43,7 +45,8 @@ def nx_random_walk(graph: nx.Graph) -> EdgeType:
 
 
 def nx_bfs_tree(graph: nx.Graph, start_node: NodeType,
-                condition: Callable[[NodeType, dict], bool]) -> tuple[NodeType, dict]:
+                condition: Callable[[NodeType, dict], bool], *,
+                node_order: Callable[[NodeType, dict], int] | None = None) -> tuple[NodeType, dict]:
     """Traverses the given `graph` in breadth-first manner, beginning at `start_node`.
 
     This function will yield all encountered nodes if they satisfy the `condition`. If no more nodes are found or the
@@ -56,6 +59,9 @@ def nx_bfs_tree(graph: nx.Graph, start_node: NodeType,
         current_node, current_edge = shell_nodes.pop()
         visited_nodes.add(current_node)
         if condition(current_node, current_edge):
-            shell_nodes.extend([(node, edge) for node, edge in graph.adj[current_node].items()
-                                if node not in visited_nodes])
+            neighbor_nodes = [(node, edge) for node, edge in graph.adj[current_node].items()
+                              if node not in visited_nodes]
+            if node_order:
+                sorted(neighbor_nodes, key=lambda neighbor: node_order(neighbor[0], neighbor[1]))
+            shell_nodes.extend(neighbor_nodes)
             yield current_node, current_edge

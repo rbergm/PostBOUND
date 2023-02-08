@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import abc
 from dataclasses import dataclass
-from typing import Iterable
+from typing import Callable, Iterable
 
 import networkx as nx
 
@@ -153,6 +153,11 @@ class JoinGraph:
     def available_pk_fk_joins_for(self, fk_table: base.TableReference) -> Iterable[JoinPath]:
         pass
 
+    def available_deep_pk_join_paths_for(self, fk_table: base.TableReference,
+                                         ordering: Callable[[base.TableReference, dict], int] | None = None
+                                         ) -> Iterable[JoinPath]:
+        pass
+
     def mark_joined(self, table: base.TableReference) -> None:
         pass
 
@@ -214,7 +219,8 @@ class JoinTree:
 
         current_root = first_tree.root
         for additional_tree in additional_trees:
-            current_root = JoinNode(additional_tree.root, current_root)
+            cross_product_bound = current_root.upper_bound * additional_tree.root.upper_bound
+            current_root = JoinNode(additional_tree.root, current_root, join_bound=cross_product_bound)
 
         cross_product_tree = JoinTree()
         cross_product_tree.root = current_root

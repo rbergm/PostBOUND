@@ -6,7 +6,7 @@ import copy
 
 import numpy as np
 
-from postbound.qal import qal, predicates as preds
+from postbound.qal import qal, base, predicates as preds
 from postbound.db import db
 from postbound.optimizer.bounds import joins as join_bounds, scans as scan_bounds, subqueries, stats
 from postbound.optimizer import data
@@ -71,7 +71,7 @@ class UESJoinOrderOptimizer(JoinOrderOptimizer):
         while join_graph.contains_free_n_m_joins():
 
             # Update the current upper bounds
-            lowest_min_bound = np.inf
+            lowest_bound = np.inf
             lowest_bound_table = None
             for candidate_join in join_graph.available_join_paths():
                 candidate_table = candidate_join.target_table
@@ -81,14 +81,43 @@ class UESJoinOrderOptimizer(JoinOrderOptimizer):
                 candidate_min_bound = min([filter_estimate] + pk_fk_bounds)
                 self.stats_container.upper_bounds[candidate_table] = candidate_min_bound
 
-                if candidate_min_bound < lowest_min_bound:
-                    lowest_min_bound = candidate_min_bound
+                if candidate_min_bound < lowest_bound:
+                    lowest_bound = candidate_min_bound
                     lowest_bound_table = candidate_table
 
             if join_tree.is_empty():
-                filter_predicate = preds.CompoundPredicate.create_and(
-                    query.predicates().filters_for(lowest_bound_table))
-                join_tree = data.JoinTree.for_base_table(lowest_bound_table, lowest_min_bound, filter_predicate)
+                filter_pred = preds.CompoundPredicate.create_and(query.predicates().filters_for(lowest_bound_table))
+                join_tree = data.JoinTree.for_base_table(lowest_bound_table, lowest_bound, filter_pred)
+                join_graph.mark_joined(lowest_bound_table)
+                self.stats_container.upper_bounds[join_tree] = lowest_bound
+                pk_joins = join_graph.available_deep_pk_join_paths_for(lowest_bound_table,
+                                                                       self._table_base_cardinality_ordering)
+                for pk_join in pk_joins:
+                    target_table = pk_join.target_table
+                    base_cardinality = self.stats_container.base_table_estimates[target_table]
+                    filter_pred = preds.CompoundPredicate.create_and(query.predicates().filters_for(target_table))
+                    join_bound = self.join_estimation.estimate_for(pk_join.join_condition, join_graph)
+                    join_graph.mark_joined(target_table)
+                    join_tree = join_tree.join_with_base_table(pk_join.target_table, base_cardinality=base_cardinality,
+                                                               base_filter_predicate=filter_pred,
+                                                               join_predicate=pk_join.join_condition,
+                                                               join_bound=join_bound)
+
+            selected_candidate: data.JoinPath | None = None
+            lowest_bound = np.inf
+            for candidate_join in join_graph.available_join_paths():
+                candidate_bound = self.join_estimation.estimate_for(candidate_join.join_condition, join_graph)
+                if candidate_bound < lowest_bound:
+                    selected_candidate = candidate_join
+                    lowest_bound = candidate_bound
+
+            # TODO: determine PK/FK joins with selected table and generate subquery if necessary
+            direct_pk_joins = join_graph.available_pk_fk_joins_for(selected_candidate.target_table)
+            if any(self.subquery_policy.generate_subquery_for(pk_join.join_condition, join_graph, self.stats_container)
+                   for pk_join in direct_pk_joins):
+                pass
+            else:
+                pass
 
         assert not join_graph.contains_free_tables()
 
@@ -96,6 +125,9 @@ class UESJoinOrderOptimizer(JoinOrderOptimizer):
 
     def _star_query_optimizer(self, join_graph: data.JoinGraph) -> data.JoinTree:
         pass
+
+    def _table_base_cardinality_ordering(self, table: base.TableReference, join_edge: dict) -> int:
+        return self.stats_container.base_table_estimates[table]
 
     def _clone(self) -> UESJoinOrderOptimizer:
         return UESJoinOrderOptimizer(base_table_estimation=copy.copy(self.base_table_estimation),
