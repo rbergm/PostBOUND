@@ -13,6 +13,12 @@ from postbound.db import db
 from postbound.util import dicts as dict_utils
 
 AutoBindColumns: bool = False
+
+_MospSelectTypes = {
+    "select": clauses.SelectType.Select,
+    "select_distinct": clauses.SelectType.SelectDistinct
+}
+
 _MospJoinTypes = {  # see https://www.postgresql.org/docs/current/queries-table-expressions.html#QUERIES-JOIN
     # INNER JOIN
     "join": joins.JoinType.InnerJoin,
@@ -200,7 +206,7 @@ def _parse_select_clause(mosp_data: dict) -> clauses.Select:
     else:
         raise ValueError("Unknown SELECT format: " + str(select_targets))
 
-    return clauses.Select(parsed_targets, select_type)
+    return clauses.Select(parsed_targets, _MospSelectTypes[select_type])
 
 
 # see https://regex101.com/r/HdKzQg/2

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import abc
+import enum
 
 from dataclasses import dataclass
 from typing import Iterable
@@ -54,8 +55,14 @@ class Hint:
         return self.content
 
 
+class SelectType(enum.Enum):
+    Select = "SELECT"
+    SelectDistinct = "SELECT DISTINCT"
+
+
 class Select:
-    def __init__(self, targets: BaseProjection | list[BaseProjection], projection_type: str = "select") -> None:
+    def __init__(self, targets: BaseProjection | list[BaseProjection],
+                 projection_type: SelectType = SelectType.Select) -> None:
         self.targets = collection_utils.enlist(targets)
         self.projection_type = projection_type
 
@@ -94,7 +101,7 @@ class Select:
         return str(self)
 
     def __str__(self) -> str:
-        select_str = _MospSelectTypesSQL.get(self.projection_type, self.projection_type)
+        select_str = self.projection_type.value
         parts_str = ", ".join(str(target) for target in self.targets)
         return f"{select_str} {parts_str}"
 
