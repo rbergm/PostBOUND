@@ -356,7 +356,10 @@ class UnaryPredicate(BasePredicate):
 
 class CompoundPredicate(AbstractPredicate):
     @staticmethod
-    def create_and(parts: Iterable[AbstractPredicate]) -> CompoundPredicate:
+    def create_and(parts: Iterable[AbstractPredicate]) -> AbstractPredicate:
+        parts = list(parts)
+        if len(parts) == 1:
+            return parts[0]
         return CompoundPredicate(expr.LogicalSqlCompoundOperators.And, list(parts))
 
     def __init__(self, operation: expr.LogicalSqlCompoundOperators,
