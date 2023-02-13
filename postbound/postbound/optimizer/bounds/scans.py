@@ -17,6 +17,11 @@ class BaseTableCardinalityEstimator(abc.ABC):
 
     @abc.abstractmethod
     def estimate_for(self, table: base.TableReference) -> int:
+        """
+
+        This method falls back to `estimate_total_rows` if the given table is not filtered.
+
+        """
         raise NotImplementedError
 
     @abc.abstractmethod
@@ -37,10 +42,12 @@ class DBCardinalityEstimator(BaseTableCardinalityEstimator):
         self.query = query
 
     def estimate_for(self, table: base.TableReference) -> int:
+        filters = list(self.query.predicates().filters_for(table))
+        if not filters:
+            return self.estimate_total_rows(table)
+
         select_clause = clauses.Select(clauses.BaseProjection.star())
         from_clause = clauses.ImplicitFromClause(table)
-
-        filters = self.query.predicates().filters_for(table)
         where_clause = clauses.Where(predicates.CompoundPredicate.create_and(filters))
 
         emulated_query = qal.ImplicitSqlQuery(select_clause=select_clause,

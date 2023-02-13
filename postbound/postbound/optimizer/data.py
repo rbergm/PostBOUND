@@ -49,10 +49,10 @@ class IndexInfo:
         self.is_invalid = False
 
     def is_primary(self) -> bool:
-        return self.index_type == "primary"
+        return not self.is_invalid and self.index_type == "primary"
 
     def is_secondary(self) -> bool:
-        return self.index_type == "secondary"
+        return not self.is_invalid and self.index_type == "secondary"
 
     def is_indexed(self) -> bool:
         return self.is_primary() or self.is_secondary()
@@ -74,14 +74,13 @@ class IndexInfo:
         return str(self)
 
     def __str__(self) -> str:
-        if self.is_invalid:
-            return f"INVALID({self.column})"
-        elif self.index_type == "none":
+        invalid_state = " INVALID" if self.is_invalid else ""
+        if self.index_type == "none":
             return f"NO INDEX({self.column})"
         elif self.index_type == "primary":
-            return f"PRIMARY INDEX({self.column})"
+            return f"PRIMARY INDEX({self.column}){invalid_state}"
         else:
-            return f"SECONDARY INDEX({self.column})"
+            return f"SECONDARY INDEX({self.column}){invalid_state}"
 
 
 class JoinGraph:
@@ -117,6 +116,9 @@ class JoinGraph:
 
         self._graph = graph
 
+    def initial(self) -> bool:
+        return all(is_free for __, is_free in self._graph.nodes.data("free"))
+
     def contains_cross_products(self) -> bool:
         return len(nx.connected_components(self._graph)) > 1
 
@@ -124,11 +126,17 @@ class JoinGraph:
         return any(is_free for __, is_free in self._graph.nodes.data("free"))
 
     def contains_free_n_m_joins(self) -> bool:
+        is_first_join = self.initial()
         for first_tab, second_tab, predicate in self._graph.edges.data("predicate"):
+            if not self.is_available_join(first_tab, second_tab) and not is_first_join:
+                continue
             first_col, second_col = predicate.columns()
             if not self._index_structures[first_col].can_pk_fk_join(self._index_structures[second_col]):
-                return False
-        return True
+                return True
+        return False
+
+    def count_consumed_tables(self) -> int:
+        return len([is_free for __, is_free in self._graph.nodes.data("free") if not is_free])
 
     def join_components(self) -> Iterable[JoinGraph]:
         components = []
@@ -139,32 +147,90 @@ class JoinGraph:
         return components
 
     def available_join_paths(self) -> Iterable[JoinPath]:
-        pass
+        join_paths = []
+        if self.initial():
+            for join_edge in self._graph.edges.data("predicate"):
+                source_table, target_table, join_condition = join_edge
+                join_paths.append(JoinPath(source_table, target_table, join_condition))
+            return join_paths
+
+        for join_edge in self._graph.edges.data("predicate"):
+            source_table, target_table, join_condition = join_edge
+            if self.is_free_table(source_table) and self.is_free_table(target_table):
+                continue
+            elif self.is_free_table(source_table):
+                source_table, target_table = target_table, source_table
+            join_paths.append(JoinPath(source_table, target_table, join_condition))
+        return join_paths
 
     def nx_graph(self) -> nx.Graph:
         return self._graph
 
+    def is_free_table(self, table: base.TableReference):
+        return self._graph.nodes[table]["free"]
+
+    def is_available_join(self, first_table: base.TableReference, second_table: base.TableReference) -> bool:
+        first_free, second_free = self._graph.nodes[first_table]["free"], self._graph.nodes[second_table]["free"]
+        return (first_free and not second_free) or (not first_table and second_table)
+
     def is_pk_fk_join(self, fk_table: base.TableReference, pk_table: base.TableReference) -> bool:
         predicate: predicates.AbstractPredicate = self._graph.edges[fk_table, pk_table]["predicate"]
-        fk_col = collection_utils.simplify(predicate.columns_of(fk_table))
-        pk_col = collection_utils.simplify(predicate.columns_of(pk_table))
-        return self._index_structures[fk_col].is_secondary() and self._index_structures[pk_col].is_primary()
+        for base_predicate in predicate.base_predicates():
+            fk_col = collection_utils.simplify(base_predicate.columns_of(fk_table))
+            pk_col = collection_utils.simplify(base_predicate.columns_of(pk_table))
+            if self._index_structures[fk_col].is_secondary() and self._index_structures[pk_col].is_primary():
+                return True
+        return False
 
     def available_pk_fk_joins_for(self, fk_table: base.TableReference) -> Iterable[JoinPath]:
-        pass
+        return [join for join in self.available_join_paths() if self.is_pk_fk_join(fk_table, join.target_table)]
 
     def available_deep_pk_join_paths_for(self, fk_table: base.TableReference,
                                          ordering: Callable[[base.TableReference, dict], int] | None = None
                                          ) -> Iterable[JoinPath]:
-        pass
+        available_joins = nx_utils.nx_bfs_tree(self._graph, fk_table, self._check_pk_fk_join, node_order=ordering)
+        join_paths = []
+        for join in available_joins:
+            fk_table: base.TableReference = join[0]
+            join_predicate: predicates.AbstractPredicate = join[1]
+            pk_table = collection_utils.simplify(column.table for column in join_predicate.join_partners_of(fk_table))
+            join_paths.append(JoinPath(fk_table, pk_table, join_predicate))
+        return join_paths
 
-    def mark_joined(self, table: base.TableReference) -> None:
-        pass
+    def mark_joined(self, table: base.TableReference, join_edge: predicates.AbstractPredicate | None = None) -> None:
+        self._graph.nodes[table]["free"] = False
+        if not join_edge:
+            return
+
+        n_m_join = True
+        for base_predicate in join_edge.base_predicates():
+            partner_table = collection_utils.simplify(base_predicate.join_partners_of(table)).table
+            n_m_join = not self.is_pk_fk_join(table, partner_table) and not self.is_pk_fk_join(partner_table, table)
+            if not n_m_join:
+                break
+
+        if not n_m_join:
+            return
+
+        for col in [index_col for index_col in self._index_structures if index_col.table == table]:
+            self._index_structures[col].invalidate()
+
+    def _check_pk_fk_join(self, pk_table: base.TableReference, edge_data: dict) -> bool:
+        join_predicate: predicates.AbstractPredicate = edge_data["predicate"]
+        for base_predicate in join_predicate.base_predicates():
+            fk_table = collection_utils.simplify(column.table for column in base_predicate.join_partners_of(pk_table))
+            if self.is_pk_fk_join(fk_table, pk_table):
+                return True
+        return False
 
 
 class JoinTreeNode(abc.ABC):
     def __init(self, upper_bound: int) -> None:
         self.upper_bound = upper_bound
+
+    @abc.abstractmethod
+    def is_join_node(self) -> bool:
+        raise NotImplementedError
 
     @abc.abstractmethod
     def __hash__(self) -> int:
@@ -179,6 +245,9 @@ class JoinNode(JoinTreeNode):
         self.join_condition = join_condition
         self.pk_fk_join = pk_fk_join
         self.join_bound = join_bound
+
+    def is_join_node(self) -> bool:
+        return True
 
     def __hash__(self) -> int:
         return hash(tuple([self.left_child, self.right_child, self.join_condition, self.join_bound]))
@@ -197,6 +266,9 @@ class BaseTableNode(JoinTreeNode):
         self.table = table
         self.filter = filter_condition
         self.cardinality_estimate = cardinality_estimate
+
+    def is_join_node(self) -> bool:
+        return False
 
     def __hash__(self) -> int:
         return hash((self.table, self.filter, self.cardinality_estimate))
