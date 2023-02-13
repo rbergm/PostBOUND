@@ -22,6 +22,11 @@ class EmptyPreCheck(OptimizationPreCheck):
 
 
 class UnsupportedQueryError(RuntimeError):
-    def __init__(self, query: qal.SqlQuery) -> None:
-        super().__init__(f"Query contains unsupported features: {query}")
+    def __init__(self, query: qal.SqlQuery, features: str | list[str] = "") -> None:
+        if isinstance(features, list):
+            features = ", ".join(features)
+        features_str = f" [{features}]" if features else ""
+
+        super().__init__(f"Query contains unsupported features{features_str}: {query}")
         self.query = query
+        self.features = features

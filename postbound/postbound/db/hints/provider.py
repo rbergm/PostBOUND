@@ -12,3 +12,7 @@ class HintProvider(abc.ABC):
     def adapt_query(self, query: qal.SqlQuery, join_order: data.JoinTree,
                     physical_operators: operators.PhysicalOperatorAssignment) -> qal.SqlQuery:
         raise NotImplementedError
+
+
+class PostgresHintProvider(HintProvider):
+    pass
