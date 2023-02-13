@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import abc
+from collections.abc import Container
 from dataclasses import dataclass
 from typing import Callable, Iterable
 
@@ -224,12 +225,24 @@ class JoinGraph:
         return False
 
 
-class JoinTreeNode(abc.ABC):
+class JoinTreeNode(abc.ABC, Container):
     def __init(self, upper_bound: int) -> None:
         self.upper_bound = upper_bound
 
     @abc.abstractmethod
     def is_join_node(self) -> bool:
+        raise NotImplementedError
+
+    @abc.abstractmethod
+    def tables(self) -> set[base.TableReference]:
+        raise NotImplementedError
+
+    @abc.abstractmethod
+    def columns(self) -> set[base.ColumnReference]:
+        raise NotImplementedError
+
+    @abc.abstractmethod
+    def __contains__(self, item) -> bool:
         raise NotImplementedError
 
     @abc.abstractmethod
@@ -239,15 +252,41 @@ class JoinTreeNode(abc.ABC):
 
 class JoinNode(JoinTreeNode):
     def __init__(self, left_child: JoinTreeNode, right_child: JoinTreeNode, *, join_bound: int,
-                 join_condition: predicates.AbstractPredicate | None = None, pk_fk_join: bool = False) -> None:
+                 join_condition: predicates.AbstractPredicate | None = None, n_m_join: bool = True,
+                 n_m_joined_table: base.TableReference | None = None) -> None:
         self.left_child = left_child
         self.right_child = right_child
         self.join_condition = join_condition
-        self.pk_fk_join = pk_fk_join
+        self.n_m_join = n_m_join
+        self.n_m_joined_table = n_m_joined_table if self.n_m_join else None
         self.join_bound = join_bound
 
     def is_join_node(self) -> bool:
         return True
+
+    def tables(self) -> set[base.TableReference]:
+        tables = set()
+        if self.left_child:
+            tables |= self.left_child.tables()
+        if self.right_child:
+            tables |= self.right_child.tables()
+        return tables
+
+    def columns(self) -> set[base.ColumnReference]:
+        columns = set(self.join_condition.columns())
+        if self.left_child:
+            columns |= self.left_child.columns()
+        if self.right_child:
+            columns |= self.right_child.columns()
+        return columns
+
+    def __contains__(self, item) -> bool:
+        if not isinstance(item, JoinTreeNode):
+            return False
+
+        if self == item:
+            return True
+        return item in self.left_child or item in self.right_child
 
     def __hash__(self) -> int:
         return hash(tuple([self.left_child, self.right_child, self.join_condition, self.join_bound]))
@@ -270,6 +309,15 @@ class BaseTableNode(JoinTreeNode):
     def is_join_node(self) -> bool:
         return False
 
+    def tables(self) -> set[base.TableReference]:
+        return {self.table}
+
+    def columns(self) -> set[base.ColumnReference]:
+        return set()
+
+    def __contains__(self, item) -> bool:
+        return self == item
+
     def __hash__(self) -> int:
         return hash((self.table, self.filter, self.cardinality_estimate))
 
@@ -280,7 +328,7 @@ class BaseTableNode(JoinTreeNode):
                 and self.cardinality_estimate == other.cardinality_estimate)
 
 
-class JoinTree:
+class JoinTree(Container[JoinTreeNode]):
     @staticmethod
     def cross_product_of(*trees: JoinTree) -> JoinTree:
         if not trees:
@@ -304,28 +352,42 @@ class JoinTree:
         root = BaseTableNode(table, base_cardinality, filter_predicates)
         return JoinTree(root)
 
+    def __init__(self, root: JoinTreeNode | None = None) -> None:
+        self.root = root
+
     def join_with_base_table(self, table: base.TableReference, *, base_cardinality: int,
                              join_predicate: predicates.AbstractPredicate | None = None, join_bound: int | None = None,
-                             base_filter_predicate: predicates.AbstractPredicate | None = None) -> JoinTree:
+                             base_filter_predicate: predicates.AbstractPredicate | None = None,
+                             n_m_join: bool = True) -> JoinTree:
         base_node = BaseTableNode(table, base_cardinality, base_filter_predicate)
         if self.is_empty():
             return JoinTree(base_node)
         else:
-            new_root = JoinNode(base_node, self.root, join_bound=join_bound, join_condition=join_predicate)
+            new_root = JoinNode(base_node, self.root, join_bound=join_bound, join_condition=join_predicate,
+                                n_m_join=n_m_join, n_m_joined_table=table)
             return JoinTree(new_root)
 
     def join_with_subquery(self, subquery: JoinTree, join_predicate: predicates.AbstractPredicate,
-                           join_bound: int) -> JoinTree:
+                           join_bound: int, *, n_m_join: bool = True,
+                           n_m_table: base.TableReference | None = None) -> JoinTree:
         if self.is_empty():
             return JoinTree(subquery.root)
-        new_root = JoinNode(subquery.root, self.root, join_bound=join_bound, join_condition=join_predicate)
+        new_root = JoinNode(subquery.root, self.root, join_bound=join_bound, join_condition=join_predicate,
+                            n_m_join=n_m_join, n_m_joined_table=n_m_table)
         return JoinTree(new_root)
-
-    def __init__(self, root: JoinTreeNode | None = None) -> None:
-        self.root = root
 
     def is_empty(self) -> bool:
         return self.root is None
+
+    def tables(self) -> set[base.TableReference]:
+        if self.is_empty():
+            return set()
+        return self.root.tables()
+
+    def columns(self) -> set[base.ColumnReference]:
+        if self.is_empty():
+            return set()
+        return self.root.columns()
 
     def _get_upper_bound(self) -> int:
         if self.is_empty():
@@ -333,6 +395,18 @@ class JoinTree:
         return self.root.upper_bound
 
     upper_bound = property(_get_upper_bound)
+
+    def __contains__(self, item: object) -> bool:
+        if not isinstance(item, JoinTree | JoinTreeNode):
+            return False
+
+        other_tree = item if isinstance(item, JoinTree) else JoinTree(item)
+        if self.is_empty() and not item.is_empty():
+            return False
+        elif item.is_empty():
+            return True
+
+        return item.root in self.root
 
     def __hash__(self) -> int:
         return hash(self.root)

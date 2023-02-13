@@ -102,7 +102,7 @@ class UESJoinOrderOptimizer(JoinOrderOptimizer):
                     join_tree = join_tree.join_with_base_table(pk_join.target_table, base_cardinality=base_cardinality,
                                                                base_filter_predicate=filter_pred,
                                                                join_predicate=pk_join.join_condition,
-                                                               join_bound=join_bound)
+                                                               join_bound=join_bound, n_m_join=False)
 
             selected_candidate: data.JoinPath | None = None
             lowest_bound = np.inf
@@ -124,7 +124,8 @@ class UESJoinOrderOptimizer(JoinOrderOptimizer):
                                                              candidate_filters)
                 join_graph.mark_joined(candidate_table)
                 self._insert_pk_joins(query, all_pk_joins, subquery_tree, join_graph)
-                join_tree = join_tree.join_with_subquery(subquery_tree, selected_candidate.join_condition, lowest_bound)
+                join_tree = join_tree.join_with_subquery(subquery_tree, selected_candidate.join_condition, lowest_bound,
+                                                         n_m_table=candidate_table)
                 self.stats_container.upper_bounds[join_tree] = lowest_bound
             else:
                 join_tree = join_tree.join_with_base_table(candidate_table, base_cardinality=candidate_base_cardinality,
@@ -154,7 +155,8 @@ class UESJoinOrderOptimizer(JoinOrderOptimizer):
             join_tree = join_tree.join_with_base_table(pk_table, base_cardinality=pk_base_cardinality,
                                                        join_predicate=pk_join.join_condition,
                                                        join_bound=pk_join_bound,
-                                                       base_filter_predicate=pk_filters)
+                                                       base_filter_predicate=pk_filters,
+                                                       n_m_join=False)
             join_graph.mark_joined(pk_table, pk_join.join_condition)
             self.stats_container.upper_bounds[join_tree] = pk_join_bound
         return join_tree
