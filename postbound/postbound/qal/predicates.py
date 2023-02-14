@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import abc
 import itertools
-from typing import Iterable
+from typing import Iterable, Iterator
 
 from postbound.qal import base, expressions as expr
 from postbound.util import errors, collections as collection_utils
@@ -63,6 +63,10 @@ class AbstractPredicate(abc.ABC):
 
         If a column is referenced multiple times, it is also returned multiple times.
         """
+        raise NotImplementedError
+
+    @abc.abstractmethod
+    def iterexpressions(self) -> Iterable[expr.SqlExpression]:
         raise NotImplementedError
 
     def tables(self) -> set[base.TableReference]:
@@ -170,6 +174,9 @@ class BinaryPredicate(BasePredicate):
     def itercolumns(self) -> Iterable[base.ColumnReference]:
         return list(self.first_argument.itercolumns()) + list(self.second_argument.itercolumns())
 
+    def iterexpressions(self) -> Iterable[expr.SqlExpression]:
+        return [self.first_argument, self.second_argument]
+
     def join_partners(self) -> set[tuple[base.ColumnReference, base.ColumnReference]]:
         self._assert_join_predicate()
         partners = []
@@ -224,6 +231,9 @@ class BetweenPredicate(BasePredicate):
         return (list(self.column.itercolumns())
                 + list(self.interval_start.itercolumns())
                 + list(self.interval_end.itercolumns()))
+
+    def iterexpressions(self) -> Iterable[expr.SqlExpression]:
+        return [self.column, self.interval_start, self.interval_end]
 
     def join_partners(self) -> set[tuple[base.ColumnReference, base.ColumnReference]]:
         self._assert_join_predicate()
@@ -283,6 +293,9 @@ class InPredicate(BasePredicate):
     def itercolumns(self) -> Iterable[base.ColumnReference]:
         return list(self.column.itercolumns()) + collection_utils.flatten(val.itercolumns() for val in self.values)
 
+    def iterexpressions(self) -> Iterable[expr.SqlExpression]:
+        return [self.column] + self.values
+
     def join_partners(self) -> set[tuple[base.ColumnReference, base.ColumnReference]]:
         self._assert_join_predicate()
         partners = []
@@ -328,6 +341,9 @@ class UnaryPredicate(BasePredicate):
 
     def itercolumns(self) -> Iterable[base.ColumnReference]:
         return self.column.itercolumns()
+
+    def iterexpressions(self) -> Iterable[expr.SqlExpression]:
+        return [self.column]
 
     def join_partners(self) -> set[tuple[base.ColumnReference, base.ColumnReference]]:
         return set(collection_utils.pairs(self.column.columns()))
@@ -379,6 +395,9 @@ class CompoundPredicate(AbstractPredicate):
 
     def itercolumns(self) -> Iterable[base.ColumnReference]:
         return collection_utils.flatten(child.itercolumns() for child in self.children)
+
+    def iterexpressions(self) -> Iterable[expr.SqlExpression]:
+        return collection_utils.flatten(child.iterexpressions() for child in self.children)
 
     def join_partners(self) -> set[tuple[base.ColumnReference, base.ColumnReference]]:
         return collection_utils.set_union(child.join_partners() for child in self.children)
@@ -495,6 +514,9 @@ class QueryPredicates:
 
         merged_predicate = CompoundPredicate(expr.LogicalSqlCompoundOperators.And, [self._root, other_predicate])
         return QueryPredicates(merged_predicate)
+
+    def __iter__(self) -> Iterator[AbstractPredicate]:
+        return (list(self.filters()) + list(self.joins())).__iter__()
 
     def _assert_not_empty(self) -> None:
         if self._root is None:

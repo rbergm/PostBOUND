@@ -35,8 +35,9 @@ class OptimizationPipeline:
             self.physical_operator_selection = selection.EmptyPhysicalOperatorSelection
 
     def optimize_query(self, query: qal.SqlQuery) -> qal.SqlQuery:
-        if not self.pre_check.check_supported_query(query):
-            raise validation.UnsupportedQueryError(query)
+        pre_check_passed, failure_reason = self.pre_check.check_supported_query(query)
+        if not pre_check_passed:
+            raise validation.UnsupportedQueryError(query, failure_reason)
 
         if query.is_implicit():
             implicit_query: qal.ImplicitSqlQuery = query

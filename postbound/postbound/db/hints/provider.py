@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import abc
 
-from postbound.qal import qal
+from postbound.qal import qal, clauses
 from postbound.optimizer import data
 from postbound.optimizer.physops import operators
 
@@ -15,4 +15,7 @@ class HintProvider(abc.ABC):
 
 
 class PostgresHintProvider(HintProvider):
-    pass
+
+    def adapt_query(self, query: qal.SqlQuery, join_order: data.JoinTree,
+                    physical_operators: operators.PhysicalOperatorAssignment) -> qal.SqlQuery:
+        pass

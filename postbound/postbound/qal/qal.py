@@ -58,6 +58,9 @@ class SqlQuery(abc.ABC):
                        self.orderby_clause, self.limit_clause]
         return [clause for clause in all_clauses if clause is not None]
 
+    def is_dependent(self) -> bool:
+        return any(not tab.full_name and not tab.virtual for tab in self.tables())
+
     def __hash__(self) -> int:
         return hash(tuple(self.clauses()))
 
