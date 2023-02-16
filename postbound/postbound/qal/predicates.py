@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import abc
+import functools
 import itertools
 from typing import Iterable, Iterator
 
@@ -495,10 +496,12 @@ class QueryPredicates:
         self._assert_not_empty()
         return self._root
 
+    @functools.cache
     def filters(self) -> Iterable[AbstractPredicate]:
         self._assert_not_empty()
         return _collect_filter_predicates(self._root)
 
+    @functools.cache
     def joins(self) -> Iterable[AbstractPredicate]:
         self._assert_not_empty()
         return _collect_join_predicates(self._root)
@@ -506,6 +509,10 @@ class QueryPredicates:
     def filters_for(self, table: base.TableReference) -> Iterable[AbstractPredicate]:
         self._assert_not_empty()
         return [filter_pred for filter_pred in self.filters() if table in filter_pred.tables()]
+
+    def joins_for(self, table: base.TableReference) -> Iterable[AbstractPredicate]:
+        self._assert_not_empty()
+        return [join_pred for join_pred in self.joins() if table in join_pred.tables()]
 
     def and_(self, other_predicate: QueryPredicates | AbstractPredicate) -> QueryPredicates:
         other_predicate = other_predicate._root if isinstance(other_predicate, QueryPredicates) else other_predicate

@@ -20,6 +20,9 @@ class TableReference:
     alias: str = ""
     virtual: bool = False
 
+    def identifier(self) -> str:
+        return self.alias if self.alias else self.full_name
+
     def __lt__(self, other) -> bool:
         if not isinstance(other, type(self)):
             return NotImplemented

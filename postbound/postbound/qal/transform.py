@@ -227,4 +227,10 @@ def bind_columns(query: qal.SqlQuery, *, with_schema: bool = True, db_schema: db
     if with_schema:
         db_schema = db_schema if db_schema else db.DatabasePool.get_instance().current_database()
         for column in unbound_columns:
-            column.table = db_schema.lookup_column(column, unbound_tables)
+            try:
+                column.table = db_schema.lookup_column(column, unbound_tables)
+            except ValueError:
+                # A ValueError is raised if the column is not found in any of the tables. However, this can still be
+                # a valid query, e.g. a dependent subquery. Therefore, we simply ignore this error and leave the column
+                # unbound.
+                pass

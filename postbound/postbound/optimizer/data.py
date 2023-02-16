@@ -242,6 +242,13 @@ class JoinTreeNode(abc.ABC, Container):
         raise NotImplementedError
 
     @abc.abstractmethod
+    def join_sequence(self) -> Iterable[JoinNode]:
+        raise NotImplementedError
+
+    def as_join_tree(self) -> JoinTree:
+        return JoinTree(self)
+
+    @abc.abstractmethod
     def __contains__(self, item) -> bool:
         raise NotImplementedError
 
@@ -266,19 +273,27 @@ class JoinNode(JoinTreeNode):
 
     def tables(self) -> set[base.TableReference]:
         tables = set()
-        if self.left_child:
-            tables |= self.left_child.tables()
-        if self.right_child:
-            tables |= self.right_child.tables()
+        tables |= self.left_child.tables()
+        tables |= self.right_child.tables()
         return tables
 
     def columns(self) -> set[base.ColumnReference]:
         columns = set(self.join_condition.columns())
-        if self.left_child:
-            columns |= self.left_child.columns()
-        if self.right_child:
-            columns |= self.right_child.columns()
+        columns |= self.left_child.columns()
+        columns |= self.right_child.columns()
         return columns
+
+    def join_sequence(self) -> Iterable[JoinNode]:
+        leaf_node = not self.left_child.is_join_node() and not self.right_child.is_join_node()
+        if leaf_node:
+            return [self]
+        sequence = []
+        if self.right_child.is_join_node():
+            sequence.extend(self.right_child.join_sequence())
+        if self.left_child.is_join_node():
+            sequence.extend(self.left_child.join_sequence())
+        sequence.append(self)
+        return sequence
 
     def __contains__(self, item) -> bool:
         if not isinstance(item, JoinTreeNode):
@@ -289,13 +304,17 @@ class JoinNode(JoinTreeNode):
         return item in self.left_child or item in self.right_child
 
     def __hash__(self) -> int:
-        return hash(tuple([self.left_child, self.right_child, self.join_condition, self.join_bound]))
+        return hash(tuple([self.left_child, self.right_child, self.join_condition,
+                           self.n_m_join, self.n_m_joined_table,
+                           self.join_bound]))
 
     def __eq__(self, other) -> bool:
         return (isinstance(other, type(self))
                 and self.left_child == other.left_child
                 and self.right_child == other.right_child
                 and self.join_condition == other.join_condition
+                and self.n_m_join == other.n_m_join
+                and self.n_m_joined_table == other.n_m_joined_table
                 and self.join_bound == other.join_bound)
 
 
@@ -315,6 +334,9 @@ class BaseTableNode(JoinTreeNode):
     def columns(self) -> set[base.ColumnReference]:
         return set()
 
+    def join_sequence(self) -> Iterable[JoinNode]:
+        return []
+
     def __contains__(self, item) -> bool:
         return self == item
 
@@ -329,6 +351,8 @@ class BaseTableNode(JoinTreeNode):
 
 
 class JoinTree(Container[JoinTreeNode]):
+    """A right-deep join tree abstraction."""
+
     @staticmethod
     def cross_product_of(*trees: JoinTree) -> JoinTree:
         if not trees:
@@ -388,6 +412,11 @@ class JoinTree(Container[JoinTreeNode]):
         if self.is_empty():
             return set()
         return self.root.columns()
+
+    def join_sequence(self) -> Iterable[JoinNode]:
+        if self.is_empty():
+            return []
+        return self.root.join_sequence()
 
     def _get_upper_bound(self) -> int:
         if self.is_empty():
