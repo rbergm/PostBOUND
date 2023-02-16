@@ -7,6 +7,7 @@ library(dplyr, warn.conflicts = FALSE)
 library(forcats)
 library(tidyr)
 library(stringr)
+library(gtools)
 
 library(ggplot2)
 library(viridis)
@@ -21,7 +22,11 @@ select_best_query_repetition <- function(result_path) {
   } else {
     df <- result_path
   }
-  representatives <- df %>% group_by(label) %>% arrange(query_rt_total) %>% slice_head() %>% ungroup()
+  representatives <- df %>% group_by(label) %>%
+    arrange(query_rt_total) %>%
+    slice_head() %>%
+    ungroup() %>%
+    arrange(order(mixedorder(label)))
   return(representatives)
 }
 
@@ -236,6 +241,61 @@ ggplot(job_ues, aes(x = label, y = query_rt_total)) +
         panel.grid.major.x = element_blank(), text= element_text(size = 18))
 ggsave("evaluation/plot-job-ues.pdf")
 
+
+# - - - - - - - - - - - - - - - -
+# 06: PG native performance ----
+# - - - - - - - - - - - - - - - -
+job_native <- read_csv("workloads/job-results-implicit.csv") %>% rename(exec_time = query_rt_total)
+job_ues <- select_best_query_repetition("workloads/job-ues-results-base.csv") %>% rename(exec_time = query_rt_total)
+
+max_job_runtime <- max(job_native$exec_time, job_ues$exec_time)
+ylimit <- ceiling(max_job_runtime * 1.01)
+tail_lat_quantile <- quantile(job_native$exec_time, 0.8)
+
+job_native["tail_latency"] <- job_native$exec_time > tail_lat_quantile
+job_ues <- inner_join(job_ues, job_native %>% select(label, tail_latency), by = "label")
+
+ggplot(job_native, aes(x = 1:nrow(job_native), y = exec_time, fill = tail_latency)) +
+  geom_col() +
+  ylim(0, ylimit) +
+  labs(x = "JOB query", y ="Runtime [seconds]") +
+  scale_fill_viridis(option = "cividis", discrete = TRUE, end = 0.9) +
+  theme_bw() +
+  theme(axis.text.x = element_blank(), legend.position = "NONE", text = element_text(size = 18))
+ggsave("evaluation/job-results-native.svg")
+
+ggplot(job_ues, aes(x = 1:nrow(job_ues), y = exec_time, fill = tail_latency)) +
+  geom_col() +
+  ylim(0, ylimit) +
+  labs(x = "JOB query", y ="Runtime [seconds]") +
+  scale_fill_viridis(option = "cividis", discrete = TRUE, end = 0.9) +
+  theme_bw() +
+  theme(axis.text.x = element_blank(), legend.position = "NONE", text = element_text(size = 18))
+ggsave("evaluation/job-results-ues.svg")
+
+job_native_pg14 <- read_csv("workloads/job-results-implicit-nonlj.csv") %>%
+  rename(exec_time = query_rt_total) %>%
+  mutate(optimizer = "native", pg_ver = "14.2")
+job_ues_pg14 <- select_best_query_repetition("workloads/job-ues-results-base.csv") %>%
+  rename(exec_time = query_rt_total) %>% mutate(optimizer = "ues", pg_ver = "14.2")
+
+job_native_pg12 <- read_csv("workloads/job-results-implicit-nonlj-pg12_4.csv") %>%
+  rename(exec_time = query_rt_total) %>%
+  mutate(optimizer = "native", pg_ver = "12.4")
+job_ues_pg12 <- select_best_query_repetition("workloads/job-ues-results-base-pg12_4.csv") %>%
+  rename(exec_time = query_rt_total) %>%
+  mutate(optimizer = "ues", pg_ver = "12.4")
+
+all_workloads <- bind_rows(job_native_pg14, job_ues_pg14, job_native_pg12, job_ues_pg12)
+
+ggplot(all_workloads, aes(x = pg_ver, y = exec_time, fill = optimizer)) +
+  geom_boxplot() +
+  scale_y_log10(labels = trans_format("log10", function(x) 10^x)) +
+  scale_fill_viridis(option = "cividis", discrete = TRUE, begin = 0.3, end = 0.95) +
+  labs(x = "Postgres version", y = "Execution time [seconds]", fill = "optimizer") +
+  theme_bw() +
+  theme(text = element_text(size = 18), plot.background = element_rect(fill = "transparent", color = NA))
+ggsave("evaluation/job-results-comparison.svg")
 
 # - - - - - - - - - - - - - - - -
 # XX: Test area ----
