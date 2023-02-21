@@ -49,6 +49,10 @@ class Join(abc.ABC):
 
 
 class TableJoin(Join):
+    @staticmethod
+    def inner(joined_table: base.TableReference, join_condition: preds.AbstractPredicate | None = None) -> TableJoin:
+        return TableJoin(JoinType.InnerJoin, joined_table, join_condition)
+
     def __init__(self, join_type: JoinType, joined_table: base.TableReference,
                  join_condition: preds.AbstractPredicate | None = None) -> None:
         super().__init__(join_type, join_condition)
@@ -72,6 +76,11 @@ class TableJoin(Join):
 
 
 class SubqueryJoin(Join):
+    @staticmethod
+    def inner(subquery: qal.SqlQuery, alias: str = "",
+              join_condition: preds.AbstractPredicate | None = None) -> SubqueryJoin:
+        return SubqueryJoin(JoinType.InnerJoin, subquery, alias, join_condition)
+
     def __init__(self, join_type: JoinType, subquery: qal.SqlQuery, alias: str = "",
                  join_condition: preds.AbstractPredicate | None = None) -> None:
         super().__init__(join_type, join_condition)

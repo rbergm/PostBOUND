@@ -173,6 +173,30 @@ def rename_table(source_query: qal.SqlQuery, from_table: base.TableReference, ta
     return target_query
 
 
+def rename_columns_in_clause(clause: clauses.GroupBy | clauses.Having | clauses.OrderBy,
+                             available_renamings: dict[base.ColumnReference, base.ColumnReference]) -> None:
+    def _perform_renaming(col: base.ColumnReference):
+        if col in available_renamings:
+            renamed_column = available_renamings[col]
+            col.name = renamed_column.name
+            col.table = renamed_column.table
+
+    if isinstance(clause, clauses.GroupBy):
+        for grouping in clause.group_columns:
+            for column in grouping.columns():
+                _perform_renaming(column)
+
+    elif isinstance(clause, clauses.Having):
+        for column in clause.condition.columns():
+            _perform_renaming(column)
+    elif isinstance(clause, clauses.OrderBy):
+        for ordering in clause.expressions:
+            for column in ordering.column.columns():
+                _perform_renaming(column)
+    else:
+        raise TypeError("Unknown clause type: " + str(clause))
+
+
 def bind_columns(query: qal.SqlQuery, *, with_schema: bool = True, db_schema: db.DatabaseSchema | None = None) -> None:
     """Queries the table metadata to obtain additional information about the referenced columns.
 

@@ -20,6 +20,10 @@ class TableReference:
     alias: str = ""
     virtual: bool = False
 
+    @staticmethod
+    def create_virtual(alias: str) -> TableReference:
+        return TableReference("", alias, True)
+
     def identifier(self) -> str:
         return self.alias if self.alias else self.full_name
 

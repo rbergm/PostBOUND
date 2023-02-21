@@ -23,6 +23,10 @@ class BaseProjection:
     def star() -> BaseProjection:
         return BaseProjection(expr.StarExpression())
 
+    @staticmethod
+    def column(col: base.ColumnReference, target_name: str = "") -> BaseProjection:
+        return BaseProjection(expr.ColumnExpression(col), target_name)
+
     def columns(self) -> set[base.ColumnReference]:
         return self.expression.columns()
 
