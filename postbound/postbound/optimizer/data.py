@@ -382,21 +382,23 @@ class JoinTree(Container[JoinTreeNode]):
     def join_with_base_table(self, table: base.TableReference, *, base_cardinality: int,
                              join_predicate: predicates.AbstractPredicate | None = None, join_bound: int | None = None,
                              base_filter_predicate: predicates.AbstractPredicate | None = None,
-                             n_m_join: bool = True) -> JoinTree:
+                             n_m_join: bool = True, insert_left: bool = True) -> JoinTree:
         base_node = BaseTableNode(table, base_cardinality, base_filter_predicate)
         if self.is_empty():
             return JoinTree(base_node)
         else:
-            new_root = JoinNode(base_node, self.root, join_bound=join_bound, join_condition=join_predicate,
+            left, right = (base_node, self.root) if insert_left else (self.root, base_node)
+            new_root = JoinNode(left, right, join_bound=join_bound, join_condition=join_predicate,
                                 n_m_join=n_m_join, n_m_joined_table=table)
             return JoinTree(new_root)
 
     def join_with_subquery(self, subquery: JoinTree, join_predicate: predicates.AbstractPredicate,
-                           join_bound: int, *, n_m_join: bool = True,
-                           n_m_table: base.TableReference | None = None) -> JoinTree:
+                           join_bound: int, *, n_m_join: bool = True, n_m_table: base.TableReference | None = None,
+                           insert_left: bool = True) -> JoinTree:
         if self.is_empty():
             return JoinTree(subquery.root)
-        new_root = JoinNode(subquery.root, self.root, join_bound=join_bound, join_condition=join_predicate,
+        left, right = (subquery.root, self.root) if insert_left else (self.root, subquery.root)
+        new_root = JoinNode(left, right, join_bound=join_bound, join_condition=join_predicate,
                             n_m_join=n_m_join, n_m_joined_table=n_m_table)
         return JoinTree(new_root)
 
