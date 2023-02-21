@@ -170,6 +170,9 @@ class UESJoinOrderOptimizer(JoinOrderOptimizer):
 
 
 class EmptyJoinOrderOptimizer(JoinOrderOptimizer):
+    def __init__(self) -> None:
+        super().__init__("empty")
+
     def optimize_join_order(self, query: qal.ImplicitSqlQuery) -> data.JoinTree | None:
         return None
 

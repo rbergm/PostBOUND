@@ -1,11 +1,11 @@
 """"""
 from __future__ import annotations
 
-from qal import qal, transform
-from optimizer import validation
-from optimizer.joinorder import enumeration
-from optimizer.physops import selection
-from db.systems import systems as db_sys
+from postbound.qal import qal, transform
+from postbound.optimizer import validation
+from postbound.optimizer.joinorder import enumeration
+from postbound.optimizer.physops import selection
+from postbound.db.systems import systems as db_sys
 
 
 class OptimizationPipeline:
@@ -30,9 +30,9 @@ class OptimizationPipeline:
         if not self.pre_check:
             self.pre_check = validation.EmptyPreCheck()
         if not self.join_order_enumerator:
-            self.join_order_enumerator = enumeration.EmptyJoinOrderOptimizer
+            self.join_order_enumerator = enumeration.EmptyJoinOrderOptimizer()
         if not self.physical_operator_selection:
-            self.physical_operator_selection = selection.EmptyPhysicalOperatorSelection
+            self.physical_operator_selection = selection.EmptyPhysicalOperatorSelection()
 
     def optimize_query(self, query: qal.SqlQuery) -> qal.SqlQuery:
         pre_check_passed, failure_reason = self.pre_check.check_supported_query(query)
