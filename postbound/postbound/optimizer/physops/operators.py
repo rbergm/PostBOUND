@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import enum
-from typing import Iterable
+from typing import Any, Iterable
 
 from postbound.qal import base, qal
 
@@ -25,6 +25,7 @@ class PhysicalOperatorAssignment:
         self.global_settings: dict[ScanOperators | JoinOperators, bool] = {}
         self.join_operators: dict[frozenset[base.TableReference], JoinOperators] = {}
         self.scan_operators: dict[base.TableReference, ScanOperators] = {}
+        self.system_specific_settings: dict[str, Any] = {}
 
     def set_operator_enabled_globally(self, operator: ScanOperators | JoinOperators, enabled: bool):
         self.global_settings[operator] = enabled
@@ -34,6 +35,15 @@ class PhysicalOperatorAssignment:
 
     def set_scan_operator(self, base_table: base.TableReference, operator: ScanOperators):
         self.scan_operators[base_table] = operator
+
+    def set_system_settings(self, setting_name: str = "", setting_value: Any = None, **kwargs):
+        if setting_name and kwargs:
+            raise ValueError("Only setting or kwargs can be supplied")
+
+        if setting_name:
+            self.system_specific_settings[setting_name] = setting_value
+        else:
+            self.system_specific_settings |= kwargs
 
     def __getitem__(self, item: base.TableReference | Iterable[base.TableReference] | ScanOperators | JoinOperators
                     ) -> ScanOperators | JoinOperators | bool | None:
