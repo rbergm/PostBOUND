@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import abc
+import collections
 from collections.abc import Container
 from dataclasses import dataclass
 from typing import Callable, Iterable
@@ -107,11 +108,17 @@ class JoinGraph:
         graph = nx.Graph()
         graph.add_nodes_from(query.tables(), free=True)
         edges = []
+        predicate_map = collections.defaultdict(list)
         for join_predicate in query.predicates().joins():
             first_col, second_col = join_predicate.columns()
-            edges.append((first_col, second_col, {"predicate": join_predicate}))
-            self._index_structures[first_col] = IndexInfo.generate_for(first_col, db_schema)
-            self._index_structures[second_col] = IndexInfo.generate_for(second_col, db_schema)
+            predicate_map[frozenset([first_col.table, second_col.table])].append(join_predicate)
+
+        for tables, joins in predicate_map.items():
+            first_tab, second_tab = tables
+            join_predicate = predicates.CompoundPredicate.create_and(joins)
+            edges.append((first_tab, second_tab, {"predicate": join_predicate}))
+            for column in join_predicate.columns():
+                self._index_structures[column] = IndexInfo.generate_for(column, db_schema)
 
         graph.add_edges_from(edges)
 
@@ -121,7 +128,7 @@ class JoinGraph:
         return all(is_free for __, is_free in self._graph.nodes.data("free"))
 
     def contains_cross_products(self) -> bool:
-        return len(nx.connected_components(self._graph)) > 1
+        return len(list(nx.connected_components(self._graph))) > 1
 
     def contains_free_tables(self) -> bool:
         return any(is_free for __, is_free in self._graph.nodes.data("free"))
@@ -142,8 +149,7 @@ class JoinGraph:
     def join_components(self) -> Iterable[JoinGraph]:
         components = []
         for component in nx.connected_components(self._graph):
-            tables = component.nodes
-            component_query = transform.extract_query_fragment(self.query, tables)
+            component_query = transform.extract_query_fragment(self.query, component)
             components.append(JoinGraph(component_query, self._db_schema))
         return components
 

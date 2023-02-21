@@ -166,8 +166,14 @@ class BinaryPredicate(BasePredicate):
 
     def is_join(self) -> bool:
         first_tables = self.first_argument.tables()
+        if len(first_tables) > 1:
+            return True
+
         second_tables = self.second_argument.tables()
-        return len(first_tables) > 1 or len(second_tables) > 1 or len(first_tables ^ second_tables) > 0
+        if len(second_tables) > 1:
+            return True
+
+        return first_tables and second_tables and len(first_tables ^ second_tables) > 0
 
     def columns(self) -> set[base.ColumnReference]:
         return self.first_argument.columns() | self.second_argument.columns()
