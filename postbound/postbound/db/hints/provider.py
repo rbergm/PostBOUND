@@ -25,7 +25,7 @@ def _build_column_alias(column: base.ColumnReference) -> str:
     return f"{column.table.identifier()}_{column.name}"
 
 
-class RightDeepJoinClauseBuilder:
+class PostgresRightDeepJoinClauseBuilder:
     def __init__(self, query: qal.ImplicitSqlQuery) -> None:
         self.query = query
         self.joined_tables = set()
@@ -174,7 +174,7 @@ class RightDeepJoinClauseBuilder:
 
 
 def _enforce_pg_join_order(query: qal.ImplicitSqlQuery, join_order: data.JoinTree) -> qal.ExplicitSqlQuery:
-    join_order_builder = RightDeepJoinClauseBuilder(query)
+    join_order_builder = PostgresRightDeepJoinClauseBuilder(query)
 
     from_clause = join_order_builder.for_join_tree(join_order)
     select_clause = copy.deepcopy(query.select_clause)
@@ -255,9 +255,19 @@ def _generate_pg_operator_hints(query: qal.SqlQuery, join_order: data.JoinTree,
         join_operator = PG_OPTIMIZER_HINTS[join_operator]
         hints.append(f"{join_operator}({join_key})")
 
-    hints_str = "\n".join(["/*+"] + hints + ["*/"])
+    if not settings and not hints:
+        return query
+
+    hints_str = "\n".join(["/*+"] + hints + ["*/"]) if hints else ""
     settings_str = "\n".join(settings)
-    final_str = "\n".join([settings_str, "\n", hints_str])
+    all_hints = [hints_str] if hints_str else []
+    if all_hints and settings_str:
+        all_hints.append("\n")
+        all_hints.append(settings_str)
+    elif settings_str:
+        all_hints.append(settings_str)
+
+    final_str = "\n".join(all_hints)
     hinted_query = copy.deepcopy(query)
     hinted_query.hints = clauses.Hint(final_str)
     return hinted_query
