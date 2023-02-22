@@ -136,10 +136,12 @@ class UESJoinOrderOptimizer(JoinOrderOptimizer):
                 self.stats_container.upper_bounds[join_tree] = lowest_bound
                 join_tree = self._insert_pk_joins(query, all_pk_joins, join_tree, join_graph)
 
-        assert not join_graph.contains_free_tables()
+        if join_graph.contains_free_tables():
+            raise AssertionError("Join graph still has free tables remaining!")
         return join_tree
 
     def _star_query_optimizer(self, join_graph: data.JoinGraph) -> data.JoinTree:
+        # TODO: implementation
         pass
 
     def _table_base_cardinality_ordering(self, table: base.TableReference, join_edge: dict) -> int:

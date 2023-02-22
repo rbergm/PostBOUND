@@ -9,7 +9,7 @@ from postbound.db import db
 from postbound.qal import base, qal
 from postbound.optimizer import data
 from postbound.optimizer.bounds import scans
-from postbound.util import dicts as dict_utils
+from postbound.util import collections as collection_utils, dicts as dict_utils
 
 ColumnType = typing.TypeVar("ColumnType")
 StatsType = typing.TypeVar("StatsType")
@@ -101,7 +101,14 @@ class MaxFrequencyStatsContainer(StatisticsContainer[MaxFrequency]):
         self.database_stats = database_stats
 
     def _inflate_attribute_frequencies(self):
-        pass
+        referenced_columns = set()
+        for join_predicate in self.query.predicates().joins():
+            referenced_columns |= join_predicate.columns()
+
+        for column in referenced_columns:
+            top1_list = self.database_stats.most_common_values(column, k=1)
+            mcv_value, mcv_frequency = collection_utils.simplify(top1_list)
+            self.attribute_frequencies[column] = mcv_frequency
 
     def _update_partner_column_frequency(self, joined_column: base.ColumnReference,
                                          partner_column: base.ColumnReference) -> None:

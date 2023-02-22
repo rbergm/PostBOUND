@@ -181,6 +181,9 @@ class JoinGraph:
         return (first_free and not second_free) or (not first_table and second_table)
 
     def is_pk_fk_join(self, fk_table: base.TableReference, pk_table: base.TableReference) -> bool:
+        if not (fk_table, pk_table) in self._graph.edges:
+            return False
+
         predicate: predicates.AbstractPredicate = self._graph.edges[fk_table, pk_table]["predicate"]
         for base_predicate in predicate.base_predicates():
             fk_col = collection_utils.simplify(base_predicate.columns_of(fk_table))
@@ -190,6 +193,11 @@ class JoinGraph:
         return False
 
     def available_pk_fk_joins_for(self, fk_table: base.TableReference) -> Iterable[JoinPath]:
+        if self.initial():
+            return [join for join in self.available_join_paths()
+                    if self.is_pk_fk_join(join.start_table, join.target_table)
+                    or self.is_pk_fk_join(join.target_table, join.start_table)]
+
         return [join for join in self.available_join_paths() if self.is_pk_fk_join(fk_table, join.target_table)]
 
     def available_deep_pk_join_paths_for(self, fk_table: base.TableReference,
@@ -199,8 +207,8 @@ class JoinGraph:
         join_paths = []
         for join in available_joins:
             fk_table: base.TableReference = join[0]
-            join_predicate: predicates.AbstractPredicate = join[1]
-            pk_table = collection_utils.simplify(column.table for column in join_predicate.join_partners_of(fk_table))
+            join_predicate: predicates.AbstractPredicate = join[1]["predicate"]
+            pk_table = collection_utils.simplify([column.table for column in join_predicate.join_partners_of(fk_table)])
             join_paths.append(JoinPath(fk_table, pk_table, join_predicate))
         return join_paths
 
@@ -225,7 +233,7 @@ class JoinGraph:
     def _check_pk_fk_join(self, pk_table: base.TableReference, edge_data: dict) -> bool:
         join_predicate: predicates.AbstractPredicate = edge_data["predicate"]
         for base_predicate in join_predicate.base_predicates():
-            fk_table = collection_utils.simplify(column.table for column in base_predicate.join_partners_of(pk_table))
+            fk_table = collection_utils.simplify([column.table for column in base_predicate.join_partners_of(pk_table)])
             if self.is_pk_fk_join(fk_table, pk_table):
                 return True
         return False
