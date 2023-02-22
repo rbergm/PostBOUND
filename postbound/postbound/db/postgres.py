@@ -200,7 +200,7 @@ class PostgresStatisticsInterface(db.DatabaseStatistics):
                 FROM pg_stats
                 WHERE tablename = %s AND attname = %s""".format(conv=attribute_converter, tab=column.table.full_name))
         self._db.cursor().execute(mcv_query, (column.table.full_name, column.name))
-        return self._db.cursor().fetchall()
+        return self._db.cursor().fetchall()[:k]
 
 
 def connect(*, name: str = "postgres", connect_string: str | None = None,
