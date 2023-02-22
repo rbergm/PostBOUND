@@ -195,7 +195,7 @@ class DatabaseStatistics(abc.ABC):
     def total_rows(self, table: base.TableReference, *, emulated: bool | None = None,
                    cache_enabled: bool | None = None) -> int:
         """Provides (an estimate of) the total number of rows in a table."""
-        if (emulated is not None and not emulated) or not self.emulated:
+        if emulated or (emulated is None and self.emulated):
             return self._calculate_total_rows(table, cache_enabled=cache_enabled)
         else:
             return self._retrieve_total_rows_from_stats(table)
@@ -208,7 +208,7 @@ class DatabaseStatistics(abc.ABC):
         """
         if not column.table:
             raise base.UnboundColumnError(column)
-        if (emulated is not None and not emulated) or not self.emulated:
+        if emulated or (emulated is None and self.emulated):
             return self._calculate_distinct_values(column, cache_enabled=cache_enabled)
         else:
             return self._retrieve_distinct_values_from_stats(column)
@@ -217,7 +217,7 @@ class DatabaseStatistics(abc.ABC):
                 cache_enabled: bool | None = None) -> tuple:
         if not column.table:
             raise base.UnboundColumnError(column)
-        if (emulated is not None and not emulated) or not self.emulated:
+        if emulated or (emulated is None and self.emulated):
             return self._calculate_min_max_values(column, cache_enabled=cache_enabled)
         else:
             return self._retrieve_min_max_values_from_stats(column)
@@ -233,7 +233,7 @@ class DatabaseStatistics(abc.ABC):
          """
         if not column.table:
             raise base.UnboundColumnError(column)
-        if (emulated is not None and not emulated) or not self.emulated:
+        if emulated or (emulated is None and self.emulated):
             return self._calculate_most_common_values(column, k, cache_enabled=cache_enabled)
         else:
             return self._retrieve_most_common_values_from_stats(column, k)
