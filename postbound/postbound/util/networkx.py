@@ -54,7 +54,7 @@ def nx_bfs_tree(graph: nx.Graph, start_node: NodeType,
     neighboring node along with the edge-data as arguments.
     """
     shell_nodes = collection_utils.Queue([(node, edge) for node, edge in graph.adj[start_node].items()])
-    visited_nodes = set(start_node)
+    visited_nodes = {start_node}
     while shell_nodes:
         current_node, current_edge = shell_nodes.pop()
         visited_nodes.add(current_node)
