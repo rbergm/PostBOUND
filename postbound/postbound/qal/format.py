@@ -11,7 +11,11 @@ def _quick_format_implicit_from(from_clause: clauses.ImplicitFromClause) -> list
         return []
     elif len(tables) > 3:
         first_table, *remaining_tables = tables
-        return [f"FROM {first_table}"] + [((" " * FORMAT_INDENT_DEPTH) + str(tab)) for tab in remaining_tables]
+        formatted_tables = [f"FROM {first_table}"]
+        formatted_tables += [((" " * FORMAT_INDENT_DEPTH) + str(tab)) for tab in remaining_tables]
+        for i in range(len(formatted_tables) - 1):
+            formatted_tables[i] += ","
+        return formatted_tables
     else:
         return [f"FROM {tables[0]}"]
 
@@ -50,4 +54,5 @@ def format_quick(query: qal.SqlQuery) -> str:
         else:
             pretty_query_parts.append(str(clause))
 
+    pretty_query_parts[-1] += ";"
     return "\n".join(pretty_query_parts)

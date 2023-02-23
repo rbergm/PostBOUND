@@ -71,7 +71,7 @@ class SqlQuery(abc.ABC):
         return str(self)
 
     def __str__(self) -> str:
-        return " ".join(str(clause) for clause in self.clauses())
+        return " ".join(str(clause) for clause in self.clauses()) + ";"
 
 
 class ImplicitSqlQuery(SqlQuery):
