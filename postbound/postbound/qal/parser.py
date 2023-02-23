@@ -127,13 +127,7 @@ def _parse_mosp_predicate(mosp_data: dict) -> preds.AbstractPredicate:
 
     # parse binary predicates (logical operators, etc.)
     if operation == "in":
-        target_column, *values = mosp_data[operation]
-        parsed_column = _parse_mosp_expression(target_column)
-        if len(values) == 1 and isinstance(values[0], dict) and "literal" in values[0]:
-            parsed_values = [expr.StaticValueExpression(val) for val in values[0]["literal"]]
-        else:
-            parsed_values = [_parse_mosp_expression(val) for val in values]
-        return preds.InPredicate(parsed_column, parsed_values)
+        return _parse_in_predicate(mosp_data)
     elif operation == "between":
         target_column, interval_start, interval_end = mosp_data[operation]
         parsed_column = _parse_mosp_expression(target_column)
@@ -143,6 +137,20 @@ def _parse_mosp_predicate(mosp_data: dict) -> preds.AbstractPredicate:
         first_arg, second_arg = mosp_data[operation]
         return preds.BinaryPredicate(_MospOperationSql[operation], _parse_mosp_expression(first_arg),
                                      _parse_mosp_expression(second_arg))
+
+
+def _parse_in_predicate(mosp_data: dict) -> preds.InPredicate:
+    target_column, *values = mosp_data["in"]
+    parsed_column = _parse_mosp_expression(target_column)
+    if len(values) == 1 and isinstance(values[0], dict) and "literal" in values[0]:
+        literal_values = values[0]["literal"]
+        if isinstance(literal_values, list):
+            parsed_values = [expr.StaticValueExpression(val) for val in literal_values]
+        else:
+            parsed_values = [expr.StaticValueExpression(literal_values)]
+    else:
+        parsed_values = [_parse_mosp_expression(val) for val in values]
+    return preds.InPredicate(parsed_column, parsed_values)
 
 
 def _parse_mosp_expression(mosp_data: Any) -> expr.SqlExpression:
