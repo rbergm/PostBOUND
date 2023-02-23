@@ -35,6 +35,7 @@ class UESJoinOrderOptimizer(JoinOrderOptimizer):
         self.subquery_policy = subquery_policy
         self.stats_container = stats_container
         self.database = database
+        self._logging_enabled = True
 
     def optimize_join_order(self, query: qal.ImplicitSqlQuery) -> data.JoinTree | None:
         if len(list(query.tables())) <= 2:
@@ -64,6 +65,7 @@ class UESJoinOrderOptimizer(JoinOrderOptimizer):
         else:
             final_join_tree = self._star_query_optimizer(join_graph)
 
+        print("### FINAL JOIN TREE:", final_join_tree)
         return final_join_tree
 
     def _default_ues_optimizer(self, query: qal.SqlQuery, join_graph: data.JoinGraph) -> data.JoinTree:
@@ -74,7 +76,7 @@ class UESJoinOrderOptimizer(JoinOrderOptimizer):
             # Update the current upper bounds
             lowest_bound = np.inf
             lowest_bound_table = None
-            for candidate_join in join_graph.available_join_paths():
+            for candidate_join in join_graph.available_n_m_join_paths():
                 candidate_table = candidate_join.target_table
                 filter_estimate = self.stats_container.base_table_estimates[candidate_table]
                 pk_fk_bounds = [self.join_estimation.estimate_for(join_path.join_condition, join_graph) for join_path
@@ -103,6 +105,8 @@ class UESJoinOrderOptimizer(JoinOrderOptimizer):
                                                                base_filter_predicate=filter_pred,
                                                                join_predicate=pk_join.join_condition,
                                                                join_bound=join_bound, n_m_join=False)
+                self._log_optimization_progress("Initial table selection", lowest_bound_table, pk_joins)
+                continue
 
             selected_candidate: data.JoinPath | None = None
             lowest_bound = np.inf
@@ -115,10 +119,13 @@ class UESJoinOrderOptimizer(JoinOrderOptimizer):
             direct_pk_joins = join_graph.available_pk_fk_joins_for(selected_candidate.target_table)
             create_subquery = any(self.subquery_policy.generate_subquery_for(pk_join.join_condition, join_graph)
                                   for pk_join in direct_pk_joins)
-            all_pk_joins = join_graph.available_deep_pk_join_paths_for(selected_candidate.target_table)
             candidate_table = selected_candidate.target_table
+            all_pk_joins = join_graph.available_deep_pk_join_paths_for(candidate_table)
             candidate_filters = preds.CompoundPredicate.create_and(query.predicates().filters_for(candidate_table))
             candidate_base_cardinality = self.stats_container.base_table_estimates[candidate_table]
+            self._log_optimization_progress("n:m join", candidate_table, all_pk_joins,
+                                            join_condition=selected_candidate.join_condition,
+                                            subquery_join=create_subquery)
             if create_subquery:
                 subquery_tree = data.JoinTree.for_base_table(candidate_table, candidate_base_cardinality,
                                                              candidate_filters)
@@ -137,6 +144,8 @@ class UESJoinOrderOptimizer(JoinOrderOptimizer):
                 join_tree = self._insert_pk_joins(query, all_pk_joins, join_tree, join_graph)
 
         if join_graph.contains_free_tables():
+            print(join_graph.nx_graph().nodes.data("free"))
+            print(list(join_graph._index_structures.values()))
             raise AssertionError("Join graph still has free tables remaining!")
         return join_tree
 
@@ -151,6 +160,9 @@ class UESJoinOrderOptimizer(JoinOrderOptimizer):
                          join_tree: data.JoinTree, join_graph: data.JoinGraph) -> data.JoinTree:
         for pk_join in pk_joins:
             pk_table = pk_join.target_table
+            if not join_graph.is_free_table(pk_table):
+                print("Skipping joined PK table", pk_table)
+                continue
             pk_filters = preds.CompoundPredicate.create_and(query.predicates().filters_for(pk_table))
             pk_join_bound = self.join_estimation.estimate_for(pk_join.join_condition, join_graph)
             pk_base_cardinality = self.stats_container.base_table_estimates[pk_table]
@@ -169,6 +181,20 @@ class UESJoinOrderOptimizer(JoinOrderOptimizer):
                                      subquery_policy=copy.copy(self.subquery_policy),
                                      stats_container=copy.copy(self.stats_container),
                                      database=self.database)
+
+    def _log_optimization_progress(self, phase: str, candidate_table: base.TableReference,
+                                   pk_joins: Iterable[data.JoinPath], *,
+                                   join_condition: preds.AbstractPredicate | None = None,
+                                   subquery_join: bool | None = None) -> None:
+        if not self._logging_enabled:
+            return
+        log_components = [phase, "::", str(candidate_table), "with PK joins", str(pk_joins)]
+        if join_condition:
+            log_components.extend(["on condition", str(join_condition)])
+        if subquery_join is not None:
+            log_components.append("with subquery" if subquery_join else "without subquery")
+        log_message = " ".join(log_components)
+        print(log_message)
 
 
 class EmptyJoinOrderOptimizer(JoinOrderOptimizer):
