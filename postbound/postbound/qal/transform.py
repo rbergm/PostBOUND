@@ -7,7 +7,8 @@ import typing
 from typing import Iterable
 
 from postbound.db import db
-from postbound.qal import qal, base, clauses, joins, predicates as preds
+from postbound.qal import qal, base, clauses, expressions as expr, joins, predicates as preds
+from postbound.util import collections as collection_utils
 
 _Q = typing.TypeVar("_Q", bound=qal.SqlQuery)
 
@@ -17,19 +18,27 @@ def flatten_and_predicate(predicate: preds.AbstractPredicate) -> preds.AbstractP
         return predicate
 
     compound_predicate: preds.CompoundPredicate = predicate
-    if compound_predicate.operation == "not" or compound_predicate.operation == "or":
+    not_operation = compound_predicate.operation == expr.LogicalSqlCompoundOperators.Not
+    or_operation = compound_predicate.operation == expr.LogicalSqlCompoundOperators.Or
+    if not_operation or or_operation:
         return compound_predicate
 
-    flattened_children = []
+    flattened_children = set()
     for child in compound_predicate.children:
-        if child.is_compound() and child.operation == "and":
+        if child.is_compound() and child.operation == expr.LogicalSqlCompoundOperators.And:
             compound_child: preds.CompoundPredicate = child
-            flattened_child: preds.CompoundPredicate = flatten_and_predicate(compound_child)
-            flattened_children.extend(flattened_child.children)
+            flattened_child = flatten_and_predicate(compound_child)
+            if isinstance(flattened_child, preds.CompoundPredicate):
+                flattened_children |= set(flattened_child.children)
+            else:
+                flattened_children.add(flattened_child)
         else:
-            flattened_children.append(child)
+            flattened_children.add(child)
 
-    return preds.CompoundPredicate("and", flattened_children)
+    if len(flattened_children) == 1:
+        return collection_utils.simplify(flattened_children)
+
+    return preds.CompoundPredicate.create_and(flattened_children)
 
 
 def explicit_to_implicit(source_query: qal.ExplicitSqlQuery) -> qal.ImplicitSqlQuery:
@@ -47,9 +56,10 @@ def explicit_to_implicit(source_query: qal.ExplicitSqlQuery) -> qal.ImplicitSqlQ
     final_from_clause = clauses.ImplicitFromClause(complete_from_tables)
 
     if source_query.where_clause:
-        final_predicate = preds.CompoundPredicate("and", [source_query.where_clause.predicate] + additional_predicates)
+        final_predicate = preds.CompoundPredicate.create_and([source_query.where_clause.predicate]
+                                                             + additional_predicates)
     else:
-        final_predicate = preds.CompoundPredicate("and", additional_predicates)
+        final_predicate = preds.CompoundPredicate.create_and(additional_predicates)
 
     final_predicate = flatten_and_predicate(final_predicate)
     final_where_clause = clauses.Where(final_predicate)
