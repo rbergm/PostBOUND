@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import abc
+import collections
 import copy
 from typing import Iterable
 
@@ -40,7 +41,7 @@ class PostgresRightDeepJoinClauseBuilder:
 
     def _setup(self) -> None:
         self.joined_tables = set()
-        self.available_joins = {}
+        self.available_joins = collections.defaultdict(list)
         self.renamed_columns = {}
         self.original_column_names = {}
 
@@ -68,7 +69,8 @@ class PostgresRightDeepJoinClauseBuilder:
         table_filters = self._fetch_filters(base_table)
         transitive_join_predicates = self._fetch_join_predicate(base_table)
 
-        all_predicates = [table_filters, transitive_join_predicates, join_condition]
+        all_predicates = set(predicate for predicate in [table_filters, transitive_join_predicates, join_condition]
+                             if predicate)
         merged_join_predicate = predicates.CompoundPredicate.create_and(all_predicates)
         merged_join_predicate = transform.flatten_and_predicate(merged_join_predicate)
 
@@ -96,14 +98,15 @@ class PostgresRightDeepJoinClauseBuilder:
         self._perform_column_renaming(join_condition)
         return joins.SubqueryJoin.inner(subquery, subquery_export_name, join_condition)
 
-    def _fetch_filters(self, table: base.TableReference) -> predicates.AbstractPredicate:
+    def _fetch_filters(self, table: base.TableReference) -> predicates.AbstractPredicate | None:
         table_filters = list(self.query.predicates().filters_for(table))
         if len(self.joined_tables) == 1:
             base_table = collection_utils.simplify(self.joined_tables)
             base_table_filters = list(self.query.predicates().filters_for(base_table))
         else:
             base_table_filters = []
-        return predicates.CompoundPredicate.create_and(table_filters + base_table_filters)
+        all_filters = table_filters + base_table_filters
+        return predicates.CompoundPredicate.create_and(all_filters) if all_filters else None
 
     def _fetch_join_predicate(self, tables: base.TableReference | list[base.TableReference]
                               ) -> predicates.AbstractPredicate:
@@ -146,14 +149,13 @@ class PostgresRightDeepJoinClauseBuilder:
         tables = collection_utils.enlist(tables)
         for table in tables:
             all_join_predicates = self.query.predicates().joins_for(table)
-            available_join_predicates = []
             for predicate in all_join_predicates:
-                join_partners = set(column.table for column in predicate.join_partners_of(table))
-                predicate_was_joined = len(join_partners & self.joined_tables) > 0
-                predicate_is_joined_now = len(join_partners & set(tables)) > 0
+                join_partner = set(column.table for column in predicate.join_partners_of(table))
+                predicate_was_joined = len(join_partner & self.joined_tables) > 0
+                predicate_is_joined_now = len(join_partner & set(tables)) > 0
                 if not predicate_was_joined and not predicate_is_joined_now:
-                    available_join_predicates.append(predicate)
-            self.available_joins[table] = available_join_predicates
+                    join_partner = collection_utils.simplify(join_partner)
+                    self.available_joins[join_partner].append(predicate)
             self.joined_tables.add(table)
 
     def _perform_column_renaming(self, predicate: predicates.AbstractPredicate) -> None:
@@ -231,16 +233,22 @@ def _generate_join_key(tables: Iterable[base.TableReference]) -> str:
     return " ".join(tab.identifier() for tab in tables)
 
 
+def _escape_setting(setting) -> str:
+    if isinstance(setting, float) or isinstance(setting, int):
+        return str(setting)
+    return f"'{setting}'"
+
+
 def _generate_pg_operator_hints(query: qal.SqlQuery, join_order: data.JoinTree,
                                 physical_operators: operators.PhysicalOperatorAssignment) -> qal.SqlQuery:
     settings = []
     for operator, enabled in physical_operators.global_settings.items():
         setting = "on" if enabled else "off"
         operator_key = PG_OPTIMIZER_SETTINGS[operator]
-        settings.append(f"{operator_key} = {setting};")
+        settings.append(f"SET {operator_key} = '{setting}';")
     for operator, setting in physical_operators.system_specific_settings.items():
-        setting = str(setting)
-        settings.append(f"{operator} = {setting};")
+        setting = _escape_setting(setting)
+        settings.append(f"SET {operator} = {setting};")
 
     hints = []
     for table, scan_operator in physical_operators.scan_operators.items():

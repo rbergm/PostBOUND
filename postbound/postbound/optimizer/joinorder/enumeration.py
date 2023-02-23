@@ -88,7 +88,8 @@ class UESJoinOrderOptimizer(JoinOrderOptimizer):
                     lowest_bound_table = candidate_table
 
             if join_tree.is_empty():
-                filter_pred = preds.CompoundPredicate.create_and(query.predicates().filters_for(lowest_bound_table))
+                filters = list(query.predicates().filters_for(lowest_bound_table))
+                filter_pred = preds.CompoundPredicate.create_and(filters) if filters else None
                 join_tree = data.JoinTree.for_base_table(lowest_bound_table, lowest_bound, filter_pred)
                 join_graph.mark_joined(lowest_bound_table)
                 self.stats_container.upper_bounds[join_tree] = lowest_bound
@@ -97,7 +98,8 @@ class UESJoinOrderOptimizer(JoinOrderOptimizer):
                 for pk_join in pk_joins:
                     target_table = pk_join.target_table
                     base_cardinality = self.stats_container.base_table_estimates[target_table]
-                    filter_pred = preds.CompoundPredicate.create_and(query.predicates().filters_for(target_table))
+                    filters = list(query.predicates().filters_for(target_table))
+                    filter_pred = preds.CompoundPredicate.create_and(filters) if filters else None
                     join_bound = self.join_estimation.estimate_for(pk_join.join_condition, join_graph)
                     join_graph.mark_joined(target_table, pk_join.join_condition)
                     join_tree = join_tree.join_with_base_table(pk_join.target_table, base_cardinality=base_cardinality,
@@ -159,7 +161,8 @@ class UESJoinOrderOptimizer(JoinOrderOptimizer):
             pk_table = pk_join.target_table
             if not join_graph.is_free_table(pk_table):
                 continue
-            pk_filters = preds.CompoundPredicate.create_and(query.predicates().filters_for(pk_table))
+            pk_filters = list(query.predicates().filters_for(pk_table))
+            pk_filters = preds.CompoundPredicate.create_and(pk_filters) if pk_filters else None
             pk_join_bound = self.join_estimation.estimate_for(pk_join.join_condition, join_graph)
             pk_base_cardinality = self.stats_container.base_table_estimates[pk_table]
             join_tree = join_tree.join_with_base_table(pk_table, base_cardinality=pk_base_cardinality,

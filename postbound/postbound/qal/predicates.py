@@ -390,6 +390,8 @@ class CompoundPredicate(AbstractPredicate):
         super().__init__()
         self.operation = operation
         self.children = collection_utils.enlist(children)
+        if not self.children:
+            raise ValueError("Child predicates can not be empty")
 
     def is_compound(self) -> bool:
         return True
