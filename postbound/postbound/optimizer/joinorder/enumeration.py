@@ -65,7 +65,6 @@ class UESJoinOrderOptimizer(JoinOrderOptimizer):
         else:
             final_join_tree = self._star_query_optimizer(join_graph)
 
-        print("### FINAL JOIN TREE:", final_join_tree)
         return final_join_tree
 
     def _default_ues_optimizer(self, query: qal.SqlQuery, join_graph: data.JoinGraph) -> data.JoinTree:
@@ -144,8 +143,6 @@ class UESJoinOrderOptimizer(JoinOrderOptimizer):
                 join_tree = self._insert_pk_joins(query, all_pk_joins, join_tree, join_graph)
 
         if join_graph.contains_free_tables():
-            print(join_graph.nx_graph().nodes.data("free"))
-            print(list(join_graph._index_structures.values()))
             raise AssertionError("Join graph still has free tables remaining!")
         return join_tree
 
@@ -161,7 +158,6 @@ class UESJoinOrderOptimizer(JoinOrderOptimizer):
         for pk_join in pk_joins:
             pk_table = pk_join.target_table
             if not join_graph.is_free_table(pk_table):
-                print("Skipping joined PK table", pk_table)
                 continue
             pk_filters = preds.CompoundPredicate.create_and(query.predicates().filters_for(pk_table))
             pk_join_bound = self.join_estimation.estimate_for(pk_join.join_condition, join_graph)
@@ -186,6 +182,7 @@ class UESJoinOrderOptimizer(JoinOrderOptimizer):
                                    pk_joins: Iterable[data.JoinPath], *,
                                    join_condition: preds.AbstractPredicate | None = None,
                                    subquery_join: bool | None = None) -> None:
+        # TODO: use proper logging
         if not self._logging_enabled:
             return
         log_components = [phase, "::", str(candidate_table), "with PK joins", str(pk_joins)]

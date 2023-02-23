@@ -127,8 +127,6 @@ class JoinGraph:
                 self._index_structures[column] = IndexInfo.generate_for(column, db_schema)
 
         graph.add_edges_from(edges)
-        print("Initial index structures:", list(self._index_structures.values()))
-
         self._graph = graph
 
     def initial(self) -> bool:
@@ -232,10 +230,6 @@ class JoinGraph:
         self._graph.nodes[table]["free"] = False
         if not join_edge:
             return
-
-        # invalidate indexes:
-        # PK / PK join => no invalidation
-        # PK / FK join => invalidation of PK
 
         partner_table = collection_utils.simplify([col.table for col in join_edge.join_partners_of(table)])
         pk_fk_join = self.is_pk_fk_join(table, partner_table)
