@@ -81,6 +81,11 @@ class Database(abc.ABC):
 
     @abc.abstractmethod
     def cursor(self) -> Any:
+        """Provides a cursor to execute queries and iterate over result sets manually.
+
+        The specific type of cursor being returned depends on the concrete database implementation. However, the cursor
+        object should always implement the interface described in the Python DB API specification 2.0 (PEP 249).
+        """
         raise NotImplementedError
 
     def _get_cache_enabled(self) -> bool:
@@ -170,8 +175,22 @@ class DatabaseSchema(abc.ABC):
         """
         return self.is_primary_key(column) or self.has_secondary_index(column)
 
+    @abc.abstractmethod
     def datatype(self, column: base.ColumnReference) -> str:
+        """Retrieves the (physical) data type of the given `column`.
+
+        The provided type can be a standardized SQL-type, but it can be a type specific to the concrete database
+        system just as well.
+
+        If the `column` is not bound to any table, an `UnboundColumnError` will be raised.
+        """
         raise NotImplementedError
+
+    def __repr__(self) -> str:
+        return str(self)
+
+    def __str__(self) -> str:
+        return f"Database schema of {self._db}"
 
 
 class DatabaseStatistics(abc.ABC):
@@ -182,19 +201,29 @@ class DatabaseStatistics(abc.ABC):
 
     Since statistics are mostly database specific, the internal catalogs can provide information in different formats
     or granularity, or they do not provide the required information at all. Therefore, calculating on the live data
-    is safer, albeit slower. To indicate how the statistics should be obtained, the `emulated` attribute exists.
-    If set to `True`, all statistical information will be retrieved based on the live data. Conversely,
-    `emulated = False` indicates that the internal metadata catalogs should be queried (and it is up to the client to
-    do something useful with that information).
+    is safer, albeit slower (caching of database queries can somewhat mitigate this effect). To indicate how the
+    statistics should be obtained, the `emulated` attribute exists. If set to `True`, all statistical information will
+    be retrieved based on the live data. Conversely, `emulated = False` indicates that the internal metadata catalogs
+    should be queried (and it is up to the client to do something useful with that information).
+
+    If the fallback to emulated statistics is not desired, the `enable_emulation_fallback` attribute can be set to
+    `False`. In this case, each time the database should provide a statistic it does not support, an
+    `UnsupportedDatabaseFeatureError` will be raised. However, this setting is overwritten by the `emulated` property.
     """
 
     def __init__(self, db: Database):
         self.emulated = True
+        self.enable_emulation_fallback = True
         self._db = db
 
     def total_rows(self, table: base.TableReference, *, emulated: bool | None = None,
                    cache_enabled: bool | None = None) -> int:
-        """Provides (an estimate of) the total number of rows in a table."""
+        """Provides (an estimate of) the total number of rows in a table.
+
+        If the `table` is virtual, a `VirtualTableError` will be raised.
+        """
+        if table.virtual:
+            raise base.VirtualTableError(table)
         if emulated or (emulated is None and self.emulated):
             return self._calculate_total_rows(table, cache_enabled=cache_enabled)
         else:
@@ -204,10 +233,13 @@ class DatabaseStatistics(abc.ABC):
                         cache_enabled: bool | None = None) -> int:
         """Provides (an estimate of) the total number of different column values of a specific column.
 
-        If the `column` is not bound to any table, an `UnboundColumnError` will be raised.
+        If the `column` is not bound to any table, an `UnboundColumnError` will be raised. Likewise, virtual tables
+        will raise a `VirtualTableError`.
         """
         if not column.table:
             raise base.UnboundColumnError(column)
+        elif column.table.virtual:
+            raise base.VirtualTableError(column.table)
         if emulated or (emulated is None and self.emulated):
             return self._calculate_distinct_values(column, cache_enabled=cache_enabled)
         else:
@@ -215,8 +247,15 @@ class DatabaseStatistics(abc.ABC):
 
     def min_max(self, column: base.ColumnReference, *, emulated: bool | None = None,
                 cache_enabled: bool | None = None) -> tuple:
+        """Provides (an estimate of) the minimum and maximum values in a column.
+
+        If the `column` is not bound to any table, an `UnboundColumnError` will be raised. Likewise, virtual tables
+        will raise a `VirtualTableError`.
+        """
         if not column.table:
             raise base.UnboundColumnError(column)
+        elif column.table.virtual:
+            raise base.VirtualTableError(column.table)
         if emulated or (emulated is None and self.emulated):
             return self._calculate_min_max_values(column, cache_enabled=cache_enabled)
         else:
@@ -229,60 +268,95 @@ class DatabaseStatistics(abc.ABC):
          By default, `k = 10`. In `emulated` mode, the result will be an ordered sequence of `(value, frequency)`
          pairs, such that the first value has the highest frequency.
 
-         If the `column` is not bound to any table, an `UnboundColumnError` will be raised.
+         If the `column` is not bound to any table, an `UnboundColumnError` will be raised. Likewise, virtual tables
+        will raise a `VirtualTableError`.
          """
         if not column.table:
             raise base.UnboundColumnError(column)
+        elif column.table.virtual:
+            raise base.VirtualTableError(column.table)
         if emulated or (emulated is None and self.emulated):
             return self._calculate_most_common_values(column, k, cache_enabled=cache_enabled)
         else:
             return self._retrieve_most_common_values_from_stats(column, k)
 
     def _calculate_total_rows(self, table: base.TableReference, *, cache_enabled: bool | None = None) -> int:
+        """Retrieves the total number of rows of a table by issuing a COUNT(*) query against the live database.
+
+        The table is assumed to be non-virtual.
+        """
         query_template = "SELECT COUNT(*) FROM {tab}"
         count_query = query_template.format(tab=table.full_name)
         return self._db.execute_query(count_query, cache_enabled=cache_enabled)
 
     def _calculate_distinct_values(self, column: base.ColumnReference, *, cache_enabled: bool | None = None) -> int:
+        """Retrieves the number of distinct column values by issuing a COUNT(*) / GROUP BY query over that column
+        against the live database.
+
+        The column is assumed to be bound to a (non-virtual) table.
+        """
         query_template = "SELECT COUNT(DISTINCT {col}) FROM {tab}"
         count_query = query_template.format(col=column.name, tab=column.table.full_name)
         return self._db.execute_query(count_query, cache_enabled=cache_enabled)
 
     def _calculate_min_max_values(self, column: base.ColumnReference, *, cache_enabled: bool | None = None) -> tuple:
+        """Retrieves the minimum/maximum values in a column by issuing an aggregation query for that column against the
+        live database.
+
+        The column is assumed to be bound to a (non-virtual) table.
+        """
         query_template = "SELECT MIN({col}), MAX({col}) FROM {tab}"
         min_max_query = query_template.format(col=column.name, tab=column.table.full_name)
         return self._db.execute_query(min_max_query, cache_enabled=cache_enabled)
 
     def _calculate_most_common_values(self, column: base.ColumnReference, k: int, *,
                                       cache_enabled: bool | None = None) -> list:
+        """Retrieves the `k` most frequent values of a column along with their frequencies by issuing a COUNT(*) /
+        GROUP BY query over that column against the live database.
+
+        The column is assumed to be bound to a (non-virtual) table.
+        """
         query_template = "SELECT {col}, COUNT(*) AS n FROM {tab} GROUP BY {col} ORDER BY n DESC, {col} LIMIT {k}"
         count_query = query_template.format(col=column.name, tab=column.table.full_name, k=k)
         return self._db.execute_query(count_query, cache_enabled=cache_enabled)
 
     @abc.abstractmethod
     def _retrieve_total_rows_from_stats(self, table: base.TableReference) -> int:
-        """Queries the DBMS-internal metadata for the number of rows in a table."""
+        """Queries the DBMS-internal metadata for the number of rows in a table.
+
+        The table is assumed to be non-virtual.
+        """
         raise NotImplementedError
 
     @abc.abstractmethod
     def _retrieve_distinct_values_from_stats(self, column: base.ColumnReference) -> int:
         """Queries the DBMS-internal metadata for the number of distinct values of the column.
 
-        If the `column` is not bound to any table, an `UnboundColumnError` will be raised.
+        The column is assumed to be bound to a (non-virtual) table.
         """
         raise NotImplementedError
 
     @abc.abstractmethod
     def _retrieve_min_max_values_from_stats(self, column: base.ColumnReference) -> tuple:
+        """Queries the DBMS-interal metadata for the minimum / maximum value in a column.
+
+        The column is assumed to be bound to a (non-virtual) table.
+        """
         raise NotImplementedError
 
     @abc.abstractmethod
     def _retrieve_most_common_values_from_stats(self, column: base.ColumnReference, k: int) -> list:
         """Queries the DBMS-internal metadata for the `k` most common values of the `column`.
 
-        If the `column` is not bound to any table, an `UnboundColumnError` will be raised.
+        The column is assumed to be bound to a (non-virtual) table.
         """
         raise NotImplementedError
+
+    def __repr__(self) -> str:
+        return str(self)
+
+    def __str__(self) -> str:
+        return f"Database statistics of {self._db}"
 
 
 _DB_POOL: DatabasePool | None = None
@@ -324,3 +398,17 @@ class DatabasePool:
 
     def __str__(self) -> str:
         return f"DatabasePool {self._pool}"
+
+
+class UnsupportedDatabaseFeatureError(RuntimeError):
+    """Indicates that some requested feature is not supported by the database.
+
+    For example, PostgreSQL (at least up to version 15) does not capture minimum or maximum column values in its
+    system statistics. Therefore, forcing the DBS to retrieve such information from its metadata could result in this
+    error.
+    """
+
+    def __init__(self, database: Database, feature: str) -> None:
+        super().__init__(f"Database {database.name} does not support feature {feature}")
+        self.database = database
+        self.feature = feature

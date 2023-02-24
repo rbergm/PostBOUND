@@ -179,6 +179,8 @@ class PostgresStatisticsInterface(db.DatabaseStatistics):
 
     def _retrieve_min_max_values_from_stats(self, column: base.ColumnReference) -> tuple:
         # Postgres does not keep track of min/max values, so we need to determine them manually
+        if not self.enable_emulation_fallback:
+            raise db.UnsupportedDatabaseFeatureError(self._db, "min/max value statistics")
         return self._calculate_min_max_values(column, cache_enabled=True)
 
     def _retrieve_most_common_values_from_stats(self, column: base.ColumnReference, k: int) -> list:
@@ -204,7 +206,24 @@ class PostgresStatisticsInterface(db.DatabaseStatistics):
 
 
 def connect(*, name: str = "postgres", connect_string: str | None = None,
-            config_file: str | None = ".psycopg_connection", cache_enabled: bool = True) -> PostgresInterface:
+            config_file: str | None = ".psycopg_connection", cache_enabled: bool = True,
+            private: bool = False) -> PostgresInterface:
+    """Convenience function to seamlessly connect to a Postgres instance.
+
+    This function obtains a connect-string to the database according to the following rules:
+
+    1. if the connect-string is supplied directly via the `connect_string` parameter, this is used
+    2. if the connect-string is not supplied, it is read from the file indicated by `config_file`
+    3. if the `config_file` does not exist, an error is raised
+
+    The Postgres instance can be supplied a name via the `name` parameter if multiple connections to different
+    Postgres instances should be maintained simultaneously. Otherwise, the parameter defaults to `postgres`.
+
+    Caching behaviour of the Postgres instance can be controlled via the `cache_enabled` parameter.
+
+    After a connection to the Postgres instance has been obtained, it is registered automatically by the current
+    `DatabasePool` instance, unless `private` is set to `True`.
+    """
     db_pool = db.DatabasePool.get_instance()
     if config_file and not connect_string:
         if not os.path.exists(config_file):
@@ -215,7 +234,8 @@ def connect(*, name: str = "postgres", connect_string: str | None = None,
         raise ValueError("Connect string or config file are required to connect to Postgres")
 
     postgres_db = PostgresInterface(connect_string, name=name, cache_enabled=cache_enabled)
-    db_pool.register_database(name, postgres_db)
+    if not private:
+        db_pool.register_database(name, postgres_db)
     return postgres_db
 
 
@@ -266,8 +286,9 @@ class ParallelQueryExecutor:
         self._tasks: list[concurrent.futures.Future] = []
         self._results = []
 
-    def queue_query(self, query: str) -> None:
+    def queue_query(self, query: qal.SqlQuery | str) -> None:
         """Adds a new query to the queue, to be executed as soon as possible."""
+        query = str(query)
         future = self._thread_pool.submit(_parallel_query_worker, query, self._thread_data, self._verbose)
         self._tasks.append(future)
 

@@ -92,3 +92,9 @@ class UnboundColumnError(errors.StateError):
     def __init__(self, column: ColumnReference) -> None:
         super().__init__("Column is not bound to any table: " + str(column))
         self.column = column
+
+
+class VirtualTableError(errors.StateError):
+    def __init__(self, table: TableReference) -> None:
+        super().__init__("Table is virtual: " + str(table))
+        self.table = table
