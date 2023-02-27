@@ -37,6 +37,9 @@ class Workload(collections.UserDict[str, qal.SqlQuery]):
     def queries(self) -> list[qal.SqlQuery]:
         return list(self._sorted_queries)
 
+    def entries(self) -> list[tuple[str, qal.SqlQuery]]:
+        return list(zip(self._sorted_labels, self._sorted_queries))
+
     def first(self, n: int) -> "Workload":
         first_n_labels = self._sorted_labels[:n]
         sub_workload = {label: self.data[label] for label in first_n_labels}
