@@ -212,6 +212,8 @@ def bind_columns(query: qal.SqlQuery, *, with_schema: bool = True, db_schema: db
 
     The retrieved information includes type information for all columns and the tables that contain the columns.
     """
+    # TODO: should this process also create redirections for renamed columns?
+
     alias_map = {table.alias: table for table in query.tables() if table.alias and table.full_name}
     unbound_tables = [table for table in query.tables() if not table.alias]
     unbound_columns = []

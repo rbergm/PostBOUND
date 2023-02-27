@@ -80,7 +80,7 @@ class Select:
         return collection_utils.flatten(target.itercolumns() for target in self.targets)
 
     def tables(self) -> set[base.TableReference]:
-        return {target.tables() for target in self.targets}
+        return collection_utils.set_union(target.tables() for target in self.targets)
 
     def output_names(self) -> dict[str, base.ColumnReference]:
         output = {}

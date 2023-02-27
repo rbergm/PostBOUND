@@ -225,11 +225,10 @@ class BetweenPredicate(BasePredicate):
 
     def is_join(self) -> bool:
         column_tables = self.column.tables()
-        interval_start_tables = self.interval_start.tables()
-        interval_end_tables = self.interval_end.tables()
-        if any(len(tabs) > 1 for tabs in [column_tables, interval_start_tables, interval_end_tables]):
+        interval_tables = self.interval_start.tables() | self.interval_end.tables()
+        if any(len(tabs) > 1 for tabs in [column_tables, interval_tables]):
             return True
-        return len(column_tables ^ interval_start_tables ^ interval_end_tables) > 0
+        return interval_tables and len(column_tables ^ interval_tables) > 0
 
     def columns(self) -> set[base.ColumnReference]:
         return self.column.columns() | self.interval_start.columns() | self.interval_end.columns()
@@ -286,10 +285,8 @@ class InPredicate(BasePredicate):
 
     def is_join(self) -> bool:
         column_tables = self.column.tables()
-        value_tables = [val.tables() for val in self.values]
-        if any(len(tabs) > 1 for tabs in [column_tables] + value_tables):
-            return True
-        return len(column_tables ^ collection_utils.set_union(value_tables)) > 0
+        value_tables = collection_utils.set_union(val.tables() for val in self.values)
+        return len(column_tables | value_tables) > 1
 
     def columns(self) -> set[base.ColumnReference]:
         all_columns = self.column.columns()
