@@ -169,10 +169,17 @@ class JoinGraph:
         for join_edge in self._graph.edges.data("predicate"):
             source_table, target_table, join_condition = join_edge
             if self.is_free_table(source_table) and self.is_free_table(target_table):
+                # both tables are still free -> no path
                 continue
-            elif self.is_free_table(source_table):
+            elif not self.is_free_table(source_table) and not self.is_free_table(target_table):
+                # both tables are already joined -> no path
+                continue
+
+            if self.is_free_table(source_table):
+                # fix directionality
                 source_table, target_table = target_table, source_table
             join_paths.append(JoinPath(source_table, target_table, join_condition))
+
         return join_paths
 
     def available_n_m_join_paths(self) -> Iterable[JoinPath]:
@@ -288,6 +295,13 @@ class JoinTreeNode(abc.ABC, Container):
     def __hash__(self) -> int:
         raise NotImplementedError
 
+    def __repr__(self) -> str:
+        return str(self)
+
+    @abc.abstractmethod
+    def __str__(self) -> str:
+        raise NotImplementedError
+
 
 class JoinNode(JoinTreeNode):
     def __init__(self, left_child: JoinTreeNode, right_child: JoinTreeNode, *, join_bound: int,
@@ -349,6 +363,12 @@ class JoinNode(JoinTreeNode):
                 and self.n_m_joined_table == other.n_m_joined_table
                 and self.join_bound == other.join_bound)
 
+    def __str__(self) -> str:
+        # perform a right-deep string generation, left branches are subqueries
+        left_str = f"({self.left_child})" if self.left_child.is_join_node() else str(self.left_child)
+        right_str = str(self.right_child)
+        return f"{right_str} ⋈ {left_str}"
+
 
 class BaseTableNode(JoinTreeNode):
     def __init__(self, table: base.TableReference, cardinality_estimate: int,
@@ -380,6 +400,9 @@ class BaseTableNode(JoinTreeNode):
                 and self.table == other.table
                 and self.filter == other.filter
                 and self.cardinality_estimate == other.cardinality_estimate)
+
+    def __str__(self) -> str:
+        return str(self.table)
 
 
 class JoinTree(Container[JoinTreeNode]):
@@ -476,3 +499,11 @@ class JoinTree(Container[JoinTreeNode]):
 
     def __eq__(self, other) -> bool:
         return isinstance(other, type(self)) and self.root == other.root
+
+    def __repr__(self) -> str:
+        return str(self)
+
+    def __str__(self) -> str:
+        if self.is_empty():
+            return "[EMPTY JOIN TREE]"
+        return str(self.root)

@@ -28,14 +28,14 @@ class UESJoinOrderOptimizer(JoinOrderOptimizer):
                  join_estimation: join_bounds.JoinBoundCardinalityEstimator,
                  subquery_policy: subqueries.SubqueryGenerationPolicy,
                  stats_container: stats.StatisticsContainer,
-                 database: db.Database) -> None:
+                 database: db.Database, verbose: bool = False) -> None:
         super().__init__("UES enumeration")
         self.base_table_estimation = base_table_estimation
         self.join_estimation = join_estimation
         self.subquery_policy = subquery_policy
         self.stats_container = stats_container
         self.database = database
-        self._logging_enabled = True
+        self._logging_enabled = verbose
 
     def optimize_join_order(self, query: qal.ImplicitSqlQuery) -> data.JoinTree | None:
         if len(list(query.tables())) <= 2:
@@ -122,7 +122,8 @@ class UESJoinOrderOptimizer(JoinOrderOptimizer):
                                   for pk_join in direct_pk_joins)
             candidate_table = selected_candidate.target_table
             all_pk_joins = join_graph.available_deep_pk_join_paths_for(candidate_table)
-            candidate_filters = preds.CompoundPredicate.create_and(query.predicates().filters_for(candidate_table))
+            candidate_filters = list(query.predicates().filters_for(candidate_table))
+            candidate_filters = preds.CompoundPredicate.create_and(candidate_filters) if candidate_filters else None
             candidate_base_cardinality = self.stats_container.base_table_estimates[candidate_table]
             self._log_optimization_progress("n:m join", candidate_table, all_pk_joins,
                                             join_condition=selected_candidate.join_condition,
