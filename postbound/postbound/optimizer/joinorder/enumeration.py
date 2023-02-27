@@ -23,6 +23,12 @@ class JoinOrderOptimizer(abc.ABC):
         raise NotImplementedError
 
 
+def _fetch_filters(query: qal.SqlQuery, table: base.TableReference) -> preds.AbstractPredicate | None:
+    all_filters = query.predicates().filters_for(table)
+    predicate = preds.CompoundPredicate.create_and(all_filters) if all_filters else None
+    return predicate
+
+
 class UESJoinOrderOptimizer(JoinOrderOptimizer):
     def __init__(self, *, base_table_estimation: scan_bounds.BaseTableCardinalityEstimator,
                  join_estimation: join_bounds.JoinBoundCardinalityEstimator,
@@ -63,7 +69,7 @@ class UESJoinOrderOptimizer(JoinOrderOptimizer):
         elif join_graph.contains_free_n_m_joins():
             final_join_tree = self._default_ues_optimizer(query, join_graph)
         else:
-            final_join_tree = self._star_query_optimizer(join_graph)
+            final_join_tree = self._star_query_optimizer(query, join_graph)
 
         return final_join_tree
 
@@ -88,8 +94,7 @@ class UESJoinOrderOptimizer(JoinOrderOptimizer):
                     lowest_bound_table = candidate_table
 
             if join_tree.is_empty():
-                filters = list(query.predicates().filters_for(lowest_bound_table))
-                filter_pred = preds.CompoundPredicate.create_and(filters) if filters else None
+                filter_pred = _fetch_filters(query, lowest_bound_table)
                 join_tree = data.JoinTree.for_base_table(lowest_bound_table, lowest_bound, filter_pred)
                 join_graph.mark_joined(lowest_bound_table)
                 self.stats_container.upper_bounds[join_tree] = lowest_bound
@@ -98,8 +103,7 @@ class UESJoinOrderOptimizer(JoinOrderOptimizer):
                 for pk_join in pk_joins:
                     target_table = pk_join.target_table
                     base_cardinality = self.stats_container.base_table_estimates[target_table]
-                    filters = list(query.predicates().filters_for(target_table))
-                    filter_pred = preds.CompoundPredicate.create_and(filters) if filters else None
+                    filter_pred = _fetch_filters(query, target_table)
                     join_bound = self.join_estimation.estimate_for(pk_join.join_condition, join_graph)
                     join_graph.mark_joined(target_table, pk_join.join_condition)
                     join_tree = join_tree.join_with_base_table(pk_join.target_table, base_cardinality=base_cardinality,
@@ -122,8 +126,7 @@ class UESJoinOrderOptimizer(JoinOrderOptimizer):
                                   for pk_join in direct_pk_joins)
             candidate_table = selected_candidate.target_table
             all_pk_joins = join_graph.available_deep_pk_join_paths_for(candidate_table)
-            candidate_filters = list(query.predicates().filters_for(candidate_table))
-            candidate_filters = preds.CompoundPredicate.create_and(candidate_filters) if candidate_filters else None
+            candidate_filters = _fetch_filters(query, candidate_table)
             candidate_base_cardinality = self.stats_container.base_table_estimates[candidate_table]
             self._log_optimization_progress("n:m join", candidate_table, all_pk_joins,
                                             join_condition=selected_candidate.join_condition,
@@ -149,9 +152,50 @@ class UESJoinOrderOptimizer(JoinOrderOptimizer):
             raise AssertionError("Join graph still has free tables remaining!")
         return join_tree
 
-    def _star_query_optimizer(self, join_graph: data.JoinGraph) -> data.JoinTree:
-        # TODO: implementation
-        pass
+    def _star_query_optimizer(self, query: qal.ImplicitSqlQuery, join_graph: data.JoinGraph) -> data.JoinTree:
+        # initial table / join selection
+        lowest_bound = np.inf
+        lowest_bound_join = None
+        for candidate_join in join_graph.available_join_paths():
+            current_bound = self.join_estimation.estimate_for(candidate_join.join_condition, join_graph)
+            if current_bound < lowest_bound:
+                lowest_bound = current_bound
+                lowest_bound_join = candidate_join
+
+        start_table, target_table = lowest_bound_join.start_table, lowest_bound_join.target_table
+        start_filters = _fetch_filters(query, start_table)
+        join_tree = data.JoinTree.for_base_table(start_table, self.stats_container.base_table_estimates[start_table],
+                                                 start_filters)
+        join_graph.mark_joined(start_table)
+
+        target_filters = _fetch_filters(query, target_table)
+        target_cardinality = self.stats_container.base_table_estimates[target_table]
+        join_tree = join_tree.join_with_base_table(target_table, join_predicate=lowest_bound_join.join_condition,
+                                                   base_cardinality=target_cardinality, join_bound=lowest_bound,
+                                                   n_m_join=False, base_filter_predicate=target_filters)
+        join_graph.mark_joined(target_table, lowest_bound_join.join_condition)
+        self.stats_container.upper_bounds[join_tree] = lowest_bound
+
+        # join partner selection
+        while join_graph.contains_free_tables():
+            lowest_bound = np.inf
+            lowest_bound_join = None
+            for candidate_join in join_graph.available_join_paths():
+                current_bound = self.join_estimation.estimate_for(candidate_join.join_condition, join_graph)
+                if current_bound < lowest_bound:
+                    lowest_bound = current_bound
+                    lowest_bound_join = candidate_join
+
+            target_table = lowest_bound_join.target_table
+            target_filters = _fetch_filters(query, target_table)
+            target_cardinality = self.stats_container.base_table_estimates[target_table]
+            join_tree = join_tree.join_with_base_table(target_table, join_predicate=lowest_bound_join.join_condition,
+                                                       base_cardinality=target_cardinality, join_bound=lowest_bound,
+                                                       n_m_join=False, base_filter_predicate=target_filters)
+            join_graph.mark_joined(target_table, lowest_bound_join.join_condition)
+            self.stats_container.upper_bounds[join_tree] = lowest_bound
+
+        return join_tree
 
     def _table_base_cardinality_ordering(self, table: base.TableReference, join_edge: dict) -> int:
         return self.stats_container.base_table_estimates[table]
@@ -162,8 +206,7 @@ class UESJoinOrderOptimizer(JoinOrderOptimizer):
             pk_table = pk_join.target_table
             if not join_graph.is_free_table(pk_table):
                 continue
-            pk_filters = list(query.predicates().filters_for(pk_table))
-            pk_filters = preds.CompoundPredicate.create_and(pk_filters) if pk_filters else None
+            pk_filters = _fetch_filters(query, pk_table)
             pk_join_bound = self.join_estimation.estimate_for(pk_join.join_condition, join_graph)
             pk_base_cardinality = self.stats_container.base_table_estimates[pk_table]
             join_tree = join_tree.join_with_base_table(pk_table, base_cardinality=pk_base_cardinality,
