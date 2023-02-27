@@ -1,4 +1,4 @@
-"""Fundamental types for the query abstraction layer."""
+"""Fundamental types for the query abstraction layer. This includes references to tables as well as columns."""
 
 from __future__ import annotations
 
@@ -14,7 +14,10 @@ class TableReference:
     It can either be a physical table, a CTE, or an entirely virtual query created via subqueries. Note that a table
     reference is indeed just a reference and not a 1:1 "representation" since each table can be sourced multiple times
     in a query. Therefore, in addition to the table name, each instance can optionally also contain an alias to
-    distinguish between different references to the same table.
+    distinguish between different references to the same table. In case of virtual tables, the full name will be empty
+    and only the alias set.
+
+    Table references can be sorted lexicographically.
     """
     full_name: str
     alias: str = ""
@@ -22,9 +25,16 @@ class TableReference:
 
     @staticmethod
     def create_virtual(alias: str) -> TableReference:
+        """Generates a new virtual table reference with the given alias."""
         return TableReference("", alias, True)
 
     def identifier(self) -> str:
+        """Provides a shorthand key that columns can use to refer to this table reference.
+
+        For example, a table reference for `movie_companies AS mc` would have `mc` as its identifier (i.e. the alias),
+        whereas a table reference without an alias such as `company_type` would provide the full table name as its
+        identifier, i.e. `company_type`.
+        """
         return self.alias if self.alias else self.full_name
 
     def __lt__(self, other) -> bool:
@@ -57,12 +67,30 @@ class TableReference:
 
 @dataclass
 class ColumnReference:
+    """A column reference represents a specific column of a specific database table.
+
+    This reference always consists of the name of the physical table. In addition, each column can be bound to the
+    table to which it belongs by providing the associated table reference.
+
+    Since subqueries can export specific columns, references do not need to be physical tables. Instead, they can
+    refer to columns of virtual tables which export their columns under different names than the original (physical)
+    column. To accommodate for such situations, columns references can redirect to other column references. Use the
+    `resolve` method to retrieve the actual column reference (which will most likely correspond to a physical column
+    of a physical table).
+
+    Column references can be sorted lexicographically.
+    """
     name: str
     table: TableReference | None = None
     redirect: ColumnReference | None = None
 
-    def resolve(self):
+    def resolve(self) -> ColumnReference:
+        """Traverse the column redirections until a non-redirecting reference is found."""
         return self.redirect.resolve() if self.redirect else self
+
+    def is_bound(self) -> bool:
+        """Checks, whether this column is bound to a table."""
+        return self.table is not None
 
     def __lt__(self, other) -> bool:
         if not isinstance(other, type(self)):
@@ -89,12 +117,16 @@ class ColumnReference:
 
 
 class UnboundColumnError(errors.StateError):
+    """Indicates that a column is required to be bound to a table, but the provided column was not."""
+
     def __init__(self, column: ColumnReference) -> None:
         super().__init__("Column is not bound to any table: " + str(column))
         self.column = column
 
 
 class VirtualTableError(errors.StateError):
+    """Indicates that a table is required to correspond to a physical table, but the provided reference was not."""
+
     def __init__(self, table: TableReference) -> None:
         super().__init__("Table is virtual: " + str(table))
         self.table = table

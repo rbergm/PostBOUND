@@ -109,12 +109,12 @@ class PostgresRightDeepJoinClauseBuilder:
         return predicates.CompoundPredicate.create_and(all_filters) if all_filters else None
 
     def _fetch_join_predicate(self, tables: base.TableReference | list[base.TableReference]
-                              ) -> predicates.AbstractPredicate:
+                              ) -> predicates.AbstractPredicate | None:
         tables = collection_utils.enlist(tables)
         join_predicates = []
         for table in tables:
             join_predicates.extend(self.available_joins[table])
-        return predicates.CompoundPredicate.create_and(join_predicates)
+        return predicates.CompoundPredicate.create_and(join_predicates) if join_predicates else None
 
     def _collect_exported_columns(self, tables: set[base.TableReference]) -> set[base.ColumnReference]:
         columns_in_predicates = set()

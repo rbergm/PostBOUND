@@ -1,3 +1,5 @@
+"""Contains the Postgres implementation of the Database interface."""
+
 from __future__ import annotations
 
 import concurrent
@@ -50,7 +52,7 @@ class PostgresInterface(db.Database):
         # [(42, 24), (4.2, 2.4)] is left as-is
         if not query_result:
             return []
-        result_structure = query_result[0]  # how do the result tuples look like?
+        result_structure = query_result[0]  # what do the result tuples look like?
         if len(result_structure) == 1:  # do we have just one column?
             query_result = [row[0] for row in query_result]  # if it is just one column, unwrap it
         return query_result if len(query_result) > 1 else query_result[0]  # if it is just one row, unwrap it
@@ -65,10 +67,11 @@ class PostgresInterface(db.Database):
         return estimate
 
     def postgres_version(self) -> utils.Version:
+        """Provides the version of the Postgres instance currently connected to."""
         self._cursor.execute("SELECT VERSION();")
         pg_ver = self._cursor.fetchone()[0]
         # version looks like "PostgreSQL 14.6 on x86_64-pc-linux-gnu, compiled by gcc (...)
-        return utils.Version(pg_ver.split(" ")[0])
+        return utils.Version(pg_ver.split(" ")[1])
 
     def reset_connection(self) -> None:
         self._cursor.close()
@@ -80,6 +83,8 @@ class PostgresInterface(db.Database):
 
 
 class PostgresSchemaInterface(db.DatabaseSchema):
+    """Schema-specific parts of the general Postgres interface."""
+
     def __int__(self, postgres_db: PostgresInterface) -> None:
         super().__init__(postgres_db)
 
@@ -122,12 +127,19 @@ class PostgresSchemaInterface(db.DatabaseSchema):
         return result_set[0]
 
     def _fetch_columns(self, table: base.TableReference) -> list[str]:
+        """Retrieves all physical columns for a given table from the PG metadata catalogs."""
         query_template = "SELECT column_name FROM information_schema.columns WHERE table_name = %s"
         self._db.cursor().execute(query_template, (table.full_name,))
         result_set = self._db.cursor().fetchall()
         return [col[0] for col in result_set]
 
     def _fetch_indexes(self, table: base.TableReference) -> dict[str, bool]:
+        """Retrieves all index structures for a given table based on the PG metadata catalogs.
+
+        The resulting dictionary will contain one entry per column if there is any index on that column.
+        If the index is the primary key index, the column name will be mapped to `True`, otherwise to `False`.
+        Columns without any index structure will not appear in the dictionary at all.
+        """
         # query adapted from https://wiki.postgresql.org/wiki/Retrieve_primary_key_columns
 
         index_query = textwrap.dedent(f"""
@@ -142,6 +154,11 @@ class PostgresSchemaInterface(db.DatabaseSchema):
         return index_map
 
 
+# Postgres stores its array datatypes in a more general array-type structure (anyarray).
+# However, to extract the individual entries from such an array, the need to be casted to a typed array structure.
+# This dictionary contains the necessary casts for the actual column types.
+# For example, suppose a column contains integer values. If this column is aggregated into an anyarray entry, the
+# appropriate converter for this array is int[]. In other words DTypeArrayConverters["integer"] = "int[]"
 _DTypeArrayConverters = {
     "integer": "int[]",
     "text": "text[]",
@@ -150,6 +167,8 @@ _DTypeArrayConverters = {
 
 
 class PostgresStatisticsInterface(db.DatabaseStatistics):
+    """Statistics-specific parts of the Postgres interface."""
+
     def __init__(self, postgres_db: PostgresInterface) -> None:
         super().__init__(postgres_db)
 
@@ -240,6 +259,7 @@ def connect(*, name: str = "postgres", connect_string: str | None = None,
 
 
 def _parallel_query_initializer(connect_string: str, local_data: threading.local, verbose: bool = False) -> None:
+    """Internal function for the `ParallelQueryExecutor` to setup worker connections."""
     log = logging.make_logger(verbose)
     tid = threading.get_ident()
     connection = psycopg.connect(connect_string, application_name=f"PostBOUND parallel worker ID {tid}")
@@ -249,6 +269,7 @@ def _parallel_query_initializer(connect_string: str, local_data: threading.local
 
 
 def _parallel_query_worker(query: str, local_data: threading.local, verbose: bool = False) -> Any:
+    """Internal function for the `ParallelQueryExecutor` to run individual queries."""
     log = logging.make_logger(verbose)
     connection: psycopg.connection.Connection = local_data.connection
     connection.rollback()
@@ -272,6 +293,9 @@ class ParallelQueryExecutor:
     The parallel execution happens by maintaining a number of worker threads that execute the incoming queries.
     The number of input queries can exceed the worker pool size, potentially by a large margin. If that is the case,
     input queries will be buffered until a worker is available.
+
+    This parallel executor has nothing to do with the Database interface and acts entirely independently and
+    Postgres-specific.
     """
 
     def __init__(self, connect_string: str, n_threads: int = None, *, verbose: bool = False) -> None:

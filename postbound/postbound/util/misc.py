@@ -1,12 +1,21 @@
+"""Contains various utilities that did not fit any other category."""
+from __future__ import annotations
 
-from typing import Any, List, Union
+from typing import Any
 
-def _wrap_version(v: Any) -> "Version":
+
+def _wrap_version(v: Any) -> Version:
+    """Transforms any object into a Version instance if it is not already."""
     return v if isinstance(v, Version) else Version(v)
 
 
 class Version:
-    def __init__(self, ver: Union[str, int, List[str], List[int]]):
+    """Version instances represent versioning information and ensure that comparison operations work as expected.
+
+    For example, Version instances can be created for strings such as "14.6" or "1.3.1" and ensure that 14.6 > 1.3.1
+    """
+
+    def __init__(self, ver: str | int | list[str] | list[int]) -> None:
         if isinstance(ver, int):
             self._version = [ver]
         elif isinstance(ver, str):
@@ -14,7 +23,7 @@ class Version:
         elif isinstance(ver, list) and ver:
             self._version = [int(v) for v in ver]
         else:
-            raise ValueError(f"Unknown version string: {ver}")
+            raise ValueError(f"Unknown version string: '{ver}'")
 
     def __eq__(self, __o: object) -> bool:
         try:
