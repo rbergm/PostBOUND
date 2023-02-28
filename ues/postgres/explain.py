@@ -1,4 +1,3 @@
-
 import enum
 import json
 import re
@@ -140,7 +139,7 @@ class PlanNode:
     def depth(self, *, _curr_depth=1) -> int:
         if not self.is_join():
             return _curr_depth
-        return max(child.depth(_curr_depth=_curr_depth+1) for child in self.children)
+        return max(child.depth(_curr_depth=_curr_depth + 1) for child in self.children)
 
     def incoming_rows(self, *, fallback_live: bool = False,
                       fallback_live_idxscan: bool = False, fallback_live_seqscan: bool = False) -> int:
@@ -206,19 +205,19 @@ class PlanNode:
         if self.pruned:
             node_label += " [PRUNED]"
 
-        join_cond   = "  Join  : {}".format(self.join_pred if self.join_pred else "/")  # noqa: E221
+        join_cond = "  Join  : {}".format(self.join_pred if self.join_pred else "/")  # noqa: E221
         filter_cond = "  Filter: {}".format(self.filter_pred if self.filter_pred else "/")
 
         if not self.is_join():
             in_rows = "  Incoming Rows: {}".format(self.incoming_rows())
         else:
-            in_rows =  "  Incoming Rows (left) : {}\n".format(self.left.proc_rows)  # noqa: E222
+            in_rows = "  Incoming Rows (left) : {}\n".format(self.left.proc_rows)  # noqa: E222
             in_rows += "  Incoming Rows (right): {}".format(self.right.proc_rows)
 
         filter_rows = "  Filtered Rows: {}".format(self.filtered_rows if self.filtered_rows else "/")
-        out_rows    = "  Outgoing Rows: {}".format(self.proc_rows)  # noqa: E221
+        out_rows = "  Outgoing Rows: {}".format(self.proc_rows)  # noqa: E221
 
-        runtime     = "  Execution Time: {} ms".format(self.exec_time)  # noqa: E221
+        runtime = "  Execution Time: {} ms".format(self.exec_time)  # noqa: E221
 
         sep = "-" * max(len(line) for line in [node_label,
                                                join_cond, filter_cond,
@@ -258,7 +257,7 @@ class PlanNode:
         child_labels = []
         for child in self.children:
             child_labels.append(child.pretty_print(include_filter=include_filter, include_exec_time=include_exec_time,
-                                                   _indent=_indent+2))
+                                                   _indent=_indent + 2))
         child_content = "".join(child_labels)
         if _indent or as_string:
             return node_label + child_content
@@ -270,12 +269,12 @@ class PlanNode:
             return self, curr_depth
 
         if self.left.is_join():
-            left_leaf, left_depth = self.left._traverse_leaf_join(curr_depth=curr_depth+1)
+            left_leaf, left_depth = self.left._traverse_leaf_join(curr_depth=curr_depth + 1)
         else:
             left_leaf, left_depth = None, -1
 
         if self.right.is_join():
-            right_leaf, right_depth = self.right._traverse_leaf_join(curr_depth=curr_depth+1)
+            right_leaf, right_depth = self.right._traverse_leaf_join(curr_depth=curr_depth + 1)
         else:
             right_leaf, right_depth = None, -1
 
@@ -301,7 +300,7 @@ def _simplify_plan_tree(plans: List[Any]) -> Union[Any, List[Any]]:
     return plans
 
 
-EXPLAIN_PREDICATE_FORMAT = re.compile(r"\(?(?P<left>[\w\.]+) (?P<op>[<>=!]+) (?P<right>[\w\.]+)\)?")
+EXPLAIN_PREDICATE_FORMAT = re.compile(r"\(?(?P<left>[\w.]+) (?P<op>[<>=!]+) (?P<right>[\w.]+)\)?")
 
 
 def _lookup_join_predicate(join_filter_needle: str, mosp_query_haystack: List[mosp.MospQuery]) -> mosp.MospQuery:
@@ -433,10 +432,11 @@ def parse_explain_analyze(orig_query: "mosp.MospQuery", plan, *,
                 scan_child = (left_parsed if left_parsed.is_scan() and left_parsed.join_pred
                               else right_parsed)
                 scan_condition = scan_child.join_pred
-                join_col, join_op, target_col = EXPLAIN_PREDICATE_FORMAT.match(scan_condition).groupdict().values()
-                reconstructed_join_condition = f"({scan_child.alias_name}.{join_col} {join_op} {target_col})"
-                join_pred = reconstructed_join_condition
-                scan_child.join_pred = ""
+                if scan_condition:
+                    join_col, join_op, target_col = EXPLAIN_PREDICATE_FORMAT.match(scan_condition).groupdict().values()
+                    reconstructed_join_condition = f"({scan_child.alias_name}.{join_col} {join_op} {target_col})"
+                    join_pred = reconstructed_join_condition
+                    scan_child.join_pred = ""
         elif node == QueryNode.MERGE_JOIN:
             join_pred = plan.get("Merge Cond", "")
         else:
@@ -595,7 +595,7 @@ def evaluate_filter_estimate_accuracy(query: mosp.MospQuery, *,
         pg_estimate = predicate.estimate_result_rows(dbs=dbs)
         predicate_query = predicate.as_full_query(count_query=True)
         actual_rows = dbs.execute_query(str(predicate_query))
-        score = (pg_estimate+1) / (actual_rows+1)
+        score = (pg_estimate + 1) / (actual_rows + 1)
         estimation_evaluations[table] = FilterEstimationAccuracy(pg_estimate, actual_rows, score)
     return estimation_evaluations
 
