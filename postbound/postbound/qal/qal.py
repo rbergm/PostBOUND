@@ -8,6 +8,7 @@ generating new queries from existing ones or formatting the query strings.
 from __future__ import annotations
 
 import abc
+import copy
 
 from postbound.qal import base, clauses, predicates as preds
 
@@ -100,6 +101,11 @@ class SqlQuery(abc.ABC):
         In order for this check to work, all columns have to be bound to actual tables.
         """
         return any(not tab.full_name and not tab.virtual for tab in self.tables())
+
+    def without_hints(self) -> SqlQuery:
+        hintless_query = copy.copy(self)
+        hintless_query.hints = None
+        return hintless_query
 
     def __hash__(self) -> int:
         return hash(tuple(self.clauses()))

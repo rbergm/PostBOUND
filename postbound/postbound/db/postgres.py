@@ -41,7 +41,20 @@ class PostgresInterface(db.Database):
 
     def execute_query(self, query: qal.SqlQuery | str, *, cache_enabled: bool | None = None) -> Any:
         cache_enabled = cache_enabled or self._cache_enabled
-        query = str(query)
+
+        query_prefix = []
+        if isinstance(query, qal.SqlQuery) and query.hints:
+            for hint in query.hints.contents:
+                if hint.preparatory:
+                    self._cursor.execute(hint.content)
+                else:
+                    query_prefix.append(hint.content)
+            query = query.without_hints()
+
+        if query_prefix:
+            query_prefix.append("\n")
+
+        query = "\n".join(prefix for prefix in query_prefix) + str(query)
         if cache_enabled and query in self._query_cache:
             query_result = self._query_cache[query]
         else:

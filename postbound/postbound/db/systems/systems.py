@@ -19,6 +19,14 @@ class DatabaseSystem(abc.ABC):
 
     @abc.abstractmethod
     def format_query(self, query: qal.SqlQuery) -> str:
+        """Transforms the query into a databases-specific string.
+
+        This is mostly done to incorporate deviations from standard SQL notation.
+
+        Notice that the query transformation does not include hints since these have to be evaluated in a
+        cursor-specific way. This is acceptable since the individual hint blocks are expected to be system-specific
+        anyway.
+        """
         raise NotImplementedError
 
 
@@ -34,7 +42,7 @@ class Postgres(DatabaseSystem):
         return hint_provider.PostgresHintProvider()
 
     def format_query(self, query: qal.SqlQuery) -> str:
-        return format.format_quick(query)
+        return format.format_quick(query.without_hints())
 
 
 class MySql(DatabaseSystem):

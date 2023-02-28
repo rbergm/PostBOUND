@@ -49,14 +49,26 @@ _MospSelectTypesSQL = {"select": "SELECT", "select_distinct": "SELECT DISTINCT"}
 
 
 @dataclass
-class Hint:
+class HintBlock:
     content: str
+    preparatory: bool = False
 
     def __repr__(self) -> str:
         return str(self)
 
     def __str__(self) -> str:
         return self.content
+
+
+@dataclass
+class Hint:
+    contents: list[HintBlock]
+
+    def __repr__(self) -> str:
+        return "; ".join(str(content) for content in self.contents)
+
+    def __str__(self) -> str:
+        return "\n".join(str(content) for content in self.contents)
 
 
 class SelectType(enum.Enum):
