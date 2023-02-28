@@ -297,6 +297,46 @@ ggplot(all_workloads, aes(x = pg_ver, y = exec_time, fill = optimizer)) +
   theme(text = element_text(size = 18), plot.background = element_rect(fill = "transparent", color = NA))
 ggsave("evaluation/job-results-comparison.svg")
 
+ggplot(all_workloads, aes(x = pg_ver, y = exec_time, fill = optimizer)) +
+  geom_boxplot() +
+  scale_y_log10(labels = trans_format("log10", function(x) 10^x)) +
+  scale_fill_viridis(option = "cividis", discrete = TRUE, begin = 0.3, end = 0.95) +
+  labs(x = "Postgres version", y = "Execution time [seconds]", fill = "optimizer") +
+  theme_bw() +
+  theme(text = element_text(size = 18))
+ggsave("evaluation/job-results-comparison-solid.svg")
+
+# - - - - - - - - - - - - - - - -
+# 07: Poster: tail latencies ----
+# - - - - - - - - - - - - - - - -
+job_native <- read_csv("workloads/job-results-implicit-nonlj.csv") %>% rename(exec_time = query_rt_total) %>% mutate(optimizer = "Postgres 14.2")
+job_ues <- select_best_query_repetition("workloads/job-ues-results-base.csv")  %>% rename(exec_time = query_rt_total) %>% mutate(optimizer = "Pessimistic (UES)")
+
+native_80pctl <- quantile(job_native$exec_time, 0.8)
+ues_80pctl <- quantile(job_native$exec_time, 0.8)
+
+job_native["tail_latency"] <- ifelse(job_native$exec_time > native_80pctl, "tail latency", "normal query")
+job_ues["tail_latency"] <- ifelse(job_native$exec_time > ues_80pctl, "tail latency", "normal query")
+
+workload_results <- bind_rows(job_native %>% select(label, optimizer, exec_time, tail_latency),
+                              job_ues %>% select(label, optimizer, exec_time, tail_latency)) %>%
+  mutate(optimizer = factor(optimizer, c("Postgres 14.2", "Pessimistic (UES)"), ordered = TRUE)) %>%
+  group_by(optimizer, tail_latency) %>%
+  summarise(exec_time = sum(exec_time))
+
+
+ggplot(workload_results, aes(x = optimizer, y = exec_time, fill = tail_latency)) +
+  geom_col(position = "dodge") +
+  labs(title = "Join Order Benchmark runtime", x = "Optimizer", y = "Execution time [seconds]", fill = "Query category") +
+  scale_fill_viridis(discrete = TRUE, option = "cividis", end = 0.95) +
+  theme_bw() +
+  theme(text = element_text(size = 18), legend.position = "bottom",
+        panel.grid = element_line(colour = "grey"),
+        panel.background = element_rect(fill='transparent'),
+        plot.background = element_rect(fill='transparent', color=NA),
+        legend.background = element_rect(fill='transparent'))
+ggsave("evaluation/job-results-tail-latencies.svg")
+
 # - - - - - - - - - - - - - - - -
 # XX: Test area ----
 # - - - - - - - - - - - - - - - -
