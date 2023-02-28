@@ -28,7 +28,7 @@ class JobWorkloadTests(regression_suite.DatabaseTestCase):
         optimization_pipeline.load_settings(presets.fetch("ues"))
         optimization_pipeline.build()
         for label, query in self.job.entries():
-            with self.subTest(label, query=query):
+            with self.subTest(label=label, query=query):
                 original_result = self.db.execute_query(query, cache_enabled=False)
                 optimized_query = optimization_pipeline.optimize_query(query)
                 optimized_result = self.db.execute_query(optimized_query, cache_enabled=False)
