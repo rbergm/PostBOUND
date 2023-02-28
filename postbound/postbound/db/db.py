@@ -37,6 +37,7 @@ class Database(abc.ABC):
         self._query_cache = {}
         if self._cache_enabled:
             self.__inflate_query_cache()
+        atexit.register(self.close)
 
     @abc.abstractmethod
     def schema(self) -> DatabaseSchema:
@@ -86,6 +87,11 @@ class Database(abc.ABC):
         The specific type of cursor being returned depends on the concrete database implementation. However, the cursor
         object should always implement the interface described in the Python DB API specification 2.0 (PEP 249).
         """
+        raise NotImplementedError
+
+    @abc.abstractmethod
+    def close(self) -> None:
+        """Shuts down all currently open connections to the database."""
         raise NotImplementedError
 
     def _get_cache_enabled(self) -> bool:

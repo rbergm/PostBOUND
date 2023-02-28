@@ -96,6 +96,10 @@ class PostgresInterface(db.Database):
     def cursor(self) -> Any:
         return self._cursor
 
+    def close(self) -> None:
+        self._cursor.close()
+        self._connection.close()
+
 
 class PostgresSchemaInterface(db.DatabaseSchema):
     """Schema-specific parts of the general Postgres interface."""
