@@ -13,7 +13,7 @@ workloads_base_dir = "../../../workloads"
 
 class Workload(collections.UserDict[str, qal.SqlQuery]):
     @staticmethod
-    def read(root_dir: str, *, query_file_pattern: str = "*.sql", name: str = "", label_prefix: str = "") -> "Workload":
+    def read(root_dir: str, *, query_file_pattern: str = "*.sql", name: str = "", label_prefix: str = "") -> Workload:
         queries: dict[str, qal.SqlQuery] = {}
         root = pathlib.Path(root_dir)
 
@@ -40,12 +40,12 @@ class Workload(collections.UserDict[str, qal.SqlQuery]):
     def entries(self) -> list[tuple[str, qal.SqlQuery]]:
         return list(zip(self._sorted_labels, self._sorted_queries))
 
-    def first(self, n: int) -> "Workload":
+    def first(self, n: int) -> Workload:
         first_n_labels = self._sorted_labels[:n]
         sub_workload = {label: self.data[label] for label in first_n_labels}
         return Workload(sub_workload, self._name, self._root)
 
-    def pick_random(self, n: int) -> "Workload":
+    def pick_random(self, n: int) -> Workload:
         labels = list(self.keys())
         selected_labels = random.sample(labels, n)
         sub_workload = {label: self.data[label] for label in selected_labels}
@@ -59,6 +59,26 @@ class Workload(collections.UserDict[str, qal.SqlQuery]):
         return f"Workload: {name} ({len(self)} queries)"
 
 
+def read_workload(path: str, name: str = "", *, query_file_pattern: str = "*.sql",
+                  recurse_subdirectories: bool = False, query_label_prefix: str = "") -> Workload:
+    base_dir_workload = Workload.read(path, name=name, query_file_pattern=query_file_pattern,
+                                      label_prefix=query_label_prefix)
+    if not recurse_subdirectories:
+        return base_dir_workload
+
+    merged_queries = dict(base_dir_workload.data)
+    root_dir = pathlib.Path(path)
+    for subdir in root_dir.iterdir():
+        if not subdir.is_dir():
+            continue
+        subdir_prefix = query_label_prefix + "/" if not query_label_prefix.endswith("/") else query_label_prefix
+        subdir_prefix += subdir.stem + "/"
+        subdir_workload = read_workload(str(subdir), query_file_pattern=query_file_pattern, recurse_subdirectories=True,
+                                        query_label_prefix=subdir_prefix)
+        merged_queries |= subdir_workload.data
+    return Workload(merged_queries, name, root_dir)
+
+
 def job() -> Workload:
     return Workload.read(f"{workloads_base_dir}/JOB-Queries/implicit", name="JOB")
 
@@ -68,12 +88,4 @@ def ssb() -> Workload:
 
 
 def stack() -> Workload:
-    stack_root = pathlib.Path(f"{workloads_base_dir}/Stack-Queries")
-    merged_queries = {}
-    for query_container in stack_root.iterdir():
-        if not query_container.is_dir():
-            continue
-        sub_workload = Workload.read(str(query_container), label_prefix=query_container.stem + "/")
-        merged_queries |= sub_workload.data
-    merged_workload = Workload(merged_queries, "Stack", stack_root)
-    return merged_workload
+    return read_workload(f"{workloads_base_dir}/Stack-Queries", "Stack", recurse_subdirectories=True)
