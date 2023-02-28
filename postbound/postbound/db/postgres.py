@@ -32,9 +32,11 @@ class PostgresInterface(db.Database):
     def schema(self) -> db.DatabaseSchema:
         return self._db_schema
 
-    def statistics(self, emulated: bool | None = None) -> db.DatabaseStatistics:
+    def statistics(self, emulated: bool | None = None, cache_enabled: bool | None = None) -> db.DatabaseStatistics:
         if emulated is not None:
             self._db_stats.emulated = emulated
+        if cache_enabled is not None:
+            self._db_stats.cache_enabled = cache_enabled
         return self._db_stats
 
     def execute_query(self, query: qal.SqlQuery | str, *, cache_enabled: bool | None = None) -> Any:

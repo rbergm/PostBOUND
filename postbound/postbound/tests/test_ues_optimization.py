@@ -20,6 +20,7 @@ class JobWorkloadTests(regression_suite.DatabaseTestCase):
     def setUp(self) -> None:
         self.db = postgres.connect(config_file=pg_connect_file)
         self.db.statistics().emulated = True
+        self.db.statistics().cache_enabled = True
         self.job = workloads.job()
 
     def test_optimize_workload(self) -> None:

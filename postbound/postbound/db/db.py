@@ -44,7 +44,7 @@ class Database(abc.ABC):
         raise NotImplementedError
 
     @abc.abstractmethod
-    def statistics(self, emulated: bool | None = None) -> DatabaseStatistics:
+    def statistics(self, emulated: bool | None = None, cache_enabled: bool | None = None) -> DatabaseStatistics:
         """Provides access to different tables and columns of the database."""
         raise NotImplementedError
 
@@ -209,11 +209,17 @@ class DatabaseStatistics(abc.ABC):
     If the fallback to emulated statistics is not desired, the `enable_emulation_fallback` attribute can be set to
     `False`. In this case, each time the database should provide a statistic it does not support, an
     `UnsupportedDatabaseFeatureError` will be raised. However, this setting is overwritten by the `emulated` property.
+
+    Since the live computation of emulated statistics can be costly, the statistics interface has its own
+    `cache_enabled` attribute. It can be set to `None` to use the default caching behaviour of the database system.
+    However, if this attribute is set to `True` or `False` directly, caching will be used accordingly for all
+    compute-intensive statistics operations. The default is to use the database setting.
     """
 
-    def __init__(self, db: Database):
+    def __init__(self, db: Database, ):
         self.emulated = True
         self.enable_emulation_fallback = True
+        self.cache_enabled: bool | None = None
         self._db = db
 
     def total_rows(self, table: base.TableReference, *, emulated: bool | None = None,
@@ -225,7 +231,8 @@ class DatabaseStatistics(abc.ABC):
         if table.virtual:
             raise base.VirtualTableError(table)
         if emulated or (emulated is None and self.emulated):
-            return self._calculate_total_rows(table, cache_enabled=cache_enabled)
+            return self._calculate_total_rows(table,
+                                              cache_enabled=self._determine_caching_behaviour(cache_enabled))
         else:
             return self._retrieve_total_rows_from_stats(table)
 
@@ -241,7 +248,8 @@ class DatabaseStatistics(abc.ABC):
         elif column.table.virtual:
             raise base.VirtualTableError(column.table)
         if emulated or (emulated is None and self.emulated):
-            return self._calculate_distinct_values(column, cache_enabled=cache_enabled)
+            return self._calculate_distinct_values(column,
+                                                   cache_enabled=self._determine_caching_behaviour(cache_enabled))
         else:
             return self._retrieve_distinct_values_from_stats(column)
 
@@ -257,7 +265,8 @@ class DatabaseStatistics(abc.ABC):
         elif column.table.virtual:
             raise base.VirtualTableError(column.table)
         if emulated or (emulated is None and self.emulated):
-            return self._calculate_min_max_values(column, cache_enabled=cache_enabled)
+            return self._calculate_min_max_values(column,
+                                                  cache_enabled=self._determine_caching_behaviour(cache_enabled))
         else:
             return self._retrieve_min_max_values_from_stats(column)
 
@@ -276,7 +285,8 @@ class DatabaseStatistics(abc.ABC):
         elif column.table.virtual:
             raise base.VirtualTableError(column.table)
         if emulated or (emulated is None and self.emulated):
-            return self._calculate_most_common_values(column, k, cache_enabled=cache_enabled)
+            return self._calculate_most_common_values(column, k,
+                                                      cache_enabled=self._determine_caching_behaviour(cache_enabled))
         else:
             return self._retrieve_most_common_values_from_stats(column, k)
 
@@ -287,7 +297,7 @@ class DatabaseStatistics(abc.ABC):
         """
         query_template = "SELECT COUNT(*) FROM {tab}"
         count_query = query_template.format(tab=table.full_name)
-        return self._db.execute_query(count_query, cache_enabled=cache_enabled)
+        return self._db.execute_query(count_query, cache_enabled=self._determine_caching_behaviour(cache_enabled))
 
     def _calculate_distinct_values(self, column: base.ColumnReference, *, cache_enabled: bool | None = None) -> int:
         """Retrieves the number of distinct column values by issuing a COUNT(*) / GROUP BY query over that column
@@ -297,7 +307,7 @@ class DatabaseStatistics(abc.ABC):
         """
         query_template = "SELECT COUNT(DISTINCT {col}) FROM {tab}"
         count_query = query_template.format(col=column.name, tab=column.table.full_name)
-        return self._db.execute_query(count_query, cache_enabled=cache_enabled)
+        return self._db.execute_query(count_query, cache_enabled=self._determine_caching_behaviour(cache_enabled))
 
     def _calculate_min_max_values(self, column: base.ColumnReference, *, cache_enabled: bool | None = None) -> tuple:
         """Retrieves the minimum/maximum values in a column by issuing an aggregation query for that column against the
@@ -307,7 +317,7 @@ class DatabaseStatistics(abc.ABC):
         """
         query_template = "SELECT MIN({col}), MAX({col}) FROM {tab}"
         min_max_query = query_template.format(col=column.name, tab=column.table.full_name)
-        return self._db.execute_query(min_max_query, cache_enabled=cache_enabled)
+        return self._db.execute_query(min_max_query, cache_enabled=self._determine_caching_behaviour(cache_enabled))
 
     def _calculate_most_common_values(self, column: base.ColumnReference, k: int, *,
                                       cache_enabled: bool | None = None) -> list:
@@ -318,7 +328,7 @@ class DatabaseStatistics(abc.ABC):
         """
         query_template = "SELECT {col}, COUNT(*) AS n FROM {tab} GROUP BY {col} ORDER BY n DESC, {col} LIMIT {k}"
         count_query = query_template.format(col=column.name, tab=column.table.full_name, k=k)
-        return self._db.execute_query(count_query, cache_enabled=cache_enabled)
+        return self._db.execute_query(count_query, cache_enabled=self._determine_caching_behaviour(cache_enabled))
 
     @abc.abstractmethod
     def _retrieve_total_rows_from_stats(self, table: base.TableReference) -> int:
@@ -351,6 +361,9 @@ class DatabaseStatistics(abc.ABC):
         The column is assumed to be bound to a (non-virtual) table.
         """
         raise NotImplementedError
+
+    def _determine_caching_behaviour(self, local_cache_enabled: bool | None) -> bool:
+        return self.cache_enabled if local_cache_enabled is None else local_cache_enabled
 
     def __repr__(self) -> str:
         return str(self)
