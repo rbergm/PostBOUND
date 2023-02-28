@@ -22,7 +22,7 @@ class PostgresInterface(db.Database):
     def __init__(self, connect_string: str, name: str = "postgres", *, cache_enabled: bool = True) -> None:
         super().__init__(name, cache_enabled=cache_enabled)
         self._connect_string = connect_string
-        self._connection = psycopg.connect(connect_string)
+        self._connection = psycopg.connect(connect_string, application_name="PostBOUND")
         self._connection.autocommit = True
         self._cursor = self._connection.cursor()
 
