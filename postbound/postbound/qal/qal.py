@@ -90,6 +90,10 @@ class SqlQuery(abc.ABC):
                        self.orderby_clause, self.limit_clause]
         return [clause for clause in all_clauses if clause is not None]
 
+    def is_ordered(self) -> bool:
+        """Checks, whether this query produces its result tuples in order."""
+        return self.orderby_clause is not None
+
     def is_dependent(self) -> bool:
         """Checks, whether all columns that are referenced in this query are provided by the tables from this query.
 
