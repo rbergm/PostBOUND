@@ -36,6 +36,13 @@ class BaseProjection:
     def tables(self) -> set[base.TableReference]:
         return self.expression.tables()
 
+    def __hash__(self) -> int:
+        return hash((self.expression, self.target_name))
+
+    def __eq__(self, other) -> bool:
+        return (isinstance(other, type(self))
+                and self.expression == other.expression and self.target_name == other.target_name)
+
     def __repr__(self) -> str:
         return str(self)
 
@@ -52,6 +59,14 @@ _MospSelectTypesSQL = {"select": "SELECT", "select_distinct": "SELECT DISTINCT"}
 class Hint:
     preparatory_statements: str = ""
     query_hints: str = ""
+
+    def __hash__(self) -> int:
+        return hash((self.preparatory_statements, self.query_hints))
+
+    def __eq__(self, other) -> bool:
+        return (isinstance(other, type(self))
+                and self.preparatory_statements == other.preparatory_statements
+                and self.query_hints == other.query_hints)
 
     def __repr__(self) -> str:
         return str(self)
@@ -76,6 +91,12 @@ class Explain:
     @staticmethod
     def pure(format_type: str = "JSON") -> Explain:
         return Explain(False, format_type)
+
+    def __hash__(self) -> int:
+        return hash((self.analyze, self.format))
+
+    def __eq__(self, other) -> bool:
+        return isinstance(other, type(self)) and self.analyze == other.analyze and self.format == other.format
 
     def __repr__(self) -> str:
         return str(self)
@@ -244,6 +265,12 @@ class ExplicitFromClause(From):
 class Where:
     predicate: preds.AbstractPredicate
 
+    def __hash__(self) -> int:
+        return hash(self.predicate)
+
+    def __eq__(self, other) -> bool:
+        return isinstance(other, type(self)) and self.predicate == other.predicate
+
     def __repr__(self) -> str:
         return str(self)
 
@@ -255,6 +282,13 @@ class Where:
 class GroupBy:
     group_columns: list[expr.SqlExpression]
     distinct: bool = False
+
+    def __hash__(self) -> int:
+        return hash((tuple(self.group_columns), self.distinct))
+
+    def __eq__(self, other) -> bool:
+        return (isinstance(other, type(self))
+                and self.group_columns == other.group_columns and self.distinct == other.distinct)
 
     def __repr__(self) -> str:
         return str(self)
@@ -269,6 +303,12 @@ class GroupBy:
 class Having:
     condition: preds.AbstractPredicate
 
+    def __hash__(self) -> int:
+        return hash(self.condition)
+
+    def __eq__(self, other) -> bool:
+        return isinstance(other, type(self)) and self.condition == other.condition
+
     def __repr__(self) -> str:
         return str(self)
 
@@ -282,6 +322,15 @@ class OrderByExpression:
     ascending: bool | None = None
     nulls_first: bool | None = None
 
+    def __hash__(self) -> int:
+        return hash((self.column, self.ascending, self.nulls_first))
+
+    def __eq__(self, other) -> bool:
+        return (isinstance(other, type(self))
+                and self.column == other.column
+                and self.ascending == other.ascending
+                and self.nulls_first == other.nulls_first)
+
     def __repr__(self) -> str:
         return str(self)
 
@@ -294,6 +343,12 @@ class OrderByExpression:
 @dataclass
 class OrderBy:
     expressions: list[OrderByExpression]
+
+    def __hash__(self) -> int:
+        return hash(tuple(self.expressions))
+
+    def __eq__(self, other) -> bool:
+        return isinstance(other, type(self)) and self.expressions == other.expressions
 
     def __repr__(self) -> str:
         return str(self)
