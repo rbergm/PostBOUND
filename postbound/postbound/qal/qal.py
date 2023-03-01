@@ -8,7 +8,6 @@ generating new queries from existing ones or formatting the query strings.
 from __future__ import annotations
 
 import abc
-import copy
 
 from postbound.qal import base, clauses, predicates as preds
 
@@ -35,7 +34,7 @@ class SqlQuery(abc.ABC):
                  from_clause: clauses.From | None = None, where_clause: clauses.Where | None = None,
                  groupby_clause: clauses.GroupBy | None = None, having_clause: clauses.Having | None = None,
                  orderby_clause: clauses.OrderBy | None = None, limit_clause: clauses.Limit | None = None,
-                 hints: clauses.Hint | None = None) -> None:
+                 hints: clauses.Hint | None = None, explain: clauses.Explain | None = None) -> None:
         self.select_clause = select_clause
         self.from_clause = from_clause
         self.where_clause = where_clause
@@ -44,6 +43,7 @@ class SqlQuery(abc.ABC):
         self.orderby_clause = orderby_clause
         self.limit_clause = limit_clause
         self.hints = hints
+        self.explain = explain
 
     @abc.abstractmethod
     def is_implicit(self) -> bool:
@@ -85,7 +85,7 @@ class SqlQuery(abc.ABC):
 
         To distinguish the individual clauses, type checks are necessary.
         """
-        all_clauses = [self.hints,
+        all_clauses = [self.hints, self.explain,
                        self.select_clause, self.from_clause, self.where_clause,
                        self.orderby_clause, self.having_clause,
                        self.orderby_clause, self.limit_clause]
@@ -101,11 +101,6 @@ class SqlQuery(abc.ABC):
         In order for this check to work, all columns have to be bound to actual tables.
         """
         return any(not tab.full_name and not tab.virtual for tab in self.tables())
-
-    def without_hints(self) -> SqlQuery:
-        hintless_query = copy.copy(self)
-        hintless_query.hints = None
-        return hintless_query
 
     def __hash__(self) -> int:
         return hash(tuple(self.clauses()))
@@ -141,11 +136,12 @@ class ImplicitSqlQuery(SqlQuery):
                  groupby_clause: clauses.GroupBy | None = None,
                  having_clause: clauses.Having | None = None,
                  orderby_clause: clauses.OrderBy | None = None,
-                 limit_clause: clauses.Limit | None = None
-                 ) -> None:
+                 limit_clause: clauses.Limit | None = None,
+                 explain_clause: clauses.Explain | None = None) -> None:
         super().__init__(select_clause=select_clause, from_clause=from_clause, where_clause=where_clause,
                          groupby_clause=groupby_clause, having_clause=having_clause,
-                         orderby_clause=orderby_clause, limit_clause=limit_clause)
+                         orderby_clause=orderby_clause, limit_clause=limit_clause,
+                         explain=explain_clause)
 
     def is_implicit(self) -> bool:
         return True
@@ -171,11 +167,12 @@ class ExplicitSqlQuery(SqlQuery):
                  groupby_clause: clauses.GroupBy | None = None,
                  having_clause: clauses.Having | None = None,
                  orderby_clause: clauses.OrderBy | None = None,
-                 limit_clause: clauses.Limit | None = None
-                 ) -> None:
+                 limit_clause: clauses.Limit | None = None,
+                 explain_clause: clauses.Explain | None = None) -> None:
         super().__init__(select_clause=select_clause, from_clause=from_clause, where_clause=where_clause,
                          groupby_clause=groupby_clause, having_clause=having_clause,
-                         orderby_clause=orderby_clause, limit_clause=limit_clause)
+                         orderby_clause=orderby_clause, limit_clause=limit_clause,
+                         explain=explain_clause)
 
     def is_implicit(self) -> bool:
         return False

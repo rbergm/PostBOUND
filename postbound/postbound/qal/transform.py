@@ -144,6 +144,18 @@ def as_count_star_query(source_query: qal.SqlQuery) -> qal.SqlQuery:
     return target_query
 
 
+def drop_hints(query: qal.SqlQuery) -> qal.SqlQuery:
+    query_without_hints = copy.copy(query)
+    query_without_hints.hints = None
+    return query_without_hints
+
+
+def with_explain(query: qal.SqlQuery, explain: clauses.Explain) -> qal.SqlQuery:
+    explain_query = copy.copy(query)
+    explain_query.explain = explain
+    return explain_query
+
+
 def rename_table(source_query: qal.SqlQuery, from_table: base.TableReference, target_table: base.TableReference, *,
                  prefix_column_names: bool = False) -> qal.SqlQuery:
     target_query = copy.deepcopy(source_query)

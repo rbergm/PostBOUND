@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import collections
 import concurrent
 import concurrent.futures
 import os
@@ -12,8 +13,30 @@ from typing import Any
 import psycopg
 
 from postbound.db import db
-from postbound.qal import qal, base
+from postbound.qal import qal, base, transform
 from postbound.util import logging, misc as utils
+
+HintBlock = collections.namedtuple("HintBlock", ["preparatory_statements", "hints", "query"])
+
+
+def _break_query_hints(query: qal.SqlQuery | str) -> HintBlock:
+    if isinstance(query, str) or not query.hints:
+        return HintBlock([], "", query)
+
+    preparatory_statements = []
+    hints = []
+
+    for hint in query.hints.contents:
+        if hint.preparatory:
+            preparatory_statements.append(hint.content)
+        else:
+            hints.append(hint.content)
+
+    if hints and not hints[-1].endswith("\n"):
+        hints[-1] += "\n"
+    hint_str = "\n".join(hints)
+
+    return HintBlock(preparatory_statements, hint_str, transform.drop_hints(query))
 
 
 class PostgresInterface(db.Database):
@@ -42,19 +65,11 @@ class PostgresInterface(db.Database):
     def execute_query(self, query: qal.SqlQuery | str, *, cache_enabled: bool | None = None) -> Any:
         cache_enabled = cache_enabled or self._cache_enabled
 
-        query_prefix = []
-        if isinstance(query, qal.SqlQuery) and query.hints:
-            for hint in query.hints.contents:
-                if hint.preparatory:
-                    self._cursor.execute(hint.content)
-                else:
-                    query_prefix.append(hint.content)
-            query = query.without_hints()
+        preparatory_statements, hint_block, query = _break_query_hints(query)
+        for preparatory_statement in preparatory_statements:
+            self._cursor.execute(preparatory_statement)
+        query = hint_block + str(query)
 
-        if query_prefix:
-            query_prefix.append("\n")
-
-        query = "\n".join(prefix for prefix in query_prefix) + str(query)
         if cache_enabled and query in self._query_cache:
             query_result = self._query_cache[query]
         else:

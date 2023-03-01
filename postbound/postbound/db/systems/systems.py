@@ -4,7 +4,7 @@ import abc
 
 from postbound.db import db, postgres as pg_db
 from postbound.db.hints import provider as hint_provider
-from postbound.qal import qal, format
+from postbound.qal import qal, format, transform
 
 
 class DatabaseSystem(abc.ABC):
@@ -42,7 +42,7 @@ class Postgres(DatabaseSystem):
         return hint_provider.PostgresHintProvider()
 
     def format_query(self, query: qal.SqlQuery) -> str:
-        return format.format_quick(query.without_hints())
+        return format.format_quick(transform.drop_hints(query))
 
 
 class MySql(DatabaseSystem):
