@@ -155,7 +155,7 @@ def drop_hints(query: qal.SqlQuery, preparatory_statements_only: bool = False) -
     return query_without_hints
 
 
-def with_explain(query: qal.SqlQuery, explain: clauses.Explain) -> qal.SqlQuery:
+def as_explain(query: qal.SqlQuery, explain: clauses.Explain) -> qal.SqlQuery:
     explain_query = copy.copy(query)
     explain_query.explain = explain
     return explain_query
