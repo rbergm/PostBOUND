@@ -144,9 +144,14 @@ def as_count_star_query(source_query: qal.SqlQuery) -> qal.SqlQuery:
     return target_query
 
 
-def drop_hints(query: qal.SqlQuery) -> qal.SqlQuery:
+def drop_hints(query: qal.SqlQuery, preparatory_statements_only: bool = False) -> qal.SqlQuery:
     query_without_hints = copy.copy(query)
-    query_without_hints.hints = None
+    if preparatory_statements_only and query_without_hints.hints:
+        new_hints = copy.copy(query_without_hints.hints)
+        new_hints.preparatory_statements = ""
+        query_without_hints.hints = new_hints
+    else:
+        query_without_hints.hints = None
     return query_without_hints
 
 

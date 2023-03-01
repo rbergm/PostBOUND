@@ -49,26 +49,19 @@ _MospSelectTypesSQL = {"select": "SELECT", "select_distinct": "SELECT DISTINCT"}
 
 
 @dataclass
-class HintBlock:
-    content: str
-    preparatory: bool = False
+class Hint:
+    preparatory_statements: str = ""
+    query_hints: str = ""
 
     def __repr__(self) -> str:
         return str(self)
 
     def __str__(self) -> str:
-        return self.content
-
-
-@dataclass
-class Hint:
-    contents: list[HintBlock]
-
-    def __repr__(self) -> str:
-        return "; ".join(str(content) for content in self.contents)
-
-    def __str__(self) -> str:
-        return "\n".join(str(content) for content in self.contents)
+        if self.preparatory_statements and self.query_hints:
+            return self.preparatory_statements + "\n" + self.query_hints
+        elif self.preparatory_statements:
+            return self.preparatory_statements
+        return self.query_hints
 
 
 @dataclass

@@ -19,26 +19,6 @@ from postbound.util import logging, misc as utils
 HintBlock = collections.namedtuple("HintBlock", ["preparatory_statements", "hints", "query"])
 
 
-def _break_query_hints(query: qal.SqlQuery | str) -> HintBlock:
-    if isinstance(query, str) or not query.hints:
-        return HintBlock([], "", query)
-
-    preparatory_statements = []
-    hints = []
-
-    for hint in query.hints.contents:
-        if hint.preparatory:
-            preparatory_statements.append(hint.content)
-        else:
-            hints.append(hint.content)
-
-    if hints and not hints[-1].endswith("\n"):
-        hints[-1] += "\n"
-    hint_str = "\n".join(hints)
-
-    return HintBlock(preparatory_statements, hint_str, transform.drop_hints(query))
-
-
 class PostgresInterface(db.Database):
     """Database implementation for PostgreSQL backends."""
 
@@ -65,10 +45,11 @@ class PostgresInterface(db.Database):
     def execute_query(self, query: qal.SqlQuery | str, *, cache_enabled: bool | None = None) -> Any:
         cache_enabled = cache_enabled or self._cache_enabled
 
-        preparatory_statements, hint_block, query = _break_query_hints(query)
-        for preparatory_statement in preparatory_statements:
-            self._cursor.execute(preparatory_statement)
-        query = hint_block + str(query)
+        if isinstance(query, qal.SqlQuery):
+            if query.hints and query.hints.preparatory_statements:
+                self._cursor.execute(query.hints.preparatory_statements)
+            query = transform.drop_hints(query, preparatory_statements_only=True)
+            query = str(query)
 
         if cache_enabled and query in self._query_cache:
             query_result = self._query_cache[query]

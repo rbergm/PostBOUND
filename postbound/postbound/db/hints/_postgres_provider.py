@@ -259,16 +259,11 @@ def _generate_pg_operator_hints(query: qal.SqlQuery, join_order: data.JoinTree,
     if not settings and not hints:
         return query
 
-    settings_block = clauses.HintBlock("\n".join(settings), True) if settings else None
-    hints_block = clauses.HintBlock("\n".join(["/*+"] + hints + ["*/"])) if hints else None
-    all_hints = []
-    if settings_block:
-        all_hints.append(settings_block)
-    if hints_block:
-        all_hints.append(hints_block)
+    settings_block = "\n".join(settings)
+    hints_block = "\n".join(["/*+"] + hints + ["*/"]) if hints else ""
 
     hinted_query = copy.deepcopy(query)
-    hinted_query.hints = clauses.Hint(all_hints)
+    hinted_query.hints = clauses.Hint(settings_block, hints_block)
     return hinted_query
 
 

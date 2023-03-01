@@ -15,6 +15,10 @@ from postbound.qal import base, clauses, predicates as preds
 # TODO: add support for CTEs. This _should_ be pretty straightforward. Just remember to output the columns/tables at
 # the appropriate places
 
+def _stringify_clause(clause: object) -> str:
+    return str(clause) + "\n" if isinstance(clause, clauses.Hint) else str(clause) + " "
+
+
 class SqlQuery(abc.ABC):
     """Represents an arbitrary SQL query, providing convenient access to the different clauses in the query.
 
@@ -112,7 +116,7 @@ class SqlQuery(abc.ABC):
         return str(self)
 
     def __str__(self) -> str:
-        return " ".join(str(clause) for clause in self.clauses()) + ";"
+        return "".join(_stringify_clause(clause) for clause in self.clauses()).rstrip() + ";"
 
 
 class ImplicitSqlQuery(SqlQuery):
