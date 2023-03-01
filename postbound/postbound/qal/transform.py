@@ -138,9 +138,8 @@ def extract_query_fragment(source_query: qal.ImplicitSqlQuery,
 
 
 def as_count_star_query(source_query: qal.SqlQuery) -> qal.SqlQuery:
-    count_star = clauses.BaseProjection.count_star()
     target_query = copy.copy(source_query)
-    target_query.select_clause = count_star
+    target_query.select_clause = clauses.Select.count_star()
     return target_query
 
 

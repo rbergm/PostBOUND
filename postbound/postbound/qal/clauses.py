@@ -98,6 +98,10 @@ class SelectType(enum.Enum):
 
 
 class Select:
+    @staticmethod
+    def count_star() -> Select:
+        return Select(BaseProjection.count_star())
+
     def __init__(self, targets: BaseProjection | list[BaseProjection],
                  projection_type: SelectType = SelectType.Select) -> None:
         self.targets = collection_utils.enlist(targets)
