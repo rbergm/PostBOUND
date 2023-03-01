@@ -45,6 +45,15 @@ class PhysicalOperatorAssignment:
         else:
             self.system_specific_settings |= kwargs
 
+    def merge_with(self, other_assignment: PhysicalOperatorAssignment) -> PhysicalOperatorAssignment:
+        merged_assignment = PhysicalOperatorAssignment(self.query)
+        merged_assignment.global_settings = self.global_settings | other_assignment.global_settings
+        merged_assignment.join_operators = self.join_operators | other_assignment.join_operators
+        merged_assignment.scan_operators = self.scan_operators | other_assignment.scan_operators
+        merged_assignment.system_specific_settings = (self.system_specific_settings
+                                                      | other_assignment.system_specific_settings)
+        return merged_assignment
+
     def __getitem__(self, item: base.TableReference | Iterable[base.TableReference] | ScanOperators | JoinOperators
                     ) -> ScanOperators | JoinOperators | bool | None:
         if isinstance(item, ScanOperators) or isinstance(item, JoinOperators):
