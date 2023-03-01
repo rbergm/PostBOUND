@@ -3,7 +3,7 @@ from __future__ import annotations
 import abc
 
 from postbound.db import db, postgres as pg_db
-from postbound.db.hints import provider as hint_provider
+from postbound.db.hints import provider as hint_provider, postgres_provider
 from postbound.qal import qal, formatter, transform
 
 
@@ -39,7 +39,7 @@ class Postgres(DatabaseSystem):
         return self.postgres_db
 
     def query_adaptor(self) -> hint_provider.HintProvider:
-        return hint_provider.PostgresHintProvider()
+        return postgres_provider.PostgresHintProvider()
 
     def format_query(self, query: qal.SqlQuery) -> str:
         return formatter.format_quick(transform.drop_hints(query))
