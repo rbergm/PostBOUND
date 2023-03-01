@@ -71,6 +71,34 @@ class Hint:
         return "\n".join(str(content) for content in self.contents)
 
 
+@dataclass
+class Explain:
+    analyze: bool = False
+    format: str | None = None
+
+    @staticmethod
+    def explain_analyze(format_type: str = "JSON") -> Explain:
+        return Explain(True, format_type)
+
+    @staticmethod
+    def pure(format_type: str = "JSON") -> Explain:
+        return Explain(False, format_type)
+
+    def __repr__(self) -> str:
+        return str(self)
+
+    def __str__(self) -> str:
+        explain_prefix = "EXPLAIN"
+        explain_body = ""
+        if self.analyze and self.format:
+            explain_body = f" (ANALYZE, FORMAT {self.format})"
+        elif self.analyze:
+            explain_body = " ANALYZE"
+        elif self.format:
+            explain_body = f" (FORMAT {self.format})"
+        return explain_prefix + explain_body
+
+
 class SelectType(enum.Enum):
     Select = "SELECT"
     SelectDistinct = "SELECT DISTINCT"
