@@ -27,10 +27,19 @@ COL_OPT_SETTINGS = "optimization_settings"
 
 
 class QueryPreparationService:
-    def __init__(self, *, explain: bool = False, count_star: bool = False, analyze: bool = False):
+    """
+
+    Describes necessary modifications on the query
+    and SQL statements that have to be executed before
+
+    """
+
+    def __init__(self, *, explain: bool = False, count_star: bool = False, analyze: bool = False,
+                 preparatory_statements: list[str] | None = None):
         self.explain = explain
         self.analyze = analyze
         self.count_star = count_star
+        self.preparatory_stmts = preparatory_statements if preparatory_statements else []
 
     def prepare_query(self, query: qal.SqlQuery) -> qal.SqlQuery:
         if self.analyze:
@@ -43,12 +52,17 @@ class QueryPreparationService:
 
         return query
 
+    def preparatory_statements(self) -> list[str]:
+        return self.preparatory_stmts
+
 
 def execute_query(query: qal.SqlQuery, database: db.Database, *,
                   repetitions: int = 1, query_preparation: QueryPreparationService | None = None) -> pd.DataFrame:
     original_query = query
     if query_preparation:
         query = query_preparation.prepare_query(query)
+        for stmt in query_preparation.preparatory_statements():
+            database.cursor().execute(stmt)
 
     query_results = []
     execution_times = []
