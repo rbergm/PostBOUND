@@ -1,14 +1,76 @@
+"""This module provides PostBOUNDs basic interaction with databases.
+
+More specifically, this includes an interface to interact with databases, schema information and statistics as well
+as a utility to easily obtain database connections.
+
+Take a look at the central `Database` class for more details.
+"""
+
 from __future__ import annotations
 
 import abc
 import atexit
 import json
 import os
+import typing
 import warnings
+from collections.abc import Sequence
 from typing import Any
 
 from postbound.qal import base, qal
 from postbound.util import dicts as dict_utils
+
+
+class Cursor(typing.Protocol):
+    """Interface for database cursors that adhere to the Python Database API specification.
+
+    This is not a complete representation and only focuses on the parts of the specification that are important for
+    PostBOUND right now. In the future, additional methods might get added.
+
+    This type is only intended to denote the expected return type of certain methods, the cursors themselves are
+    supplied by the respective database integrations. There should be no need to implement one manually and all cursors
+    should be compatible with this interface by default (since they are DB API 2.0 cursor objects).
+
+    See PEP 249 for details (https://peps.python.org/pep-0249/)
+    """
+
+    @abc.abstractmethod
+    def close(self) -> None:
+        raise NotImplementedError
+
+    @abc.abstractmethod
+    def execute(self, operation: str, parameters: typing.Optional[dict | Sequence] = None) -> typing.Optional[Cursor]:
+        raise NotImplementedError
+
+    @abc.abstractmethod
+    def fetchone(self) -> typing.Optional[tuple]:
+        raise NotImplementedError
+
+    @abc.abstractmethod
+    def fetchall(self) -> typing.Optional[list[tuple]]:
+        raise NotImplementedError
+
+
+class Connection(typing.Protocol):
+    """Interface for database connections that adhere to the Python Database API specification.
+
+    This is not a complete representation and only focuses on the parts of the specification that are important for
+    PostBOUND right now. In the future, additional methods might get added.
+
+    This type is only intended to denote the expected return type of certain methods, the connections themselves are
+    supplied by the respective database integrations. There should be no need to implement one manually and all
+    connections should be compatible with this interface by default (since they are DB API 2.0 connection objects).
+
+    See PEP 249 for details (https://peps.python.org/pep-0249/)
+    """
+
+    @abc.abstractmethod
+    def close(self) -> None:
+        raise NotImplementedError
+
+    @abc.abstractmethod
+    def cursor(self) -> Cursor:
+        raise NotImplementedError
 
 
 class Database(abc.ABC):
@@ -81,7 +143,7 @@ class Database(abc.ABC):
         self._query_cache = {}
 
     @abc.abstractmethod
-    def cursor(self) -> Any:
+    def cursor(self) -> Cursor:
         """Provides a cursor to execute queries and iterate over result sets manually.
 
         The specific type of cursor being returned depends on the concrete database implementation. However, the cursor

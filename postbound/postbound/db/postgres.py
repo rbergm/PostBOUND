@@ -89,7 +89,7 @@ class PostgresInterface(db.Database):
         self._connection.rollback()
         self._cursor = self._connection.cursor()
 
-    def cursor(self) -> Any:
+    def cursor(self) -> db.Cursor:
         return self._cursor
 
     def close(self) -> None:
