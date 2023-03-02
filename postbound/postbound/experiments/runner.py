@@ -4,11 +4,13 @@ import random
 from datetime import datetime
 from typing import Iterable
 
+import numpy as np
 import pandas as pd
 
 from postbound import postbound as pb
 from postbound.db import db
 from postbound.qal import qal, transform, clauses
+from postbound.optimizer import validation
 
 COL_LABEL = "label"
 COL_QUERY = "query"
@@ -24,6 +26,8 @@ COL_WORKLOAD_ITER = "workload_iteration"
 
 COL_ORIG_QUERY = "original_query"
 COL_OPT_SETTINGS = "optimization_settings"
+COL_OPT_SUCCESS = "optimization_success"
+COL_OPT_FAILURE_REASON = "optimization_failure_reason"
 
 
 class QueryPreparationService:
@@ -56,6 +60,16 @@ class QueryPreparationService:
         return self.preparatory_stmts
 
 
+def _failed_execution_result(query: qal.SqlQuery, repetitions: int = 1) -> pd.DataFrame:
+    return pd.DataFrame({
+        COL_QUERY: [transform.drop_hints(query)] * repetitions,
+        COL_QUERY_HINTS: [query.hints] * repetitions,
+        COL_T_EXEC: [np.nan] * repetitions,
+        COL_RESULT: [np.nan] * repetitions,
+        COL_REP: list(range(1, repetitions + 1))
+    })
+
+
 def execute_query(query: qal.SqlQuery, database: db.Database, *,
                   repetitions: int = 1, query_preparation: QueryPreparationService | None = None) -> pd.DataFrame:
     original_query = query
@@ -75,11 +89,13 @@ def execute_query(query: qal.SqlQuery, database: db.Database, *,
         query_results.append(current_result)
         execution_times.append(exec_time.total_seconds())
 
-    return pd.DataFrame({COL_QUERY: [transform.drop_hints(original_query)] * repetitions,
-                         COL_QUERY_HINTS: [original_query.hints] * repetitions,
-                         COL_T_EXEC: execution_times,
-                         COL_RESULT: query_results,
-                         COL_REP: range(1, repetitions + 1)})
+    return pd.DataFrame({
+        COL_QUERY: [transform.drop_hints(original_query)] * repetitions,
+        COL_QUERY_HINTS: [original_query.hints] * repetitions,
+        COL_T_EXEC: execution_times,
+        COL_RESULT: query_results,
+        COL_REP: list(range(1, repetitions + 1))
+    })
 
 
 def execute_workload(queries: Iterable[qal.SqlQuery], database: db.Database, *,
@@ -115,17 +131,25 @@ def execute_workload(queries: Iterable[qal.SqlQuery], database: db.Database, *,
 def optimize_and_execute_query(query: qal.SqlQuery, optimization_pipeline: pb.OptimizationPipeline, *,
                                repetitions: int = 1,
                                query_preparation: QueryPreparationService | None = None) -> pd.DataFrame:
-    start_time = datetime.now()
-    optimized_query = optimization_pipeline.optimize_query(query)
-    end_time = datetime.now()
-    optimization_time = end_time - start_time
+    try:
+        start_time = datetime.now()
+        optimized_query = optimization_pipeline.optimize_query(query)
+        end_time = datetime.now()
+        optimization_time = end_time - start_time
 
-    execution_result = execute_query(optimized_query, repetitions=repetitions, query_preparation=query_preparation,
-                                     database=optimization_pipeline.target_dbs.interface())
-    execution_result[COL_T_OPT] = optimization_time.total_seconds()
+        execution_result = execute_query(optimized_query, repetitions=repetitions, query_preparation=query_preparation,
+                                         database=optimization_pipeline.target_dbs.interface())
+        execution_result[COL_T_OPT] = optimization_time.total_seconds()
+        execution_result[COL_OPT_SUCCESS] = True
+        execution_result[COL_OPT_FAILURE_REASON] = None
+    except validation.UnsupportedQueryError as e:
+        execution_result = _failed_execution_result(query, repetitions)
+        execution_result[COL_T_OPT] = np.nan
+        execution_result[COL_OPT_SUCCESS] = False
+        execution_result[COL_OPT_FAILURE_REASON] = e.features
+
     execution_result[COL_ORIG_QUERY] = query
-    execution_result[COL_OPT_SETTINGS] = optimization_pipeline
-
+    execution_result[COL_OPT_SETTINGS] = [optimization_pipeline.describe()] * repetitions
     return execution_result
 
 
@@ -158,4 +182,5 @@ def optimize_and_execute_workload(queries: Iterable[qal.SqlQuery], optimization_
     return result_df[[COL_LABEL, COL_EXEC_IDX, COL_QUERY,
                       COL_WORKLOAD_ITER, COL_REP,
                       COL_T_OPT, COL_T_EXEC, COL_RESULT,
+                      COL_OPT_SUCCESS, COL_OPT_FAILURE_REASON,
                       COL_ORIG_QUERY]]
