@@ -28,6 +28,10 @@ class BaseTableCardinalityEstimator(abc.ABC):
     def estimate_total_rows(self, table: base.TableReference) -> int:
         raise NotImplementedError
 
+    @abc.abstractmethod
+    def describe(self) -> dict:
+        raise NotImplementedError
+
     def __getitem__(self, item: base.TableReference) -> int:
         return self.estimate_for(item)
 
@@ -58,6 +62,9 @@ class DBCardinalityEstimator(BaseTableCardinalityEstimator):
     def estimate_total_rows(self, table: base.TableReference) -> int:
         return self.database.statistics().total_rows(table, emulated=True)
 
+    def describe(self) -> dict:
+        return {"name": "native"}
+
 
 class PreciseCardinalityEstimator(BaseTableCardinalityEstimator):
     def __init__(self, database: db.Database) -> None:
@@ -82,3 +89,6 @@ class PreciseCardinalityEstimator(BaseTableCardinalityEstimator):
 
     def estimate_total_rows(self, table: base.TableReference) -> int:
         return self.database.statistics().total_rows(table, emulated=False)
+
+    def describe(self) -> dict:
+        return {"name": "precise"}

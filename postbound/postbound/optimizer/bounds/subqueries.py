@@ -19,6 +19,10 @@ class SubqueryGenerationPolicy(abc.ABC):
     def generate_subquery_for(self, join: predicates.AbstractPredicate, join_graph: data.JoinGraph) -> bool:
         raise NotImplementedError
 
+    @abc.abstractmethod
+    def describe(self) -> dict:
+        raise NotImplementedError
+
 
 class LinearSubqueryGenerationPolicy(SubqueryGenerationPolicy):
     def __init__(self):
@@ -29,6 +33,9 @@ class LinearSubqueryGenerationPolicy(SubqueryGenerationPolicy):
 
     def generate_subquery_for(self, join: predicates.AbstractPredicate, join_graph: data.JoinGraph) -> bool:
         return False
+
+    def describe(self) -> dict:
+        return {"name": "linear"}
 
 
 class UESSubqueryGenerationPolicy(SubqueryGenerationPolicy):
@@ -52,3 +59,6 @@ class UESSubqueryGenerationPolicy(SubqueryGenerationPolicy):
                 break
 
         return self.stats_container.upper_bounds[joined_table] < self.stats_container.base_table_estimates[joined_table]
+
+    def describe(self) -> dict:
+        return {"name": "defensive"}

@@ -24,12 +24,19 @@ class PhysicalOperatorSelection(abc.ABC):
         self.next_selection = next_selection
 
     @abc.abstractmethod
+    def describe(self) -> dict:
+        raise NotImplementedError
+
+    @abc.abstractmethod
     def _apply_selection(self, query: qal.ImplicitSqlQuery,
                          join_order: data.JoinTree | None) -> operators.PhysicalOperatorAssignment:
         raise NotImplementedError
 
 
 class UESOperatorSelection(PhysicalOperatorSelection):
+    def describe(self) -> dict:
+        return {"name": "ues"}
+
     def _apply_selection(self, query: qal.ImplicitSqlQuery,
                          join_order: data.JoinTree | None) -> operators.PhysicalOperatorAssignment:
         assignment = operators.PhysicalOperatorAssignment(query)
@@ -38,6 +45,10 @@ class UESOperatorSelection(PhysicalOperatorSelection):
 
 
 class EmptyPhysicalOperatorSelection(PhysicalOperatorSelection):
+
+    def describe(self) -> dict:
+        return {"name": "no_selection"}
+
     def _apply_selection(self, query: qal.ImplicitSqlQuery,
                          join_order: data.JoinTree | None) -> operators.PhysicalOperatorAssignment:
         return operators.PhysicalOperatorAssignment(query)

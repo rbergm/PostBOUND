@@ -6,14 +6,16 @@ from postbound.optimizer import presets, validation
 from postbound.optimizer.joinorder import enumeration
 from postbound.optimizer.physops import selection
 from postbound.db.systems import systems as db_sys
+from postbound.util import errors
 
 
 class OptimizationPipeline:
     def __init__(self, target_dbs: db_sys.DatabaseSystem) -> None:
         self.target_dbs = target_dbs
         self.pre_check: validation.OptimizationPreCheck | None = None
-        self.join_order_enumerator: enumeration.UESJoinOrderOptimizer | None = None
+        self.join_order_enumerator: enumeration.JoinOrderOptimizer | None = None
         self.physical_operator_selection: selection.PhysicalOperatorSelection | None = None
+        self._build = False
 
     def setup_query_support_check(self, check: validation.OptimizationPreCheck) -> OptimizationPipeline:
         self.pre_check = check
@@ -45,8 +47,10 @@ class OptimizationPipeline:
             self.join_order_enumerator = enumeration.EmptyJoinOrderOptimizer()
         if not self.physical_operator_selection:
             self.physical_operator_selection = selection.EmptyPhysicalOperatorSelection()
+        self._build = True
 
     def optimize_query(self, query: qal.SqlQuery) -> qal.SqlQuery:
+        self._assert_is_build()
         pre_check_passed, failure_reason = self.pre_check.check_supported_query(query)
         if not pre_check_passed:
             raise validation.UnsupportedQueryError(query, failure_reason)
@@ -60,3 +64,22 @@ class OptimizationPipeline:
         operators = self.physical_operator_selection.select_physical_operators(implicit_query, join_order)
 
         return self.target_dbs.query_adaptor().adapt_query(implicit_query, join_order, operators)
+
+    def describe(self) -> dict:
+        return {
+            "database_system": {
+                "name": self.target_dbs.interface().name,
+                "statistics": {
+                    "emulated": self.target_dbs.interface().statistics().emulated,
+                    "cache_enabled": self.target_dbs.interface().statistics().cache_enabled
+                }
+            },
+            "query_pre_check": self.pre_check.describe() if self.pre_check else None,
+            "join_ordering": self.join_order_enumerator.describe() if self.join_order_enumerator else None,
+            "operator_selection": (self.physical_operator_selection.describe() if self.physical_operator_selection
+                                   else None)
+        }
+
+    def _assert_is_build(self) -> None:
+        if not self._build:
+            raise errors.StateError("Pipeline has not been build")

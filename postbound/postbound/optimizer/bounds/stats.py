@@ -75,6 +75,10 @@ class StatisticsContainer(abc.ABC, Generic[StatsType]):
         for third_party_column in third_party_columns:
             self._update_third_party_column_frequency(lowest_joined_column_frequency, third_party_column)
 
+    @abc.abstractmethod
+    def describe(self) -> dict:
+        raise NotImplementedError
+
     def _inflate_base_table_estimates(self):
         for table in self.query.tables():
             table_estimate = self.base_table_estimator.estimate_for(table)
@@ -99,6 +103,9 @@ class MaxFrequencyStatsContainer(StatisticsContainer[MaxFrequency]):
     def __init__(self, database_stats: db.DatabaseStatistics):
         super().__init__()
         self.database_stats = database_stats
+
+    def describe(self) -> dict:
+        return {"name": "max_column_frequency"}
 
     def _inflate_attribute_frequencies(self):
         referenced_columns = set()

@@ -22,6 +22,10 @@ class JoinOrderOptimizer(abc.ABC):
     def optimize_join_order(self, query: qal.ImplicitSqlQuery) -> data.JoinTree | None:
         raise NotImplementedError
 
+    @abc.abstractmethod
+    def describe(self) -> dict:
+        raise NotImplementedError
+
 
 def _fetch_filters(query: qal.SqlQuery, table: base.TableReference) -> preds.AbstractPredicate | None:
     all_filters = query.predicates().filters_for(table)
@@ -72,6 +76,17 @@ class UESJoinOrderOptimizer(JoinOrderOptimizer):
             final_join_tree = self._star_query_optimizer(query, join_graph)
 
         return final_join_tree
+
+    def describe(self) -> dict:
+        return {
+            "name": "ues",
+            "settings": {
+                "base_table_estimation": self.base_table_estimation.describe(),
+                "join_estimation": self.join_estimation.describe(),
+                "subqueries": self.subquery_policy.describe(),
+                "statistics": self.stats_container.describe()
+            }
+        }
 
     def _default_ues_optimizer(self, query: qal.SqlQuery, join_graph: data.JoinGraph) -> data.JoinTree:
         join_tree = data.JoinTree()
@@ -247,6 +262,9 @@ class EmptyJoinOrderOptimizer(JoinOrderOptimizer):
 
     def optimize_join_order(self, query: qal.ImplicitSqlQuery) -> data.JoinTree | None:
         return None
+
+    def describe(self) -> dict:
+        return {"name": "no_ordering"}
 
 
 class JoinOrderOptimizationError(RuntimeError):

@@ -23,6 +23,10 @@ class JoinBoundCardinalityEstimator(abc.ABC):
     def estimate_for(self, join_edge: predicates.AbstractPredicate, join_graph: data.JoinGraph) -> int:
         raise NotImplementedError
 
+    @abc.abstractmethod
+    def describe(self) -> dict:
+        raise NotImplementedError
+
 
 class UESJoinBoundEstimator(JoinBoundCardinalityEstimator):
     def __init__(self) -> None:
@@ -51,6 +55,9 @@ class UESJoinBoundEstimator(JoinBoundCardinalityEstimator):
                 current_min_bound = join_bound
 
         return current_min_bound
+
+    def describe(self) -> dict:
+        return {"name": "ues"}
 
     def _estimate_pk_fk_join(self, fk_column: base.ColumnReference, pk_column: base.ColumnReference) -> int:
         pk_cardinality = self.stats_container.base_table_estimates[pk_column.table]

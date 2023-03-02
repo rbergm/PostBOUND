@@ -11,6 +11,10 @@ class OptimizationPreCheck(abc.ABC):
     def check_supported_query(self, query: qal.SqlQuery) -> tuple[bool, str | list[str]]:
         raise NotImplementedError
 
+    @abc.abstractmethod
+    def describe(self) -> dict:
+        raise NotImplementedError
+
 
 def _detect_dependent_subqueries(expression: expr.SqlExpression) -> bool:
     if isinstance(expression, expr.SubqueryExpression):
@@ -49,10 +53,16 @@ class UESOptimizationPreCheck(OptimizationPreCheck):
 
         return not failures, list(failures)
 
+    def describe(self) -> dict:
+        return {"name": "ues"}
+
 
 class EmptyPreCheck(OptimizationPreCheck):
     def check_supported_query(self, query: qal.SqlQuery) -> tuple[bool, str | list[str]]:
         return True, ""
+
+    def describe(self) -> dict:
+        return {"name": "no_check"}
 
 
 class UnsupportedQueryError(RuntimeError):
