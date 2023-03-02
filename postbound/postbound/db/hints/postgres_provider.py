@@ -1,3 +1,5 @@
+"""PostgreSQL-specific hint generation and query transformation."""
+
 from __future__ import annotations
 
 import collections
@@ -12,14 +14,24 @@ from postbound.optimizer.physops import operators
 
 
 def _build_subquery_alias(tables: Iterable[base.TableReference]) -> str:
+    """Generates a unified name for a subquery joining the specified tables."""
     return "_".join(tab.identifier() for tab in sorted(tables))
 
 
 def _build_column_alias(column: base.ColumnReference) -> str:
+    """Generates a unified name for columns that are exported from a subquery.
+
+    This prevents name clashes with other columns of similar name that are processed outside of the subquery.
+    """
     return f"{column.table.identifier()}_{column.name}"
 
 
 class PostgresRightDeepJoinClauseBuilder:
+    """Service to generate an explicit from clause for a given join order.
+
+    The join order is traversed in right-deep manner. Any non-base table joins are inserted as subqueries.
+    """
+
     def __init__(self, query: qal.ImplicitSqlQuery) -> None:
         self.query = query
         self.joined_tables = set()
@@ -28,17 +40,36 @@ class PostgresRightDeepJoinClauseBuilder:
         self.original_column_names: dict[base.ColumnReference, str] = {}
 
     def for_join_tree(self, join_tree: data.JoinTree) -> clauses.ExplicitFromClause:
+        """Generates the FROM clause based on the join tree. Subqueries are inserted as-needed.
+
+        If a subquery exports specific columns that are used at other places in the query, these columns will have
+        been renamed to prevent name clashes with columns from tables that are joined outside of the subquery. While
+        this method performs the appropriate renaming within the FROM clause, the renamed attributes have to be applied
+        to other clauses such as GROUP BY as well. In order to do so, the performed renamings can be looked up in the
+        `renamed_columns` attribute after the FROM clause has been build. Likewise, if a renamed attribute should be
+        exported in the SELECT clause, the renaming has to undone to ensure compatibility with other code that uses the
+        optimized query (and must refer to the columns by name). The `original_column_names` attribute contains the
+        reverse mapping from renamed column to original name and can be used to select the columns AS their true name.
+
+        The linear structure of a FROM clause means that circular joins have to be broken up in some way. In order to
+        do so, this service applies the following strategy: each time a new table is joined, all possible join
+        predicates on that table are looked up. If one of these predicates only references tables that have already
+        been joined as well, that predicate is included in the final join predicate for the table. Likewise, filters
+        on the table are included in the ON clause, too.
+        """
         self._setup()
         base_table, *joined_tables = self._build_from_clause(join_tree.root)
         return clauses.ExplicitFromClause(base_table, joined_tables)
 
     def _setup(self) -> None:
+        """Initializes all necessary attributes."""
         self.joined_tables = set()
         self.available_joins = collections.defaultdict(list)
         self.renamed_columns = {}
         self.original_column_names = {}
 
     def _build_from_clause(self, join_node: data.JoinTreeNode) -> list[base.TableReference | joins.Join]:
+        """Constructs the actual FROM clause and updates all renamings and available joins as needed."""
         if isinstance(join_node, data.BaseTableNode):
             self._mark_tables_joined(join_node.table)
             return [join_node.table]
@@ -58,6 +89,18 @@ class PostgresRightDeepJoinClauseBuilder:
 
     def _build_base_table_join(self, base_table_node: data.BaseTableNode,
                                join_condition: predicates.AbstractPredicate) -> joins.TableJoin:
+        """Constructs the join statement for the given table.
+
+        The ON clause is build according to the following rules:
+
+        1. all filters on the table are added to the ON clause
+        2. the actual join predicate is included in the ON clause
+        3. all join predicates that join tables that are already part of the FROM clause are included in the ON clause
+
+        If some of the join columns have to be renamed, this is performed here as well.
+
+        Lastly, this method also updates all the renamings and available joins.
+        """
         base_table = base_table_node.table
         table_filters = self._fetch_filters(base_table)
         transitive_join_predicates = self._fetch_join_predicate(base_table)
@@ -73,6 +116,22 @@ class PostgresRightDeepJoinClauseBuilder:
 
     def _build_subquery_join(self, join_node: data.JoinNode,
                              join_condition: predicates.AbstractPredicate) -> joins.SubqueryJoin:
+        """Constructs the subquery join statement for the given table.
+
+        The subquery will have the following structure:
+
+        - all columns that are referenced in other parts of the query are exported in the SELECT clause. They will be
+        renamed to include their original table name to prevent any name clashes with columns of the same name that
+        are exported by other tables in the query
+        - the subquery contains all tables that are joined in the current join node branch in its FROM clause
+        - the FROM clause itself is structured in an explicit manner once again and the same rules for normal table
+        joins apply (see `_build_base_table_join`)
+
+        The subquery does not contain a WHERE clause, GROUP BY, etc. Such operations are part of the outer query.
+
+        If the current join branch contains further subqueries, these are generated in a recursive manner, using the
+        same rules.
+        """
         subquery_tables = set(join_node.tables())
         subquery_export_name = _build_subquery_alias(subquery_tables)
 
@@ -92,6 +151,10 @@ class PostgresRightDeepJoinClauseBuilder:
         return joins.SubqueryJoin.inner(subquery, subquery_export_name, join_condition)
 
     def _fetch_filters(self, table: base.TableReference) -> predicates.AbstractPredicate | None:
+        """Provides all the filter predicates specified on the current table.
+
+        It only a single table has been placed in the FROM clause so far, this also includes all filters on that table.
+        """
         table_filters = list(self.query.predicates().filters_for(table))
         if len(self.joined_tables) == 1:
             base_table = collection_utils.simplify(self.joined_tables)
@@ -103,6 +166,7 @@ class PostgresRightDeepJoinClauseBuilder:
 
     def _fetch_join_predicate(self, tables: base.TableReference | list[base.TableReference]
                               ) -> predicates.AbstractPredicate | None:
+        """"Provides all available join predicates on the given tables."""
         tables = collection_utils.enlist(tables)
         join_predicates = []
         for table in tables:
@@ -110,6 +174,7 @@ class PostgresRightDeepJoinClauseBuilder:
         return predicates.CompoundPredicate.create_and(join_predicates) if join_predicates else None
 
     def _collect_exported_columns(self, tables: set[base.TableReference]) -> set[base.ColumnReference]:
+        """Provides all columns from the given tables that are used at some other place in the query."""
         columns_in_predicates = set()
         for table in tables:
             join_predicates = self.query.predicates().joins_for(table)
@@ -139,6 +204,7 @@ class PostgresRightDeepJoinClauseBuilder:
         return columns_in_select_clause | columns_in_predicates | columns_in_grouping | columns_in_ordering
 
     def _mark_tables_joined(self, tables: base.TableReference | Iterable[base.TableReference]) -> None:
+        """Marks the given tables as joined, potentially making new join predicates to other tables available."""
         tables = collection_utils.enlist(tables)
         for table in tables:
             all_join_predicates = self.query.predicates().joins_for(table)
@@ -152,6 +218,7 @@ class PostgresRightDeepJoinClauseBuilder:
             self.joined_tables.add(table)
 
     def _perform_column_renaming(self, predicate: predicates.AbstractPredicate) -> None:
+        """Renames all columns in the predicate according to the currently available renamings."""
         for column in predicate.columns():
             if column in self.renamed_columns:
                 renamed_column = self.renamed_columns[column]
@@ -159,6 +226,7 @@ class PostgresRightDeepJoinClauseBuilder:
                 column.table = renamed_column.table
 
     def _update_renamed_columns(self, columns: set[base.ColumnReference], target_table: base.TableReference) -> None:
+        """Renames all of the given columns to refer to the `target_table` (i.e. the virtual subquery table) instead."""
         for column in columns:
             export_name = _build_column_alias(column)
             renamed_column = copy.copy(column)
@@ -169,6 +237,7 @@ class PostgresRightDeepJoinClauseBuilder:
 
 
 def _enforce_pg_join_order(query: qal.ImplicitSqlQuery, join_order: data.JoinTree) -> qal.ExplicitSqlQuery:
+    """Generates the explicit join order for the given query and performs all necessary renaming operations."""
     join_order_builder = PostgresRightDeepJoinClauseBuilder(query)
 
     from_clause = join_order_builder.for_join_tree(join_order)
@@ -212,6 +281,8 @@ PG_OPTIMIZER_SETTINGS = {
     operators.ScanOperators.IndexOnlyScan: "enable_indexonlyscan"
 }
 
+# based on PG_HINT_PLAN extension (https://github.com/ossc-db/pg_hint_plan)
+# see https://github.com/ossc-db/pg_hint_plan#hints-list for details
 PG_OPTIMIZER_HINTS = {
     operators.JoinOperators.NestedLoopJoin: "NestLoop",
     operators.JoinOperators.HashJoin: "HashJoin",
@@ -223,17 +294,22 @@ PG_OPTIMIZER_HINTS = {
 
 
 def _generate_join_key(tables: Iterable[base.TableReference]) -> str:
+    """Builds a PG_HINT_PLAN-compatible identifier for the join consisting of the given tables."""
     return " ".join(tab.identifier() for tab in tables)
 
 
 def _escape_setting(setting) -> str:
+    """Transforms the setting variable into a string that can be used in an SQL query."""
     if isinstance(setting, float) or isinstance(setting, int):
         return str(setting)
+    elif isinstance(setting, bool):
+        return "TRUE" if setting else "FALSE"
     return f"'{setting}'"
 
 
 def _generate_pg_operator_hints(query: qal.SqlQuery, join_order: data.JoinTree,
                                 physical_operators: operators.PhysicalOperatorAssignment) -> qal.SqlQuery:
+    """Generates the hints and preparatory statements to enforce the selected optimization in Postgres."""
     settings = []
     for operator, enabled in physical_operators.global_settings.items():
         setting = "on" if enabled else "off"
@@ -268,6 +344,16 @@ def _generate_pg_operator_hints(query: qal.SqlQuery, join_order: data.JoinTree,
 
 
 class PostgresHintProvider(provider.HintProvider):
+    """PostgreSQL implementation of the `HintProvider`.
+
+    The query transformation works as follows:
+
+    - the join order is enforced by transforming the implicit SQL query into a query that uses the JOIN ON syntax
+    - the Postgres optimizer is forced to adhere to that order via the `join_collapse_limit` setting / hint
+    - all operator hints are enforced via the PG_HINT_PLAN Postgres extension and receive hints of the appropriate
+    syntax
+    """
+
     def adapt_query(self, query: qal.ImplicitSqlQuery, join_order: data.JoinTree | None,
                     physical_operators: operators.PhysicalOperatorAssignment | None) -> qal.SqlQuery:
         adapted_query = query

@@ -8,13 +8,27 @@ from postbound.qal import qal, formatter, transform
 
 
 class DatabaseSystem(abc.ABC):
+    """A `DatabaseSystem` is designed as a "one-stop-shop" to supply optimized queries to a database.
+
+    This expands upon the `Database` interface which focuses on the interaction with the database with two important
+    methods: `query_adaptor` provides the appropriate conversion to ensure that an optimized query is executed as
+    intended by the PostBOUND plan. `format_query` transforms a query object into a string that can be executed by
+    the database system. This second method is necessary to work with deviations from standard SQL (e.g. single vs.
+    double-quoted string values in MySQL).
+    """
 
     @abc.abstractmethod
     def interface(self) -> db.Database:
+        """Provides access to the actual database connection."""
         raise NotImplementedError
 
     @abc.abstractmethod
     def query_adaptor(self) -> hint_provider.HintProvider:
+        """Provides access to the hint generation and query preparation service for this database system.
+
+        This service is intended to ensure that the optimized join order and operator selection are actually applied
+        to the query by generating appropriate hints and transforming the query in other system-specific ways.
+        """
         raise NotImplementedError
 
     @abc.abstractmethod
@@ -31,6 +45,7 @@ class DatabaseSystem(abc.ABC):
 
 
 class Postgres(DatabaseSystem):
+    """Postgres implementation"""
 
     def __init__(self, postgres_db: pg_db.PostgresInterface):
         self.postgres_db = postgres_db
