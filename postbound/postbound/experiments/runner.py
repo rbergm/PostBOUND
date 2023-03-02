@@ -87,19 +87,19 @@ def execute_workload(queries: Iterable[qal.SqlQuery], database: db.Database, *,
                      query_preparation: QueryPreparationService | None = None,
                      query_labels: dict[qal.SqlQuery, str] | None = None) -> pd.DataFrame:
     results = []
-    current_execution_index = 0
+    current_execution_index = 1
     for i in range(workload_repetitions):
         current_repetition_results = []
         if shuffled:
             queries = random.sample(queries, k=len(queries))
 
         for query in queries:
-            current_execution_index += 1
             execution_result = execute_query(query, database, repetitions=per_query_repetitions,
                                              query_preparation=query_preparation)
             execution_result[COL_EXEC_IDX] = list(range(current_execution_index,
                                                         current_execution_index + per_query_repetitions))
             current_repetition_results.append(execution_result)
+            current_execution_index += per_query_repetitions
 
         current_df = pd.concat(current_repetition_results)
         current_df[COL_WORKLOAD_ITER] = i + 1
@@ -134,20 +134,20 @@ def optimize_and_execute_workload(queries: Iterable[qal.SqlQuery], optimization_
                                   query_preparation: QueryPreparationService | None = None,
                                   query_labels: dict[qal.SqlQuery, str] | None = None) -> pd.DataFrame:
     results = []
-    current_execution_index = 0
+    current_execution_index = 1
     for i in range(workload_repetitions):
         current_repetition_results = []
         if shuffled:
             queries = random.sample(queries, k=len(queries))
 
         for query in queries:
-            current_execution_index += 1
             execution_result = optimize_and_execute_query(query, optimization_pipeline,
                                                           repetitions=per_query_repetitions,
                                                           query_preparation=query_preparation)
             execution_result[COL_EXEC_IDX] = list(range(current_execution_index,
                                                         current_execution_index + per_query_repetitions))
             current_repetition_results.append(execution_result)
+            current_execution_index += per_query_repetitions
 
         current_df = pd.concat(current_repetition_results)
         current_df[COL_WORKLOAD_ITER] = i + 1
