@@ -72,7 +72,7 @@ class AbstractPredicate(abc.ABC):
 
     def tables(self) -> set[base.TableReference]:
         """Provides all tables that are accessed by this predicate."""
-        return {attribute.table for attribute in self.columns()}
+        return {column.table for column in self.columns() if column.is_bound()}
 
     def contains_table(self, table: base.TableReference) -> bool:
         """Checks, whether this predicate filters or joins a column of the given table."""

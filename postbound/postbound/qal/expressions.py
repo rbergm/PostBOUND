@@ -73,7 +73,7 @@ class SqlExpression(abc.ABC):
 
     def tables(self) -> set[base.TableReference]:
         """Provides all tables that are accessed by this expression."""
-        return {column.table for column in self.columns() if column}
+        return {column.table for column in self.columns() if column.is_bound()}
 
     @abc.abstractmethod
     def __hash__(self) -> int:
