@@ -320,7 +320,7 @@ def _parse_having_clause(mosp_data: dict) -> clauses.Having:
 
 def _parse_orderby_expression(mosp_data: dict) -> clauses.OrderByExpression:
     column = _parse_mosp_expression(mosp_data["value"])
-    ascending = mosp_data.get("sort", "asc") == "asc"
+    ascending = mosp_data["sort"] == "asc" if "sort" in mosp_data else None
     return clauses.OrderByExpression(column, ascending)
 
 
