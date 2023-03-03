@@ -11,6 +11,7 @@ import threading
 from typing import Any
 
 import psycopg
+import psycopg.rows
 
 from postbound.db import db
 from postbound.qal import qal, base, transform
@@ -25,7 +26,8 @@ class PostgresInterface(db.Database):
     def __init__(self, connect_string: str, name: str = "postgres", *, cache_enabled: bool = True) -> None:
         super().__init__(name, cache_enabled=cache_enabled)
         self._connect_string = connect_string
-        self._connection = psycopg.connect(connect_string, application_name="PostBOUND")
+        self._connection = psycopg.connect(connect_string, application_name="PostBOUND",
+                                           row_factory=psycopg.rows.tuple_row)
         self._connection.autocommit = True
         self._cursor = self._connection.cursor()
 
@@ -43,7 +45,7 @@ class PostgresInterface(db.Database):
         return self._db_stats
 
     def execute_query(self, query: qal.SqlQuery | str, *, cache_enabled: bool | None = None) -> Any:
-        cache_enabled = cache_enabled or self._cache_enabled
+        cache_enabled = cache_enabled or (cache_enabled is None and self._cache_enabled)
 
         if isinstance(query, qal.SqlQuery):
             if query.hints and query.hints.preparatory_statements:
