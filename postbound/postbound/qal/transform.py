@@ -277,7 +277,7 @@ def bind_columns(query: qal.SqlQuery, *, with_schema: bool = True, db_schema: db
                     column.redirect = column_output_names[column.name]
 
     if with_schema:
-        db_schema = db_schema if db_schema else db.DatabasePool.get_instance().current_database()
+        db_schema = db_schema if db_schema else db.DatabasePool.get_instance().current_database().schema()
         for column in unbound_columns:
             try:
                 column.table = db_schema.lookup_column(column, unbound_tables)

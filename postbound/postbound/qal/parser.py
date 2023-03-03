@@ -435,7 +435,8 @@ class _MospQueryParser:
 
 def parse_query(query: str, *,
                 bind_columns: bool = AutoBindColumns, db_schema: db.DatabaseSchema | None = None) -> qal.SqlQuery:
-    db_schema = db_schema if db_schema or not bind_columns else db.DatabasePool.get_instance().current_database()
+    db_schema = (db_schema if db_schema or not bind_columns
+                 else db.DatabasePool.get_instance().current_database().schema())
     mosp_data = mosp.parse(query)
     parsed_query = _MospQueryParser(mosp_data, query).parse_query()
     transform.bind_columns(parsed_query, with_schema=bind_columns, db_schema=db_schema)
