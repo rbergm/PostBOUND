@@ -91,7 +91,7 @@ class SqlQuery(abc.ABC):
         """
         all_clauses = [self.hints, self.explain,
                        self.select_clause, self.from_clause, self.where_clause,
-                       self.orderby_clause, self.having_clause,
+                       self.groupby_clause, self.having_clause,
                        self.orderby_clause, self.limit_clause]
         return [clause for clause in all_clauses if clause is not None]
 
