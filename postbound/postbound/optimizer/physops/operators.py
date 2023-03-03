@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import enum
+import typing
 from typing import Any, Iterable
 
 from postbound.qal import base, qal
@@ -17,6 +18,16 @@ class JoinOperators(enum.Enum):
     HashJoin = "Hash Join"
     SortMergeJoin = "Sort-Merge Join"
     IndexNestedLoopJoin = "Idx. NLJ"
+
+
+PhysicalOperator = typing.Union[ScanOperators, JoinOperators]
+
+
+class HintType(enum.Enum):
+    JoinOrderHint = "Join order"
+    JoinDirectionHint = "Join direction"
+    ParallelizationHint = "Par. workers"
+    CardinalityHint = "Cardinality"
 
 
 class PhysicalOperatorAssignment:

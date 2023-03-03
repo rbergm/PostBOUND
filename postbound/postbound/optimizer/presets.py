@@ -3,6 +3,7 @@ from __future__ import annotations
 import abc
 
 from postbound.db import db
+from postbound.db.systems import systems
 from postbound.optimizer import validation
 from postbound.optimizer.bounds import scans, joins, stats, subqueries
 from postbound.optimizer.joinorder import enumeration
@@ -45,7 +46,7 @@ class UESOptimizationSettings(OptimizationSettings):
         return enumerator
 
     def build_physical_operator_selection(self) -> selection.PhysicalOperatorSelection | None:
-        return selection.UESOperatorSelection()
+        return selection.UESOperatorSelection(systems.DatabaseSystemRegistry.load_system_for(self.database))
 
 
 def fetch(key: str) -> OptimizationSettings:
