@@ -106,7 +106,8 @@ class JoinGraph:
 
     """
 
-    def __init__(self, query: qal.ImplicitSqlQuery, db_schema: db.DatabaseSchema) -> None:
+    def __init__(self, query: qal.ImplicitSqlQuery, db_schema: db.DatabaseSchema | None = None) -> None:
+        db_schema = db_schema if db_schema else db.DatabasePool.get_instance().current_database().schema()
         self.query = query
         self._db_schema = db_schema
         self._index_structures: dict[base.ColumnReference, IndexInfo] = {}
