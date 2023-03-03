@@ -5,11 +5,11 @@ import unittest
 def _rebuild_result_set(result_set: object) -> list[tuple[object]]:
     """Transforms a possibly simplified result set as returned by the Database interface back to a normalized one."""
 
-    # case 1: result set of a single row ('foo', 42) becomes [('foo', 42)]
+    # case 1: result set of a single row -- ('foo', 42) becomes [('foo', 42)]
     if isinstance(result_set, tuple):
         return [result_set]
 
-    # case 2: result set of a single row of a single value 42 becomes [(42,)]
+    # case 2: result set of a single row of a single value -- 42 becomes [(42,)]
     if not isinstance(result_set, list):
         return [(result_set,)]
 
@@ -18,7 +18,7 @@ def _rebuild_result_set(result_set: object) -> list[tuple[object]]:
     if isinstance(first_row, tuple):
         return result_set
 
-    # case 4: result set of multiple rows of single values ['foo', 'bar'] becomes [('foo',), ('bar',)]
+    # case 4: result set of multiple rows of single values -- ['foo', 'bar'] becomes [('foo',), ('bar',)]
     return [(value,) for value in result_set]
 
 
