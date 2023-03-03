@@ -54,7 +54,7 @@ class DatabaseSystem(abc.ABC, Generic[DatabaseType]):
         raise NotImplementedError
 
     @abc.abstractmethod
-    def supports_operator(self, operator: physops.PhysicalOperator) -> bool:
+    def supports_hint(self, hint: physops.PhysicalOperator | physops.HintType) -> bool:
         """Checks, whether the database system is capable of using the specified operator."""
         raise NotImplementedError
 
@@ -103,8 +103,8 @@ class Postgres(DatabaseSystem[pg_db.PostgresInterface]):
     def format_query(self, query: qal.SqlQuery) -> str:
         return formatter.format_quick(transform.drop_hints(query))
 
-    def supports_operator(self, operator: physops.PhysicalOperator) -> bool:
-        return operator in PG_OPERATORS
+    def supports_hint(self, hint: physops.PhysicalOperator) -> bool:
+        return hint in PG_OPERATORS
 
 
 DatabaseSystemRegistry.register_system(pg_db.PostgresInterface, Postgres)
