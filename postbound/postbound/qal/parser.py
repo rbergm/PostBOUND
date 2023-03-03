@@ -12,7 +12,7 @@ from postbound.qal import transform
 from postbound.db import db
 from postbound.util import dicts as dict_utils
 
-AutoBindColumns: bool = False
+auto_bind_columns: bool = False
 
 _MospSelectTypes = {
     "select": clauses.SelectType.Select,
@@ -434,7 +434,8 @@ class _MospQueryParser:
 
 
 def parse_query(query: str, *,
-                bind_columns: bool = AutoBindColumns, db_schema: db.DatabaseSchema | None = None) -> qal.SqlQuery:
+                bind_columns: bool | None = None, db_schema: db.DatabaseSchema | None = None) -> qal.SqlQuery:
+    bind_columns = bind_columns if bind_columns is not None else auto_bind_columns
     db_schema = (db_schema if db_schema or not bind_columns
                  else db.DatabasePool.get_instance().current_database().schema())
     mosp_data = mosp.parse(query)
