@@ -123,6 +123,10 @@ class Select:
     def count_star() -> Select:
         return Select(BaseProjection.count_star())
 
+    @staticmethod
+    def star() -> Select:
+        return Select(BaseProjection.star())
+
     def __init__(self, targets: BaseProjection | list[BaseProjection],
                  projection_type: SelectType = SelectType.Select) -> None:
         self.targets = collection_utils.enlist(targets)

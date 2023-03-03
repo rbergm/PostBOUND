@@ -96,7 +96,10 @@ def extract_query_fragment(source_query: qal.ImplicitSqlQuery,
         if target.tables() == referenced_tables or not target.columns():
             select_fragment.append(target)
 
-    select_clause = clauses.Select(select_fragment, source_query.select_clause.projection_type)
+    if select_fragment:
+        select_clause = clauses.Select(select_fragment, source_query.select_clause.projection_type)
+    else:
+        select_clause = clauses.Select.star()
 
     if source_query.from_clause:
         from_clause = clauses.ImplicitFromClause([tab for tab in source_query.tables() if tab in referenced_tables])
