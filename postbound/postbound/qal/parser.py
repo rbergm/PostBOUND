@@ -252,6 +252,8 @@ def _parse_implicit_from_clause(mosp_data: dict) -> clauses.ImplicitFromClause:
     from_clause = mosp_data["from"]
     if isinstance(from_clause, str):
         return clauses.ImplicitFromClause(_parse_table_reference(from_clause))
+    elif isinstance(from_clause, dict):
+        return clauses.ImplicitFromClause(_parse_table_reference(from_clause))
     return clauses.ImplicitFromClause([_parse_table_reference(table) for table in from_clause])
 
 
