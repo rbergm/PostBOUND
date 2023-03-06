@@ -141,6 +141,8 @@ def extract_query_fragment(source_query: qal.ImplicitSqlQuery,
 
 
 def as_count_star_query(source_query: qal.SqlQuery) -> qal.SqlQuery:
+    # TODO: how to work with column aliases from the SELECT clause that are referenced later on?
+    # E.g. SELECT SUM(foo) AS f FROM bar ORDER BY f
     target_query = copy.copy(source_query)
     target_query.select_clause = clauses.Select.count_star()
     return target_query

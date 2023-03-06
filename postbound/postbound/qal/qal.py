@@ -8,15 +8,72 @@ generating new queries from existing ones or formatting the query strings.
 from __future__ import annotations
 
 import abc
+from typing import Iterable
 
-from postbound.qal import base, clauses, predicates as preds
+from postbound.qal import base, clauses, joins, expressions as expr, predicates as preds
+from postbound.util import collections as collection_utils
 
 
 # TODO: add support for CTEs. This _should_ be pretty straightforward. Just remember to output the columns/tables at
 # the appropriate places
 
 def _stringify_clause(clause: object) -> str:
+    """Provides a refined string for the given clause, to be used by the SqlQuery __str__ method."""
     return str(clause) + "\n" if isinstance(clause, clauses.Hint) else str(clause) + " "
+
+
+def _collect_subqueries_in_expression(expression: expr.SqlExpression) -> set[SqlQuery]:
+    """Provides all the subqueries that are contained in the expression."""
+    if isinstance(expression, expr.SubqueryExpression):
+        return {expression.query}
+    return collection_utils.set_union(_collect_subqueries_in_expression(child_expr)
+                                      for child_expr in expression.iterchildren())
+
+
+def _collect_subqueries(clause) -> set[SqlQuery]:
+    """Provides all the subqueries that are contained in the given clause."""
+    if isinstance(clause, clauses.Hint) or isinstance(clause, clauses.Limit) or isinstance(clause, clauses.Explain):
+        return set()
+
+    if isinstance(clause, clauses.Select):
+        return collection_utils.set_union(_collect_subqueries_in_expression(target.expression)
+                                          for target in clause.targets)
+    elif isinstance(clause, clauses.ImplicitFromClause):
+        return set()
+    elif isinstance(clause, clauses.ExplicitFromClause):
+        return {join.subquery for join in clause.joined_tables if isinstance(join, joins.SubqueryJoin)}
+    elif isinstance(clause, clauses.Where):
+        where_predicate = clause.predicate
+        return collection_utils.set_union(_collect_subqueries_in_expression(expression)
+                                          for expression in where_predicate.iterexpressions())
+    elif isinstance(clause, clauses.GroupBy):
+        return collection_utils.set_union(_collect_subqueries_in_expression(column) for column in clause.group_columns)
+    elif isinstance(clause, clauses.Having):
+        having_predicate = clause.condition
+        return collection_utils.set_union(_collect_subqueries_in_expression(expression)
+                                          for expression in having_predicate.iterexpressions())
+    elif isinstance(clause, clauses.OrderBy):
+        return collection_utils.set_union(_collect_subqueries_in_expression(expression.column)
+                                          for expression in clause.expressions)
+    else:
+        raise ValueError(f"Unknown clause type: {clause}")
+
+
+def _collect_bound_tables(from_clause: clauses.From) -> set[base.TableReference]:
+    """Provides all tables that are bound in the given clause. See `bound_tables` in SqlQuery for details."""
+    if isinstance(from_clause, clauses.ImplicitFromClause):
+        return from_clause.tables()
+    elif isinstance(from_clause, clauses.ExplicitFromClause):
+        bound_tables = {from_clause.base_table}
+        for join in from_clause.joined_tables:
+            if isinstance(join, joins.TableJoin):
+                bound_tables |= {join.joined_table}
+            elif isinstance(join, joins.SubqueryJoin):
+                bound_tables |= join.subquery.bound_tables()
+            else:
+                raise ValueError(f"Unknown JOIN clause: {join}")
+    else:
+        raise ValueError(f"Unknown FROM clause: {from_clause}")
 
 
 class SqlQuery(abc.ABC):
@@ -84,6 +141,10 @@ class SqlQuery(abc.ABC):
         else:
             return where_predicates
 
+    def subqueries(self) -> Iterable[SqlQuery]:
+        """Provides all subqueries that are referenced in this query."""
+        return collection_utils.set_union(_collect_subqueries(clause) for clause in self.clauses())
+
     def clauses(self) -> list:
         """Provides all the clauses that are present in this query.
 
@@ -95,6 +156,17 @@ class SqlQuery(abc.ABC):
                        self.orderby_clause, self.limit_clause]
         return [clause for clause in all_clauses if clause is not None]
 
+    def bound_tables(self) -> set[base.TableReference]:
+        """Provides all tables that can be assigned to a physical/virtual table reference in this query.
+
+        For example, the query SELECT * FROM R, S WHERE R.a = S.b has two bound tables: R and S.
+        On the other hand, the query SELECT * FROM R WHERE R.a = S.b has only bound R, whereas S has to be bound in
+        a surrounding query.
+        """
+        subquery_produced_tables = collection_utils.set_union(subquery.bound_tables() for subquery in self.subqueries())
+        own_produced_tables = _collect_bound_tables(self.from_clause)
+        return own_produced_tables | subquery_produced_tables
+
     def is_ordered(self) -> bool:
         """Checks, whether this query produces its result tuples in order."""
         return self.orderby_clause is not None
@@ -104,7 +176,7 @@ class SqlQuery(abc.ABC):
 
         In order for this check to work, all columns have to be bound to actual tables.
         """
-        return any(not tab.full_name and not tab.virtual for tab in self.tables())
+        return not (self.tables() <= self.bound_tables())
 
     def __hash__(self) -> int:
         return hash(tuple(self.clauses()))

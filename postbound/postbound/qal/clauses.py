@@ -198,6 +198,8 @@ class From(abc.ABC):
 
 
 class ImplicitFromClause(From):
+    # TODO: we could also have subqueries in an implicit from clause!
+
     def __init__(self, tables: base.TableReference | list[base.TableReference] | None = None):
         self._tables = collection_utils.enlist(tables) if tables is not None else []
 
