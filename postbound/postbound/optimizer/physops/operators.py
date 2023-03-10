@@ -23,13 +23,6 @@ class JoinOperators(enum.Enum):
 PhysicalOperator = typing.Union[ScanOperators, JoinOperators]
 
 
-class HintType(enum.Enum):
-    JoinOrderHint = "Join order"
-    JoinDirectionHint = "Join direction"
-    ParallelizationHint = "Par. workers"
-    CardinalityHint = "Cardinality"
-
-
 class PhysicalOperatorAssignment:
     def __init__(self, query: qal.SqlQuery) -> None:
         self.query = query

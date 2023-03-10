@@ -65,17 +65,3 @@ class EmptyPhysicalOperatorSelection(PhysicalOperatorSelection):
 
     def _description(self) -> dict:
         return {"name": "no_selection"}
-
-    def _apply_selection(self, query: qal.ImplicitSqlQuery,
-                         join_order: data.JoinTree | None) -> operators.PhysicalOperatorAssignment:
-        return operators.PhysicalOperatorAssignment(query)
-
-
-class UnsupportedSystemError(RuntimeError):
-    def __init__(self, db_system: systems.DatabaseSystem, reason: str = "") -> None:
-        error_msg = f"Unsupported database system: {db_system}"
-        if reason:
-            error_msg += f" ({reason})"
-        super().__init__(error_msg)
-        self.db_system = db_system
-        self.reason = reason

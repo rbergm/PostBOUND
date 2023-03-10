@@ -5,6 +5,7 @@ from postbound.qal import qal, transform
 from postbound.optimizer import presets, validation
 from postbound.optimizer.joinorder import enumeration
 from postbound.optimizer.physops import selection
+from postbound.optimizer.planmeta import parameterization as plan_param
 from postbound.db.systems import systems as db_sys
 from postbound.util import errors
 
@@ -15,6 +16,7 @@ class OptimizationPipeline:
         self.pre_check: validation.OptimizationPreCheck | None = None
         self.join_order_enumerator: enumeration.JoinOrderOptimizer | None = None
         self.physical_operator_selection: selection.PhysicalOperatorSelection | None = None
+        self.plan_parameterization: plan_param.ParameterGeneration | None = None
         self._build = False
 
     def setup_query_support_check(self, check: validation.OptimizationPreCheck) -> OptimizationPipeline:
@@ -27,6 +29,10 @@ class OptimizationPipeline:
 
     def setup_physical_operator_selection(self, selector: selection.PhysicalOperatorSelection) -> OptimizationPipeline:
         self.physical_operator_selection = selector
+        return self
+
+    def setup_plan_parameterization(self, param_generator: plan_param.ParameterGeneration) -> OptimizationPipeline:
+        self.plan_parameterization = param_generator
         return self
 
     def load_settings(self, optimization_settings: presets.OptimizationSettings) -> None:
@@ -46,7 +52,9 @@ class OptimizationPipeline:
         if not self.join_order_enumerator:
             self.join_order_enumerator = enumeration.EmptyJoinOrderOptimizer()
         if not self.physical_operator_selection:
-            self.physical_operator_selection = selection.EmptyPhysicalOperatorSelection()
+            self.physical_operator_selection = selection.EmptyPhysicalOperatorSelection(self.target_dbs)
+        if not self.plan_parameterization:
+            self.plan_parameterization = plan_param.EmptyParameterization()
         self._build = True
 
     def optimize_query(self, query: qal.SqlQuery) -> qal.SqlQuery:
@@ -62,8 +70,9 @@ class OptimizationPipeline:
 
         join_order = self.join_order_enumerator.optimize_join_order(implicit_query)
         operators = self.physical_operator_selection.select_physical_operators(implicit_query, join_order)
+        plan_parameters = self.plan_parameterization.generate_plan_parameters(query, join_order, operators)
 
-        return self.target_dbs.query_adaptor().adapt_query(implicit_query, join_order, operators)
+        return self.target_dbs.query_adaptor().adapt_query(implicit_query, join_order, operators, plan_parameters)
 
     def describe(self) -> dict:
         return {

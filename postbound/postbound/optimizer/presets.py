@@ -8,6 +8,7 @@ from postbound.optimizer import validation
 from postbound.optimizer.bounds import scans, joins, stats, subqueries
 from postbound.optimizer.joinorder import enumeration
 from postbound.optimizer.physops import selection
+from postbound.optimizer.planmeta import hints as plan_param
 
 
 class OptimizationSettings(abc.ABC):
@@ -22,6 +23,10 @@ class OptimizationSettings(abc.ABC):
 
     @abc.abstractmethod
     def build_physical_operator_selection(self) -> selection.PhysicalOperatorSelection | None:
+        raise NotImplementedError
+
+    @abc.abstractmethod
+    def build_plan_parameterization(self) -> plan_param.PlanParameterization | None:
         raise NotImplementedError
 
 
@@ -47,6 +52,9 @@ class UESOptimizationSettings(OptimizationSettings):
 
     def build_physical_operator_selection(self) -> selection.PhysicalOperatorSelection | None:
         return selection.UESOperatorSelection(systems.DatabaseSystemRegistry.load_system_for(self.database))
+
+    def build_plan_parameterization(self) -> plan_param.PlanParameterization | None:
+        return None
 
 
 def fetch(key: str) -> OptimizationSettings:

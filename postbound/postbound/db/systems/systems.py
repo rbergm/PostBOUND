@@ -8,6 +8,7 @@ from postbound.db import db, postgres as pg_db
 from postbound.db.hints import provider as hint_provider, postgres_provider
 from postbound.qal import qal, formatter, transform
 from postbound.optimizer.physops import operators as physops
+from postbound.optimizer.planmeta import hints as plan_params
 
 DatabaseType = typing.TypeVar("DatabaseType", bound=db.Database)
 
@@ -54,7 +55,7 @@ class DatabaseSystem(abc.ABC, Generic[DatabaseType]):
         raise NotImplementedError
 
     @abc.abstractmethod
-    def supports_hint(self, hint: physops.PhysicalOperator | physops.HintType) -> bool:
+    def supports_hint(self, hint: physops.PhysicalOperator | plan_params.HintType) -> bool:
         """Checks, whether the database system is capable of using the specified operator."""
         raise NotImplementedError
 
@@ -88,7 +89,10 @@ class DatabaseSystemRegistry:
 PG_OPERATORS = {physops.JoinOperators.HashJoin, physops.JoinOperators.NestedLoopJoin,
                 physops.JoinOperators.SortMergeJoin,
                 physops.ScanOperators.SequentialScan, physops.ScanOperators.IndexScan,
-                physops.ScanOperators.IndexOnlyScan}
+                physops.ScanOperators.IndexOnlyScan,
+                plan_params.HintType.JoinOrderHint, plan_params.HintType.JoinDirectionHint,
+                plan_params.HintType.CardinalityHint,
+                plan_params.HintType.ParallelizationHint}
 
 
 class Postgres(DatabaseSystem[pg_db.PostgresInterface]):
@@ -103,7 +107,7 @@ class Postgres(DatabaseSystem[pg_db.PostgresInterface]):
     def format_query(self, query: qal.SqlQuery) -> str:
         return formatter.format_quick(transform.drop_hints(query))
 
-    def supports_hint(self, hint: physops.PhysicalOperator) -> bool:
+    def supports_hint(self, hint: physops.PhysicalOperator | plan_params.HintType) -> bool:
         return hint in PG_OPERATORS
 
 

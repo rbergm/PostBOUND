@@ -4,13 +4,15 @@ from __future__ import annotations
 
 import collections
 import copy
-from typing import Iterable
+from dataclasses import dataclass
+from typing import Iterable, Optional
 
 from postbound.db.hints import provider
 from postbound.qal import qal, base, clauses, joins, predicates, transform
 from postbound.util import collections as collection_utils
 from postbound.optimizer import data
 from postbound.optimizer.physops import operators
+from postbound.optimizer.planmeta import hints as plan_param
 
 
 def _build_subquery_alias(tables: Iterable[base.TableReference]) -> str:
@@ -307,8 +309,21 @@ def _escape_setting(setting) -> str:
     return f"'{setting}'"
 
 
+@dataclass
+class HintParts:
+    settings: list[str]
+    hints: list[str]
+
+    @staticmethod
+    def empty() -> HintParts:
+        return HintParts([], [])
+
+    def merge_with(self, other: HintParts) -> HintParts:
+        return HintParts(self.settings + other.settings, self.hints + other.hints)
+
+
 def _generate_pg_operator_hints(query: qal.SqlQuery, join_order: data.JoinTree,
-                                physical_operators: operators.PhysicalOperatorAssignment) -> qal.SqlQuery:
+                                physical_operators: operators.PhysicalOperatorAssignment) -> HintParts:
     """Generates the hints and preparatory statements to enforce the selected optimization in Postgres."""
     settings = []
     for operator, enabled in physical_operators.global_settings.items():
@@ -333,13 +348,41 @@ def _generate_pg_operator_hints(query: qal.SqlQuery, join_order: data.JoinTree,
         hints.append(f"{join_operator}({join_key})")
 
     if not settings and not hints:
-        return query
+        return HintParts.empty()
 
+    return HintParts(settings, hints)
+
+
+def _generate_pg_parameter_hints(plan_parameters: plan_param.PlanParameterization) -> HintParts:
+    hints = []
+    for join, cardinality_hint in plan_parameters.cardinality_hints.items():
+        if len(join) < 2:
+            # pg_hint_plan can only generate cardinality hints for joins
+            continue
+        join_key = _generate_join_key(join)
+        hints.append(f"Rows({join_key} #{cardinality_hint})")
+
+    for join, num_workers in plan_parameters.parallel_worker_hints.items():
+        if len(join) != 1:
+            # pg_hint_plan can only generate parallelization hints for single tables
+            continue
+        table: base.TableReference = collection_utils.simplify(join)
+        hints.append(f"Parallel({table.identifier()} {num_workers} hard)")
+    return HintParts([], hints)
+
+
+def _generate_hint_block(parts: HintParts) -> Optional[clauses.Hint]:
+    settings, hints = parts.settings, parts.hints
+    if not settings and not hints:
+        return None
     settings_block = "\n".join(settings)
-    hints_block = "\n".join(["/*+"] + hints + ["*/"]) if hints else ""
+    hints_block = "\n".join(["/*+"] + ["  " + hint for hint in hints] + ["*/"]) if hints else ""
+    return clauses.Hint(settings_block, hints_block)
 
-    hinted_query = copy.deepcopy(query)
-    hinted_query.hints = clauses.Hint(settings_block, hints_block)
+
+def _apply_hint_block_to_query(query: qal.SqlQuery, hint_block: Optional[clauses.Hint]) -> qal.SqlQuery:
+    hinted_query = copy.copy(query)
+    hinted_query.hints = hint_block
     return hinted_query
 
 
@@ -355,11 +398,23 @@ class PostgresHintProvider(provider.HintProvider):
     """
 
     def adapt_query(self, query: qal.ImplicitSqlQuery, join_order: data.JoinTree | None,
-                    physical_operators: operators.PhysicalOperatorAssignment | None) -> qal.SqlQuery:
+                    physical_operators: operators.PhysicalOperatorAssignment | None,
+                    plan_parameters: plan_param.PlanParameterization | None) -> qal.SqlQuery:
         adapted_query = query
+
         if join_order:
             physical_operators.set_system_settings(join_collapse_limit=1)
             adapted_query = _enforce_pg_join_order(adapted_query, join_order)
+
+        hint_parts = HintParts.empty()
         if physical_operators:
-            adapted_query = _generate_pg_operator_hints(adapted_query, join_order, physical_operators)
+            operator_hints = _generate_pg_operator_hints(adapted_query, join_order, physical_operators)
+            hint_parts = hint_parts.merge_with(operator_hints)
+
+        if plan_parameters:
+            plan_hints = _generate_pg_parameter_hints(plan_parameters)
+            hint_parts = hint_parts.merge_with(plan_hints)
+
+        hint_block = _generate_hint_block(hint_parts)
+        adapted_query = _apply_hint_block_to_query(adapted_query, hint_block)
         return adapted_query

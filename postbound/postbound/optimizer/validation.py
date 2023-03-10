@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import abc
 
+from postbound.db.systems import systems
 from postbound.qal import qal, predicates, expressions as expr
 
 
@@ -74,3 +75,13 @@ class UnsupportedQueryError(RuntimeError):
         super().__init__(f"Query contains unsupported features{features_str}: {query}")
         self.query = query
         self.features = features
+
+
+class UnsupportedSystemError(RuntimeError):
+    def __init__(self, db_system: systems.DatabaseSystem, reason: str = "") -> None:
+        error_msg = f"Unsupported database system: {db_system}"
+        if reason:
+            error_msg += f" ({reason})"
+        super().__init__(error_msg)
+        self.db_system = db_system
+        self.reason = reason
