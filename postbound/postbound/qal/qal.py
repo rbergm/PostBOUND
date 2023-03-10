@@ -8,7 +8,8 @@ generating new queries from existing ones or formatting the query strings.
 from __future__ import annotations
 
 import abc
-from typing import Iterable
+import typing
+from typing import Iterable, Generic
 
 from postbound.qal import base, clauses, joins, expressions as expr, predicates as preds
 from postbound.util import collections as collection_utils
@@ -76,7 +77,10 @@ def _collect_bound_tables(from_clause: clauses.From) -> set[base.TableReference]
         raise ValueError(f"Unknown FROM clause: {from_clause}")
 
 
-class SqlQuery(abc.ABC):
+FromClauseType = typing.TypeVar("FromClauseType", bound=clauses.From)
+
+
+class SqlQuery(Generic[FromClauseType], abc.ABC):
     """Represents an arbitrary SQL query, providing convenient access to the different clauses in the query.
 
     At a basic level, PostBOUND differentiates between two types of queries:
@@ -92,7 +96,7 @@ class SqlQuery(abc.ABC):
     """
 
     def __init__(self, *, select_clause: clauses.Select,
-                 from_clause: clauses.From | None = None, where_clause: clauses.Where | None = None,
+                 from_clause: FromClauseType | None = None, where_clause: clauses.Where | None = None,
                  groupby_clause: clauses.GroupBy | None = None, having_clause: clauses.Having | None = None,
                  orderby_clause: clauses.OrderBy | None = None, limit_clause: clauses.Limit | None = None,
                  hints: clauses.Hint | None = None, explain: clauses.Explain | None = None) -> None:
@@ -145,7 +149,7 @@ class SqlQuery(abc.ABC):
         """Provides all subqueries that are referenced in this query."""
         return collection_utils.set_union(_collect_subqueries(clause) for clause in self.clauses())
 
-    def clauses(self) -> list:
+    def clauses(self) -> list[clauses.BaseClause]:
         """Provides all the clauses that are present in this query.
 
         To distinguish the individual clauses, type checks are necessary.
@@ -191,7 +195,7 @@ class SqlQuery(abc.ABC):
         return "".join(_stringify_clause(clause) for clause in self.clauses()).rstrip() + ";"
 
 
-class ImplicitSqlQuery(SqlQuery):
+class ImplicitSqlQuery(SqlQuery[clauses.ImplicitFromClause]):
     """Represents an implicit SQL query.
 
     A SQL query is implicit, if the FROM clause only lists the referenced tables and all joins are specified in the
@@ -223,7 +227,7 @@ class ImplicitSqlQuery(SqlQuery):
         return True
 
 
-class ExplicitSqlQuery(SqlQuery):
+class ExplicitSqlQuery(SqlQuery[clauses.ExplicitFromClause]):
     """Represents an explicit SQL query.
 
         A SQL query is explicit, if the FROM clause only lists all referenced tables along with the join predicates

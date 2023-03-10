@@ -10,6 +10,96 @@ from postbound.qal import base, expressions as expr, joins, predicates as preds
 from postbound.util import collections as collection_utils
 
 
+class BaseClause(abc.ABC):
+    def tables(self) -> set[base.TableReference]:
+        return {column.table for column in self.columns() if column.is_bound()}
+
+    def columns(self) -> set[base.ColumnReference]:
+        raise NotImplementedError
+
+    def iterexpressions(self) -> Iterable[expr.SqlExpression]:
+        raise NotImplementedError
+
+    def itercolumns(self) -> Iterable[base.ColumnReference]:
+        raise NotImplementedError
+
+
+@dataclass
+class Hint(BaseClause):
+    preparatory_statements: str = ""
+    query_hints: str = ""
+
+    def columns(self) -> set[base.ColumnReference]:
+        return set()
+
+    def iterexpressions(self) -> Iterable[expr.SqlExpression]:
+        return []
+
+    def itercolumns(self) -> Iterable[base.ColumnReference]:
+        return []
+
+    def __hash__(self) -> int:
+        return hash((self.preparatory_statements, self.query_hints))
+
+    def __eq__(self, other) -> bool:
+        return (isinstance(other, type(self))
+                and self.preparatory_statements == other.preparatory_statements
+                and self.query_hints == other.query_hints)
+
+    def __repr__(self) -> str:
+        return str(self)
+
+    def __str__(self) -> str:
+        if self.preparatory_statements and self.query_hints:
+            return self.preparatory_statements + "\n" + self.query_hints
+        elif self.preparatory_statements:
+            return self.preparatory_statements
+        return self.query_hints
+
+
+@dataclass
+class Explain(BaseClause):
+    analyze: bool = False
+    format: str | None = None
+
+    @staticmethod
+    def explain_analyze(format_type: str = "JSON") -> Explain:
+        return Explain(True, format_type)
+
+    @staticmethod
+    def plan(format_type: str = "JSON") -> Explain:
+        return Explain(False, format_type)
+
+    def columns(self) -> set[base.ColumnReference]:
+        return set()
+
+    def iterexpressions(self) -> Iterable[expr.SqlExpression]:
+        return []
+
+    def itercolumns(self) -> Iterable[base.ColumnReference]:
+        return []
+
+    def __hash__(self) -> int:
+        return hash((self.analyze, self.format))
+
+    def __eq__(self, other) -> bool:
+        return isinstance(other, type(self)) and self.analyze == other.analyze and self.format == other.format
+
+    def __repr__(self) -> str:
+        return str(self)
+
+    def __str__(self) -> str:
+        explain_prefix = "EXPLAIN"
+        explain_body = ""
+        if self.analyze and self.format:
+            explain_body = f" (ANALYZE, FORMAT {self.format})"
+        elif self.analyze:
+            explain_body = " ANALYZE"
+        elif self.format:
+            explain_body = f" (FORMAT {self.format})"
+        return explain_prefix + explain_body
+
+
 @dataclass
 class BaseProjection:
     expression: expr.SqlExpression
@@ -52,73 +142,12 @@ class BaseProjection:
         return f"{self.expression} AS {self.target_name}"
 
 
-_MospSelectTypesSQL = {"select": "SELECT", "select_distinct": "SELECT DISTINCT"}
-
-
-@dataclass
-class Hint:
-    preparatory_statements: str = ""
-    query_hints: str = ""
-
-    def __hash__(self) -> int:
-        return hash((self.preparatory_statements, self.query_hints))
-
-    def __eq__(self, other) -> bool:
-        return (isinstance(other, type(self))
-                and self.preparatory_statements == other.preparatory_statements
-                and self.query_hints == other.query_hints)
-
-    def __repr__(self) -> str:
-        return str(self)
-
-    def __str__(self) -> str:
-        if self.preparatory_statements and self.query_hints:
-            return self.preparatory_statements + "\n" + self.query_hints
-        elif self.preparatory_statements:
-            return self.preparatory_statements
-        return self.query_hints
-
-
-@dataclass
-class Explain:
-    analyze: bool = False
-    format: str | None = None
-
-    @staticmethod
-    def explain_analyze(format_type: str = "JSON") -> Explain:
-        return Explain(True, format_type)
-
-    @staticmethod
-    def plan(format_type: str = "JSON") -> Explain:
-        return Explain(False, format_type)
-
-    def __hash__(self) -> int:
-        return hash((self.analyze, self.format))
-
-    def __eq__(self, other) -> bool:
-        return isinstance(other, type(self)) and self.analyze == other.analyze and self.format == other.format
-
-    def __repr__(self) -> str:
-        return str(self)
-
-    def __str__(self) -> str:
-        explain_prefix = "EXPLAIN"
-        explain_body = ""
-        if self.analyze and self.format:
-            explain_body = f" (ANALYZE, FORMAT {self.format})"
-        elif self.analyze:
-            explain_body = " ANALYZE"
-        elif self.format:
-            explain_body = f" (FORMAT {self.format})"
-        return explain_prefix + explain_body
-
-
 class SelectType(enum.Enum):
     Select = "SELECT"
     SelectDistinct = "SELECT DISTINCT"
 
 
-class Select:
+class Select(BaseClause):
     @staticmethod
     def count_star() -> Select:
         return Select(BaseProjection.count_star())
@@ -143,6 +172,9 @@ class Select:
 
     def tables(self) -> set[base.TableReference]:
         return collection_utils.set_union(target.tables() for target in self.targets)
+
+    def iterexpressions(self) -> Iterable[expr.SqlExpression]:
+        return [target.expression for target in self.targets]
 
     def output_names(self) -> dict[str, base.ColumnReference]:
         output = {}
@@ -172,10 +204,7 @@ class Select:
         return f"{select_str} {parts_str}"
 
 
-class From(abc.ABC):
-    @abc.abstractmethod
-    def tables(self) -> set[base.TableReference]:
-        raise NotImplementedError
+class From(BaseClause, abc.ABC):
 
     @abc.abstractmethod
     def predicates(self) -> preds.QueryPredicates | None:
@@ -211,6 +240,15 @@ class ImplicitFromClause(From):
 
     def predicates(self) -> preds.QueryPredicates | None:
         return None
+
+    def columns(self) -> set[base.ColumnReference]:
+        return set()
+
+    def iterexpressions(self) -> Iterable[expr.SqlExpression]:
+        return []
+
+    def itercolumns(self) -> Iterable[base.ColumnReference]:
+        return []
 
     def __hash__(self) -> int:
         return hash(tuple(self._tables))
@@ -255,6 +293,18 @@ class ExplicitFromClause(From):
 
         return all_predicates
 
+    def tables(self) -> set[base.TableReference]:
+        pass
+
+    def columns(self) -> set[base.ColumnReference]:
+        return set()
+
+    def iterexpressions(self) -> Iterable[expr.SqlExpression]:
+        pass
+
+    def itercolumns(self) -> Iterable[base.ColumnReference]:
+        pass
+
     def __hash__(self) -> int:
         return hash((self.base_table, tuple(self.joined_tables)))
 
@@ -268,8 +318,17 @@ class ExplicitFromClause(From):
 
 
 @dataclass
-class Where:
+class Where(BaseClause):
     predicate: preds.AbstractPredicate
+
+    def columns(self) -> set[base.ColumnReference]:
+        return self.predicate.columns()
+
+    def iterexpressions(self) -> Iterable[expr.SqlExpression]:
+        return self.predicate.iterexpressions()
+
+    def itercolumns(self) -> Iterable[base.ColumnReference]:
+        return self.predicate.itercolumns()
 
     def __hash__(self) -> int:
         return hash(self.predicate)
@@ -285,7 +344,7 @@ class Where:
 
 
 @dataclass
-class GroupBy:
+class GroupBy(BaseClause):
     group_columns: list[expr.SqlExpression]
     distinct: bool = False
 
@@ -306,7 +365,7 @@ class GroupBy:
 
 
 @dataclass
-class Having:
+class Having(BaseClause):
     condition: preds.AbstractPredicate
 
     def __hash__(self) -> int:
@@ -347,7 +406,7 @@ class OrderByExpression:
 
 
 @dataclass
-class OrderBy:
+class OrderBy(BaseClause):
     expressions: list[OrderByExpression]
 
     def __hash__(self) -> int:
@@ -363,12 +422,21 @@ class OrderBy:
         return "ORDER BY " + ", ".join(str(order_expr) for order_expr in self.expressions)
 
 
-class Limit:
+class Limit(BaseClause):
     def __init__(self, *, limit: int | None = None, offset: int | None = None) -> None:
         if limit is None and offset is None:
             raise ValueError("LIMIT and OFFSET cannot be both unspecified")
         self.limit = limit
         self.offset = offset
+
+    def columns(self) -> set[base.ColumnReference]:
+        return set()
+
+    def iterexpressions(self) -> Iterable[expr.SqlExpression]:
+        return []
+
+    def itercolumns(self) -> Iterable[base.ColumnReference]:
+        return []
 
     def __hash__(self) -> int:
         return hash((self.limit, self.offset))

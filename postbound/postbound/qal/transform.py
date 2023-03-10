@@ -204,7 +204,7 @@ def rename_table(source_query: qal.SqlQuery, from_table: base.TableReference, ta
     return target_query
 
 
-def rename_columns_in_clause(clause: clauses.GroupBy | clauses.Having | clauses.OrderBy,
+def rename_columns_in_clause(clause: clauses.BaseClause,
                              available_renamings: dict[base.ColumnReference, base.ColumnReference]) -> None:
     def _perform_renaming(col: base.ColumnReference):
         if col in available_renamings:
