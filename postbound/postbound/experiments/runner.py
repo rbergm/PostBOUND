@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 import random
+from dataclasses import dataclass
 from datetime import datetime
-from typing import Iterable
+from typing import Callable, Iterable, Optional
 
 import numpy as np
 import pandas as pd
@@ -30,6 +31,14 @@ COL_OPT_SUCCESS = "optimization_success"
 COL_OPT_FAILURE_REASON = "optimization_failure_reason"
 
 
+@dataclass
+class ExecutionResult:
+    query: qal.SqlQuery
+    result_set: object
+    optimization_time: float = np.nan
+    execution_time: float = np.nan
+
+
 class QueryPreparationService:
     """
 
@@ -39,7 +48,7 @@ class QueryPreparationService:
     """
 
     def __init__(self, *, explain: bool = False, count_star: bool = False, analyze: bool = False,
-                 preparatory_statements: list[str] | None = None):
+                 preparatory_statements: Optional[list[str]] = None):
         self.explain = explain
         self.analyze = analyze
         self.count_star = count_star
@@ -70,8 +79,25 @@ def _failed_execution_result(query: qal.SqlQuery, repetitions: int = 1) -> pd.Da
     })
 
 
+def _invoke_post_process(query: qal.SqlQuery, execution_result: pd.DataFrame,
+                         action: Optional[Callable[[ExecutionResult], None]] = None) -> None:
+    if not action:
+        return
+
+    if len(execution_result) > 1:
+        raise ValueError("Post process action can only be invoked on 1 execution result at a time, "
+                         f"but {len(execution_result)} supplied.")
+
+    execution_result = execution_result.iloc[0]
+    result_set, execution_time = execution_result[COL_RESULT], execution_result[COL_T_EXEC]
+    optimization_time = execution_result[COL_T_OPT] if COL_T_OPT in execution_result else np.nan
+    result_wrapper = ExecutionResult(query, result_set, optimization_time, execution_time)
+
+    action(result_wrapper)
+
+
 def execute_query(query: qal.SqlQuery, database: db.Database, *,
-                  repetitions: int = 1, query_preparation: QueryPreparationService | None = None) -> pd.DataFrame:
+                  repetitions: int = 1, query_preparation: Optional[QueryPreparationService] = None) -> pd.DataFrame:
     original_query = query
     if query_preparation:
         query = query_preparation.prepare_query(query)
@@ -100,8 +126,9 @@ def execute_query(query: qal.SqlQuery, database: db.Database, *,
 
 def execute_workload(queries: Iterable[qal.SqlQuery], database: db.Database, *,
                      workload_repetitions: int = 1, per_query_repetitions: int = 1, shuffled: bool = False,
-                     query_preparation: QueryPreparationService | None = None,
-                     query_labels: dict[qal.SqlQuery, str] | None = None) -> pd.DataFrame:
+                     query_preparation: Optional[QueryPreparationService] = None,
+                     query_labels: Optional[dict[qal.SqlQuery, str]] = None,
+                     post_process: Optional[Callable[[ExecutionResult], None]] = None) -> pd.DataFrame:
     results = []
     current_execution_index = 1
     for i in range(workload_repetitions):
@@ -117,6 +144,8 @@ def execute_workload(queries: Iterable[qal.SqlQuery], database: db.Database, *,
             current_repetition_results.append(execution_result)
             current_execution_index += per_query_repetitions
 
+            _invoke_post_process(query, execution_result, post_process)
+
         current_df = pd.concat(current_repetition_results)
         current_df[COL_WORKLOAD_ITER] = i + 1
         results.append(current_df)
@@ -130,7 +159,7 @@ def execute_workload(queries: Iterable[qal.SqlQuery], database: db.Database, *,
 
 def optimize_and_execute_query(query: qal.SqlQuery, optimization_pipeline: pb.OptimizationPipeline, *,
                                repetitions: int = 1,
-                               query_preparation: QueryPreparationService | None = None) -> pd.DataFrame:
+                               query_preparation: Optional[QueryPreparationService] = None) -> pd.DataFrame:
     try:
         start_time = datetime.now()
         optimized_query = optimization_pipeline.optimize_query(query)
@@ -155,8 +184,8 @@ def optimize_and_execute_query(query: qal.SqlQuery, optimization_pipeline: pb.Op
 
 def optimize_and_execute_workload(queries: Iterable[qal.SqlQuery], optimization_pipeline: pb.OptimizationPipeline, *,
                                   workload_repetitions: int = 1, per_query_repetitions: int = 1, shuffled: bool = False,
-                                  query_preparation: QueryPreparationService | None = None,
-                                  query_labels: dict[qal.SqlQuery, str] | None = None) -> pd.DataFrame:
+                                  query_preparation: Optional[QueryPreparationService] = None,
+                                  query_labels: Optional[dict[qal.SqlQuery, str]] = None) -> pd.DataFrame:
     results = []
     current_execution_index = 1
     for i in range(workload_repetitions):
@@ -172,6 +201,8 @@ def optimize_and_execute_workload(queries: Iterable[qal.SqlQuery], optimization_
                                                         current_execution_index + per_query_repetitions))
             current_repetition_results.append(execution_result)
             current_execution_index += per_query_repetitions
+
+            _invoke_post_process(query, execution_result, post_process)
 
         current_df = pd.concat(current_repetition_results)
         current_df[COL_WORKLOAD_ITER] = i + 1
