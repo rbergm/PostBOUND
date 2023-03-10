@@ -25,13 +25,19 @@ class PhysicalOperatorSelection(abc.ABC):
     def chain_with(self, next_selection: PhysicalOperatorSelection) -> None:
         self.next_selection = next_selection
 
-    @abc.abstractmethod
     def describe(self) -> dict:
-        raise NotImplementedError
+        description = self._description()
+        if self.next_selection:
+            description["next_selection"] = self.next_selection.describe()
+        return description
 
     @abc.abstractmethod
     def _apply_selection(self, query: qal.ImplicitSqlQuery,
                          join_order: data.JoinTree | None) -> operators.PhysicalOperatorAssignment:
+        raise NotImplementedError
+
+    @abc.abstractmethod
+    def _description(self) -> dict:
         raise NotImplementedError
 
 
@@ -40,9 +46,6 @@ class UESOperatorSelection(PhysicalOperatorSelection):
     def __init__(self, target_system: systems.DatabaseSystem) -> None:
         super().__init__(target_system)
 
-    def describe(self) -> dict:
-        return {"name": "ues"}
-
     def _apply_selection(self, query: qal.ImplicitSqlQuery,
                          join_order: data.JoinTree | None) -> operators.PhysicalOperatorAssignment:
         assignment = operators.PhysicalOperatorAssignment(query)
@@ -50,10 +53,17 @@ class UESOperatorSelection(PhysicalOperatorSelection):
             assignment.set_operator_enabled_globally(operators.JoinOperators.NestedLoopJoin, False)
         return assignment
 
+    def _description(self) -> dict:
+        return {"name": "ues"}
+
 
 class EmptyPhysicalOperatorSelection(PhysicalOperatorSelection):
 
-    def describe(self) -> dict:
+    def _apply_selection(self, query: qal.ImplicitSqlQuery,
+                         join_order: data.JoinTree | None) -> operators.PhysicalOperatorAssignment:
+        return operators.PhysicalOperatorAssignment(query)
+
+    def _description(self) -> dict:
         return {"name": "no_selection"}
 
     def _apply_selection(self, query: qal.ImplicitSqlQuery,
