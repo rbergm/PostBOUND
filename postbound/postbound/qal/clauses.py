@@ -23,25 +23,7 @@ class BaseClause(abc.ABC):
         raise NotImplementedError
 
     def itercolumns(self) -> Iterable[base.ColumnReference]:
-        return self.expression.itercolumns()
-
-    def tables(self) -> set[base.TableReference]:
-        return self.expression.tables()
-
-    def __hash__(self) -> int:
-        return hash((self.expression, self.target_name))
-
-    def __eq__(self, other) -> bool:
-        return (isinstance(other, type(self))
-                and self.expression == other.expression and self.target_name == other.target_name)
-
-    def __repr__(self) -> str:
-        return str(self)
-
-    def __str__(self) -> str:
-        if not self.target_name:
-            return str(self.expression)
-        return f"{self.expression} AS {self.target_name}"
+        raise NotImplementedError
 
 
 @dataclass
