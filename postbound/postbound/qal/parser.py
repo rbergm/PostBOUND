@@ -398,6 +398,9 @@ class _MospQueryParser:
         select_clause = _parse_select_clause(self._mosp_data)
         where_clause = _parse_where_clause(self._mosp_data["where"]) if "where" in self._mosp_data else None
 
+        # TODO: support for EXPLAIN queries
+        # TODO: support for CTEs
+
         if "groupby" in self._mosp_data:
             groupby_clause = _parse_groupby_clause(self._mosp_data["groupby"])
         else:

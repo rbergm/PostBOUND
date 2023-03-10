@@ -1,3 +1,5 @@
+"""Models all supported SQL expressions. Predicates and clauses are located in separate modules."""
+
 from __future__ import annotations
 
 import abc
@@ -8,10 +10,12 @@ from typing import Iterable
 
 from postbound.qal import base, qal
 
-_T = typing.TypeVar("_T")
+T = typing.TypeVar("T")
+"""Typed expressions use this generic type variable."""
 
 
 class MathematicalSqlOperators(enum.Enum):
+    """The supported mathematical operators."""
     Add = "+"
     Subtract = "-"
     Multiply = "*"
@@ -21,6 +25,7 @@ class MathematicalSqlOperators(enum.Enum):
 
 
 class LogicalSqlOperators(enum.Enum):
+    """The supported unary and binary operators."""
     Equal = "="
     NotEqual = "<>"
     Less = "<"
@@ -38,6 +43,7 @@ class LogicalSqlOperators(enum.Enum):
 
 
 class LogicalSqlCompoundOperators(enum.Enum):
+    """The supported compound operators."""
     And = "AND"
     Or = "OR"
     Not = "NOT"
@@ -47,6 +53,10 @@ SqlOperator = typing.Type[MathematicalSqlOperators | LogicalSqlOperators | Logic
 
 
 class SqlExpression(abc.ABC):
+    """Base class for all expressions.
+
+    Expressions can be inserted in many different places in a SQL query. TODO
+    """
 
     @abc.abstractmethod
     def columns(self) -> set[base.ColumnReference]:
@@ -91,8 +101,8 @@ class SqlExpression(abc.ABC):
         raise NotImplementedError
 
 
-class StaticValueExpression(SqlExpression, typing.Generic[_T]):
-    def __init__(self, value: _T) -> None:
+class StaticValueExpression(SqlExpression, typing.Generic[T]):
+    def __init__(self, value: T) -> None:
         self.value = value
 
     def columns(self) -> set[base.ColumnReference]:
