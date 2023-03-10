@@ -71,7 +71,8 @@ def read_workload(path: str, name: str = "", *, query_file_pattern: str = "*.sql
     for subdir in root_dir.iterdir():
         if not subdir.is_dir():
             continue
-        subdir_prefix = query_label_prefix + "/" if not query_label_prefix.endswith("/") else query_label_prefix
+        subdir_prefix = ((query_label_prefix + "/") if query_label_prefix and not query_label_prefix.endswith("/")
+                         else query_label_prefix)
         subdir_prefix += subdir.stem + "/"
         subdir_workload = read_workload(str(subdir), query_file_pattern=query_file_pattern, recurse_subdirectories=True,
                                         query_label_prefix=subdir_prefix)
