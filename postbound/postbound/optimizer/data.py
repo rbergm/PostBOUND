@@ -503,10 +503,10 @@ class JoinTree(Container[JoinTreeNode]):
         other_tree = item if isinstance(item, JoinTree) else JoinTree(item)
         if self.is_empty() and not item.is_empty():
             return False
-        elif item.is_empty():
+        elif other_tree.is_empty():
             return True
 
-        return item.root in self.root
+        return other_tree.root in self.root
 
     def __hash__(self) -> int:
         return hash(self.root)
