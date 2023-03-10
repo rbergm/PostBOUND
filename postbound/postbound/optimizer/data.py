@@ -256,6 +256,14 @@ class JoinGraph:
                 self._index_structures[partner_col].invalidate()
                 self._index_structures[joined_col].invalidate()
 
+        if pk_fk_join:
+            return
+
+        for table, is_free in self._graph.nodes.data("free"):
+            if is_free or table == partner_table:
+                continue
+            self._invalidate_indexes_on(table)
+
     def _check_pk_fk_join(self, pk_table: base.TableReference, edge_data: dict) -> bool:
         join_predicate: predicates.AbstractPredicate = edge_data["predicate"]
         for base_predicate in join_predicate.base_predicates():
@@ -263,6 +271,11 @@ class JoinGraph:
             if self.is_pk_fk_join(fk_table, pk_table):
                 return True
         return False
+
+    def _invalidate_indexes_on(self, table: base.TableReference) -> None:
+        for column, index in self._index_structures.items():
+            if column.table == table:
+                index.invalidate()
 
 
 class JoinTreeNode(abc.ABC, Container):
