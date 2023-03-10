@@ -49,7 +49,7 @@ class QueryPreparationService:
         if self.analyze:
             query = transform.as_explain(query, clauses.Explain.explain_analyze())
         elif self.explain:
-            query = transform.as_explain(query, clauses.Explain.pure())
+            query = transform.as_explain(query, clauses.Explain.plan())
 
         if self.count_star:
             query = transform.as_count_star_query(query)

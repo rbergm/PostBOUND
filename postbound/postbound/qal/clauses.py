@@ -89,7 +89,7 @@ class Explain:
         return Explain(True, format_type)
 
     @staticmethod
-    def pure(format_type: str = "JSON") -> Explain:
+    def plan(format_type: str = "JSON") -> Explain:
         return Explain(False, format_type)
 
     def __hash__(self) -> int:
