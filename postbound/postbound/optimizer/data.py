@@ -229,8 +229,8 @@ class JoinGraph:
         for join in available_joins:
             current_pk_table: base.TableReference = join[0]
             join_predicate: predicates.AbstractPredicate = join[1]["predicate"]
-            current_fk_table = collection_utils.simplify([column.table for column
-                                                          in join_predicate.join_partners_of(current_pk_table)])
+            current_fk_table = collection_utils.simplify({column.table for column
+                                                          in join_predicate.join_partners_of(current_pk_table)})
             join_paths.append(JoinPath(current_fk_table, current_pk_table, join_predicate))
         return join_paths
 
@@ -239,7 +239,7 @@ class JoinGraph:
         if not join_edge:
             return
 
-        partner_table = collection_utils.simplify([col.table for col in join_edge.join_partners_of(table)])
+        partner_table = collection_utils.simplify({col.table for col in join_edge.join_partners_of(table)})
         pk_fk_join = self.is_pk_fk_join(table, partner_table)
         fk_pk_join = self.is_pk_fk_join(partner_table, table)
 
@@ -259,7 +259,7 @@ class JoinGraph:
     def _check_pk_fk_join(self, pk_table: base.TableReference, edge_data: dict) -> bool:
         join_predicate: predicates.AbstractPredicate = edge_data["predicate"]
         for base_predicate in join_predicate.base_predicates():
-            fk_table = collection_utils.simplify([column.table for column in base_predicate.join_partners_of(pk_table)])
+            fk_table = collection_utils.simplify({column.table for column in base_predicate.join_partners_of(pk_table)})
             if self.is_pk_fk_join(fk_table, pk_table):
                 return True
         return False
