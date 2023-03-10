@@ -144,9 +144,9 @@ class JoinGraph:
         for first_tab, second_tab, predicate in self._graph.edges.data("predicate"):
             if not self.is_available_join(first_tab, second_tab) and not is_first_join:
                 continue
-            first_col, second_col = predicate.columns()
-            if not self._index_structures[first_col].can_pk_fk_join(self._index_structures[second_col]):
-                return True
+            for first_col, second_col in predicate.join_partners():
+                if not self._index_structures[first_col].can_pk_fk_join(self._index_structures[second_col]):
+                    return True
         return False
 
     def count_consumed_tables(self) -> int:
