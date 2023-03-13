@@ -3,7 +3,8 @@
 More specifically, this includes an interface to interact with databases, schema information and statistics as well
 as a utility to easily obtain database connections.
 
-Take a look at the central `Database` class for more details.
+Take a look at the central `Database` class for more details. All concrete database systems need to implement this
+interface.
 """
 
 from __future__ import annotations
@@ -90,6 +91,9 @@ class Database(abc.ABC):
     query over and over again. This is achieved by storing the results of past queries in a special JSON file, which is
     read upon creation of the `Database` instance. If this behavior is not desired, it can simply be turned off via the
     `cache_enabled` property.
+
+    Each database management system will need to implement this basic interface to enable PostBOUND to access the
+    necessary information.
     """
 
     def __init__(self, name: str, *, cache_enabled: bool = True) -> None:
