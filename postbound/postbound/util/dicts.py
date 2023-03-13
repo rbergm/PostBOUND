@@ -1,18 +1,19 @@
-"""Contains utilties to access and modify dictionaries more conveniently."""
+"""Contains utilities to access and modify dictionaries more conveniently."""
 
 import collections
+import collections.abc
 import itertools
 import numbers
 import typing
 import warnings
-from typing import Dict, List, Callable, Tuple
+from typing import Callable, Optional
 
-_T = typing.TypeVar("_T")
-_K = typing.TypeVar("_K")
-_V = typing.TypeVar("_V")
+T = typing.TypeVar("T")
+K = typing.TypeVar("K")
+V = typing.TypeVar("V")
 
 
-def key(dictionary: Dict[_K, _V]) -> _K:
+def key(dictionary: dict[K, V]) -> K:
     """Provides the key of a dictionary with just 1 item.
 
     `key({'a': 1}) = 'a'`
@@ -22,7 +23,8 @@ def key(dictionary: Dict[_K, _V]) -> _K:
     for k in dictionary:
         return k
 
-def value(dictionary: Dict[_K, _V]) -> _V:
+
+def value(dictionary: dict[K, V]) -> V:
     """Provides the value of a dictionary with just 1 item.
 
     `value({'a': 1}) = 1`
@@ -33,7 +35,7 @@ def value(dictionary: Dict[_K, _V]) -> _V:
         return v
 
 
-def merge(a: Dict[_K, _V], b: Dict[_K, _V], *, update: Callable[[_K, _V, _V], _V] = None) -> Dict[_K, _V]:
+def merge(a: dict[K, V], b: dict[K, V], *, updater: Optional[Callable[[K, V, V], V]] = None) -> dict[K, V]:
     """Creates a new dict containing all key/values pairs from both argument dictionaries.
 
     If keys overlap, entries from dictionary `b` will take priority, unless an `update` method is given.
@@ -44,32 +46,32 @@ def merge(a: Dict[_K, _V], b: Dict[_K, _V], *, update: Callable[[_K, _V, _V], _V
     implementation is not optimized for larger dictionaries and will probably have a pretty bad performance on such
     input data.
     """
-    if not update:
+    if not updater:
         return dict([*a.items()] + [*b.items()])
     else:
         merged = dict(a)
-        for key, val in b.items():
-            if key in merged:
-                merged[key] = update(key, merged[key], val)
+        for k, v in b.items():
+            if k in merged:
+                merged[k] = updater(k, merged[k], v)
             else:
-                merged[key] = val
+                merged[k] = v
         return merged
 
 
-def update(dictionary: Dict[_K, _V], update: Callable[[_K, _V], _T]) -> Dict[_K, _T]:
+def update(dictionary: dict[K, V], updater: Callable[[K, V], T]) -> dict[K, T]:
     """Creates a new dict by calling update on each key/value pair on the old dict, retaining its keys."""
-    return {key: update(val) for key, val in dictionary.items()}
+    return {k: updater(k, v) for k, v in dictionary.items()}
 
 
-def explode(dictionary: Dict[_K, List[_V]]) -> List[Tuple[_K, _V]]:
+def explode(dictionary: dict[K, list[V]]) -> list[tuple[K, V]]:
     """Transforms dicts mapping keys to lists of values to a list of key/value pairs."""
     values = []
-    for key, dict_values in dictionary.items():
-        values.extend(zip(itertools.cycle([key]), dict_values))
+    for k, dict_values in dictionary.items():
+        values.extend(zip(itertools.cycle([k]), dict_values))
     return values
 
 
-def hash_dict(dictionary: Dict[_K, _V]) -> int:
+def hash_dict(dictionary: dict[K, V]) -> int:
     """Calculates a hash value based on the current dict contents (keys and values)."""
     keys = list(dictionary.keys())
     values = []
@@ -87,30 +89,30 @@ def hash_dict(dictionary: Dict[_K, _V]) -> int:
     return hash((keys_hash, values_hash))
 
 
-def generate_multi(entries: List[Tuple[_K, _V]]) -> Dict[_K, List[_V]]:
+def generate_multi(entries: list[tuple[K, V]]) -> dict[K, list[V]]:
     """Generates a multi-dict based on its entries.
 
     Each key can occur multiple times and values will be aggregated in a list.
     """
     collector = collections.defaultdict(list)
-    for key, value in entries:
-        collector[key].append(value)
+    for k, v in entries:
+        collector[k].append(v)
     return dict(collector)
 
 
-def reduce_multi(multi_dict: Dict[_K, List[_V]], reduction: Callable[[_K, List[_V]], _V]) -> Dict[_K, _V]:
+def reduce_multi(multi_dict: dict[K, list[V]], reduction: Callable[[K, list[V]], V]) -> dict[K, V]:
     """Ungroups a multi-dict by aggregating the values based on key and values."""
-    return {key: reduction(key, values) for key, values in multi_dict.items()}
+    return {k: reduction(k, vs) for k, vs in multi_dict.items()}
 
 
-def invert(mapping: Dict[_K, List[_V]]) -> Dict[_V, List[_K]]:
+def invert_multi(mapping: dict[K, list[V]]) -> dict[V, list[K]]:
     """Inverts the `key -> values` mapping of a dict to become `value -> keys` instead.
 
     Supppose a multi-dict has the following contents: `{'a': [1, 2], 'b': [2, 3]}`.
     Calling `invert` transforms this mapping to `{1: ['a'], 2: ['a', 'b'], 3: ['b']}`.
     """
     level1 = {tuple(vs): k for k, vs in mapping.items()}
-    level2: Dict[_V, List[_K]] = {}
+    level2: dict[V, list[K]] = {}
     for vs, k in level1.items():
         for v in vs:
             if v not in level2:
@@ -120,7 +122,18 @@ def invert(mapping: Dict[_K, List[_V]]) -> Dict[_V, List[_K]]:
     return level2
 
 
-def argmin(mapping: Dict[_K, numbers.Number]) -> _K:
+def invert(mapping: dict[K, V]) -> dict[V, K]:
+    """Inverts the `key -> value` mapping of a dict to become `value -> key` instead.
+
+    In contrast to `invert_multi` this does not handle duplicate values (which leads to duplicate keys), nor does it
+    process the original values of `mapping` in any way.
+
+    Basically, this function is just a better-readable shortcut for `{v: k for k, v in d.items()}`.
+    """
+    return {v: k for k, v in mapping.items()}
+
+
+def argmin(mapping: dict[K, numbers.Number]) -> K:
     """
     For a dict mapping keys to numeric types, returns the key `k` with minimum value `v`, s.t. for all keys `k'` with
     values `v'` it holds that `v <= v'`.
