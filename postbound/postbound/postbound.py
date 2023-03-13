@@ -59,9 +59,9 @@ class OptimizationPipeline:
 
     def optimize_query(self, query: qal.SqlQuery) -> qal.SqlQuery:
         self._assert_is_build()
-        pre_check_passed, failure_reason = self.pre_check.check_supported_query(query)
-        if not pre_check_passed:
-            raise validation.UnsupportedQueryError(query, failure_reason)
+        supported_query_check = self.pre_check.check_supported_query(query)
+        if not supported_query_check.passed:
+            raise validation.UnsupportedQueryError(query, supported_query_check.failure_reason)
 
         if query.is_implicit():
             implicit_query: qal.ImplicitSqlQuery = query
