@@ -8,7 +8,7 @@ from postbound import postbound as pb
 from postbound.experiments import runner
 
 
-def prepare_df_for_csv_export(df: pd.DataFrame) -> pd.DataFrame:
+def prepare_export(df: pd.DataFrame) -> pd.DataFrame:
     if not len(df):
         return df
 
