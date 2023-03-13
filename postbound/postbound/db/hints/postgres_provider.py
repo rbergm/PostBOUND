@@ -148,7 +148,7 @@ class PostgresRightDeepJoinClauseBuilder:
         subquery = qal.ExplicitSqlQuery(select_clause=select_clause, from_clause=from_clause)
 
         self._update_renamed_columns(exported_columns, base.TableReference.create_virtual(subquery_export_name))
-        self._mark_tables_joined(subquery_tables)
+        self._mark_tables_joined(list(subquery_tables))
         self._perform_column_renaming(join_condition)
         return joins.SubqueryJoin.inner(subquery, subquery_export_name, join_condition)
 
@@ -168,7 +168,7 @@ class PostgresRightDeepJoinClauseBuilder:
 
     def _fetch_join_predicate(self, tables: base.TableReference | list[base.TableReference]
                               ) -> predicates.AbstractPredicate | None:
-        """"Provides all available join predicates on the given tables."""
+        """Provides all available join predicates on the given tables."""
         tables = collection_utils.enlist(tables)
         join_predicates = []
         for table in tables:
@@ -205,7 +205,7 @@ class PostgresRightDeepJoinClauseBuilder:
 
         return columns_in_select_clause | columns_in_predicates | columns_in_grouping | columns_in_ordering
 
-    def _mark_tables_joined(self, tables: base.TableReference | Iterable[base.TableReference]) -> None:
+    def _mark_tables_joined(self, tables: base.TableReference | list[base.TableReference]) -> None:
         """Marks the given tables as joined, potentially making new join predicates to other tables available."""
         tables = collection_utils.enlist(tables)
         for table in tables:
@@ -322,8 +322,7 @@ class HintParts:
         return HintParts(self.settings + other.settings, self.hints + other.hints)
 
 
-def _generate_pg_operator_hints(query: qal.SqlQuery, join_order: data.JoinTree,
-                                physical_operators: operators.PhysicalOperatorAssignment) -> HintParts:
+def _generate_pg_operator_hints(physical_operators: operators.PhysicalOperatorAssignment) -> HintParts:
     """Generates the hints and preparatory statements to enforce the selected optimization in Postgres."""
     settings = []
     for operator, enabled in physical_operators.global_settings.items():
@@ -408,7 +407,7 @@ class PostgresHintProvider(provider.HintProvider):
 
         hint_parts = HintParts.empty()
         if physical_operators:
-            operator_hints = _generate_pg_operator_hints(adapted_query, join_order, physical_operators)
+            operator_hints = _generate_pg_operator_hints(physical_operators)
             hint_parts = hint_parts.merge_with(operator_hints)
 
         if plan_parameters:
