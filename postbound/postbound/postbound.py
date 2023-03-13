@@ -35,7 +35,7 @@ class OptimizationPipeline:
         self.plan_parameterization = param_generator
         return self
 
-    def load_settings(self, optimization_settings: presets.OptimizationSettings) -> None:
+    def load_settings(self, optimization_settings: presets.OptimizationSettings) -> OptimizationPipeline:
         support_check = optimization_settings.query_pre_check()
         if support_check:
             self.setup_query_support_check(support_check)
@@ -45,8 +45,9 @@ class OptimizationPipeline:
         operator_selection = optimization_settings.build_physical_operator_selection()
         if operator_selection:
             self.setup_physical_operator_selection(operator_selection)
+        return self
 
-    def build(self) -> None:
+    def build(self) -> OptimizationPipeline:
         if not self.pre_check:
             self.pre_check = validation.EmptyPreCheck()
         if not self.join_order_enumerator:
@@ -56,6 +57,7 @@ class OptimizationPipeline:
         if not self.plan_parameterization:
             self.plan_parameterization = plan_param.EmptyParameterization()
         self._build = True
+        return self
 
     def optimize_query(self, query: qal.SqlQuery) -> qal.SqlQuery:
         self._assert_is_build()
