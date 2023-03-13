@@ -22,8 +22,11 @@ class PhysicalOperatorSelection(abc.ABC):
             assignment = assignment.merge_with(next_assignment)
         return assignment
 
-    def chain_with(self, next_selection: PhysicalOperatorSelection) -> None:
+    def chain_with(self, next_selection: PhysicalOperatorSelection) -> PhysicalOperatorSelection:
+        if self.next_selection:
+            next_selection.chain_with(self.next_selection)
         self.next_selection = next_selection
+        return self
 
     def describe(self) -> dict:
         description = self._description()
