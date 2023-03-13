@@ -63,16 +63,16 @@ class OptimizationPipeline:
         if not supported_query_check.passed:
             raise validation.UnsupportedQueryError(query, supported_query_check.failure_reason)
 
-        if query.is_implicit():
-            implicit_query: qal.ImplicitSqlQuery = query
-        else:
-            implicit_query: qal.ImplicitSqlQuery = transform.explicit_to_implicit(query)
+        if isinstance(query, qal.ExplicitSqlQuery):
+            query = transform.explicit_to_implicit(query)
+        elif not isinstance(query, qal.ImplicitSqlQuery):
+            raise ValueError(f"Unknown query type '{type(query)}' for query '{query}'")
 
-        join_order = self.join_order_enumerator.optimize_join_order(implicit_query)
-        operators = self.physical_operator_selection.select_physical_operators(implicit_query, join_order)
+        join_order = self.join_order_enumerator.optimize_join_order(query)
+        operators = self.physical_operator_selection.select_physical_operators(query, join_order)
         plan_parameters = self.plan_parameterization.generate_plan_parameters(query, join_order, operators)
 
-        return self.target_dbs.query_adaptor().adapt_query(implicit_query, join_order, operators, plan_parameters)
+        return self.target_dbs.query_adaptor().adapt_query(query, join_order, operators, plan_parameters)
 
     def describe(self) -> dict:
         return {
