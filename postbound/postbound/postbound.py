@@ -86,7 +86,8 @@ class OptimizationPipeline:
             "query_pre_check": self.pre_check.describe() if self.pre_check else None,
             "join_ordering": self.join_order_enumerator.describe() if self.join_order_enumerator else None,
             "operator_selection": (self.physical_operator_selection.describe() if self.physical_operator_selection
-                                   else None)
+                                   else None),
+            "plan_parameterization": self.plan_parameterization.describe() if self.plan_parameterization else None
         }
 
     def _assert_is_build(self) -> None:
