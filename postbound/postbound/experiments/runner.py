@@ -12,6 +12,7 @@ from postbound import postbound as pb
 from postbound.db import db
 from postbound.qal import qal, transform, clauses
 from postbound.optimizer import validation
+from postbound.experiments import workloads
 
 COL_LABEL = "label"
 COL_QUERY = "query"
@@ -124,23 +125,30 @@ def execute_query(query: qal.SqlQuery, database: db.Database, *,
     })
 
 
-def execute_workload(queries: Iterable[qal.SqlQuery], database: db.Database, *,
+def _wrap_workload(queries: Iterable[qal.SqlQuery] | workloads.Workload) -> workloads.Workload:
+    return queries if isinstance(queries, workloads.Workload) else workloads.generate_workload(queries)
+
+
+def execute_workload(queries: Iterable[qal.SqlQuery] | workloads.Workload, database: db.Database, *,
                      workload_repetitions: int = 1, per_query_repetitions: int = 1, shuffled: bool = False,
-                     query_preparation: Optional[QueryPreparationService] = None,
-                     query_labels: Optional[dict[qal.SqlQuery, str]] = None,
+                     query_preparation: Optional[QueryPreparationService] = None, include_labels: bool = False,
                      post_process: Optional[Callable[[ExecutionResult], None]] = None) -> pd.DataFrame:
+    queries = _wrap_workload(queries)
     results = []
     current_execution_index = 1
     for i in range(workload_repetitions):
         current_repetition_results = []
         if shuffled:
-            queries = random.sample(queries, k=len(queries))
+            queries = queries.shuffle()
 
-        for query in queries:
+        for label, query in queries.entries():
             execution_result = execute_query(query, database, repetitions=per_query_repetitions,
                                              query_preparation=query_preparation)
             execution_result[COL_EXEC_IDX] = list(range(current_execution_index,
                                                         current_execution_index + per_query_repetitions))
+            if include_labels:
+                execution_result[COL_LABEL] = label
+
             current_repetition_results.append(execution_result)
             current_execution_index += per_query_repetitions
 
@@ -151,7 +159,6 @@ def execute_workload(queries: Iterable[qal.SqlQuery], database: db.Database, *,
         results.append(current_df)
 
     result_df = pd.concat(results)
-    result_df[COL_LABEL] = result_df[COL_QUERY].apply(query_labels.get) if query_labels else ""
     return result_df[[COL_LABEL, COL_EXEC_IDX, COL_QUERY,
                       COL_WORKLOAD_ITER, COL_REP,
                       COL_T_EXEC, COL_RESULT]]
@@ -182,23 +189,29 @@ def optimize_and_execute_query(query: qal.SqlQuery, optimization_pipeline: pb.Op
     return execution_result
 
 
-def optimize_and_execute_workload(queries: Iterable[qal.SqlQuery], optimization_pipeline: pb.OptimizationPipeline, *,
+def optimize_and_execute_workload(queries: Iterable[qal.SqlQuery] | workloads.Workload,
+                                  optimization_pipeline: pb.OptimizationPipeline, *,
                                   workload_repetitions: int = 1, per_query_repetitions: int = 1, shuffled: bool = False,
                                   query_preparation: Optional[QueryPreparationService] = None,
-                                  query_labels: Optional[dict[qal.SqlQuery, str]] = None) -> pd.DataFrame:
+                                  include_labels: bool = False,
+                                  post_process: Optional[Callable[[ExecutionResult], None]] = None) -> pd.DataFrame:
+    queries = _wrap_workload(queries)
     results = []
     current_execution_index = 1
     for i in range(workload_repetitions):
         current_repetition_results = []
         if shuffled:
-            queries = random.sample(queries, k=len(queries))
+            queries = queries.shuffle()
 
-        for query in queries:
+        for label, query in queries.entries():
             execution_result = optimize_and_execute_query(query, optimization_pipeline,
                                                           repetitions=per_query_repetitions,
                                                           query_preparation=query_preparation)
             execution_result[COL_EXEC_IDX] = list(range(current_execution_index,
                                                         current_execution_index + per_query_repetitions))
+            if include_labels:
+                execution_result[COL_LABEL] = label
+
             current_repetition_results.append(execution_result)
             current_execution_index += per_query_repetitions
 
@@ -209,7 +222,6 @@ def optimize_and_execute_workload(queries: Iterable[qal.SqlQuery], optimization_
         results.append(current_df)
 
     result_df = pd.concat(results)
-    result_df[COL_LABEL] = result_df[COL_ORIG_QUERY].apply(query_labels.get) if query_labels else ""
     return result_df[[COL_LABEL, COL_EXEC_IDX, COL_QUERY,
                       COL_WORKLOAD_ITER, COL_REP,
                       COL_T_OPT, COL_T_EXEC, COL_RESULT,
