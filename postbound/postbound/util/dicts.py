@@ -1,4 +1,5 @@
 """Contains utilities to access and modify dictionaries more conveniently."""
+from __future__ import annotations
 
 import collections
 import collections.abc

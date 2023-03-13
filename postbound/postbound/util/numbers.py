@@ -1,3 +1,5 @@
+"""Utilities centered around numbers."""
+from __future__ import annotations
 
 import math
 import numbers
@@ -16,6 +18,7 @@ def represents_number(val: str) -> bool:
 
 class AtomicInt(numbers.Integral):
     """An atomic int allows for multi-threaded access to the integer value."""
+
     def __init__(self, value: int = 0):
         self._value = value
         self._lock = threading.Lock()
@@ -49,7 +52,7 @@ class AtomicInt(numbers.Integral):
         with self._lock:
             return abs(self._value)
 
-    def __add__(self, other: Any) -> "AtomicInt":
+    def __add__(self, other: Any) -> AtomicInt:
         self._assert_integral(other)
         other = self._unwrap_atomic(other)
         with self._lock:
@@ -73,7 +76,7 @@ class AtomicInt(numbers.Integral):
         with self._lock:
             return math.floor(self._value)
 
-    def __floordiv__(self, other: Any) -> int:
+    def __floordiv__(self, other: Any) -> AtomicInt:
         other = self._unwrap_atomic(other)
         with self._lock:
             return AtomicInt(self._value // other)
@@ -106,13 +109,13 @@ class AtomicInt(numbers.Integral):
         with self._lock:
             return self._value % other
 
-    def __mul__(self, other: Any) -> "AtomicInt":
+    def __mul__(self, other: Any) -> AtomicInt:
         self._assert_integral(other)
         other = self._unwrap_atomic(other)
         with self._lock:
             return AtomicInt(self._value * other)
 
-    def __neg__(self) -> "AtomicInt":
+    def __neg__(self) -> AtomicInt:
         with self._lock:
             return AtomicInt(-self._value)
 
@@ -125,7 +128,7 @@ class AtomicInt(numbers.Integral):
         with self._lock:
             return +self.value
 
-    def __pow__(self, exponent: Any, modulus: Union[Any, None] = ...) -> "AtomicInt":
+    def __pow__(self, exponent: Any, modulus: Any | None = ...) -> AtomicInt:
         with self._lock:
             res = self._value ** exponent
             if res != int(res):
@@ -142,7 +145,7 @@ class AtomicInt(numbers.Integral):
         with self._lock:
             return other + self._value
 
-    def __rfloordiv__(self, other: Any) -> "AtomicInt":
+    def __rfloordiv__(self, other: Any) -> Any:
         other = self._unwrap_atomic(other)
         with self._lock:
             return other // self._value
@@ -229,8 +232,9 @@ class BoundedInt(numbers.Integral):
     If the bounded integer does leave the allowed interval, it will be snapped back to the minimum/maximum allowed number,
     respectively.
     """
+
     @staticmethod
-    def non_neg(value: int, *, allowed_max: Union[int, None] = None) -> "BoundedInt":
+    def non_neg(value: int, *, allowed_max: Union[int, None] = None) -> BoundedInt:
         return BoundedInt(value, allowed_min=0, allowed_max=allowed_max)
 
     def __init__(self, value: int, *, allowed_min: Union[int, None] = None, allowed_max: Union[int, None] = None):
@@ -269,7 +273,7 @@ class BoundedInt(numbers.Integral):
     def __abs__(self) -> int:
         return abs(self._value)
 
-    def __add__(self, other: Union[int, "BoundedInt"]) -> "BoundedInt":
+    def __add__(self, other: int | BoundedInt) -> BoundedInt:
         other_value = self._unwrap_atomic(other)
         return BoundedInt(self._value + other_value, allowed_min=self._allowed_min, allowed_max=self._allowed_max)
 
@@ -313,11 +317,11 @@ class BoundedInt(numbers.Integral):
         other_value = self._unwrap_atomic(other)
         return self._value % other_value
 
-    def __mul__(self, other: Any) -> "BoundedInt":
+    def __mul__(self, other: Any) -> BoundedInt:
         other_value = self._unwrap_atomic(other)
         return BoundedInt(self._value * other_value, allowed_min=self._allowed_min, allowed_max=self._allowed_max)
 
-    def __neg__(self) -> "BoundedInt":
+    def __neg__(self) -> BoundedInt:
         return BoundedInt(-self._value, allowed_min=self._allowed_min, allowed_max=self._allowed_max)
 
     def __or__(self, other: Any) -> Any:
@@ -327,7 +331,7 @@ class BoundedInt(numbers.Integral):
     def __pos__(self) -> Any:
         return +self._value
 
-    def __pow__(self, exponent: Any, modulus: Union[Any, None] = ...) -> "BoundedInt":
+    def __pow__(self, exponent: Any, modulus: Union[Any, None] = ...) -> BoundedInt:
         res = self._value ** exponent
         if res != int(res):
             raise ValueError(f"Power not support for type BoundedInt with argument {exponent}")
