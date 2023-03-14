@@ -4,11 +4,19 @@ import abc
 
 from postbound.db import db
 from postbound.db.systems import systems
+from postbound.qal import parser
 from postbound.optimizer import validation
 from postbound.optimizer.bounds import scans, joins, stats, subqueries
 from postbound.optimizer.joinorder import enumeration
 from postbound.optimizer.physops import selection
 from postbound.optimizer.planmeta import hints as plan_param
+
+
+def apply_standard_system_options() -> None:
+    database = db.DatabasePool.get_instance().current_database()
+    database.statistics().emulated = True
+    database.statistics().cache_enabled = True
+    parser.auto_bind_columns = True
 
 
 class OptimizationSettings(abc.ABC):
