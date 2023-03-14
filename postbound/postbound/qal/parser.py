@@ -6,8 +6,7 @@ from typing import Any
 
 import mo_sql_parsing as mosp
 
-import postbound.qal.clauses
-from postbound.qal import base, clauses, expressions as expr, joins, qal, predicates as preds
+from postbound.qal import base, qal, clauses, expressions as expr, joins, predicates as preds
 from postbound.qal import transform
 from postbound.db import db
 from postbound.util import dicts as dict_utils
@@ -191,13 +190,13 @@ def _parse_mosp_expression(mosp_data: Any) -> expr.SqlExpression:
     return expr.FunctionExpression(operation, parsed_arguments, distinct=distinct)
 
 
-def _parse_select_statement(mosp_data: dict | str) -> postbound.qal.clauses.BaseProjection:
+def _parse_select_statement(mosp_data: dict | str) -> clauses.BaseProjection:
     if isinstance(mosp_data, dict):
         select_target = copy.copy(mosp_data["value"])
         target_name = mosp_data.get("name", None)
-        return postbound.qal.clauses.BaseProjection(_parse_mosp_expression(select_target), target_name)
+        return clauses.BaseProjection(_parse_mosp_expression(select_target), target_name)
     target_column = _parse_column_reference(mosp_data)
-    return postbound.qal.clauses.BaseProjection(expr.ColumnExpression(target_column))
+    return clauses.BaseProjection(expr.ColumnExpression(target_column))
 
 
 def _parse_select_clause(mosp_data: dict) -> clauses.Select:
