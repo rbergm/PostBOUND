@@ -1,6 +1,15 @@
+"""Tests for PostBOUND's implementation of the UES algorithm on various benchmarks.
+
+In order to run these tests, working instances of the various databases are required and connect files have to be
+created accordingly.
+
+The tests do not run any performance measurements, but rather only ensure that results between original and optimized
+queries remain equal. They act as regression tests in that sense.
+"""
 from __future__ import annotations
 
 import sys
+import unittest
 
 sys.path.append("../../")
 
@@ -79,3 +88,8 @@ class StackWorkloadTests(regression_suite.DatabaseTestCase):
                     self.assertResultSetsEqual(original_result, optimized_result, ordered=query.is_ordered())
                 except validation.UnsupportedQueryError as e:
                     self.skipTest(f"Unsupported query: {e}")
+
+
+class RegressionTests(unittest.TestCase):
+    # No regressions so far!
+    pass
