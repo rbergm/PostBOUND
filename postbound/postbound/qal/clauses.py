@@ -13,21 +13,59 @@ from postbound.util import collections as collection_utils
 
 
 class BaseClause(abc.ABC):
+    """Basic interface shared by all supported clauses. This is an abstract interface, not an usable clause."""
+
     def tables(self) -> set[base.TableReference]:
+        """Provides all tables that are referenced in the clause."""
         return {column.table for column in self.columns() if column.is_bound()}
 
     def columns(self) -> set[base.ColumnReference]:
+        """Provides all columns that are referenced in the clause."""
         raise NotImplementedError
 
     def iterexpressions(self) -> Iterable[expr.SqlExpression]:
+        """Provides access to all directly contained expressions in this clause.
+
+        Nested expressions can be accessed from these expressions in a recursive manner (see the `SqlExpression`
+        interface for details).
+        """
         raise NotImplementedError
 
     def itercolumns(self) -> Iterable[base.ColumnReference]:
+        """Provides access to all column in this clause.
+
+        In contrast to the `columns` method, duplicates are returned multiple times, i.e. if a column is referenced `n`
+        times in this clause, it will also be returned `n` times by this method. Furthermore, the order in which
+        columns are provided by the iterable matches the order in which they appear in this clause.
+        """
         raise NotImplementedError
 
 
 @dataclass
 class Hint(BaseClause):
+    """Hint block of a clause.
+
+    Depending on the SQL dialect, these hints will be placed at different points in the query. Furthermore, the precise
+    contents (i.e. syntax and semantic) vary from database system to system.
+
+    Hints are differentiated in two parts:
+
+    - preparatory statements can be executed as valid commands on the database system, e.g. optimizer settings, etc.
+    - query hints are the actual hints. Typically, these will be inserted as comments at some place in the query.
+
+    For example, a hint clause for MySQL could look like this:
+
+    ```sql
+    SET optimizer_switch = 'block_nested_loop=off';
+    SELECT /*+ HASH_JOIN(R S) */ R.a
+    FROM R, S, T
+    WHERE R.a = S.b AND S.b = T.c
+    ```
+
+    This enforces the join between tables `R` and `S` to be executed as a hash join (due to the query hint) and disables
+    usage of the block nested-loop join for the entire query (which in this case only affects the join between tables
+    `S` and `T`) due to the preparatory `SET optimizer_switch` statement.
+    """
     preparatory_statements: str = ""
     query_hints: str = ""
 

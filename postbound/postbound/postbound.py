@@ -1,4 +1,4 @@
-""""""
+"""Provides PostBOUND's main optimization pipeline."""
 from __future__ import annotations
 
 from postbound.qal import qal, transform
@@ -11,6 +11,10 @@ from postbound.util import errors
 
 
 class OptimizationPipeline:
+    """The optimization pipeline is the main tool to apply and combine different optimization strategies.
+
+    """
+
     def __init__(self, target_dbs: db_sys.DatabaseSystem) -> None:
         self.target_dbs = target_dbs
         self.pre_check: validation.OptimizationPreCheck | None = None

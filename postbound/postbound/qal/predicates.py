@@ -7,7 +7,7 @@ import functools
 import itertools
 from typing import Iterable, Iterator
 
-from postbound.qal import base, expressions as expr
+from postbound.qal import base, expressions as expr, qal
 from postbound.util import errors, collections as collection_utils
 
 _ReflexiveOps = ["=", "!=", "<>"]
@@ -29,6 +29,13 @@ class NoFilterPredicateError(errors.StateError):
     def __init__(self, predicate: AbstractPredicate | None = None) -> None:
         super().__init__(f"For predicate {predicate}" if predicate else "")
         self.predicate = predicate
+
+
+def _collect_dependent_subqueries(expression: expr.SqlExpression) -> list[qal.SqlQuery]:
+    if isinstance(expression, expr.SubqueryExpression):
+        return [expression.query] if expression.query.is_dependent() else []
+    return collection_utils.flatten(_collect_dependent_subqueries(child_expr)
+                                    for child_expr in expression.iterchildren())
 
 
 class AbstractPredicate(abc.ABC):
@@ -128,6 +135,10 @@ class AbstractPredicate(abc.ABC):
         """Raises a `NoFilterPredicateError` if `self` is not a filter."""
         if not self.is_filter():
             raise NoFilterPredicateError(self)
+
+    def _detect_dependent_subqueries(self) -> list[qal.SqlQuery]:
+        return collection_utils.flatten(_collect_dependent_subqueries(expression)
+                                        for expression in self.iterexpressions())
 
     @abc.abstractmethod
     def __hash__(self) -> int:
