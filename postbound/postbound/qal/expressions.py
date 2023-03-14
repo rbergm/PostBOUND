@@ -274,13 +274,18 @@ class SubqueryExpression(SqlExpression):
         self.query = subquery
 
     def columns(self) -> set[base.ColumnReference]:
-        return self.query.predicates().root().columns()
+        predicates = self.query.predicates()
+        return predicates.root().columns() if predicates else set()
 
     def itercolumns(self) -> Iterable[base.ColumnReference]:
-        return self.query.predicates().root().itercolumns()
+        predicates = self.query.predicates()
+        return predicates.root().itercolumns() if predicates else []
 
     def iterchildren(self) -> Iterable[SqlExpression]:
         return []
+
+    def tables(self) -> set[base.TableReference]:
+        return self.query.tables()
 
     def __hash__(self) -> int:
         return hash(self.query)
@@ -292,7 +297,8 @@ class SubqueryExpression(SqlExpression):
         return super().__repr__()
 
     def __str__(self) -> str:
-        return f"({self.query})"
+        query_str = str(self.query).removesuffix(";")
+        return f"({query_str})"
 
 
 class StarExpression(SqlExpression):

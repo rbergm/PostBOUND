@@ -327,8 +327,12 @@ class InPredicate(BasePredicate):
         return super().__repr__()
 
     def __str__(self) -> str:
-        vals = ", ".join(str(val) for val in self.values)
-        return f"{self.column} IN ({vals})"
+        if len(self.values) == 1:
+            value = collection_utils.simplify(self.values)
+            vals = str(value) if isinstance(value, expr.SubqueryExpression) else f"({value})"
+        else:
+            vals = "(" + ", ".join(str(val) for val in self.values) + ")"
+        return f"{self.column} IN {vals}"
 
 
 class UnaryPredicate(BasePredicate):
@@ -433,10 +437,7 @@ class CompoundPredicate(AbstractPredicate):
 
 def _collect_filter_predicates(predicate: AbstractPredicate) -> set[AbstractPredicate]:
     if predicate.is_base():
-        if predicate.is_join():
-            return set()
-        else:
-            return {predicate}
+        return set() if predicate.is_join() else {predicate}
     else:
         if not isinstance(predicate, CompoundPredicate):
             raise ValueError(f"Predicate claims to be compound but is not instance of CompoundPredicate: {predicate}")
@@ -460,10 +461,7 @@ def _collect_filter_predicates(predicate: AbstractPredicate) -> set[AbstractPred
 
 def _collect_join_predicates(predicate: AbstractPredicate) -> set[AbstractPredicate]:
     if predicate.is_base():
-        if predicate.is_join():
-            return {predicate}
-        else:
-            return set()
+        return {predicate} if predicate.is_join() else set()
     else:
         if not isinstance(predicate, CompoundPredicate):
             raise ValueError(f"Predicate claims to be compound but is not instance of CompoundPredicate: {predicate}")
