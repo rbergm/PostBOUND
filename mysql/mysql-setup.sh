@@ -15,7 +15,9 @@ git clone --depth 1 --branch 8.0 https://github.com/mysql/mysql-server.git mysql
 echo ".. Building MySQL 8.0"
 mkdir $MYSQL_INSTALL_ROOT/mysql-build
 cd $MYSQL_INSTALL_ROOT/mysql-build
-cmake $MYSQL_INSTALL_ROOT/mysql-src -D
+cmake $MYSQL_INSTALL_ROOT/mysql-src \
+    -DCMAKE_INSTALL_PREFIX=/ \
+    -DDOWNLOAD_BOOST=1 -DWITH_BOOST=$MYSQL_INSTALL_ROOT/boost-src
 make -j $MAKE_CORES
 make install DESTDIR=$MYSQL_INSTALL_ROOT/mysql-server
 
