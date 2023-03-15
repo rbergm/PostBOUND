@@ -171,6 +171,15 @@ class SqlQuery(Generic[FromClauseType], abc.ABC):
         own_produced_tables = _collect_bound_tables(self.from_clause)
         return own_produced_tables | subquery_produced_tables
 
+    def unbound_tables(self) -> set[base.TableReference]:
+        """Provides all tables that are referenced in this query but not bound.
+
+        While `tables()` provides all tables that are referenced in this query in any way, `bound_tables` restricts
+        these tables. This methods provides the complementary set to `bound_tables` i.e.
+        `tables = bound_tables ⊕ unbound_tables`.
+        """
+        return self.tables() - self.bound_tables()
+
     def is_ordered(self) -> bool:
         """Checks, whether this query produces its result tuples in order."""
         return self.orderby_clause is not None
