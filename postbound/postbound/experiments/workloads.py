@@ -20,12 +20,12 @@ LabelType = typing.TypeVar("LabelType", bound=Hashable)
 class Workload(collections.UserDict[LabelType, qal.SqlQuery]):
     @staticmethod
     def read(root_dir: str, *, query_file_pattern: str = "*.sql", name: str = "",
-             label_prefix: str = "") -> Workload[str]:
+             label_prefix: str = "", file_encoding: str = "utf-8") -> Workload[str]:
         queries: dict[str, qal.SqlQuery] = {}
         root = pathlib.Path(root_dir)
 
         for query_file_path in root.glob(query_file_pattern):
-            with open(query_file_path, "r", encoding="utf-8") as query_file:
+            with open(query_file_path, "r", encoding=file_encoding) as query_file:
                 raw_contents = query_file.readlines()
             query_contents = "\n".join([line for line in raw_contents])
             parsed_query = parser.parse_query(query_contents)
@@ -90,9 +90,10 @@ class Workload(collections.UserDict[LabelType, qal.SqlQuery]):
 
 
 def read_workload(path: str, name: str = "", *, query_file_pattern: str = "*.sql",
-                  recurse_subdirectories: bool = False, query_label_prefix: str = "") -> Workload[str]:
+                  recurse_subdirectories: bool = False, query_label_prefix: str = "",
+                  file_encoding: str = "utf-8") -> Workload[str]:
     base_dir_workload = Workload.read(path, name=name, query_file_pattern=query_file_pattern,
-                                      label_prefix=query_label_prefix)
+                                      label_prefix=query_label_prefix, file_encoding=file_encoding)
     if not recurse_subdirectories:
         return base_dir_workload
 
@@ -119,13 +120,14 @@ def generate_workload(queries: Iterable[qal.SqlQuery], *, name: str = "",
     return Workload(workload_contents, name, workload_root)
 
 
-def job() -> Workload[str]:
-    return Workload.read(f"{workloads_base_dir}/JOB-Queries/implicit", name="JOB")
+def job(file_encoding: str = "utf-8") -> Workload[str]:
+    return Workload.read(f"{workloads_base_dir}/JOB-Queries/implicit", name="JOB", file_encoding=file_encoding)
 
 
-def ssb() -> Workload[str]:
-    return Workload.read(f"{workloads_base_dir}/SSB-Queries", name="SSB")
+def ssb(file_encoding: str = "utf-8") -> Workload[str]:
+    return Workload.read(f"{workloads_base_dir}/SSB-Queries", name="SSB", file_encoding=file_encoding)
 
 
-def stack() -> Workload[str]:
-    return read_workload(f"{workloads_base_dir}/Stack-Queries", "Stack", recurse_subdirectories=True)
+def stack(file_encoding: str = "utf-8") -> Workload[str]:
+    return read_workload(f"{workloads_base_dir}/Stack-Queries", "Stack", recurse_subdirectories=True,
+                         file_encoding=file_encoding)
