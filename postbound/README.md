@@ -7,19 +7,26 @@ the `postbound` directory.
 
 ```python
 from postbound import postbound as pb
-from postbound.workloads import workloads
+from postbound.db import postgres
+from postbound.db.systems import systems
+from postbound.experiments import workloads
 from postbound.optimizer import presets
 
-job = workloads.job()  # let's optimize a query of the Join Order Benchmark
-ues = presets.fetch("ues")  # use UES default optimization settings
+# Step 1: System setup
+presets.apply_standard_system_options()
+postgres_instance = postgres.connect()
+job_workload = workloads.job()
+ues_settings = presets.fetch("ues")
 
-pipeline = pb.OptimizationPipeline("postgres")  # create our optimization pipeline for Postgres
-pipeline.set_join_order_optimization(join_enumerator=ues.join_enumerator,
-                                     base_cardinality_estimator=ues.base_cardinality,
-                                     join_cardinality_estimator=ues.join_estimator,
-                                     subquery_policy=ues.subquery_policy)
-pipeline.set_physical_operator_selection(operator_selector=ues.operator_selection)
-pipeline.build()  # finalize the pipeline to be ready for optimization
+# Step 2: Optimization pipeline setup
+optimization_pipeline = pb.OptimizationPipeline(systems.Postgres(postgres_instance))
+optimization_pipeline.load_settings(ues_settings)
+optimization_pipeline.build()
 
-pipeline.optimize_query(job["1a"])
+# Step 3: Query optimization
+optimized_query = optimization_pipeline.optimize_query(job_workload["1a"])
+
+# Step 4: Query execution
+query_result = postgres_instance.execute_query(optimized_query)
+print(query_result)
 ```
