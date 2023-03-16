@@ -6,8 +6,8 @@ from postbound.db import db
 from postbound.db.systems import systems
 from postbound.qal import parser
 from postbound.optimizer import validation
-from postbound.optimizer.bounds import scans, joins, stats, subqueries
-from postbound.optimizer.joinorder import enumeration
+from postbound.optimizer.bounds import scans, joins, stats
+from postbound.optimizer.joinorder import enumeration, subqueries
 from postbound.optimizer.physops import selection
 from postbound.optimizer.planmeta import hints as plan_param
 

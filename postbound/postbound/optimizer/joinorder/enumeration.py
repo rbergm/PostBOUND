@@ -9,7 +9,8 @@ import numpy as np
 
 from postbound.qal import qal, base, predicates as preds
 from postbound.db import db
-from postbound.optimizer.bounds import joins as join_bounds, scans as scan_bounds, subqueries, stats
+from postbound.optimizer.bounds import joins as join_bounds, scans as scan_bounds, stats
+from postbound.optimizer.joinorder import subqueries
 from postbound.optimizer import data
 
 
@@ -182,14 +183,8 @@ class UESJoinOrderOptimizer(JoinOrderOptimizer):
         join_tree = data.JoinTree.for_base_table(start_table, self.stats_container.base_table_estimates[start_table],
                                                  start_filters)
         join_graph.mark_joined(start_table)
-
-        target_filters = _fetch_filters(query, target_table)
-        target_cardinality = self.stats_container.base_table_estimates[target_table]
-        join_tree = join_tree.join_with_base_table(target_table, join_predicate=lowest_bound_join.join_condition,
-                                                   base_cardinality=target_cardinality, join_bound=lowest_bound,
-                                                   n_m_join=False, base_filter_predicate=target_filters)
-        join_graph.mark_joined(target_table, lowest_bound_join.join_condition)
-        self.stats_container.upper_bounds[join_tree] = lowest_bound
+        join_tree = self._apply_pk_fk_join(query, lowest_bound_join, join_bound=lowest_bound, join_graph=join_graph,
+                                           current_join_tree=join_tree)
 
         # join partner selection
         while join_graph.contains_free_tables():
@@ -201,19 +196,28 @@ class UESJoinOrderOptimizer(JoinOrderOptimizer):
                     lowest_bound = current_bound
                     lowest_bound_join = candidate_join
 
-            target_table = lowest_bound_join.target_table
-            target_filters = _fetch_filters(query, target_table)
-            target_cardinality = self.stats_container.base_table_estimates[target_table]
-            join_tree = join_tree.join_with_base_table(target_table, join_predicate=lowest_bound_join.join_condition,
-                                                       base_cardinality=target_cardinality, join_bound=lowest_bound,
-                                                       n_m_join=False, base_filter_predicate=target_filters)
-            join_graph.mark_joined(target_table, lowest_bound_join.join_condition)
-            self.stats_container.upper_bounds[join_tree] = lowest_bound
+            join_tree = self._apply_pk_fk_join(query, lowest_bound_join, join_bound=lowest_bound, join_graph=join_graph,
+                                               current_join_tree=join_tree)
 
         return join_tree
 
     def _table_base_cardinality_ordering(self, table: base.TableReference, join_edge: dict) -> int:
         return self.stats_container.base_table_estimates[table]
+
+    def _apply_pk_fk_join(self, query: qal.SqlQuery, pk_fk_join: data.JoinPath, *, join_bound: int,
+                          join_graph: data.JoinGraph, current_join_tree: data.JoinTree) -> data.JoinTree:
+        target_table = pk_fk_join.target_table
+        target_filters = _fetch_filters(query, target_table)
+        target_cardinality = self.stats_container.base_table_estimates[target_table]
+        updated_join_tree = current_join_tree.join_with_base_table(target_table,
+                                                                   join_predicate=pk_fk_join.join_condition,
+                                                                   base_cardinality=target_cardinality,
+                                                                   join_bound=join_bound,
+                                                                   n_m_join=False,
+                                                                   base_filter_predicate=target_filters)
+        join_graph.mark_joined(target_table, pk_fk_join.join_condition)
+        self.stats_container.upper_bounds[updated_join_tree] = join_bound
+        return updated_join_tree
 
     def _insert_pk_joins(self, query: qal.SqlQuery, pk_joins: Iterable[data.JoinPath],
                          join_tree: data.JoinTree, join_graph: data.JoinGraph) -> data.JoinTree:
