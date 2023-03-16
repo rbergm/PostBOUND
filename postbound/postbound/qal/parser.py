@@ -9,7 +9,7 @@ import mo_sql_parsing as mosp
 from postbound.qal import base, qal, clauses, expressions as expr, joins, predicates as preds
 from postbound.qal import transform
 from postbound.db import db
-from postbound.util import dicts as dict_utils
+from postbound.util import collections as collection_utils, dicts as dict_utils
 
 auto_bind_columns: bool = False
 
@@ -139,16 +139,21 @@ def _parse_mosp_predicate(mosp_data: dict) -> preds.AbstractPredicate:
 
 
 def _parse_in_predicate(mosp_data: dict) -> preds.InPredicate:
-    target_column, *values = mosp_data["in"]
+    target_column, values = mosp_data["in"]
     parsed_column = _parse_mosp_expression(target_column)
-    if len(values) == 1 and isinstance(values[0], dict) and "literal" in values[0]:
-        literal_values = values[0]["literal"]
-        if isinstance(literal_values, list):
-            parsed_values = [expr.StaticValueExpression(val) for val in literal_values]
-        else:
-            parsed_values = [expr.StaticValueExpression(literal_values)]
-    else:
+    if isinstance(values, list):
         parsed_values = [_parse_mosp_expression(val) for val in values]
+    elif isinstance(values, dict) and "literal" in values:
+        # This weird wrap/unwrap logic is necessary b/c mosp _can_ return lists of string literals as
+        # {"literal": ["a", "b", "c"]} instead of [{"literal": "a"}, {"literal": "b"}, {"literal": "c"]}], but the
+        # parse_expression method only handles single expressions, not lists of them (i.e. produces one static value
+        # expression in this case, rather than a list of expressions).
+        # At the same time, an IN literal of a single value must be handled as well (e.g. IN ('foo')), which is parsed
+        # by mosp as {"literal": "foo"} without any lists
+        # Therefore we enlist the literal values first, and then construct individual literal clauses for each of them.
+        parsed_values = [_parse_mosp_expression({"literal": val}) for val in collection_utils.enlist(values["literal"])]
+    else:
+        parsed_values = [_parse_mosp_expression(values)]
     return preds.InPredicate(parsed_column, parsed_values)
 
 
@@ -157,7 +162,8 @@ def _parse_mosp_expression(mosp_data: Any) -> expr.SqlExpression:
         return expr.StarExpression()
     if isinstance(mosp_data, str):
         return expr.ColumnExpression(_parse_column_reference(mosp_data))
-    elif not isinstance(mosp_data, dict):
+
+    if not isinstance(mosp_data, dict):
         return expr.StaticValueExpression(mosp_data)
 
     # parse string literals
