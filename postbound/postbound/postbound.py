@@ -63,6 +63,13 @@ class OptimizationPipeline:
             self.physical_operator_selection = selection.EmptyPhysicalOperatorSelection(self.target_dbs)
         if not self.plan_parameterization:
             self.plan_parameterization = plan_param.EmptyParameterization()
+
+        all_pre_checks = [self.pre_check] + [check for check in [self.join_order_enumerator.pre_check(),
+                                                                 self.physical_operator_selection.pre_check(),
+                                                                 self.plan_parameterization.pre_check()]
+                                             if check]
+        self.pre_check = validation.merge_checks(all_pre_checks)
+
         self._build = True
         return self
 

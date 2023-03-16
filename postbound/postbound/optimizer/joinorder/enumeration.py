@@ -9,9 +9,9 @@ import numpy as np
 
 from postbound.qal import qal, base, predicates as preds
 from postbound.db import db
+from postbound.optimizer import data, validation
 from postbound.optimizer.bounds import joins as join_bounds, scans as scan_bounds, stats
 from postbound.optimizer.joinorder import subqueries
-from postbound.optimizer import data
 
 
 class JoinOrderOptimizer(abc.ABC):
@@ -26,6 +26,9 @@ class JoinOrderOptimizer(abc.ABC):
     @abc.abstractmethod
     def describe(self) -> dict:
         raise NotImplementedError
+
+    def pre_check(self) -> validation.OptimizationPreCheck:
+        return validation.EmptyPreCheck()
 
 
 def _fetch_filters(query: qal.SqlQuery, table: base.TableReference) -> preds.AbstractPredicate | None:
@@ -88,6 +91,14 @@ class UESJoinOrderOptimizer(JoinOrderOptimizer):
                 "statistics": self.stats_container.describe()
             }
         }
+
+    def pre_check(self) -> validation.OptimizationPreCheck:
+        specified_checks = [check for check in [self.base_table_estimation.pre_check(),
+                                                self.join_estimation.pre_check(),
+                                                self.subquery_policy.pre_check()]
+                            if check]
+        specified_checks.append(validation.UESOptimizationPreCheck())
+        return validation.merge_checks(specified_checks)
 
     def _default_ues_optimizer(self, query: qal.SqlQuery, join_graph: data.JoinGraph) -> data.JoinTree:
         join_tree = data.JoinTree()

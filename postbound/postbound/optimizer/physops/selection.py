@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 import abc
+from typing import Optional
 
 from postbound.qal import qal
-from postbound.optimizer import data
+from postbound.optimizer import data, validation
 from postbound.optimizer.physops import operators
 from postbound.db.systems import systems
 
@@ -33,6 +34,9 @@ class PhysicalOperatorSelection(abc.ABC):
         if self.next_selection:
             description["next_selection"] = self.next_selection.describe()
         return description
+
+    def pre_check(self) -> Optional[validation.OptimizationPreCheck]:
+        return None
 
     @abc.abstractmethod
     def _apply_selection(self, query: qal.ImplicitSqlQuery,

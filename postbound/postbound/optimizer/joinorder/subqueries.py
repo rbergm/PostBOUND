@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 import abc
+from typing import Optional
 
 from postbound.qal import base, qal, predicates
-from postbound.optimizer import data
+from postbound.optimizer import data, validation
 from postbound.optimizer.bounds import stats
 
 
@@ -22,6 +23,9 @@ class SubqueryGenerationPolicy(abc.ABC):
     @abc.abstractmethod
     def describe(self) -> dict:
         raise NotImplementedError
+
+    def pre_check(self) -> Optional[validation.OptimizationPreCheck]:
+        return None
 
 
 class LinearSubqueryGenerationPolicy(SubqueryGenerationPolicy):

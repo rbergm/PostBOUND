@@ -2,11 +2,12 @@ from __future__ import annotations
 
 import abc
 import math
+from typing import Optional
 
 import numpy as np
 
 from postbound.qal import base, qal, predicates
-from postbound.optimizer import data
+from postbound.optimizer import data, validation
 from postbound.optimizer.bounds import stats
 from postbound.util import collections as collection_utils
 
@@ -26,6 +27,9 @@ class JoinBoundCardinalityEstimator(abc.ABC):
     @abc.abstractmethod
     def describe(self) -> dict:
         raise NotImplementedError
+
+    def pre_check(self) -> Optional[validation.OptimizationPreCheck]:
+        return None
 
 
 class UESJoinBoundEstimator(JoinBoundCardinalityEstimator):
@@ -58,6 +62,11 @@ class UESJoinBoundEstimator(JoinBoundCardinalityEstimator):
 
     def describe(self) -> dict:
         return {"name": "ues"}
+
+    def pre_check(self) -> Optional[validation.OptimizationPreCheck]:
+        # TODO: the UES check is slightly too restrictive here.
+        # It suffices to check that there are only conjunctive equi joins.
+        return validation.UESOptimizationPreCheck()
 
     def _estimate_pk_fk_join(self, fk_column: base.ColumnReference, pk_column: base.ColumnReference) -> int:
         pk_cardinality = self.stats_container.base_table_estimates[pk_column.table]

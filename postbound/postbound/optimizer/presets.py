@@ -9,7 +9,7 @@ from postbound.optimizer import validation
 from postbound.optimizer.bounds import scans, joins, stats
 from postbound.optimizer.joinorder import enumeration, subqueries
 from postbound.optimizer.physops import selection
-from postbound.optimizer.planmeta import hints as plan_param
+from postbound.optimizer.planmeta import parameterization as plan_param
 
 
 def apply_standard_system_options() -> None:
@@ -35,7 +35,7 @@ class OptimizationSettings(abc.ABC):
         raise NotImplementedError
 
     @abc.abstractmethod
-    def build_plan_parameterization(self) -> plan_param.PlanParameterization | None:
+    def build_plan_parameterization(self) -> plan_param.ParameterGeneration | None:
         raise NotImplementedError
 
 

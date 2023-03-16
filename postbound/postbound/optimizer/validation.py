@@ -99,6 +99,8 @@ def merge_checks(checks: OptimizationPreCheck | Iterable[OptimizationPreCheck], 
 
     If there is only a single (unique) check, this is returned directly.
     """
+    if not checks:
+        return EmptyPreCheck()
     all_checks = ({checks} if isinstance(checks, OptimizationPreCheck) else set(checks)) | set(more_checks)
     compound_checks = [check for check in all_checks if isinstance(check, CompoundCheck)]
     atomic_checks = {check for check in all_checks if not isinstance(check, CompoundCheck)}

@@ -5,7 +5,7 @@ import abc
 from typing import Optional
 
 from postbound.qal import qal
-from postbound.optimizer import data
+from postbound.optimizer import data, validation
 from postbound.optimizer.physops import operators as physops
 from postbound.optimizer.planmeta import hints as plan_params
 
@@ -30,6 +30,9 @@ class ParameterGeneration(abc.ABC):
     @abc.abstractmethod
     def describe(self) -> dict:
         raise NotImplementedError
+
+    def pre_check(self) -> Optional[validation.OptimizationPreCheck]:
+        return None
 
 
 class EmptyParameterization(ParameterGeneration):
