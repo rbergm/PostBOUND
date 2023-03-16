@@ -14,6 +14,7 @@ from postbound.optimizer.planmeta import hints as plan_param
 
 def apply_standard_system_options() -> None:
     database = db.DatabasePool.get_instance().current_database()
+    database.cache_enabled = False
     database.statistics().emulated = True
     database.statistics().cache_enabled = True
     parser.auto_bind_columns = True
