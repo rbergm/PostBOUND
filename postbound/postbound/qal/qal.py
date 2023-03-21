@@ -9,7 +9,8 @@ from __future__ import annotations
 
 import abc
 import typing
-from typing import Iterable, Generic
+from collections.abc import Collection
+from typing import Generic
 
 from postbound.qal import base, clauses, joins, expressions as expr, predicates as preds
 from postbound.util import collections as collection_utils
@@ -145,7 +146,7 @@ class SqlQuery(Generic[FromClauseType], abc.ABC):
         else:
             return where_predicates
 
-    def subqueries(self) -> Iterable[SqlQuery]:
+    def subqueries(self) -> Collection[SqlQuery]:
         """Provides all subqueries that are referenced in this query."""
         return collection_utils.set_union(_collect_subqueries(clause) for clause in self.clauses())
 

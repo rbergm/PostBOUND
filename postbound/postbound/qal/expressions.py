@@ -6,7 +6,7 @@ import abc
 import enum
 import numbers
 import typing
-from typing import Iterable
+from typing import Iterable, Union
 
 from postbound.qal import base, qal
 
@@ -49,7 +49,7 @@ class LogicalSqlCompoundOperators(enum.Enum):
     Not = "NOT"
 
 
-SqlOperator = typing.Type[MathematicalSqlOperators | LogicalSqlOperators | LogicalSqlCompoundOperators]
+SqlOperator = Union[MathematicalSqlOperators, LogicalSqlOperators, LogicalSqlCompoundOperators]
 
 
 class SqlExpression(abc.ABC):

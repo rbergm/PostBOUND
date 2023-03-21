@@ -5,12 +5,11 @@ from __future__ import annotations
 import abc
 import functools
 import itertools
-from typing import Iterable, Iterator
+from collections.abc import Collection
+from typing import Iterable, Iterator, Union
 
 from postbound.qal import base, expressions as expr, qal
 from postbound.util import errors, collections as collection_utils
-
-_ReflexiveOps = ["=", "!=", "<>"]
 
 
 def _normalize_join_pair(columns: tuple[base.ColumnReference, base.ColumnReference]
@@ -511,20 +510,20 @@ class QueryPredicates:
         return self._root
 
     @functools.cache
-    def filters(self) -> Iterable[AbstractPredicate]:
+    def filters(self) -> Collection[AbstractPredicate]:
         self._assert_not_empty()
         return _collect_filter_predicates(self._root)
 
     @functools.cache
-    def joins(self) -> Iterable[AbstractPredicate]:
+    def joins(self) -> Collection[AbstractPredicate]:
         self._assert_not_empty()
         return _collect_join_predicates(self._root)
 
-    def filters_for(self, table: base.TableReference) -> Iterable[AbstractPredicate]:
+    def filters_for(self, table: base.TableReference) -> Collection[AbstractPredicate]:
         self._assert_not_empty()
         return [filter_pred for filter_pred in self.filters() if table in filter_pred.tables()]
 
-    def joins_for(self, table: base.TableReference) -> Iterable[AbstractPredicate]:
+    def joins_for(self, table: base.TableReference) -> Collection[AbstractPredicate]:
         self._assert_not_empty()
         return [join_pred for join_pred in self.joins() if table in join_pred.tables()]
 
