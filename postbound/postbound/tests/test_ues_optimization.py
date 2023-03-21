@@ -26,7 +26,7 @@ workloads.workloads_base_dir = "../../../workloads"
 pg_connect_dir = "../.."
 
 
-class JOBWorkloadTests(regression_suite.DatabaseTestCase):
+class JobWorkloadTests(regression_suite.DatabaseTestCase):
     def setUp(self) -> None:
         self.db = postgres.connect(config_file=f"{pg_connect_dir}/.psycopg_connection_job")
         self.db.statistics().emulated = True
@@ -46,7 +46,7 @@ class JOBWorkloadTests(regression_suite.DatabaseTestCase):
                 self.assertResultSetsEqual(original_result, optimized_result, ordered=query.is_ordered())
 
 
-class SSBWorkloadTests(regression_suite.DatabaseTestCase):
+class SsbWorkloadTests(regression_suite.DatabaseTestCase):
     def setUp(self) -> None:
         self.db = postgres.connect(config_file=f"{pg_connect_dir}/.psycopg_connection_tpch")
         parser.auto_bind_columns = True
