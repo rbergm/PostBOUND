@@ -164,6 +164,7 @@ class PostgresRightDeepJoinClauseBuilder:
         else:
             base_table_filters = []
         all_filters = table_filters + base_table_filters
+        all_filters = [filter_pred for filter_pred in all_filters if self._can_include_predicate(filter_pred)]
         return predicates.CompoundPredicate.create_and(all_filters) if all_filters else None
 
     def _fetch_join_predicate(self, tables: base.TableReference | list[base.TableReference]
@@ -173,6 +174,7 @@ class PostgresRightDeepJoinClauseBuilder:
         join_predicates = []
         for table in tables:
             join_predicates.extend(self.available_joins[table])
+        join_predicates = [join_pred for join_pred in join_predicates if self._can_include_predicate(join_pred)]
         return predicates.CompoundPredicate.create_and(join_predicates) if join_predicates else None
 
     def _collect_exported_columns(self, tables: set[base.TableReference]) -> set[base.ColumnReference]:
@@ -236,6 +238,9 @@ class PostgresRightDeepJoinClauseBuilder:
             renamed_column.table = target_table
             self.renamed_columns[column] = renamed_column
             self.original_column_names[renamed_column] = column.name
+
+    def _can_include_predicate(self, predicate: predicates.AbstractPredicate) -> bool:
+        return predicate.required_tables() < self.joined_tables
 
 
 def _enforce_pg_join_order(query: qal.ImplicitSqlQuery, join_order: data.JoinTree) -> qal.ExplicitSqlQuery:

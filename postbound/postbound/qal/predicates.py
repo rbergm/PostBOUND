@@ -8,7 +8,7 @@ import itertools
 from collections.abc import Collection
 from typing import Iterable, Iterator, Union
 
-from postbound.qal import base, expressions as expr, qal
+from postbound.qal import base, expressions as expr
 from postbound.util import errors, collections as collection_utils
 
 
@@ -30,11 +30,34 @@ class NoFilterPredicateError(errors.StateError):
         self.predicate = predicate
 
 
-def _collect_dependent_subqueries(expression: expr.SqlExpression) -> list[qal.SqlQuery]:
-    if isinstance(expression, expr.SubqueryExpression):
-        return [expression.query] if expression.query.is_dependent() else []
-    return collection_utils.flatten(_collect_dependent_subqueries(child_expr)
-                                    for child_expr in expression.iterchildren())
+BaseExpression = Union[expr.ColumnExpression, expr.StaticValueExpression, expr.SubqueryExpression]
+
+
+def _collect_base_expressions(expression: expr.SqlExpression) -> Iterable[BaseExpression]:
+    if isinstance(expression, (expr.ColumnExpression, expr.StaticValueExpression, expr.SubqueryExpression)):
+        return [expression]
+    return collection_utils.flatten(_collect_base_expressions(child_expr) for child_expr in expression.iterchildren())
+
+
+def _collect_subquery_expressions(expression: expr.SqlExpression) -> Iterable[expr.SubqueryExpression]:
+    return [child_expr for child_expr in _collect_base_expressions(expression)
+            if isinstance(child_expr, expr.SubqueryExpression)]
+
+
+def _collect_column_expression_columns(expression: expr.SqlExpression) -> set[base.ColumnReference]:
+    return collection_utils.set_union(base_expr.columns() for base_expr in _collect_base_expressions(expression)
+                                      if isinstance(base_expr, expr.ColumnExpression))
+
+
+def _collect_column_expression_tables(expression: expr.SqlExpression) -> set[base.TableReference]:
+    return {column.table for column in _collect_column_expression_columns(expression) if column.is_bound()}
+
+
+def _generate_join_pairs(first_columns: Iterable[base.ColumnReference],
+                         second_columns: Iterable[base.ColumnReference]
+                         ) -> set[tuple[base.ColumnReference, base.ColumnReference]]:
+    return {_normalize_join_pair((first_col, second_col)) for first_col, second_col
+            in itertools.product(first_columns, second_columns) if first_col.table != second_col.table}
 
 
 class AbstractPredicate(abc.ABC):
@@ -52,7 +75,20 @@ class AbstractPredicate(abc.ABC):
 
     @abc.abstractmethod
     def is_join(self) -> bool:
-        """Checks, whether this predicate describes a join between two tables."""
+        """Checks, whether this predicate describes a join between two tables.
+
+        PostBOUND uses the following criteria to determine, whether a predicate is join or not:
+
+        1. all predicates of the form <col 1> <operator> <col 2> where <col 1> and <col 2> come from different tables
+        are joins. The columns can optionally be modified by value casts or static expressions, e.g. `R.a::integer + 7`
+        2. all functions that access columns from multiple tables are joins, e.g. `my_udf(R.a, S.b)`
+        3. all subqueries are treated as filters, no matter whether they are dependent subqueries or not.
+        This means that both `R.a = (SELECT MAX(S.b) FROM S)` and `R.a = (SELECT MAX(S.b) FROM S WHERE R.c = S.d)`
+        are treated as filters and not as joins, even though the second subquery will require some sort of the join
+        in the query plan.
+        4. BETWEEN and IN predicates are treated according to rule 1 since they can be emulated via base predicates
+        (subqueries in IN predicates are evaluated according to rule 3.)
+        """
         raise NotImplementedError
 
     def is_filter(self) -> bool:
@@ -112,6 +148,12 @@ class AbstractPredicate(abc.ABC):
     def join_partners(self) -> set[tuple[base.ColumnReference, base.ColumnReference]]:
         """Provides all pairs of columns that are joined within this predicate.
 
+        If multiple columns are joined or it is unclear which columns are involved in a join exactly, this method
+        falls back to returning the cross-product of all potential join partners.
+        For example, consider the following query: `SELECT * FROM R, S WHERE my_udf(R.a, R.b, S.c)`.
+        In this case, it cannot be determined which columns of R take part in the join. Therefore, `join_partners`
+        will return the set `{(R.a, S.c), (R.b, S.c)}`.
+
         If this predicate is not a join, an error will be raised.
         """
         raise NotImplementedError
@@ -125,6 +167,24 @@ class AbstractPredicate(abc.ABC):
         """
         raise NotImplementedError
 
+    def required_tables(self) -> set[base.TableReference]:
+        """Provides all tables that have to be available in order for this predicate to be executed.
+
+        The return value of this method differs from `tables` in one central aspect: `tables` provides all tables
+        that are accessed, which includes all tables from subqueries.
+
+        Consider the following example predicate: `R.a = (SELECT MIN(S.b) FROM S)`. Calling `tables` on this predicate
+        would return the set `{R, S}`. However, table `S` is already provided by the subquery. Therefore,
+        `required_tables` only returns `{R}`, since this is the only table that has to be provided by the context of
+        this method.
+        """
+        subqueries = collection_utils.flatten(_collect_subquery_expressions(child_expr)
+                                              for child_expr in self.iterexpressions())
+        subquery_tables = collection_utils.set_union(subquery.query.unbound_tables() for subquery in subqueries)
+        column_tables = collection_utils.set_union(_collect_column_expression_tables(child_expr)
+                                                   for child_expr in self.iterexpressions())
+        return column_tables | subquery_tables
+
     def _assert_join_predicate(self) -> None:
         """Raises a `NoJoinPredicateError` if `self` is not a join."""
         if not self.is_join():
@@ -134,10 +194,6 @@ class AbstractPredicate(abc.ABC):
         """Raises a `NoFilterPredicateError` if `self` is not a filter."""
         if not self.is_filter():
             raise NoFilterPredicateError(self)
-
-    def _detect_dependent_subqueries(self) -> list[qal.SqlQuery]:
-        return collection_utils.flatten(_collect_dependent_subqueries(expression)
-                                        for expression in self.iterexpressions())
 
     @abc.abstractmethod
     def __hash__(self) -> int:
@@ -175,11 +231,11 @@ class BinaryPredicate(BasePredicate):
         self.second_argument = second_argument
 
     def is_join(self) -> bool:
-        first_tables = self.first_argument.tables()
+        first_tables = _collect_column_expression_tables(self.first_argument)
         if len(first_tables) > 1:
             return True
 
-        second_tables = self.second_argument.tables()
+        second_tables = _collect_column_expression_tables(self.second_argument)
         if len(second_tables) > 1:
             return True
 
@@ -196,19 +252,13 @@ class BinaryPredicate(BasePredicate):
 
     def join_partners(self) -> set[tuple[base.ColumnReference, base.ColumnReference]]:
         self._assert_join_predicate()
-        partners = []
-        first_columns = self.first_argument.columns()
-        second_columns = self.second_argument.columns()
+        first_columns = _collect_column_expression_columns(self.first_argument)
+        second_columns = _collect_column_expression_columns(self.second_argument)
 
-        partners.extend(_normalize_join_pair(join) for join in collection_utils.pairs(first_columns))
-        partners.extend(_normalize_join_pair(join) for join in collection_utils.pairs(second_columns))
-
-        for first_col, second_col in itertools.product(first_columns, second_columns):
-            if first_col.table == second_col.table:
-                continue
-            partners.append(_normalize_join_pair((first_col, second_col)))
-
-        return set(partners)
+        partners = _generate_join_pairs(first_columns, first_columns)
+        partners |= _generate_join_pairs(second_columns, second_columns)
+        partners |= _generate_join_pairs(first_columns, second_columns)
+        return partners
 
     def __hash__(self) -> int:
         return hash(tuple([self.operation, self.first_argument, self.second_argument]))
@@ -234,11 +284,12 @@ class BetweenPredicate(BasePredicate):
         self.interval_start, self.interval_end = self.interval
 
     def is_join(self) -> bool:
-        column_tables = self.column.tables()
-        interval_tables = self.interval_start.tables() | self.interval_end.tables()
-        if any(len(tabs) > 1 for tabs in [column_tables, interval_tables]):
-            return True
-        return interval_tables and len(column_tables ^ interval_tables) > 0
+        column_tables = _collect_column_expression_tables(self.column)
+        interval_start_tables = _collect_column_expression_tables(self.interval_start)
+        interval_end_tables = _collect_column_expression_tables(self.interval_end)
+        return (len(column_tables) > 1
+                or len(column_tables | interval_start_tables) > 1
+                or len(column_tables | interval_end_tables) > 1)
 
     def columns(self) -> set[base.ColumnReference]:
         return self.column.columns() | self.interval_start.columns() | self.interval_end.columns()
@@ -253,24 +304,13 @@ class BetweenPredicate(BasePredicate):
 
     def join_partners(self) -> set[tuple[base.ColumnReference, base.ColumnReference]]:
         self._assert_join_predicate()
-        partners = []
-        predicate_columns = self.column.columns()
-        start_columns = self.interval_start.columns()
-        end_columns = self.interval_end.columns()
+        predicate_columns = _collect_column_expression_columns(self.column)
+        start_columns = _collect_column_expression_columns(self.interval_start)
+        end_columns = _collect_column_expression_columns(self.interval_end)
 
-        partners.extend(_normalize_join_pair(join) for join in collection_utils.pairs(predicate_columns))
-        partners.extend(_normalize_join_pair(join) for join in collection_utils.pairs(start_columns))
-        partners.extend(_normalize_join_pair(join) for join in collection_utils.pairs(end_columns))
-
-        for first_col, second_col in itertools.product(predicate_columns, start_columns):
-            if first_col.table == second_col.table:
-                continue
-            partners.append(_normalize_join_pair((first_col, second_col)))
-        for first_col, second_col in itertools.product(predicate_columns, end_columns):
-            if first_col.table == second_col.table:
-                continue
-            partners.append(_normalize_join_pair((first_col, second_col)))
-
+        partners = _generate_join_pairs(predicate_columns, predicate_columns)
+        partners |= _generate_join_pairs(predicate_columns, start_columns)
+        partners |= _generate_join_pairs(predicate_columns, end_columns)
         return set(partners)
 
     def __hash__(self) -> int:
@@ -294,9 +334,14 @@ class InPredicate(BasePredicate):
         self.values = values
 
     def is_join(self) -> bool:
-        column_tables = self.column.tables()
-        value_tables = collection_utils.set_union(val.tables() for val in self.values)
-        return len(column_tables | value_tables) > 1
+        column_tables = _collect_column_expression_tables(self.column)
+        if len(column_tables) > 1:
+            return True
+        for value in self.values:
+            value_tables = _collect_column_expression_tables(value)
+            if len(column_tables | value_tables) > 1:
+                return True
+        return False
 
     def columns(self) -> set[base.ColumnReference]:
         all_columns = self.column.columns()
@@ -312,20 +357,13 @@ class InPredicate(BasePredicate):
 
     def join_partners(self) -> set[tuple[base.ColumnReference, base.ColumnReference]]:
         self._assert_join_predicate()
-        partners = []
-        predicate_columns = self.column.columns()
-        value_columns = [val.columns() for val in self.values]
+        predicate_columns = _collect_column_expression_columns(self.column)
 
-        partners.extend(_normalize_join_pair(join) for join in collection_utils.pairs(predicate_columns))
-        for cols in value_columns:
-            partners.extend(_normalize_join_pair(join) for join in collection_utils.pairs(cols))
-
-            for first_col, second_col in itertools.product(predicate_columns, cols):
-                if first_col.table == second_col.table:
-                    continue
-                partners.append(_normalize_join_pair((first_col, second_col)))
-
-        return set(partners)
+        partners = _generate_join_pairs(predicate_columns, predicate_columns)
+        for value in self.values:
+            value_columns = _collect_column_expression_columns(value)
+            partners |= _generate_join_pairs(predicate_columns, value_columns)
+        return partners
 
     def __hash__(self) -> int:
         return hash(tuple(["IN", self.column, tuple(self.values)]))
@@ -352,7 +390,7 @@ class UnaryPredicate(BasePredicate):
         self.column = column
 
     def is_join(self) -> bool:
-        return len(self.column.tables()) > 1
+        return len(_collect_column_expression_tables(self.column)) > 1
 
     def columns(self) -> set[base.ColumnReference]:
         return self.column.columns()
@@ -364,7 +402,8 @@ class UnaryPredicate(BasePredicate):
         return [self.column]
 
     def join_partners(self) -> set[tuple[base.ColumnReference, base.ColumnReference]]:
-        return set(collection_utils.pairs(self.column.columns()))
+        columns = _collect_column_expression_columns(self.column)
+        return _generate_join_pairs(columns, columns)
 
     def __hash__(self) -> int:
         return hash(tuple([self.operation, self.column]))
