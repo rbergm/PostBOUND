@@ -1,14 +1,14 @@
 #!/bin/bash
 
 show_help() {
-    echo "set-workload [--help | --check | job | ssb | stack ]"
+    echo "set-workload [--help | --check] [job | ssb | stack | tpch]"
     echo
     echo "set-workload is a utility to conveniently set active .psycopg_connection files for different workloads."
     echo "These files are used by PostBOUND to connect to the active database more easily."
     echo
-    echo "--help              .. shows this help dialog"
-    echo "--check             .. checks, which .psycopg_connection files are available"
-    echo "[job | ssb | stack] .. sets the active .psycopg_connection file to the given workload"
+    echo "--help                     .. shows this help dialog"
+    echo "--check                    .. checks, which .psycopg_connection files are available"
+    echo "[job | tpch | ssb | stack] .. sets the active .psycopg_connection file to the given workload"
 }
 
 check_profiles() {
@@ -19,9 +19,15 @@ check_profiles() {
     fi
 
     if [ ! -f ".psycopg_connection_tpch" ] ; then
-        echo "No SSB/TPC-H connection file (expected name: .psycopg_connection_tpch)"
+        echo "No TPC-H connection file (expected name: .psycopg_connection_tpch)"
     else
-        echo "SSB/TPC-H connection .. OK"
+        echo "TPC-H connection .. OK"
+    fi
+
+    if [ ! -f ".psycopg_connection_ssb" ] ; then
+        echo "No SSB connection file (expected name: .psycopg_connection_ssb)
+    else
+        echo "SSB connection .. OK"
     fi
 
     if [ ! -f ".psycopg_connection_stack" ] ; then
@@ -33,11 +39,8 @@ check_profiles() {
 
 set_profile() {
     case "$1" in
-        job | tpch | stack)
+        job | tpch | stack | ssb)
             PROFILE="$1"
-            ;;
-        ssb)
-            PROFILE="tpch"
             ;;
         *)
             echo "Unknown profile: '$1'"

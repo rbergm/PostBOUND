@@ -48,7 +48,7 @@ class JobWorkloadTests(regression_suite.DatabaseTestCase):
 
 class SsbWorkloadTests(regression_suite.DatabaseTestCase):
     def setUp(self) -> None:
-        self.db = postgres.connect(config_file=f"{pg_connect_dir}/.psycopg_connection_tpch")
+        self.db = postgres.connect(config_file=f"{pg_connect_dir}/.psycopg_connection_ssb")
         parser.auto_bind_columns = True
         self.db.statistics().emulated = True
         self.db.statistics().cache_enabled = True

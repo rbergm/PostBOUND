@@ -166,7 +166,9 @@ dt-venv/
 postbound-venv/
 .psycopg_connection
 .psycopg_connection_job
+.psycopg_connection_imdb
 .psycopg_connection_tpch
+.psycopg_connection_ssb
 .psycopg_connection_stack
 .query_cache_*.json
 
