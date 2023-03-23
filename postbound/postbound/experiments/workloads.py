@@ -68,6 +68,12 @@ class Workload(collections.UserDict[LabelType, qal.SqlQuery]):
         sub_workload = {label: self.data[label] for label in selected_labels}
         return Workload(sub_workload, self._name, self._root)
 
+    def with_prefix(self, label_prefix: LabelType) -> Workload[LabelType]:
+        if not "startswith" in dir(label_prefix):
+            raise ValueError("label_prefix must have startswith() method")
+        prefix_queries = {label: query for label, query in self.data.items() if label.startswith(label_prefix)}
+        return Workload(prefix_queries, name=self._name, root=self._root)
+
     def shuffle(self) -> Workload[LabelType]:
         shuffled_workload = copy.copy(self)
         shuffled_workload._sorted_labels = random.sample(self._sorted_labels, k=len(self))
