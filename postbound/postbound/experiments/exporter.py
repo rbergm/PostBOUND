@@ -19,7 +19,6 @@ def prepare_export(df: pd.DataFrame) -> pd.DataFrame:
         prepared_df[runner.COL_RESULT] = prepared_df[runner.COL_RESULT].apply(json.dumps)
 
     if runner.COL_OPT_SETTINGS in prepared_df:
-        prepared_opt_settings = prepared_df[runner.COL_OPT_SETTINGS].apply(pb.OptimizationPipeline.describe)
-        prepared_df[runner.COL_OPT_SETTINGS] = prepared_opt_settings.apply(json.dumps)
+        prepared_df[runner.COL_OPT_SETTINGS] = prepared_df[runner.COL_OPT_SETTINGS].apply(json.dumps)
 
     return prepared_df

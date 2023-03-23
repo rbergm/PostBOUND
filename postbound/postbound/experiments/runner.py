@@ -1,6 +1,6 @@
+"""Utilities to optimize and execute queries quickly."""
 from __future__ import annotations
 
-import random
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Callable, Iterable, Optional
@@ -226,4 +226,4 @@ def optimize_and_execute_workload(queries: Iterable[qal.SqlQuery] | workloads.Wo
                       COL_WORKLOAD_ITER, COL_REP,
                       COL_T_OPT, COL_T_EXEC, COL_RESULT,
                       COL_OPT_SUCCESS, COL_OPT_FAILURE_REASON,
-                      COL_ORIG_QUERY]]
+                      COL_ORIG_QUERY, COL_OPT_SETTINGS]]
