@@ -4,12 +4,14 @@ import abc
 import collections
 from collections.abc import Container
 from dataclasses import dataclass
-from typing import Callable, Iterable
+from typing import Callable, Iterable, Optional
 
 import networkx as nx
 
 from postbound.qal import base, predicates, qal, transform
 from postbound.db import db
+from postbound.optimizer.physops import operators as physops
+from postbound.optimizer.planmeta import hints as plan_param
 from postbound.util import collections as collection_utils, errors, networkx as nx_utils
 
 
@@ -445,8 +447,12 @@ class JoinTree(Container[JoinTreeNode]):
         root = BaseTableNode(table, base_cardinality, filter_predicates)
         return JoinTree(root)
 
-    def __init__(self, root: JoinTreeNode | None = None) -> None:
+    def __init__(self, root: JoinTreeNode | None = None, *,
+                 operator_assignment: Optional[physops.PhysicalOperatorAssignment] = None,
+                 plan_parameters: Optional[plan_param.PlanParameterization] = None) -> None:
         self.root = root
+        self.operator_assignment = operator_assignment
+        self.plan_parameterization = plan_parameters
 
     def join_with_base_table(self, table: base.TableReference, *, base_cardinality: int,
                              join_predicate: predicates.AbstractPredicate | None = None, join_bound: int | None = None,
@@ -454,22 +460,30 @@ class JoinTree(Container[JoinTreeNode]):
                              n_m_join: bool = True, insert_left: bool = True) -> JoinTree:
         base_node = BaseTableNode(table, base_cardinality, base_filter_predicate)
         if self.is_empty():
-            return JoinTree(base_node)
+            return JoinTree(base_node,
+                            operator_assignment=self.operator_assignment,
+                            plan_parameters=self.plan_parameterization)
         else:
             left, right = (base_node, self.root) if insert_left else (self.root, base_node)
             new_root = JoinNode(left, right, join_bound=join_bound, join_condition=join_predicate,
                                 n_m_join=n_m_join, n_m_joined_table=table)
-            return JoinTree(new_root)
+            return JoinTree(new_root,
+                            operator_assignment=self.operator_assignment,
+                            plan_parameters=self.plan_parameterization)
 
     def join_with_subquery(self, subquery: JoinTree, join_predicate: predicates.AbstractPredicate,
                            join_bound: int, *, n_m_join: bool = True, n_m_table: base.TableReference | None = None,
                            insert_left: bool = True) -> JoinTree:
         if self.is_empty():
-            return JoinTree(subquery.root)
+            return JoinTree(subquery.root,
+                            operator_assignment=self.operator_assignment,
+                            plan_parameters=self.plan_parameterization)
         left, right = (subquery.root, self.root) if insert_left else (self.root, subquery.root)
         new_root = JoinNode(left, right, join_bound=join_bound, join_condition=join_predicate,
                             n_m_join=n_m_join, n_m_joined_table=n_m_table)
-        return JoinTree(new_root)
+        return JoinTree(new_root,
+                        operator_assignment=self.operator_assignment,
+                        plan_parameters=self.plan_parameterization)
 
     def is_empty(self) -> bool:
         return self.root is None
@@ -497,7 +511,7 @@ class JoinTree(Container[JoinTreeNode]):
     upper_bound = property(_get_upper_bound)
 
     def __contains__(self, item: object) -> bool:
-        if not isinstance(item, JoinTree | JoinTreeNode):
+        if not isinstance(item, (JoinTree, JoinTreeNode)):
             return False
 
         other_tree = item if isinstance(item, JoinTree) else JoinTree(item)

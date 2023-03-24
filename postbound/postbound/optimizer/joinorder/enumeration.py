@@ -52,7 +52,7 @@ class UESJoinOrderOptimizer(JoinOrderOptimizer):
         self._logging_enabled = verbose
 
     def optimize_join_order(self, query: qal.ImplicitSqlQuery) -> data.JoinTree | None:
-        if len(list(query.tables())) <= 2:
+        if len(query.tables()) <= 2:
             return None
 
         self.base_table_estimation.setup_for_query(query)

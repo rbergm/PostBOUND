@@ -55,9 +55,11 @@ class UESOperatorSelection(PhysicalOperatorSelection):
 
     def _apply_selection(self, query: qal.ImplicitSqlQuery,
                          join_order: data.JoinTree | None) -> operators.PhysicalOperatorAssignment:
-        assignment = operators.PhysicalOperatorAssignment(query)
+        assignment = (join_order.operator_assignment.clone() if join_order and join_order.operator_assignment
+                      else operators.PhysicalOperatorAssignment(query))
         if self.target_system.supports_hint(operators.JoinOperators.NestedLoopJoin):
-            assignment.set_operator_enabled_globally(operators.JoinOperators.NestedLoopJoin, False)
+            assignment.set_operator_enabled_globally(operators.JoinOperators.NestedLoopJoin, False,
+                                                     overwrite_fine_grained_selection=True)
         return assignment
 
     def _description(self) -> dict:
