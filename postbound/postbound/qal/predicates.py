@@ -8,6 +8,8 @@ import itertools
 from collections.abc import Collection
 from typing import Iterable, Iterator, Union
 
+import networkx as nx
+
 from postbound.qal import base, expressions as expr
 from postbound.util import errors, collections as collection_utils
 
@@ -566,6 +568,12 @@ class QueryPredicates:
         self._assert_not_empty()
         return [join_pred for join_pred in self.joins() if table in join_pred.tables()]
 
+    def joins_tables(self, tables: base.TableReference | Iterable[base.TableReference],
+                     *more_tables: base.TableReference) -> bool:
+        tables = [tables] if not isinstance(tables, Iterable) else list(tables)
+        tables = frozenset(set(tables) | set(more_tables))
+        return self._join_tables_check(tables)
+
     def and_(self, other_predicate: QueryPredicates | AbstractPredicate) -> QueryPredicates:
         other_predicate = other_predicate._root if isinstance(other_predicate, QueryPredicates) else other_predicate
         if self._root is None:
@@ -576,6 +584,16 @@ class QueryPredicates:
 
     def __iter__(self) -> Iterator[AbstractPredicate]:
         return (list(self.filters()) + list(self.joins())).__iter__()
+
+    @functools.cache
+    def _join_tables_check(self, tables: frozenset[base.TableReference]) -> bool:
+        join_graph = nx.Graph()
+        join_graph.add_nodes_from(tables)
+        for table in tables:
+            for join in self.joins_for(table):
+                partner_tables = set(col.table for col in join.join_partners_of(table)) & tables
+                join_graph.add_edges_from(itertools.product([table], partner_tables))
+        return nx.is_connected(join_graph)
 
     def _assert_not_empty(self) -> None:
         if self._root is None:
