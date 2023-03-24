@@ -1,10 +1,13 @@
+"""Provides utilities to work with benchmark results, including analysis and data preparation."""
+
 from __future__ import annotations
 
 import json
 
+import natsort
+import numpy as np
 import pandas as pd
 
-from postbound import postbound as pb
 from postbound.experiments import runner
 
 
@@ -22,3 +25,8 @@ def prepare_export(df: pd.DataFrame) -> pd.DataFrame:
         prepared_df[runner.COL_OPT_SETTINGS] = prepared_df[runner.COL_OPT_SETTINGS].apply(json.dumps)
 
     return prepared_df
+
+
+def sort_results(results_df: pd.DataFrame, by_column: str = "label") -> pd.DataFrame:
+    return results_df.sort_values(by=by_column,
+                                  key=lambda _: np.argsort(natsort.index_natsorted(results_df[by_column])))
