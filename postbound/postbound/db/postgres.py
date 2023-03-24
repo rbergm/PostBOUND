@@ -25,7 +25,7 @@ class PostgresInterface(db.Database):
 
     def __init__(self, connect_string: str, name: str = "postgres", *, cache_enabled: bool = True) -> None:
         super().__init__(name, cache_enabled=cache_enabled)
-        self._connect_string = connect_string
+        self.connect_string = connect_string
         self._connection = psycopg.connect(connect_string, application_name="PostBOUND",
                                            row_factory=psycopg.rows.tuple_row)
         self._connection.autocommit = True
@@ -285,7 +285,7 @@ def _parallel_query_initializer(connect_string: str, local_data: threading.local
     log(f"[worker id={tid}, ts={logging.timestamp()}] Connected")
 
 
-def _parallel_query_worker(query: str, local_data: threading.local, verbose: bool = False) -> Any:
+def _parallel_query_worker(query: str | qal.SqlQuery, local_data: threading.local, verbose: bool = False) -> Any:
     """Internal function for the `ParallelQueryExecutor` to run individual queries."""
     log = logging.make_logger(verbose)
     connection: psycopg.connection.Connection = local_data.connection
@@ -293,7 +293,7 @@ def _parallel_query_worker(query: str, local_data: threading.local, verbose: boo
     cursor = connection.cursor()
 
     log(f"[worker id={threading.get_ident()}, ts={logging.timestamp()}] Now executing query {query}")
-    cursor.execute(query)
+    cursor.execute(str(query))
     log(f"[worker id={threading.get_ident()}, ts={logging.timestamp()}] Executed query {query}")
 
     result_set = cursor.fetchall()
@@ -329,7 +329,6 @@ class ParallelQueryExecutor:
 
     def queue_query(self, query: qal.SqlQuery | str) -> None:
         """Adds a new query to the queue, to be executed as soon as possible."""
-        query = str(query)
         future = self._thread_pool.submit(_parallel_query_worker, query, self._thread_data, self._verbose)
         self._tasks.append(future)
 
@@ -338,7 +337,7 @@ class ParallelQueryExecutor:
         for future in concurrent.futures.as_completed(self._tasks, timeout=timeout):
             self._results.append(future.result())
 
-    def result_set(self) -> dict[str, Any]:
+    def result_set(self) -> dict[str | qal.SqlQuery, Any]:
         """Provides the results of all queries that have terminated already, mapping query -> result set"""
         return dict(self._results)
 

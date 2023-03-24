@@ -1,5 +1,4 @@
 """PostgreSQL-specific hint generation and query transformation."""
-
 from __future__ import annotations
 
 import collections
@@ -241,6 +240,11 @@ class PostgresRightDeepJoinClauseBuilder:
 
     def _can_include_predicate(self, predicate: predicates.AbstractPredicate,
                                joined_tables: base.TableReference | Iterable[base.TableReference]) -> bool:
+        """Checks, whether the given predicate can already be included in the join tree.
+
+        This asserts that all the tables that are required by the predicate are either already joined, or being
+        joined right now.
+        """
         joined_tables = set(collection_utils.enlist(joined_tables))
         return predicate.required_tables() < self.joined_tables | joined_tables
 
@@ -318,15 +322,23 @@ def _escape_setting(setting) -> str:
 
 @dataclass
 class HintParts:
+    """Captures the different kinds of Postgres-hints to collect them more easily."""
     settings: list[str]
     hints: list[str]
 
     @staticmethod
     def empty() -> HintParts:
+        """An empty hint parts object, i.e. no hints have been specified, yet."""
         return HintParts([], [])
 
     def merge_with(self, other: HintParts) -> HintParts:
-        return HintParts(self.settings + other.settings, self.hints + other.hints)
+        """Combines the hints that are contained in this hint parts object with all hints in the other object.
+
+        This construct new hint parts and leaves the current object unmodified.
+        """
+        merged_settings = self.settings + [setting for setting in other.settings if setting not in self.settings]
+        merged_hints = self.hints + [hint for hint in other.hints if hint not in self.hints]
+        return HintParts(merged_settings, merged_hints)
 
 
 def _generate_pg_operator_hints(physical_operators: operators.PhysicalOperatorAssignment) -> HintParts:
@@ -360,6 +372,7 @@ def _generate_pg_operator_hints(physical_operators: operators.PhysicalOperatorAs
 
 
 def _generate_pg_parameter_hints(plan_parameters: plan_param.PlanParameterization) -> HintParts:
+    """Produces the cardinality and parallelization hints for Postgres."""
     hints = []
     for join, cardinality_hint in plan_parameters.cardinality_hints.items():
         if len(join) < 2:
@@ -378,6 +391,7 @@ def _generate_pg_parameter_hints(plan_parameters: plan_param.PlanParameterizatio
 
 
 def _generate_hint_block(parts: HintParts) -> Optional[clauses.Hint]:
+    """Constructs the hint block for the given hint parts"""
     settings, hints = parts.settings, parts.hints
     if not settings and not hints:
         return None
@@ -387,6 +401,7 @@ def _generate_hint_block(parts: HintParts) -> Optional[clauses.Hint]:
 
 
 def _apply_hint_block_to_query(query: qal.SqlQuery, hint_block: Optional[clauses.Hint]) -> qal.SqlQuery:
+    """Generates a new query with the given hint block."""
     hinted_query = copy.copy(query)
     hinted_query.hints = hint_block
     return hinted_query
