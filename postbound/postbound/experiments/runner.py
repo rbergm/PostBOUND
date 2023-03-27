@@ -215,9 +215,11 @@ def execute_workload(queries: Iterable[qal.SqlQuery] | workloads.Workload, datab
         results.append(current_df)
 
     result_df = pd.concat(results)
-    return result_df[[COL_LABEL, COL_EXEC_IDX, COL_QUERY,
+    target_labels = [COL_LABEL] if include_labels else []
+    target_labels += [COL_EXEC_IDX, COL_QUERY,
                       COL_WORKLOAD_ITER, COL_REP,
-                      COL_T_EXEC, COL_RESULT]]
+                      COL_T_EXEC, COL_RESULT]
+    return result_df[target_labels]
 
 
 def optimize_and_execute_query(query: qal.SqlQuery, optimization_pipeline: pb.OptimizationPipeline, *,
@@ -294,8 +296,10 @@ def optimize_and_execute_workload(queries: Iterable[qal.SqlQuery] | workloads.Wo
         results.append(current_df)
 
     result_df = pd.concat(results)
-    return result_df[[COL_LABEL, COL_EXEC_IDX, COL_QUERY,
+    target_labels = [COL_LABEL] if include_labels else []
+    target_labels += [COL_EXEC_IDX, COL_QUERY,
                       COL_WORKLOAD_ITER, COL_REP,
                       COL_T_OPT, COL_T_EXEC, COL_RESULT,
                       COL_OPT_SUCCESS, COL_OPT_FAILURE_REASON,
-                      COL_ORIG_QUERY, COL_OPT_SETTINGS]]
+                      COL_ORIG_QUERY, COL_OPT_SETTINGS]
+    return result_df[target_labels]
