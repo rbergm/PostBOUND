@@ -25,6 +25,9 @@ class Version:
         else:
             raise ValueError(f"Unknown version string: '{ver}'")
 
+    def formatted(self, *, prefix: str = "", suffix: str = "", separator: str = "."):
+        return prefix + separator.join(str(v) for v in self._version) + suffix
+
     def __eq__(self, __o: object) -> bool:
         try:
             other = _wrap_version(__o)
@@ -70,4 +73,4 @@ class Version:
         return str(self)
 
     def __str__(self) -> str:
-        return ".".join(str(v) for v in self._version)
+        return "v" + ".".join(str(v) for v in self._version)

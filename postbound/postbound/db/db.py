@@ -19,7 +19,7 @@ from collections.abc import Sequence
 from typing import Any
 
 from postbound.qal import base, qal
-from postbound.util import dicts as dict_utils
+from postbound.util import dicts as dict_utils, misc
 
 
 class Cursor(typing.Protocol):
@@ -96,8 +96,8 @@ class Database(abc.ABC):
     necessary information.
     """
 
-    def __init__(self, name: str, *, cache_enabled: bool = True) -> None:
-        self.name = name
+    def __init__(self, system_name: str, *, cache_enabled: bool = True) -> None:
+        self.system_name = system_name
 
         self._cache_enabled = cache_enabled
         self._query_cache = {}
@@ -135,6 +135,20 @@ class Database(abc.ABC):
     @abc.abstractmethod
     def cardinality_estimate(self, query: qal.SqlQuery | str) -> int:
         """Queries the DBMS query optimizer for its cardinality estimate, instead of executing the query."""
+        raise NotImplementedError
+
+    @abc.abstractmethod
+    def database_name(self) -> str:
+        """Provides the name of the (physical) database that the database interface is connected to."""
+        raise NotImplementedError
+
+    def database_system_name(self) -> str:
+        """Provides the name of the database management system that this interface is connected to."""
+        return self.system_name
+
+    @abc.abstractmethod
+    def database_system_version(self) -> misc.Version:
+        """Returns the release version of the database management system that this interface is connected to."""
         raise NotImplementedError
 
     @abc.abstractmethod
@@ -196,13 +210,16 @@ class Database(abc.ABC):
 
     def __query_cache_name(self):
         """Provides a normalized file name for the query cache."""
-        return f".query_cache_{self.name}.json"
+        identifier = "_".join([self.database_system_name(),
+                               self.database_system_version().formatted(prefix="v", separator="_"),
+                               self.database_name()])
+        return f".query_cache_{identifier}.json"
 
     def __repr__(self) -> str:
         return str(self)
 
     def __str__(self) -> str:
-        return self.name
+        return f"{self.database_name()} @ {self.database_system_name()} ({self.database_system_version()})"
 
 
 class DatabaseSchema(abc.ABC):
@@ -494,6 +511,6 @@ class UnsupportedDatabaseFeatureError(RuntimeError):
     """
 
     def __init__(self, database: Database, feature: str) -> None:
-        super().__init__(f"Database {database.name} does not support feature {feature}")
+        super().__init__(f"Database {database.system_name} does not support feature {feature}")
         self.database = database
         self.feature = feature

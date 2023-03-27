@@ -23,8 +23,8 @@ HintBlock = collections.namedtuple("HintBlock", ["preparatory_statements", "hint
 class PostgresInterface(db.Database):
     """Database implementation for PostgreSQL backends."""
 
-    def __init__(self, connect_string: str, name: str = "postgres", *, cache_enabled: bool = True) -> None:
-        super().__init__(name, cache_enabled=cache_enabled)
+    def __init__(self, connect_string: str, system_name: str = "Postgres", *, cache_enabled: bool = True) -> None:
+        super().__init__(system_name, cache_enabled=cache_enabled)
         self.connect_string = connect_string
         self._connection = psycopg.connect(connect_string, application_name="PostBOUND",
                                            row_factory=psycopg.rows.tuple_row)
@@ -79,8 +79,12 @@ class PostgresInterface(db.Database):
         estimate = query_plan[0]["Plan"]["Plan Rows"]
         return estimate
 
-    def postgres_version(self) -> utils.Version:
-        """Provides the version of the Postgres instance currently connected to."""
+    def database_name(self) -> str:
+        self._cursor.execute("SELECT CURRENT_DATABASE();")
+        db_name = self._cursor.fetchone()[0]
+        return db_name
+
+    def database_system_version(self) -> utils.Version:
         self._cursor.execute("SELECT VERSION();")
         pg_ver = self._cursor.fetchone()[0]
         # version looks like "PostgreSQL 14.6 on x86_64-pc-linux-gnu, compiled by gcc (...)
@@ -269,7 +273,7 @@ def connect(*, name: str = "postgres", connect_string: str | None = None,
     elif not connect_string:
         raise ValueError("Connect string or config file are required to connect to Postgres")
 
-    postgres_db = PostgresInterface(connect_string, name=name, cache_enabled=cache_enabled)
+    postgres_db = PostgresInterface(connect_string, system_name=name, cache_enabled=cache_enabled)
     if not private:
         db_pool.register_database(name, postgres_db)
     return postgres_db

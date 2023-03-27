@@ -99,7 +99,9 @@ class OptimizationPipeline:
     def describe(self) -> dict:
         return {
             "database_system": {
-                "name": self.target_dbs.interface().name,
+                "name": self.target_dbs.interface().database_system_name(),
+                "version": self.target_dbs.interface().database_system_version(),
+                "database": self.target_dbs.interface().database_name(),
                 "statistics": {
                     "emulated": self.target_dbs.interface().statistics().emulated,
                     "cache_enabled": self.target_dbs.interface().statistics().cache_enabled
