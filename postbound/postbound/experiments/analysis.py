@@ -9,6 +9,7 @@ import numpy as np
 import pandas as pd
 
 from postbound.experiments import runner
+from postbound.util import jsonize
 
 
 def prepare_export(df: pd.DataFrame) -> pd.DataFrame:
@@ -28,7 +29,7 @@ def prepare_export(df: pd.DataFrame) -> pd.DataFrame:
         prepared_df[runner.COL_RESULT] = prepared_df[runner.COL_RESULT].apply(json.dumps)
 
     if runner.COL_OPT_SETTINGS in prepared_df:
-        prepared_df[runner.COL_OPT_SETTINGS] = prepared_df[runner.COL_OPT_SETTINGS].apply(json.dumps)
+        prepared_df[runner.COL_OPT_SETTINGS] = prepared_df[runner.COL_OPT_SETTINGS].apply(jsonize.to_json)
 
     return prepared_df
 
