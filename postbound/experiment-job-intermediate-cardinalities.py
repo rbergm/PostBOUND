@@ -7,7 +7,7 @@ import pandas as pd
 
 from postbound.qal import qal, transform
 from postbound.db import postgres
-from postbound.experiments import workloads, exporter
+from postbound.experiments import workloads, analysis
 from postbound.util import collections as collection_utils
 
 workloads.workloads_base_dir = "../workloads"
@@ -55,5 +55,5 @@ for query_fragment, cardinality in fragment_cardinalities.items():
         cardinalities.append(cardinality)
 
 result_df = pd.DataFrame({"label": labels, "query": queries, "query_fragment": fragments, "cardinality": cardinalities})
-result_df = exporter.sort_results(result_df)
+result_df = analysis.sort_results(result_df)
 result_df.to_csv("job-intermediate-cardinalities.csv", index=False)
