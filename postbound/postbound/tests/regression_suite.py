@@ -69,3 +69,11 @@ class DatabaseTestCase(unittest.TestCase, abc.ABC):
             _assert_ordered_result_sets_equal(first_set, second_set)
         else:
             _assert_default_result_sets_equal(first_set, second_set)
+
+
+class QueryTestCase(unittest.TestCase, abc.ABC):
+
+    def assertQueriesEqual(self, first_query: object, second_query: object, message: str = ""):
+        first_query = str(first_query).strip().removesuffix(";").lower()
+        second_query = str(second_query).strip().removesuffix(";").lower()
+        return self.assertEqual(first_query, second_query, message)

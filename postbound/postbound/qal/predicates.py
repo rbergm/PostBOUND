@@ -1,12 +1,11 @@
 """Contains those parts of the `qal`, that are dedicated to representing predicates of SQL queries."""
-
 from __future__ import annotations
 
 import abc
 import functools
 import itertools
 from collections.abc import Collection
-from typing import Iterable, Iterator, Union
+from typing import Type, Iterable, Iterator, Union
 
 import networkx as nx
 
@@ -16,53 +15,70 @@ from postbound.util import errors, collections as collection_utils
 
 def _normalize_join_pair(columns: tuple[base.ColumnReference, base.ColumnReference]
                          ) -> tuple[base.ColumnReference, base.ColumnReference]:
+    """Normalizes the given join such that a pair (R.a, S.b) and (S.b, R.a) can be recognized as equal."""
     first_col, second_col = columns
     return (second_col, first_col) if second_col < first_col else columns
 
 
 class NoJoinPredicateError(errors.StateError):
+    """Indicates that the given predicate is not a join predicate, but was expected to be one."""
+
     def __init__(self, predicate: AbstractPredicate | None = None) -> None:
         super().__init__(f"For predicate {predicate}" if predicate else "")
         self.predicate = predicate
 
 
 class NoFilterPredicateError(errors.StateError):
+    """Indicates that the given predicate is not a filter predicate, but was expected to be one."""
+
     def __init__(self, predicate: AbstractPredicate | None = None) -> None:
         super().__init__(f"For predicate {predicate}" if predicate else "")
         self.predicate = predicate
 
 
 BaseExpression = Union[expr.ColumnExpression, expr.StaticValueExpression, expr.SubqueryExpression]
+"""Supertype that captures all expression types that can be considered base expressions for predicates."""
 
 
 def _collect_base_expressions(expression: expr.SqlExpression) -> Iterable[BaseExpression]:
+    """Provides all base expressions that are contained in the given expression."""
     if isinstance(expression, (expr.ColumnExpression, expr.StaticValueExpression, expr.SubqueryExpression)):
         return [expression]
     return collection_utils.flatten(_collect_base_expressions(child_expr) for child_expr in expression.iterchildren())
 
 
 def _collect_subquery_expressions(expression: expr.SqlExpression) -> Iterable[expr.SubqueryExpression]:
+    """Provides all subquery expressions that are contained in the given expression."""
     return [child_expr for child_expr in _collect_base_expressions(expression)
             if isinstance(child_expr, expr.SubqueryExpression)]
 
 
 def _collect_column_expression_columns(expression: expr.SqlExpression) -> set[base.ColumnReference]:
+    """Provides all the columns in column expressions that are contained in the given expression."""
     return collection_utils.set_union(base_expr.columns() for base_expr in _collect_base_expressions(expression)
                                       if isinstance(base_expr, expr.ColumnExpression))
 
 
 def _collect_column_expression_tables(expression: expr.SqlExpression) -> set[base.TableReference]:
+    """Provides all tables of columns from the column expressions that are contained in the given expression."""
     return {column.table for column in _collect_column_expression_columns(expression) if column.is_bound()}
 
 
 def _generate_join_pairs(first_columns: Iterable[base.ColumnReference],
                          second_columns: Iterable[base.ColumnReference]
                          ) -> set[tuple[base.ColumnReference, base.ColumnReference]]:
+    """Provides all possible join pairs with columns from `first_columns` joined by columns from `second_columns`."""
     return {_normalize_join_pair((first_col, second_col)) for first_col, second_col
             in itertools.product(first_columns, second_columns) if first_col.table != second_col.table}
 
 
 class AbstractPredicate(abc.ABC):
+    """`AbstractPredicate` defines the basic interface that is shared by all possible predicates.
+
+    Possible predicates include basic binary predicates such as `R.a = S.b` or `R.a = 42`, as well as compound
+    predicates that are build from base predicates, e.g. conjunctions, disjunctions or negations.
+    """
+
     def __init__(self) -> None:
         pass
 
@@ -112,6 +128,11 @@ class AbstractPredicate(abc.ABC):
 
     @abc.abstractmethod
     def iterexpressions(self) -> Iterable[expr.SqlExpression]:
+        """Provides access to all directly contained expressions in this predicate.
+
+        Nested expressions can be accessed from these expressions in a recursive manner (see the `SqlExpression`
+        interface for details).
+        """
         raise NotImplementedError
 
     def tables(self) -> set[base.TableReference]:
@@ -214,6 +235,11 @@ class AbstractPredicate(abc.ABC):
 
 
 class BasePredicate(AbstractPredicate, abc.ABC):
+    """A `BasePredicate` is a predicate that is not composed of other predicates anymore.
+
+    It represents the smallest kind of condition that evaluates to TRUE or FALSE.
+    """
+
     def __init__(self, operation: expr.SqlOperator) -> None:
         super().__init__()
         self.operation = operation
@@ -226,6 +252,11 @@ class BasePredicate(AbstractPredicate, abc.ABC):
 
 
 class BinaryPredicate(BasePredicate):
+    """A `BinaryPredicate` combines exactly two base expressions with a comparison operation.
+
+    This will be the most typical kind of join, as in `R.a = S.b` or filter, as in `R.a = 42`.
+    """
+
     def __init__(self, operation: expr.SqlOperator, first_argument: expr.SqlExpression,
                  second_argument: expr.SqlExpression) -> None:
         super().__init__(operation)
@@ -279,6 +310,17 @@ class BinaryPredicate(BasePredicate):
 
 
 class BetweenPredicate(BasePredicate):
+    """A BETWEEN predicate is a special case of a conjunction of two binary predicates.
+
+    A BETWEEN predicate as the structure `<col> BETWEEN <a> AND <b>`, where `<col>` denotes the column expression to
+    which the condition should apply and `<a>` and `<b>` are the expressions that denote the valid bounds.
+
+    Each BETWEEN predicate can be represented by a conjunction of binary predicates: `<col> BETWEEN <a> AND <b>` is
+    equivalent to `<col> >= <a> AND <col> <= <b>`.
+
+    Notice that a BETWEEN predicate can be a join predicate as in `R.a BETWEEN 42 AND S.b`.
+    """
+
     def __init__(self, column: expr.SqlExpression, interval: tuple[expr.SqlExpression, expr.SqlExpression]) -> None:
         super().__init__(expr.LogicalSqlOperators.Between)
         self.column = column
@@ -330,6 +372,15 @@ class BetweenPredicate(BasePredicate):
 
 
 class InPredicate(BasePredicate):
+    """An IN predicate lists the allowed values for a column.
+
+    In most cases, such a predicate with `n` allowed values can be transformed into a disjunction of `n` equality
+    predicates, i.e. `R.a IN (1, 2, 3)` is equivalent to `R.a = 1 OR R.a = 2 OR R.a = 3`. Depending on the allowed
+    values, an IN predicate can denote a join, e.g. `R.a IN (S.b, S.c)`. An important special case arises if the
+    allowed values are produced by a subquery, e.g. `R.a IN (SELECT S.b FROM S)`. This does no longer allow for a
+    transformation into binary predicates since it is unclear how many rows the subquery will produce.
+    """
+
     def __init__(self, column: expr.SqlExpression, values: list[expr.SqlExpression]) -> None:
         super().__init__(expr.LogicalSqlOperators.In)
         self.column = column
@@ -386,6 +437,11 @@ class InPredicate(BasePredicate):
 
 
 class UnaryPredicate(BasePredicate):
+    """A unary predicate is applied directly to an expression, evaluating to TRUE or FALSE.
+
+    For example, `R.a IS NOT NULL`, `EXISTS (SELECT S.b FROM S WHERE R.a = S.b)` or `my_udf(R.a)`.
+    """
+
     def __init__(self, operation: expr.SqlOperator, column: expr.SqlExpression):
         super().__init__(operation)
         self.operation = operation
@@ -430,9 +486,21 @@ class UnaryPredicate(BasePredicate):
 
 
 class CompoundPredicate(AbstractPredicate):
+    """A `CompoundPredicate` contains other predicates in a hierarchical structure.
+
+    Currently, PostBOUND supports 3 kinds of compound predicates: negations, conjunctions and disjunctions.
+    """
+
     @staticmethod
-    def create_and(parts: Iterable[AbstractPredicate]) -> AbstractPredicate:
+    def create_and(parts: Collection[AbstractPredicate]) -> AbstractPredicate:
+        """Creates an AND predicate joining the giving child predicates.
+
+        If just a single child predicate is provided, returns that child directly instead of wrapping it in an
+        AND predicate.
+        """
         parts = list(parts)
+        if not parts:
+            raise ValueError("No predicates supplied.")
         if len(parts) == 1:
             return parts[0]
         return CompoundPredicate(expr.LogicalSqlCompoundOperators.And, list(parts))
@@ -487,94 +555,158 @@ class CompoundPredicate(AbstractPredicate):
 
 
 def _collect_filter_predicates(predicate: AbstractPredicate) -> set[AbstractPredicate]:
-    if predicate.is_base():
+    """Provides all base filter predicates that are contained in the given predicate hierarchy.
+
+    This method handles compound predicates as follows:
+
+    - conjunctions are un-nested, i.e. all predicates that form an AND predicate are collected individually
+    - OR predicates are included with exactly those predicates from their children that are filters. If this is only
+    true for a single predicate, that predicate will be returned directly.
+    - NOT predicates are included if their child predicate is a filter
+    """
+    if isinstance(predicate, BasePredicate):
         return set() if predicate.is_join() else {predicate}
-    else:
-        if not isinstance(predicate, CompoundPredicate):
-            raise ValueError(f"Predicate claims to be compound but is not instance of CompoundPredicate: {predicate}")
-        compound_pred: CompoundPredicate = predicate
-        if compound_pred.operation == expr.LogicalSqlCompoundOperators.Or:
-            or_filter_children = [child_pred for child_pred in compound_pred.children if child_pred.is_filter()]
-            if not or_filter_children:
-                return set()
+    elif isinstance(predicate, CompoundPredicate):
+        if predicate.operation == expr.LogicalSqlCompoundOperators.Or:
+            or_filter_children = [child_pred for child_pred in predicate.children if child_pred.is_filter()]
+            if len(or_filter_children) < 2:
+                return set(or_filter_children)
             or_filters = CompoundPredicate(expr.LogicalSqlCompoundOperators.Or, or_filter_children)
             return {or_filters}
-        elif compound_pred.operation == expr.LogicalSqlCompoundOperators.Not:
-            not_filter_children = compound_pred.children[0] if compound_pred.children[0].is_filter() else None
+        elif predicate.operation == expr.LogicalSqlCompoundOperators.Not:
+            not_filter_children = predicate.children[0] if predicate.children[0].is_filter() else None
             if not not_filter_children:
                 return set()
-            return {compound_pred}
-        elif compound_pred.operation == expr.LogicalSqlCompoundOperators.And:
-            return collection_utils.set_union([_collect_filter_predicates(child) for child in compound_pred.children])
+            return {predicate}
+        elif predicate.operation == expr.LogicalSqlCompoundOperators.And:
+            return collection_utils.set_union([_collect_filter_predicates(child) for child in predicate.children])
         else:
-            raise ValueError(f"Unknown operation: '{compound_pred.operation}'")
+            raise ValueError(f"Unknown operation: '{predicate.operation}'")
+    else:
+        raise ValueError(f"Unknown predicate type: {predicate}")
 
 
 def _collect_join_predicates(predicate: AbstractPredicate) -> set[AbstractPredicate]:
-    if predicate.is_base():
+    """Provides all join predicates that are contained in the given predicate hierarchy.
+
+    This method handles compound predicates as follows:
+
+    - conjunctions are un-nested, i.e. all predicates that form an AND predicate are collected individually
+    - OR predicates are included with exactly those predicates from their children that are joins. If this is only
+    true for a single predicate, that predicate will be returned directly.
+    - NOT predicates are included if their child predicate is a join
+    """
+    if isinstance(predicate, BasePredicate):
         return {predicate} if predicate.is_join() else set()
-    else:
-        if not isinstance(predicate, CompoundPredicate):
-            raise ValueError(f"Predicate claims to be compound but is not instance of CompoundPredicate: {predicate}")
-        compound_pred: CompoundPredicate = predicate
-        if compound_pred.operation == expr.LogicalSqlCompoundOperators.Or:
-            or_join_children = [child_pred for child_pred in compound_pred.children if child_pred.is_join()]
-            if not or_join_children:
-                return set()
+    elif isinstance(predicate, CompoundPredicate):
+        if predicate.operation == expr.LogicalSqlCompoundOperators.Or:
+            or_join_children = [child_pred for child_pred in predicate.children if child_pred.is_join()]
+            if len(or_join_children) < 2:
+                return set(or_join_children)
             or_joins = CompoundPredicate(expr.LogicalSqlCompoundOperators.Or, or_join_children)
             return {or_joins}
-        elif compound_pred.operation == expr.LogicalSqlCompoundOperators.Not:
-            not_join_children = compound_pred.children[0] if compound_pred.children[0].is_join() else None
+        elif predicate.operation == expr.LogicalSqlCompoundOperators.Not:
+            not_join_children = predicate.children[0] if predicate.children[0].is_join() else None
             if not not_join_children:
                 return set()
-            return {compound_pred}
-        elif compound_pred.operation == expr.LogicalSqlCompoundOperators.And:
-            return collection_utils.set_union([_collect_join_predicates(child) for child in compound_pred.children])
+            return {predicate}
+        elif predicate.operation == expr.LogicalSqlCompoundOperators.And:
+            return collection_utils.set_union([_collect_join_predicates(child) for child in predicate.children])
         else:
-            raise ValueError(f"Unknown operation: '{compound_pred.operation}'")
+            raise ValueError(f"Unknown operation: '{predicate.operation}'")
+    else:
+        raise ValueError(f"Unknown predicate type: {predicate}")
 
 
 class QueryPredicates:
+    """`QueryPredicates` provide high-level access to all the different predicates in a query.
+
+    This access mainly revolves around identifying filter and join predicates easily, as well the appropriate
+    predicates for specific classes. In this sense, `QueryPredicates` act as a wrapper around the actual query
+    predicates.
+
+    Currently, all usages of `QueryPredicates` by PostBOUND are part of the `SqlQuery` interface. If another distinction
+    between joins and filters is necessary to satisfy some use case, this can be achieved by setting the
+    `DefaultPredicateHandler` to a subclass of `QueryPredicates` that implements the required logic. The value of
+    `DefaultPredicateHandler` is respected when `SqlQuery` object create their `QueryPredicates` in the `predicates`
+    method.
+    """
 
     @staticmethod
     def empty_predicate() -> QueryPredicates:
+        """Constructs a `QueryPredicates` instance without any actual content."""
         return QueryPredicates(None)
 
     def __init__(self, root: AbstractPredicate | None):
         self._root = root
 
     def is_empty(self) -> bool:
+        """Checks, whether this predicate handler contains any actual predicates."""
         return self._root is None
 
     def root(self) -> AbstractPredicate:
+        """Provides the root predicate that is wrapped by this `QueryPredicates` instance."""
         self._assert_not_empty()
         return self._root
 
     @functools.cache
     def filters(self) -> Collection[AbstractPredicate]:
+        """Provides all filter predicates that are contained in the predicate hierarchy.
+
+        This method handles compound predicates as follows:
+
+        - conjunctions are un-nested, i.e. all predicates that form an AND predicate are collected individually
+        - OR predicates are included with exactly those predicates from their children that are filters. If this is only
+        true for a single predicate, that predicate will be returned directly.
+        - NOT predicates are included if their child predicate is a filter.
+        """
         self._assert_not_empty()
         return _collect_filter_predicates(self._root)
 
     @functools.cache
     def joins(self) -> Collection[AbstractPredicate]:
+        """Provides all join predicates that are contained in the predicate hierarchy.
+
+        This method handles compound predicates as follows:
+
+        - conjunctions are un-nested, i.e. all predicates that form an AND predicate are collected individually
+        - OR predicates are included with exactly those predicates from their children that are joins. If this is only
+        true for a single predicate, that predicate will be returned directly.
+        - NOT predicates are included if their child predicate is a join.
+        """
         self._assert_not_empty()
         return _collect_join_predicates(self._root)
 
     def filters_for(self, table: base.TableReference) -> Collection[AbstractPredicate]:
+        """Provides all filter predicates that reference the given table.
+
+        The determination of matching filter predicates is the same as for the `filters()` method.
+        """
         self._assert_not_empty()
         return [filter_pred for filter_pred in self.filters() if table in filter_pred.tables()]
 
     def joins_for(self, table: base.TableReference) -> Collection[AbstractPredicate]:
+        """Provides all join predicates that reference the given table.
+
+        The determination of matching join predicates is the same as for the `joins()` method.
+        """
         self._assert_not_empty()
         return [join_pred for join_pred in self.joins() if table in join_pred.tables()]
 
     def joins_tables(self, tables: base.TableReference | Iterable[base.TableReference],
                      *more_tables: base.TableReference) -> bool:
+        """Checks, whether the given tables are all joined with each other.
+
+        This does not mean that there has to be a join predicate between each pair of tables, but rather that all pairs
+        of tables must at least be connected through a sequence of other tables. From a graph theory-centric point of
+        view this means that the join (sub-) graph induced by the given tables is connected.
+        """
         tables = [tables] if not isinstance(tables, Iterable) else list(tables)
         tables = frozenset(set(tables) | set(more_tables))
         return self._join_tables_check(tables)
 
     def and_(self, other_predicate: QueryPredicates | AbstractPredicate) -> QueryPredicates:
+        """Combines the given predicates with the predicates in this query via a conjunction."""
         other_predicate = other_predicate._root if isinstance(other_predicate, QueryPredicates) else other_predicate
         if self._root is None:
             return QueryPredicates(other_predicate)
@@ -587,6 +719,7 @@ class QueryPredicates:
 
     @functools.cache
     def _join_tables_check(self, tables: frozenset[base.TableReference]) -> bool:
+        """Constructs the join graph for the given tables and checks, whether it is connected."""
         join_graph = nx.Graph()
         join_graph.add_nodes_from(tables)
         for table in tables:
@@ -596,6 +729,7 @@ class QueryPredicates:
         return nx.is_connected(join_graph)
 
     def _assert_not_empty(self) -> None:
+        """Raises a `StateError` if this predicates instance is empty."""
         if self._root is None:
             raise errors.StateError("No query predicates!")
 
@@ -604,3 +738,11 @@ class QueryPredicates:
 
     def __str__(self) -> str:
         return str(self._root)
+
+
+DefaultPredicateHandler: Type[QueryPredicates] = QueryPredicates
+"""
+The DefaultPredicateHandler designates which QueryPredicates object should be constructed when a query is asked for its
+predicates. Changing this variable means an instance of a different class will be instantiated.
+This might be useful if another differentiation between join and filter predicates is required by a specific use case.
+"""

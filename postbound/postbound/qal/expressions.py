@@ -1,5 +1,8 @@
-"""Models all supported SQL expressions. Predicates and clauses are located in separate modules."""
+"""Models all supported SQL expressions. Predicates and clauses are located in separate modules.
 
+See the package description for more details on how these concepts are related. The`SqlExpression` provides a
+high-level introduction into the structure of different expressions.
+"""
 from __future__ import annotations
 
 import abc
@@ -50,12 +53,23 @@ class LogicalSqlCompoundOperators(enum.Enum):
 
 
 SqlOperator = Union[MathematicalSqlOperators, LogicalSqlOperators, LogicalSqlCompoundOperators]
+"""Captures all different kinds of operators in one type."""
 
 
 class SqlExpression(abc.ABC):
     """Base class for all expressions.
 
-    Expressions can be inserted in many different places in a SQL query. TODO
+    Expressions can be inserted in many different places in a SQL query. For example, a SELECT clause produces columns
+    such as in `SELECT R.a FROM R`, but it can also modify the column values slightly, such as in
+    `SELECT R.a + 42 FROM R`. To account for all  these different situations, the `SqlExpression` is intended to form
+    a hierarchical trees and chains of expressions.
+
+    For example, a complicated expressions such as `my_udf(R.a::interval + 42)` consisting of a user-defined function,
+    a value cast and a mathematical operation is represented the following way:
+    `FunctionExpression(MathematicalExpression(CastExpression(ColumnExpression), StaticValueExpression))`. The methods
+    provided by all expression instances enable a more convenient use and access to the expression hierarchies.
+
+    The different kinds of expressions are represented using different subclasses of the `SqlExpression` interface.
     """
 
     @abc.abstractmethod
@@ -102,6 +116,8 @@ class SqlExpression(abc.ABC):
 
 
 class StaticValueExpression(SqlExpression, typing.Generic[T]):
+    """An expression that wraps a literal/static value."""
+
     def __init__(self, value: T) -> None:
         self.value = value
 
@@ -128,6 +144,12 @@ class StaticValueExpression(SqlExpression, typing.Generic[T]):
 
 
 class CastExpression(SqlExpression):
+    """An expression that casts the type of another nested expression.
+
+    Note that PostBOUND itself does not know about the semantics of the actual types or casts. Eventual errors due to
+    illegal casts are only caught at runtime by the actual database system.
+    """
+
     def __init__(self, expression: SqlExpression, target_type: str) -> None:
         self.casted_expression = expression
         self.target_type = target_type
@@ -157,6 +179,11 @@ class CastExpression(SqlExpression):
 
 
 class MathematicalExpression(SqlExpression):
+    """
+    A mathematical expression computes a result value based on an arbitrary expression, an operator and potentially
+    a number of additional expressions/arguments.
+    """
+
     def __init__(self, operator: SqlOperator, first_argument: SqlExpression,
                  second_argument: SqlExpression | list[SqlExpression] | None = None) -> None:
         self.operator = operator
@@ -204,6 +231,8 @@ class MathematicalExpression(SqlExpression):
 
 
 class ColumnExpression(SqlExpression):
+    """A column expression wraps the reference to a column."""
+
     def __init__(self, column: base.ColumnReference) -> None:
         self.column = column
 
@@ -230,6 +259,12 @@ class ColumnExpression(SqlExpression):
 
 
 class FunctionExpression(SqlExpression):
+    """The function expression indicates a call to an arbitrary function.
+
+    The actual function might be one of the standard SQL functions, an aggregation function or a user-defined one.
+    PostBOUND does not make any difference here.
+    """
+
     def __init__(self, function: str, arguments: list[SqlExpression] | None = None, *, distinct: bool = False) -> None:
         self.function = function
         self.arguments = [] if arguments is None else arguments
@@ -270,6 +305,8 @@ class FunctionExpression(SqlExpression):
 
 
 class SubqueryExpression(SqlExpression):
+    """A subquery expression wraps an arbitrary subquery."""
+
     def __init__(self, subquery: qal.SqlQuery) -> None:
         self.query = subquery
 
@@ -302,6 +339,8 @@ class SubqueryExpression(SqlExpression):
 
 
 class StarExpression(SqlExpression):
+    """A special expression used in SELECT clauses to select all columns."""
+
     def columns(self) -> set[base.ColumnReference]:
         return set()
 

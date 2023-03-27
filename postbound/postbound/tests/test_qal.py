@@ -11,6 +11,8 @@ sys.path.append("../../")
 
 from postbound.qal import base, parser
 
+from postbound.tests import regression_suite
+
 
 class SqlQueryTests(unittest.TestCase):
     def test_dependent_subqueries(self) -> None:
@@ -195,11 +197,33 @@ class TransformationTests(unittest.TestCase):
             self.assertSetEqual(parsed.where_clause.columns(), {col_r_a, col_r_b, col_s_c})
 
 
-class ParserTests(unittest.TestCase):
+class ParserTests(regression_suite.QueryTestCase):
     def test_parse_subquery_without_predicates(self) -> None:
         query = "SELECT * FROM R WHERE R.a IN (SELECT S.b FROM S)"
         parsed = parser.parse_query(query)
         self.assertTrue(len(parsed.subqueries()) == 1, "Should detect 1 subquery")
+
+    def test_count_distinct(self) -> None:
+        query = "SELECT COUNT(DISTINCT *) FROM R"
+        parsed = parser.parse_query(query)
+        self.assertQueriesEqual(query, parsed, "Did not parse/format COUNT(DISTINCT *) correctly.")
+
+    def test_is_predicate(self) -> None:
+        query = "SELECT * FROM R WHERE R.a IS NULL"
+        parsed = parser.parse_query(query)
+        self.assertQueriesEqual(query, parsed, "Did not parse/format IS NULL correctly.")
+        self.assertTrue(len(parsed.predicates().filters()) == 1, "Should detect 1 filter for IS NULL")
+
+        query = "SELECT * FROM R WHERE R.a IS NOT NULL"
+        parsed = parser.parse_query(query)
+        self.assertQueriesEqual(query, parsed, "Did not parse/format IS NOT NULL correctly.")
+        self.assertTrue(len(parsed.predicates().filters()) == 1, "Should detect 1 filter for IS NOT NULL")
+
+    def test_unary_udf_filter(self) -> None:
+        query = "SELECT * FROM R WHERE my_udf(R.a)"
+        parsed = parser.parse_query(query)
+        self.assertQueriesEqual(query, parsed, "Did not parse/format unary UDF filter correctly.")
+        self.assertTrue(len(parsed.predicates().filters()) == 1, "Should detect 1 filter for unary UDF filter")
 
 
 class RegressionTests(unittest.TestCase):

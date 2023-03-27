@@ -1,5 +1,4 @@
-"""`transform` provides utilities to generate SQL queries from other queries."""
-
+"""`transform` provides utilities to generate SQL queries from other queries and to modify existing queries."""
 from __future__ import annotations
 
 import copy
@@ -10,21 +9,28 @@ from postbound.db import db
 from postbound.qal import qal, base, clauses, expressions as expr, joins, predicates as preds
 from postbound.util import collections as collection_utils
 
-_Q = typing.TypeVar("_Q", bound=qal.SqlQuery)
+QueryType = typing.TypeVar("QueryType", bound=qal.SqlQuery)
 
 
 def flatten_and_predicate(predicate: preds.AbstractPredicate) -> preds.AbstractPredicate:
+    """Simplifies the predicate structure by moving all nested AND predicates their parent AND predicate.
+
+    For example, consider the predicate `(R.a = S.b AND R.a = 42) AND S.b = 24`. This is transformed into a flat
+    conjunction, i.e. `R.a = S.b AND R.a = 42 AND S.b = 24`.
+
+    This procedure continues in a recursive manner, until the first disjunction or negation is encountered. All
+    predicates below that are left as-is.
+    """
     if not isinstance(predicate, preds.CompoundPredicate):
         return predicate
 
-    compound_predicate: preds.CompoundPredicate = predicate
-    not_operation = compound_predicate.operation == expr.LogicalSqlCompoundOperators.Not
-    or_operation = compound_predicate.operation == expr.LogicalSqlCompoundOperators.Or
+    not_operation = predicate.operation == expr.LogicalSqlCompoundOperators.Not
+    or_operation = predicate.operation == expr.LogicalSqlCompoundOperators.Or
     if not_operation or or_operation:
-        return compound_predicate
+        return predicate
 
     flattened_children = set()
-    for child in compound_predicate.children:
+    for child in predicate.children:
         if child.is_compound() and child.operation == expr.LogicalSqlCompoundOperators.And:
             compound_child: preds.CompoundPredicate = child
             flattened_child = flatten_and_predicate(compound_child)
@@ -42,16 +48,19 @@ def flatten_and_predicate(predicate: preds.AbstractPredicate) -> preds.AbstractP
 
 
 def explicit_to_implicit(source_query: qal.ExplicitSqlQuery) -> qal.ImplicitSqlQuery:
+    """Transforms a query with an explicit FROM clause to a query with an implicit FROM clause.
+
+    Currently, this process is only supported for explicit queries that do not contain subqueries in their FROM clause.
+    """
     original_from_clause: clauses.ExplicitFromClause = source_query.from_clause
     additional_predicates = []
     complete_from_tables = [original_from_clause.base_table]
 
     for joined_table in original_from_clause.joined_tables:
-        if joined_table.is_subquery_join():
+        if not isinstance(joined_table, joins.TableJoin):
             raise ValueError("Transforming joined subqueries to implicit table references is not support yet")
-        table_join: joins.TableJoin = joined_table
-        complete_from_tables.append(table_join.joined_table)
-        additional_predicates.append(table_join.join_condition)
+        complete_from_tables.append(joined_table.joined_table)
+        additional_predicates.append(joined_table.join_condition)
 
     final_from_clause = clauses.ImplicitFromClause(complete_from_tables)
 
@@ -76,17 +85,36 @@ def query_to_mosp(source_query: qal.SqlQuery) -> dict:
 
 def _get_predicate_fragment(predicate: preds.AbstractPredicate,
                             referenced_tables: set[base.TableReference]) -> preds.AbstractPredicate | None:
+    """Filters the predicate hierarchy to include only exactly those base predicates that reference the given tables.
+
+    This applies all simplifications as necessary.
+    """
     if not isinstance(predicate, preds.CompoundPredicate):
         return predicate if predicate.tables().issubset(referenced_tables) else None
 
     compound_predicate: preds.CompoundPredicate = predicate
     child_fragments = [_get_predicate_fragment(child, referenced_tables) for child in compound_predicate.children]
     child_fragments = [fragment for fragment in child_fragments if fragment]
-    return preds.CompoundPredicate(compound_predicate.operation, child_fragments) if child_fragments else None
+    if not child_fragments:
+        return None
+    elif len(child_fragments) == 1 and compound_predicate.operation != expr.LogicalSqlCompoundOperators.Not:
+        return child_fragments[0]
+    else:
+        return preds.CompoundPredicate(compound_predicate.operation, child_fragments)
 
 
 def extract_query_fragment(source_query: qal.ImplicitSqlQuery,
                            referenced_tables: Iterable[base.TableReference]) -> qal.ImplicitSqlQuery | None:
+    """Filters the `source_query` to only include the given tables.
+
+    This constructs a new query from the given query that contains exactly those parts of the original query's clauses
+    that reference only the given tables.
+
+    For example, consider the query `SELECT * FROM R, S, T WHERE R.a = S.b AND S.c = T.d AND R.a = 42 ORDER BY S.b`
+    the query fragment for tables `R` and `S` would look like this:
+    `SELECT * FROM R, S WHERE R.a = S.b AND R.a = 42 ORDER BY S.b`, whereas the query fragment for table `S` would
+    look like `SELECT * FROM S ORDER BY S.b`.
+    """
     referenced_tables = set(referenced_tables)
     if not referenced_tables.issubset(source_query.tables()):
         return None
@@ -140,7 +168,8 @@ def extract_query_fragment(source_query: qal.ImplicitSqlQuery,
                                 orderby_clause=orderby_clause, limit_clause=source_query.limit_clause)
 
 
-def as_count_star_query(source_query: qal.SqlQuery) -> qal.SqlQuery:
+def as_count_star_query(source_query: QueryType) -> QueryType:
+    """Replaces the SELECT clause of the given query with a COUNT(*) statement."""
     # TODO: how to work with column aliases from the SELECT clause that are referenced later on?
     # E.g. SELECT SUM(foo) AS f FROM bar ORDER BY f
     target_query = copy.copy(source_query)
@@ -148,7 +177,8 @@ def as_count_star_query(source_query: qal.SqlQuery) -> qal.SqlQuery:
     return target_query
 
 
-def drop_hints(query: qal.SqlQuery, preparatory_statements_only: bool = False) -> qal.SqlQuery:
+def drop_hints(query: QueryType, preparatory_statements_only: bool = False) -> QueryType:
+    """Removes the hint clause from the given query."""
     query_without_hints = copy.copy(query)
     if preparatory_statements_only and query_without_hints.hints:
         new_hints = copy.copy(query_without_hints.hints)
@@ -159,14 +189,21 @@ def drop_hints(query: qal.SqlQuery, preparatory_statements_only: bool = False) -
     return query_without_hints
 
 
-def as_explain(query: qal.SqlQuery, explain: clauses.Explain) -> qal.SqlQuery:
+def as_explain(query: QueryType, explain: clauses.Explain) -> QueryType:
+    """Transforms the given query into a query that uses the provided EXPLAIN clause."""
     explain_query = copy.copy(query)
     explain_query.explain = explain
     return explain_query
 
 
-def rename_table(source_query: qal.SqlQuery, from_table: base.TableReference, target_table: base.TableReference, *,
-                 prefix_column_names: bool = False) -> qal.SqlQuery:
+def rename_table(source_query: QueryType, from_table: base.TableReference, target_table: base.TableReference, *,
+                 prefix_column_names: bool = False) -> QueryType:
+    """Changes all occurrences of the `from_table` in the `source_query` to use the `target_table` instead.
+
+    If `prefix_column_names` is set to `True`, all renamed columns will also have their name changed to include the
+    original table name. This is mostly used in outer queries where a subquery had the names of the exported columns
+    changed.
+    """
     target_query = copy.deepcopy(source_query)
 
     def _update_column_name(col: base.ColumnReference):
@@ -206,6 +243,8 @@ def rename_table(source_query: qal.SqlQuery, from_table: base.TableReference, ta
 
 def rename_columns_in_clause(clause: clauses.BaseClause,
                              available_renamings: dict[base.ColumnReference, base.ColumnReference]) -> None:
+    """Renames all columns in the given clause according to the available renamings."""
+
     def _perform_renaming(col: base.ColumnReference):
         if col in available_renamings:
             renamed_column = available_renamings[col]
@@ -229,9 +268,12 @@ def rename_columns_in_clause(clause: clauses.BaseClause,
 
 
 def bind_columns(query: qal.SqlQuery, *, with_schema: bool = True, db_schema: db.DatabaseSchema | None = None) -> None:
-    """Queries the table metadata to obtain additional information about the referenced columns.
+    """Adds additional metadata to all column references that appear in the given query.
 
-    The retrieved information includes type information for all columns and the tables that contain the columns.
+    This sets the `table` reference of all column objects to the actual tables that provide the column. If
+    `with_schema` is `False`, this process only uses the names and aliases of the tables themselves. Otherwise, the
+    database schema (falling back to the schema provided by the `DatabasePool` if necessary) is used to retrieve the
+    tables for all columns where a simple name-based binding does not work.
     """
     # TODO: should this process also create redirections for renamed columns?
     for subquery in query.subqueries():
