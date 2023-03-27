@@ -200,11 +200,10 @@ class Database(abc.ABC):
         else:
             warnings.warn(f"Could not read query cache: File {query_cache_name} does not exist")
             self._query_cache = {}
-        atexit.register(self.__store_query_cache)
+        atexit.register(self.__store_query_cache, query_cache_name)
 
-    def __store_query_cache(self):
+    def __store_query_cache(self, query_cache_name: str):
         """Stores the query cache into a JSON file."""
-        query_cache_name = self.__query_cache_name()
         with open(query_cache_name, "w") as cache_file:
             json.dump(self._query_cache, cache_file)
 

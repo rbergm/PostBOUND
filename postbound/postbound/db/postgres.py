@@ -24,7 +24,6 @@ class PostgresInterface(db.Database):
     """Database implementation for PostgreSQL backends."""
 
     def __init__(self, connect_string: str, system_name: str = "Postgres", *, cache_enabled: bool = True) -> None:
-        super().__init__(system_name, cache_enabled=cache_enabled)
         self.connect_string = connect_string
         self._connection = psycopg.connect(connect_string, application_name="PostBOUND",
                                            row_factory=psycopg.rows.tuple_row)
@@ -33,6 +32,8 @@ class PostgresInterface(db.Database):
 
         self._db_schema = PostgresSchemaInterface(self)
         self._db_stats = PostgresStatisticsInterface(self)
+
+        super().__init__(system_name, cache_enabled=cache_enabled)
 
     def schema(self) -> db.DatabaseSchema:
         return self._db_schema
