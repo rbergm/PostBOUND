@@ -625,8 +625,8 @@ class QueryPredicates:
     predicates for specific classes. In this sense, `QueryPredicates` act as a wrapper around the actual query
     predicates.
 
-    Currently, all usages of `QueryPredicates` by PostBOUND are part of the `SqlQuery` interface. If another distinction
-    between joins and filters is necessary to satisfy some use case, this can be achieved by setting the
+    Currently, all usages of `QueryPredicates` by PostBOUND are part of the `SqlQuery` interface. If another
+    distinction between joins and filters is necessary to satisfy some use case, this can be achieved by setting the
     `DefaultPredicateHandler` to a subclass of `QueryPredicates` that implements the required logic. The value of
     `DefaultPredicateHandler` is respected when `SqlQuery` object create their `QueryPredicates` in the `predicates`
     method.
@@ -656,8 +656,8 @@ class QueryPredicates:
         This method handles compound predicates as follows:
 
         - conjunctions are un-nested, i.e. all predicates that form an AND predicate are collected individually
-        - OR predicates are included with exactly those predicates from their children that are filters. If this is only
-        true for a single predicate, that predicate will be returned directly.
+        - OR predicates are included with exactly those predicates from their children that are filters. If this is
+        only true for a single predicate, that predicate will be returned directly.
         - NOT predicates are included if their child predicate is a filter.
         """
         self._assert_not_empty()

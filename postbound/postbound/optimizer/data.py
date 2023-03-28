@@ -269,7 +269,8 @@ class JoinGraph:
     def _check_pk_fk_join(self, pk_table: base.TableReference, edge_data: dict) -> bool:
         join_predicate: predicates.AbstractPredicate = edge_data["predicate"]
         for base_predicate in join_predicate.base_predicates():
-            fk_table = collection_utils.simplify({column.table for column in base_predicate.join_partners_of(pk_table)})
+            fk_table = collection_utils.simplify({column.table
+                                                  for column in base_predicate.join_partners_of(pk_table)})
             if self.is_pk_fk_join(fk_table, pk_table):
                 return True
         return False
