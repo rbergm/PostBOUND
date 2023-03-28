@@ -62,7 +62,8 @@ class UESSubqueryGenerationPolicy(SubqueryGenerationPolicy):
                 joined_table = table
                 break
 
-        return self.stats_container.upper_bounds[joined_table] < self.stats_container.base_table_estimates[joined_table]
+        stats = self.stats_container
+        return stats.upper_bounds[joined_table] < stats.base_table_estimates[joined_table]
 
     def describe(self) -> dict:
         return {"name": "defensive"}

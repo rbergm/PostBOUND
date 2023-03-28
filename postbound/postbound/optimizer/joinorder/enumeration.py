@@ -66,6 +66,7 @@ class UESJoinOrderOptimizer(JoinOrderOptimizer):
             # cross-product query is reduced to multiple independent optimization passes
             optimized_components = []
             for component in join_graph.join_components():
+                # FIXME: join components might consist of single tables!
                 optimized_component = self._clone().optimize_join_order(component.query)
                 if not optimized_component:
                     raise JoinOrderOptimizationError(component.query)

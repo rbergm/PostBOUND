@@ -33,20 +33,46 @@ optimization process are available behind dedicated interfaces that can be imple
 Notice that PostBOUND chooses empty strategies that simply don't do anything if no dedicated algorithm has been chosen
 for a stage.
 
+
 ## Adapting the optimization pipeline
 
-TODO
-join order
-physical operator selection
-plan parameterization
+To construct your own optimization pipeline, PostBOUND provides interfaces to customize the behavior of each stage.
+
+The initial join ordering stage determines an optimized join order for the incoming query (defined in package
+`joinorder`). How this is achieved, is completely up to the implementation. Furthermore, the algorithm can also
+determine an initial selection of physical operators. For example, this can be used to delegate to the native optimizer
+of a database system.
+
+In the second stage, the physical operators are determined (defined in package `physops`). Depending on the specific
+algorithm and the input data, different scenarios are possible:
+
+- the operator selection may choose all of the operators according to the specified join order
+- the operator selection may choose some of the operators, leaving the remainder for the native optimizer
+- the operator selection may choose operators without a join order, for example if the pipeline is not concerned with
+join order optimization at all
+- the operator selection may adapt the initial operator selection, thereby overwriting some of the previos assignments
+(or throwing them away altogether)
+
+The final stage of the optimization pipeline is concerned with parameterizing the query execution plan further (defined
+in package `planmeta`). For example, this can include information about parallel workers for each operator, the
+direction of joins or cardinality hints for the native optimizer. Once again, this stage receives the optimized join
+order (if there is one) as well as the physical operator assignment (if operators were indeed chosen).
+
+Since each stage is optional, this enables the implementation of vastly different optimization strategies if different
+scopes. Some example scenarios are described in the final section.
 
 
 ## Additional infrastructure provided by PostBOUND
 
-TODO
-cardinality estimators
-subqueries
-stats
+Other than interfaces for the different optimization stages, the optimizer package also provides default
+implementations and interfaces for some components that are of a more infrastructural nature:
+
+- the `data` module provides a representation of a join tree and a join graph
+- the `bounds` package provides interfaces to compute cardinality estimates for (filtered) base tables and
+(intermediate) joins. The `stats` module offers an abstract statistics container to automatically store and update
+statistics
+- the `subqueries` module in the `joinorder` package provides a policy interface to decide, where to include branches
+in a join order
 
 To enable a basic introspection of the current optimization settings, all/most interfaces provide a `describe` method.
 This method is intended to return a dictionary that contains setting-specific information. Although the format of such
@@ -57,8 +83,22 @@ to calculate upper bounds for join estimates, the `JoinEstimator` implementation
 following: {"name": "topk-estimator", "k": 100}, which indicates that the estimator is based on top-k lists and
 processes top-k lists with 100 elements.
 
+
 ## Special scenarios
 
-TODO
-scenario cardinality injection
+The flexible combination of the different optimization stages allows to accomodate different optimization scenarios.
+Some examples are described in this section.
+
+**Cardinality injection.** Skipping the join ordering and operator selection stages allows to generate cardinalities
+for all join candidates in a query during the plan parameterization phase. This way, different cardinality estimators
+and their influence on the native query optimizers can be evaluated.
+
+**Pessimistic optimization.** Using an upper bound-driven join ordering algorithm such as UES [0] in combination with
+a robust operator selection strategy like TONIC allows to generate and compare different optimization strategies from
+the field of defensive or pessimistic query optimization.
+
+**Native optimization.** Delegating the join ordering and operator selection stages to the native optimizers of the
+database systems allows to modify specific aspects of their query plans. This can even involve different different
+database systems. For example, the join order could be obtained from a Postgres instance whereas MySQL handles the
+operator selection.
 """

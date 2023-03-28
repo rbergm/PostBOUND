@@ -50,6 +50,7 @@ class StatisticsContainer(abc.ABC, Generic[StatsType]):
                 if isinstance(join_tree, data.JoinTree)}
 
     def trigger_frequency_update(self, join_tree: data.JoinTree) -> None:
+        # TODO: this update does not work for joins that involve many source tables
         if join_tree.is_empty():
             return
 
