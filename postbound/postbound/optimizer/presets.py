@@ -75,7 +75,7 @@ class UESOptimizationSettings(OptimizationSettings):
         return validation.UESOptimizationPreCheck()
 
     def build_join_order_optimizer(self) -> enumeration.JoinOrderOptimizer | None:
-        base_table_estimator = scans.DBCardinalityEstimator(self.database)
+        base_table_estimator = scans.NativeCardinalityEstimator(self.database)
         join_cardinality_estimator = joins.UESJoinBoundEstimator()
         subquery_policy = subqueries.UESSubqueryGenerationPolicy()
         stats_container = stats.MaxFrequencyStatsContainer(self.database.statistics())

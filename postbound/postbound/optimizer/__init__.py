@@ -6,10 +6,10 @@ Generally speaking, query optimization in PostBOUND happens in a three-stage pro
 2. choosing the best-fitting physical operators for the input query and its join order
 3. generating additional parameters for the optimized query plan, e.g. parallelization info for individual operators
 
-To accomodate all three stages, PostBOUND introduces an `OptimizationPipeline`. This pipeline can be set up to use
+To accommodate all three stages, PostBOUND introduces an `OptimizationPipeline`. This pipeline can be set up to use
 vastly different strategies for each of the stages, depending on the specific research question. Once build, the
 pipeline can optimize arbitrary input queries. For the actual query execution, PostBOUND relies on a native database
-system instance and does not handle the execution directly. This is because PostBOUND does not interfer with the
+system instance and does not handle the execution directly. This is because PostBOUND does not interfere with the
 optimization process of the database system directly. Instead, it operates as a wrapper around the database and
 augments the input query with metadata such that the query plan that was constructed by PostBOUND is enforced at
 query execution time. This process can also apply some transformations of the input query.
@@ -28,7 +28,7 @@ automatically, some require user input):
 5. generating the appropriate plan metadata
 6. executing the input query with the optimization metadata
 
-To enable an easy adaptation of the optimization pipeline to different research scenarious, all stages of the
+To enable an easy adaptation of the optimization pipeline to different research scenarios, all stages of the
 optimization process are available behind dedicated interfaces that can be implemented using different strategies.
 Notice that PostBOUND chooses empty strategies that simply don't do anything if no dedicated algorithm has been chosen
 for a stage.
@@ -46,11 +46,11 @@ of a database system.
 In the second stage, the physical operators are determined (defined in package `physops`). Depending on the specific
 algorithm and the input data, different scenarios are possible:
 
-- the operator selection may choose all of the operators according to the specified join order
-- the operator selection may choose some of the operators, leaving the remainder for the native optimizer
+- the operator selection may choose all operators according to the specified join order
+- the operator selection may choose some operators, leaving the remainder for the native optimizer
 - the operator selection may choose operators without a join order, for example if the pipeline is not concerned with
 join order optimization at all
-- the operator selection may adapt the initial operator selection, thereby overwriting some of the previos assignments
+- the operator selection may adapt the initial operator selection, thereby overwriting some of the previous assignments
 (or throwing them away altogether)
 
 The final stage of the optimization pipeline is concerned with parameterizing the query execution plan further (defined
@@ -86,7 +86,7 @@ processes top-k lists with 100 elements.
 
 ## Special scenarios
 
-The flexible combination of the different optimization stages allows to accomodate different optimization scenarios.
+The flexible combination of the different optimization stages allows to accommodate different optimization scenarios.
 Some examples are described in this section.
 
 **Cardinality injection.** Skipping the join ordering and operator selection stages allows to generate cardinalities
@@ -98,7 +98,7 @@ a robust operator selection strategy like TONIC allows to generate and compare d
 the field of defensive or pessimistic query optimization.
 
 **Native optimization.** Delegating the join ordering and operator selection stages to the native optimizers of the
-database systems allows to modify specific aspects of their query plans. This can even involve different different
-database systems. For example, the join order could be obtained from a Postgres instance whereas MySQL handles the
-operator selection.
+database systems allows to modify specific aspects of their query plans. This can even involve different database
+systems. For example, the join order could be obtained from a Postgres instance whereas MySQL handles the operator
+selection.
 """
