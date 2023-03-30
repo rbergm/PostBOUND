@@ -41,8 +41,8 @@ from postbound.experiments import workloads
 ##
 ## Step 1: System setup
 ##
-presets.apply_standard_system_options()
 postgres_instance = postgres.connect()
+presets.apply_standard_system_options()
 job_workload = workloads.job()
 ues_settings = presets.fetch("ues")
 
