@@ -174,6 +174,18 @@ class PredicateTests(unittest.TestCase):
             self.assertTrue(len(parsed.predicates().joins()) == 0)
             self.assertTrue(len(parsed.predicates().filters()) == 1)
 
+        query = "SELECT * FROM R, S WHERE my_udf(R.a)"
+        with self.subTest("Unary UDF filter", query=query):
+            parsed = parser.parse_query(query)
+            self.assertTrue(len(parsed.predicates().joins()) == 0)
+            self.assertTrue(len(parsed.predicates().filters()) == 1)
+
+        query = "SELECT * FROM R, S WHERE my_udf(R.a, S.b)"
+        with self.subTest("Unary UDF join", query=query):
+            parsed = parser.parse_query(query)
+            self.assertTrue(len(parsed.predicates().joins()) == 1)
+            self.assertTrue(len(parsed.predicates().filters()) == 0)
+
 
 class TransformationTests(unittest.TestCase):
     def test_column_binding(self) -> None:

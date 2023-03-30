@@ -5,7 +5,7 @@ import abc
 import functools
 import itertools
 from collections.abc import Collection
-from typing import Type, Iterable, Iterator, Union
+from typing import Type, Iterable, Iterator, Union, Optional
 
 import networkx as nx
 
@@ -442,7 +442,7 @@ class UnaryPredicate(BasePredicate):
     For example, `R.a IS NOT NULL`, `EXISTS (SELECT S.b FROM S WHERE R.a = S.b)` or `my_udf(R.a)`.
     """
 
-    def __init__(self, operation: expr.SqlOperator, column: expr.SqlExpression):
+    def __init__(self, column: expr.SqlExpression, operation: Optional[expr.SqlOperator] = None):
         super().__init__(operation)
         self.operation = operation
         self.column = column
@@ -473,6 +473,9 @@ class UnaryPredicate(BasePredicate):
         return super().__repr__()
 
     def __str__(self) -> str:
+        if not self.operation:
+            return str(self.column)
+
         if isinstance(self.column, expr.SubqueryExpression) and self.operation == expr.LogicalSqlOperators.Exists:
             return f"EXISTS {self.column}"
         elif isinstance(self.column, expr.SubqueryExpression) and self.operation == expr.LogicalSqlOperators.Missing:

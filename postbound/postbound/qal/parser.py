@@ -138,13 +138,13 @@ def _parse_mosp_predicate(mosp_data: dict) -> preds.AbstractPredicate:
 
     # parse IS NULL / IS NOT NULL
     if operation in _MospUnaryOperations:
-        return preds.UnaryPredicate(_MospUnaryOperations[operation], _parse_mosp_expression(mosp_data[operation]))
+        return preds.UnaryPredicate(_parse_mosp_expression(mosp_data[operation]), _MospUnaryOperations[operation])
 
     # FIXME: cannot parse unary filter functions at the moment: SELECT * FROM R WHERE my_udf(R.a)
     # this likely requires changes to the UnaryPredicate implementation as well
 
     if operation not in _MospBinaryOperations:
-        raise ValueError("Unknown predicate format: " + str(mosp_data))
+        return preds.UnaryPredicate(_parse_mosp_expression(mosp_data))
 
     # parse binary predicates (logical operators, etc.)
     if operation == "in":
@@ -180,6 +180,9 @@ def _parse_in_predicate(mosp_data: dict) -> preds.InPredicate:
 
 
 def _parse_mosp_expression(mosp_data: Any) -> expr.SqlExpression:
+    # TODO: support for CASE WHEN expressions
+    # TODO: support for string concatenation
+
     if mosp_data == "*":
         return expr.StarExpression()
     if isinstance(mosp_data, str):
