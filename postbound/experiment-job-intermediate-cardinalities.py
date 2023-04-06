@@ -14,14 +14,15 @@ workloads.workloads_base_dir = "../workloads"
 
 postgres_db = postgres.connect(config_file=".psycopg_connection_job")
 db_pool = postgres.ParallelQueryExecutor(postgres_db.connect_string, n_threads=12)
-job_benchmark = workloads.job().first(3)
+job_benchmark = workloads.job()
 
 explored_queries: set[qal.SqlQuery] = set()
 fragment_to_queries_map: dict[qal.SqlQuery, list[qal.SqlQuery]] = collections.defaultdict(list)
 
 for label, query in job_benchmark.entries():
     if not isinstance(query, qal.ImplicitSqlQuery):
-        warnings.warn(f"Skipping query {label} b/c query fragments can currently only be created for implicit queries.")
+        warnings.warn(f"Skipping query {label} b/c query fragments can currently "
+                      "only be created for implicit queries.")
         continue
 
     tables = query.tables()
@@ -54,6 +55,7 @@ for query_fragment, cardinality in fragment_cardinalities.items():
         labels.append(query_label)
         cardinalities.append(cardinality)
 
-result_df = pd.DataFrame({"label": labels, "query": queries, "query_fragment": fragments, "cardinality": cardinalities})
-result_df = analysis.sort_results(result_df)
+result_df = pd.DataFrame({"label": labels, "query": queries,
+                          "query_fragment": fragments, "cardinality": cardinalities})
+result_df = analysis.sort_results(result_df, "label")
 result_df.to_csv("job-intermediate-cardinalities.csv", index=False)

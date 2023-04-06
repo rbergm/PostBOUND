@@ -34,8 +34,8 @@ def prepare_export(df: pd.DataFrame) -> pd.DataFrame:
     return prepared_df
 
 
-def sort_results(results_df: pd.DataFrame, label_column: str = runner.COL_LABEL,
-                 execution_index_column: str = runner.COL_EXEC_IDX) -> pd.DataFrame:
+def sort_results(results_df: pd.DataFrame,
+                 by_column: str | tuple[str] = (runner.COL_LABEL, runner.COL_EXEC_IDX)) -> pd.DataFrame:
     """Sorts the rows of the result data naturally.
 
     In contrast to lexicographic sorting, natural sorting handles numeric labels in a better way: labels like
@@ -44,5 +44,5 @@ def sort_results(results_df: pd.DataFrame, label_column: str = runner.COL_LABEL,
     The primary column for the sorting is the `label_column` which contains the actual labels. The secondary
     `execution_index_column` is used to break ties (and sorted lexicographically as well).
     """
-    return results_df.sort_values(by=(label_column, execution_index_column),
+    return results_df.sort_values(by=by_column,
                                   key=lambda series: np.argsort(natsort.index_natsorted(series)))
