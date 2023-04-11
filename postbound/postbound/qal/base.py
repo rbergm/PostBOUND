@@ -1,5 +1,4 @@
 """Fundamental types for the query abstraction layer. This includes references to tables as well as columns."""
-
 from __future__ import annotations
 
 from dataclasses import dataclass

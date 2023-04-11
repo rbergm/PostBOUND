@@ -1,0 +1,8 @@
+matplotlib
+mo-sql-parsing
+natsort
+networkx
+numpy
+pandas
+psycopg
+psycopg-pool

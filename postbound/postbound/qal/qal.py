@@ -4,12 +4,12 @@ The most important type of `qal` is `SqlQuery` along with the classes that inher
 focuses on the representation of queries. Other packages of the `qal` provide methods to transform SQL queries,
 generating new queries from existing ones or formatting the query strings.
 """
-
 from __future__ import annotations
 
 import abc
 import typing
-from typing import Iterable, Generic
+from collections.abc import Collection
+from typing import Generic, Iterable
 
 from postbound.qal import base, clauses, joins, expressions as expr, predicates as preds
 from postbound.util import collections as collection_utils
@@ -130,13 +130,18 @@ class SqlQuery(Generic[FromClauseType], abc.ABC):
         where_tables = self.where_clause.predicate.tables() if self.where_clause else set()
         return select_tables | from_tables | where_tables
 
+    def columns(self) -> set[base.ColumnReference]:
+        """Provides all columns that are referenced at any place in the query."""
+        return collection_utils.set_union(clause.columns() for clause in self.clauses())
+
     def predicates(self) -> preds.QueryPredicates | None:
         """Provides all predicates in this query.
 
         This includes predicates in the FROM clause, as well as the WHERE clause.
         """
-        where_predicates = (preds.QueryPredicates(self.where_clause.predicate) if self.where_clause is not None
-                            else preds.QueryPredicates.empty_predicate())
+        predicate_handler = preds.DefaultPredicateHandler
+        where_predicates = (predicate_handler(self.where_clause.predicate) if self.where_clause is not None
+                            else predicate_handler.empty_predicate())
         from_predicate = self.from_clause.predicates()
         if from_predicate:
             return where_predicates.and_(from_predicate)
@@ -145,7 +150,7 @@ class SqlQuery(Generic[FromClauseType], abc.ABC):
         else:
             return where_predicates
 
-    def subqueries(self) -> Iterable[SqlQuery]:
+    def subqueries(self) -> Collection[SqlQuery]:
         """Provides all subqueries that are referenced in this query."""
         return collection_utils.set_union(_collect_subqueries(clause) for clause in self.clauses())
 
@@ -190,6 +195,23 @@ class SqlQuery(Generic[FromClauseType], abc.ABC):
         In order for this check to work, all columns have to be bound to actual tables.
         """
         return not (self.tables() <= self.bound_tables())
+
+    def iterexpressions(self) -> Iterable[expr.SqlExpression]:
+        """Provides access to all directly contained expressions in this query.
+
+        Nested expressions can be accessed from these expressions in a recursive manner (see the `SqlExpression`
+        interface for details).
+        """
+        return collection_utils.flatten(clause.iterexpressions() for clause in self.clauses())
+
+    def itercolumns(self) -> Iterable[base.ColumnReference]:
+        """Provides access to all column in this query.
+
+        In contrast to the `columns` method, duplicates are returned multiple times, i.e. if a column is referenced `n`
+        times in this query, it will also be returned `n` times by this method. Furthermore, the order in which
+        columns are provided by the iterable matches the order in which they appear in this query.
+        """
+        return collection_utils.flatten(clause.itercolumns() for clause in self.clauses())
 
     def __hash__(self) -> int:
         return hash(tuple(self.clauses()))

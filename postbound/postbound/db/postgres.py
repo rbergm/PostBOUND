@@ -23,9 +23,8 @@ HintBlock = collections.namedtuple("HintBlock", ["preparatory_statements", "hint
 class PostgresInterface(db.Database):
     """Database implementation for PostgreSQL backends."""
 
-    def __init__(self, connect_string: str, name: str = "postgres", *, cache_enabled: bool = True) -> None:
-        super().__init__(name, cache_enabled=cache_enabled)
-        self._connect_string = connect_string
+    def __init__(self, connect_string: str, system_name: str = "Postgres", *, cache_enabled: bool = True) -> None:
+        self.connect_string = connect_string
         self._connection = psycopg.connect(connect_string, application_name="PostBOUND",
                                            row_factory=psycopg.rows.tuple_row)
         self._connection.autocommit = True
@@ -33,6 +32,8 @@ class PostgresInterface(db.Database):
 
         self._db_schema = PostgresSchemaInterface(self)
         self._db_stats = PostgresStatisticsInterface(self)
+
+        super().__init__(system_name, cache_enabled=cache_enabled)
 
     def schema(self) -> db.DatabaseSchema:
         return self._db_schema
@@ -79,8 +80,12 @@ class PostgresInterface(db.Database):
         estimate = query_plan[0]["Plan"]["Plan Rows"]
         return estimate
 
-    def postgres_version(self) -> utils.Version:
-        """Provides the version of the Postgres instance currently connected to."""
+    def database_name(self) -> str:
+        self._cursor.execute("SELECT CURRENT_DATABASE();")
+        db_name = self._cursor.fetchone()[0]
+        return db_name
+
+    def database_system_version(self) -> utils.Version:
         self._cursor.execute("SELECT VERSION();")
         pg_ver = self._cursor.fetchone()[0]
         # version looks like "PostgreSQL 14.6 on x86_64-pc-linux-gnu, compiled by gcc (...)
@@ -269,7 +274,7 @@ def connect(*, name: str = "postgres", connect_string: str | None = None,
     elif not connect_string:
         raise ValueError("Connect string or config file are required to connect to Postgres")
 
-    postgres_db = PostgresInterface(connect_string, name=name, cache_enabled=cache_enabled)
+    postgres_db = PostgresInterface(connect_string, system_name=name, cache_enabled=cache_enabled)
     if not private:
         db_pool.register_database(name, postgres_db)
     return postgres_db
@@ -285,7 +290,7 @@ def _parallel_query_initializer(connect_string: str, local_data: threading.local
     log(f"[worker id={tid}, ts={logging.timestamp()}] Connected")
 
 
-def _parallel_query_worker(query: str, local_data: threading.local, verbose: bool = False) -> Any:
+def _parallel_query_worker(query: str | qal.SqlQuery, local_data: threading.local, verbose: bool = False) -> Any:
     """Internal function for the `ParallelQueryExecutor` to run individual queries."""
     log = logging.make_logger(verbose)
     connection: psycopg.connection.Connection = local_data.connection
@@ -293,7 +298,7 @@ def _parallel_query_worker(query: str, local_data: threading.local, verbose: boo
     cursor = connection.cursor()
 
     log(f"[worker id={threading.get_ident()}, ts={logging.timestamp()}] Now executing query {query}")
-    cursor.execute(query)
+    cursor.execute(str(query))
     log(f"[worker id={threading.get_ident()}, ts={logging.timestamp()}] Executed query {query}")
 
     result_set = cursor.fetchall()
@@ -329,7 +334,6 @@ class ParallelQueryExecutor:
 
     def queue_query(self, query: qal.SqlQuery | str) -> None:
         """Adds a new query to the queue, to be executed as soon as possible."""
-        query = str(query)
         future = self._thread_pool.submit(_parallel_query_worker, query, self._thread_data, self._verbose)
         self._tasks.append(future)
 
@@ -338,7 +342,7 @@ class ParallelQueryExecutor:
         for future in concurrent.futures.as_completed(self._tasks, timeout=timeout):
             self._results.append(future.result())
 
-    def result_set(self) -> dict[str, Any]:
+    def result_set(self) -> dict[str | qal.SqlQuery, Any]:
         """Provides the results of all queries that have terminated already, mapping query -> result set"""
         return dict(self._results)
 

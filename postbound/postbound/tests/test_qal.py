@@ -39,12 +39,12 @@ class SqlQueryTests(unittest.TestCase):
 
         subquery_join_query = "SELECT * FROM R WHERE R.a IN (SELECT S.b FROM S WHERE R.c = S.d)"
         parsed_query = parser.parse_query(subquery_join_query)
-        self.assertTrue(len(parsed_query.predicates().filters()) == 1,
+        self.assertTrue(len(list(parsed_query.predicates().filters())) == 1,
                         "Should not detect filters for dependent subquery")
 
         independent_subquery_query = "SELECT * FROM R WHERE R.a = (SELECT MIN(S.b) FROM S)"
         parsed_query = parser.parse_query(independent_subquery_query)
-        self.assertTrue(len(parsed_query.predicates().filters()) == 1,
+        self.assertTrue(len(list(parsed_query.predicates().filters())) == 1,
                         "Should detect 1 filter for independent subquery")
 
 

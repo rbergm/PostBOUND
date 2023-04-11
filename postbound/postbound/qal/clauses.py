@@ -1,5 +1,4 @@
 """Contains the implementation of all supported SQL clauses."""
-
 from __future__ import annotations
 
 import abc
@@ -12,8 +11,10 @@ from postbound.qal import base, expressions as expr, joins, predicates as preds
 from postbound.util import collections as collection_utils
 
 
+# TODO: move away from dataclasses where necessary. Many clauses actually have constraints (non-None / non-empty) objects
+
 class BaseClause(abc.ABC):
-    """Basic interface shared by all supported clauses. This is an abstract interface, not an usable clause."""
+    """Basic interface shared by all supported clauses. This is an abstract interface, not a usable clause."""
 
     def tables(self) -> set[base.TableReference]:
         """Provides all tables that are referenced in the clause."""
@@ -99,15 +100,29 @@ class Hint(BaseClause):
 
 @dataclass
 class Explain(BaseClause):
+    """EXPLAIN block of a query.
+
+    EXPLAIN queries change the execution mode of a query. Instead of focusing on the actual query result, an EXPLAIN
+    query produces information about the internal processes of the database system. Typically, this includes which
+    execution plan the DBS would choose for the query. Additionally, EXPLAIN ANALYZE (as for example supported by
+    Postgres) provides the query plan and executes the actual query. The returned plan is then annotated by how the
+    optimizer predictions match reality. Furthermore, such ANALYZE plans typically also contain some runtime statistics
+    such as runtime of certain operators.
+
+    The precise syntax and semantic of an EXPLAIN statement depends on the actual DBS. The Explain clause object
+    is modeled after Postgres.
+    """
     analyze: bool = False
     format: str | None = None
 
     @staticmethod
     def explain_analyze(format_type: str = "JSON") -> Explain:
+        """Constructs an EXPLAIN ANALYZE clause with the specified output format."""
         return Explain(True, format_type)
 
     @staticmethod
     def plan(format_type: str = "JSON") -> Explain:
+        """Constructs a pure EXPLAIN clause (i.e. without ANALYZE) with the specified output format."""
         return Explain(False, format_type)
 
     def columns(self) -> set[base.ColumnReference]:
@@ -142,19 +157,28 @@ class Explain(BaseClause):
 
 @dataclass
 class BaseProjection:
+    """The `BaseProjection` forms the fundamental ingredient for a SELECT clause.
+
+    Each SELECT clause is composed of at least one `BaseProjection`. Each projection can be an arbitrary
+    `SqlExpression` (rules and restrictions of the SQL standard are not enforced here). In addition, each projection
+    can receive a target name as in `SELECT foo AS f FROM bar`.
+    """
     expression: expr.SqlExpression
     target_name: str = ""
 
     @staticmethod
     def count_star() -> BaseProjection:
+        """Shortcut to create a COUNT(*) projection."""
         return BaseProjection(expr.FunctionExpression("count", [expr.StarExpression()]))
 
     @staticmethod
     def star() -> BaseProjection:
+        """Shortcut to create a * projection."""
         return BaseProjection(expr.StarExpression())
 
     @staticmethod
     def column(col: base.ColumnReference, target_name: str = "") -> BaseProjection:
+        """Shortcut to create a projection for the given column."""
         return BaseProjection(expr.ColumnExpression(col), target_name)
 
     def columns(self) -> set[base.ColumnReference]:
@@ -183,26 +207,34 @@ class BaseProjection:
 
 
 class SelectType(enum.Enum):
+    """Indicates the specific type of the SELECT clause."""
     Select = "SELECT"
     SelectDistinct = "SELECT DISTINCT"
 
 
 class Select(BaseClause):
+    """The SELECT clause of a query.
+
+    This is the only required part of a query. Everything else is optional and can be left out. (Notice that PostBOUND
+    is focused on SPJ-queries, hence there are no INSERT, UPDATE, or DELETE queries)
+
+    A SELECT clause simply consists of a number of individual projections (see `BaseProjection`), the `targets`.
+    """
+
     @staticmethod
     def count_star() -> Select:
+        """Shortcut to create a SELECT COUNT(*) clause."""
         return Select(BaseProjection.count_star())
 
     @staticmethod
     def star() -> Select:
+        """Shortcut to create a SELECT * clause."""
         return Select(BaseProjection.star())
 
     def __init__(self, targets: BaseProjection | list[BaseProjection],
                  projection_type: SelectType = SelectType.Select) -> None:
         self.targets = collection_utils.enlist(targets)
         self.projection_type = projection_type
-
-    def parts(self) -> list[BaseProjection]:
-        return self.targets
 
     def columns(self) -> set[base.ColumnReference]:
         return collection_utils.set_union(target.columns() for target in self.targets)
@@ -217,6 +249,15 @@ class Select(BaseClause):
         return [target.expression for target in self.targets]
 
     def output_names(self) -> dict[str, base.ColumnReference]:
+        """Output names map the alias of each column to the actual column.
+
+        For example, consider a query `SELECT R.a AS foo, R.b AS bar FROM R`. Calling `output_names` on this query
+        provides the dictionary `{'foo': R.a, 'bar': R.b}`.
+
+        Currently, this method only works for 1:1 mappings and other aliases are ignored. For example, consider a query
+        `SELECT my_udf(R.a, R.b) AS c FROM R`. Here, a user-defined function is used to combine the values of `R.a` and
+        `R.b` to form an output column `c`. Such a projection is ignored by `output_names`.
+        """
         output = {}
         for projection in self.targets:
             if not projection.target_name:
@@ -245,6 +286,17 @@ class Select(BaseClause):
 
 
 class From(BaseClause, abc.ABC):
+    """FROM clause of the query.
+
+    PostBOUND distinguishes between two types of FROM clauses:
+    - implicit FROM clauses simply list all referenced tables as in `SELECT * FROM R, S, T WHERE ...`
+    - explicit FROM clauses on the other hand combine the source using the `JOIN ON` syntax as in
+    `SELECT * FROM R JOIN S ON ... JOIN T ON ... WHERE ...`
+
+    Note that these types of clauses are mutually exclusive for PostBOUND even though a combination of implicit
+    references and JOIN statements could be used in a valid SQL query. I.e., a query can only be either implicit or
+    explicit. This behaviour might change in the future to allow for a mixture of both types of references.
+    """
 
     @abc.abstractmethod
     def predicates(self) -> preds.QueryPredicates | None:
@@ -267,6 +319,13 @@ class From(BaseClause, abc.ABC):
 
 
 class ImplicitFromClause(From):
+    """The implicit FROM clause lists all referenced tables without specifying their relation.
+
+    See `FromClause` for details.
+
+    One limitation of implicit FROM clauses is that currently they may only be composed of tables and not subqueries.
+    """
+
     # TODO: we could also have subqueries in an implicit from clause!
 
     def __init__(self, tables: base.TableReference | list[base.TableReference] | None = None):
@@ -303,6 +362,11 @@ class ImplicitFromClause(From):
 
 
 class ExplicitFromClause(From):
+    """The explicit FROM clause lists all referenced tables and subqueries using the JOIN ON syntax.
+
+    See `FromClause` for details.
+    """
+
     def __init__(self, base_table: base.TableReference, joined_tables: list[joins.Join]):
         self.base_table = base_table
         self.joined_tables = joined_tables
@@ -314,7 +378,8 @@ class ExplicitFromClause(From):
         return set(all_tables)
 
     def predicates(self) -> preds.QueryPredicates | None:
-        all_predicates = preds.QueryPredicates.empty_predicate()
+        predicate_handler = preds.DefaultPredicateHandler
+        all_predicates = predicate_handler.empty_predicate()
         for join in self.joined_tables:
             if isinstance(join, joins.TableJoin):
                 if join.join_condition:
@@ -334,13 +399,13 @@ class ExplicitFromClause(From):
         return all_predicates
 
     def columns(self) -> set[base.ColumnReference]:
-        return set()
+        return collection_utils.set_union(join.columns() for join in self.joined_tables)
 
     def iterexpressions(self) -> Iterable[expr.SqlExpression]:
-        pass
+        return collection_utils.flatten(join.iterexpressions() for join in self.joined_tables)
 
     def itercolumns(self) -> Iterable[base.ColumnReference]:
-        pass
+        return collection_utils.flatten(join.itercolumns() for join in self.joined_tables)
 
     def __hash__(self) -> int:
         return hash((self.base_table, tuple(self.joined_tables)))
@@ -356,6 +421,11 @@ class ExplicitFromClause(From):
 
 @dataclass
 class Where(BaseClause):
+    """The WHERE clause specifies conditions that result rows must satisfy.
+
+    All conditions are collected in a (potentially conjunctive or disjunctive) predicate object. See
+    `AbstractPredicate` for details.
+    """
     predicate: preds.AbstractPredicate
 
     def columns(self) -> set[base.ColumnReference]:
@@ -382,8 +452,22 @@ class Where(BaseClause):
 
 @dataclass
 class GroupBy(BaseClause):
+    """The GROUP BY clause combines rows that match a grouping criterion to enable aggregation on these groups.
+
+    All grouped columns can be arbitrary `SqlExpression`s, rules and restrictions of the SQL standard are not enforced
+    by PostBOUND.
+    """
     group_columns: list[expr.SqlExpression]
     distinct: bool = False
+
+    def columns(self) -> set[base.ColumnReference]:
+        return collection_utils.set_union(column.columns() for column in self.group_columns)
+
+    def iterexpressions(self) -> Iterable[expr.SqlExpression]:
+        return self.group_columns
+
+    def itercolumns(self) -> Iterable[base.ColumnReference]:
+        return collection_utils.flatten(column.itercolumns() for column in self.group_columns)
 
     def __hash__(self) -> int:
         return hash((tuple(self.group_columns), self.distinct))
@@ -403,7 +487,21 @@ class GroupBy(BaseClause):
 
 @dataclass
 class Having(BaseClause):
+    """The HAVING clause specifies conditions that have to be met on the groups constructed by a GROUP BY clause.
+
+    All conditions are collected in a (potentially conjunctive or disjunctive) predicate object. See
+    `AbstractPredicate` for details.
+    """
     condition: preds.AbstractPredicate
+
+    def columns(self) -> set[base.ColumnReference]:
+        return self.condition.columns()
+
+    def iterexpressions(self) -> Iterable[expr.SqlExpression]:
+        return self.condition.iterexpressions()
+
+    def itercolumns(self) -> Iterable[base.ColumnReference]:
+        return self.condition.itercolumns()
 
     def __hash__(self) -> int:
         return hash(self.condition)
@@ -420,6 +518,13 @@ class Having(BaseClause):
 
 @dataclass
 class OrderByExpression:
+    """The `OrderByExpression` is the fundamental ingredient for an ORDER BY clause.
+
+    Each expression consists of the actual column (which might be an arbitrary `SqlExpression`, rules and restrictions
+    by the SQL standard are not enforced here) as well as information regarding the ordering of the column. Setting
+    such information to `None` falls back to the default interpretation by the target database system.
+    """
+
     column: expr.SqlExpression
     ascending: bool | None = None
     nulls_first: bool | None = None
@@ -442,9 +547,25 @@ class OrderByExpression:
         return f"{self.column}{ascending_str}{nulls_first}"
 
 
-@dataclass
 class OrderBy(BaseClause):
-    expressions: list[OrderByExpression]
+    """The ORDER BY clause specifies how result rows should be sorted.
+
+    It consists of an arbitrary number of `OrderByExpression`s.
+    """
+
+    def __init__(self, expressions: list[OrderByExpression]) -> None:
+        if not expressions:
+            raise ValueError("At least one ORDER BY expression required")
+        self.expressions = expressions
+
+    def columns(self) -> set[base.ColumnReference]:
+        return collection_utils.set_union(expression.column.columns() for expression in self.expressions)
+
+    def iterexpressions(self) -> Iterable[expr.SqlExpression]:
+        return [expression.column for expression in self.expressions]
+
+    def itercolumns(self) -> Iterable[base.ColumnReference]:
+        return collection_utils.flatten(expression.itercolumns() for expression in self.iterexpressions())
 
     def __hash__(self) -> int:
         return hash(tuple(self.expressions))
@@ -460,6 +581,12 @@ class OrderBy(BaseClause):
 
 
 class Limit(BaseClause):
+    """The LIMIT clause restricts the number of output rows returned by the database system.
+
+    Each clause can specify an OFFSET (which is probably only meaningful if there is also an ORDER BY clause) and the
+    actual LIMIT. Note that some database systems might use a non-standard syntax for such clauses.
+    """
+
     def __init__(self, *, limit: int | None = None, offset: int | None = None) -> None:
         if limit is None and offset is None:
             raise ValueError("LIMIT and OFFSET cannot be both unspecified")

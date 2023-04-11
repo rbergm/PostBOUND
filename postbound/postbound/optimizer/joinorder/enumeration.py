@@ -1,3 +1,4 @@
+"""Contains the abstractions for the join order optimization."""
 from __future__ import annotations
 
 import abc
@@ -9,32 +10,73 @@ import numpy as np
 
 from postbound.qal import qal, base, predicates as preds
 from postbound.db import db
+from postbound.optimizer import data, validation
 from postbound.optimizer.bounds import joins as join_bounds, scans as scan_bounds, stats
 from postbound.optimizer.joinorder import subqueries
-from postbound.optimizer import data
 
 
 class JoinOrderOptimizer(abc.ABC):
+    """The `JoinOrderOptimizer` handles the entire process of obtaining a join order for input queries.
+
+    The join ordering is the first step in the optimization process. Therefore, the implemented optimization strategy
+    can apply an entire green-field approach.
+    """
 
     def __init__(self, name: str):
         self.name = name
 
     @abc.abstractmethod
     def optimize_join_order(self, query: qal.ImplicitSqlQuery) -> data.JoinTree | None:
+        """Performs the actual join ordering process.
+
+        If for some reason there is no valid join order for the given query (e.g. queries with just a single selected
+        table), `None` can be returned. Otherwise, the selected join order has to be described using a `JoinTree`.
+
+        The join tree can be further annotated with an initial operator assignment, if that is an inherent part of
+        the specific optimization strategy (e.g. for integrated optimization algorithms that are used in many
+        real-world systems).
+
+        Other than the join order and operator assignment, the algorithm should add as much information to the join
+        tree as possible, e.g. including join conditions and cardinality estimates that were calculated for the
+        selected joins. This ensures that other parts of the code base work as expected.
+        """
         raise NotImplementedError
 
     @abc.abstractmethod
     def describe(self) -> dict:
+        """Provides a representation of the join order optimization strategy."""
         raise NotImplementedError
+
+    def pre_check(self) -> validation.OptimizationPreCheck:
+        """Provides requirements that an input query has to satisfy in order for the optimizer to work properly."""
+        return validation.EmptyPreCheck()
 
 
 def _fetch_filters(query: qal.SqlQuery, table: base.TableReference) -> preds.AbstractPredicate | None:
+    """Merges all filters for the given table into one predicate."""
     all_filters = query.predicates().filters_for(table)
     predicate = preds.CompoundPredicate.create_and(all_filters) if all_filters else None
     return predicate
 
 
 class UESJoinOrderOptimizer(JoinOrderOptimizer):
+    """Implementation of the UES join order algorithm.
+
+    See Hertzschuch et al.: "Simplicity Done Right for Join Ordering", CIDR'2021 for a formal introduction into the
+    algorithm
+
+    The actual implementation used here expands upon the original algorithm in several ways:
+
+    - conjunctive join predicates are supported by using the smallest bound of all components of the conjunction
+    - queries with cross products are optimized on a per-connected-component basis. The final join order is created
+    such that components with smaller upper bounds are joined first
+    - star queries that only consist of primary key/foreign key joins are optimized using a derived algorithm:
+    the smallest bound pk/fk join is used as the first join. Afterwards, the smallest bound tables are inserted
+    greedily
+    - paths of pk/fk joins are still inserted greedily, but their subtree is iterated using a BFS based on the base
+    table estimates
+    """
+
     def __init__(self, *, base_table_estimation: scan_bounds.BaseTableCardinalityEstimator,
                  join_estimation: join_bounds.JoinBoundCardinalityEstimator,
                  subquery_policy: subqueries.SubqueryGenerationPolicy,
@@ -49,7 +91,7 @@ class UESJoinOrderOptimizer(JoinOrderOptimizer):
         self._logging_enabled = verbose
 
     def optimize_join_order(self, query: qal.ImplicitSqlQuery) -> data.JoinTree | None:
-        if len(list(query.tables())) <= 2:
+        if len(query.tables()) <= 2:
             return None
 
         self.base_table_estimation.setup_for_query(query)
@@ -63,6 +105,7 @@ class UESJoinOrderOptimizer(JoinOrderOptimizer):
             # cross-product query is reduced to multiple independent optimization passes
             optimized_components = []
             for component in join_graph.join_components():
+                # FIXME: join components might consist of single tables!
                 optimized_component = self._clone().optimize_join_order(component.query)
                 if not optimized_component:
                     raise JoinOrderOptimizationError(component.query)
@@ -89,7 +132,16 @@ class UESJoinOrderOptimizer(JoinOrderOptimizer):
             }
         }
 
+    def pre_check(self) -> validation.OptimizationPreCheck:
+        specified_checks = [check for check in [self.base_table_estimation.pre_check(),
+                                                self.join_estimation.pre_check(),
+                                                self.subquery_policy.pre_check()]
+                            if check]
+        specified_checks.append(validation.UESOptimizationPreCheck())
+        return validation.merge_checks(specified_checks)
+
     def _default_ues_optimizer(self, query: qal.SqlQuery, join_graph: data.JoinGraph) -> data.JoinTree:
+        """Implementation of our take on the UES algorithm for n:m joined queries."""
         join_tree = data.JoinTree()
 
         while join_graph.contains_free_n_m_joins():
@@ -169,6 +221,7 @@ class UESJoinOrderOptimizer(JoinOrderOptimizer):
         return join_tree
 
     def _star_query_optimizer(self, query: qal.ImplicitSqlQuery, join_graph: data.JoinGraph) -> data.JoinTree:
+        """UES-inspired algorithm for star queries (i.e. queries with pk/fk joins only)"""
         # initial table / join selection
         lowest_bound = np.inf
         lowest_bound_join = None
@@ -202,10 +255,12 @@ class UESJoinOrderOptimizer(JoinOrderOptimizer):
         return join_tree
 
     def _table_base_cardinality_ordering(self, table: base.TableReference, join_edge: dict) -> int:
+        """Utility method to enable an ordering of base tables according to their base table estimates."""
         return self.stats_container.base_table_estimates[table]
 
     def _apply_pk_fk_join(self, query: qal.SqlQuery, pk_fk_join: data.JoinPath, *, join_bound: int,
                           join_graph: data.JoinGraph, current_join_tree: data.JoinTree) -> data.JoinTree:
+        """Includes the given  pk/fk join into the join tree, taking care of all necessary updates."""
         target_table = pk_fk_join.target_table
         target_filters = _fetch_filters(query, target_table)
         target_cardinality = self.stats_container.base_table_estimates[target_table]
@@ -221,6 +276,8 @@ class UESJoinOrderOptimizer(JoinOrderOptimizer):
 
     def _insert_pk_joins(self, query: qal.SqlQuery, pk_joins: Iterable[data.JoinPath],
                          join_tree: data.JoinTree, join_graph: data.JoinGraph) -> data.JoinTree:
+        """Generalization of `_apply_pk_fk_join` to multiple join paths."""
+        # TODO: refactor in terms of _apply_pk_fk_join
         for pk_join in pk_joins:
             pk_table = pk_join.target_table
             if not join_graph.is_free_table(pk_table):
@@ -238,6 +295,7 @@ class UESJoinOrderOptimizer(JoinOrderOptimizer):
         return join_tree
 
     def _clone(self) -> UESJoinOrderOptimizer:
+        """Creates a new join order optimizer with the same settings as this one."""
         return UESJoinOrderOptimizer(base_table_estimation=copy.copy(self.base_table_estimation),
                                      join_estimation=copy.copy(self.join_estimation),
                                      subquery_policy=copy.copy(self.subquery_policy),
@@ -248,6 +306,7 @@ class UESJoinOrderOptimizer(JoinOrderOptimizer):
                                    pk_joins: Iterable[data.JoinPath], *,
                                    join_condition: preds.AbstractPredicate | None = None,
                                    subquery_join: bool | None = None) -> None:
+        """Logs the current optimization state."""
         # TODO: use proper logging
         if not self._logging_enabled:
             return
@@ -261,6 +320,8 @@ class UESJoinOrderOptimizer(JoinOrderOptimizer):
 
 
 class EmptyJoinOrderOptimizer(JoinOrderOptimizer):
+    """Dummy implementation of the join order optimizer that does not actually optimize anything."""
+
     def __init__(self) -> None:
         super().__init__("empty")
 
@@ -272,6 +333,8 @@ class EmptyJoinOrderOptimizer(JoinOrderOptimizer):
 
 
 class JoinOrderOptimizationError(RuntimeError):
+    """Error to indicate that something went wrong while optimizing the join order."""
+
     def __init__(self, query: qal.SqlQuery, message: str = "") -> None:
         super().__init__(f"Join order optimization failed for query {query}" if not message else message)
         self.query = query

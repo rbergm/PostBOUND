@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import itertools
 import typing
-from typing import Iterable, Sized, Iterator, Container
+from typing import Iterable, Sized, Iterator, Container, Collection
 
 _T = typing.TypeVar("_T")
 
@@ -70,11 +70,11 @@ class Queue(Iterable[_T], Sized, Container[_T]):
         self.data = list(data) if data else []
 
     def enqueue(self, value: _T) -> None:
-        """Adds a new item at the end of the queue."""
+        """Adds a new item to the end of the queue."""
         self.data.append(value)
 
     def append(self, value: _T) -> None:
-        """Adds a new item at the end of the queue.
+        """Adds a new item at to end of the queue.
 
         Basically an alias for `enqueue` to enable easier interchangeability with normal lists.
         """
@@ -105,7 +105,7 @@ class Queue(Iterable[_T], Sized, Container[_T]):
         return self.data.__iter__()
 
 
-class SizedQueue(Iterable[_T]):
+class SizedQueue(Collection[_T]):
     """A sized queue extends on the behaviour of a normal queue by restricting the number of items in the queue.
 
     A sized queue has weak FIFO semantics: items can only be appended at the end, but the contents of the entire queue
@@ -119,15 +119,22 @@ class SizedQueue(Iterable[_T]):
         self.capacity = capacity
 
     def append(self, value: _T) -> None:
+        """Adds a new item to the end of the queue, popping any excess items."""
         if len(self.data) >= self.capacity:
             self.data.pop(0)
         self.data.append(value)
 
     def extend(self, values: typing.Iterable[_T]) -> None:
+        """Adds all the items to the end of the queue, popping any excess items."""
         self.data = (self.data + list(values))[:self.capacity]
 
     def head(self) -> _T:
+        """Provides the current first item of the queue without removing it."""
         return self.data[0]
+
+    def pop(self) -> _T:
+        """Provides the current first item of the queue and removes it."""
+        return self.data.pop(0)
 
     def __contains__(self, other: _T) -> bool:
         return other in self.data

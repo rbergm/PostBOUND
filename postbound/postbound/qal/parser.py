@@ -1,3 +1,14 @@
+"""The parser constructs `SqlQuery` objects from query strings.
+
+Other than the parsing itself, the process will also execute a basic column binding process. For example, consider
+a query like `SELECT * FROM R WHERE R.a = 42`. The binding affects the column reference `R.a` and sets the table of
+that column to `R`. This binding based on column and table names is always performed.
+
+If the table cannot be inferred based on the column name (e.g. for a query like `SELECT * FROM R WHERE a = 42`), a
+second binding phase can be executed. This binding needs a working database connection and queries the database schema
+to detect the correct tables for each column. Whether the second phase should also be executed by default can be
+configured system-wide by setting the `auto_bind_columns` variable.
+"""
 from __future__ import annotations
 
 import copy
@@ -12,6 +23,14 @@ from postbound.db import db
 from postbound.util import collections as collection_utils, dicts as dict_utils
 
 auto_bind_columns: bool = False
+"""Indicates whether the parser should use the database catalog to obtain column bindings."""
+
+# The parser logic is based on the mo-sql-parsing project that implements a SQL -> JSON/dict conversion
+# Our parser implementation takes such a JSON structure and constructs an equivalent SqlQuery object.
+# The basic strategy for the parsing process is pretty straightforward: for each clause in the JSON data, there is
+# a matching parsing method for our parser. This method then takes care of the appropriate conversion. For some parts,
+# such as the parsing of predicates or expressions, more general methods exist that are shared by the clause parsing
+# logic.
 
 _MospSelectTypes = {
     "select": clauses.SelectType.Select,
@@ -119,10 +138,13 @@ def _parse_mosp_predicate(mosp_data: dict) -> preds.AbstractPredicate:
 
     # parse IS NULL / IS NOT NULL
     if operation in _MospUnaryOperations:
-        return preds.UnaryPredicate(_MospUnaryOperations[operation], _parse_mosp_expression(mosp_data[operation]))
+        return preds.UnaryPredicate(_parse_mosp_expression(mosp_data[operation]), _MospUnaryOperations[operation])
+
+    # FIXME: cannot parse unary filter functions at the moment: SELECT * FROM R WHERE my_udf(R.a)
+    # this likely requires changes to the UnaryPredicate implementation as well
 
     if operation not in _MospBinaryOperations:
-        raise ValueError("Unknown predicate format: " + str(mosp_data))
+        return preds.UnaryPredicate(_parse_mosp_expression(mosp_data))
 
     # parse binary predicates (logical operators, etc.)
     if operation == "in":
@@ -158,6 +180,9 @@ def _parse_in_predicate(mosp_data: dict) -> preds.InPredicate:
 
 
 def _parse_mosp_expression(mosp_data: Any) -> expr.SqlExpression:
+    # TODO: support for CASE WHEN expressions
+    # TODO: support for string concatenation
+
     if mosp_data == "*":
         return expr.StarExpression()
     if isinstance(mosp_data, str):
@@ -384,6 +409,8 @@ class QueryFormatError(RuntimeError):
 
 
 class _MospQueryParser:
+    """The parser class acts as a one-stop-shop to parse the input query."""
+
     def __init__(self, mosp_data: dict, raw_query: str = "") -> None:
         self._raw_query = raw_query
         self._mosp_data = mosp_data
@@ -443,8 +470,16 @@ class _MospQueryParser:
             self._mosp_data = self._mosp_data["explain"]
 
 
-def parse_query(query: str, *,
-                bind_columns: bool | None = None, db_schema: db.DatabaseSchema | None = None) -> qal.SqlQuery:
+def parse_query(query: str, *, bind_columns: bool | None = None,
+                db_schema: db.DatabaseSchema | None = None) -> qal.SqlQuery:
+    """Parses the given query string into a `SqlQuery` object.
+
+    If `bind_columns` is `True`, will perform a binding process based on the schema of a live database.
+    This database schema can be either supplied directly via the `db_schema` parameter, otherwise it will be fetched
+    from the `DatabasePool`.
+
+    If `bind_columns` is omitted, the `auto_bind_columns` variable will be queried.
+    """
     bind_columns = bind_columns if bind_columns is not None else auto_bind_columns
     db_schema = (db_schema if db_schema or not bind_columns
                  else db.DatabasePool.get_instance().current_database().schema())

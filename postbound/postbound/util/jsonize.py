@@ -9,8 +9,19 @@ Sadly (or luckily?), the inverse conversion does not work because JSON does not 
 """
 from __future__ import annotations
 
+import abc
+from typing import Protocol
+
 import json
 from typing import Any
+
+
+class Jsonizable(Protocol):
+    """Protocol to indicate that a certain class provides the `__json__` method."""
+
+    @abc.abstractmethod
+    def __json__(self) -> object:
+        raise NotImplementedError
 
 
 class JsonizeEncoder(json.JSONEncoder):

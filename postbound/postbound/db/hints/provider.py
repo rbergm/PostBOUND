@@ -1,3 +1,4 @@
+"""Contains the services that enable the generation of database-specific hints for optimized queries."""
 from __future__ import annotations
 
 import abc
