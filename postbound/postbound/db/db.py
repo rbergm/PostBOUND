@@ -497,3 +497,4 @@ class UnsupportedDatabaseFeatureError(RuntimeError):
         super().__init__(f"Database {database.name} does not support feature {feature}")
         self.database = database
         self.feature = feature
+        

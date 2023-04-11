@@ -137,7 +137,7 @@ class PostgresSchemaInterface(db.DatabaseSchema):
             raise base.UnboundColumnError(column)
         query_template = textwrap.dedent("""
                         SELECT data_type FROM information_schema.columns
-                        WHERE table_name = {tab} AND column_name = {col}""")
+                        WHERE table_name = '{tab}' AND column_name = '{col}'""")
         datatype_query = query_template.format(tab=column.table.full_name, col=column.name)
         self._db.cursor().execute(datatype_query)
         result_set = self._db.cursor().fetchone()
