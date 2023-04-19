@@ -9,6 +9,7 @@ import os
 import textwrap
 import threading
 from typing import Any
+import re
 
 import psycopg
 import psycopg.rows
@@ -89,7 +90,11 @@ class PostgresInterface(db.Database):
         self._cursor.execute("SELECT VERSION();")
         pg_ver = self._cursor.fetchone()[0]
         # version looks like "PostgreSQL 14.6 on x86_64-pc-linux-gnu, compiled by gcc (...)
-        return utils.Version(pg_ver.split(" ")[1])
+        match = re.search(r'PostgreSQL (\d+\.\d+)', pg_ver)
+        if match:
+           return utils.Version(match.group(1))
+        else:
+           raise ValueError(f"Unable to extract version from string: {pg_ver}")
 
     def reset_connection(self) -> None:
         self._cursor.close()

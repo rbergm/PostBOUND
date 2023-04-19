@@ -209,10 +209,8 @@ class Database(abc.ABC):
 
     def __query_cache_name(self):
         """Provides a normalized file name for the query cache."""
-        identifier = "_".join([self.database_system_name(),
-                               self.database_system_version().formatted(prefix="v", separator="_"),
-                               self.database_name()])
-        return f".query_cache_{identifier}.json"
+        
+        return f".query_cache_{self.system_name}.json"
 
     def __repr__(self) -> str:
         return str(self)

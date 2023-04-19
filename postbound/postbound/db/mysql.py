@@ -21,15 +21,18 @@ from postbound.util import logging, misc as utils
 
 class mysqlInterface(db.Database):
     
-    def __init__(self, connect_string: dict[str, Any], name: str = "mysql", *, cache_enabled: bool = True) -> None:
-        super().__init__(name, cache_enabled=cache_enabled)
-        self._connect_string = connect_string
+    def __init__(self, connect_string: dict[str, Any],system_name: str = "MYSQL",  *, cache_enabled: bool = True) -> None:
+       
+        self.connect_string = connect_string
         
         self._connection = mysql.connector.connect(**connect_string)
         self._connection.autocommit = True
         self._cursor = self._connection.cursor()
+       
         self._db_schema = mysqlSchemaInterface(self)
         self._db_stats = mysqlStatisticsInterface(self)
+
+        super().__init__(system_name, cache_enabled=cache_enabled)
 
     def schema(self) -> db.DatabaseSchema:
         return self._db_schema
@@ -41,9 +44,6 @@ class mysqlInterface(db.Database):
             self._db_stats.cache_enabled = cache_enabled
         return self._db_stats
         
-
-    
-
 
     def execute_query(self, query: qal.SqlQuery | str, *, cache_enabled: bool | None = None) -> Any:
         cache_enabled = cache_enabled or (cache_enabled is None and self._cache_enabled)
@@ -85,12 +85,22 @@ class mysqlInterface(db.Database):
         return estimate
     
     
-    def mysql_version(self) -> utils.Version:
-        """Provides the version of the Postgres instance currently connected to."""
+   
+    
+    def database_name(self) -> None:
+        self._cursor.execute("SELECT DATABASE();")
+        db_name = self._cursor.fetchone()[0]
+        return db_name
+        
+    
+    def database_system_version(self) -> utils.Version:
         self._cursor.execute("SELECT VERSION();")
         mysql_ver = self._cursor.fetchone()[0]
-        return utils.Version(mysql_ver)
+        # version looks like "8.0.32"
+        return utils.Version(str(mysql_ver))
+
         
+            
 
     def reset_connection(self) -> None:
         self._cursor.close()
@@ -106,9 +116,9 @@ class mysqlInterface(db.Database):
 
 
 class mysqlSchemaInterface(db.DatabaseSchema):
-    """Schema-specific parts of the general Postgres interface."""
+    """Schema-specific parts of the general MYSQL interface."""
 
-    def __int__(self, mysql_db: mysqlInterface) -> None:
+    def __init__(self, mysql_db: mysqlInterface) -> None:
         super().__init__(mysql_db)
 
     def lookup_column(self, column: base.ColumnReference,
@@ -170,15 +180,10 @@ class mysqlSchemaInterface(db.DatabaseSchema):
         return [col[0] for col in result_set]
     
 
-DTypeArrayConverters = {
-    "integer": "int[]",
-    "text": "text[]",
-    "character varying": "text[]"
-}
-   
+ 
 
 class mysqlStatisticsInterface(db.DatabaseStatistics):
-    """Statistics-specific parts of the Postgres interface."""
+    """Statistics-specific parts of the MYSQL interface."""
 
     def __init__(self, mysql_db: mysqlInterface) -> None:
         super().__init__(mysql_db)    
@@ -193,10 +198,8 @@ class mysqlStatisticsInterface(db.DatabaseStatistics):
         dist_query = "SELECT DISTINCTROW CARDINALITY FROM information_schema.statistics WHERE BINARY table_name = %s AND BINARY column_name = %s"
         self._db.cursor().execute(dist_query, (column.table.full_name, column.name))
         dist_values = self._db.cursor().fetchone()[0]
-        if dist_values >= 0:
-            return dist_values
-        n_rows = self._retrieve_total_rows_from_stats(column.table)
-        return -1 * n_rows * dist_values
+        return dist_values
+        
     
     def _retrieve_min_max_values_from_stats(self, column: base.ColumnReference) -> tuple:
         if not self.enable_emulation_fallback:
@@ -221,9 +224,9 @@ def connect(*, name: str = "mysql", connect_string: str | None = None, config_fi
         with open(config_file, "r") as f:
             connect_string = f.readline().strip()
     elif not connect_string:
-        raise ValueError("Connect string or config file are required to connect to mysql")
+        raise ValueError("Connect string or config file are required to connect to MYSQL")
 
-    mysql_db = mysqlInterface(connect_string, name=name, cache_enabled=cache_enabled)
+    mysql_db = mysqlInterface(connect_string, system_name=name, cache_enabled=cache_enabled)
     if not private:
         db_pool.register_database(name, mysql_db)
     
