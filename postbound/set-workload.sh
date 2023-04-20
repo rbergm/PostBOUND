@@ -25,7 +25,7 @@ check_profiles() {
     fi
 
     if [ ! -f ".psycopg_connection_ssb" ] ; then
-        echo "No SSB connection file (expected name: .psycopg_connection_ssb)
+        echo "No SSB connection file (expected name: .psycopg_connection_ssb)"
     else
         echo "SSB connection .. OK"
     fi
@@ -46,8 +46,8 @@ set_profile() {
             echo "Unknown profile: '$1'"
             exit 1
     esac
-    ln -sf .psycopg_connection_$PROFILE .psycopg_connection
-    ln -sf .psycopg_connection_$PROFILE tests/.psycopg_connection
+    ln -sf ".psycopg_connection_$PROFILE" .psycopg_connection
+    ln -sf ".psycopg_connection_$PROFILE" tests/.psycopg_connection
 }
 
 if [ $# -eq 0 ] ; then
