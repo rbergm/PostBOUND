@@ -6,12 +6,36 @@ import copy
 from dataclasses import dataclass
 from typing import Iterable, Optional
 
+import numpy as np
+
 from postbound.db.hints import provider
 from postbound.qal import qal, base, clauses, joins, predicates, transform
 from postbound.util import collections as collection_utils
+from postbound.util.typing import deprecated
 from postbound.optimizer import data
 from postbound.optimizer.physops import operators
 from postbound.optimizer.planmeta import hints as plan_param
+
+
+@dataclass
+class HintParts:
+    """Captures the different kinds of Postgres-hints to collect them more easily."""
+    settings: list[str]
+    hints: list[str]
+
+    @staticmethod
+    def empty() -> HintParts:
+        """An empty hint parts object, i.e. no hints have been specified, yet."""
+        return HintParts([], [])
+
+    def merge_with(self, other: HintParts) -> HintParts:
+        """Combines the hints that are contained in this hint parts object with all hints in the other object.
+
+        This construct new hint parts and leaves the current object unmodified.
+        """
+        merged_settings = self.settings + [setting for setting in other.settings if setting not in self.settings]
+        merged_hints = self.hints + [hint for hint in other.hints if hint not in self.hints]
+        return HintParts(merged_settings, merged_hints)
 
 
 def _build_subquery_alias(tables: Iterable[base.TableReference]) -> str:
@@ -27,6 +51,7 @@ def _build_column_alias(column: base.ColumnReference) -> str:
     return f"{column.table.identifier()}_{column.name}"
 
 
+@deprecated
 class PostgresRightDeepJoinClauseBuilder:
     """Service to generate an explicit from clause for a given join order.
 
@@ -249,7 +274,9 @@ class PostgresRightDeepJoinClauseBuilder:
         return predicate.required_tables() < self.joined_tables | joined_tables
 
 
-def _enforce_pg_join_order(query: qal.ImplicitSqlQuery, join_order: data.JoinTree) -> qal.ExplicitSqlQuery:
+@deprecated
+def _enforce_pg_join_order(query: qal.ImplicitSqlQuery,
+                           join_order: data.JoinTree) -> tuple[qal.ExplicitSqlQuery, Optional[HintParts]]:
     """Generates the explicit join order for the given query and performs all necessary renaming operations."""
     join_order_builder = PostgresRightDeepJoinClauseBuilder(query)
 
@@ -282,7 +309,64 @@ def _enforce_pg_join_order(query: qal.ImplicitSqlQuery, join_order: data.JoinTre
                                            having_clause=having_clause,
                                            orderby_clause=orderby_clause,
                                            limit_clause=copy.deepcopy(query.limit_clause))
-    return reordered_query
+    return reordered_query, None
+
+
+def _is_hash_join(join_tree_node: data.JoinTreeNode,
+                  operator_assignment: Optional[operators.PhysicalOperatorAssignment]) -> bool:
+    """Checks, whether the given node should be executed as a hash join.
+
+    Fails gracefully for base table and unspecified operator assignments (by returning False).
+    """
+    return operator_assignment and operator_assignment[join_tree_node.tables()] == operators.JoinOperators.HashJoin
+
+
+def _generate_leading_hint_content(join_tree_node: data.JoinTreeNode,
+                                   operator_assignment: Optional[operators.PhysicalOperatorAssignment] = None) -> str:
+    """Builds part of the Leading hint to enforce join order and join direction for the given join node."""
+    if isinstance(join_tree_node, data.JoinNode):
+        left, right = join_tree_node.left_child, join_tree_node.right_child
+        left_hint = _generate_leading_hint_content(left, operator_assignment)
+        right_hint = _generate_leading_hint_content(right, operator_assignment)
+        left_bound = left.upper_bound if left.upper_bound and not np.isnan(left.upper_bound) else -np.inf
+        right_bound = right.upper_bound if right.upper_bound and not np.isnan(right.upper_bound) else np.inf
+
+        # for Postgres, the inner relation of a Hash join is the one that gets the hash table and the outer relation is
+        # the one being probed. For all other joins, the inner/outer relation actually is the inner/outer relation
+        # Therefore, we want to have the smaller relation as the inner relation for hash joins and the other way around
+        # for all other joins
+
+        if _is_hash_join(join_tree_node, operator_assignment):
+            left_hint, right_hint = (left_hint, right_hint) if right_bound > left_bound else (right_hint, left_hint)
+        elif left_bound > right_bound:
+            left_hint, right_hint = right_hint, left_hint
+
+        return f"({left_hint} {right_hint})"
+    elif isinstance(join_tree_node, data.BaseTableNode):
+        return join_tree_node.table.identifier()
+    else:
+        raise ValueError(f"Unknown join tree node: {join_tree_node}")
+
+
+def _generate_pg_join_order_hint(query: qal.SqlQuery, join_order: data.JoinTree,
+                                 operator_assignment: Optional[operators.PhysicalOperatorAssignment] = None
+                                 ) -> tuple[qal.SqlQuery, Optional[HintParts]]:
+    """Generates the Leading hint to enforce join order and join direction for the given query.
+
+    This function needs access to the operator assignment in addition to the join tree, because the actual join
+    directions in the leading hint depend on the selected join operators.
+
+    More specifically, the join tree assumes that the left join partner of a join node acts as the outer relation
+    whereas the right partner acts as the inner relation. For hash joins this means that the inner relation should be
+    probed whereas the hash table is created for the outer relation. However, Postgres denotes the directions
+    exactly the other way around. Therefore, the direction has to be swapped for hash joins.
+    """
+    if not join_order.root or len(join_order) < 2:
+        return query, None
+    leading_hint = _generate_leading_hint_content(join_order.root, operator_assignment)
+    leading_hint = f"Leading({leading_hint})"
+    hints = HintParts([], [leading_hint])
+    return query, hints
 
 
 PG_OPTIMIZER_SETTINGS = {
@@ -293,6 +377,7 @@ PG_OPTIMIZER_SETTINGS = {
     operators.ScanOperators.IndexScan: "enable_indexscan",
     operators.ScanOperators.IndexOnlyScan: "enable_indexonlyscan"
 }
+"""Denotes all (session-global) optimizer settings that modify the allowed physical operators."""
 
 # based on PG_HINT_PLAN extension (https://github.com/ossc-db/pg_hint_plan)
 # see https://github.com/ossc-db/pg_hint_plan#hints-list for details
@@ -304,6 +389,10 @@ PG_OPTIMIZER_HINTS = {
     operators.ScanOperators.IndexScan: "IndexOnlyScan",
     operators.ScanOperators.IndexOnlyScan: "IndexOnlyScan"
 }
+"""Denotes all physical operators that can be enforced for individual parts of a query.
+
+These settings overwrite the session-global optimizer settings.
+"""
 
 
 def _generate_join_key(tables: Iterable[base.TableReference]) -> str:
@@ -318,27 +407,6 @@ def _escape_setting(setting) -> str:
     elif isinstance(setting, bool):
         return "TRUE" if setting else "FALSE"
     return f"'{setting}'"
-
-
-@dataclass
-class HintParts:
-    """Captures the different kinds of Postgres-hints to collect them more easily."""
-    settings: list[str]
-    hints: list[str]
-
-    @staticmethod
-    def empty() -> HintParts:
-        """An empty hint parts object, i.e. no hints have been specified, yet."""
-        return HintParts([], [])
-
-    def merge_with(self, other: HintParts) -> HintParts:
-        """Combines the hints that are contained in this hint parts object with all hints in the other object.
-
-        This construct new hint parts and leaves the current object unmodified.
-        """
-        merged_settings = self.settings + [setting for setting in other.settings if setting not in self.settings]
-        merged_hints = self.hints + [hint for hint in other.hints if hint not in self.hints]
-        return HintParts(merged_settings, merged_hints)
 
 
 def _generate_pg_operator_hints(physical_operators: operators.PhysicalOperatorAssignment) -> HintParts:
@@ -422,12 +490,14 @@ class PostgresHintProvider(provider.HintProvider):
                     physical_operators: operators.PhysicalOperatorAssignment | None = None,
                     plan_parameters: plan_param.PlanParameterization | None = None) -> qal.SqlQuery:
         adapted_query = query
+        hint_parts = None
 
         if join_order:
-            physical_operators.set_system_settings(join_collapse_limit=1)
-            adapted_query = _enforce_pg_join_order(adapted_query, join_order)
+            # not needed any more, un-comment if old join order strategy should become necessary again:
+            # >>> physical_operators.set_system_settings(join_collapse_limit=1)
+            adapted_query, hint_parts = _generate_pg_join_order_hint(adapted_query, join_order, physical_operators)
 
-        hint_parts = HintParts.empty()
+        hint_parts = hint_parts if hint_parts else HintParts.empty()
         if physical_operators:
             operator_hints = _generate_pg_operator_hints(physical_operators)
             hint_parts = hint_parts.merge_with(operator_hints)

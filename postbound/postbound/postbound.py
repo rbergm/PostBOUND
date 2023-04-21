@@ -172,7 +172,10 @@ class OptimizationPipeline:
         if join_order:
             join_order.plan_parameterization = None
 
-        return self.target_dbs.query_adaptor().adapt_query(query, join_order, operators, plan_parameters)
+        return self.target_dbs.query_adaptor().adapt_query(query,
+                                                           join_order=join_order,
+                                                           physical_operators=operators,
+                                                           plan_parameters=plan_parameters)
 
     def describe(self) -> dict:
         """Provides a representation of the selected optimization strategies and the database settings."""
