@@ -91,7 +91,7 @@ class UESJoinOrderOptimizer(JoinOrderOptimizer):
         self._logging_enabled = verbose
 
     def optimize_join_order(self, query: qal.SqlQuery) -> data.JoinTree | None:
-        if len(query.tables()) <= 2:
+        if len(query.tables()) < 2:
             return None
 
         self.base_table_estimation.setup_for_query(query)
@@ -101,6 +101,8 @@ class UESJoinOrderOptimizer(JoinOrderOptimizer):
 
         join_graph = data.JoinGraph(query, self.database.schema())
 
+        if len(query.tables()) == 2:
+            final_join_tree = self._binary_join_optimization(query, join_graph)
         if join_graph.contains_cross_products():
             # cross-product query is reduced to multiple independent optimization passes
             optimized_components = []
@@ -220,6 +222,29 @@ class UESJoinOrderOptimizer(JoinOrderOptimizer):
             raise AssertionError("Join graph still has free tables remaining!")
         return join_tree
 
+    def _binary_join_optimization(self, query: qal.ImplicitSqlQuery, join_graph: data.JoinGraph) -> data.JoinTree:
+        """Simplified "optimization" for a query with a single join. Makes the smaller table the outer relation."""
+        table1, table2 = query.tables()
+        table1_smaller = self.stats_container.base_table_estimates[table1] < self.stats_container.base_table_estimates[
+            table2]
+        small_table, large_table = (table1, table2) if table1_smaller else (table2, table1)
+
+        large_card = self.stats_container.base_table_estimates[large_table]
+        small_card = self.stats_container.base_table_estimates[small_table]
+
+        large_filter = _fetch_filters(query, large_table)
+        small_filter = _fetch_filters(query, small_table)
+
+        join_predicate = query.predicates().joins_between(large_table, small_table)
+        join_bound = self.join_estimation.estimate_for(join_predicate, join_graph)
+
+        join_tree = data.JoinTree.for_base_table(large_table, large_card, large_filter)
+        join_tree = join_tree.join_with_base_table(small_table, base_cardinality=small_card,
+                                                   base_filter_predicate=small_filter,
+                                                   join_predicate=join_predicate, join_bound=join_bound,
+                                                   n_m_join=join_graph.is_n_m_join(small_table, large_table))
+        return join_tree
+
     def _star_query_optimizer(self, query: qal.ImplicitSqlQuery, join_graph: data.JoinGraph) -> data.JoinTree:
         """UES-inspired algorithm for star queries (i.e. queries with pk/fk joins only)"""
         # initial table / join selection
@@ -231,7 +256,7 @@ class UESJoinOrderOptimizer(JoinOrderOptimizer):
                 lowest_bound = current_bound
                 lowest_bound_join = candidate_join
 
-        start_table, target_table = lowest_bound_join.start_table, lowest_bound_join.target_table
+        start_table = lowest_bound_join.start_table
         start_filters = _fetch_filters(query, start_table)
         join_tree = data.JoinTree.for_base_table(start_table, self.stats_container.base_table_estimates[start_table],
                                                  start_filters)
