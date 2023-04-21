@@ -7,6 +7,11 @@ import threading
 from typing import Any, Union
 
 
+def catalan_number(n: int) -> int:
+    """Computes the n-th catalan number. See https://en.wikipedia.org/wiki/Catalan_number."""
+    return round(math.comb(2 * n, n) / (n + 1))
+
+
 def represents_number(val: str) -> bool:
     """Checks, whether `val` can be cast into an integer/float value."""
     try:
@@ -229,8 +234,8 @@ class AtomicInt(numbers.Integral):
 class BoundedInt(numbers.Integral):
     """A bounded int cannot become larger and/or smaller than a specified interval.
 
-    If the bounded integer does leave the allowed interval, it will be snapped back to the minimum/maximum allowed number,
-    respectively.
+    If the bounded integer does leave the allowed interval, it will be snapped back to the minimum/maximum allowed
+    number, respectively.
     """
 
     @staticmethod

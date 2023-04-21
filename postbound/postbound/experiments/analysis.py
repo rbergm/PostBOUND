@@ -8,8 +8,9 @@ import natsort
 import numpy as np
 import pandas as pd
 
+from postbound.qal import qal
 from postbound.experiments import runner
-from postbound.util import jsonize
+from postbound.util import jsonize, numbers as num
 
 
 def prepare_export(df: pd.DataFrame) -> pd.DataFrame:
@@ -46,3 +47,25 @@ def sort_results(results_df: pd.DataFrame,
     """
     return results_df.sort_values(by=by_column,
                                   key=lambda series: np.argsort(natsort.index_natsorted(series)))
+
+
+def possible_plans_bound(query: qal.SqlQuery, *,
+                         join_operators: set[str] = {"nested-loop join", "hash join", "sort-merge join"},
+                         scan_operators: set[str] = {"sequential scan", "index scan"}) -> int:
+    """Computes an upper bound on the maximum number of possible query execution plans for a given query.
+
+    This upper bound is based on three assumptions:
+    1. any join sequence (even involving cross-products) of any form (i.e. right-deep, bushy, ...) is allowed
+    2. the choice of scan operators and join operators can be varied freely
+    3. each table can be scanned using arbitrary operators
+
+    The number of real-world query execution plans will typically be much smaller, because cross-products are only
+    used if really necessary and the selected join operator influences the scan operators and vice-versa.
+    """
+    n_tables = len(query.tables())
+
+    join_orders = num.catalan_number(n_tables)
+    joins = (n_tables - 1) * len(join_operators)
+    scans = n_tables * len(scan_operators)
+
+    return join_orders * joins * scans
