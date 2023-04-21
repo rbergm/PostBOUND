@@ -30,6 +30,16 @@ class PlanParameterization:
         """Assigns the given number of parallel works to the (join of) tables."""
         self.parallel_worker_hints[frozenset(tables)] = num_workers
 
+    def merge_with(self, other_parameters: PlanParameterization) -> PlanParameterization:
+        """Combines the plan parameters with the settings from the `other_parameters`.
+
+        In case of contradicting parameters, the `other_parameters` take precedence.
+        """
+        merged_params = PlanParameterization()
+        merged_params.cardinality_hints = self.cardinality_hints | other_parameters.cardinality_hints
+        merged_params.parallel_worker_hints = self.parallel_worker_hints | other_parameters.parallel_worker_hints
+        return merged_params
+
 
 class HintType(enum.Enum):
     """Contains all hint types that are supported by PostBOUND (or at least should be supported in the future)."""

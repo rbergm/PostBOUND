@@ -681,6 +681,20 @@ class QueryPredicates:
         return _collect_join_predicates(self._root)
 
     @functools.cache
+    def join_graph(self) -> nx.Graph:
+        """Provides the join graph for the predicates.
+
+        Nodes correspond to tables and edges to predicates that join those tables.
+        """
+        join_graph = nx.Graph()
+        tables = self._root.tables()
+        join_graph.add_nodes_from(tables)
+        for join in self.joins():
+            for first_col, second_col in join.join_partners():
+                join_graph.add_edge(first_col.table, second_col.table)
+        return join_graph
+
+    @functools.cache
     def filters_for(self, table: base.TableReference) -> Collection[AbstractPredicate]:
         """Provides all filter predicates that reference the given table.
 
@@ -697,6 +711,15 @@ class QueryPredicates:
         """
         self._assert_not_empty()
         return [join_pred for join_pred in self.joins() if table in join_pred.tables()]
+
+    @functools.cache
+    def joins_between(self, first_table: base.TableReference,
+                      second_table: base.TableReference) -> Optional[AbstractPredicate]:
+        """Provides the (conjunctive) join predicate that joins the given tables."""
+        self._assert_not_empty()
+        first_joins = self.joins_for(first_table)
+        matching_joins = [join_pred for join_pred in first_joins if join_pred.joins_table(second_table)]
+        return CompoundPredicate.create_and(matching_joins) if matching_joins else None
 
     def joins_tables(self, tables: base.TableReference | Iterable[base.TableReference],
                      *more_tables: base.TableReference) -> bool:

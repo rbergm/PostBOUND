@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from typing import Callable, Iterable, Optional
 
 import networkx as nx
+import numpy as np
 
 from postbound.qal import base, predicates, qal, transform
 from postbound.db import db
@@ -30,6 +31,14 @@ class JoinPath:
     def tables(self) -> Collection[base.TableReference]:
         """Provides the tables that are joined."""
         return [self.start_table, self.target_table]
+
+    def spans_table(self, table: base.TableReference) -> bool:
+        """Checks, whether the given table is either the start, or the target table in this path."""
+        return table == self.start_table or table == self.target_table
+
+    def flip_direction(self) -> JoinPath:
+        """Provides a new join path with swapped roles for start and target tables."""
+        return JoinPath(self.target_table, self.start_table, join_condition=self.join_condition)
 
     def __repr__(self) -> str:
         return str(self)
@@ -125,6 +134,10 @@ class IndexInfo:
             return f"SECONDARY INDEX({self.column}){invalid_state}"
 
 
+_PredicateMap = collections.defaultdict[frozenset[base.TableReference], list[predicates.AbstractPredicate]]
+"""Type alias for an (internally used) predicate map"""
+
+
 class JoinGraph:
     """The `JoinGraph` models the connection between different tables of in a query.
 
@@ -160,7 +173,7 @@ class JoinGraph:
         graph = nx.Graph()
         graph.add_nodes_from(query.tables(), free=True)
         edges = []
-        predicate_map = collections.defaultdict(list)
+        predicate_map: _PredicateMap = collections.defaultdict(list)
         for join_predicate in query.predicates().joins():
             first_col, second_col = join_predicate.columns()
             predicate_map[frozenset([first_col.table, second_col.table])].append(join_predicate)
@@ -263,6 +276,16 @@ class JoinGraph:
                 n_m_paths.append(join_path)
         return n_m_paths
 
+    def available_join_paths_for(self, free_table: base.TableReference) -> Iterable[JoinPath]:
+        """Returns all possible joins of the given free table with consumed tables.
+
+        The returned join paths will have the consumed tables as start tables and the free table as target table.
+
+        This method adapts the behavior of `available_join_paths` for initial join graphs.
+        """
+        return [path if free_table == path.start_table else path.flip_direction()
+                for path in self.available_join_paths() if path.spans_table(free_table)]
+
     def nx_graph(self) -> nx.Graph:
         """Provides the underlying graph object for this join graph."""
         return self._graph
@@ -271,17 +294,25 @@ class JoinGraph:
         """Checks, whether the given table is still free in this join graph."""
         return self._graph.nodes[table]["free"]
 
+    def joins_tables(self, first_table: base.TableReference, second_table: base.TableReference) -> bool:
+        """Checks, whether the join graph contains an edge between the given tables.
+
+        This check does not require the join in question to be available (this is what `is_available_join` is for).
+        """
+        return (first_table, second_table) in self._graph.edges
+
     def is_available_join(self, first_table: base.TableReference, second_table: base.TableReference) -> bool:
         """Checks, whether the join between the supplied tables is still available."""
         first_free, second_free = self._graph.nodes[first_table]["free"], self._graph.nodes[second_table]["free"]
-        return (first_free and not second_free) or (not first_free and second_free)
+        valid_join = self.joins_tables(first_table, second_table)
+        return valid_join and (first_free and not second_free) or (not first_free and second_free)
 
     def is_pk_fk_join(self, fk_table: base.TableReference, pk_table: base.TableReference) -> bool:
         """Checks, whether the join between the supplied tables is a primary key/foreign key join.
 
         This check does not require the indicated join to be available.
         """
-        if not (fk_table, pk_table) in self._graph.edges:
+        if not self.joins_tables(fk_table, pk_table):
             return False
 
         predicate: predicates.AbstractPredicate = self._graph.edges[fk_table, pk_table]["predicate"]
@@ -291,6 +322,15 @@ class JoinGraph:
             if self._index_structures[fk_col].is_indexed() and self._index_structures[pk_col].is_primary():
                 return True
         return False
+
+    def is_n_m_join(self, first_table: base.TableReference, second_table: base.TableReference) -> bool:
+        """Checks, whether the join between the supplied tables is an n:m join.
+
+        This check does not require the indicated join to be available.
+        """
+        return (self.joins_tables(first_table, second_table)
+                and not self.is_pk_fk_join(first_table, second_table)
+                and not self.is_pk_fk_join(second_table, first_table))
 
     def available_pk_fk_joins_for(self, fk_table: base.TableReference) -> Iterable[JoinPath]:
         """Provides all available primary key/foreign key joins with `fk_table`.
@@ -335,6 +375,34 @@ class JoinGraph:
             join_paths.append(JoinPath(current_fk_table, current_pk_table, join_predicate))
         return join_paths
 
+    def join_partners_from(self, table: base.TableReference,
+                           candidate_tables: Iterable[base.TableReference]) -> set[base.TableReference]:
+        """Provides exactly those tables from the candidates that are joined with the given table.
+
+        This check does not require the joins in question to be available. The existence of a join edge is sufficient.
+        """
+        candidate_tables = set(candidate_tables)
+        return set(neighbor for neighbor in self._graph.adj[table].keys() if neighbor in candidate_tables)
+
+    def join_predicates_between(self, first_tables: base.TableReference | Iterable[base.TableReference],
+                                second_tables: Optional[base.TableReference | Iterable[base.TableReference]] = None
+                                ) -> Collection[predicates.AbstractPredicate]:
+        """Provides all defined join predicates between the first tables with the second tables.
+
+        If `second_tables` is `None`, returns all join predicates within the first tables instead.
+        """
+        first_tables = collection_utils.enlist(first_tables)
+        second_tables = collection_utils.enlist(second_tables) if second_tables else first_tables
+        matching_predicates = set()
+
+        for first_table in first_tables:
+            for second_table in second_tables:
+                join_predicate = self._fetch_join_predicate(first_table, second_table)
+                if join_predicate:
+                    matching_predicates.add(join_predicate)
+
+        return matching_predicates
+
     def mark_joined(self, table: base.TableReference, join_edge: predicates.AbstractPredicate | None = None) -> None:
         """Updates the join graph to include the given table in the intermediate result.
 
@@ -343,6 +411,8 @@ class JoinGraph:
 
         If no join predicate is supplied, no index structures are updated.
         """
+        # TODO: allow auto-update
+
         self._graph.nodes[table]["free"] = False
         if not join_edge:
             return
@@ -387,6 +457,13 @@ class JoinGraph:
         for column, index in self._index_structures.items():
             if column.table == table:
                 index.invalidate()
+
+    def _fetch_join_predicate(self, first_table: base.TableReference,
+                              second_table: base.TableReference) -> Optional[predicates.AbstractPredicate]:
+        """Provides the join predicate between the given tables if there is one."""
+        if (first_table, second_table) not in self._graph.edges:
+            return None
+        return self._graph.edges[first_table, second_table]["predicate"]
 
 
 class JoinTreeNode(abc.ABC, Container):
@@ -434,7 +511,33 @@ class JoinTreeNode(abc.ABC, Container):
         return JoinTree(self)
 
     @abc.abstractmethod
+    def count_cross_product_joins(self) -> int:
+        """Counts the number of joins below and including this node that do not have an attached join predicate."""
+        raise NotImplementedError
+
+    @abc.abstractmethod
+    def homomorphic_hash(self) -> int:
+        """
+        Calculates a hash value that is independent of join directions, i.e. R ⋈ S and S ⋈ R have the same hash value.
+        """
+        raise NotImplementedError
+
+    @abc.abstractmethod
+    def base_table(self, traverse_right: bool = True) -> base.TableReference:
+        """Provides the left-most or right-most table in the join tree."""
+        raise NotImplementedError
+
+    @abc.abstractmethod
+    def inspect(self, *, indentation: int = 0) -> str:
+        """Produces a human-readable structure that describes the structure of this join tree."""
+        raise NotImplementedError
+
+    @abc.abstractmethod
     def __contains__(self, item) -> bool:
+        raise NotImplementedError
+
+    @abc.abstractmethod
+    def __len__(self) -> int:
         raise NotImplementedError
 
     @abc.abstractmethod
@@ -507,6 +610,28 @@ class JoinNode(JoinTreeNode):
         sequence.append(self)
         return sequence
 
+    def count_cross_product_joins(self) -> int:
+        own_cross_product = 1 if not self.join_condition else 0
+        return own_cross_product + self.left_child.count_cross_product_joins() + self.right_child.count_cross_product_joins()
+
+    def homomorphic_hash(self) -> int:
+        left_hash = self.left_child.homomorphic_hash()
+        right_hash = self.right_child.homomorphic_hash()
+        child_hash = hash((left_hash, right_hash)) if left_hash < right_hash else hash((right_hash, left_hash))
+        return hash((self.join_condition, child_hash))
+
+    def base_table(self, traverse_right: bool = True) -> base.TableReference:
+        return (self.right_child.base_table(traverse_right) if traverse_right
+                else self.left_child.base_table(traverse_right))
+
+    def inspect(self, *, indentation: int = 0) -> str:
+        padding = " " * indentation
+        prefix = f"{padding}<- " if padding else ""
+        own_inspection = f"{prefix}JOIN ON {self.join_condition}" if self.join_condition else f"{prefix}CROSS JOIN"
+        left_inspection = self.left_child.inspect(indentation=indentation + 2)
+        right_inspection = self.right_child.inspect(indentation=indentation + 2)
+        return "\n".join([own_inspection, left_inspection, right_inspection])
+
     def __contains__(self, item) -> bool:
         if not isinstance(item, JoinTreeNode):
             return False
@@ -515,10 +640,12 @@ class JoinNode(JoinTreeNode):
             return True
         return item in self.left_child or item in self.right_child
 
+    def __len__(self) -> int:
+        return len(self.left_child) + len(self.right_child)
+
     def __hash__(self) -> int:
         return hash(tuple([self.left_child, self.right_child, self.join_condition,
-                           self.n_m_join, self.n_m_joined_table,
-                           self.join_bound]))
+                           self.n_m_join, self.n_m_joined_table]))
 
     def __eq__(self, other) -> bool:
         return (isinstance(other, type(self))
@@ -526,8 +653,7 @@ class JoinNode(JoinTreeNode):
                 and self.right_child == other.right_child
                 and self.join_condition == other.join_condition
                 and self.n_m_join == other.n_m_join
-                and self.n_m_joined_table == other.n_m_joined_table
-                and self.join_bound == other.join_bound)
+                and self.n_m_joined_table == other.n_m_joined_table)
 
     def __str__(self) -> str:
         # perform a right-deep string generation, left branches are subqueries
@@ -565,17 +691,33 @@ class BaseTableNode(JoinTreeNode):
     def join_sequence(self) -> Iterable[JoinNode]:
         return []
 
+    def count_cross_product_joins(self) -> int:
+        return 0
+
+    def homomorphic_hash(self) -> int:
+        return hash(self)
+
+    def base_table(self, traverse_right: bool = True) -> base.TableReference:
+        return self.table
+
+    def inspect(self, *, indentation: int = 0) -> str:
+        padding = " " * indentation
+        prefix = f"{padding} <- " if padding else ""
+        return f"{prefix} SCAN :: {self.table}"
+
     def __contains__(self, item) -> bool:
         return self == item
 
+    def __len__(self) -> int:
+        return 1
+
     def __hash__(self) -> int:
-        return hash((self.table, self.filter, self.cardinality_estimate))
+        return hash((self.table, self.filter))
 
     def __eq__(self, other) -> bool:
         return (isinstance(other, type(self))
                 and self.table == other.table
-                and self.filter == other.filter
-                and self.cardinality_estimate == other.cardinality_estimate)
+                and self.filter == other.filter)
 
     def __str__(self) -> str:
         return str(self.table)
@@ -620,6 +762,34 @@ class JoinTree(Container[JoinTreeNode]):
         """Generates a new join tree that for now only includes the given base table."""
         root = BaseTableNode(table, base_cardinality, filter_predicates)
         return JoinTree(root)
+
+    @staticmethod
+    def joining(left_tree: JoinTree, right_tree: JoinTree, *,
+                join_condition: Optional[predicates.AbstractPredicate] = None,
+                join_bound: int = np.nan, n_m_join: bool = True,
+                n_m_joined_table: Optional[base.TableReference] = None) -> JoinTree:
+        """Constructs a new join tree that joins the two input trees."""
+        if left_tree.is_empty():
+            return right_tree
+        if right_tree.is_empty():
+            return left_tree
+
+        join_node = JoinNode(left_tree.root, right_tree.root, join_bound=join_bound, join_condition=join_condition,
+                             n_m_join=n_m_join, n_m_joined_table=n_m_joined_table)
+
+        if left_tree.operator_assignment and right_tree.operator_assignment:
+            operator_assignment = left_tree.operator_assignment.merge_with(right_tree.operator_assignment)
+        else:
+            operator_assignment = (left_tree.operator_assignment if left_tree.operator_assignment
+                                   else right_tree.operator_assignment)
+
+        if left_tree.plan_parameterization and right_tree.plan_parameterization:
+            plan_parameterization = left_tree.plan_parameterization.merge_with(right_tree.plan_parameterization)
+        else:
+            plan_parameterization = (left_tree.plan_parameterization if left_tree.plan_parameterization
+                                     else right_tree.plan_parameterization)
+
+        return JoinTree(join_node, operator_assignment=operator_assignment, plan_parameters=plan_parameterization)
 
     def __init__(self, root: JoinTreeNode | None = None, *,
                  operator_assignment: Optional[physops.PhysicalOperatorAssignment] = None,
@@ -682,11 +852,11 @@ class JoinTree(Container[JoinTreeNode]):
         """Checks, whether there is at least one table in the join tree."""
         return self.root is None
 
-    def tables(self) -> set[base.TableReference]:
+    def tables(self, frozen: bool = False) -> set[base.TableReference] | frozenset[base.TableReference]:
         """Provides all tables that are currently contained in the join tree."""
         if self.is_empty():
             return set()
-        return self.root.tables()
+        return frozenset(self.root.tables()) if frozen else self.root.tables()
 
     def columns(self) -> set[base.ColumnReference]:
         """Provides all columns that are currently referenced by the join and filter predicates of this join tree."""
@@ -700,10 +870,39 @@ class JoinTree(Container[JoinTreeNode]):
             return []
         return self.root.join_sequence()
 
+    def base_table(self, direction: str = "right") -> base.TableReference:
+        """Provides the left-most or right-most table in the join tree."""
+        if direction not in {"right", "left"}:
+            raise ValueError(f"Direction must be either 'left' or 'right', not '{direction}'")
+        self._assert_not_empty()
+        return self.root.base_table(direction == "right")
+
+    def count_cross_product_joins(self) -> int:
+        """Counts the number of joins in this tree that do not have an attached join predicate."""
+        return 0 if self.is_empty() else self.root.count_cross_product_joins()
+
+    def homomorphic_hash(self) -> int:
+        """
+        Calculates a hash value that is independent of join directions, i.e. R ⋈ S and S ⋈ R have the same hash value.
+        """
+        return self.root.homomorphic_hash() if self.root else hash(self.root)
+
+    def inspect(self) -> str:
+        """Produces a human-readable structure that describes the structure of this join tree."""
+        if self.is_empty():
+            return "[EMPTY JOIN TREE]"
+        return self.root.inspect()
+
     def _get_upper_bound(self) -> int:
+        """Provides the upper bound associated with this tree, raises an error if empty."""
         if self.is_empty():
             raise errors.StateError("Join tree is empty")
         return self.root.upper_bound
+
+    def _assert_not_empty(self) -> None:
+        """Raises an error if this tree is empty."""
+        if self.is_empty():
+            raise errors.StateError("Empty join tree")
 
     upper_bound = property(_get_upper_bound)
     """Provides the current upper bound or cardinality estimate of this join tree (i.e. its root node)."""
@@ -719,6 +918,9 @@ class JoinTree(Container[JoinTreeNode]):
             return True
 
         return other_tree.root in self.root
+
+    def __len__(self) -> int:
+        return 0 if self.is_empty() else len(self.root)
 
     def __hash__(self) -> int:
         return hash(self.root)

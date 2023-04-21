@@ -149,4 +149,4 @@ class PhysicalOperatorAssignment:
         elif isinstance(item, Iterable):
             return self.join_operators.get(frozenset(item), None)
         else:
-            raise ValueError("Unknown item type: " + str(item))
+            return None
