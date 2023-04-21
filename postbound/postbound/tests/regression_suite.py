@@ -4,6 +4,7 @@ import unittest
 
 def _rebuild_result_set(result_set: object) -> list[tuple[object]]:
     """Transforms a possibly simplified result set as returned by the Database interface back to a normalized one."""
+    result_set = _rebuild_result_set_from_cache(result_set)
 
     # case 1: result set of a single row -- ('foo', 42) becomes [('foo', 42)]
     if isinstance(result_set, tuple):
@@ -20,6 +21,16 @@ def _rebuild_result_set(result_set: object) -> list[tuple[object]]:
 
     # case 4: result set of multiple rows of single values -- ['foo', 'bar'] becomes [('foo',), ('bar',)]
     return [(value,) for value in result_set]
+
+
+def _rebuild_result_set_from_cache(result_set: list[list[object]]) -> list[tuple[object]]:
+    if not isinstance(result_set, list):
+        return result_set
+    if not len(result_set):
+        return result_set
+    if not isinstance(result_set[0], list):
+        return result_set
+    return [tuple(row) for row in result_set]
 
 
 def _stringify_result_set(result_set: list[tuple[object]]) -> str:
