@@ -98,7 +98,11 @@ class GraphWalk:
 
     def expand(self, next_node: NodeType, edge_data: Optional[dict] = None) -> GraphWalk:
         """Creates a new walk by prolonging the current one with one more edge at the end."""
-        return GraphWalk(self.start_node, self.path + [(next_node, edge_data)])
+        return GraphWalk(self.start_node, list(self.path) + [(next_node, edge_data)])
+
+    def nodes_hash(self) -> int:
+        """Provides a hash value only based on the nodes sequence, not the selected predicates."""
+        return hash(tuple(self.nodes()))
 
     def __len__(self) -> int:
         return 1 + len(self.path)
@@ -108,6 +112,18 @@ class GraphWalk:
 
     def __contains__(self, other: object) -> bool:
         return other in self.nodes()
+
+    def __hash__(self) -> int:
+        return hash((self.start_node, tuple(self.path)))
+
+    def __eq__(self, other: object) -> bool:
+        return isinstance(other, type(self)) and self.start_node == other.start_node and self.path == other.path
+
+    def __repr__(self) -> str:
+        return str(self)
+
+    def __str__(self) -> str:
+        return " -> ".join(str(node) for node in self.nodes())
 
 
 def _walk_frontier(graph: nx.Graph, current_walk: GraphWalk, current_frontier: set[NodeType]) -> Generator[GraphWalk]:
@@ -127,7 +143,8 @@ def _walk_frontier(graph: nx.Graph, current_walk: GraphWalk, current_frontier: s
         yield current_walk
     else:
         for target_node, edge_data in available_edges:
-            yield from _walk_frontier(graph, current_walk.expand(target_node, edge_data), current_frontier | {target_node})
+            yield from _walk_frontier(graph, current_walk.expand(target_node, edge_data),
+                                      current_frontier | {target_node})
 
 
 def nx_frontier_walks(graph: nx.Graph) -> Generator[GraphWalk]:
