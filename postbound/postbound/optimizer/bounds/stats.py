@@ -14,7 +14,7 @@ from __future__ import annotations
 import abc
 import typing
 import collections
-from typing import Generic
+from typing import Generic, Union
 
 from postbound.db import db
 from postbound.qal import base, qal
@@ -41,7 +41,7 @@ MostCommonElements = typing.NewType("MostCommonElements", list[tuple[Generic[Col
 """Type alias for top-k lists statistics. The top-k list is generic over the actual column type."""
 
 
-class UpperBoundsContainer(collections.UserDict[base.TableReference | data.JoinTree, int]):
+class UpperBoundsContainer(collections.UserDict[Union[base.TableReference, data.JoinTree], int]):
     """This container stores upper bounds for intermediate results or candidate tables.
 
     If a new intermediate result is stored, the container will trigger updates on the underlying statistics by itself.
@@ -84,6 +84,12 @@ class StatisticsContainer(abc.ABC, Generic[StatsType]):
 
     A statistics container is abstract to enable a tailored implementation of the loading and updating procedures for
     different statistics types.
+
+
+    Warning: the current implementation of the statistics container is quite tailored to the UES join enumeration
+    algorithm. This can become problematic to underlying assumptions of when and how a statistics update will happen.
+    For many scenarios, it will be better to overwrite the `trigger_trigger_frequency_update` method or study
+    its current implementation carefully.
     """
 
     def __init__(self, disable_auto_updates: bool = False) -> None:
@@ -129,7 +135,6 @@ class StatisticsContainer(abc.ABC, Generic[StatsType]):
         party columns are part of the intermediate result, but not directly involved in the join. In order to update
         them, some sort of correlation info is usually required.
         """
-        # TODO: this update does not work for joins that involve many source tables
         if join_tree.is_empty():
             return
 
@@ -138,7 +143,6 @@ class StatisticsContainer(abc.ABC, Generic[StatsType]):
             raise ValueError(f"Expected join node, but was '{root_node}'")
 
         if not root_node.n_m_join:
-            # FIXME: pk/fk joins where the joined column is the FK table need frequency updates as well!
             return
 
         joined_table = root_node.n_m_joined_table

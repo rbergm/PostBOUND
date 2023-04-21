@@ -13,14 +13,14 @@ import unittest
 
 sys.path.append("../../")
 
-from postbound import postbound as pb
-from postbound.db import postgres
-from postbound.db.systems import systems
-from postbound.qal import parser
-from postbound.experiments import workloads
-from postbound.optimizer import presets, validation
+from postbound import postbound as pb  # noqa: E402
+from postbound.db import postgres  # noqa: E402
+from postbound.db.systems import systems  # noqa: E402
+from postbound.qal import parser  # noqa: E402
+from postbound.experiments import workloads  # noqa: E402
+from postbound.optimizer import presets, validation  # noqa: E402
 
-from postbound.tests import regression_suite
+from postbound.tests import regression_suite  # noqa: E402
 
 workloads.workloads_base_dir = "../../../workloads"
 pg_connect_dir = "../.."
@@ -40,7 +40,7 @@ class JobWorkloadTests(regression_suite.DatabaseTestCase):
         for label, query in self.job.entries():
             # JOB is fully supported by UES
             with self.subTest(label=label, query=query):
-                original_result = self.db.execute_query(query, cache_enabled=False)
+                original_result = self.db.execute_query(query, cache_enabled=True)
                 optimized_query = optimization_pipeline.optimize_query(query)
                 optimized_result = self.db.execute_query(optimized_query, cache_enabled=False)
                 self.assertResultSetsEqual(original_result, optimized_result, ordered=query.is_ordered())
@@ -49,9 +49,9 @@ class JobWorkloadTests(regression_suite.DatabaseTestCase):
 class SsbWorkloadTests(regression_suite.DatabaseTestCase):
     def setUp(self) -> None:
         self.db = postgres.connect(config_file=f"{pg_connect_dir}/.psycopg_connection_ssb")
-        parser.auto_bind_columns = True
         self.db.statistics().emulated = True
         self.db.statistics().cache_enabled = True
+        parser.auto_bind_columns = True
         self.ssb = workloads.ssb()
 
     def test_optimize_workload(self) -> None:
@@ -61,7 +61,7 @@ class SsbWorkloadTests(regression_suite.DatabaseTestCase):
         for label, query in self.ssb.entries():
             # SSB is fully supported by UES
             with self.subTest(label=label, query=query):
-                original_result = self.db.execute_query(query, cache_enabled=False)
+                original_result = self.db.execute_query(query, cache_enabled=True)
                 optimized_query = optimization_pipeline.optimize_query(query)
                 optimized_result = self.db.execute_query(optimized_query, cache_enabled=False)
                 self.assertResultSetsEqual(original_result, optimized_result, ordered=query.is_ordered())
@@ -72,6 +72,7 @@ class StackWorkloadTests(regression_suite.DatabaseTestCase):
         self.db = postgres.connect(config_file=f"{pg_connect_dir}/.psycopg_connection_stack")
         self.db.statistics().emulated = True
         self.db.statistics().cache_enabled = True
+        parser.auto_bind_columns = True
         self.stack = workloads.stack()
 
     def test_optimize_workload(self) -> None:
@@ -83,7 +84,7 @@ class StackWorkloadTests(regression_suite.DatabaseTestCase):
             with self.subTest(label=label, query=query):
                 try:
                     optimized_query = optimization_pipeline.optimize_query(query)
-                    original_result = self.db.execute_query(query, cache_enabled=False)
+                    original_result = self.db.execute_query(query, cache_enabled=True)
                     optimized_result = self.db.execute_query(optimized_query, cache_enabled=False)
                     self.assertResultSetsEqual(original_result, optimized_result, ordered=query.is_ordered())
                 except validation.UnsupportedQueryError as e:

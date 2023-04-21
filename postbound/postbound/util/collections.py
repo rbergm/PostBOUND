@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import itertools
 import typing
-from typing import Iterable, Sized, Iterator, Container, Collection
+from collections.abc import Collection, Container, Generator, Iterator, Iterable, Sequence, Sized
 
 _T = typing.TypeVar("_T")
 
@@ -23,7 +23,7 @@ def enlist(obj: _T | list[_T]) -> list[_T]:
     return [obj]
 
 
-def simplify(obj: (Iterable[_T], Sized)) -> _T | Iterable[_T]:
+def simplify(obj: Collection[_T]) -> _T | Iterable[_T]:
     """Unwraps singular containers.
 
     For example `[1]` is simplified to `1`. On the other hand, `[1,2]` is returned unmodified.
@@ -33,9 +33,27 @@ def simplify(obj: (Iterable[_T], Sized)) -> _T | Iterable[_T]:
     return obj
 
 
-def powerset(lst: (Iterable[_T], Sized)) -> Iterable[tuple[_T, ...]]:
+def powerset(lst: Collection[_T]) -> Iterable[tuple[_T, ...]]:
     """Calculates the powerset of the provided iterable."""
     return itertools.chain.from_iterable(itertools.combinations(lst, size) for size in range(len(lst) + 1))
+
+
+def sliding_window(lst: Sequence[_T], size: int,
+                   step: int = 1) -> Generator[tuple[Sequence[_T], Sequence[_T], Sequence[_T]]]:
+    """Iterates over the given sequence using a sliding window.
+
+    The window will contain exactly `size` many entries, starting at the beginning of the sequence. After yielding a
+    window, the next window will be shifted `step` many elements.
+
+    The tuples produced by the generator are structured as follows: `(prefix, window, suffix)` where `prefix` are all
+    elements of the sequence before the current window, `window` contains exactly those elements that are part of the
+    current window and `suffix` contains all elements after the current window.
+    """
+    for i in range(0, len(lst) - size + 1, step=step):
+        prefix = lst[:i]
+        window = lst[i:i + size]
+        suffix = lst[i + size:]
+        yield prefix, window, suffix
 
 
 def pairs(lst: Iterable[_T]) -> Iterable[tuple[_T, _T]]:

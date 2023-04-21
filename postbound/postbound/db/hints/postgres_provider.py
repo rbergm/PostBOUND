@@ -418,9 +418,9 @@ class PostgresHintProvider(provider.HintProvider):
     syntax
     """
 
-    def adapt_query(self, query: qal.ImplicitSqlQuery, join_order: data.JoinTree | None,
-                    physical_operators: operators.PhysicalOperatorAssignment | None,
-                    plan_parameters: plan_param.PlanParameterization | None) -> qal.SqlQuery:
+    def adapt_query(self, query: qal.SqlQuery, *, join_order: data.JoinTree | None = None,
+                    physical_operators: operators.PhysicalOperatorAssignment | None = None,
+                    plan_parameters: plan_param.PlanParameterization | None = None) -> qal.SqlQuery:
         adapted_query = query
 
         if join_order:

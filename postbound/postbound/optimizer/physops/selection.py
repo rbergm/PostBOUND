@@ -26,7 +26,7 @@ class PhysicalOperatorSelection(abc.ABC):
         self.next_selection: PhysicalOperatorSelection | None = None
         self.target_system = target_system
 
-    def select_physical_operators(self, query: qal.ImplicitSqlQuery,
+    def select_physical_operators(self, query: qal.SqlQuery,
                                   join_order: data.JoinTree | None) -> operators.PhysicalOperatorAssignment:
         """Performs the operator assignment.
 
@@ -73,7 +73,7 @@ class PhysicalOperatorSelection(abc.ABC):
         return None
 
     @abc.abstractmethod
-    def _apply_selection(self, query: qal.ImplicitSqlQuery,
+    def _apply_selection(self, query: qal.SqlQuery,
                          join_order: data.JoinTree | None) -> operators.PhysicalOperatorAssignment:
         """Performs the actual assignment of the physical operators and has to be implemented by every strategy.
 
@@ -108,7 +108,7 @@ class UESOperatorSelection(PhysicalOperatorSelection):
     def __init__(self, target_system: systems.DatabaseSystem) -> None:
         super().__init__(target_system)
 
-    def _apply_selection(self, query: qal.ImplicitSqlQuery,
+    def _apply_selection(self, query: qal.SqlQuery,
                          join_order: data.JoinTree | None) -> operators.PhysicalOperatorAssignment:
         assignment = (join_order.operator_assignment.clone() if join_order and join_order.operator_assignment
                       else operators.PhysicalOperatorAssignment(query))
@@ -127,7 +127,7 @@ class EmptyPhysicalOperatorSelection(PhysicalOperatorSelection):
     def chain_with(self, next_selection: PhysicalOperatorSelection) -> PhysicalOperatorSelection:
         return next_selection
 
-    def _apply_selection(self, query: qal.ImplicitSqlQuery,
+    def _apply_selection(self, query: qal.SqlQuery,
                          join_order: data.JoinTree | None) -> operators.PhysicalOperatorAssignment:
         return operators.PhysicalOperatorAssignment(query)
 

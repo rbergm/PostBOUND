@@ -26,7 +26,7 @@ class JoinOrderOptimizer(abc.ABC):
         self.name = name
 
     @abc.abstractmethod
-    def optimize_join_order(self, query: qal.ImplicitSqlQuery) -> data.JoinTree | None:
+    def optimize_join_order(self, query: qal.SqlQuery) -> data.JoinTree | None:
         """Performs the actual join ordering process.
 
         If for some reason there is no valid join order for the given query (e.g. queries with just a single selected
@@ -90,7 +90,7 @@ class UESJoinOrderOptimizer(JoinOrderOptimizer):
         self.database = database
         self._logging_enabled = verbose
 
-    def optimize_join_order(self, query: qal.ImplicitSqlQuery) -> data.JoinTree | None:
+    def optimize_join_order(self, query: qal.SqlQuery) -> data.JoinTree | None:
         if len(query.tables()) <= 2:
             return None
 
@@ -325,7 +325,7 @@ class EmptyJoinOrderOptimizer(JoinOrderOptimizer):
     def __init__(self) -> None:
         super().__init__("empty")
 
-    def optimize_join_order(self, query: qal.ImplicitSqlQuery) -> data.JoinTree | None:
+    def optimize_join_order(self, query: qal.SqlQuery) -> data.JoinTree | None:
         return None
 
     def describe(self) -> dict:

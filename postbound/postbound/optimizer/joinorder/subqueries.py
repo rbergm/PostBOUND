@@ -24,7 +24,7 @@ class SubqueryGenerationPolicy(abc.ABC):
         self.name = name
 
     @abc.abstractmethod
-    def setup_for_query(self, query: qal.ImplicitSqlQuery, stats_container: stats.StatisticsContainer) -> None:
+    def setup_for_query(self, query: qal.SqlQuery, stats_container: stats.StatisticsContainer) -> None:
         """Enables the setup of internal data structures to enable decisions about the given query."""
         raise NotImplementedError
 
@@ -53,7 +53,7 @@ class LinearSubqueryGenerationPolicy(SubqueryGenerationPolicy):
     def __init__(self):
         super().__init__("Linear subquery policy")
 
-    def setup_for_query(self, query: qal.ImplicitSqlQuery, stats_container: stats.StatisticsContainer) -> None:
+    def setup_for_query(self, query: qal.SqlQuery, stats_container: stats.StatisticsContainer) -> None:
         pass
 
     def generate_subquery_for(self, join: predicates.AbstractPredicate, join_graph: data.JoinGraph) -> bool:
@@ -77,7 +77,7 @@ class UESSubqueryGenerationPolicy(SubqueryGenerationPolicy):
         self.query: qal.SqlQuery | None = None
         self.stats_container: stats.StatisticsContainer | None = None
 
-    def setup_for_query(self, query: qal.ImplicitSqlQuery, stats_container: stats.StatisticsContainer) -> None:
+    def setup_for_query(self, query: qal.SqlQuery, stats_container: stats.StatisticsContainer) -> None:
         self.query = query
         self.stats_container = stats_container
 

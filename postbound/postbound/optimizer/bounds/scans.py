@@ -22,7 +22,7 @@ class BaseTableCardinalityEstimator(abc.ABC):
         self.name = name
 
     @abc.abstractmethod
-    def setup_for_query(self, query: qal.ImplicitSqlQuery) -> None:
+    def setup_for_query(self, query: qal.SqlQuery) -> None:
         """
         The setup functionality allows the estimator to prepare internal data structures such that the input query can
         be optimized.
@@ -66,9 +66,9 @@ class NativeCardinalityEstimator(BaseTableCardinalityEstimator):
     def __init__(self, database: db.Database) -> None:
         super().__init__("Native optimizer")
         self.database = database
-        self.query: qal.ImplicitSqlQuery | None = None
+        self.query: qal.SqlQuery | None = None
 
-    def setup_for_query(self, query: qal.ImplicitSqlQuery) -> None:
+    def setup_for_query(self, query: qal.SqlQuery) -> None:
         self.query = query
 
     def estimate_for(self, table: base.TableReference) -> int:
@@ -104,9 +104,9 @@ class PreciseCardinalityEstimator(BaseTableCardinalityEstimator):
     def __init__(self, database: db.Database) -> None:
         super().__init__("Precise estimator")
         self.database = database
-        self.query: qal.ImplicitSqlQuery | None = None
+        self.query: qal.SqlQuery | None = None
 
-    def setup_for_query(self, query: qal.ImplicitSqlQuery) -> None:
+    def setup_for_query(self, query: qal.SqlQuery) -> None:
         self.query = query
 
     def estimate_for(self, table: base.TableReference) -> int:
@@ -114,7 +114,7 @@ class PreciseCardinalityEstimator(BaseTableCardinalityEstimator):
         from_clause = clauses.ImplicitFromClause(table)
 
         filters = self.query.predicates().filters_for(table)
-        where_clause = clauses.Where(predicates.CompoundPredicate.create_and(filters))
+        where_clause = clauses.Where(predicates.CompoundPredicate.create_and(filters)) if filters else None
 
         emulated_query = qal.ImplicitSqlQuery(select_clause=select_clause,
                                               from_clause=from_clause,

@@ -25,7 +25,7 @@ class JoinBoundCardinalityEstimator(abc.ABC):
     def __init__(self, name: str) -> None:
         self.name = name
 
-    def setup_for_query(self, query: qal.ImplicitSqlQuery, stats_container: stats.StatisticsContainer) -> None:
+    def setup_for_query(self, query: qal.SqlQuery, stats_container: stats.StatisticsContainer) -> None:
         """
         The setup functionality allows the estimator to prepare internal data structures such that the input query can
         be optimized.
@@ -67,7 +67,7 @@ class UESJoinBoundEstimator(JoinBoundCardinalityEstimator):
         self.query: qal.ImplicitSqlQuery | None = None
         self.stats_container: stats.StatisticsContainer[stats.MaxFrequency] | None = None
 
-    def setup_for_query(self, query: qal.ImplicitSqlQuery,
+    def setup_for_query(self, query: qal.SqlQuery,
                         stats_container: stats.StatisticsContainer[stats.MaxFrequency]) -> None:
         self.query = query
         self.stats_container = stats_container
