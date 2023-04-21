@@ -164,7 +164,7 @@ class CastExpression(SqlExpression):
         return [self.casted_expression]
 
     def __hash__(self) -> int:
-        return hash(tuple([self.casted_expression, self.target_type]))
+        return hash((self.casted_expression, self.target_type))
 
     def __eq__(self, other) -> bool:
         return (isinstance(other, type(self))
@@ -209,7 +209,7 @@ class MathematicalExpression(SqlExpression):
         return [self.first_arg, self.second_arg]
 
     def __hash__(self) -> int:
-        return hash(tuple([self.operator, self.first_arg, self.second_arg]))
+        return hash((self.operator, self.first_arg, self.second_arg))
 
     def __eq__(self, other) -> bool:
         return (isinstance(other, type(self))
@@ -267,7 +267,7 @@ class FunctionExpression(SqlExpression):
 
     def __init__(self, function: str, arguments: list[SqlExpression] | None = None, *, distinct: bool = False) -> None:
         self.function = function
-        self.arguments = [] if arguments is None else arguments
+        self.arguments = () if arguments is None else tuple(arguments)
         self.distinct = distinct
 
     def columns(self) -> set[base.ColumnReference]:
@@ -286,7 +286,7 @@ class FunctionExpression(SqlExpression):
         return list(self.arguments)
 
     def __hash__(self) -> int:
-        return hash(tuple([self.function, self.distinct] + self.arguments))
+        return hash((self.function, self.distinct, self.arguments))
 
     def __eq__(self, other) -> bool:
         return (isinstance(other, type(self))

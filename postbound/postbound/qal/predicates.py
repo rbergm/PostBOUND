@@ -294,7 +294,7 @@ class BinaryPredicate(BasePredicate):
         return partners
 
     def __hash__(self) -> int:
-        return hash(tuple([self.operation, self.first_argument, self.second_argument]))
+        return hash((self.operation, self.first_argument, self.second_argument))
 
     def __eq__(self, other: object) -> bool:
         return (isinstance(other, type(self))
@@ -358,7 +358,7 @@ class BetweenPredicate(BasePredicate):
         return set(partners)
 
     def __hash__(self) -> int:
-        return hash(tuple(["BETWEEN", self.column, self.interval]))
+        return hash(("BETWEEN", self.column, self.interval))
 
     def __eq__(self, other: object) -> bool:
         return isinstance(other, type(self)) and self.column == other.column and self.interval == other.interval
@@ -384,7 +384,7 @@ class InPredicate(BasePredicate):
     def __init__(self, column: expr.SqlExpression, values: list[expr.SqlExpression]) -> None:
         super().__init__(expr.LogicalSqlOperators.In)
         self.column = column
-        self.values = values
+        self.values = tuple(values)
 
     def is_join(self) -> bool:
         column_tables = _collect_column_expression_tables(self.column)
@@ -406,7 +406,7 @@ class InPredicate(BasePredicate):
         return list(self.column.itercolumns()) + collection_utils.flatten(val.itercolumns() for val in self.values)
 
     def iterexpressions(self) -> Iterable[expr.SqlExpression]:
-        return [self.column] + self.values
+        return [self.column] + list(self.values)
 
     def join_partners(self) -> set[tuple[base.ColumnReference, base.ColumnReference]]:
         self._assert_join_predicate()
@@ -419,7 +419,7 @@ class InPredicate(BasePredicate):
         return partners
 
     def __hash__(self) -> int:
-        return hash(tuple(["IN", self.column, tuple(self.values)]))
+        return hash(("IN", self.column, self.values))
 
     def __eq__(self, other: object) -> bool:
         return isinstance(other, type(self)) and self.column == other.column and set(self.values) == set(other.values)
@@ -464,7 +464,7 @@ class UnaryPredicate(BasePredicate):
         return _generate_join_pairs(columns, columns)
 
     def __hash__(self) -> int:
-        return hash(tuple([self.operation, self.column]))
+        return hash((self.operation, self.column))
 
     def __eq__(self, other: object) -> bool:
         return isinstance(other, type(self)) and self.operation == other.operation and self.column == other.column
@@ -512,7 +512,7 @@ class CompoundPredicate(AbstractPredicate):
                  children: AbstractPredicate | list[AbstractPredicate]):
         super().__init__()
         self.operation = operation
-        self.children = collection_utils.enlist(children)
+        self.children = tuple(collection_utils.enlist(children))
         if not self.children:
             raise ValueError("Child predicates can not be empty")
 
@@ -538,7 +538,7 @@ class CompoundPredicate(AbstractPredicate):
         return collection_utils.set_union(set(child.base_predicates()) for child in self.children)
 
     def __hash__(self) -> int:
-        return hash(tuple([self.operation, tuple(self.children)]))
+        return hash((self.operation, self.children))
 
     def __eq__(self, other: object) -> bool:
         return isinstance(other, type(self)) and self.operation == other.operation and self.children == other.children
@@ -680,6 +680,7 @@ class QueryPredicates:
         self._assert_not_empty()
         return _collect_join_predicates(self._root)
 
+    @functools.cache
     def filters_for(self, table: base.TableReference) -> Collection[AbstractPredicate]:
         """Provides all filter predicates that reference the given table.
 
@@ -688,6 +689,7 @@ class QueryPredicates:
         self._assert_not_empty()
         return [filter_pred for filter_pred in self.filters() if table in filter_pred.tables()]
 
+    @functools.cache
     def joins_for(self, table: base.TableReference) -> Collection[AbstractPredicate]:
         """Provides all join predicates that reference the given table.
 
@@ -717,9 +719,6 @@ class QueryPredicates:
         merged_predicate = CompoundPredicate(expr.LogicalSqlCompoundOperators.And, [self._root, other_predicate])
         return QueryPredicates(merged_predicate)
 
-    def __iter__(self) -> Iterator[AbstractPredicate]:
-        return (list(self.filters()) + list(self.joins())).__iter__()
-
     @functools.cache
     def _join_tables_check(self, tables: frozenset[base.TableReference]) -> bool:
         """Constructs the join graph for the given tables and checks, whether it is connected."""
@@ -735,6 +734,15 @@ class QueryPredicates:
         """Raises a `StateError` if this predicates instance is empty."""
         if self._root is None:
             raise errors.StateError("No query predicates!")
+
+    def __iter__(self) -> Iterator[AbstractPredicate]:
+        return (list(self.filters()) + list(self.joins())).__iter__()
+
+    def __hash__(self) -> int:
+        return hash(self._root)
+
+    def __eq__(self, other) -> bool:
+        return isinstance(other, type(self)) and self._root == other._root
 
     def __repr__(self) -> str:
         return str(self)

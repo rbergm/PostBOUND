@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import abc
 import enum
-
+from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Iterable
 
@@ -233,7 +233,7 @@ class Select(BaseClause):
 
     def __init__(self, targets: BaseProjection | list[BaseProjection],
                  projection_type: SelectType = SelectType.Select) -> None:
-        self.targets = collection_utils.enlist(targets)
+        self.targets = tuple(collection_utils.enlist(targets))
         self.projection_type = projection_type
 
     def columns(self) -> set[base.ColumnReference]:
@@ -269,7 +269,7 @@ class Select(BaseClause):
         return output
 
     def __hash__(self) -> int:
-        return hash((self.projection_type, tuple(self.targets)))
+        return hash((self.projection_type, self.targets))
 
     def __eq__(self, other) -> bool:
         return (isinstance(other, type(self))
@@ -329,7 +329,7 @@ class ImplicitFromClause(From):
     # TODO: we could also have subqueries in an implicit from clause!
 
     def __init__(self, tables: base.TableReference | list[base.TableReference] | None = None):
-        self._tables = collection_utils.enlist(tables) if tables is not None else []
+        self._tables = tuple(collection_utils.enlist(tables)) if tables is not None else ()
 
     def tables(self) -> set[base.TableReference]:
         return set(self._tables)
@@ -350,7 +350,7 @@ class ImplicitFromClause(From):
         return []
 
     def __hash__(self) -> int:
-        return hash(tuple(self._tables))
+        return hash(self._tables)
 
     def __eq__(self, other) -> bool:
         return isinstance(other, type(self)) and self._tables == other._tables
@@ -369,7 +369,7 @@ class ExplicitFromClause(From):
 
     def __init__(self, base_table: base.TableReference, joined_tables: list[joins.Join]):
         self.base_table = base_table
-        self.joined_tables = joined_tables
+        self.joined_tables = tuple(joined_tables)
 
     def tables(self) -> set[base.TableReference]:
         all_tables = [self.base_table]
@@ -408,7 +408,7 @@ class ExplicitFromClause(From):
         return collection_utils.flatten(join.itercolumns() for join in self.joined_tables)
 
     def __hash__(self) -> int:
-        return hash((self.base_table, tuple(self.joined_tables)))
+        return hash((self.base_table, self.joined_tables))
 
     def __eq__(self, other) -> bool:
         return (isinstance(other, type(self))
@@ -457,8 +457,10 @@ class GroupBy(BaseClause):
     All grouped columns can be arbitrary `SqlExpression`s, rules and restrictions of the SQL standard are not enforced
     by PostBOUND.
     """
-    group_columns: list[expr.SqlExpression]
-    distinct: bool = False
+
+    def __init__(self, group_columns: Sequence[expr.SqlExpression], distinct: bool = False) -> None:
+        self.group_columns = tuple(group_columns)
+        self.distinct = distinct
 
     def columns(self) -> set[base.ColumnReference]:
         return collection_utils.set_union(column.columns() for column in self.group_columns)
@@ -470,7 +472,7 @@ class GroupBy(BaseClause):
         return collection_utils.flatten(column.itercolumns() for column in self.group_columns)
 
     def __hash__(self) -> int:
-        return hash((tuple(self.group_columns), self.distinct))
+        return hash((self.group_columns, self.distinct))
 
     def __eq__(self, other) -> bool:
         return (isinstance(other, type(self))
@@ -556,7 +558,7 @@ class OrderBy(BaseClause):
     def __init__(self, expressions: list[OrderByExpression]) -> None:
         if not expressions:
             raise ValueError("At least one ORDER BY expression required")
-        self.expressions = expressions
+        self.expressions = tuple(expressions)
 
     def columns(self) -> set[base.ColumnReference]:
         return collection_utils.set_union(expression.column.columns() for expression in self.expressions)
@@ -568,7 +570,7 @@ class OrderBy(BaseClause):
         return collection_utils.flatten(expression.itercolumns() for expression in self.iterexpressions())
 
     def __hash__(self) -> int:
-        return hash(tuple(self.expressions))
+        return hash(self.expressions)
 
     def __eq__(self, other) -> bool:
         return isinstance(other, type(self)) and self.expressions == other.expressions

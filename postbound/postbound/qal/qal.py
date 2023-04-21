@@ -214,7 +214,9 @@ class SqlQuery(Generic[FromClauseType], abc.ABC):
         return collection_utils.flatten(clause.itercolumns() for clause in self.clauses())
 
     def __hash__(self) -> int:
-        return hash(tuple(self.clauses()))
+        return hash((self.select_clause, self.from_clause, self.where_clause,
+                     self.groupby_clause, self.having_clause,
+                     self.orderby_clause, self.limit_clause))
 
     def __eq__(self, other) -> bool:
         return isinstance(other, type(self)) and self.clauses() == other.clauses()
