@@ -9,9 +9,9 @@ import unittest
 
 sys.path.append("../../")
 
-from postbound.qal import base, parser
+from postbound.qal import base, parser  # noqa: E402
 
-from postbound.tests import regression_suite
+from postbound.tests import regression_suite  # noqa: E402
 
 
 class SqlQueryTests(unittest.TestCase):
@@ -187,8 +187,22 @@ class PredicateTests(unittest.TestCase):
             self.assertTrue(len(parsed.predicates().filters()) == 0)
 
 
+class MockSchemaLookup:
+    LookupData = {"a": base.TableReference("R"), "b": base.TableReference("R"), "c": base.TableReference("S")}
+
+    def lookup_column(self, column: base.ColumnReference | str,
+                      candidates: list[base.TableReference]) -> base.TableReference:
+        column = column.name if isinstance(column, base.ColumnReference) else column
+        return MockSchemaLookup.LookupData[column]
+
+
 class TransformationTests(unittest.TestCase):
+
     def test_column_binding(self) -> None:
+        """Column binding happens automatically during parsing.
+
+        Therefore we parse normally and test the binding results for normal queries explicitly in this method.
+        """
         tab_r = base.TableReference("R")
         col_r_a = base.ColumnReference("a", tab_r)
         col_r_b = base.ColumnReference("b", tab_r)
@@ -201,15 +215,86 @@ class TransformationTests(unittest.TestCase):
             parsed = parser.parse_query(query, bind_columns=False)  # bind_columns refers to live binding
             self.assertSetEqual(parsed.select_clause.columns(), {col_r_a})
             self.assertSetEqual(parsed.where_clause.columns(), {col_r_b})
+            self.assertSetEqual(parsed.columns(), {col_r_a, col_r_b})
+            self.assertSetEqual(parsed.tables(), {tab_r})
 
         query = "SELECT S.c FROM R, S WHERE R.a = S.c AND R.b = 42"
         with self.subTest("Simple binding in join", query=query):
             parsed = parser.parse_query(query, bind_columns=False)  # bind_columns refers to live binding
             self.assertSetEqual(parsed.select_clause.columns(), {col_s_c})
             self.assertSetEqual(parsed.where_clause.columns(), {col_r_a, col_r_b, col_s_c})
+            self.assertSetEqual(parsed.columns(), {col_r_a, col_r_b, col_s_c})
+            self.assertSetEqual(parsed.tables(), {tab_r, tab_s})
+
+    def test_alias_binding(self) -> None:
+        """Column binding happens automatically during parsing.
+
+        Therefore we parse normally and test the binding results for aliased queries explicitly in this method.
+        """
+        tab_r = base.TableReference("R", "r_tab")
+        col_r_a = base.ColumnReference("a", tab_r)
+        col_r_b = base.ColumnReference("b", tab_r)
+
+        tab_s = base.TableReference("S")  # no alias!
+        col_s_c = base.ColumnReference("c", tab_s)
+
+        query = "SELECT r_tab.a FROM R r_tab WHERE r_tab.b = 42"
+        with self.subTest("Simple binding through alias", query=query):
+            parsed = parser.parse_query(query, bind_columns=False)  # bind_columns refers to live binding
+            self.assertSetEqual(parsed.select_clause.columns(), {col_r_a})
+            self.assertSetEqual(parsed.where_clause.columns(), {col_r_b})
+            self.assertSetEqual(parsed.columns(), {col_r_a, col_r_b})
+            self.assertSetEqual(parsed.tables(), {tab_r})
+
+        query = "SELECT S.c FROM R r_tab, S WHERE r_tab.a = S.c AND r_tab.b = 42"
+        with self.subTest("Simple binding in join", query=query):
+            parsed = parser.parse_query(query, bind_columns=False)  # bind_columns refers to live binding
+            self.assertSetEqual(parsed.select_clause.columns(), {col_s_c})
+            self.assertSetEqual(parsed.where_clause.columns(), {col_r_a, col_r_b, col_s_c})
+            self.assertSetEqual(parsed.columns(), {col_r_a, col_r_b, col_s_c})
+            self.assertSetEqual(parsed.tables(), {tab_r, tab_s})
+
+    def test_schema_binding(self) -> None:
+        """Column binding happens automatically during parsing.
+
+        Therefore we parse normally and test the binding results explicitly in this method. In contrast to the other
+        binding tests, these tests here focus on the binding that happens for unbound columns via the database schema.
+        """
+        tab_r = base.TableReference("R")
+        col_r_a = base.ColumnReference("a", tab_r)
+        col_r_b = base.ColumnReference("b", tab_r)
+
+        tab_s = base.TableReference("S")
+        col_s_c = base.ColumnReference("c", tab_s)
+
+        query = "SELECT a FROM R WHERE b = 42"
+        with self.subTest("Simple binding through full name", query=query):
+            parsed = parser.parse_query(query, db_schema=MockSchemaLookup(), bind_columns=True)
+            self.assertSetEqual(parsed.select_clause.columns(), {col_r_a})
+            self.assertSetEqual(parsed.where_clause.columns(), {col_r_b})
+            self.assertSetEqual(parsed.columns(), {col_r_a, col_r_b})
+            self.assertSetEqual(parsed.tables(), {tab_r})
+
+        query = "SELECT c FROM R, S WHERE a = S.c AND R.b = 42"
+        with self.subTest("Simple binding in join", query=query):
+            parsed = parser.parse_query(query, db_schema=MockSchemaLookup(), bind_columns=True)
+            self.assertSetEqual(parsed.select_clause.columns(), {col_s_c})
+            self.assertSetEqual(parsed.where_clause.columns(), {col_r_a, col_r_b, col_s_c})
+            self.assertSetEqual(parsed.columns(), {col_r_a, col_r_b, col_s_c})
+            self.assertSetEqual(parsed.tables(), {tab_r, tab_s})
 
 
 class ParserTests(regression_suite.QueryTestCase):
+
+    def test_parse_simple(self) -> None:
+        query = "SELECT * FROM R, S WHERE R.a = S.b AND R.c = 42"
+        parser.parse_query(query)
+
+    def test_select_star(self) -> None:
+        query = "SELECT * FROM R"
+        parsed = parser.parse_query(query)
+        self.assertSetEqual(parsed.columns(), set(), "* should not be considered a column")
+
     def test_parse_subquery_without_predicates(self) -> None:
         query = "SELECT * FROM R WHERE R.a IN (SELECT S.b FROM S)"
         parsed = parser.parse_query(query)
