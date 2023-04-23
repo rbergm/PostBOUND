@@ -14,7 +14,7 @@ import psycopg
 import psycopg.rows
 
 from postbound.db import db
-from postbound.qal import qal, base, transform
+from postbound.qal import qal, base, clauses, transform
 from postbound.util import logging, misc as utils
 
 HintBlock = collections.namedtuple("HintBlock", ["preparatory_statements", "hints", "query"])
@@ -72,6 +72,8 @@ class PostgresInterface(db.Database):
         return query_result if len(query_result) > 1 else query_result[0]  # if it is just one row, unwrap it
 
     def cardinality_estimate(self, query: qal.SqlQuery | str) -> int:
+        if isinstance(query, qal.SqlQuery):
+            query = transform.drop_clause(query, clauses.Explain)
         query = str(query)
         if not query.upper().startswith("EXPLAIN (FORMAT JSON)"):
             query = "EXPLAIN (FORMAT JSON) " + query
@@ -110,14 +112,15 @@ class PostgresSchemaInterface(db.DatabaseSchema):
     def __int__(self, postgres_db: PostgresInterface) -> None:
         super().__init__(postgres_db)
 
-    def lookup_column(self, column: base.ColumnReference,
+    def lookup_column(self, column: base.ColumnReference | str,
                       candidate_tables: list[base.TableReference]) -> base.TableReference:
+        column = column.name if isinstance(column, base.ColumnReference) else column
         for table in candidate_tables:
             table_columns = self._fetch_columns(table)
-            if column.name in table_columns:
+            if column in table_columns:
                 return table
         candidate_tables = [table.full_name for table in candidate_tables]
-        raise ValueError(f"Column '{column.name}' not found in candidate tables {candidate_tables}")
+        raise ValueError(f"Column '{column}' not found in candidate tables {candidate_tables}")
 
     def is_primary_key(self, column: base.ColumnReference) -> bool:
         if not column.table:

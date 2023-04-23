@@ -231,7 +231,7 @@ class DatabaseSchema(abc.ABC):
         self._db = db
 
     @abc.abstractmethod
-    def lookup_column(self, column: base.ColumnReference,
+    def lookup_column(self, column: base.ColumnReference | str,
                       candidate_tables: list[base.TableReference]) -> base.TableReference:
         """Searches the `candidate_tables` for the given `column`.
 
