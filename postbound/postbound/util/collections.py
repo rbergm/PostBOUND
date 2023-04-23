@@ -5,25 +5,35 @@ import itertools
 import typing
 from collections.abc import Collection, Container, Generator, Iterator, Iterable, Sequence, Sized
 
-_T = typing.TypeVar("_T")
+T = typing.TypeVar("T")
+ContainerType = typing.TypeVar("ContainerType", list, tuple, set, frozenset)
 
 
-def flatten(deep_list: Iterable[Iterable[_T]]) -> list[_T]:
+def flatten(deep_list: Iterable[Iterable[T]]) -> list[T]:
     """Transforms a nested list into a flat list: `[[1, 2], [3]]` is turned into `[1, 2, 3]`"""
     return list(itertools.chain(*deep_list))
 
 
-def enlist(obj: _T | list[_T]) -> list[_T]:
-    """Transforms any object into a singular list, if it is not a list already.
+def enlist(obj: T | ContainerType[T], *, enlist_tuples: bool = False) -> ContainerType[T] | list[T]:
+    """Transforms any object into a singular list, if it is not a container already.
+
+    Specifically, the following types are treated as container-like and will not be transformed: lists, tuples, sets
+    and frozensets. All other arguments will be wrapped in a list. If the argument is a tuple and enlist_tuples is
+    `True`, it will also be wrapped in a list.
 
     For example, `"abc"` is turned into `["abc"]`, whereas `["abc"]` is returned unmodified.
     """
-    if isinstance(obj, list):
+    if isinstance(obj, str):
+        return [obj]
+    if isinstance(obj, tuple) and enlist_tuples:
+        return [obj]
+    list_types = [tuple, list, set, frozenset]
+    if any(isinstance(obj, target_type) for target_type in list_types):
         return obj
     return [obj]
 
 
-def simplify(obj: Collection[_T]) -> _T | Iterable[_T]:
+def simplify(obj: Collection[T]) -> T | Iterable[T]:
     """Unwraps singular containers.
 
     For example `[1]` is simplified to `1`. On the other hand, `[1,2]` is returned unmodified.
@@ -33,13 +43,13 @@ def simplify(obj: Collection[_T]) -> _T | Iterable[_T]:
     return obj
 
 
-def powerset(lst: Collection[_T]) -> Iterable[tuple[_T, ...]]:
+def powerset(lst: Collection[T]) -> Iterable[tuple[T, ...]]:
     """Calculates the powerset of the provided iterable."""
     return itertools.chain.from_iterable(itertools.combinations(lst, size) for size in range(len(lst) + 1))
 
 
-def sliding_window(lst: Sequence[_T], size: int,
-                   step: int = 1) -> Generator[tuple[Sequence[_T], Sequence[_T], Sequence[_T]]]:
+def sliding_window(lst: Sequence[T], size: int,
+                   step: int = 1) -> Generator[tuple[Sequence[T], Sequence[T], Sequence[T]]]:
     """Iterates over the given sequence using a sliding window.
 
     The window will contain exactly `size` many entries, starting at the beginning of the sequence. After yielding a
@@ -56,7 +66,7 @@ def sliding_window(lst: Sequence[_T], size: int,
         yield prefix, window, suffix
 
 
-def pairs(lst: Iterable[_T]) -> Iterable[tuple[_T, _T]]:
+def pairs(lst: Iterable[T]) -> Iterable[tuple[T, T]]:
     """Provides all pairs of elements of the given iterable, disregarding order and identical pairs.
 
     This means that the resulting iterable will not contain entries `(a, a)` unless `a` itself is present multiple
@@ -81,32 +91,32 @@ def set_union(sets: Iterable[set]) -> set:
     return union_set
 
 
-class Queue(Iterable[_T], Sized, Container[_T]):
+class Queue(Iterable[T], Sized, Container[T]):
     """Essentially, a queue is a wrapper around an underlying list of data that provides FIFO semantics."""
 
-    def __init__(self, data: Iterable[_T] | None = None) -> None:
+    def __init__(self, data: Iterable[T] | None = None) -> None:
         self.data = list(data) if data else []
 
-    def enqueue(self, value: _T) -> None:
+    def enqueue(self, value: T) -> None:
         """Adds a new item to the end of the queue."""
         self.data.append(value)
 
-    def append(self, value: _T) -> None:
+    def append(self, value: T) -> None:
         """Adds a new item at to end of the queue.
 
         Basically an alias for `enqueue` to enable easier interchangeability with normal lists.
         """
         self.enqueue(value)
 
-    def extend(self, values: Iterable[_T]) -> None:
+    def extend(self, values: Iterable[T]) -> None:
         """Adds all values to the end of the queue, in the order in which they are provided by the iterable."""
         self.data.extend(values)
 
-    def head(self) -> _T | None:
+    def head(self) -> T | None:
         """Provides the current first element of the queue without removing."""
         return self.data[0] if self.data else None
 
-    def pop(self) -> _T | None:
+    def pop(self) -> T | None:
         """Provides the current first element of the queue and removes it."""
         item = self.head()
         if item:
@@ -119,11 +129,11 @@ class Queue(Iterable[_T], Sized, Container[_T]):
     def __contains__(self, __x: object) -> bool:
         return __x in self.data
 
-    def __iter__(self) -> Iterator[_T]:
+    def __iter__(self) -> Iterator[T]:
         return self.data.__iter__()
 
 
-class SizedQueue(Collection[_T]):
+class SizedQueue(Collection[T]):
     """A sized queue extends on the behaviour of a normal queue by restricting the number of items in the queue.
 
     A sized queue has weak FIFO semantics: items can only be appended at the end, but the contents of the entire queue
@@ -136,28 +146,28 @@ class SizedQueue(Collection[_T]):
         self.data = []
         self.capacity = capacity
 
-    def append(self, value: _T) -> None:
+    def append(self, value: T) -> None:
         """Adds a new item to the end of the queue, popping any excess items."""
         if len(self.data) >= self.capacity:
             self.data.pop(0)
         self.data.append(value)
 
-    def extend(self, values: typing.Iterable[_T]) -> None:
+    def extend(self, values: typing.Iterable[T]) -> None:
         """Adds all the items to the end of the queue, popping any excess items."""
         self.data = (self.data + list(values))[:self.capacity]
 
-    def head(self) -> _T:
+    def head(self) -> T:
         """Provides the current first item of the queue without removing it."""
         return self.data[0]
 
-    def pop(self) -> _T:
+    def pop(self) -> T:
         """Provides the current first item of the queue and removes it."""
         return self.data.pop(0)
 
-    def __contains__(self, other: _T) -> bool:
+    def __contains__(self, other: T) -> bool:
         return other in self.data
 
-    def __iter__(self) -> typing.Iterator[_T]:
+    def __iter__(self) -> typing.Iterator[T]:
         return self.data.__iter__()
 
     def __len__(self) -> int:
