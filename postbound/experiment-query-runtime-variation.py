@@ -3,8 +3,10 @@ from __future__ import annotations
 import dataclasses
 import multiprocessing as mp
 import multiprocessing.connection
+import os
+import pathlib
+import re
 import signal
-import sys
 from datetime import datetime
 from typing import Iterable
 
@@ -18,10 +20,37 @@ from postbound.experiments import workloads
 from postbound.optimizer import data
 from postbound.optimizer.joinorder import enumeration
 from postbound.optimizer.physops import operators
+from postbound.util import jsonize
 
 ExhaustiveJoinOrderingLimit = 1000
+QuerySlowdownToleranceFactor = 3
+DefaultQueryTimeout = 120
+
+OutputFileFormat = "join-order-runtimes-{label}.csv"
+OutputFilePattern = r"join-order-runtimes-(?P<label>\w+).csv"
+OutputDirectory = "results/query-runtime-variation/"
+
 StopEvaluation = False
 workloads.workloads_base_dir = "../workloads"
+
+
+def skip_existing_results(workload: workloads.Workload) -> workloads.Workload:
+    existing_results = set()
+    result_directory = pathlib.Path(OutputDirectory)
+    for result_file in result_directory.glob("join-order-runtimes-*.csv"):
+        file_matcher = re.match(OutputFilePattern, result_file.name)
+        if not file_matcher:
+            continue
+        label = file_matcher.group("label")
+        if not label:
+            continue
+        existing_results.add(label)
+
+    if not existing_results:
+        return workload
+    skipped_workload = workload.filter_by(lambda label, __: label not in existing_results)
+    print(".. Skipping existing results until label", skipped_workload.head()[0])
+    return skipped_workload
 
 
 def stop_evaluation(sig_num, stack_trace) -> None:
@@ -48,9 +77,9 @@ def generate_all_join_orders(query: qal.SqlQuery,
             next_join_order = next(exhaustive_join_order_generator)
             join_order_plans.append(next_join_order)
             if len(join_order_plans) % 100 == 0:
-                print(".. Generated", len(join_order_plans), "plans")
+                print("... Generated", len(join_order_plans), "plans")
         except StopIteration:
-            print(".. All join orders generated,", len(join_order_plans), "total")
+            print("... All join orders generated,", len(join_order_plans), "total")
             break
     return join_order_plans
 
@@ -70,7 +99,7 @@ def generate_random_join_orders(query: qal.SqlQuery) -> list[data.JoinTree]:
         join_order_plans.append(next_join_order)
         current_plan_idx += 1
         if current_plan_idx % 100 == 0:
-            print("..", len(join_order_plans), "plans sampled")
+            print("...", len(join_order_plans), "plans sampled")
     return join_order_plans
 
 
@@ -90,11 +119,11 @@ def execute_single_query(label: str, query: qal.SqlQuery, join_order: data.JoinT
     enforce_hash_join.set_operator_enabled_globally(operators.JoinOperators.NestedLoopJoin, False)
     enforce_hash_join.set_operator_enabled_globally(operators.JoinOperators.SortMergeJoin, False)
 
-    print(".. Trying join order ", n_executed_plans, "::", join_order)
     optimized_query = query_generator.adapt_query(query, join_order=join_order,
                                                   physical_operators=enforce_hash_join)
 
-    query_timeout = 3 * (total_query_runtime / n_executed_plans) if n_executed_plans else 120
+    query_timeout = (QuerySlowdownToleranceFactor * (total_query_runtime / n_executed_plans) if n_executed_plans
+                     else DefaultQueryTimeout)
     query_duration_receiver, query_duration_sender = mp.Pipe(False)
 
     # TODO: what about query repetitions?
@@ -107,12 +136,10 @@ def execute_single_query(label: str, query: qal.SqlQuery, join_order: data.JoinT
         query_execution_worker.terminate()
         query_execution_worker.join()
         query_runtime = np.inf
-        print("... Query timed out")
     else:
         query_runtime = query_duration_receiver.recv()
         total_query_runtime += query_runtime
         n_executed_plans += 1
-        print("... Terminated after", query_runtime)
     query_execution_worker.close()
 
     return EvaluationResult(label, query, join_order, query_runtime)
@@ -120,9 +147,7 @@ def execute_single_query(label: str, query: qal.SqlQuery, join_order: data.JoinT
 
 def evaluate_query(label: str, query: qal.SqlQuery, *, db_instance: db.Database,
                    db_system: systems.DatabaseSystem) -> Iterable[EvaluationResult]:
-    print("== Query", label)
-
-    print(".. Building all plans")
+    print("... Building all plans")
     exhaustive_enumerator = enumeration.ExhaustiveJoinOrderGenerator()
     join_order_plans = generate_all_join_orders(query, exhaustive_enumerator)
 
@@ -140,7 +165,7 @@ def evaluate_query(label: str, query: qal.SqlQuery, *, db_instance: db.Database,
             should_sample_randomly = False
 
     if should_sample_randomly:
-        print(".. Falling back to random sampling of join orders")
+        print("... Falling back to random sampling of join orders")
         join_order_plans = generate_random_join_orders(query)
 
     n_executed_plans = 0
@@ -154,28 +179,40 @@ def evaluate_query(label: str, query: qal.SqlQuery, *, db_instance: db.Database,
         total_query_runtime += evaluation_result.execution_time
         query_runtimes.append(evaluation_result)
 
-        if StopEvaluation:
-            break
+        if n_executed_plans % 100 == 0:
+            print("...", n_executed_plans, "plans executed")
 
+    print("... All plans executed")
     return query_runtimes
+
+
+def prepare_for_export(df: pd.DataFrame) -> pd.DataFrame:
+    df = df.copy()
+    df["join_order"] = df["join_order"].apply(data.JoinTree.as_list).apply(jsonize.to_json)
+    return df
 
 
 def main():
     signal.signal(signal.SIGINT, stop_evaluation)
+    os.makedirs(OutputDirectory, exist_ok=True)
     pg_db = postgres.connect(config_file=".psycopg_connection_job")
     pg_system = systems.Postgres(pg_db)
 
-    workload = workloads.job().first(1)
+    workload = workloads.job()
+    workload = skip_existing_results(workload)
 
-    query_runtimes = []
     for label, query in workload.entries():
-        query_runtimes.extend(evaluate_query(label, query, db_instance=pg_db, db_system=pg_system))
+        print(".. Now evaluating query", label)
+        query_runtimes = evaluate_query(label, query, db_instance=pg_db, db_system=pg_system)
+
+        result_df = pd.DataFrame(query_runtimes)
+        out_file = OutputDirectory + OutputFileFormat.format(label=label)
+        result_df = prepare_for_export(result_df)
+        result_df.to_csv(out_file, index=False)
+
         if StopEvaluation:
             print(".. Ctl+C received, terminating evaluation")
             break
-
-    result_df = pd.DataFrame(query_runtimes)
-    result_df.to_csv("results.temp.csv", index=False)
 
 
 if __name__ == "__main__":

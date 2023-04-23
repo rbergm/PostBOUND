@@ -506,6 +506,17 @@ class JoinTreeNode(abc.ABC, Container):
         """
         raise NotImplementedError
 
+    @abc.abstractmethod
+    def as_list(self) -> list:
+        """Provides the selected join order as a nested list.
+
+        The table of each base table node will be contained directly in the join order. Each join node will be
+        represented as a list of the list-representations of its child nodes.
+
+        For example, the join order R ⋈ (S ⋈ T) will be represented as `[R, [S, T]]`.
+        """
+        raise NotImplementedError
+
     def as_join_tree(self) -> JoinTree:
         """Creates a new join tree with this node as root and all children as sub-nodes."""
         return JoinTree(self)
@@ -610,9 +621,14 @@ class JoinNode(JoinTreeNode):
         sequence.append(self)
         return sequence
 
+    def as_list(self) -> list:
+        return [self.left_child.as_list(), self.right_child.as_list()]
+
     def count_cross_product_joins(self) -> int:
         own_cross_product = 1 if not self.join_condition else 0
-        return own_cross_product + self.left_child.count_cross_product_joins() + self.right_child.count_cross_product_joins()
+        return (own_cross_product
+                + self.left_child.count_cross_product_joins()
+                + self.right_child.count_cross_product_joins())
 
     def homomorphic_hash(self) -> int:
         left_hash = self.left_child.homomorphic_hash()
@@ -690,6 +706,9 @@ class BaseTableNode(JoinTreeNode):
 
     def join_sequence(self) -> Iterable[JoinNode]:
         return []
+
+    def as_list(self) -> list:
+        return self.table
 
     def count_cross_product_joins(self) -> int:
         return 0
@@ -869,6 +888,18 @@ class JoinTree(Container[JoinTreeNode]):
         if self.is_empty():
             return []
         return self.root.join_sequence()
+
+    def as_list(self) -> list:
+        """Provides the selected join order as a nested list.
+
+        The table of each base table node will be contained directly in the join order. Each join node will be
+        represented as a list of the list-representations of its child nodes.
+
+        For example, the join order R ⋈ (S ⋈ T) will be represented as `[R, [S, T]]`.
+        """
+        if self.is_empty():
+            return []
+        return self.root.as_list()
 
     def base_table(self, direction: str = "right") -> base.TableReference:
         """Provides the left-most or right-most table in the join tree."""

@@ -117,6 +117,12 @@ class Workload(collections.UserDict[LabelType, qal.SqlQuery]):
         """Provides all (label, query) pairs in the workload, in natural order of the query labels."""
         return list(zip(self._sorted_labels, self._sorted_queries))
 
+    def head(self) -> Optional[tuple[LabelType, qal.SqlQuery]]:
+        """Provides the first query in the workload."""
+        if not self._sorted_labels:
+            return None
+        return (self._sorted_labels[0], self._sorted_queries[0])
+
     def label_of(self, query: qal.SqlQuery) -> LabelType:
         """Provides the label of the given query."""
         return self._label_mapping[query]

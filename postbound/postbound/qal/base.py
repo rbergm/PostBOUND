@@ -3,10 +3,10 @@ from __future__ import annotations
 
 from typing import Optional
 
-from postbound.util import errors
+from postbound.util import errors, jsonize
 
 
-class TableReference:
+class TableReference(jsonize.Jsonizable):
     """A table reference represents a database table.
 
     It can either be a physical table, a CTE, or an entirely virtual query created via subqueries. Note that a table
@@ -57,6 +57,9 @@ class TableReference:
         """
         return self.alias if self.alias else self.full_name
 
+    def __json__(self) -> object:
+        return {"full_name": self._full_name, "alias": self._alias}
+
     def __lt__(self, __value: object) -> bool:
         if not isinstance(__value, type(self)):
             return NotImplemented
@@ -84,7 +87,7 @@ class TableReference:
             return "[UNKNOWN TABLE]"
 
 
-class ColumnReference:
+class ColumnReference(jsonize.Jsonizable):
     """A column reference represents a specific column of a specific database table.
 
     This reference always consists of the name of the physical table. In addition, each column can be bound to the
@@ -130,6 +133,9 @@ class ColumnReference:
     def is_bound(self) -> bool:
         """Checks, whether this column is bound to a table."""
         return self.table is not None
+
+    def __json__(self) -> object:
+        return {"name": self._name, "table": self._table}
 
     def __lt__(self, other) -> bool:
         if not isinstance(other, type(self)):

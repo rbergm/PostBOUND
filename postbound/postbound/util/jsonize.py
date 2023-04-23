@@ -1,9 +1,9 @@
 """Contains utilities to store and load objects more conveniently to/from JSON.
 
 More specifically, this module introduces the `JsonizeEncoder`, which can be accessed via the `to_json` utility method.
-This encoder allows to transform instances of any class to JSON by providing a `__json__` method in the class implementation.
-This method does not take any (required) parameters and returns a JSON-izeable representation of the current instance, e.g.
-a `dict` or a `list`.
+This encoder allows to transform instances of any class to JSON by providing a `__json__` method in the class
+implementation. This method does not take any (required) parameters and returns a JSON-izeable representation of the
+current instance, e.g. a `dict` or a `list`.
 
 Sadly (or luckily?), the inverse conversion does not work because JSON does not store any type information.
 """
