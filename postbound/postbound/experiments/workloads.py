@@ -35,7 +35,8 @@ import copy
 import pathlib
 import random
 import typing
-from typing import Hashable, Iterable, Optional
+from collections.abc import Callable, Iterable
+from typing import Hashable, Optional
 
 import natsort
 import pandas as pd
@@ -145,10 +146,15 @@ class Workload(collections.UserDict[LabelType, qal.SqlQuery]):
         This method requires that all label instances provide a `startswith` method (as is the case for simple string
         labels).
         """
-        if not "startswith" in dir(label_prefix):
+        if "startswith" not in dir(label_prefix):
             raise ValueError("label_prefix must have startswith() method")
         prefix_queries = {label: query for label, query in self.data.items() if label.startswith(label_prefix)}
         return Workload(prefix_queries, name=self._name, root=self._root)
+
+    def filter_by(self, predicate: Callable[[LabelType, qal.SqlQuery], bool]) -> Workload[LabelType]:
+        """Provides all queries from the workload that match the given predicate."""
+        matching_queries = {label: query for label, query in self.data.items() if predicate(label, query)}
+        return Workload(matching_queries, name=self._name, root=self._root)
 
     def shuffle(self) -> Workload[LabelType]:
         """Randomly changes the order of the queries in the workload."""
@@ -196,8 +202,8 @@ def read_workload(path: str, name: str = "", *, query_file_pattern: str = "*.sql
         subdir_prefix = ((query_label_prefix + "/") if query_label_prefix and not query_label_prefix.endswith("/")
                          else query_label_prefix)
         subdir_prefix += subdir.stem + "/"
-        subdir_workload = read_workload(str(subdir), query_file_pattern=query_file_pattern, recurse_subdirectories=True,
-                                        query_label_prefix=subdir_prefix)
+        subdir_workload = read_workload(str(subdir), query_file_pattern=query_file_pattern,
+                                        recurse_subdirectories=True, query_label_prefix=subdir_prefix)
         merged_queries |= subdir_workload.data
     return Workload(merged_queries, name, root_dir)
 
@@ -222,8 +228,8 @@ def read_batch_workload(filename: str, name: str = "", *, file_encoding: str = "
         return generate_workload(parsed_queries, name=name, workload_root=filename)
 
 
-def read_csv_workload(filename: str, name: str = "", *, query_column: str = "query", label_column: Optional[str] = None,
-                      file_encoding: str = "utf-8") -> Workload:
+def read_csv_workload(filename: str, name: str = "", *, query_column: str = "query",
+                      label_column: Optional[str] = None, file_encoding: str = "utf-8") -> Workload:
     """Reads all the queries from a CSV file to construct a new `Workload` object.
 
     The column containing the actual queries can be configured via the `query_column` parameter. Likewise, the
