@@ -5,6 +5,7 @@ queried for joins, etc.
 """
 
 import sys
+import textwrap
 import unittest
 
 sys.path.append("../../")
@@ -185,6 +186,18 @@ class PredicateTests(unittest.TestCase):
             parsed = parser.parse_query(query)
             self.assertTrue(len(parsed.predicates().joins()) == 1)
             self.assertTrue(len(parsed.predicates().filters()) == 0)
+
+    def test_join_false_positives(self) -> None:
+        query = textwrap.dedent("""
+                                SELECT * FROM R
+                                WHERE R.a = R.b
+                                    AND my_udf_pred1(R.a)
+                                    AND my_udf_pred2(R.a, R.c)
+                                    AND R.a IN (24, R.b, 42)
+                                """)
+        parsed = parser.parse_query(query)
+        self.assertFalse(parsed.predicates().joins())
+        self.assertTrue(len(parsed.predicates().filters()) == 4)
 
 
 class MockSchemaLookup:

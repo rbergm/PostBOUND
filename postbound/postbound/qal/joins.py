@@ -3,8 +3,8 @@ from __future__ import annotations
 
 import abc
 import enum
-
-from typing import Iterable
+from collections.abc import Iterable
+from typing import Optional
 
 from postbound.qal import base, predicates as preds, qal, expressions as expr
 from postbound.util import collections as collection_utils
@@ -33,9 +33,21 @@ class JoinType(enum.Enum):
 class Join(abc.ABC):
     """Abstract interface shared by all JOIN statements."""
 
-    def __init__(self, join_type: JoinType, join_condition: preds.AbstractPredicate | None = None) -> None:
-        self.join_type = join_type
-        self.join_condition = join_condition
+    def __init__(self, join_type: JoinType, join_condition: Optional[preds.AbstractPredicate] = None,
+                 *, hash_val: int) -> None:
+        self._join_type = join_type
+        self._join_condition = join_condition
+        self._hash_val = hash_val
+
+    @property
+    def join_type(self) -> JoinType:
+        """Get the kind of join to be executed."""
+        return self._join_type
+
+    @property
+    def join_condition(self) -> Optional[preds.AbstractPredicate]:
+        """Get the join predicate if there is one."""
+        return self._join_condition
 
     @abc.abstractmethod
     def is_subquery_join(self) -> bool:
@@ -63,12 +75,19 @@ class Join(abc.ABC):
 
     @abc.abstractmethod
     def itercolumns(self) -> Iterable[base.ColumnReference]:
-        """Provides access to all column in this joins.
+        """Provides access to all columns in this join.
 
         In contrast to the `columns` method, duplicates are returned multiple times, i.e. if a column is referenced `n`
         times in this join, it will also be returned `n` times by this method. Furthermore, the order in which
         columns are provided by the iterable matches the order in which they appear in this join.
         """
+        raise NotImplementedError
+
+    def __hash__(self) -> int:
+        return self._hash_val
+
+    @abc.abstractmethod
+    def __eq__(self, other: object) -> bool:
         raise NotImplementedError
 
     def __repr__(self) -> str:
@@ -85,12 +104,20 @@ class TableJoin(Join):
     @staticmethod
     def inner(joined_table: base.TableReference, join_condition: preds.AbstractPredicate | None = None) -> TableJoin:
         """Constructs an INNER JOIN with the given subquery."""
-        return TableJoin(JoinType.InnerJoin, joined_table, join_condition)
+        return TableJoin(joined_table, join_condition, join_type=JoinType.InnerJoin)
 
-    def __init__(self, join_type: JoinType, joined_table: base.TableReference,
-                 join_condition: preds.AbstractPredicate | None = None) -> None:
-        super().__init__(join_type, join_condition)
-        self.joined_table = joined_table
+    def __init__(self, joined_table: base.TableReference, join_condition: Optional[preds.AbstractPredicate] = None, *,
+                 join_type: JoinType = JoinType.InnerJoin) -> None:
+        if not join_type or not joined_table:
+            raise ValueError("Join type and table must be set")
+        self._joined_table = joined_table
+        hash_val = hash((join_type, joined_table, join_condition))
+        super().__init__(join_type, join_condition, hash_val=hash_val)
+
+    @property
+    def joined_table(self) -> base.TableReference:
+        """Get the table being joined."""
+        return self._joined_table
 
     def is_subquery_join(self) -> bool:
         return False
@@ -106,6 +133,14 @@ class TableJoin(Join):
 
     def itercolumns(self) -> Iterable[base.ColumnReference]:
         return self.join_condition.itercolumns()
+
+    __hash__ = Join.__hash__
+
+    def __eq__(self, other: object) -> bool:
+        return (isinstance(other, type(self))
+                and self.joined_table == other.joined_table
+                and self.join_type == other.join_type
+                and self.join_condition == other.join_condition)
 
     def __str__(self) -> str:
         join_str = str(self.join_type)
@@ -123,16 +158,33 @@ class SubqueryJoin(Join):
     def inner(subquery: qal.SqlQuery, alias: str = "",
               join_condition: preds.AbstractPredicate | None = None) -> SubqueryJoin:
         """Constructs an INNER JOIN with the given subquery."""
-        return SubqueryJoin(JoinType.InnerJoin, subquery, alias, join_condition)
+        return SubqueryJoin(subquery, alias, join_condition, join_type=JoinType.InnerJoin)
 
-    def __init__(self, join_type: JoinType, subquery: qal.SqlQuery, alias: str = "",
-                 join_condition: preds.AbstractPredicate | None = None) -> None:
-        super().__init__(join_type, join_condition)
-        self.subquery = subquery
-        self.alias = alias
+    def __init__(self, subquery: qal.SqlQuery, alias: str, join_condition: Optional[preds.AbstractPredicate] = None, *,
+                 join_type: JoinType = JoinType.InnerJoin) -> None:
+        if not subquery or not alias:
+            raise ValueError("Subquery and alias have to be set")
+        self._subquery = subquery
+        self._alias = alias
+        hash_val = hash((join_type, subquery, alias, join_condition))
+        super().__init__(join_type, join_condition, hash_val=hash_val)
+
+    @property
+    def subquery(self) -> qal.SqlQuery:
+        """Get the subquery that is being joined."""
+        return self._subquery
+
+    @property
+    def alias(self) -> str:
+        """Get the virtual table name under which the subquery results should be made available."""
+        return self._alias
 
     def is_subquery_join(self) -> bool:
         return True
+
+    def target_table(self) -> base.TableReference:
+        """Provides the virtual table that represents the result set of this subquery."""
+        return base.TableReference.create_virtual(self._alias)
 
     def tables(self) -> set[base.TableReference]:
         return self.subquery.tables() | self.join_condition.tables()
@@ -145,6 +197,15 @@ class SubqueryJoin(Join):
 
     def itercolumns(self) -> Iterable[base.ColumnReference]:
         return collection_utils.flatten([self.subquery.itercolumns(), self.join_condition.itercolumns()])
+
+    __hash__ = Join.__hash__
+
+    def __eq__(self, other: object) -> bool:
+        return (isinstance(other, type(self))
+                and self.join_type == other.join_type
+                and self.alias == other.alias
+                and self.join_condition == other.join_condition
+                and self.subquery == other.subquery)
 
     def __str__(self) -> str:
         join_type_str = str(self.join_type)

@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import copy
 import re
-from typing import Any
+from typing import Any, Optional
 
 import mo_sql_parsing as mosp
 
@@ -226,6 +226,8 @@ def _parse_select_statement(mosp_data: dict | str) -> clauses.BaseProjection:
         select_target = copy.copy(mosp_data["value"])
         target_name = mosp_data.get("name", None)
         return clauses.BaseProjection(_parse_mosp_expression(select_target), target_name)
+    if mosp_data == "*":
+        return clauses.BaseProjection.star()
     target_column = _parse_column_reference(mosp_data)
     return clauses.BaseProjection(expr.ColumnExpression(target_column))
 
@@ -309,18 +311,19 @@ def _parse_explicit_from_clause(mosp_data: dict) -> clauses.ExplicitFromClause:
             # we found a subquery
             joined_subquery = _MospQueryParser(join_source["value"], mosp.format(join_source)).parse_query()
             join_alias = joined_table.get("name", None)
-            parsed_joins.append(joins.SubqueryJoin(parsed_join_type, joined_subquery, join_alias, join_condition))
+            parsed_joins.append(joins.SubqueryJoin(joined_subquery, join_alias, join_condition,
+                                                   join_type=parsed_join_type))
         elif isinstance(join_source, dict):
             # we found a normal table join with an alias
             table_name = join_source["value"]
             table_alias = join_source.get("name", None)
             table = base.TableReference(table_name, table_alias)
-            parsed_joins.append(joins.TableJoin(parsed_join_type, table, join_condition))
+            parsed_joins.append(joins.TableJoin(table, join_condition, join_type=parsed_join_type))
         elif isinstance(join_source, str):
             # we found a normal table join without an alias
             table_name = join_source
             table = base.TableReference(table_name)
-            parsed_joins.append(joins.TableJoin(parsed_join_type, table, join_condition))
+            parsed_joins.append(joins.TableJoin(table, join_condition, join_type=parsed_join_type))
         else:
             raise ValueError("Unknown JOIN format: " + str(joined_table))
     return clauses.ExplicitFromClause(initial_table, parsed_joins)
@@ -338,12 +341,11 @@ def _parse_groupby_clause(mosp_data: dict | list) -> clauses.GroupBy:
     mosp_data = mosp_data["value"]
     if "distinct" in mosp_data:
         groupby_clause = _parse_groupby_clause(mosp_data["distinct"])
-        groupby_clause.distinct = True
+        groupby_clause = clauses.GroupBy(groupby_clause.group_columns, True)
         return groupby_clause
     else:
         columns = [_parse_mosp_expression(mosp_data)]
-        distinct = False
-        return clauses.GroupBy(columns, distinct)
+        return clauses.GroupBy(columns, False)
 
 
 def _parse_having_clause(mosp_data: dict) -> clauses.Having:
@@ -471,7 +473,7 @@ class _MospQueryParser:
 
 
 def parse_query(query: str, *, bind_columns: bool | None = None,
-                db_schema: db.DatabaseSchema | None = None) -> qal.SqlQuery:
+                db_schema: Optional[db.DatabaseSchema] = None) -> qal.SqlQuery:
     """Parses the given query string into a `SqlQuery` object.
 
     If `bind_columns` is `True`, will perform a binding process based on the schema of a live database.
@@ -485,5 +487,4 @@ def parse_query(query: str, *, bind_columns: bool | None = None,
                  else db.DatabasePool.get_instance().current_database().schema())
     mosp_data = mosp.parse(query)
     parsed_query = _MospQueryParser(mosp_data, query).parse_query()
-    transform.bind_columns(parsed_query, with_schema=bind_columns, db_schema=db_schema)
-    return parsed_query
+    return transform.bind_columns(parsed_query, with_schema=bind_columns, db_schema=db_schema)

@@ -4,26 +4,28 @@ from __future__ import annotations
 import abc
 import enum
 from collections.abc import Sequence
-from dataclasses import dataclass
-from typing import Iterable
+from typing import Iterable, Optional
 
 from postbound.qal import base, expressions as expr, joins, predicates as preds
 from postbound.util import collections as collection_utils
 
 
-# TODO: move away from dataclasses where necessary. Many clauses actually have constraints (non-None / non-empty) objects
-
 class BaseClause(abc.ABC):
     """Basic interface shared by all supported clauses. This is an abstract interface, not a usable clause."""
+
+    def __init__(self, hash_val: int):
+        self._hash_val = hash_val
 
     def tables(self) -> set[base.TableReference]:
         """Provides all tables that are referenced in the clause."""
         return {column.table for column in self.columns() if column.is_bound()}
 
+    @abc.abstractmethod
     def columns(self) -> set[base.ColumnReference]:
         """Provides all columns that are referenced in the clause."""
         raise NotImplementedError
 
+    @abc.abstractmethod
     def iterexpressions(self) -> Iterable[expr.SqlExpression]:
         """Provides access to all directly contained expressions in this clause.
 
@@ -32,6 +34,7 @@ class BaseClause(abc.ABC):
         """
         raise NotImplementedError
 
+    @abc.abstractmethod
     def itercolumns(self) -> Iterable[base.ColumnReference]:
         """Provides access to all column in this clause.
 
@@ -41,8 +44,21 @@ class BaseClause(abc.ABC):
         """
         raise NotImplementedError
 
+    def __hash__(self) -> int:
+        return self._hash_val
 
-@dataclass
+    @abc.abstractmethod
+    def __eq__(self, other: object) -> bool:
+        raise NotImplementedError
+
+    def __repr__(self) -> str:
+        return str(self)
+
+    @abc.abstractmethod
+    def __str__(self) -> str:
+        raise NotImplementedError
+
+
 class Hint(BaseClause):
     """Hint block of a clause.
 
@@ -63,12 +79,27 @@ class Hint(BaseClause):
     WHERE R.a = S.b AND S.b = T.c
     ```
 
-    This enforces the join between tables `R` and `S` to be executed as a hash join (due to the query hint) and disables
-    usage of the block nested-loop join for the entire query (which in this case only affects the join between tables
-    `S` and `T`) due to the preparatory `SET optimizer_switch` statement.
+    This enforces the join between tables `R` and `S` to be executed as a hash join (due to the query hint) and
+    disables usage of the block nested-loop join for the entire query (which in this case only affects the join between
+    tables `S` and `T`) due to the preparatory `SET optimizer_switch` statement.
     """
-    preparatory_statements: str = ""
-    query_hints: str = ""
+
+    def __init__(self, preparatory_statements: str = "", query_hints: str = ""):
+        self._preparatory_statements = preparatory_statements
+        self._query_hints = query_hints
+
+        hash_val = hash((preparatory_statements, query_hints))
+        super().__init__(hash_val)
+
+    @property
+    def preparatory_statements(self) -> str:
+        """Get the string of preparatory statements. Can be empty."""
+        return self._preparatory_statements
+
+    @property
+    def query_hints(self) -> str:
+        """Get the query hint text. Can be empty."""
+        return self._query_hints
 
     def columns(self) -> set[base.ColumnReference]:
         return set()
@@ -79,16 +110,12 @@ class Hint(BaseClause):
     def itercolumns(self) -> Iterable[base.ColumnReference]:
         return []
 
-    def __hash__(self) -> int:
-        return hash((self.preparatory_statements, self.query_hints))
+    __hash__ = BaseClause.__hash__
 
     def __eq__(self, other) -> bool:
         return (isinstance(other, type(self))
                 and self.preparatory_statements == other.preparatory_statements
                 and self.query_hints == other.query_hints)
-
-    def __repr__(self) -> str:
-        return str(self)
 
     def __str__(self) -> str:
         if self.preparatory_statements and self.query_hints:
@@ -98,7 +125,6 @@ class Hint(BaseClause):
         return self.query_hints
 
 
-@dataclass
 class Explain(BaseClause):
     """EXPLAIN block of a query.
 
@@ -112,8 +138,6 @@ class Explain(BaseClause):
     The precise syntax and semantic of an EXPLAIN statement depends on the actual DBS. The Explain clause object
     is modeled after Postgres.
     """
-    analyze: bool = False
-    format: str | None = None
 
     @staticmethod
     def explain_analyze(format_type: str = "JSON") -> Explain:
@@ -125,6 +149,27 @@ class Explain(BaseClause):
         """Constructs a pure EXPLAIN clause (i.e. without ANALYZE) with the specified output format."""
         return Explain(False, format_type)
 
+    def __init__(self, analyze: bool = False, target_format: Optional[str] = None):
+        self._analyze = analyze
+        self._target_format = target_format
+
+        hash_val = hash((analyze, target_format))
+        super().__init__(hash_val)
+
+    @property
+    def analyze(self) -> bool:
+        """Check, whether the query should be executed as EXPLAIN ANALYZE rather than just plain EXPLAIN.
+
+        Usually, EXPLAIN ANALYZE executes the query and gathers extensive runtime statistics (e.g. comparing estimated
+        vs. true cardinalities for intermediate nodes).
+        """
+        return self._analyze
+
+    @property
+    def target_format(self) -> Optional[str]:
+        """Get the target format in which the EXPLAIN plan should be provided."""
+        return self._target_format
+
     def columns(self) -> set[base.ColumnReference]:
         return set()
 
@@ -134,28 +179,25 @@ class Explain(BaseClause):
     def itercolumns(self) -> Iterable[base.ColumnReference]:
         return []
 
-    def __hash__(self) -> int:
-        return hash((self.analyze, self.format))
+    __hash__ = BaseClause.__hash__
 
     def __eq__(self, other) -> bool:
-        return isinstance(other, type(self)) and self.analyze == other.analyze and self.format == other.format
-
-    def __repr__(self) -> str:
-        return str(self)
+        return (isinstance(other, type(self))
+                and self.analyze == other.analyze
+                and self.target_format == other.target_format)
 
     def __str__(self) -> str:
         explain_prefix = "EXPLAIN"
         explain_body = ""
-        if self.analyze and self.format:
-            explain_body = f" (ANALYZE, FORMAT {self.format})"
+        if self.analyze and self.target_format:
+            explain_body = f" (ANALYZE, FORMAT {self.target_format})"
         elif self.analyze:
             explain_body = " ANALYZE"
-        elif self.format:
-            explain_body = f" (FORMAT {self.format})"
+        elif self.target_format:
+            explain_body = f" (FORMAT {self.target_format})"
         return explain_prefix + explain_body
 
 
-@dataclass
 class BaseProjection:
     """The `BaseProjection` forms the fundamental ingredient for a SELECT clause.
 
@@ -163,8 +205,6 @@ class BaseProjection:
     `SqlExpression` (rules and restrictions of the SQL standard are not enforced here). In addition, each projection
     can receive a target name as in `SELECT foo AS f FROM bar`.
     """
-    expression: expr.SqlExpression
-    target_name: str = ""
 
     @staticmethod
     def count_star() -> BaseProjection:
@@ -181,6 +221,23 @@ class BaseProjection:
         """Shortcut to create a projection for the given column."""
         return BaseProjection(expr.ColumnExpression(col), target_name)
 
+    def __init__(self, expression: expr.SqlExpression, target_name: str = ""):
+        if not expression:
+            raise ValueError("Expression must be set")
+        self._expression = expression
+        self._target_name = target_name
+        self._hash_val = hash((expression, target_name))
+
+    @property
+    def expression(self) -> expr.SqlExpression:
+        """Get the expression that forms the column."""
+        return self._expression
+
+    @property
+    def target_name(self) -> str:
+        """Get the alias under which the column should be accessible. Can be empty."""
+        return self._target_name
+
     def columns(self) -> set[base.ColumnReference]:
         return self.expression.columns()
 
@@ -191,7 +248,7 @@ class BaseProjection:
         return self.expression.tables()
 
     def __hash__(self) -> int:
-        return hash((self.expression, self.target_name))
+        return self._hash_val
 
     def __eq__(self, other) -> bool:
         return (isinstance(other, type(self))
@@ -233,8 +290,23 @@ class Select(BaseClause):
 
     def __init__(self, targets: BaseProjection | list[BaseProjection],
                  projection_type: SelectType = SelectType.Select) -> None:
-        self.targets = tuple(collection_utils.enlist(targets))
-        self.projection_type = projection_type
+        if not targets:
+            raise ValueError("At least one target must be specified")
+        self._targets = tuple(collection_utils.enlist(targets))
+        self._projection_type = projection_type
+
+        hash_val = hash((self._projection_type, self._targets))
+        super().__init__(hash_val)
+
+    @property
+    def targets(self) -> Sequence[BaseProjection]:
+        """Get all projections."""
+        return self._targets
+
+    @property
+    def projection_type(self) -> SelectType:
+        """Get the type of projection (with or without duplicate elimination)."""
+        return self._projection_type
 
     def columns(self) -> set[base.ColumnReference]:
         return collection_utils.set_union(target.columns() for target in self.targets)
@@ -268,16 +340,12 @@ class Select(BaseClause):
             output[projection.target_name] = collection_utils.simplify(source_columns)
         return output
 
-    def __hash__(self) -> int:
-        return hash((self.projection_type, self.targets))
+    __hash__ = BaseClause.__hash__
 
     def __eq__(self, other) -> bool:
         return (isinstance(other, type(self))
                 and self.projection_type == other.projection_type
                 and self.targets == other.targets)
-
-    def __repr__(self) -> str:
-        return str(self)
 
     def __str__(self) -> str:
         select_str = self.projection_type.value
@@ -302,16 +370,11 @@ class From(BaseClause, abc.ABC):
     def predicates(self) -> preds.QueryPredicates | None:
         raise NotImplementedError
 
-    @abc.abstractmethod
-    def __hash__(self) -> int:
-        raise NotImplementedError
+    __hash__ = BaseClause.__hash__
 
     @abc.abstractmethod
     def __eq__(self, other) -> bool:
         raise NotImplementedError
-
-    def __repr__(self) -> str:
-        return str(self)
 
     @abc.abstractmethod
     def __str__(self) -> str:
@@ -330,6 +393,12 @@ class ImplicitFromClause(From):
 
     def __init__(self, tables: base.TableReference | list[base.TableReference] | None = None):
         self._tables = tuple(collection_utils.enlist(tables)) if tables is not None else ()
+        super().__init__(hash(self._tables))
+
+    @property
+    def target_tables(self) -> Sequence[base.TableReference]:
+        """Gets the tables in this FROM clause in exactly the sequence in which they were specified."""
+        return self._tables
 
     def tables(self) -> set[base.TableReference]:
         return set(self._tables)
@@ -349,8 +418,7 @@ class ImplicitFromClause(From):
     def itercolumns(self) -> Iterable[base.ColumnReference]:
         return []
 
-    def __hash__(self) -> int:
-        return hash(self._tables)
+    __hash__ = BaseClause.__hash__
 
     def __eq__(self, other) -> bool:
         return isinstance(other, type(self)) and self._tables == other._tables
@@ -368,8 +436,21 @@ class ExplicitFromClause(From):
     """
 
     def __init__(self, base_table: base.TableReference, joined_tables: list[joins.Join]):
-        self.base_table = base_table
-        self.joined_tables = tuple(joined_tables)
+        self._base_table = base_table
+        self._joined_tables = tuple(joined_tables)
+
+        hash_val = hash((self.base_table, self.joined_tables))
+        super().__init__(hash_val)
+
+    @property
+    def base_table(self) -> base.TableReference:
+        """Get the first table that is part of the FROM clause."""
+        return self._base_table
+
+    @property
+    def joined_tables(self) -> Sequence[joins.Join]:
+        """Get all tables that are defined in the JOIN ON syntax."""
+        return self._joined_tables
 
     def tables(self) -> set[base.TableReference]:
         all_tables = [self.base_table]
@@ -407,8 +488,7 @@ class ExplicitFromClause(From):
     def itercolumns(self) -> Iterable[base.ColumnReference]:
         return collection_utils.flatten(join.itercolumns() for join in self.joined_tables)
 
-    def __hash__(self) -> int:
-        return hash((self.base_table, self.joined_tables))
+    __hash__ = BaseClause.__hash__
 
     def __eq__(self, other) -> bool:
         return (isinstance(other, type(self))
@@ -419,14 +499,23 @@ class ExplicitFromClause(From):
         return f"FROM {self.base_table} " + " ".join(str(join) for join in self.joined_tables)
 
 
-@dataclass
 class Where(BaseClause):
     """The WHERE clause specifies conditions that result rows must satisfy.
 
     All conditions are collected in a (potentially conjunctive or disjunctive) predicate object. See
     `AbstractPredicate` for details.
     """
-    predicate: preds.AbstractPredicate
+
+    def __init__(self, predicate: preds.AbstractPredicate) -> None:
+        if not predicate:
+            raise ValueError("Predicate must be set")
+        self._predicate = predicate
+        super().__init__(hash(predicate))
+
+    @property
+    def predicate(self) -> preds.AbstractPredicate:
+        """Get the root predicate that contains all filters and joins in the WHERE clause."""
+        return self._predicate
 
     def columns(self) -> set[base.ColumnReference]:
         return self.predicate.columns()
@@ -437,20 +526,15 @@ class Where(BaseClause):
     def itercolumns(self) -> Iterable[base.ColumnReference]:
         return self.predicate.itercolumns()
 
-    def __hash__(self) -> int:
-        return hash(self.predicate)
+    __hash__ = BaseClause.__hash__
 
     def __eq__(self, other) -> bool:
         return isinstance(other, type(self)) and self.predicate == other.predicate
-
-    def __repr__(self) -> str:
-        return str(self)
 
     def __str__(self) -> str:
         return f"WHERE {self.predicate}"
 
 
-@dataclass
 class GroupBy(BaseClause):
     """The GROUP BY clause combines rows that match a grouping criterion to enable aggregation on these groups.
 
@@ -459,8 +543,23 @@ class GroupBy(BaseClause):
     """
 
     def __init__(self, group_columns: Sequence[expr.SqlExpression], distinct: bool = False) -> None:
-        self.group_columns = tuple(group_columns)
-        self.distinct = distinct
+        if not group_columns:
+            raise ValueError("At least one group column must be specified")
+        self._group_columns = tuple(group_columns)
+        self._distinct = distinct
+
+        hash_val = hash((self._group_columns, self._distinct))
+        super().__init__(hash_val)
+
+    @property
+    def group_columns(self) -> Sequence[expr.SqlExpression]:
+        """Get all expressions that should be used to determine the grouping."""
+        return self._group_columns
+
+    @property
+    def distinct(self) -> bool:
+        """Get whether the grouping should eliminate duplicates."""
+        return self._distinct
 
     def columns(self) -> set[base.ColumnReference]:
         return collection_utils.set_union(column.columns() for column in self.group_columns)
@@ -471,15 +570,11 @@ class GroupBy(BaseClause):
     def itercolumns(self) -> Iterable[base.ColumnReference]:
         return collection_utils.flatten(column.itercolumns() for column in self.group_columns)
 
-    def __hash__(self) -> int:
-        return hash((self.group_columns, self.distinct))
+    __hash__ = BaseClause.__hash__
 
     def __eq__(self, other) -> bool:
         return (isinstance(other, type(self))
                 and self.group_columns == other.group_columns and self.distinct == other.distinct)
-
-    def __repr__(self) -> str:
-        return str(self)
 
     def __str__(self) -> str:
         columns_str = ", ".join(str(col) for col in self.group_columns)
@@ -487,14 +582,23 @@ class GroupBy(BaseClause):
         return f"GROUP BY{distinct_str} {columns_str}"
 
 
-@dataclass
 class Having(BaseClause):
     """The HAVING clause specifies conditions that have to be met on the groups constructed by a GROUP BY clause.
 
     All conditions are collected in a (potentially conjunctive or disjunctive) predicate object. See
     `AbstractPredicate` for details.
     """
-    condition: preds.AbstractPredicate
+
+    def __init__(self, condition: preds.AbstractPredicate) -> None:
+        if not condition:
+            raise ValueError("Condition must be set")
+        self._condition = condition
+        super().__init__(hash(condition))
+
+    @property
+    def condition(self) -> preds.AbstractPredicate:
+        """Get the root predicate that is used to form the HAVING clause."""
+        return self._condition
 
     def columns(self) -> set[base.ColumnReference]:
         return self.condition.columns()
@@ -505,20 +609,15 @@ class Having(BaseClause):
     def itercolumns(self) -> Iterable[base.ColumnReference]:
         return self.condition.itercolumns()
 
-    def __hash__(self) -> int:
-        return hash(self.condition)
+    __hash__ = BaseClause.__hash__
 
     def __eq__(self, other) -> bool:
         return isinstance(other, type(self)) and self.condition == other.condition
-
-    def __repr__(self) -> str:
-        return str(self)
 
     def __str__(self) -> str:
         return f"HAVING {self.condition}"
 
 
-@dataclass
 class OrderByExpression:
     """The `OrderByExpression` is the fundamental ingredient for an ORDER BY clause.
 
@@ -527,12 +626,32 @@ class OrderByExpression:
     such information to `None` falls back to the default interpretation by the target database system.
     """
 
-    column: expr.SqlExpression
-    ascending: bool | None = None
-    nulls_first: bool | None = None
+    def __init__(self, column: expr.SqlExpression, ascending: Optional[bool] = None,
+                 nulls_first: Optional[bool] = None) -> None:
+        if not column:
+            raise ValueError("Column must be specified")
+        self._column = column
+        self._ascending = ascending
+        self._nulls_first = nulls_first
+        self._hash_val = hash((self._column, self._ascending, self._nulls_first))
+
+    @property
+    def column(self) -> expr.SqlExpression:
+        """Get the expression used to specify the current grouping."""
+        return self._column
+
+    @property
+    def ascending(self) -> bool:
+        """Get the desired ordering of the output rows."""
+        return self._ascending
+
+    @property
+    def nulls_first(self) -> bool:
+        """Get where to place NULL values in the result set."""
+        return self._nulls_first
 
     def __hash__(self) -> int:
-        return hash((self.column, self.ascending, self.nulls_first))
+        return self._hash_val
 
     def __eq__(self, other) -> bool:
         return (isinstance(other, type(self))
@@ -558,7 +677,13 @@ class OrderBy(BaseClause):
     def __init__(self, expressions: list[OrderByExpression]) -> None:
         if not expressions:
             raise ValueError("At least one ORDER BY expression required")
-        self.expressions = tuple(expressions)
+        self._expressions = tuple(expressions)
+        super().__init__(hash(self._expressions))
+
+    @property
+    def expressions(self) -> Sequence[OrderByExpression]:
+        """Get the expressions that form this ORDER BY clause."""
+        return self._expressions
 
     def columns(self) -> set[base.ColumnReference]:
         return collection_utils.set_union(expression.column.columns() for expression in self.expressions)
@@ -569,14 +694,10 @@ class OrderBy(BaseClause):
     def itercolumns(self) -> Iterable[base.ColumnReference]:
         return collection_utils.flatten(expression.itercolumns() for expression in self.iterexpressions())
 
-    def __hash__(self) -> int:
-        return hash(self.expressions)
+    __hash__ = BaseClause.__hash__
 
     def __eq__(self, other) -> bool:
         return isinstance(other, type(self)) and self.expressions == other.expressions
-
-    def __repr__(self) -> str:
-        return str(self)
 
     def __str__(self) -> str:
         return "ORDER BY " + ", ".join(str(order_expr) for order_expr in self.expressions)
@@ -589,11 +710,24 @@ class Limit(BaseClause):
     actual LIMIT. Note that some database systems might use a non-standard syntax for such clauses.
     """
 
-    def __init__(self, *, limit: int | None = None, offset: int | None = None) -> None:
+    def __init__(self, *, limit: Optional[int] = None, offset: Optional[int] = None) -> None:
         if limit is None and offset is None:
             raise ValueError("LIMIT and OFFSET cannot be both unspecified")
-        self.limit = limit
-        self.offset = offset
+        self._limit = limit
+        self._offset = offset
+
+        hash_val = hash((self._limit, self._offset))
+        super().__init__(hash_val)
+
+    @property
+    def limit(self) -> Optional[int]:
+        """Get the maximum number of rows in the result set."""
+        return self._limit
+
+    @property
+    def offset(self) -> Optional[int]:
+        """Get the offset within the result set (i.e. number of first rows to skip)."""
+        return self._offset
 
     def columns(self) -> set[base.ColumnReference]:
         return set()
@@ -604,14 +738,10 @@ class Limit(BaseClause):
     def itercolumns(self) -> Iterable[base.ColumnReference]:
         return []
 
-    def __hash__(self) -> int:
-        return hash((self.limit, self.offset))
+    __hash__ = BaseClause.__hash__
 
     def __eq__(self, other) -> bool:
         return isinstance(other, type(self)) and self.limit == other.limit and self.offset == other.offset
-
-    def __repr__(self) -> str:
-        return str(self)
 
     def __str__(self) -> str:
         limit_str = f"LIMIT {self.limit}" if self.limit is not None else ""

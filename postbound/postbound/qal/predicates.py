@@ -4,8 +4,8 @@ from __future__ import annotations
 import abc
 import functools
 import itertools
-from collections.abc import Collection
-from typing import Type, Iterable, Iterator, Union, Optional
+from collections.abc import Collection, Iterable, Iterator, Sequence
+from typing import Type, Union, Optional
 
 import networkx as nx
 
@@ -79,8 +79,8 @@ class AbstractPredicate(abc.ABC):
     predicates that are build from base predicates, e.g. conjunctions, disjunctions or negations.
     """
 
-    def __init__(self) -> None:
-        pass
+    def __init__(self, hash_val: int) -> None:
+        self._hash_val = hash_val
 
     @abc.abstractmethod
     def is_compound(self) -> bool:
@@ -218,9 +218,8 @@ class AbstractPredicate(abc.ABC):
         if not self.is_filter():
             raise NoFilterPredicateError(self)
 
-    @abc.abstractmethod
     def __hash__(self) -> int:
-        raise NotImplementedError
+        return self._hash_val
 
     @abc.abstractmethod
     def __eq__(self, other: object) -> bool:
@@ -240,15 +239,27 @@ class BasePredicate(AbstractPredicate, abc.ABC):
     It represents the smallest kind of condition that evaluates to TRUE or FALSE.
     """
 
-    def __init__(self, operation: expr.SqlOperator) -> None:
-        super().__init__()
-        self.operation = operation
+    def __init__(self, operation: Optional[expr.SqlOperator], *, hash_val: int) -> None:
+        self._operation = operation
+        super().__init__(hash_val)
+
+    @property
+    def operation(self) -> Optional[expr.SqlOperator]:
+        """Provides the operation that is used to obtain matching (pairs of) tuples.
+
+        Most of the time, this operation will be set to one of the SQL operators. However, in a special case there
+        might not be an operation. This occurs for unary predicates that filter based on a predicate function (e.g.
+        a user-defined function such as in `SELECT * FROM R WHERE my_udf_predicate(R.a, R.b)`).
+        """
+        return self._operation
 
     def is_compound(self) -> bool:
         return False
 
     def base_predicates(self) -> Iterable[AbstractPredicate]:
         return [self]
+
+    __hash__ = AbstractPredicate.__hash__
 
 
 class BinaryPredicate(BasePredicate):
@@ -259,9 +270,23 @@ class BinaryPredicate(BasePredicate):
 
     def __init__(self, operation: expr.SqlOperator, first_argument: expr.SqlExpression,
                  second_argument: expr.SqlExpression) -> None:
-        super().__init__(operation)
-        self.first_argument = first_argument
-        self.second_argument = second_argument
+        if not first_argument or not second_argument:
+            raise ValueError("First argument and second argument are required")
+        self._first_argument = first_argument
+        self._second_argument = second_argument
+
+        hash_val = hash((operation, first_argument, second_argument))
+        super().__init__(operation, hash_val=hash_val)
+
+    @property
+    def first_argument(self) -> expr.SqlExpression:
+        """Get the first argument of the predicate."""
+        return self._first_argument
+
+    @property
+    def second_argument(self) -> expr.SqlExpression:
+        """Get the second argument of the predicate."""
+        return self._second_argument
 
     def is_join(self) -> bool:
         first_tables = _collect_column_expression_tables(self.first_argument)
@@ -293,17 +318,13 @@ class BinaryPredicate(BasePredicate):
         partners |= _generate_join_pairs(first_columns, second_columns)
         return partners
 
-    def __hash__(self) -> int:
-        return hash((self.operation, self.first_argument, self.second_argument))
+    __hash__ = AbstractPredicate.__hash__
 
     def __eq__(self, other: object) -> bool:
         return (isinstance(other, type(self))
                 and self.operation == other.operation
                 and self.first_argument == other.first_argument
                 and self.second_argument == other.second_argument)
-
-    def __repr__(self) -> str:
-        return super().__repr__()
 
     def __str__(self) -> str:
         return f"{self.first_argument} {self.operation.value} {self.second_argument}"
@@ -322,10 +343,34 @@ class BetweenPredicate(BasePredicate):
     """
 
     def __init__(self, column: expr.SqlExpression, interval: tuple[expr.SqlExpression, expr.SqlExpression]) -> None:
-        super().__init__(expr.LogicalSqlOperators.Between)
-        self.column = column
-        self.interval = interval
-        self.interval_start, self.interval_end = self.interval
+        if not column or not interval:
+            raise ValueError("Column and interval must be set")
+        self._column = column
+        self._interval = interval
+        self._interval_start, self._interval_end = self._interval
+
+        hash_val = hash((expr.LogicalSqlOperators.Between, self._column, self._interval_start, self._interval_end))
+        super().__init__(expr.LogicalSqlOperators.Between, hash_val=hash_val)
+
+    @property
+    def column(self) -> expr.SqlExpression:
+        """Get the column that is tested (`R.a` in `SELECT * FROM R WHERE R.a BETWEEN 1 AND 42`)."""
+        return self._column
+
+    @property
+    def interval(self) -> tuple[expr.SqlExpression, expr.SqlExpression]:
+        """Get the interval (as lower, upper) that is tested against."""
+        return self._interval
+
+    @property
+    def interval_start(self) -> expr.SqlExpression:
+        """Get the lower bound of the interval that is tested against."""
+        return self._interval_start
+
+    @property
+    def interval_end(self) -> expr.SqlExpression:
+        """Get the upper bound of the interval that is tested against."""
+        return self._interval_end
 
     def is_join(self) -> bool:
         column_tables = _collect_column_expression_tables(self.column)
@@ -357,14 +402,10 @@ class BetweenPredicate(BasePredicate):
         partners |= _generate_join_pairs(predicate_columns, end_columns)
         return set(partners)
 
-    def __hash__(self) -> int:
-        return hash(("BETWEEN", self.column, self.interval))
+    __hash__ = AbstractPredicate.__hash__
 
     def __eq__(self, other: object) -> bool:
         return isinstance(other, type(self)) and self.column == other.column and self.interval == other.interval
-
-    def __repr__(self) -> str:
-        return super().__repr__()
 
     def __str__(self) -> str:
         interval_start, interval_end = self.interval
@@ -381,10 +422,25 @@ class InPredicate(BasePredicate):
     transformation into binary predicates since it is unclear how many rows the subquery will produce.
     """
 
-    def __init__(self, column: expr.SqlExpression, values: list[expr.SqlExpression]) -> None:
-        super().__init__(expr.LogicalSqlOperators.In)
-        self.column = column
-        self.values = tuple(values)
+    def __init__(self, column: expr.SqlExpression, values: Sequence[expr.SqlExpression]) -> None:
+        if not column or not values:
+            raise ValueError("Both column and values must be given")
+        if not all(val for val in values):
+            raise ValueError("No empty value allowed")
+        self._column = column
+        self._values = tuple(values)
+        hash_val = hash((expr.LogicalSqlOperators.In, self._column, self._values))
+        super().__init__(expr.LogicalSqlOperators.In, hash_val=hash_val)
+
+    @property
+    def column(self) -> expr.SqlExpression:
+        """Get the column that is tested (`R.a` in `SELECT * FROM R WHERE R.a IN (1, 2, 3)`)."""
+        return self._column
+
+    @property
+    def values(self) -> Sequence[expr.SqlExpression]:
+        """Get the values that possible values that are tested against."""
+        return self._values
 
     def is_join(self) -> bool:
         column_tables = _collect_column_expression_tables(self.column)
@@ -418,14 +474,10 @@ class InPredicate(BasePredicate):
             partners |= _generate_join_pairs(predicate_columns, value_columns)
         return partners
 
-    def __hash__(self) -> int:
-        return hash(("IN", self.column, self.values))
+    __hash__ = AbstractPredicate.__hash__
 
     def __eq__(self, other: object) -> bool:
         return isinstance(other, type(self)) and self.column == other.column and set(self.values) == set(other.values)
-
-    def __repr__(self) -> str:
-        return super().__repr__()
 
     def __str__(self) -> str:
         if len(self.values) == 1:
@@ -443,9 +495,15 @@ class UnaryPredicate(BasePredicate):
     """
 
     def __init__(self, column: expr.SqlExpression, operation: Optional[expr.SqlOperator] = None):
-        super().__init__(operation)
-        self.operation = operation
-        self.column = column
+        if not column:
+            raise ValueError("Column must be set")
+        self._column = column
+        super().__init__(operation, hash_val=hash((operation, column)))
+
+    @property
+    def column(self) -> expr.SqlExpression:
+        """Get the expression (without the operation) that forms the predicate."""
+        return self._column
 
     def is_join(self) -> bool:
         return len(_collect_column_expression_tables(self.column)) > 1
@@ -463,14 +521,10 @@ class UnaryPredicate(BasePredicate):
         columns = _collect_column_expression_columns(self.column)
         return _generate_join_pairs(columns, columns)
 
-    def __hash__(self) -> int:
-        return hash((self.operation, self.column))
+    __hash__ = AbstractPredicate.__hash__
 
     def __eq__(self, other: object) -> bool:
         return isinstance(other, type(self)) and self.operation == other.operation and self.column == other.column
-
-    def __repr__(self) -> str:
-        return super().__repr__()
 
     def __str__(self) -> str:
         if not self.operation:
@@ -509,36 +563,53 @@ class CompoundPredicate(AbstractPredicate):
         return CompoundPredicate(expr.LogicalSqlCompoundOperators.And, list(parts))
 
     def __init__(self, operation: expr.LogicalSqlCompoundOperators,
-                 children: AbstractPredicate | list[AbstractPredicate]):
-        super().__init__()
-        self.operation = operation
-        self.children = tuple(collection_utils.enlist(children))
-        if not self.children:
-            raise ValueError("Child predicates can not be empty")
+                 children: AbstractPredicate | Sequence[AbstractPredicate]):
+        if not operation or not children:
+            raise ValueError("Operation and children must be set")
+        if operation == expr.LogicalSqlCompoundOperators.Not and len(collection_utils.enlist(children)) > 1:
+            raise ValueError("NOT predicates can only have one child predicate")
+        if operation != expr.LogicalSqlCompoundOperators.Not and len(collection_utils.enlist(children)) < 2:
+            raise ValueError("AND/OR predicates require at least two child predicates.")
+        self._operation = operation
+        self._children = tuple(collection_utils.enlist(children))
+        super().__init__(hash((self._operation, self._children)))
+
+    @property
+    def operation(self) -> expr.LogicalSqlCompoundOperators:
+        """Get the operation used to combine the individual evaluations of the child predicates."""
+        return self._operation
+
+    @property
+    def children(self) -> Sequence[AbstractPredicate] | AbstractPredicate:
+        """Get the child predicates that are combined in this compound predicate.
+
+        For conjunctions and disjunctions this will be a sequence of children with at least two children. For negations
+        the child predicate will be returned directly (i.e. without being wrapped in a sequence).
+        """
+        return self._children[0] if self.operation == expr.LogicalSqlCompoundOperators.Not else self._children
 
     def is_compound(self) -> bool:
         return True
 
     def is_join(self) -> bool:
-        return any(child.is_join() for child in self.children)
+        return any(child.is_join() for child in self._children)
 
     def columns(self) -> set[base.ColumnReference]:
-        return collection_utils.set_union(child.columns() for child in self.children)
+        return collection_utils.set_union(child.columns() for child in self._children)
 
     def itercolumns(self) -> Iterable[base.ColumnReference]:
-        return collection_utils.flatten(child.itercolumns() for child in self.children)
+        return collection_utils.flatten(child.itercolumns() for child in self._children)
 
     def iterexpressions(self) -> Iterable[expr.SqlExpression]:
-        return collection_utils.flatten(child.iterexpressions() for child in self.children)
+        return collection_utils.flatten(child.iterexpressions() for child in self._children)
 
     def join_partners(self) -> set[tuple[base.ColumnReference, base.ColumnReference]]:
-        return collection_utils.set_union(child.join_partners() for child in self.children)
+        return collection_utils.set_union(child.join_partners() for child in self._children)
 
     def base_predicates(self) -> Iterable[AbstractPredicate]:
-        return collection_utils.set_union(set(child.base_predicates()) for child in self.children)
+        return collection_utils.set_union(set(child.base_predicates()) for child in self._children)
 
-    def __hash__(self) -> int:
-        return hash((self.operation, self.children))
+    __hash__ = AbstractPredicate.__hash__
 
     def __eq__(self, other: object) -> bool:
         return isinstance(other, type(self)) and self.operation == other.operation and self.children == other.children
@@ -548,7 +619,7 @@ class CompoundPredicate(AbstractPredicate):
 
     def __str__(self) -> str:
         if self.operation == expr.LogicalSqlCompoundOperators.Not:
-            return f"NOT {self.children[0]}"
+            return f"NOT {self.children}"
         elif self.operation == expr.LogicalSqlCompoundOperators.Or:
             return "(" + " OR ".join(str(child) for child in self.children) + ")"
         elif self.operation == expr.LogicalSqlCompoundOperators.And:
@@ -577,7 +648,7 @@ def _collect_filter_predicates(predicate: AbstractPredicate) -> set[AbstractPred
             or_filters = CompoundPredicate(expr.LogicalSqlCompoundOperators.Or, or_filter_children)
             return {or_filters}
         elif predicate.operation == expr.LogicalSqlCompoundOperators.Not:
-            not_filter_children = predicate.children[0] if predicate.children[0].is_filter() else None
+            not_filter_children = predicate.children if predicate.children.is_filter() else None
             if not not_filter_children:
                 return set()
             return {predicate}
@@ -609,7 +680,7 @@ def _collect_join_predicates(predicate: AbstractPredicate) -> set[AbstractPredic
             or_joins = CompoundPredicate(expr.LogicalSqlCompoundOperators.Or, or_join_children)
             return {or_joins}
         elif predicate.operation == expr.LogicalSqlCompoundOperators.Not:
-            not_join_children = predicate.children[0] if predicate.children[0].is_join() else None
+            not_join_children = predicate.children if predicate.children.is_join() else None
             if not not_join_children:
                 return set()
             return {predicate}
@@ -640,8 +711,9 @@ class QueryPredicates:
         """Constructs a `QueryPredicates` instance without any actual content."""
         return QueryPredicates(None)
 
-    def __init__(self, root: AbstractPredicate | None):
+    def __init__(self, root: Optional[AbstractPredicate]):
         self._root = root
+        self._hash_val = hash(self._root)
 
     def is_empty(self) -> bool:
         """Checks, whether this predicate handler contains any actual predicates."""
@@ -762,7 +834,7 @@ class QueryPredicates:
         return (list(self.filters()) + list(self.joins())).__iter__()
 
     def __hash__(self) -> int:
-        return hash(self._root)
+        return self._hash_val
 
     def __eq__(self, other) -> bool:
         return isinstance(other, type(self)) and self._root == other._root

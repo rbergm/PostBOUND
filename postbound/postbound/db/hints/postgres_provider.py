@@ -198,7 +198,8 @@ class PostgresRightDeepJoinClauseBuilder:
         join_predicates = []
         for table in tables:
             join_predicates.extend(self.available_joins[table])
-        join_predicates = [join_pred for join_pred in join_predicates if self._can_include_predicate(join_pred, tables)]
+        join_predicates = [join_pred for join_pred in join_predicates
+                           if self._can_include_predicate(join_pred, tables)]
         return predicates.CompoundPredicate.create_and(join_predicates) if join_predicates else None
 
     def _collect_exported_columns(self, tables: set[base.TableReference]) -> set[base.ColumnReference]:
@@ -254,7 +255,7 @@ class PostgresRightDeepJoinClauseBuilder:
                 column.table = renamed_column.table
 
     def _update_renamed_columns(self, columns: set[base.ColumnReference], target_table: base.TableReference) -> None:
-        """Renames all of the given columns to refer to the `target_table` (i.e. the virtual subquery table) instead."""
+        """Renames all of the given columns to refer to the target table (i.e. the virtual subquery table) instead."""
         for column in columns:
             export_name = _build_column_alias(column)
             renamed_column = copy.copy(column)
@@ -470,9 +471,7 @@ def _generate_hint_block(parts: HintParts) -> Optional[clauses.Hint]:
 
 def _apply_hint_block_to_query(query: qal.SqlQuery, hint_block: Optional[clauses.Hint]) -> qal.SqlQuery:
     """Generates a new query with the given hint block."""
-    hinted_query = copy.copy(query)
-    hinted_query.hints = hint_block
-    return hinted_query
+    return transform.replace_clause(query, hint_block) if hint_block else query
 
 
 class PostgresHintProvider(provider.HintProvider):

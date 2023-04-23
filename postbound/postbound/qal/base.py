@@ -1,12 +1,11 @@
 """Fundamental types for the query abstraction layer. This includes references to tables as well as columns."""
 from __future__ import annotations
 
-from dataclasses import dataclass
+from typing import Optional
 
 from postbound.util import errors
 
 
-@dataclass
 class TableReference:
     """A table reference represents a database table.
 
@@ -18,14 +17,36 @@ class TableReference:
 
     Table references can be sorted lexicographically.
     """
-    full_name: str
-    alias: str = ""
-    virtual: bool = False
 
     @staticmethod
     def create_virtual(alias: str) -> TableReference:
         """Generates a new virtual table reference with the given alias."""
         return TableReference("", alias, True)
+
+    def __init__(self, full_name: str, alias: str = "", virtual: bool = False) -> None:
+        if not full_name and not alias:
+            raise ValueError("Full name or alias required")
+        if full_name and virtual:
+            raise ValueError("Virtual tables do not have a full name")
+        self._full_name = full_name
+        self._alias = alias
+        self._virtual = virtual
+        self._hash_val = hash((full_name, alias))
+
+    @property
+    def full_name(self) -> str:
+        """Get the full name of this table. If empty, alias is guaranteed to be set."""
+        return self._full_name
+
+    @property
+    def alias(self) -> str:
+        """Get the alias of this table. If empty, the full name is guaranteed to be set."""
+        return self._alias
+
+    @property
+    def virtual(self) -> bool:
+        """Checks whether this table is virtual. In this case, only the alias and not the full name is set."""
+        return self._virtual
 
     def identifier(self) -> str:
         """Provides a shorthand key that columns can use to refer to this table reference.
@@ -36,18 +57,18 @@ class TableReference:
         """
         return self.alias if self.alias else self.full_name
 
-    def __lt__(self, other) -> bool:
-        if not isinstance(other, type(self)):
+    def __lt__(self, __value: object) -> bool:
+        if not isinstance(__value, type(self)):
             return NotImplemented
-        if self.full_name == other.full_name:
-            return self.alias < other.alias
-        return self.full_name < other.full_name
+        return self.identifier() < __value.identifier()
 
     def __hash__(self) -> int:
-        return hash((self.full_name, self.alias))
+        return self._hash_val
 
-    def __eq__(self, other) -> bool:
-        return isinstance(other, type(self)) and self.full_name == other.full_name and self.alias == other.alias
+    def __eq__(self, __value: object) -> bool:
+        return (isinstance(__value, type(self))
+                and self._full_name == __value._full_name
+                and self._alias == __value._alias)
 
     def __repr__(self) -> str:
         return str(self)
@@ -63,7 +84,6 @@ class TableReference:
             return "[UNKNOWN TABLE]"
 
 
-@dataclass
 class ColumnReference:
     """A column reference represents a specific column of a specific database table.
 
@@ -78,9 +98,30 @@ class ColumnReference:
 
     Column references can be sorted lexicographically.
     """
-    name: str
-    table: TableReference | None = None
-    redirect: ColumnReference | None = None
+
+    def __init__(self, name: str, table: Optional[TableReference] = None, *,
+                 redirect: Optional[ColumnReference] = None) -> None:
+        if not name:
+            raise ValueError("Column name is required")
+        self._name = name
+        self._table = table
+        self._redirect = redirect
+        self._hash_val = hash((self._name, self._table))
+
+    @property
+    def name(self) -> str:
+        """Get the name of this column. This is guaranteed to be set."""
+        return self._name
+
+    @property
+    def table(self) -> Optional[TableReference]:
+        """Get the table to which this column belongs, if specified."""
+        return self._table
+
+    @property
+    def redirect(self) -> Optional[ColumnReference]:
+        """Get the column for which this column is an alias."""
+        return self._redirect
 
     def resolve(self) -> ColumnReference:
         """Traverse the column redirections until a non-redirecting reference is found."""
@@ -98,7 +139,7 @@ class ColumnReference:
         return self.table < other.table
 
     def __hash__(self) -> int:
-        return hash((self.name, self.table))
+        return self._hash_val
 
     def __eq__(self, other) -> bool:
         return isinstance(other, type(self)) and self.name == other.name and self.table == other.table

@@ -18,4 +18,10 @@ the subqueries in turn contain predicates. This might lead to cyclic import erro
 issues can usually be solved by varying the import sequence slightly.
 
 The `parser`, `formatter` and `transform` modules operate on top of qal objects or handle their construction.
+
+All concepts in the qal are modelled as data objects that are immutable. In order to modify parts of an SQL query, a
+new query has to be constructed. The `transform` module provides some functions to help with that. The immutability
+enables a very fast hashing of values as well as the caching of complicated computations. Most objects employ a pattern
+of determining their hash value during initialization of the object and simply provide that precomputed value during
+hashing. This helps to speed up several hot loops at optimization time significantly.
 """
