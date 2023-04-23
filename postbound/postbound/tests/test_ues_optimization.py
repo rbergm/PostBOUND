@@ -16,7 +16,7 @@ sys.path.append("../../")
 from postbound import postbound as pb  # noqa: E402
 from postbound.db import postgres  # noqa: E402
 from postbound.db.systems import systems  # noqa: E402
-from postbound.qal import parser  # noqa: E402
+from postbound.qal import parser, transform  # noqa: E402
 from postbound.experiments import workloads  # noqa: E402
 from postbound.optimizer import presets, validation  # noqa: E402
 
@@ -33,7 +33,7 @@ class JobWorkloadTests(regression_suite.DatabaseTestCase):
         self.db.statistics().cache_enabled = True
         self.job = workloads.job()
 
-    def test_optimize_workload(self) -> None:
+    def test_result_set_equivalence(self) -> None:
         optimization_pipeline = pb.OptimizationPipeline(target_dbs=systems.Postgres(self.db))
         optimization_pipeline.load_settings(presets.fetch("ues"))
         optimization_pipeline.build()
@@ -45,6 +45,17 @@ class JobWorkloadTests(regression_suite.DatabaseTestCase):
                 optimized_result = self.db.execute_query(optimized_query, cache_enabled=False)
                 self.assertResultSetsEqual(original_result, optimized_result, ordered=query.is_ordered())
 
+    def test_optimize_workload(self) -> None:
+        optimization_pipeline = pb.OptimizationPipeline(target_dbs=systems.Postgres(self.db))
+        optimization_pipeline.load_settings(presets.fetch("ues"))
+        optimization_pipeline.build()
+        for label, query in self.job.entries():
+            # JOB is fully supported by UES
+            with self.subTest(label=label, query=query):
+                optimized_query = optimization_pipeline.optimize_query(query)
+                explain_query = transform.as_explain(optimized_query)
+                self.db.execute_query(explain_query, cache_enabled=False)
+
 
 class SsbWorkloadTests(regression_suite.DatabaseTestCase):
     def setUp(self) -> None:
@@ -54,7 +65,7 @@ class SsbWorkloadTests(regression_suite.DatabaseTestCase):
         parser.auto_bind_columns = True
         self.ssb = workloads.ssb()
 
-    def test_optimize_workload(self) -> None:
+    def test_result_set_equivalence(self) -> None:
         optimization_pipeline = pb.OptimizationPipeline(target_dbs=systems.Postgres(self.db))
         optimization_pipeline.load_settings(presets.fetch("ues"))
         optimization_pipeline.build()
@@ -66,6 +77,17 @@ class SsbWorkloadTests(regression_suite.DatabaseTestCase):
                 optimized_result = self.db.execute_query(optimized_query, cache_enabled=False)
                 self.assertResultSetsEqual(original_result, optimized_result, ordered=query.is_ordered())
 
+    def test_optimize_workload(self) -> None:
+        optimization_pipeline = pb.OptimizationPipeline(target_dbs=systems.Postgres(self.db))
+        optimization_pipeline.load_settings(presets.fetch("ues"))
+        optimization_pipeline.build()
+        for label, query in self.ssb.entries():
+            # SSB is fully supported by UES
+            with self.subTest(label=label, query=query):
+                optimized_query = optimization_pipeline.optimize_query(query)
+                explain_query = transform.as_explain(optimized_query)
+                self.db.execute_query(explain_query, cache_enabled=False)
+
 
 class StackWorkloadTests(regression_suite.DatabaseTestCase):
     def setUp(self) -> None:
@@ -75,7 +97,7 @@ class StackWorkloadTests(regression_suite.DatabaseTestCase):
         parser.auto_bind_columns = True
         self.stack = workloads.stack()
 
-    def test_optimize_workload(self) -> None:
+    def test_result_set_equivalence(self) -> None:
         optimization_pipeline = pb.OptimizationPipeline(target_dbs=systems.Postgres(self.db))
         optimization_pipeline.load_settings(presets.fetch("ues"))
         optimization_pipeline.build()
@@ -87,6 +109,20 @@ class StackWorkloadTests(regression_suite.DatabaseTestCase):
                     original_result = self.db.execute_query(query, cache_enabled=True)
                     optimized_result = self.db.execute_query(optimized_query, cache_enabled=False)
                     self.assertResultSetsEqual(original_result, optimized_result, ordered=query.is_ordered())
+                except validation.UnsupportedQueryError as e:
+                    self.skipTest(f"Unsupported query: {e}")
+
+    def test_optimize_workload(self) -> None:
+        optimization_pipeline = pb.OptimizationPipeline(target_dbs=systems.Postgres(self.db))
+        optimization_pipeline.load_settings(presets.fetch("ues"))
+        optimization_pipeline.build()
+        for label, query in self.stack.entries():
+            # Stack is only partially supported by UES
+            with self.subTest(label=label, query=query):
+                try:
+                    optimized_query = optimization_pipeline.optimize_query(query)
+                    explain_query = transform.as_explain(optimized_query)
+                    self.db.execute_query(explain_query, cache_enabled=False)
                 except validation.UnsupportedQueryError as e:
                     self.skipTest(f"Unsupported query: {e}")
 
