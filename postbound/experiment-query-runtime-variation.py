@@ -24,7 +24,11 @@ from postbound.util import jsonize
 
 ExhaustiveJoinOrderingLimit = 1000
 QuerySlowdownToleranceFactor = 3
+MinQueriesUntilDynamicTimeout = 10
 DefaultQueryTimeout = 120
+MinimumQueryTimeout = 30
+
+RestrictedOperatorSelection = True
 
 SkipExistingResults = True
 OutputFileFormat = "join-order-runtimes-{label}.csv"
@@ -122,19 +126,31 @@ class EvaluationResult:
     execution_time: float
 
 
+def determine_timeout(total_query_runtime: float, n_executed_plans: int) -> float:
+    if n_executed_plans < MinQueriesUntilDynamicTimeout:
+        return DefaultQueryTimeout
+    average_runtime = total_query_runtime / n_executed_plans
+    timeout = QuerySlowdownToleranceFactor * average_runtime
+    return max(timeout, MinimumQueryTimeout)
+
+
+def restrict_to_hash_join(query: qal.SqlQuery) -> operators.PhysicalOperatorAssignment:
+    operator_selection = operators.PhysicalOperatorAssignment(query)
+    operator_selection.set_operator_enabled_globally(operators.JoinOperators.NestedLoopJoin, False)
+    operator_selection.set_operator_enabled_globally(operators.JoinOperators.SortMergeJoin, False)
+    return operator_selection
+
+
 def execute_single_query(label: str, query: qal.SqlQuery, join_order: data.JoinTree, *, n_executed_plans: int = 0,
                          total_query_runtime: float = 0, db_system: systems.DatabaseSystem,
                          db_instance: db.Database) -> EvaluationResult:
     query_generator = db_system.query_adaptor()
-    enforce_hash_join = operators.PhysicalOperatorAssignment(query)
-    enforce_hash_join.set_operator_enabled_globally(operators.JoinOperators.NestedLoopJoin, False)
-    enforce_hash_join.set_operator_enabled_globally(operators.JoinOperators.SortMergeJoin, False)
+    operator_selection = restrict_to_hash_join(query) if RestrictedOperatorSelection else None
 
     optimized_query = query_generator.adapt_query(query, join_order=join_order,
-                                                  physical_operators=enforce_hash_join)
+                                                  physical_operators=operator_selection)
 
-    query_timeout = (QuerySlowdownToleranceFactor * (total_query_runtime / n_executed_plans) if n_executed_plans
-                     else DefaultQueryTimeout)
+    query_timeout = determine_timeout(total_query_runtime, n_executed_plans)
     query_duration_receiver, query_duration_sender = mp.Pipe(False)
 
     # TODO: what about query repetitions?
@@ -143,11 +159,11 @@ def execute_single_query(label: str, query: qal.SqlQuery, join_order: data.JoinT
     query_execution_worker.start()
 
     query_execution_worker.join(query_timeout)
-    if query_execution_worker.is_alive():
+    if query_execution_worker.is_alive():  # process timeout
         query_execution_worker.terminate()
         query_execution_worker.join()
         query_runtime = np.inf
-    else:
+    else:  # correct termination
         query_runtime = query_duration_receiver.recv()
         total_query_runtime += query_runtime
         n_executed_plans += 1
@@ -228,15 +244,13 @@ def main():
     for label, query in workload.entries():
         print(".. Now evaluating query", label)
         query_runtimes = evaluate_query(label, query, db_instance=pg_db, db_system=pg_system)
-        if CancelEvaluation:
-            break
 
         result_df = pd.DataFrame(query_runtimes)
         out_file = OutputDirectory + OutputFileFormat.format(label=label)
         result_df = prepare_for_export(result_df)
         result_df.to_csv(out_file, index=False)
 
-        if StopEvaluation:
+        if StopEvaluation or CancelEvaluation:
             print(".. Ctl+C received, terminating evaluation")
             break
 
