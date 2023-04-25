@@ -5,14 +5,14 @@ USER=$(whoami)
 MAKE_CORES=$(($(nproc --all) / 2))
 
 
-mkdir mysql-server
+mkdir $WD/mysql-server
 cd $WD/mysql-server
 MYSQL_INSTALL_ROOT=$(pwd)
 
-echo ".. Cloning MySQL 8.0"
+echo ".. Cloning MySQL 8"
 git clone --depth 1 --branch 8.0 https://github.com/mysql/mysql-server.git mysql-src
 
-echo ".. Building MySQL 8.0"
+echo ".. Building MySQL 8"
 mkdir $MYSQL_INSTALL_ROOT/mysql-build
 cd $MYSQL_INSTALL_ROOT/mysql-build
 cmake $MYSQL_INSTALL_ROOT/mysql-src \
@@ -30,6 +30,7 @@ bin/mysqld --initialize-insecure \
     --datadir=$MYSQL_INSTALL_DIR/mysql-data
 
 echo ".. Starting MySQL server"
+
 bin/mysqld --basedir=$MYSQL_INSTALL_DIR \
     --datadir=$MYSQL_INSTALL_DIR/mysql-data \
     --pid-file=$MYSQL_INSTALL_DIR/mysqld.pid \
