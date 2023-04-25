@@ -362,7 +362,7 @@ def _generate_pg_join_order_hint(query: qal.SqlQuery, join_order: data.JoinTree,
     probed whereas the hash table is created for the outer relation. However, Postgres denotes the directions
     exactly the other way around. Therefore, the direction has to be swapped for hash joins.
     """
-    if not join_order.root or len(join_order) < 2:
+    if len(join_order) < 2:
         return query, None
     leading_hint = _generate_leading_hint_content(join_order.root, operator_assignment)
     leading_hint = f"Leading({leading_hint})"
@@ -471,7 +471,7 @@ def _generate_hint_block(parts: HintParts) -> Optional[clauses.Hint]:
 
 def _apply_hint_block_to_query(query: qal.SqlQuery, hint_block: Optional[clauses.Hint]) -> qal.SqlQuery:
     """Generates a new query with the given hint block."""
-    return transform.replace_clause(query, hint_block) if hint_block else query
+    return transform.add_clause(query, hint_block) if hint_block else query
 
 
 class PostgresHintProvider(provider.HintProvider):

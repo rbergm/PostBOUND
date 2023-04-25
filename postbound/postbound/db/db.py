@@ -138,6 +138,11 @@ class Database(abc.ABC):
         raise NotImplementedError
 
     @abc.abstractmethod
+    def cost_estimate(self, query: qal.SqlQuery | str) -> float:
+        """Queries the DBMS query optimizer for the estimated cost of executing the query."""
+        raise NotImplementedError
+
+    @abc.abstractmethod
     def database_name(self) -> str:
         """Provides the name of the (physical) database that the database interface is connected to."""
         raise NotImplementedError

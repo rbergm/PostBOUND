@@ -15,7 +15,7 @@ import pandas as pd
 
 from postbound.db import db, postgres
 from postbound.db.systems import systems
-from postbound.qal import qal
+from postbound.qal import qal, transform
 from postbound.experiments import workloads
 from postbound.optimizer import data
 from postbound.optimizer.joinorder import enumeration
@@ -26,15 +26,19 @@ ExhaustiveJoinOrderingLimit = 1000
 QuerySlowdownToleranceFactor = 3
 DefaultQueryTimeout = 120
 
+SkipExistingResults = True
 OutputFileFormat = "join-order-runtimes-{label}.csv"
 OutputFilePattern = r"join-order-runtimes-(?P<label>\w+).csv"
 OutputDirectory = "results/query-runtime-variation/"
 
 StopEvaluation = False
+CancelEvaluation = False
 workloads.workloads_base_dir = "../workloads"
 
 
 def skip_existing_results(workload: workloads.Workload) -> workloads.Workload:
+    if not SkipExistingResults:
+        return workload
     existing_results = set()
     result_directory = pathlib.Path(OutputDirectory)
     for result_file in result_directory.glob("join-order-runtimes-*.csv"):
@@ -55,7 +59,10 @@ def skip_existing_results(workload: workloads.Workload) -> workloads.Workload:
 
 def stop_evaluation(sig_num, stack_trace) -> None:
     global StopEvaluation
-    StopEvaluation = True
+    global CancelEvaluation
+    if StopEvaluation:  # 2nd time the signal is raised cancel the entire evaluation
+        CancelEvaluation = True
+    StopEvaluation = True  # don't evaluate any new queries if the signal is raised
 
 
 def execute_query_handler(query: qal.SqlQuery, database: db.Database,
@@ -89,7 +96,7 @@ def generate_random_join_orders(query: qal.SqlQuery) -> list[data.JoinTree]:
     join_order_plans = []
     random_plan_hashes = set()
     current_plan_idx = 0
-    random_join_order_generator = random_enumerator.random_join_order_for(query)
+    random_join_order_generator = random_enumerator.random_join_order_generator(query)
     while current_plan_idx < ExhaustiveJoinOrderingLimit:
         next_join_order = next(random_join_order_generator)
         next_hash = hash(next_join_order)
@@ -103,11 +110,15 @@ def generate_random_join_orders(query: qal.SqlQuery) -> list[data.JoinTree]:
     return join_order_plans
 
 
-@dataclasses.dataclass
+@dataclasses.dataclass(frozen=True)
 class EvaluationResult:
     label: str
     query: qal.SqlQuery
     join_order: data.JoinTree
+    query_hints: str
+    planner_options: str
+    query_plan: dict
+    cost_estimate: float
     execution_time: float
 
 
@@ -142,7 +153,13 @@ def execute_single_query(label: str, query: qal.SqlQuery, join_order: data.JoinT
         n_executed_plans += 1
     query_execution_worker.close()
 
-    return EvaluationResult(label, query, join_order, query_runtime)
+    query_plan = db_instance.execute_query(transform.as_explain(optimized_query), cache_enabled=False)
+    cost_estimate = db_instance.cost_estimate(optimized_query)
+    query_hints, planner_options = ((optimized_query.hints.query_hints, optimized_query.hints.preparatory_statements)
+                                    if optimized_query.hints else ("", ""))
+    return EvaluationResult(label=label, query=query, join_order=join_order,
+                            query_hints=query_hints, planner_options=planner_options,
+                            query_plan=query_plan, cost_estimate=cost_estimate, execution_time=query_runtime)
 
 
 def evaluate_query(label: str, query: qal.SqlQuery, *, db_instance: db.Database,
@@ -181,6 +198,9 @@ def evaluate_query(label: str, query: qal.SqlQuery, *, db_instance: db.Database,
 
         if n_executed_plans % 100 == 0:
             print("...", n_executed_plans, "plans executed")
+        if CancelEvaluation:
+            print("... Cancel")
+            break
 
     print("... All plans executed")
     return query_runtimes
@@ -189,6 +209,7 @@ def evaluate_query(label: str, query: qal.SqlQuery, *, db_instance: db.Database,
 def prepare_for_export(df: pd.DataFrame) -> pd.DataFrame:
     df = df.copy()
     df["join_order"] = df["join_order"].apply(data.JoinTree.as_list).apply(jsonize.to_json)
+    df["query_plan"] = df["query_plan"].apply(jsonize.to_json)
     return df
 
 
@@ -198,12 +219,17 @@ def main():
     pg_db = postgres.connect(config_file=".psycopg_connection_job")
     pg_system = systems.Postgres(pg_db)
 
-    workload = workloads.job()
+    workload = workloads.job().first(1)
     workload = skip_existing_results(workload)
+
+    if CancelEvaluation:
+        return
 
     for label, query in workload.entries():
         print(".. Now evaluating query", label)
         query_runtimes = evaluate_query(label, query, db_instance=pg_db, db_system=pg_system)
+        if CancelEvaluation:
+            break
 
         result_df = pd.DataFrame(query_runtimes)
         out_file = OutputDirectory + OutputFileFormat.format(label=label)

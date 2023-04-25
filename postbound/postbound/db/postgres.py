@@ -47,12 +47,7 @@ class PostgresInterface(db.Database):
 
     def execute_query(self, query: qal.SqlQuery | str, *, cache_enabled: bool | None = None) -> Any:
         cache_enabled = cache_enabled or (cache_enabled is None and self._cache_enabled)
-
-        if isinstance(query, qal.SqlQuery):
-            if query.hints and query.hints.preparatory_statements:
-                self._cursor.execute(query.hints.preparatory_statements)
-            query = transform.drop_hints(query, preparatory_statements_only=True)
-            query = str(query)
+        query = self._prepare_query_execution(query)
 
         if cache_enabled and query in self._query_cache:
             query_result = self._query_cache[query]
@@ -72,14 +67,15 @@ class PostgresInterface(db.Database):
         return query_result if len(query_result) > 1 else query_result[0]  # if it is just one row, unwrap it
 
     def cardinality_estimate(self, query: qal.SqlQuery | str) -> int:
-        if isinstance(query, qal.SqlQuery):
-            query = transform.drop_clause(query, clauses.Explain)
-        query = str(query)
-        if not query.upper().startswith("EXPLAIN (FORMAT JSON)"):
-            query = "EXPLAIN (FORMAT JSON) " + query
-        self._cursor.execute(query)
-        query_plan = self._cursor.fetchone()[0]
+        query = self._prepare_query_execution(query, drop_explain=True)
+        query_plan = self._obtain_query_plan(query)
         estimate = query_plan[0]["Plan"]["Plan Rows"]
+        return estimate
+
+    def cost_estimate(self, query: qal.SqlQuery | str) -> float:
+        query = self._prepare_query_execution(query, drop_explain=True)
+        query_plan = self._obtain_query_plan(query)
+        estimate = query_plan[0]["Plan"]["Total Cost"]
         return estimate
 
     def database_name(self) -> str:
@@ -104,6 +100,30 @@ class PostgresInterface(db.Database):
     def close(self) -> None:
         self._cursor.close()
         self._connection.close()
+
+    def _prepare_query_execution(self, query: qal.SqlQuery | str, *, drop_explain: bool = False) -> str:
+        """Provides the query in a unified format, taking care of preparatory statements as necessary.
+
+        `drop_explain` can be used to remove any EXPLAIN clauses from the query. Note that all actions that require
+        the "semantics" of the query to be known (e.g. EXPLAIN modifications or query hints) and are therefore only
+        executed for instances of the qal queries.
+        """
+        if not isinstance(query, qal.SqlQuery):
+            return query
+
+        if drop_explain:
+            query = transform.drop_clause(query, clauses.Explain)
+        if query.hints and query.hints.preparatory_statements:
+            self._cursor.execute(query.hints.preparatory_statements)
+            query = transform.drop_hints(query, preparatory_statements_only=True)
+        return str(query)
+
+    def _obtain_query_plan(self, query: str) -> dict:
+        """Provides the query plan (without ANALYZE) for the given query."""
+        if not query.upper().startswith("EXPLAIN (FORMAT JSON)"):
+            query = "EXPLAIN (FORMAT JSON) " + query
+        self._cursor.execute(query)
+        return self._cursor.fetchone()[0]
 
 
 class PostgresSchemaInterface(db.DatabaseSchema):
