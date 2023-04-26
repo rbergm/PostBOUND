@@ -23,13 +23,20 @@ tar xzvf pg_hint_plan.tar.gz
 mv pg_hint_plan-REL14_1_4_0 pg_hint_plan
 cd pg_hint_plan
 make && make install
+cd $WD/postgres-server
+
+echo ".. Installing pg_prewarm extension"
+cd contrib/pg_prewarm
+make && make install
+cd $WD/postgres-server
 
 echo ".. Initializing Postgres Server environment"
 cd $WD/postgres-server
 echo "... Creating cluster"
 initdb -D $(pwd)/data
-echo "... Adding pg_hint_plan to preload libraries"
-sed -i "s/shared_preload_libraries.*/shared_preload_libraries = 'pg_hint_plan'/" $(pwd)/data/postgresql.conf
+echo "... Adding pg_hint_plan and pg_prewarm to preload libraries"
+sed -i "s/shared_preload_libraries.*/shared_preload_libraries = 'pg_hint_plan,pg_prewarm'/" $(pwd)/data/postgresql.conf
+sed -i "$ipg\.prewarm = false" $(pwd)/data/postgresql.conf
 echo "... Starting Postgres (log file is pg.log)"
 pg_ctl -D $(pwd)/data -l pg.log start
 echo "... Creating user database for $USER"
