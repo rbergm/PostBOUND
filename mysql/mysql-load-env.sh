@@ -1,7 +1,7 @@
 #!/bin/bash
 
 WD=$(pwd)
-cd mysql-server/mysql-server
+cd "$WD/mysql-server/mysql-server"
 MYSQL_CTL_PATH="$(pwd)/bin"
 INIT=$(echo "$PATH" | grep "$MYSQL_CTL_PATH")
 

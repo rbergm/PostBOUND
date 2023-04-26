@@ -1,7 +1,7 @@
 #!/bin/bash
 
 WD=$(pwd)
-$MYSQL_INSTALL_DIR=mysql-server/mysql-server
+MYSQL_INSTALL_DIR="$WD/mysql-server/mysql-server"
 . ./mysql-load-env.sh
 
 cd $MYSQL_INSTALL_DIR
