@@ -42,12 +42,12 @@ for label, query in job_benchmark.entries():
         fragment_to_queries_map[query_fragment].append(query)
         db_pool.queue_query(query_fragment)
 
+print(".. All queries submitted to DB pool")
 db_pool.drain_queue()
 fragment_cardinalities: dict[qal.SqlQuery, int] = db_pool.result_set()
 
 queries, fragments, labels, cardinalities = [], [], [], []
 for query_fragment, cardinality in fragment_cardinalities.items():
-    print(query_fragment, type(query_fragment))
     for query in fragment_to_queries_map[query_fragment]:
         query_label = job_benchmark.label_of(query)
         queries.append(query)
