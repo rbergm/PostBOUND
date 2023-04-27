@@ -7,6 +7,7 @@ import os
 import pathlib
 import re
 import signal
+import sys
 from datetime import datetime
 from typing import Iterable
 
@@ -29,6 +30,7 @@ DefaultQueryTimeout = 120
 MinimumQueryTimeout = 30
 
 RestrictedOperatorSelection = True
+EnablePrewarming = True
 
 SkipExistingResults = True
 OutputFileFormat = "join-order-runtimes-{label}.csv"
@@ -59,6 +61,20 @@ def skip_existing_results(workload: workloads.Workload) -> workloads.Workload:
     skipped_workload = workload.filter_by(lambda label, __: label not in existing_results)
     print(".. Skipping existing results until label", skipped_workload.head()[0])
     return skipped_workload
+
+
+def filter_for_label(workload: workloads.Workload) -> workloads.Workload:
+    if len(sys.argv) < 2:
+        return workload
+    if len(sys.argv) == 2:
+        target = sys.argv[1]
+        return workload.filter_by(lambda label, __: label == target)
+    elif len(sys.argv) == 3:
+        start, end = sys.argv[1:]
+        return workload.filter_by(lambda label, __: start <= label and label <= end)
+    else:
+        allowed_labels = set(sys.argv[1:])
+        return workload.filter_by(lambda label, __: label in allowed_labels)
 
 
 def stop_evaluation(sig_num, stack_trace) -> None:
@@ -124,6 +140,7 @@ class EvaluationResult:
     query_plan: dict
     cost_estimate: float
     execution_time: float
+    timeout: float
 
 
 def determine_timeout(total_query_runtime: float, n_executed_plans: int) -> float:
@@ -159,14 +176,15 @@ def execute_single_query(label: str, query: qal.SqlQuery, join_order: data.JoinT
     query_execution_worker.start()
 
     query_execution_worker.join(query_timeout)
-    if query_execution_worker.is_alive():  # process timeout
+    timed_out = query_execution_worker.is_alive()
+    if timed_out:
         query_execution_worker.terminate()
         query_execution_worker.join()
+        db_instance.reset_connection()
+
         query_runtime = np.inf
-    else:  # correct termination
+    else:
         query_runtime = query_duration_receiver.recv()
-        total_query_runtime += query_runtime
-        n_executed_plans += 1
     query_execution_worker.close()
 
     query_plan = db_instance.execute_query(transform.as_explain(optimized_query), cache_enabled=False)
@@ -175,7 +193,15 @@ def execute_single_query(label: str, query: qal.SqlQuery, join_order: data.JoinT
                                     if optimized_query.hints else ("", ""))
     return EvaluationResult(label=label, query=query, join_order=join_order,
                             query_hints=query_hints, planner_options=planner_options,
-                            query_plan=query_plan, cost_estimate=cost_estimate, execution_time=query_runtime)
+                            query_plan=query_plan, cost_estimate=cost_estimate, execution_time=query_runtime,
+                            timeout=query_timeout)
+
+
+def prewarm_database(query: qal.SqlQuery, db_instance: db.Database) -> None:
+    if not EnablePrewarming:
+        return
+    for table in query.tables():
+        db_instance.execute_query(f"SELECT pg_prewarm('{table.full_name}');", cache_enabled=False)
 
 
 def evaluate_query(label: str, query: qal.SqlQuery, *, db_instance: db.Database,
@@ -204,12 +230,14 @@ def evaluate_query(label: str, query: qal.SqlQuery, *, db_instance: db.Database,
     n_executed_plans = 0
     total_query_runtime = 0
     query_runtimes = []
+    prewarm_database(query, db_instance)
     for join_order in join_order_plans:
         evaluation_result = execute_single_query(label, query, join_order, n_executed_plans=n_executed_plans,
                                                  total_query_runtime=total_query_runtime,
                                                  db_system=db_system, db_instance=db_instance)
         n_executed_plans += 1
-        total_query_runtime += evaluation_result.execution_time
+        total_query_runtime += (evaluation_result.execution_time if np.isfinite(evaluation_result.execution_time)
+                                else evaluation_result.timeout)
         query_runtimes.append(evaluation_result)
 
         if n_executed_plans % 100 == 0:
@@ -235,8 +263,13 @@ def main():
     pg_db = postgres.connect(config_file=".psycopg_connection_job")
     pg_system = systems.Postgres(pg_db)
 
-    workload = workloads.job().first(1)
-    workload = skip_existing_results(workload)
+    workload = workloads.job()
+
+    if len(sys.argv) > 1:
+        print(".. Filtering workload for queries", sys.argv[1:])
+        workload = filter_for_label(workload)
+    else:
+        workload = skip_existing_results(workload)
 
     if CancelEvaluation:
         return
