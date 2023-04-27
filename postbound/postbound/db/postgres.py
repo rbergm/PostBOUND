@@ -52,8 +52,12 @@ class PostgresInterface(db.Database):
         if cache_enabled and query in self._query_cache:
             query_result = self._query_cache[query]
         else:
-            self._cursor.execute(query)
-            query_result = self._cursor.fetchall()
+            try:
+                self._cursor.execute(query)
+                query_result = self._cursor.fetchall()
+            except psycopg.Error as e:
+                print("[ERROR] for query:", query)
+                raise e
             if cache_enabled:
                 self._query_cache[query] = query_result
 
@@ -90,8 +94,10 @@ class PostgresInterface(db.Database):
         return utils.Version(pg_ver.split(" ")[1])
 
     def reset_connection(self) -> None:
+        self._connection.cancel()
         self._cursor.close()
-        self._connection.rollback()
+        self._connection.close()
+        self._connection = psycopg.connect(self.connect_string)
         self._cursor = self._connection.cursor()
 
     def cursor(self) -> db.Cursor:
