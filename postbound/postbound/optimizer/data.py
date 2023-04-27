@@ -622,7 +622,7 @@ class JoinNode(JoinTreeNode):
         return sequence
 
     def as_list(self) -> list:
-        return [self.left_child.as_list(), self.right_child.as_list()]
+        return [self.right_child.as_list(), self.left_child.as_list()]
 
     def count_cross_product_joins(self) -> int:
         own_cross_product = 1 if not self.join_condition else 0
