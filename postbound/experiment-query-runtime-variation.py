@@ -254,6 +254,7 @@ def prepare_for_export(df: pd.DataFrame) -> pd.DataFrame:
     df = df.copy()
     df["join_order"] = df["join_order"].apply(data.JoinTree.as_list).apply(jsonize.to_json)
     df["query_plan"] = df["query_plan"].apply(jsonize.to_json)
+    df["db_config"] = df["db_config"].apply(jsonize.to_json)
     return df
 
 
@@ -279,6 +280,7 @@ def main():
         query_runtimes = evaluate_query(label, query, db_instance=pg_db, db_system=pg_system)
 
         result_df = pd.DataFrame(query_runtimes)
+        result_df["db_config"] = pg_db.inspect()
         out_file = OutputDirectory + OutputFileFormat.format(label=label)
         result_df = prepare_for_export(result_df)
         result_df.to_csv(out_file, index=False)

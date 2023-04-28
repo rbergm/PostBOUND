@@ -93,6 +93,21 @@ class PostgresInterface(db.Database):
         # version looks like "PostgreSQL 14.6 on x86_64-pc-linux-gnu, compiled by gcc (...)
         return utils.Version(pg_ver.split(" ")[1])
 
+    def inspect(self) -> dict:
+        base_info = {
+            "system_name": self.database_system_name(),
+            "system_version": self.database_system_version(),
+            "database": self.database_name(),
+            "statistics_settings": {
+                "emulated": self._db_stats.emulated,
+                "cache_enabled": self._db_stats.cache_enabled
+            }
+        }
+        self._cursor.execute("SELECT name, setting FROM pg_settings")
+        system_settings = self._cursor.fetchall()
+        base_info["system_settings"] = dict(system_settings)
+        return base_info
+
     def reset_connection(self) -> None:
         self._connection.cancel()
         self._cursor.close()

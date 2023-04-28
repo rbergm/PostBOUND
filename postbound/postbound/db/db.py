@@ -157,6 +157,11 @@ class Database(abc.ABC):
         raise NotImplementedError
 
     @abc.abstractmethod
+    def inspect(self) -> dict:
+        """Provides a representation of the current database connection as well as the system settings."""
+        raise NotImplementedError
+
+    @abc.abstractmethod
     def reset_connection(self) -> None:
         """Obtains a new network connection for the database. Useful for debugging purposes."""
         raise NotImplementedError
