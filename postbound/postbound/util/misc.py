@@ -1,9 +1,15 @@
 """Contains various utilities that did not fit any other category."""
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Any
 
 from postbound.util import jsonize
+
+
+def current_timestamp() -> str:
+    """Provides the current time (year-month-day hour:minute)"""
+    return datetime.now().strftime("%y-%m-%d %H:%M")
 
 
 def _wrap_version(v: Any) -> Version:

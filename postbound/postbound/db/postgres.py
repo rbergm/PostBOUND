@@ -56,7 +56,7 @@ class PostgresInterface(db.Database):
                 self._cursor.execute(query)
                 query_result = self._cursor.fetchall()
             except psycopg.Error as e:
-                print("[ERROR] for query:", query)
+                print("[ERROR]", utils.current_timestamp(), " :: for query:", query, "message =", str(e))
                 raise e
             if cache_enabled:
                 self._query_cache[query] = query_result

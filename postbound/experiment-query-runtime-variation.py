@@ -21,7 +21,7 @@ from postbound.experiments import workloads
 from postbound.optimizer import data
 from postbound.optimizer.joinorder import enumeration
 from postbound.optimizer.physops import operators
-from postbound.util import jsonize
+from postbound.util import jsonize, misc
 
 ExhaustiveJoinOrderingLimit = 1000
 QuerySlowdownToleranceFactor = 3
@@ -276,7 +276,7 @@ def main():
         return
 
     for label, query in workload.entries():
-        print(".. Now evaluating query", label)
+        print(".. Now evaluating query", label, "time =", misc.current_timestamp())
         query_runtimes = evaluate_query(label, query, db_instance=pg_db, db_system=pg_system)
 
         result_df = pd.DataFrame(query_runtimes)
