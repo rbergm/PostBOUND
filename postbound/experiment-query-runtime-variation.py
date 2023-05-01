@@ -23,32 +23,41 @@ from postbound.optimizer.joinorder import enumeration
 from postbound.optimizer.physops import operators
 from postbound.util import jsonize, misc
 
-ExhaustiveJoinOrderingLimit = 1000
-QuerySlowdownToleranceFactor = 3
-MinQueriesUntilDynamicTimeout = 10
-DefaultQueryTimeout = 120
-MinimumQueryTimeout = 30
-
-RestrictedOperatorSelection = True
-EnablePrewarming = True
-
-SkipExistingResults = True
-OutputFileFormat = "join-order-runtimes-{label}.csv"
-OutputFilePattern = r"join-order-runtimes-(?P<label>\w+).csv"
-OutputDirectory = "results/query-runtime-variation/"
-
 StopEvaluation = False
 CancelEvaluation = False
 workloads.workloads_base_dir = "../workloads"
 
 
-def skip_existing_results(workload: workloads.Workload) -> workloads.Workload:
-    if not SkipExistingResults:
+@dataclasses.dataclass(frozen=True)
+class ExperimentConfig:
+    exhaustive_join_ordering_limit: int = 100
+    query_slowdown_tolerance_factor: int = 3
+    min_queries_until_dynamic_timeout: int = 10
+    default_query_timeout: int = 120
+    minimum_query_timeout: int = 30
+
+    restricted_operator_selection: bool = True
+    enable_prewarming: bool = True
+
+    skip_existing_results: bool = True
+    output_file_format: str = "join-order-runtimes-{label}.csv"
+    output_file_pattern: str = r"join-order-runtimes-(?P<label>\w+).csv"
+    output_file_glob: str = "join-order-runtimes-*.csv"
+    output_directory: str = "results/query-runtime-variation/"
+
+    @staticmethod
+    def default() -> ExperimentConfig:
+        return ExperimentConfig()
+
+
+def skip_existing_results(workload: workloads.Workload, *,
+                          config: ExperimentConfig = ExperimentConfig.default()) -> workloads.Workload:
+    if not config.skip_existing_results:
         return workload
     existing_results = set()
-    result_directory = pathlib.Path(OutputDirectory)
-    for result_file in result_directory.glob("join-order-runtimes-*.csv"):
-        file_matcher = re.match(OutputFilePattern, result_file.name)
+    result_directory = pathlib.Path(config.output_directory)
+    for result_file in result_directory.glob(config.output_file_glob):
+        file_matcher = re.match(config.output_file_pattern, result_file.name)
         if not file_matcher:
             continue
         label = file_matcher.group("label")
@@ -58,7 +67,7 @@ def skip_existing_results(workload: workloads.Workload) -> workloads.Workload:
 
     if not existing_results:
         return workload
-    skipped_workload = workload.filter_by(lambda label, __: label not in existing_results)
+    skipped_workload = workload.filter_by(lambda l, __: l not in existing_results)
     print(".. Skipping existing results until label", skipped_workload.head()[0])
     return skipped_workload
 
@@ -71,7 +80,7 @@ def filter_for_label(workload: workloads.Workload) -> workloads.Workload:
         return workload.filter_by(lambda label, __: label == target)
     elif len(sys.argv) == 3:
         start, end = sys.argv[1:]
-        return workload.filter_by(lambda label, __: start <= label and label <= end)
+        return workload.filter_by(lambda label, __: start <= label <= end)
     else:
         allowed_labels = set(sys.argv[1:])
         return workload.filter_by(lambda label, __: label in allowed_labels)
@@ -95,11 +104,11 @@ def execute_query_handler(query: qal.SqlQuery, database: db.Database,
     duration_sender.send(query_duration)
 
 
-def generate_all_join_orders(query: qal.SqlQuery,
-                             exhaustive_enumerator: enumeration.ExhaustiveJoinOrderGenerator) -> list[data.JoinTree]:
+def generate_all_join_orders(query: qal.SqlQuery, exhaustive_enumerator: enumeration.ExhaustiveJoinOrderGenerator, *,
+                             config: ExperimentConfig = ExperimentConfig.default()) -> list[data.JoinTree]:
     exhaustive_join_order_generator = exhaustive_enumerator.all_join_orders_for(query)
     join_order_plans = []
-    for i in range(ExhaustiveJoinOrderingLimit):
+    for i in range(config.exhaustive_join_ordering_limit):
         try:
             next_join_order = next(exhaustive_join_order_generator)
             join_order_plans.append(next_join_order)
@@ -111,13 +120,14 @@ def generate_all_join_orders(query: qal.SqlQuery,
     return join_order_plans
 
 
-def generate_random_join_orders(query: qal.SqlQuery) -> list[data.JoinTree]:
+def generate_random_join_orders(query: qal.SqlQuery, *,
+                                config: ExperimentConfig = ExperimentConfig.default()) -> list[data.JoinTree]:
     random_enumerator = enumeration.RandomJoinOrderGenerator()
     join_order_plans = []
     random_plan_hashes = set()
     current_plan_idx = 0
     random_join_order_generator = random_enumerator.random_join_order_generator(query)
-    while current_plan_idx < ExhaustiveJoinOrderingLimit:
+    while current_plan_idx < config.exhaustive_join_ordering_limit:
         next_join_order = next(random_join_order_generator)
         next_hash = hash(next_join_order)
         if next_hash in random_plan_hashes:
@@ -143,12 +153,13 @@ class EvaluationResult:
     timeout: float
 
 
-def determine_timeout(total_query_runtime: float, n_executed_plans: int) -> float:
-    if n_executed_plans < MinQueriesUntilDynamicTimeout:
-        return DefaultQueryTimeout
+def determine_timeout(total_query_runtime: float, n_executed_plans: int, *,
+                      config: ExperimentConfig = ExperimentConfig.default()) -> float:
+    if n_executed_plans < config.min_queries_until_dynamic_timeout:
+        return config.default_query_timeout
     average_runtime = total_query_runtime / n_executed_plans
-    timeout = QuerySlowdownToleranceFactor * average_runtime
-    return max(timeout, MinimumQueryTimeout)
+    timeout = config.query_slowdown_tolerance_factor * average_runtime
+    return max(timeout, config.minimum_query_timeout)
 
 
 def restrict_to_hash_join(query: qal.SqlQuery) -> operators.PhysicalOperatorAssignment:
@@ -159,10 +170,10 @@ def restrict_to_hash_join(query: qal.SqlQuery) -> operators.PhysicalOperatorAssi
 
 
 def execute_single_query(label: str, query: qal.SqlQuery, join_order: data.JoinTree, *, n_executed_plans: int = 0,
-                         total_query_runtime: float = 0, db_system: systems.DatabaseSystem,
-                         db_instance: db.Database) -> EvaluationResult:
+                         total_query_runtime: float = 0, db_system: systems.DatabaseSystem, db_instance: db.Database,
+                         config: ExperimentConfig = ExperimentConfig.default()) -> EvaluationResult:
     query_generator = db_system.query_adaptor()
-    operator_selection = restrict_to_hash_join(query) if RestrictedOperatorSelection else None
+    operator_selection = restrict_to_hash_join(query) if config.restricted_operator_selection else None
 
     optimized_query = query_generator.adapt_query(query, join_order=join_order,
                                                   physical_operators=operator_selection)
@@ -197,21 +208,22 @@ def execute_single_query(label: str, query: qal.SqlQuery, join_order: data.JoinT
                             timeout=query_timeout)
 
 
-def prewarm_database(query: qal.SqlQuery, db_instance: db.Database) -> None:
-    if not EnablePrewarming:
+def prewarm_database(query: qal.SqlQuery, db_instance: db.Database, *,
+                     config: ExperimentConfig = ExperimentConfig.default()) -> None:
+    if not config.enable_prewarming:
         return
     for table in query.tables():
         db_instance.execute_query(f"SELECT pg_prewarm('{table.full_name}');", cache_enabled=False)
 
 
-def evaluate_query(label: str, query: qal.SqlQuery, *, db_instance: db.Database,
-                   db_system: systems.DatabaseSystem) -> Iterable[EvaluationResult]:
+def evaluate_query(label: str, query: qal.SqlQuery, *, db_instance: db.Database, db_system: systems.DatabaseSystem,
+                   config: ExperimentConfig = ExperimentConfig.default()) -> Iterable[EvaluationResult]:
     print("... Building all plans")
     exhaustive_enumerator = enumeration.ExhaustiveJoinOrderGenerator()
     join_order_plans = generate_all_join_orders(query, exhaustive_enumerator)
 
     should_sample_randomly = False
-    reached_exhaustion_limit = len(join_order_plans) == ExhaustiveJoinOrderingLimit
+    reached_exhaustion_limit = len(join_order_plans) == config.exhaustive_join_ordering_limit
     if reached_exhaustion_limit:
         # Special case: there exist exactly as many join orders for the query as the ExhaustiveJoinOrderingLimit
         # If this situation occurs, we don't want to fall back to random sampling because this would mean we need
@@ -260,7 +272,8 @@ def prepare_for_export(df: pd.DataFrame) -> pd.DataFrame:
 
 def main():
     signal.signal(signal.SIGINT, stop_evaluation)
-    os.makedirs(OutputDirectory, exist_ok=True)
+    config = ExperimentConfig.default()
+    os.makedirs(config.output_directory, exist_ok=True)
     pg_db = postgres.connect(config_file=".psycopg_connection_job")
     pg_system = systems.Postgres(pg_db)
 
@@ -281,7 +294,7 @@ def main():
 
         result_df = pd.DataFrame(query_runtimes)
         result_df["db_config"] = pg_db.inspect()
-        out_file = OutputDirectory + OutputFileFormat.format(label=label)
+        out_file = config.output_directory + config.output_file_format.format(label=label)
         result_df = prepare_for_export(result_df)
         result_df.to_csv(out_file, index=False)
 
