@@ -30,7 +30,7 @@ workloads.workloads_base_dir = "../workloads"
 
 @dataclasses.dataclass(frozen=True)
 class ExperimentConfig:
-    exhaustive_join_ordering_limit: int = 100
+    exhaustive_join_ordering_limit: int = 500
     query_slowdown_tolerance_factor: int = 3
     min_queries_until_dynamic_timeout: int = 10
     default_query_timeout: int = 120
@@ -178,7 +178,7 @@ def execute_single_query(label: str, query: qal.SqlQuery, join_order: data.JoinT
     optimized_query = query_generator.adapt_query(query, join_order=join_order,
                                                   physical_operators=operator_selection)
 
-    query_timeout = determine_timeout(total_query_runtime, n_executed_plans)
+    query_timeout = determine_timeout(total_query_runtime, n_executed_plans, config=config)
     query_duration_receiver, query_duration_sender = mp.Pipe(False)
 
     # TODO: what about query repetitions?
@@ -220,7 +220,7 @@ def evaluate_query(label: str, query: qal.SqlQuery, *, db_instance: db.Database,
                    config: ExperimentConfig = ExperimentConfig.default()) -> Iterable[EvaluationResult]:
     print("... Building all plans")
     exhaustive_enumerator = enumeration.ExhaustiveJoinOrderGenerator()
-    join_order_plans = generate_all_join_orders(query, exhaustive_enumerator)
+    join_order_plans = generate_all_join_orders(query, exhaustive_enumerator, config=config)
 
     should_sample_randomly = False
     reached_exhaustion_limit = len(join_order_plans) == config.exhaustive_join_ordering_limit
@@ -237,16 +237,18 @@ def evaluate_query(label: str, query: qal.SqlQuery, *, db_instance: db.Database,
 
     if should_sample_randomly:
         print("... Falling back to random sampling of join orders")
-        join_order_plans = generate_random_join_orders(query)
+        join_order_plans = generate_random_join_orders(query, config=config)
 
     n_executed_plans = 0
     total_query_runtime = 0
     query_runtimes = []
-    prewarm_database(query, db_instance)
+    prewarm_database(query, db_instance, config=config)
+    print("... Starting query execution")
     for join_order in join_order_plans:
         evaluation_result = execute_single_query(label, query, join_order, n_executed_plans=n_executed_plans,
                                                  total_query_runtime=total_query_runtime,
-                                                 db_system=db_system, db_instance=db_instance)
+                                                 db_system=db_system, db_instance=db_instance,
+                                                 config=config)
         n_executed_plans += 1
         total_query_runtime += (evaluation_result.execution_time if np.isfinite(evaluation_result.execution_time)
                                 else evaluation_result.timeout)
@@ -283,17 +285,19 @@ def main():
         print(".. Filtering workload for queries", sys.argv[1:])
         workload = filter_for_label(workload)
     else:
-        workload = skip_existing_results(workload)
+        workload = skip_existing_results(workload, config=config)
 
     if CancelEvaluation:
+        # in case evaluation was cancelled shortly after starting the experiment (and before running the first query),
+        # exit here
         return
 
     for label, query in workload.entries():
         print(".. Now evaluating query", label, "time =", misc.current_timestamp())
-        query_runtimes = evaluate_query(label, query, db_instance=pg_db, db_system=pg_system)
+        query_runtimes = evaluate_query(label, query, db_instance=pg_db, db_system=pg_system, config=config)
 
         result_df = pd.DataFrame(query_runtimes)
-        result_df["db_config"] = pg_db.inspect()
+        result_df["db_config"] = [pg_db.inspect()] * len(result_df)
         out_file = config.output_directory + config.output_file_format.format(label=label)
         result_df = prepare_for_export(result_df)
         result_df.to_csv(out_file, index=False)
