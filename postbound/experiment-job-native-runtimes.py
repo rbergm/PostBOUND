@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 import os
 from dataclasses import dataclass
 from datetime import datetime
@@ -10,6 +9,7 @@ import pandas as pd
 from postbound.db import postgres
 from postbound.experiments import workloads
 from postbound.qal import transform
+from postbound.util import jsonize
 
 
 @dataclass
@@ -34,7 +34,8 @@ for label, query in workloads.job().entries():
     query_end = datetime.now()
     execution_time = (query_end - query_start).total_seconds()
     query_plan = pg_db.execute_query(transform.as_explain_analyze(query))
-    result_wrapper = BenchmarkResult(label, str(query), execution_time, json.dumps(query_plan), json.dumps(db_config))
+    result_wrapper = BenchmarkResult(label, str(query), execution_time, jsonize.to_json(query_plan),
+                                     jsonize.to_json(db_config))
     benchmark_results.append(result_wrapper)
 
 df = pd.DataFrame(benchmark_results)
