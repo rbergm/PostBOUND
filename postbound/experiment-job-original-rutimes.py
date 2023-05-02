@@ -31,5 +31,5 @@ for label, query in workloads.job().entries():
     benchmark_results.append(result_wrapper)
 
 df = pd.DataFrame(benchmark_results)
-os.makedirs("results/ax1/")
+os.makedirs("results/ax1/", exist_ok=True)
 df.to_csv("results/ax1/job-native-runtimes.csv", index=False)
