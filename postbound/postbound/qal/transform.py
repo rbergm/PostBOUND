@@ -185,6 +185,11 @@ def as_explain(query: QueryType, explain: clauses.Explain = clauses.Explain.plan
     return qal.build_query(query_clauses + [explain])
 
 
+def as_explain_analyze(query: QueryType) -> QueryType:
+    """Transforms the given query into an EXPLAIN ANALYZE query."""
+    return as_explain(query, clauses.Explain.explain_analyze())
+
+
 def add_clause(query: qal.SqlQuery, clauses_to_add: clauses.BaseClause | Iterable[clauses.BaseClause]) -> qal.SqlQuery:
     """Creates a new SQL query with the given additional clauses.
 
