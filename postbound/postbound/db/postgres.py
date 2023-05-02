@@ -8,14 +8,15 @@ import concurrent.futures
 import os
 import textwrap
 import threading
-from typing import Any
+from collections.abc import Iterable
+from typing import Any, Optional
 
 import psycopg
 import psycopg.rows
 
 from postbound.db import db
 from postbound.qal import qal, base, clauses, transform
-from postbound.util import logging, misc as utils
+from postbound.util import collections as collection_utils, logging, misc as utils
 
 HintBlock = collections.namedtuple("HintBlock", ["preparatory_statements", "hints", "query"])
 
@@ -121,6 +122,17 @@ class PostgresInterface(db.Database):
     def close(self) -> None:
         self._cursor.close()
         self._connection.close()
+
+    def prewarm_tables(self, tables: Optional[base.TableReference | Iterable[base.TableReference]] = None,
+                       *more_tables: base.TableReference) -> None:
+        tables = list(collection_utils.enlist(tables)) + list(more_tables)
+        if not tables:
+            return
+        tables = set(tab.full_name for tab in tables)  # eliminate duplicates if tables are selected multiple times
+        prewarm_call = [f"pg_prewarm('{tab}')" for tab in tables]
+        prewarm_text = ", ".join(prewarm_call)
+        prewarm_query = f"SELECT {prewarm_text}"
+        self._cursor.execute(prewarm_query)
 
     def _prepare_query_execution(self, query: qal.SqlQuery | str, *, drop_explain: bool = False) -> str:
         """Provides the query in a unified format, taking care of preparatory statements as necessary.
