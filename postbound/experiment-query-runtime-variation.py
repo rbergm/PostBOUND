@@ -27,7 +27,7 @@ from postbound.util import jsonize, misc
 
 StopEvaluation = False
 CancelEvaluation = False
-Interactive = False
+Interactive = True
 workloads.workloads_base_dir = "../workloads"
 
 
@@ -38,8 +38,10 @@ class ExperimentConfig:
     min_queries_until_dynamic_timeout: int = 10
     default_query_timeout: int = 120
     minimum_query_timeout: int = 30
+    timeout_mode: str = "native"  # allowed values: "native" / "dynamic"
+    native_runtimes_df: str = "results/job/job-native-runtimes.csv"
 
-    operator_selection: str = "optimal"  # allowed values: "native" / "hashjoin" / "optimal"
+    operator_selection: str = "native"  # allowed values: "native" / "hashjoin" / "optimal"
     enable_prewarming: bool = True
     true_cardinalities_df: str = "results/job/job-intermediate-cardinalities.csv"
 
@@ -157,8 +159,16 @@ class EvaluationResult:
     timeout: float
 
 
-def determine_timeout(total_query_runtime: float, n_executed_plans: int, *,
+def determine_timeout(label: str, total_query_runtime: float, n_executed_plans: int, *,
                       config: ExperimentConfig = ExperimentConfig.default()) -> float:
+    if config.timeout_mode == "native":
+        df = pd.read_csv(config.native_runtimes_df)
+        native_runtime = df[df.label == label]["execution_time"].iloc[0]
+        return config.query_slowdown_tolerance_factor * native_runtime
+
+    if not config.timeout_mode == "dynamic":
+        raise ValueError("Unknown timeout mode: " + config.timeout_mode)
+
     if n_executed_plans < config.min_queries_until_dynamic_timeout:
         return config.default_query_timeout
     average_runtime = total_query_runtime / n_executed_plans
@@ -203,7 +213,7 @@ def execute_single_query(label: str, query: qal.SqlQuery, join_order: data.JoinT
     optimized_query = query_generator.adapt_query(query, join_order=join_order, physical_operators=operator_selection,
                                                   plan_parameters=plan_params)
 
-    query_timeout = determine_timeout(total_query_runtime, n_executed_plans, config=config)
+    query_timeout = determine_timeout(label, total_query_runtime, n_executed_plans, config=config)
     query_duration_receiver, query_duration_sender = mp.Pipe(False)
 
     # TODO: what about query repetitions?
@@ -313,6 +323,10 @@ def read_config() -> tuple[ExperimentConfig, Sequence[str]]:
                             help="Default static query timeout.")
     arg_parser.add_argument("--min-timeout", action="store", type=int, default=30,
                             help="Minimum dynamic query timeout.")
+    arg_parser.add_argument("--timeout-mode", action="store", default="dynamic", choices=["native", "dynamic"],
+                            help="Calculate timeout based on current average runtime ('dynamic'), or based on the "
+                                 "runtime of a natively optimized query ('native'). The tolerance factor is applied "
+                                 "normally.")
 
     arg_parser.add_argument("--prewarm", action="store_true", default=False, help="Pre-warm the database buffer pool.")
     arg_parser.add_argument("--operator-selection", action="store", default="native",
