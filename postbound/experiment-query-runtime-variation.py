@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import argparse
 import dataclasses
 import multiprocessing as mp
 import multiprocessing.connection
@@ -7,7 +8,7 @@ import os
 import pathlib
 import re
 import signal
-import sys
+from collections.abc import Sequence
 from datetime import datetime
 from typing import Iterable
 
@@ -16,15 +17,17 @@ import pandas as pd
 
 from postbound.db import db, postgres
 from postbound.db.systems import systems
-from postbound.qal import qal, transform
+from postbound.qal import qal, transform, parser
 from postbound.experiments import workloads
 from postbound.optimizer import data
 from postbound.optimizer.joinorder import enumeration
 from postbound.optimizer.physops import operators
+from postbound.optimizer.planmeta import hints as params
 from postbound.util import jsonize, misc
 
 StopEvaluation = False
 CancelEvaluation = False
+Interactive = False
 workloads.workloads_base_dir = "../workloads"
 
 
@@ -36,8 +39,9 @@ class ExperimentConfig:
     default_query_timeout: int = 120
     minimum_query_timeout: int = 30
 
-    restricted_operator_selection: bool = True
+    operator_selection: str = "optimal"  # allowed values: "native" / "hashjoin" / "optimal"
     enable_prewarming: bool = True
+    true_cardinalities_df: str = "results/job/job-intermediate-cardinalities.csv"
 
     skip_existing_results: bool = True
     output_file_format: str = "join-order-runtimes-{label}.csv"
@@ -72,17 +76,17 @@ def skip_existing_results(workload: workloads.Workload, *,
     return skipped_workload
 
 
-def filter_for_label(workload: workloads.Workload) -> workloads.Workload:
-    if len(sys.argv) < 2:
+def filter_for_label(workload: workloads.Workload, labels: Sequence[str]) -> workloads.Workload:
+    if not len(labels):
         return workload
-    if len(sys.argv) == 2:
-        target = sys.argv[1]
+    if len(labels) == 1:
+        target = labels[0]
         return workload.filter_by(lambda label, __: label == target)
-    elif len(sys.argv) == 3:
-        start, end = sys.argv[1:]
+    elif len(labels) == 2:
+        start, end = labels
         return workload.filter_by(lambda label, __: start <= label <= end)
     else:
-        allowed_labels = set(sys.argv[1:])
+        allowed_labels = set(labels)
         return workload.filter_by(lambda label, __: label in allowed_labels)
 
 
@@ -169,14 +173,35 @@ def restrict_to_hash_join(query: qal.SqlQuery) -> operators.PhysicalOperatorAssi
     return operator_selection
 
 
+def true_cardinality_hints(label: str, config: ExperimentConfig) -> params.PlanParameterization:
+    card_df = pd.read_csv(config.true_cardinalities_df)
+    relevant_queries = card_df[card_df.label == label].copy()
+    relevant_queries["query_fragment"] = relevant_queries["query_fragment"].apply(parser.parse_query)
+    plan_params = params.PlanParameterization()
+    for __, row in relevant_queries.iterrows():
+        plan_params.add_cardinality_hint(row["query_fragment"].tables(), row["cardinality"])
+    return plan_params
+
+
 def execute_single_query(label: str, query: qal.SqlQuery, join_order: data.JoinTree, *, n_executed_plans: int = 0,
                          total_query_runtime: float = 0, db_system: systems.DatabaseSystem, db_instance: db.Database,
                          config: ExperimentConfig = ExperimentConfig.default()) -> EvaluationResult:
     query_generator = db_system.query_adaptor()
-    operator_selection = restrict_to_hash_join(query) if config.restricted_operator_selection else None
 
-    optimized_query = query_generator.adapt_query(query, join_order=join_order,
-                                                  physical_operators=operator_selection)
+    if config.operator_selection == "native":
+        operator_selection = None
+        plan_params = None
+    elif config.operator_selection == "hashjoin":
+        operator_selection = restrict_to_hash_join(query)
+        plan_params = None
+    elif config.operator_selection == "optimal":
+        operator_selection = None
+        plan_params = true_cardinality_hints(label, config)
+    else:
+        raise ValueError("Unknown operator selection strategy: " + config.operator_selection)
+
+    optimized_query = query_generator.adapt_query(query, join_order=join_order, physical_operators=operator_selection,
+                                                  plan_parameters=plan_params)
 
     query_timeout = determine_timeout(total_query_runtime, n_executed_plans, config=config)
     query_duration_receiver, query_duration_sender = mp.Pipe(False)
@@ -272,18 +297,67 @@ def prepare_for_export(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
+def read_config() -> tuple[ExperimentConfig, Sequence[str]]:
+    if not Interactive:
+        return ExperimentConfig.default(), ["1a"]
+
+    arg_parser = argparse.ArgumentParser(description="Determines the difference in query runtime depending on the "
+                                                     "selected join order for queries in the Join Order Benchmark.")
+
+    arg_parser.add_argument("--max-plans", action="store", type=int, default=500,
+                            help="The maximum number of join orders to evaluate per query.")
+    arg_parser.add_argument("--slowdown-tolerance", action="store", type=float, default=2.5,
+                            help="Maximum factor a query can be slower than the dynamic timeout before being "
+                                 "cancelled.")
+    arg_parser.add_argument("--default-timeout", action="store", type=int, default=120,
+                            help="Default static query timeout.")
+    arg_parser.add_argument("--min-timeout", action="store", type=int, default=30,
+                            help="Minimum dynamic query timeout.")
+
+    arg_parser.add_argument("--prewarm", action="store_true", default=False, help="Pre-warm the database buffer pool.")
+    arg_parser.add_argument("--operator-selection", action="store", default="native",
+                            choices=["native", "hashjoin", "optimal"],
+                            help="Modify the operator selection. native for unchanged operators, hashjoin to "
+                                 "restrict all joins or optimal to derive from true cardinalities.")
+
+    arg_parser.add_argument("--out-dir", action="store", type=str, default="results/query-runtime-variation/",
+                            help="Directory where to store the experiment results.")
+
+    arg_parser.add_argument("--execute-all", action="store_true", default=False,
+                            help="Force evaluation of all benchmark queries.")
+
+    arg_parser.add_argument("labels", action="store", nargs="*",
+                            help="Filters the workload for the given query labels: "
+                                 "0 labels means all queries, "
+                                 "1 label filters for exactly that query, "
+                                 "2 labels filter for all queries between (and including) the given labels, "
+                                 "3 or more labels again filter for exactly the given labels")
+
+    args = arg_parser.parse_args()
+    config = ExperimentConfig(exhaustive_join_ordering_limit=args.max_plans,
+                              query_slowdown_tolerance_factor=args.slowdown_tolerance,
+                              default_query_timeout=args.default_timeout,
+                              minimum_query_timeout=args.min_timeout,
+                              enable_prewarming=args.prewarm,
+                              operator_selection=args.operator_selection,
+                              output_directory=args.out_dir if args.out_dir.endswith("/") else args.out_dir + "/",
+                              skip_existing_results=not args.execute_all)
+    labels = list(args.labels)
+    return config, labels
+
+
 def main():
     signal.signal(signal.SIGINT, stop_evaluation)
-    config = ExperimentConfig.default()
+    config, labels = read_config()
     os.makedirs(config.output_directory, exist_ok=True)
     pg_db = postgres.connect(config_file=".psycopg_connection_job")
     pg_system = systems.Postgres(pg_db)
 
     workload = workloads.job()
 
-    if len(sys.argv) > 1:
-        print(".. Filtering workload for queries", sys.argv[1:])
-        workload = filter_for_label(workload)
+    if labels:
+        print(".. Filtering workload for queries", labels)
+        workload = filter_for_label(workload, labels)
     else:
         workload = skip_existing_results(workload, config=config)
 
