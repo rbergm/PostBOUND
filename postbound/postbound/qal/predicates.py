@@ -661,6 +661,141 @@ def as_predicate(column: base.ColumnReference, operation: expr.LogicalSqlOperato
     return BinaryPredicate(operation, column, expr.as_expression(argument))
 
 
+def _unwrap_expression(expression: expr.SqlExpression) -> base.ColumnReference | object:
+    if isinstance(expression, expr.StaticValueExpression):
+        return expression.value
+    elif isinstance(expression, expr.ColumnExpression):
+        return expression.column
+    else:
+        raise ValueError("Cannot unwrap expression " + str(expression))
+
+
+def _attempt_filter_unwrap(predicate: AbstractPredicate
+                           ) -> Optional[tuple[base.ColumnReference, expr.LogicalSqlOperators, object]]:
+    if not predicate.is_filter() or not isinstance(predicate, BasePredicate):
+        return None
+
+    if isinstance(predicate, BinaryPredicate):
+        try:
+            left, right = _unwrap_expression(predicate.first_argument), _unwrap_expression(predicate.second_argument)
+            operation = predicate.operation
+            left, right = (left, right) if isinstance(left, base.ColumnReference) else (right, left)
+            return left, operation, right
+        except ValueError:
+            return None
+    elif isinstance(predicate, BetweenPredicate):
+        try:
+            column = _unwrap_expression(predicate.column)
+            start = _unwrap_expression(predicate.interval_start)
+            end = _unwrap_expression(predicate.interval_end)
+            return column, expr.LogicalSqlOperators.Between, (start, end)
+        except ValueError:
+            return None
+    elif isinstance(predicate, InPredicate):
+        try:
+            column = _unwrap_expression(predicate.column)
+            values = [_unwrap_expression(val) for val in predicate.values]
+            return column, expr.LogicalSqlOperators.In, tuple(values)
+        except ValueError:
+            return None
+    else:
+        raise ValueError("Unknown predicate type: " + str(predicate))
+
+
+class SimplifiedFilterView(AbstractPredicate):
+    """The intent behind this view is to provide more streamlined and direct access to filter predicates.
+
+    As the name suggests, the view is a read-only predicate, i.e. it cannot be created on its own and has to be derived
+    from a base predicate (either a binary predicate, a BETWEEN predicate or an IN predicate). Afterward, it provides
+    read-only access to the predicate being filtered, the filter operation, as well as the values used to restrict
+    the allowed column instances.
+
+    Note that not all base predicates can be represented as a simplified view. In order for the view to work, both the
+    column as well as the filter values cannot be modified by other expressions such as casts or mathematical
+    expressions.
+    """
+
+    @staticmethod
+    def wrap(predicate: AbstractPredicate) -> SimplifiedFilterView:
+        """Transforms the given predicate into a simplified view. Raises an error if that is not possible."""
+        return SimplifiedFilterView(predicate)
+
+    @staticmethod
+    def can_wrap(predicate: AbstractPredicate) -> bool:
+        """Checks, whether the given predicate can be represented as a simplified view"""
+        return _attempt_filter_unwrap(predicate) is not None
+
+    @staticmethod
+    def wrap_all(predicates: Iterable[AbstractPredicate]) -> Sequence[AbstractPredicate]:
+        """Transforms each of the given predicates into a simplified view if that is possible.
+
+        If none of the predicates can be simplified, an empty sequence is returned.
+        """
+        return [SimplifiedFilterView.wrap(pred) for pred in predicates if SimplifiedFilterView.can_wrap(pred)]
+
+    def __init__(self, predicate: AbstractPredicate) -> None:
+        column, operation, value = _attempt_filter_unwrap(predicate)
+        self._column = column
+        self._operation = operation
+        self._value = value
+        self._predicate = predicate
+
+        hash_val = hash((column, operation, value))
+        super().__init__(hash_val)
+
+    @property
+    def column(self) -> base.ColumnReference:
+        """Get the filtered column."""
+        return self._column
+
+    @property
+    def operation(self) -> expr.LogicalSqlOperators:
+        """Get the SQL operation used for the filter (e.g. IN or <>)."""
+        return self._operation
+
+    @property
+    def value(self) -> object | tuple[object] | Sequence[object]:
+        """Get the filter value.
+
+        For a binary predicate, this is just the value itself. For a BETWEEN predicate, this is tuple in the form
+        `(lower, upper)` and for an IN predicate, this is a sequence of the allowed values.
+        """
+        return self._value
+
+    def unwrap(self) -> AbstractPredicate:
+        """Get the original predicate that is represented by this view."""
+        return self._predicate
+
+    def is_compound(self) -> bool:
+        return False
+
+    def is_join(self) -> bool:
+        return False
+
+    def columns(self) -> set[base.ColumnReference]:
+        return {self.column}
+
+    def itercolumns(self) -> Iterable[base.ColumnReference]:
+        return [self.column]
+
+    def iterexpressions(self) -> Iterable[expr.SqlExpression]:
+        return []
+
+    def join_partners(self) -> set[tuple[base.ColumnReference, base.ColumnReference]]:
+        return set()
+
+    def base_predicates(self) -> Iterable[AbstractPredicate]:
+        return [self]
+
+    __hash__ = AbstractPredicate.__hash__
+
+    def __eq__(self, other: object) -> bool:
+        return isinstance(other, type(self)) and self.unwrap() == other.unwrap()
+
+    def __str__(self) -> str:
+        return str(self.unwrap())
+
+
 def _collect_filter_predicates(predicate: AbstractPredicate) -> set[AbstractPredicate]:
     """Provides all base filter predicates that are contained in the given predicate hierarchy.
 
