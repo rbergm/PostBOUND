@@ -222,6 +222,56 @@ def replace_clause(query: QueryType, replacements: clauses.BaseClause | Iterable
     return qal.build_query(replaced_clauses)
 
 
+def _perform_predicate_replacement(current_predicate: preds.AbstractPredicate,
+                                   target_predicate: preds.AbstractPredicate,
+                                   new_predicate: preds.AbstractPredicate) -> preds.AbstractPredicate:
+    """Performs the designated predicate replacement, moving deeper into the predicate tree as necessary."""
+    if current_predicate == target_predicate:
+        return new_predicate
+
+    if isinstance(current_predicate, preds.CompoundPredicate):
+        if current_predicate.operation == expr.LogicalSqlCompoundOperators.Not:
+            replaced_children = [_perform_predicate_replacement(current_predicate.children,
+                                                                target_predicate, new_predicate)]
+        else:
+            replaced_children = [_perform_predicate_replacement(child_pred, target_predicate, new_predicate)
+                                 for child_pred in current_predicate.children]
+        return preds.CompoundPredicate(current_predicate.operation, replaced_children)
+    else:
+        return current_predicate
+
+
+def replace_predicate(query: qal.ImplicitSqlQuery, predicate_to_replace: preds.AbstractPredicate,
+                      new_predicate: preds.AbstractPredicate) -> qal.ImplicitSqlQuery:
+    """Rewrites the given query to use `new_predicate` in all occurrences of the other predicate.
+
+    In the current implementation this does only work for top-level predicates, i.e. subqueries are not considered.
+    Furthermore, only the WHERE clause and the HAVING clause are modified.
+
+    If the predicate to replace is not found, nothing happens.
+    """
+    # TODO: also allow replacement in explicit SQL queries
+    # TODO: allow predicate replacement in subqueries
+    if not query.where_clause and not query.having_clause:
+        return query
+
+    if query.where_clause:
+        replaced_predicate = _perform_predicate_replacement(query.where_clause.predicate, predicate_to_replace,
+                                                            new_predicate)
+        replaced_where = clauses.Where(replaced_predicate)
+    else:
+        replaced_where = None
+
+    if query.having_clause:
+        replaced_predicate = _perform_predicate_replacement(query.having_clause.condition, predicate_to_replace,
+                                                            new_predicate)
+        replaced_having = clauses.Having(replaced_predicate)
+    else:
+        replaced_having = None
+
+    return replace_clause(query, [clause for clause in (replaced_where, replaced_having) if clause])
+
+
 def _rename_columns_in_query(query: QueryType,
                              available_renamings: dict[base.ColumnReference, base.ColumnReference]) -> QueryType:
     """Renames all columns in the query predicate according to the available renamings.

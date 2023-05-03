@@ -449,3 +449,27 @@ class StarExpression(SqlExpression):
 
     def __str__(self) -> str:
         return "*"
+
+
+def as_expression(value: object) -> SqlExpression:
+    """Transforms the given value into the most appropriate `SqlExpression` instance.
+
+    The following rules are applied:
+
+    - `ColumnReference` becomes `ColumnExpression`
+    - `SqlQuery` becomes `SubqueryExpression`
+    - the star-string `*` becomes a `StarExpression`
+
+    All other values become a `StaticValueExpression`.
+    """
+    if isinstance(value, SqlExpression):
+        return value
+
+    if isinstance(value, base.ColumnReference):
+        return ColumnExpression(value)
+    elif isinstance(value, qal.SqlQuery):
+        return SubqueryExpression(value)
+
+    if value == "*":
+        return StarExpression()
+    return StaticValueExpression(value)

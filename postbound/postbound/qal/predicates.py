@@ -4,6 +4,7 @@ from __future__ import annotations
 import abc
 import functools
 import itertools
+import warnings
 from collections.abc import Collection, Iterable, Iterator, Sequence
 from typing import Type, Union, Optional
 
@@ -626,6 +627,38 @@ class CompoundPredicate(AbstractPredicate):
             return " AND ".join(str(child) for child in self.children)
         else:
             raise ValueError(f"Unknown operation: '{self.operation}'")
+
+
+def as_predicate(column: base.ColumnReference, operation: expr.LogicalSqlOperators,
+                 *arguments) -> AbstractPredicate:
+    """Utility method to quickly construct predicate instances.
+
+    The given arguments are transformed into appropriate expression objects as necessary.
+
+    The specific type of generated predicate is determined by the given operation. The following rules are applied:
+
+    - for BETWEEN predicates, the arguments can be either two values, or a tuple of values
+    (additional arguments are ignored)
+    - for IN predicates, the arguments can be either a number of arguments, or a (nested) iterable of arguments
+    - for all other binary predicates exactly one additional argument must be given (and an error is raised if that
+    is not the case)
+    """
+    column = expr.ColumnExpression(column)
+
+    if operation == expr.LogicalSqlOperators.Between:
+        if len(arguments) == 1:
+            lower, upper = arguments[0]
+        else:
+            lower, upper, *__ = arguments
+        return BetweenPredicate(column, (expr.as_expression(lower), expr.as_expression(upper)))
+    elif operation == expr.LogicalSqlOperators.In:
+        arguments = collection_utils.flatten(arguments)
+        return InPredicate(column, [expr.as_expression(value) for value in arguments])
+    elif len(arguments) != 1:
+        raise ValueError("Too many arguments for binary predicate: " + str(arguments))
+
+    argument = arguments[0]
+    return BinaryPredicate(operation, column, expr.as_expression(argument))
 
 
 def _collect_filter_predicates(predicate: AbstractPredicate) -> set[AbstractPredicate]:
