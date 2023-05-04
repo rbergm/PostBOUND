@@ -19,10 +19,10 @@ class PlanParameterization:
     """
 
     def __init__(self) -> None:
-        self.cardinality_hints: dict[frozenset[base.TableReference], int] = {}
+        self.cardinality_hints: dict[frozenset[base.TableReference], int | float] = {}
         self.parallel_worker_hints: dict[frozenset[base.TableReference], int] = {}
 
-    def add_cardinality_hint(self, tables: Iterable[base.TableReference], cardinality: int) -> None:
+    def add_cardinality_hint(self, tables: Iterable[base.TableReference], cardinality: int | float) -> None:
         """Assigns the given cardinality hint to the (join of) tables."""
         self.cardinality_hints[frozenset(tables)] = cardinality
 

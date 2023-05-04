@@ -3,9 +3,13 @@ from __future__ import annotations
 
 import enum
 import typing
+from collections.abc import Collection
+from dataclasses import dataclass
 from typing import Any, Iterable
 
-from postbound.qal import base, qal
+import numpy as np
+
+from postbound.qal import base
 
 
 class ScanOperators(enum.Enum):
@@ -27,6 +31,90 @@ class JoinOperators(enum.Enum):
     HashJoin = "Hash Join"
     SortMergeJoin = "Sort-Merge Join"
     IndexNestedLoopJoin = "Idx. NLJ"
+
+
+@dataclass(frozen=True)
+class ScanOperatorAssignment:
+    operator: ScanOperators
+    table: base.TableReference
+    parallel_workers: float | int = np.nan
+
+    def inspect(self) -> str:
+        return f"USING {self.operator}" if self.operator else ""
+
+
+class JoinOperatorAssignment:
+    def __init__(self, operator: JoinOperators, join: Collection[base.TableReference], *,
+                 parallel_workers: float | int = np.nan) -> None:
+        if not join:
+            raise ValueError("Joined tables must be given")
+        self._operator = operator
+        self._join = frozenset(join)
+        self._parallel_workers = parallel_workers
+
+        self._hash_val = hash((self._operator, self._join, self._parallel_workers))
+
+    @property
+    def operator(self) -> JoinOperators:
+        return self._operator
+
+    @property
+    def join(self) -> frozenset[base.TableReference]:
+        return self._join
+
+    @property
+    def parallel_workers(self) -> float | int:
+        return self._parallel_workers
+
+    def inspect(self) -> str:
+        return f"USING {self.operator}" if self.operator else ""
+
+    def is_directional(self) -> bool:
+        return False
+
+    def __hash__(self) -> int:
+        return self._hash_val
+
+    def __eq__(self, other: object) -> bool:
+        return (isinstance(other, type(self))
+                and self._operator == other._operator
+                and self._join == other._join
+                and self._parallel_workers == other._parallel_workers)
+
+    def __repr__(self) -> str:
+        return str(self)
+
+    def __str__(self) -> str:
+        return f"{self.operator}({self.join})"
+
+
+class DirectionalJoinOperatorAssignment(JoinOperatorAssignment):
+    def __init__(self, operator: JoinOperators, inner: Collection[base.TableReference],
+                 outer: Collection[base.TableReference], *, parallel_workers: float | int = np.nan) -> None:
+        if not inner or not outer:
+            raise ValueError("Both inner and outer relations must be given")
+        self._inner = frozenset(inner)
+        self._outer = frozenset(outer)
+        super().__init__(operator, self._inner | self._outer, parallel_workers=parallel_workers)
+
+    @property
+    def inner(self) -> frozenset[base.TableReference]:
+        return self._inner
+
+    @property
+    def outer(self) -> frozenset[base.TableReference]:
+        return self._outer
+
+    def is_directional(self) -> bool:
+        return True
+
+    __hash__ = JoinOperatorAssignment.__hash__
+
+    def __eq__(self, other: object) -> bool:
+        return (isinstance(other, type(self))
+                and self._inner == other._inner
+                and self._outer == other._outer
+                and super().__eq__(other))
 
 
 PhysicalOperator = typing.Union[ScanOperators, JoinOperators]
@@ -59,11 +147,10 @@ class PhysicalOperatorAssignment:
     the join operator and supplying an operator will return the global setting.
     """
 
-    def __init__(self, query: qal.SqlQuery) -> None:
-        self.query = query
+    def __init__(self) -> None:
         self.global_settings: dict[ScanOperators | JoinOperators, bool] = {}
-        self.join_operators: dict[frozenset[base.TableReference], JoinOperators] = {}
-        self.scan_operators: dict[base.TableReference, ScanOperators] = {}
+        self.join_operators: dict[frozenset[base.TableReference], JoinOperatorAssignment] = {}
+        self.scan_operators: dict[base.TableReference, ScanOperatorAssignment] = {}
         self.system_specific_settings: dict[str, Any] = {}
 
     def set_operator_enabled_globally(self, operator: ScanOperators | JoinOperators, enabled: bool, *,
@@ -87,13 +174,13 @@ class PhysicalOperatorAssignment:
             self.join_operators = {join: current_setting for join, current_setting in self.join_operators.items()
                                    if current_setting != operator}
 
-    def set_join_operator(self, tables: Iterable[base.TableReference], operator: JoinOperators) -> None:
+    def set_join_operator(self, join_operator: JoinOperatorAssignment) -> None:
         """Enforces the specified operator for the join that consists of the given tables."""
-        self.join_operators[frozenset(tables)] = operator
+        self.join_operators[join_operator.join] = join_operator
 
-    def set_scan_operator(self, base_table: base.TableReference, operator: ScanOperators) -> None:
+    def set_scan_operator(self, scan_operator: ScanOperatorAssignment) -> None:
         """Enforces the specified scan operator for the given base table."""
-        self.scan_operators[base_table] = operator
+        self.scan_operators[scan_operator.table] = scan_operator
 
     def set_system_settings(self, setting_name: str = "", setting_value: Any = None, **kwargs) -> None:
         """Stores the given system setting.
@@ -123,7 +210,7 @@ class PhysicalOperatorAssignment:
 
         In case of contradicting assignments, the `other_settings` take precedence.
         """
-        merged_assignment = PhysicalOperatorAssignment(self.query)
+        merged_assignment = PhysicalOperatorAssignment()
         merged_assignment.global_settings = self.global_settings | other_assignment.global_settings
         merged_assignment.join_operators = self.join_operators | other_assignment.join_operators
         merged_assignment.scan_operators = self.scan_operators | other_assignment.scan_operators
@@ -131,9 +218,16 @@ class PhysicalOperatorAssignment:
                                                       | other_assignment.system_specific_settings)
         return merged_assignment
 
+    def global_settings_only(self) -> PhysicalOperatorAssignment:
+        """Provides only those settings of the assignment that affect all operators."""
+        global_assignment = PhysicalOperatorAssignment()
+        global_assignment.global_settings = dict(self.global_settings)
+        global_assignment.system_specific_settings = dict(self.system_specific_settings)
+        return global_assignment
+
     def clone(self) -> PhysicalOperatorAssignment:
         """Provides a copy of the current settings."""
-        cloned_assignment = PhysicalOperatorAssignment(self.query)
+        cloned_assignment = PhysicalOperatorAssignment()
         cloned_assignment.global_settings = dict(self.global_settings)
         cloned_assignment.join_operators = dict(self.join_operators)
         cloned_assignment.scan_operators = dict(self.scan_operators)
@@ -141,7 +235,7 @@ class PhysicalOperatorAssignment:
         return cloned_assignment
 
     def __getitem__(self, item: base.TableReference | Iterable[base.TableReference] | ScanOperators | JoinOperators
-                    ) -> ScanOperators | JoinOperators | bool | None:
+                    ) -> ScanOperatorAssignment | JoinOperatorAssignment | bool | None:
         if isinstance(item, ScanOperators) or isinstance(item, JoinOperators):
             return self.global_settings.get(item, None)
         elif isinstance(item, base.TableReference):

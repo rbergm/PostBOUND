@@ -13,14 +13,15 @@ from __future__ import annotations
 
 import abc
 import typing
-import collections
-from typing import Generic, Union
+from typing import Generic
 
 from postbound.db import db
-from postbound.qal import base, qal
-from postbound.optimizer import data
+from postbound.qal import base, qal, predicates
+from postbound.optimizer import jointree
 from postbound.optimizer.bounds import scans
 from postbound.util import collections as collection_utils, dicts as dict_utils
+
+# TODO: adjust documentation
 
 ColumnType = typing.TypeVar("ColumnType")
 """The type of the columns for which statistics are generated."""
@@ -39,27 +40,6 @@ is 3.
 
 MostCommonElements = typing.NewType("MostCommonElements", list[tuple[Generic[ColumnType], int]])
 """Type alias for top-k lists statistics. The top-k list is generic over the actual column type."""
-
-
-class UpperBoundsContainer(collections.UserDict[Union[base.TableReference, data.JoinTree], int]):
-    """This container stores upper bounds for intermediate results or candidate tables.
-
-    If a new intermediate result is stored, the container will trigger updates on the underlying statistics by itself.
-    The underlying statistics container has to be supplied during instantiation of this upper bounds container.
-
-    The management and interpretation of the upper bounds/cardinality estimates is completely up to the user of the
-    container.
-    """
-
-    def __init__(self, stats_container: StatisticsContainer, disable_auto_updates: bool = False):
-        super().__init__()
-        self._stats_container = stats_container
-        self._disable_auto_updates = disable_auto_updates
-
-    def __setitem__(self, key: base.TableReference | data.JoinTree, value: int) -> None:
-        self.data[key] = value
-        if isinstance(key, data.JoinTree) and key.root.is_join_node() and not self._disable_auto_updates:
-            self._stats_container.trigger_frequency_update(key)
 
 
 class StatisticsContainer(abc.ABC, Generic[StatsType]):
@@ -92,9 +72,9 @@ class StatisticsContainer(abc.ABC, Generic[StatsType]):
     its current implementation carefully.
     """
 
-    def __init__(self, disable_auto_updates: bool = False) -> None:
+    def __init__(self) -> None:
         self.base_table_estimates: dict[base.TableReference, int] = {}
-        self.upper_bounds: UpperBoundsContainer = UpperBoundsContainer(self, disable_auto_updates)
+        self.upper_bounds: dict[base.TableReference | jointree.LogicalJoinTree, int] = {}
         self.attribute_frequencies: dict[base.ColumnReference, StatsType] = {}
 
         self.query: qal.SqlQuery | None = None
@@ -112,12 +92,13 @@ class StatisticsContainer(abc.ABC, Generic[StatsType]):
         self._inflate_base_table_estimates()
         self._inflate_attribute_frequencies()
 
-    def join_bounds(self) -> dict[data.JoinTree, int]:
+    def join_bounds(self) -> dict[jointree.LogicalJoinTree, int]:
         """Provides the cardinality estimates of all join trees that are currently stored in the container."""
         return {join_tree: bound for join_tree, bound in self.upper_bounds.items()
-                if isinstance(join_tree, data.JoinTree)}
+                if isinstance(join_tree, jointree.LogicalJoinTree)}
 
-    def trigger_frequency_update(self, join_tree: data.JoinTree) -> None:
+    def trigger_frequency_update(self, join_tree: jointree.LogicalJoinTree, joined_table: base.TableReference,
+                                 join_condition: predicates.AbstractPredicate) -> None:
         """Updates the `attribute_frequencies` according to the supplied join tree.
 
         This method is usually executed automatically when new join trees are inserted into the upper bounds.
@@ -135,27 +116,16 @@ class StatisticsContainer(abc.ABC, Generic[StatsType]):
         party columns are part of the intermediate result, but not directly involved in the join. In order to update
         them, some sort of correlation info is usually required.
         """
-        if join_tree.is_empty():
-            return
-
-        root_node = join_tree.root
-        if not root_node or not isinstance(root_node, data.JoinNode):
-            raise ValueError(f"Expected join node, but was '{root_node}'")
-
-        if not root_node.n_m_join:
-            return
-
-        joined_table = root_node.n_m_joined_table
-        partner_columns = root_node.join_condition.join_partners_of(joined_table)
-        third_party_columns = set(col for col in join_tree.columns()
+        partner_columns = join_condition.join_partners_of(joined_table)
+        third_party_columns = set(col for col in join_tree.join_columns()
                                   if col.table != joined_table and col not in partner_columns)
 
-        for col1, col2 in root_node.join_condition.join_partners():
+        for col1, col2 in join_condition.join_partners():
             joined_column, partner_column = (col1, col2) if col1.table == joined_table else (col2, col1)
             self._update_partner_column_frequency(joined_column, partner_column)
 
         joined_columns_frequencies = {joined_col: self.attribute_frequencies[joined_col] for joined_col
-                                      in root_node.join_condition.columns_of(joined_table)}
+                                      in join_condition.columns_of(joined_table)}
         lowest_joined_column_frequency = dict_utils.argmin(joined_columns_frequencies)
         for third_party_column in third_party_columns:
             self._update_third_party_column_frequency(lowest_joined_column_frequency, third_party_column)

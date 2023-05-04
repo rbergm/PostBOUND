@@ -6,7 +6,7 @@ import abc
 from typing import Optional
 
 from postbound.qal import qal
-from postbound.optimizer import data, validation
+from postbound.optimizer import jointree, validation
 from postbound.optimizer.physops import operators as physops
 from postbound.optimizer.planmeta import hints as plan_params
 
@@ -33,7 +33,8 @@ class ParameterGeneration(abc.ABC):
         self.next_generator: ParameterGeneration | None = None
 
     @abc.abstractmethod
-    def generate_plan_parameters(self, query: qal.SqlQuery, join_order: Optional[data.JoinTree],
+    def generate_plan_parameters(self, query: qal.SqlQuery,
+                                 join_order: Optional[jointree.LogicalJoinTree | jointree.PhysicalQueryPlan],
                                  operator_assignment: Optional[physops.PhysicalOperatorAssignment]
                                  ) -> Optional[plan_params.PlanParameterization]:
         """Executes the actual parameterization.
@@ -75,7 +76,8 @@ class ParameterGeneration(abc.ABC):
 class EmptyParameterization(ParameterGeneration):
     """Dummy implementation of the plan parameterization that does not actually generate any parameters."""
 
-    def generate_plan_parameters(self, query: qal.SqlQuery, join_order: Optional[data.JoinTree],
+    def generate_plan_parameters(self, query: qal.SqlQuery,
+                                 join_order: Optional[jointree.LogicalJoinTree | jointree.PhysicalQueryPlan],
                                  operator_assignment: Optional[physops.PhysicalOperatorAssignment]
                                  ) -> Optional[plan_params.PlanParameterization]:
         return None

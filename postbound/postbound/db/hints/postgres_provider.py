@@ -12,7 +12,7 @@ from postbound.db.hints import provider
 from postbound.qal import qal, base, clauses, joins, predicates, transform
 from postbound.util import collections as collection_utils
 from postbound.util.typing import deprecated
-from postbound.optimizer import data
+from postbound.optimizer import jointree
 from postbound.optimizer.physops import operators
 from postbound.optimizer.planmeta import hints as plan_param
 
@@ -65,7 +65,8 @@ class PostgresRightDeepJoinClauseBuilder:
         self.renamed_columns: dict[base.ColumnReference, base.ColumnReference] = {}
         self.original_column_names: dict[base.ColumnReference, str] = {}
 
-    def for_join_tree(self, join_tree: data.JoinTree) -> clauses.ExplicitFromClause:
+    def for_join_tree(self, join_tree: jointree.LogicalJoinTree | jointree.PhysicalQueryPlan
+                      ) -> clauses.ExplicitFromClause:
         """Generates the FROM clause based on the join tree. Subqueries are inserted as-needed.
 
         If a subquery exports specific columns that are used at other places in the query, these columns will have
@@ -94,26 +95,27 @@ class PostgresRightDeepJoinClauseBuilder:
         self.renamed_columns = {}
         self.original_column_names = {}
 
-    def _build_from_clause(self, join_node: data.JoinTreeNode) -> list[base.TableReference | joins.Join]:
+    def _build_from_clause(self, join_node: jointree.AbstractJoinTreeNode) -> list[base.TableReference | joins.Join]:
         """Constructs the actual FROM clause and updates all renamings and available joins as needed."""
-        if isinstance(join_node, data.BaseTableNode):
+        if isinstance(join_node, jointree.BaseTableNode):
             self._mark_tables_joined(join_node.table)
             return [join_node.table]
 
-        if not isinstance(join_node, data.JoinNode):
+        if not isinstance(join_node, jointree.IntermediateJoinNode):
             raise ValueError("Unknown join node type: " + str(join_node))
 
         right_joins = self._build_from_clause(join_node.right_child)
-        if isinstance(join_node.left_child, data.JoinNode):
-            subquery_join = self._build_subquery_join(join_node.left_child, join_node.join_condition)
+        join_condition = join_node.annotation.join_predicate if join_node.annotation else None
+        if isinstance(join_node.left_child, jointree.IntermediateJoinNode):
+            subquery_join = self._build_subquery_join(join_node.left_child, join_condition)
             return right_joins + [subquery_join]
-        elif isinstance(join_node.left_child, data.BaseTableNode):
-            base_table_join = self._build_base_table_join(join_node.left_child, join_node.join_condition)
+        elif isinstance(join_node.left_child, jointree.BaseTableNode):
+            base_table_join = self._build_base_table_join(join_node.left_child, join_condition)
             return right_joins + [base_table_join]
         else:
             raise ValueError("Unknown join node type: " + str(join_node.left_child))
 
-    def _build_base_table_join(self, base_table_node: data.BaseTableNode,
+    def _build_base_table_join(self, base_table_node: jointree.BaseTableNode,
                                join_condition: predicates.AbstractPredicate) -> joins.TableJoin:
         """Constructs the join statement for the given table.
 
@@ -140,7 +142,7 @@ class PostgresRightDeepJoinClauseBuilder:
         self._mark_tables_joined(base_table)
         return joins.TableJoin.inner(base_table, merged_join_predicate)
 
-    def _build_subquery_join(self, join_node: data.JoinNode,
+    def _build_subquery_join(self, join_node: jointree.IntermediateJoinNode,
                              join_condition: predicates.AbstractPredicate) -> joins.SubqueryJoin:
         """Constructs the subquery join statement for the given table.
 
@@ -277,7 +279,8 @@ class PostgresRightDeepJoinClauseBuilder:
 
 @deprecated
 def _enforce_pg_join_order(query: qal.ImplicitSqlQuery,
-                           join_order: data.JoinTree) -> tuple[qal.ExplicitSqlQuery, Optional[HintParts]]:
+                           join_order: jointree.LogicalJoinTree | jointree.PhysicalQueryPlan
+                           ) -> tuple[qal.ExplicitSqlQuery, Optional[HintParts]]:
     """Generates the explicit join order for the given query and performs all necessary renaming operations."""
     join_order_builder = PostgresRightDeepJoinClauseBuilder(query)
 
@@ -313,19 +316,24 @@ def _enforce_pg_join_order(query: qal.ImplicitSqlQuery,
     return reordered_query, None
 
 
-def _is_hash_join(join_tree_node: data.JoinTreeNode,
+def _is_hash_join(join_tree_node: jointree.IntermediateJoinNode,
                   operator_assignment: Optional[operators.PhysicalOperatorAssignment]) -> bool:
     """Checks, whether the given node should be executed as a hash join.
 
     Fails gracefully for base table and unspecified operator assignments (by returning False).
     """
-    return operator_assignment and operator_assignment[join_tree_node.tables()] == operators.JoinOperators.HashJoin
+    if not operator_assignment:
+        return False
+    selected_operators: Optional[operators.JoinOperatorAssignment] = operator_assignment[join_tree_node.tables()]
+    if not selected_operators:
+        return False
+    return selected_operators.operator == operators.JoinOperators.HashJoin
 
 
-def _generate_leading_hint_content(join_tree_node: data.JoinTreeNode,
+def _generate_leading_hint_content(join_tree_node: jointree.AbstractJoinTreeNode,
                                    operator_assignment: Optional[operators.PhysicalOperatorAssignment] = None) -> str:
     """Builds part of the Leading hint to enforce join order and join direction for the given join node."""
-    if isinstance(join_tree_node, data.JoinNode):
+    if isinstance(join_tree_node, jointree.IntermediateJoinNode):
         left, right = join_tree_node.left_child, join_tree_node.right_child
         left_hint = _generate_leading_hint_content(left, operator_assignment)
         right_hint = _generate_leading_hint_content(right, operator_assignment)
@@ -343,13 +351,14 @@ def _generate_leading_hint_content(join_tree_node: data.JoinTreeNode,
             left_hint, right_hint = right_hint, left_hint
 
         return f"({left_hint} {right_hint})"
-    elif isinstance(join_tree_node, data.BaseTableNode):
+    elif isinstance(join_tree_node, jointree.BaseTableNode):
         return join_tree_node.table.identifier()
     else:
         raise ValueError(f"Unknown join tree node: {join_tree_node}")
 
 
-def _generate_pg_join_order_hint(query: qal.SqlQuery, join_order: data.JoinTree,
+def _generate_pg_join_order_hint(query: qal.SqlQuery,
+                                 join_order: jointree.LogicalJoinTree | jointree.PhysicalQueryPlan,
                                  operator_assignment: Optional[operators.PhysicalOperatorAssignment] = None
                                  ) -> tuple[qal.SqlQuery, Optional[HintParts]]:
     """Generates the Leading hint to enforce join order and join direction for the given query.
@@ -422,17 +431,17 @@ def _generate_pg_operator_hints(physical_operators: operators.PhysicalOperatorAs
         settings.append(f"SET {operator} = {setting};")
 
     hints = []
-    for table, scan_operator in physical_operators.scan_operators.items():
+    for table, scan_assignment in physical_operators.scan_operators.items():
         table_key = table.identifier()
-        scan_operator = PG_OPTIMIZER_HINTS[scan_operator]
-        hints.append(f"{scan_operator}({table_key})")
+        scan_assignment = PG_OPTIMIZER_HINTS[scan_assignment.operator]
+        hints.append(f"{scan_assignment}({table_key})")
 
     if hints:
         hints.append("")
-    for join, join_operator in physical_operators.join_operators.items():
+    for join, join_assignment in physical_operators.join_operators.items():
         join_key = _generate_join_key(join)
-        join_operator = PG_OPTIMIZER_HINTS[join_operator]
-        hints.append(f"{join_operator}({join_key})")
+        join_assignment = PG_OPTIMIZER_HINTS[join_assignment.operator]
+        hints.append(f"{join_assignment}({join_key})")
 
     if not settings and not hints:
         return HintParts.empty()
@@ -485,9 +494,10 @@ class PostgresHintProvider(provider.HintProvider):
     syntax
     """
 
-    def adapt_query(self, query: qal.SqlQuery, *, join_order: data.JoinTree | None = None,
-                    physical_operators: operators.PhysicalOperatorAssignment | None = None,
-                    plan_parameters: plan_param.PlanParameterization | None = None) -> qal.SqlQuery:
+    def adapt_query(self, query: qal.SqlQuery, *,
+                    join_order: Optional[jointree.LogicalJoinTree | jointree.PhysicalQueryPlan] = None,
+                    physical_operators: Optional[operators.PhysicalOperatorAssignment] = None,
+                    plan_parameters: Optional[plan_param.PlanParameterization] = None) -> qal.SqlQuery:
         adapted_query = query
         hint_parts = None
 

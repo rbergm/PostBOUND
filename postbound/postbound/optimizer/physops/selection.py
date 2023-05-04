@@ -5,7 +5,7 @@ import abc
 from typing import Optional
 
 from postbound.qal import qal
-from postbound.optimizer import data, validation
+from postbound.optimizer import jointree, validation
 from postbound.optimizer.physops import operators
 from postbound.db.systems import systems
 
@@ -27,7 +27,8 @@ class PhysicalOperatorSelection(abc.ABC):
         self.target_system = target_system
 
     def select_physical_operators(self, query: qal.SqlQuery,
-                                  join_order: data.JoinTree | None) -> operators.PhysicalOperatorAssignment:
+                                  join_order: Optional[jointree.LogicalJoinTree | jointree.PhysicalQueryPlan]
+                                  ) -> operators.PhysicalOperatorAssignment:
         """Performs the operator assignment.
 
         The operator selection should handle a number of different special cases:
@@ -74,7 +75,8 @@ class PhysicalOperatorSelection(abc.ABC):
 
     @abc.abstractmethod
     def _apply_selection(self, query: qal.SqlQuery,
-                         join_order: data.JoinTree | None) -> operators.PhysicalOperatorAssignment:
+                         join_order: Optional[jointree.LogicalJoinTree | jointree.PhysicalQueryPlan]
+                         ) -> operators.PhysicalOperatorAssignment:
         """Performs the actual assignment of the physical operators and has to be implemented by every strategy.
 
         The more high-level `select_physical_operators` method also takes care of the chaining rules and delegates the
@@ -109,9 +111,13 @@ class UESOperatorSelection(PhysicalOperatorSelection):
         super().__init__(target_system)
 
     def _apply_selection(self, query: qal.SqlQuery,
-                         join_order: data.JoinTree | None) -> operators.PhysicalOperatorAssignment:
-        assignment = (join_order.operator_assignment.clone() if join_order and join_order.operator_assignment
-                      else operators.PhysicalOperatorAssignment(query))
+                         join_order: Optional[jointree.LogicalJoinTree | jointree.PhysicalQueryPlan]
+                         ) -> operators.PhysicalOperatorAssignment:
+        if isinstance(join_order, jointree.PhysicalQueryPlan):
+            assignment = join_order.physical_operators().clone()
+        else:
+            assignment = operators.PhysicalOperatorAssignment()
+
         if self.target_system.supports_hint(operators.JoinOperators.NestedLoopJoin):
             assignment.set_operator_enabled_globally(operators.JoinOperators.NestedLoopJoin, False,
                                                      overwrite_fine_grained_selection=True)
@@ -128,8 +134,9 @@ class EmptyPhysicalOperatorSelection(PhysicalOperatorSelection):
         return next_selection
 
     def _apply_selection(self, query: qal.SqlQuery,
-                         join_order: data.JoinTree | None) -> operators.PhysicalOperatorAssignment:
-        return operators.PhysicalOperatorAssignment(query)
+                         join_order: Optional[jointree.LogicalJoinTree | jointree.PhysicalQueryPlan]
+                         ) -> operators.PhysicalOperatorAssignment:
+        return operators.PhysicalOperatorAssignment()
 
     def _description(self) -> dict:
         return {"name": "no_selection"}
