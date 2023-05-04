@@ -136,7 +136,7 @@ class UESJoinOrderOptimizer(JoinOrderOptimizer):
 
         if len(query.tables()) == 2:
             final_join_tree = self._binary_join_optimization(query, join_graph)
-        if join_graph.contains_cross_products():
+        elif join_graph.contains_cross_products():
             # cross-product query is reduced to multiple independent optimization passes
             optimized_components = []
             for component in join_graph.join_components():

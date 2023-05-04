@@ -121,7 +121,7 @@ class Workload(collections.UserDict[LabelType, qal.SqlQuery]):
         """Provides the first query in the workload."""
         if not self._sorted_labels:
             return None
-        return (self._sorted_labels[0], self._sorted_queries[0])
+        return self._sorted_labels[0], self._sorted_queries[0]
 
     def label_of(self, query: qal.SqlQuery) -> LabelType:
         """Provides the label of the given query."""

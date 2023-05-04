@@ -3,6 +3,7 @@
 The tests here mainly act as regression tests to ensure that SqlQuery objects provide the correct information if
 queried for joins, etc.
 """
+from __future__ import annotations
 
 import sys
 import textwrap
