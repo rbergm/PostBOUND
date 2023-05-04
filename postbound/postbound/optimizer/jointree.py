@@ -160,7 +160,7 @@ class AbstractJoinTreeNode(abc.ABC, Container[base.TableReference], Generic[Join
     """
 
     @property
-    def annotation(self) -> Optional[BaseMetadata]:
+    def annotation(self) -> Optional[JoinMetadataType | BaseTableMetadataType]:
         raise NotImplementedError
 
     @property
@@ -187,7 +187,7 @@ class AbstractJoinTreeNode(abc.ABC, Container[base.TableReference], Generic[Join
         raise NotImplementedError
 
     @abc.abstractmethod
-    def join_sequence(self) -> Sequence[IntermediateJoinNode[JoinMetadataType]]:
+    def join_sequence(self) -> Sequence[IntermediateJoinNode[JoinMetadataType, BaseTableMetadataType]]:
         """Provides all joins under and including this node in a right-deep manner.
 
         If this node is a base table node, the returned container will be empty.
@@ -195,7 +195,7 @@ class AbstractJoinTreeNode(abc.ABC, Container[base.TableReference], Generic[Join
         raise NotImplementedError
 
     @abc.abstractmethod
-    def table_sequence(self) -> Sequence[BaseTableNode[BaseTableMetadataType]]:
+    def table_sequence(self) -> Sequence[BaseTableNode[JoinMetadataType, BaseTableMetadataType]]:
         """Provides all base tables under and including this node in a right-deep manner."""
         raise NotImplementedError
 
@@ -210,7 +210,7 @@ class AbstractJoinTreeNode(abc.ABC, Container[base.TableReference], Generic[Join
         """
         raise NotImplementedError
 
-    def as_join_tree(self) -> JoinTree:
+    def as_join_tree(self) -> JoinTree[JoinMetadataType, BaseTableMetadataType]:
         """Creates a new join tree with this node as root and all children as sub-nodes."""
         return JoinTree(self)
 
@@ -260,8 +260,10 @@ class AbstractJoinTreeNode(abc.ABC, Container[base.TableReference], Generic[Join
         raise NotImplementedError
 
 
-class IntermediateJoinNode(AbstractJoinTreeNode, Generic[JoinMetadataType, BaseTableMetadataType]):
-    def __init__(self, left_child: AbstractJoinTreeNode, right_child: AbstractJoinTreeNode,
+class IntermediateJoinNode(AbstractJoinTreeNode[JoinMetadataType, BaseTableMetadataType],
+                           Generic[JoinMetadataType, BaseTableMetadataType]):
+    def __init__(self, left_child: AbstractJoinTreeNode[JoinMetadataType, BaseTableMetadataType],
+                 right_child: AbstractJoinTreeNode[JoinMetadataType, BaseTableMetadataType],
                  annotation: Optional[JoinMetadataType]) -> None:
         if not left_child or not right_child:
             raise ValueError("Left child and right child are required")
@@ -271,11 +273,11 @@ class IntermediateJoinNode(AbstractJoinTreeNode, Generic[JoinMetadataType, BaseT
         self._hash_val = hash((left_child, right_child))
 
     @property
-    def left_child(self) -> AbstractJoinTreeNode:
+    def left_child(self) -> AbstractJoinTreeNode[JoinMetadataType, BaseTableMetadataType]:
         return self._left_child
 
     @property
-    def right_child(self) -> AbstractJoinTreeNode:
+    def right_child(self) -> AbstractJoinTreeNode[JoinMetadataType, BaseTableMetadataType]:
         return self._right_child
 
     @property
@@ -293,7 +295,7 @@ class IntermediateJoinNode(AbstractJoinTreeNode, Generic[JoinMetadataType, BaseT
                              if self.annotation and self.annotation.join_predicate else set())
         return frozenset(self._left_child.columns() | self._right_child.columns() | predicate_columns)
 
-    def join_sequence(self) -> Sequence[IntermediateJoinNode[JoinMetadataType]]:
+    def join_sequence(self) -> Sequence[IntermediateJoinNode[JoinMetadataType, BaseTableMetadataType]]:
         is_final_join = not self.left_child.is_join_node() and not self.right_child.is_join_node()
         if is_final_join:
             return [self]
@@ -306,7 +308,7 @@ class IntermediateJoinNode(AbstractJoinTreeNode, Generic[JoinMetadataType, BaseT
         sequence.append(self)
         return sequence
 
-    def table_sequence(self) -> Sequence[BaseTableNode[BaseTableMetadataType]]:
+    def table_sequence(self) -> Sequence[BaseTableNode[JoinMetadataType, BaseTableMetadataType]]:
         return list(self.right_child.table_sequence()) + list(self.left_child.table_sequence())
 
     def as_list(self) -> NestedTableSequence:
@@ -356,7 +358,8 @@ class IntermediateJoinNode(AbstractJoinTreeNode, Generic[JoinMetadataType, BaseT
         return f"{right_str} ⋈ {left_str}"
 
 
-class BaseTableNode(AbstractJoinTreeNode, Generic[BaseTableMetadataType]):
+class BaseTableNode(AbstractJoinTreeNode[JoinMetadataType, BaseTableMetadataType],
+                    Generic[JoinMetadataType, BaseTableMetadataType]):
     def __init__(self, table: base.TableReference, annotation: Optional[BaseTableMetadataType]):
         if not table:
             raise ValueError("Table is required")
@@ -382,10 +385,10 @@ class BaseTableNode(AbstractJoinTreeNode, Generic[BaseTableMetadataType]):
         return frozenset(self.annotation.filter_predicate.columns()
                          if self.annotation and self.annotation.filter_predicate else set())
 
-    def join_sequence(self) -> Sequence[IntermediateJoinNode[JoinMetadataType]]:
+    def join_sequence(self) -> Sequence[IntermediateJoinNode[JoinMetadataType, BaseTableMetadataType]]:
         return []
 
-    def table_sequence(self) -> Sequence[BaseTableNode[BaseTableMetadataType]]:
+    def table_sequence(self) -> Sequence[BaseTableNode[JoinMetadataType, BaseTableMetadataType]]:
         return [self]
 
     def as_list(self) -> NestedTableSequence:
@@ -425,15 +428,14 @@ class BaseTableNode(AbstractJoinTreeNode, Generic[BaseTableMetadataType]):
 
 
 JoinTreeType = typing.TypeVar("JoinTreeType", bound="JoinTree")
+AnnotationMerger = Optional[Callable[[Optional[BaseMetadata], Optional[BaseMetadata]], Optional[BaseMetadata]]]
 
 
 class JoinTree(Container[base.TableReference], Iterable[IntermediateJoinNode[JoinMetadataType, BaseTableMetadataType]],
                Generic[JoinMetadataType, BaseTableMetadataType]):
 
     @staticmethod
-    def cross_product_of(*trees: JoinTree[JoinMetadataType, BaseTableMetadataType],
-                         annotation_supplier: Optional[Callable[[BaseMetadata, BaseMetadata], BaseMetadata]] = None
-                         ) -> JoinTree[JoinMetadataType, BaseTableMetadataType]:
+    def cross_product_of(*trees: JoinTreeType, annotation_supplier: AnnotationMerger = None) -> JoinTreeType:
         """Generates a new join tree with by applying a cross product over the given join trees."""
         if not trees:
             raise ValueError("No trees given")
@@ -451,16 +453,14 @@ class JoinTree(Container[base.TableReference], Iterable[IntermediateJoinNode[Joi
 
     @staticmethod
     def for_base_table(table: base.TableReference,
-                       base_annotation: Optional[BaseTableMetadataType] = None
-                       ) -> JoinTree[JoinMetadataType, BaseTableMetadataType]:
+                       base_annotation: Optional[BaseTableMetadataType] = None) -> JoinTreeType:
         """Generates a new join tree that for now only includes the given base table."""
         root = BaseTableNode(table, base_annotation)
         return JoinTree(root)
 
     @staticmethod
-    def joining(left_tree: JoinTree[JoinMetadataType, BaseTableMetadataType],
-                right_tree: JoinTree[JoinMetadataType, BaseTableMetadataType],
-                join_annotation: Optional[JoinMetadataType] = None) -> JoinTree:
+    def joining(left_tree: JoinTreeType, right_tree: JoinTreeType,
+                join_annotation: Optional[JoinMetadataType] = None) -> JoinTreeType:
         """Constructs a new join tree that joins the two input trees."""
         if left_tree.is_empty():
             return right_tree
@@ -517,7 +517,7 @@ class JoinTree(Container[base.TableReference], Iterable[IntermediateJoinNode[Joi
             return []
         return self._root.join_sequence()
 
-    def table_sequence(self) -> Sequence[BaseTableNode[BaseTableMetadataType]]:
+    def table_sequence(self) -> Sequence[BaseTableNode[JoinMetadataType, BaseTableMetadataType]]:
         """Provides a right-deep iteration of all base tables in the join tree. See `JoinTreeNode`."""
         if self.is_empty():
             return []
@@ -615,15 +615,15 @@ class JoinTree(Container[base.TableReference], Iterable[IntermediateJoinNode[Joi
 
 
 LogicalTreeMetadata = typing.Union[LogicalBaseTableMetadata, LogicalJoinMetadata]
+LogicalAnnotationMerger = Optional[
+    Callable[[Optional[LogicalTreeMetadata], Optional[LogicalTreeMetadata]], Optional[LogicalTreeMetadata]]]
 
 
 class LogicalJoinTree(JoinTree[LogicalJoinMetadata, LogicalBaseTableMetadata]):
 
     @staticmethod
     def cross_product_of(*trees: LogicalJoinTree,
-                         annotation_supplier:
-                         Optional[Callable[[LogicalTreeMetadata, LogicalTreeMetadata], LogicalTreeMetadata]] = None
-                         ) -> LogicalJoinTree:
+                         annotation_supplier: LogicalAnnotationMerger = None) -> LogicalJoinTree:
         if not trees:
             raise ValueError("No trees given")
         elif len(trees) == 1:
@@ -678,15 +678,15 @@ def logical_join_tree_annotation_merger(first_annotation: Optional[LogicalTreeMe
 
 
 PhysicalPlanMetadata = typing.Union[PhysicalBaseTableMetadata, PhysicalJoinMetadata]
+PhysicalAnnotationMerger = Optional[
+    Callable[[Optional[PhysicalPlanMetadata], Optional[PhysicalPlanMetadata]], Optional[PhysicalPlanMetadata]]]
 
 
 class PhysicalQueryPlan(JoinTree[PhysicalJoinMetadata, PhysicalBaseTableMetadata]):
 
     @staticmethod
     def cross_product_of(*trees: PhysicalQueryPlan,
-                         annotation_supplier:
-                         Optional[Callable[[PhysicalPlanMetadata, PhysicalPlanMetadata], PhysicalPlanMetadata]] = None
-                         ) -> PhysicalQueryPlan:
+                         annotation_supplier: PhysicalAnnotationMerger = None) -> PhysicalQueryPlan:
         if not trees:
             raise ValueError("No trees given")
         elif len(trees) == 1:
