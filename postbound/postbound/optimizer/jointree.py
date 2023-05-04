@@ -260,7 +260,7 @@ class AbstractJoinTreeNode(abc.ABC, Container[base.TableReference], Generic[Join
         raise NotImplementedError
 
 
-class IntermediateJoinNode(AbstractJoinTreeNode, Generic[JoinMetadataType]):
+class IntermediateJoinNode(AbstractJoinTreeNode, Generic[JoinMetadataType, BaseTableMetadataType]):
     def __init__(self, left_child: AbstractJoinTreeNode, right_child: AbstractJoinTreeNode,
                  annotation: Optional[JoinMetadataType]) -> None:
         if not left_child or not right_child:
@@ -402,7 +402,7 @@ class BaseTableNode(AbstractJoinTreeNode, Generic[BaseTableMetadataType]):
 
     def inspect(self, *, indentation: int = 0) -> str:
         padding = " " * indentation
-        prefix = f"{padding} <- " if padding else ""
+        prefix = f"{padding}<- " if padding else ""
         annotation_str = f" {self.annotation.inspect()}" if self.annotation else ""
         return f"{prefix} SCAN :: {self.table}{annotation_str}"
 
@@ -427,7 +427,7 @@ class BaseTableNode(AbstractJoinTreeNode, Generic[BaseTableMetadataType]):
 JoinTreeType = typing.TypeVar("JoinTreeType", bound="JoinTree")
 
 
-class JoinTree(Container[base.TableReference], Iterable[IntermediateJoinNode[JoinMetadataType]],
+class JoinTree(Container[base.TableReference], Iterable[IntermediateJoinNode[JoinMetadataType, BaseTableMetadataType]],
                Generic[JoinMetadataType, BaseTableMetadataType]):
 
     @staticmethod
@@ -469,11 +469,12 @@ class JoinTree(Container[base.TableReference], Iterable[IntermediateJoinNode[Joi
         join_node = IntermediateJoinNode(left_tree.root, right_tree.root, join_annotation)
         return JoinTree(join_node)
 
-    def __init__(self: JoinTreeType, root: Optional[AbstractJoinTreeNode] = None):
+    def __init__(self: JoinTreeType,
+                 root: Optional[AbstractJoinTreeNode[JoinMetadataType, BaseTableMetadataType]] = None) -> None:
         self._root = root
 
     @property
-    def root(self) -> Optional[AbstractJoinTreeNode]:
+    def root(self) -> Optional[AbstractJoinTreeNode[JoinMetadataType, BaseTableMetadataType]]:
         """Get the root element/node of this tree if there is any."""
         return self._root
 
@@ -510,7 +511,7 @@ class JoinTree(Container[base.TableReference], Iterable[IntermediateJoinNode[Joi
                                                     in self.join_sequence()
                                                     if join_node.annotation and join_node.annotation.join_predicate))
 
-    def join_sequence(self) -> Sequence[IntermediateJoinNode[JoinMetadataType]]:
+    def join_sequence(self) -> Sequence[IntermediateJoinNode[JoinMetadataType, BaseTableMetadataType]]:
         """Provides a right-deep iteration of all join nodes in the join tree. See `JoinTreeNode`."""
         if self.is_empty():
             return []
@@ -580,7 +581,7 @@ class JoinTree(Container[base.TableReference], Iterable[IntermediateJoinNode[Joi
 
         if self.is_empty():
             return subtree
-        left, right = (subtree, self.root) if insert_left else (self.root, subtree)
+        left, right = (subtree.root, self.root) if insert_left else (self.root, subtree.root)
         join_node = IntermediateJoinNode(left, right, annotation)
         return JoinTree(join_node)
 
@@ -653,8 +654,19 @@ class LogicalJoinTree(JoinTree[LogicalJoinMetadata, LogicalBaseTableMetadata]):
         join_node = IntermediateJoinNode(left_tree.root, right_tree.root, join_annotation)
         return LogicalJoinTree(join_node)
 
-    def __init__(self, root: Optional[AbstractJoinTreeNode[LogicalJoinMetadata, LogicalBaseTableMetadata]] = None
-                 ) -> None:
+    @staticmethod
+    def load_from_join_sequence(join_order: NestedTableSequence) -> LogicalJoinTree:
+        current_join_tree = LogicalJoinTree()
+        for join in join_order:
+            if isinstance(join, Sequence):
+                subtree = LogicalJoinTree.load_from_join_sequence(join)
+                current_join_tree = current_join_tree.join_with_subtree(subtree)
+            else:
+                current_join_tree = current_join_tree.join_with_base_table(join)
+        return current_join_tree
+
+    def __init__(self: LogicalJoinTree,
+                 root: Optional[AbstractJoinTreeNode[LogicalJoinMetadata, LogicalBaseTableMetadata]] = None) -> None:
         super().__init__(root)
 
 
@@ -705,7 +717,8 @@ class PhysicalQueryPlan(JoinTree[PhysicalJoinMetadata, PhysicalBaseTableMetadata
         join_node = IntermediateJoinNode(left_tree.root, right_tree.root, join_annotation)
         return PhysicalQueryPlan(join_node)
 
-    def __init__(self, root: Optional[AbstractJoinTreeNode[PhysicalJoinMetadata, PhysicalBaseTableMetadata]] = None, *,
+    def __init__(self: PhysicalQueryPlan,
+                 root: Optional[AbstractJoinTreeNode[PhysicalJoinMetadata, PhysicalBaseTableMetadata]] = None, *,
                  global_operator_settings: Optional[physops.PhysicalOperatorAssignment] = None) -> None:
         super().__init__(root)
         self._global_settings = (global_operator_settings.global_settings_only() if global_operator_settings
