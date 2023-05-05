@@ -8,7 +8,7 @@ import concurrent.futures
 import os
 import textwrap
 import threading
-from collections.abc import Iterable
+from collections.abc import Iterable, Sequence
 from typing import Any, Optional
 
 import psycopg
@@ -39,14 +39,14 @@ class PostgresInterface(db.Database):
     def schema(self) -> db.DatabaseSchema:
         return self._db_schema
 
-    def statistics(self, emulated: bool | None = None, cache_enabled: bool | None = None) -> db.DatabaseStatistics:
+    def statistics(self, emulated: bool | None = None, cache_enabled: Optional[bool] = None) -> db.DatabaseStatistics:
         if emulated is not None:
             self._db_stats.emulated = emulated
         if cache_enabled is not None:
             self._db_stats.cache_enabled = cache_enabled
         return self._db_stats
 
-    def execute_query(self, query: qal.SqlQuery | str, *, cache_enabled: bool | None = None) -> Any:
+    def execute_query(self, query: qal.SqlQuery | str, *, cache_enabled: Optional[bool] = None) -> Any:
         cache_enabled = cache_enabled or (cache_enabled is None and self._cache_enabled)
         query = self._prepare_query_execution(query)
 
@@ -129,8 +129,8 @@ class PostgresInterface(db.Database):
         if not tables:
             return
         tables = set(tab.full_name for tab in tables)  # eliminate duplicates if tables are selected multiple times
-        prewarm_call = [f"pg_prewarm('{tab}')" for tab in tables]
-        prewarm_text = ", ".join(prewarm_call)
+        prewarm_invocations = [f"pg_prewarm('{tab}')" for tab in tables]
+        prewarm_text = ", ".join(prewarm_invocations)
         prewarm_query = f"SELECT {prewarm_text}"
         self._cursor.execute(prewarm_query)
 
@@ -197,10 +197,9 @@ class PostgresSchemaInterface(db.DatabaseSchema):
         if not column.table:
             raise base.UnboundColumnError(column)
         query_template = textwrap.dedent("""
-                        SELECT data_type FROM information_schema.columns
-                        WHERE table_name = {tab} AND column_name = {col}""")
-        datatype_query = query_template.format(tab=column.table.full_name, col=column.name)
-        self._db.cursor().execute(datatype_query)
+            SELECT data_type FROM information_schema.columns
+            WHERE table_name = {tab} AND column_name = {col}""".format(tab=column.table.full_name, col=column.name))
+        self._db.cursor().execute(query_template)
         result_set = self._db.cursor().fetchone()
         return result_set[0]
 
@@ -221,11 +220,12 @@ class PostgresSchemaInterface(db.DatabaseSchema):
         # query adapted from https://wiki.postgresql.org/wiki/Retrieve_primary_key_columns
 
         index_query = textwrap.dedent(f"""
-                                        SELECT attr.attname, idx.indisprimary
-                                        FROM pg_index idx
-                                            JOIN pg_attribute attr
-                                            ON idx.indrelid = attr.attrelid AND attr.attnum = ANY(idx.indkey)
-                                        WHERE idx.indrelid = '{table.full_name}'::regclass""")
+            SELECT attr.attname, idx.indisprimary
+            FROM pg_index idx
+                JOIN pg_attribute attr
+                ON idx.indrelid = attr.attrelid AND attr.attnum = ANY(idx.indkey)
+            WHERE idx.indrelid = '{table.full_name}'::regclass
+        """)
         self._db.cursor().execute(index_query)
         result_set = self._db.cursor().fetchall()
         index_map = dict(result_set)
@@ -250,13 +250,13 @@ class PostgresStatisticsInterface(db.DatabaseStatistics):
     def __init__(self, postgres_db: PostgresInterface) -> None:
         super().__init__(postgres_db)
 
-    def _retrieve_total_rows_from_stats(self, table: base.TableReference) -> int:
+    def _retrieve_total_rows_from_stats(self, table: base.TableReference) -> Optional[int]:
         count_query = f"SELECT reltuples FROM pg_class WHERE oid = '{table.full_name}'::regclass"
         self._db.cursor().execute(count_query)
         count = self._db.cursor().fetchone()[0]
         return count
 
-    def _retrieve_distinct_values_from_stats(self, column: base.ColumnReference) -> int:
+    def _retrieve_distinct_values_from_stats(self, column: base.ColumnReference) -> Optional[int]:
         dist_query = "SELECT n_distinct FROM pg_stats WHERE tablename = %s and attname = %s"
         self._db.cursor().execute(dist_query, (column.table.full_name, column.name))
         dist_values = self._db.cursor().fetchone()[0]
@@ -274,13 +274,14 @@ class PostgresStatisticsInterface(db.DatabaseStatistics):
         n_rows = self._retrieve_total_rows_from_stats(column.table)
         return -1 * n_rows * dist_values
 
-    def _retrieve_min_max_values_from_stats(self, column: base.ColumnReference) -> tuple:
+    def _retrieve_min_max_values_from_stats(self, column: base.ColumnReference) -> Optional[tuple[Any, Any]]:
         # Postgres does not keep track of min/max values, so we need to determine them manually
         if not self.enable_emulation_fallback:
             raise db.UnsupportedDatabaseFeatureError(self._db, "min/max value statistics")
         return self._calculate_min_max_values(column, cache_enabled=True)
 
-    def _retrieve_most_common_values_from_stats(self, column: base.ColumnReference, k: int) -> list:
+    def _retrieve_most_common_values_from_stats(self, column: base.ColumnReference,
+                                                k: int) -> Sequence[tuple[Any, int]]:
         # Postgres stores the Most common values in a column of type anyarray (since in this column, many MCVs from
         # many different tables and data types are present). However, this type is not very convenient to work on.
         # Therefore, we first need to convert the anyarray to an array of the actual attribute type.

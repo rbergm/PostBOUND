@@ -6,6 +6,7 @@ import dataclasses
 import json
 import os
 import textwrap
+from collections.abc import Sequence
 from typing import Any, Optional
 
 import mysql.connector
@@ -45,14 +46,14 @@ class MysqlInterface(db.Database):
     def schema(self) -> db.DatabaseSchema:
         return self._db_schema
 
-    def statistics(self, emulated: bool | None = None, cache_enabled: bool | None = None) -> db.DatabaseStatistics:
+    def statistics(self, emulated: bool | None = None, cache_enabled: Optional[bool] = None) -> db.DatabaseStatistics:
         if emulated is not None:
             self._db_stats.emulated = emulated
         if cache_enabled is not None:
             self._db_stats.cache_enabled = cache_enabled
         return self._db_stats
 
-    def execute_query(self, query: qal.SqlQuery | str, *, cache_enabled: bool | None = None) -> Any:
+    def execute_query(self, query: qal.SqlQuery | str, *, cache_enabled: Optional[bool] = None) -> Any:
         cache_enabled = cache_enabled or (cache_enabled is None and self._cache_enabled)
         query = self._prepare_query_execution(query)
 
@@ -202,7 +203,7 @@ class MysqlSchemaInterface(db.DatabaseSchema):
             SELECT column_name, column_key = 'PRI'
             FROM information_schema.columns
             WHERE table_name = %s AND column_key <> ''
-            """)
+        """)
         self._db.cursor().execute(index_query, table.full_name)
         result_set = self._db.cursor().fetchall()
         index_map = dict(result_set)
@@ -213,13 +214,13 @@ class MysqlStatisticsInterface(db.DatabaseStatistics):
     def __init__(self, mysql_db: MysqlInterface):
         super().__init__(mysql_db)
 
-    def _retrieve_total_rows_from_stats(self, table: base.TableReference) -> int:
+    def _retrieve_total_rows_from_stats(self, table: base.TableReference) -> Optional[int]:
         count_query = "SELECT table_rows FROM information_schema.tables WHERE table_name = %s"
         self._db.cursor().execute(count_query, table.full_name)
         count = self._db.cursor().fetchone()[0]
         return count
 
-    def _retrieve_distinct_values_from_stats(self, column: base.ColumnReference) -> int:
+    def _retrieve_distinct_values_from_stats(self, column: base.ColumnReference) -> Optional[int]:
         stats_query = "SELECT cardinality FROM information_schema.statistics WHERE table_name = %s AND column_name = %s"
         self._db.cursor().execute(stats_query, (column.table.full_name, column.name))
         distinct_vals: Optional[int] = self._db.cursor().fetchone()
@@ -230,12 +231,13 @@ class MysqlStatisticsInterface(db.DatabaseStatistics):
         else:
             return distinct_vals
 
-    def _retrieve_min_max_values_from_stats(self, column: base.ColumnReference) -> tuple:
+    def _retrieve_min_max_values_from_stats(self, column: base.ColumnReference) -> Optional[tuple[Any, Any]]:
         if not self.enable_emulation_fallback:
             raise db.UnsupportedDatabaseFeatureError(self._db, "min/max value statistics")
         return self._calculate_min_max_values(column, cache_enabled=True)
 
-    def _retrieve_most_common_values_from_stats(self, column: base.ColumnReference, k: int) -> list:
+    def _retrieve_most_common_values_from_stats(self, column: base.ColumnReference,
+                                                k: int) -> Sequence[tuple[Any, int]]:
         if not self.enable_emulation_fallback:
             raise db.UnsupportedDatabaseFeatureError(self._db, "most common values statistics")
         return self._calculate_most_common_values(column, k=k, cache_enabled=True)
