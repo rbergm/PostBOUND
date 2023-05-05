@@ -176,8 +176,8 @@ def determine_timeout(label: str, total_query_runtime: float, n_executed_plans: 
     return max(timeout, config.minimum_query_timeout)
 
 
-def restrict_to_hash_join(query: qal.SqlQuery) -> operators.PhysicalOperatorAssignment:
-    operator_selection = operators.PhysicalOperatorAssignment(query)
+def restrict_to_hash_join() -> operators.PhysicalOperatorAssignment:
+    operator_selection = operators.PhysicalOperatorAssignment()
     operator_selection.set_operator_enabled_globally(operators.JoinOperators.NestedLoopJoin, False)
     operator_selection.set_operator_enabled_globally(operators.JoinOperators.SortMergeJoin, False)
     return operator_selection
@@ -202,7 +202,7 @@ def execute_single_query(label: str, query: qal.SqlQuery, join_order: data.JoinT
         operator_selection = None
         plan_params = None
     elif config.operator_selection == "hashjoin":
-        operator_selection = restrict_to_hash_join(query)
+        operator_selection = restrict_to_hash_join()
         plan_params = None
     elif config.operator_selection == "optimal":
         operator_selection = None
