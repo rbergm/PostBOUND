@@ -1,6 +1,7 @@
 """Contains various utilities that did not fit any other category."""
 from __future__ import annotations
 
+import re
 from datetime import datetime
 from typing import Any
 
@@ -10,6 +11,14 @@ from postbound.util import jsonize
 def current_timestamp() -> str:
     """Provides the current time (year-month-day hour:minute)"""
     return datetime.now().strftime("%y-%m-%d %H:%M")
+
+
+_CamelCasePattern = re.compile(r'(?<!^)(?=[A-Z])')
+
+
+def camel_case2snake_case(camel_case: str) -> str:
+    # adapted from https://stackoverflow.com/a/1176023
+    return _CamelCasePattern.sub("_", camel_case).lower()
 
 
 def _wrap_version(v: Any) -> Version:

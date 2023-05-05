@@ -171,6 +171,7 @@ pb-venv/
 .psycopg_connection_tpch
 .psycopg_connection_ssb
 .psycopg_connection_stack
+.mysql_connection.config
 
 # PostBOUND-specific files
 .query_cache_*.json
