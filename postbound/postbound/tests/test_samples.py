@@ -26,5 +26,4 @@ class ReadmeExampleTests(unittest.TestCase):
 
         optimized_query = optimization_pipeline.optimize_query(job_workload["1a"])
 
-        query_result = postgres_instance.execute_query(optimized_query)
-        print(query_result)
+        postgres_instance.execute_query(optimized_query)

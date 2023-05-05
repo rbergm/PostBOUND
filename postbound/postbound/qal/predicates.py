@@ -4,7 +4,6 @@ from __future__ import annotations
 import abc
 import functools
 import itertools
-import warnings
 from collections.abc import Collection, Iterable, Iterator, Sequence
 from typing import Type, Union, Optional
 

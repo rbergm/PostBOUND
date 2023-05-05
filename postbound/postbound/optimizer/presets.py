@@ -8,9 +8,10 @@ from postbound.db import db
 from postbound.db.systems import systems
 from postbound.qal import parser
 from postbound.optimizer import validation
-from postbound.optimizer.bounds import scans, joins, stats
-from postbound.optimizer.joinorder import enumeration, subqueries
+from postbound.optimizer.bounds import scans
+from postbound.optimizer.joinorder import enumeration
 from postbound.optimizer.physops import selection
+from postbound.optimizer.strategies import ues
 from postbound.optimizer.planmeta import parameterization as plan_param
 
 
@@ -76,18 +77,18 @@ class UESOptimizationSettings(OptimizationSettings):
 
     def build_join_order_optimizer(self) -> enumeration.JoinOrderOptimizer | None:
         base_table_estimator = scans.NativeCardinalityEstimator(self.database)
-        join_cardinality_estimator = joins.UESJoinBoundEstimator()
-        subquery_policy = subqueries.UESSubqueryGenerationPolicy()
-        stats_container = stats.MaxFrequencyStatsContainer(self.database.statistics())
-        enumerator = enumeration.UESJoinOrderOptimizer(base_table_estimation=base_table_estimator,
-                                                       join_estimation=join_cardinality_estimator,
-                                                       subquery_policy=subquery_policy,
-                                                       stats_container=stats_container,
-                                                       database=self.database)
+        join_cardinality_estimator = ues.UESJoinBoundEstimator()
+        subquery_policy = ues.UESSubqueryGenerationPolicy()
+        stats_container = ues.MaxFrequencyStatsContainer(self.database.statistics())
+        enumerator = ues.UESJoinOrderOptimizer(base_table_estimation=base_table_estimator,
+                                               join_estimation=join_cardinality_estimator,
+                                               subquery_policy=subquery_policy,
+                                               stats_container=stats_container,
+                                               database=self.database)
         return enumerator
 
     def build_physical_operator_selection(self) -> selection.PhysicalOperatorSelection | None:
-        return selection.UESOperatorSelection(systems.DatabaseSystemRegistry.load_system_for(self.database))
+        return ues.UESOperatorSelection(systems.DatabaseSystemRegistry.load_system_for(self.database))
 
     def build_plan_parameterization(self) -> plan_param.ParameterGeneration | None:
         return None

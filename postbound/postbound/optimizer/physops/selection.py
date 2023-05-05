@@ -96,37 +96,6 @@ class PhysicalOperatorSelection(abc.ABC):
         raise NotImplementedError
 
 
-class UESOperatorSelection(PhysicalOperatorSelection):
-    """Implementation of the operator selection for the UES algorithm.
-
-    UES is actually not concerned with operator selection and focuses exclusively on join orders. Therefore, this
-    strategy simply disables nested loop joins since they can typically lead to performance degradation. Essentially
-    this enforces the usage of hash joins for the vast majority of joins in a typical database system since they
-    provide the most robust behavior.
-
-    See Hertzschuch et al.: "Simplicity Done Right for Join Ordering", CIDR'2021 for more details.
-    """
-
-    def __init__(self, target_system: systems.DatabaseSystem) -> None:
-        super().__init__(target_system)
-
-    def _apply_selection(self, query: qal.SqlQuery,
-                         join_order: Optional[jointree.LogicalJoinTree | jointree.PhysicalQueryPlan]
-                         ) -> operators.PhysicalOperatorAssignment:
-        if isinstance(join_order, jointree.PhysicalQueryPlan):
-            assignment = join_order.physical_operators().clone()
-        else:
-            assignment = operators.PhysicalOperatorAssignment()
-
-        if self.target_system.supports_hint(operators.JoinOperators.NestedLoopJoin):
-            assignment.set_operator_enabled_globally(operators.JoinOperators.NestedLoopJoin, False,
-                                                     overwrite_fine_grained_selection=True)
-        return assignment
-
-    def _description(self) -> dict:
-        return {"name": "ues"}
-
-
 class EmptyPhysicalOperatorSelection(PhysicalOperatorSelection):
     """Dummy implementation of operator optimization that does not actually optimize anything."""
 

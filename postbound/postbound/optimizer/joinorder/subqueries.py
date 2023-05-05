@@ -4,9 +4,8 @@ from __future__ import annotations
 import abc
 from typing import Optional
 
-from postbound.qal import base, qal, predicates
+from postbound.qal import qal, predicates
 from postbound.optimizer import data, validation
-from postbound.optimizer.bounds import stats
 
 
 class SubqueryGenerationPolicy(abc.ABC):
@@ -24,7 +23,7 @@ class SubqueryGenerationPolicy(abc.ABC):
         self.name = name
 
     @abc.abstractmethod
-    def setup_for_query(self, query: qal.SqlQuery, stats_container: stats.StatisticsContainer) -> None:
+    def setup_for_query(self, query: qal.SqlQuery) -> None:
         """Enables the setup of internal data structures to enable decisions about the given query."""
         raise NotImplementedError
 
@@ -53,7 +52,7 @@ class LinearSubqueryGenerationPolicy(SubqueryGenerationPolicy):
     def __init__(self):
         super().__init__("Linear subquery policy")
 
-    def setup_for_query(self, query: qal.SqlQuery, stats_container: stats.StatisticsContainer) -> None:
+    def setup_for_query(self, query: qal.SqlQuery) -> None:
         pass
 
     def generate_subquery_for(self, join: predicates.AbstractPredicate, join_graph: data.JoinGraph) -> bool:
@@ -61,38 +60,3 @@ class LinearSubqueryGenerationPolicy(SubqueryGenerationPolicy):
 
     def describe(self) -> dict:
         return {"name": "linear"}
-
-
-class UESSubqueryGenerationPolicy(SubqueryGenerationPolicy):
-    """The subquery strategy as proposed in the UES paper.
-
-    In short, this strategy generates subqueries if they guarantee a reduction of the upper bounds of the higher-level
-    join.
-
-    See Hertzschuch et al.: "Simplicity Done Right for Join Ordering", CIDR'2021 for details.
-    """
-
-    def __init__(self):
-        super().__init__("UES subquery policy")
-        self.query: qal.SqlQuery | None = None
-        self.stats_container: stats.StatisticsContainer | None = None
-
-    def setup_for_query(self, query: qal.SqlQuery, stats_container: stats.StatisticsContainer) -> None:
-        self.query = query
-        self.stats_container = stats_container
-
-    def generate_subquery_for(self, join: predicates.AbstractPredicate, join_graph: data.JoinGraph) -> bool:
-        if join_graph.count_consumed_tables() < 2:
-            return False
-
-        joined_table: base.TableReference | None = None
-        for table in join.tables():
-            if join_graph.is_free_table(table):
-                joined_table = table
-                break
-
-        stats_container = self.stats_container
-        return stats_container.upper_bounds[joined_table] < stats_container.base_table_estimates[joined_table]
-
-    def describe(self) -> dict:
-        return {"name": "defensive"}
