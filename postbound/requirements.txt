@@ -1,8 +1,8 @@
 matplotlib
 mo-sql-parsing
+mysql-connector-python
 natsort
 networkx
 numpy
 pandas
 psycopg
-psycopg-pool
