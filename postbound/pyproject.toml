@@ -1,0 +1,36 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "PostBOUND_test"
+version = "0.0.1-alpha"
+authors = [{name="Rico Bergmann", email="rico.bergmann1@tu-dresden.de"}]
+description = "PostBOUND is an adaptable framework to implement and evaluate database query optimizers"
+readme = "README.md"
+requires-python = ">=3.9"
+classifiers = [
+	"Programming Language :: Python :: 3",
+	"License :: OSI Approved :: Apache Software License",
+	"Development Status :: 3 - Alpha",
+	"Operating System :: OS Independent",
+]
+dependencies = [
+	"mo-sql-parsing",
+	"natsort",
+	"networkx",
+	"numpy",
+	"pandas",
+	"psycopg[binary]"
+]
+
+optional-dependencies = [
+    "mysql-connector-python"
+]
+
+[project.urls]
+"Homepage" = "https://github.com/rbergm/PostBOUND"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["postbound*"]
