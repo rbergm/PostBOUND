@@ -19,7 +19,7 @@ from postbound.db import db, postgres
 from postbound.db.systems import systems
 from postbound.qal import qal, transform, parser
 from postbound.experiments import workloads
-from postbound.optimizer import data
+from postbound.optimizer import jointree
 from postbound.optimizer.joinorder import enumeration
 from postbound.optimizer.physops import operators
 from postbound.optimizer.planmeta import hints as params
@@ -111,7 +111,7 @@ def execute_query_handler(query: qal.SqlQuery, database: db.Database,
 
 
 def generate_all_join_orders(query: qal.SqlQuery, exhaustive_enumerator: enumeration.ExhaustiveJoinOrderGenerator, *,
-                             config: ExperimentConfig = ExperimentConfig.default()) -> list[data.JoinTree]:
+                             config: ExperimentConfig = ExperimentConfig.default()) -> list[jointree.LogicalJoinTree]:
     exhaustive_join_order_generator = exhaustive_enumerator.all_join_orders_for(query)
     join_order_plans = []
     for i in range(config.exhaustive_join_ordering_limit):
@@ -126,8 +126,8 @@ def generate_all_join_orders(query: qal.SqlQuery, exhaustive_enumerator: enumera
     return join_order_plans
 
 
-def generate_random_join_orders(query: qal.SqlQuery, *,
-                                config: ExperimentConfig = ExperimentConfig.default()) -> list[data.JoinTree]:
+def generate_random_join_orders(query: qal.SqlQuery, *, config: ExperimentConfig = ExperimentConfig.default()
+                                ) -> list[jointree.LogicalJoinTree]:
     random_enumerator = enumeration.RandomJoinOrderGenerator()
     join_order_plans = []
     random_plan_hashes = set()
@@ -150,7 +150,7 @@ def generate_random_join_orders(query: qal.SqlQuery, *,
 class EvaluationResult:
     label: str
     query: qal.SqlQuery
-    join_order: data.JoinTree
+    join_order: jointree.JoinTree
     query_hints: str
     planner_options: str
     query_plan: dict
@@ -193,8 +193,9 @@ def true_cardinality_hints(label: str, config: ExperimentConfig) -> params.PlanP
     return plan_params
 
 
-def execute_single_query(label: str, query: qal.SqlQuery, join_order: data.JoinTree, *, n_executed_plans: int = 0,
-                         total_query_runtime: float = 0, db_system: systems.DatabaseSystem, db_instance: db.Database,
+def execute_single_query(label: str, query: qal.SqlQuery, join_order: jointree.LogicalJoinTree, *,
+                         n_executed_plans: int = 0, total_query_runtime: float = 0,
+                         db_system: systems.DatabaseSystem, db_instance: db.Database,
                          config: ExperimentConfig = ExperimentConfig.default()) -> EvaluationResult:
     query_generator = db_system.query_adaptor()
 
@@ -301,7 +302,7 @@ def evaluate_query(label: str, query: qal.SqlQuery, *, db_instance: db.Database,
 
 def prepare_for_export(df: pd.DataFrame) -> pd.DataFrame:
     df = df.copy()
-    df["join_order"] = df["join_order"].apply(data.JoinTree.as_list).apply(jsonize.to_json)
+    df["join_order"] = df["join_order"].apply(jointree.JoinTree.as_list).apply(jsonize.to_json)
     df["query_plan"] = df["query_plan"].apply(jsonize.to_json)
     df["db_config"] = df["db_config"].apply(jsonize.to_json)
     return df
