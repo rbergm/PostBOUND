@@ -25,14 +25,15 @@ tar xzf $OPENSSL_ARCHIVE_NAME
 
 echo ".. Building OpenSSL 1.1"
 cd $OPENSSL_SRC_DIR
-./config shared --prefix="$LIB_DIR"
-make -j $NCORES
+./config shared --prefix="$LIB_DIR" | tee openssl-1.1.1-configure.log
+make -j $NCORES | tee openssl-1.1.1-make.log | tee openssl-1.1.1-make.log
 make install
+export LD_LIBRARY_PATH="$LIB_DIR/lib:$LD_LIBRARY_PATH"
 
 echo ".. Building Python 3.10"
 cd $PYTHON_SRC_DIR
-./configure --enable-optimizations --prefix="$BIN_DIR" --with-openssl="$LIB_DIR"
-make -j $NCORES
+./configure --enable-optimizations --prefix="$BIN_DIR" --with-openssl="$LIB_DIR" | tee python3.10-configure.log
+make -j $NCORES | tee python3.10-make.log
 make altinstall
 
 cd $BIN_DIR/bin
