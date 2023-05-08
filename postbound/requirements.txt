@@ -5,4 +5,4 @@ natsort
 networkx
 numpy
 pandas
-psycopg
+psycopg[binary]
