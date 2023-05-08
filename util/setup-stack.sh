@@ -60,7 +60,7 @@ if [ -f $SSB_DIR/stack_dump ] ;  then
     echo ".. Re-using existing Stack dump"
 else
     echo ".. Downloading Stack database dump"
-    curl -o $SSB_DIR/stack_dump "https://www.dropbox.com/s/55bxfhilcu19i33/so_pg13?dl=1"
+    curl --location "https://www.dropbox.com/s/55bxfhilcu19i33/so_pg13?dl=1" --output $SSB_DIR/stack_dump
 fi
 
 echo ".. Creating Stack database"
