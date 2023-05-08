@@ -656,6 +656,7 @@ class LogicalJoinTree(JoinTree[LogicalJoinMetadata, LogicalBaseTableMetadata]):
 
     @staticmethod
     def load_from_join_sequence(join_order: NestedTableSequence) -> LogicalJoinTree:
+        """Creates the join tree specified in the right-deep sequence (as provided by the `join_sequence` method)."""
         current_join_tree = LogicalJoinTree()
         for join in join_order:
             if isinstance(join, Sequence):
@@ -663,6 +664,18 @@ class LogicalJoinTree(JoinTree[LogicalJoinMetadata, LogicalBaseTableMetadata]):
                 current_join_tree = current_join_tree.join_with_subtree(subtree)
             else:
                 current_join_tree = current_join_tree.join_with_base_table(join)
+        return current_join_tree
+
+    @staticmethod
+    def load_from_list(join_order: NestedTableSequence) -> LogicalJoinTree:
+        """Inverse operation to the `as_list` method: creates the join tree from such a list."""
+        current_join_tree = LogicalJoinTree()
+        for join in join_order:
+            if isinstance(join, Sequence):
+                subtree = LogicalJoinTree.load_from_list(join)
+                current_join_tree = current_join_tree.join_with_subtree(subtree, insert_left=False)
+            else:
+                current_join_tree = current_join_tree.join_with_base_table(join, insert_left=False)
         return current_join_tree
 
     def __init__(self: LogicalJoinTree,
