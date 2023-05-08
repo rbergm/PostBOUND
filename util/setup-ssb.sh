@@ -18,7 +18,7 @@ cd $root
 echo ".. Setting up environment"
 export DSS_CONFIG=$(pwd)/ssb-kit/dbgen
 export DSS_QUERY=$DSS_CONFIG/queries
-export DSS_PATH=../tpch_data
+export DSS_PATH=../ssb_data
 
 echo ".. Generating SSB data (SF = $SF)"
 mkdir -p ../ssb_data
@@ -38,4 +38,4 @@ psql ssb -f ../ssb_data/pg_load.sql
 
 
 echo ".. Creating SSB Foreign Key indices"
-psql ssb -f tpch_fk_indexes.sql
+psql ssb -f ssb_fk_indexes.sql
