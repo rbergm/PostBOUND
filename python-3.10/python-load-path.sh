@@ -12,7 +12,7 @@ if [ -z "$INIT" ] ; then
     export PY_PATH
     export PATH="$PY_PATH:$PATH"
 
-    export $LIB_PATH
+    export LIB_PATH
     export LD_LIBRARY_PATH="$PY_LIB_PATH:$LD_LIBRARY_PATH"
 fi
 
