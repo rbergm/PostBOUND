@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import sys
 from dataclasses import dataclass
 from datetime import datetime
 
@@ -39,5 +40,6 @@ for label, query in workloads.job().entries():
     benchmark_results.append(result_wrapper)
 
 df = pd.DataFrame(benchmark_results)
-os.makedirs("results/ax1/", exist_ok=True)
-df.to_csv("results/ax1/job-native-runtimes.csv", index=False)
+os.makedirs("results/job/", exist_ok=True)
+outfile = sys.argv[1] if len(sys.argv) > 1 else "job-native-runtimes.csv"
+df.to_csv(f"results/job/{outfile}", index=False)
