@@ -11,6 +11,8 @@ from __future__ import annotations
 import sys
 import unittest
 
+import psycopg.errors
+
 sys.path.append("../../")
 
 from postbound import postbound as pb  # noqa: E402
@@ -111,6 +113,12 @@ class StackWorkloadTests(regression_suite.DatabaseTestCase):
                     self.assertResultSetsEqual(original_result, optimized_result, ordered=query.is_ordered())
                 except validation.UnsupportedQueryError as e:
                     self.skipTest(f"Unsupported query: {e}")
+                except psycopg.errors.ProgrammingError as e:
+                    self.fail(f"Programming error at query '{label}': {e}")
+                except psycopg.errors.NotSupportedError as e:
+                    self.fail(f"Unsupported database feature error at query '{label}': {e}")
+                except psycopg.errors.DiskFull as e:
+                    self.skipTest(f"Internal database error at '{label}': {e}")
 
     def test_optimize_workload(self) -> None:
         optimization_pipeline = pb.OptimizationPipeline(target_dbs=systems.Postgres(self.db))
