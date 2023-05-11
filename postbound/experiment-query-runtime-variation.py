@@ -164,7 +164,8 @@ def determine_timeout(label: str, total_query_runtime: float, n_executed_plans: 
     if config.timeout_mode == "native":
         df = pd.read_csv(config.native_runtimes_df)
         native_runtime = df[df.label == label]["execution_time"].iloc[0]
-        return config.query_slowdown_tolerance_factor * native_runtime
+        timeout = config.query_slowdown_tolerance_factor * native_runtime
+        return max(timeout, config.minimum_query_timeout)
 
     if not config.timeout_mode == "dynamic":
         raise ValueError("Unknown timeout mode: " + config.timeout_mode)
