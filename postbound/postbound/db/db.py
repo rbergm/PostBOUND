@@ -12,11 +12,12 @@ from __future__ import annotations
 import abc
 import atexit
 import json
+import math
 import os
 import textwrap
 import typing
 import warnings
-from collections.abc import Sequence
+from collections.abc import Iterable, Sequence
 from typing import Any, Optional
 
 from postbound.qal import base, qal
@@ -389,8 +390,8 @@ class DatabaseStatistics(abc.ABC):
         else:
             return self._retrieve_most_common_values_from_stats(column, k)
 
-    def _calculate_total_rows(self, table: base.TableReference, *, cache_enabled: Optional[bool] = None) -> Optional[
-        int]:
+    def _calculate_total_rows(self, table: base.TableReference, *,
+                              cache_enabled: Optional[bool] = None) -> Optional[int]:
         """Retrieves the total number of rows of a table by issuing a COUNT(*) query against the live database.
 
         The table is assumed to be non-virtual.
@@ -529,3 +530,33 @@ class UnsupportedDatabaseFeatureError(RuntimeError):
         super().__init__(f"Database {database.system_name} does not support feature {feature}")
         self.database = database
         self.feature = feature
+
+
+class QueryExecutionPlan:
+    """Abstraction for the smalles common denominator of query plan features.
+
+    This can be used when information from a query plan is required to implement other functionality. A plan simply consists
+    of a number of nodes which contain information specific to the actual node type.
+    """
+
+    def __init__(self, node_type: str, is_join: bool, is_scan: bool, *, table: Optional[base.TableReference] = None,
+                 children: Optional[Iterable[QueryExecutionPlan]] = None, index: str = "", condition: str = "",
+                 estimated_cost: float = math.nan, estimated_cardinality: float = math.nan, true_cardinality: float = math.nan,
+                 execution_time: float = math.nan) -> None:
+        self.node_type = node_type
+        self.is_join = is_join
+        self.is_scan = is_scan
+        self.children: Sequence[QueryExecutionPlan] = list(children) if children else []
+
+        self.table = table
+        self.index = index
+        self.condition = condition
+
+        self.estimated_cost = estimated_cost
+        self.estimated_cardinality = estimated_cardinality
+        self.true_cardinality = true_cardinality
+        self.execution_time = execution_time
+
+    def is_analyze(self) -> bool:
+        """Checks, whether the current node also contains information about actual execution properties."""
+        return not math.isnan(self.true_cardinality) or not math.isnan(self.execution_time)
