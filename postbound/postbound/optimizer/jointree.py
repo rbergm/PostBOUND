@@ -10,7 +10,7 @@ import numpy as np
 from postbound.qal import base, predicates
 from postbound.optimizer.physops import operators as physops
 from postbound.optimizer.planmeta import hints as params
-from postbound.util import collections as collection_utils, errors, numbers as num_utils
+from postbound.util import collections as collection_utils, errors, stats
 
 
 class BaseMetadata(abc.ABC):
@@ -146,7 +146,8 @@ class PhysicalBaseTableMetadata(BaseTableMetadata):
 
 JoinMetadataType = typing.TypeVar("JoinMetadataType", bound=JoinMetadata)
 BaseTableMetadataType = typing.TypeVar("BaseTableMetadataType", bound=BaseTableMetadata)
-NestedTableSequence = typing.NewType("NestedTableSequence", Union[Sequence["NestedTableSequence"], base.TableReference])
+NestedTableSequence = typing.NewType("NestedTableSequence",
+                                     Union[Sequence["NestedTableSequence"], base.TableReference])
 
 
 class AbstractJoinTreeNode(abc.ABC, Container[base.TableReference], Generic[JoinMetadataType, BaseTableMetadataType]):
@@ -811,7 +812,54 @@ def physical_join_tree_annotation_merger(first_annotation: Optional[PhysicalPlan
     return PhysicalJoinMetadata(upper_bound=first_annotation.upper_bound * second_annotation.upper_bound)
 
 
+def top_down_similarity(a: JoinTree | AbstractJoinTreeNode, b: JoinTree | AbstractJoinTreeNode, *,
+                        symmetric: bool = False, gamma: float = 1.1) -> float:
+    tables_a, tables_b = a.tables(), b.tables()
+    total_n_tables = len(tables_a | tables_b)
+    normalization_factor = 1 / total_n_tables
+
+    # similarity between two leaf nodes
+    if len(tables_a) == 1 and len(tables_b) == 1:
+        return 1 if tables_a == tables_b else 0
+
+    a = a.root if isinstance(a, JoinTree) else a
+    b = b.root if isinstance(b, JoinTree) else b
+
+    # similarity between leaf node and intermediate node
+    if len(tables_a) == 1 or len(tables_b) == 1:
+        leaf_tree = a if len(tables_a) == 1 else b
+        intermediate_tree = b if leaf_tree == a else a
+        assert isinstance(intermediate_tree, IntermediateJoinNode)
+
+        left_score = stats.jaccard(leaf_tree.tables(), intermediate_tree.left_child.tables())
+        right_score = stats.jaccard(leaf_tree.tables(), intermediate_tree.right_child.tables())
+
+        return normalization_factor * max(left_score, right_score)
+
+    assert isinstance(a, IntermediateJoinNode) and isinstance(b, IntermediateJoinNode)
+
+    # similarity between two intermediate nodes
+    a_left, a_right = a.left_child, a.right_child
+    b_left, b_right = b.left_child, b.right_child
+
+    symmetric_score = (stats.jaccard(a_left.tables(), b_left.tables())
+                       + stats.jaccard(a_right.tables(), b_right.tables()))
+    crossover_score = (stats.jaccard(a_left.tables(), b_right.tables())
+                       + stats.jaccard(a_right.tables(), b_left.tables())
+                       if symmetric else 0)
+    node_score = normalization_factor * max(symmetric_score, crossover_score)
+
+    if symmetric and crossover_score > symmetric_score:
+        child_score = (top_down_similarity(a_left, b_right, symmetric=symmetric, gamma=gamma)
+                       + top_down_similarity(a_right, b_left, symmetric=symmetric, gamma=gamma))
+    else:
+        child_score = (top_down_similarity(a_left, b_left, symmetric=symmetric, gamma=gamma)
+                       + top_down_similarity(a_right, b_right, symmetric=symmetric, gamma=gamma))
+
+    return node_score + gamma * child_score
+
+
 def bottom_up_similarity(a: JoinTree, b: JoinTree) -> float:
     a_subtrees = {join.tables() for join in a.join_sequence()}
     b_subtrees = {join.tables() for join in b.join_sequence()}
-    return num_utils.jaccard(a_subtrees, b_subtrees)
+    return stats.jaccard(a_subtrees, b_subtrees)
