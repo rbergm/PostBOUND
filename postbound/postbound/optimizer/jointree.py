@@ -10,7 +10,7 @@ import numpy as np
 from postbound.qal import base, predicates
 from postbound.optimizer.physops import operators as physops
 from postbound.optimizer.planmeta import hints as params
-from postbound.util import collections as collection_utils, errors
+from postbound.util import collections as collection_utils, errors, numbers as num_utils
 
 
 class BaseMetadata(abc.ABC):
@@ -804,3 +804,9 @@ def physical_join_tree_annotation_merger(first_annotation: Optional[PhysicalPlan
     if not first_annotation or not second_annotation:
         return PhysicalJoinMetadata()
     return PhysicalJoinMetadata(upper_bound=first_annotation.upper_bound * second_annotation.upper_bound)
+
+
+def bottom_up_similarity(a: JoinTree, b: JoinTree) -> float:
+    a_subtrees = {join.tables() for join in a.join_sequence()}
+    b_subtrees = {join.tables() for join in b.join_sequence()}
+    return num_utils.jaccard(a_subtrees, b_subtrees)
