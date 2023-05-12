@@ -281,6 +281,11 @@ class IntermediateJoinNode(AbstractJoinTreeNode[JoinMetadataType, BaseTableMetad
         return self._right_child
 
     @property
+    def children(self) -> tuple[AbstractJoinTreeNode[JoinMetadataType, BaseTableMetadataType],
+                                AbstractJoinTreeNode[JoinMetadataType, BaseTableMetadataType]]:
+        return (self._left_child, self._right_child)
+
+    @property
     def annotation(self) -> Optional[JoinMetadataType]:
         return self._annotation
 
