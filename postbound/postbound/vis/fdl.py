@@ -3,12 +3,12 @@ from __future__ import annotations
 
 import collections
 import typing
-from collections.abc import Iterable
+from collections.abc import Hashable, Iterable
 
 import networkx as nx
 import numpy as np
 
-T = typing.TypeVar("T")
+T = typing.TypeVar("T", bound=Hashable)
 
 
 def force_directed_layout(elements: Iterable[T], difference_score: callable[[T, T], float]) -> dict[T, np.ndarray]:
@@ -18,6 +18,10 @@ def force_directed_layout(elements: Iterable[T], difference_score: callable[[T, 
 
     The returned dictionary maps each of the input element to the pair of (x, y) coordinates.
     """
+    return DefaultLayoutEngine(elements, difference_score)
+
+
+def kamada_kawai_layout(elements: Iterable[T], difference_score: callable[[T, T], float]) -> dict[T, np.ndarray]:
     elements = list(elements)
     layout_graph = nx.complete_graph(elements)
 
@@ -29,3 +33,17 @@ def force_directed_layout(elements: Iterable[T], difference_score: callable[[T, 
             distance_map[b][a] = current_score
 
     return nx.kamada_kawai_layout(layout_graph, dist=distance_map)
+
+
+def fruchterman_reingold_layout(elements: Iterable[T], difference_score: callable[[T, T], float], *,
+                                n_iter: int = 100) -> dict[T, np.ndarray]:
+    elements = list(elements)
+    layout_graph = nx.Graph()
+    layout_graph.add_nodes_from(elements)
+    for a_idx, a in enumerate(elements):
+        for b in elements[a_idx:]:
+            layout_graph.add_edge(a, b, attraction=1 / max(difference_score(a, b), 1e-5))
+    return nx.spring_layout(layout_graph, weight="attraction", iterations=n_iter)
+
+
+DefaultLayoutEngine = kamada_kawai_layout
