@@ -10,7 +10,7 @@ import pandas as pd
 
 from postbound.qal import qal
 from postbound.experiments import runner
-from postbound.util import jsonize, numbers as num
+from postbound.util import jsonize, stats as num
 
 
 def prepare_export(df: pd.DataFrame) -> pd.DataFrame:
