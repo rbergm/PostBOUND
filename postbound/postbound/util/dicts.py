@@ -140,3 +140,17 @@ def argmin(mapping: dict[K, numbers.Number]) -> K:
     values `v'` it holds that `v <= v'`.
     """
     return min(mapping, key=mapping.get)
+
+
+class CustomHashDict(collections.UserDict[K, V]):
+    """A normal Python dictionary that uses a custom hash function instead of the default hash() call."""
+
+    def __init__(self, hash_func: Callable[[K], int]) -> None:
+        super().__init__()
+        self.hash_function = hash_func
+
+    def __getitem__(self, k: K) -> V:
+        return super().__getitem__(self.hash_function(k))
+
+    def __setitem__(self, k: K, item: V) -> None:
+        super().__setitem__(self.hash_function(k), item)
