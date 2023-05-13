@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import abc
+import collections
 import functools
 import itertools
 from collections.abc import Collection, Iterable, Iterator, Sequence
@@ -934,30 +935,67 @@ class QueryPredicates:
         return join_graph
 
     @functools.cache
-    def filters_for(self, table: base.TableReference) -> Collection[AbstractPredicate]:
+    def filters_for(self, table: base.TableReference) -> Optional[AbstractPredicate]:
         """Provides all filter predicates that reference the given table.
+
+        If multiple individual filter predicates are specified in the query, they will be combined in one large
+        conjunction.
 
         The determination of matching filter predicates is the same as for the `filters()` method.
         """
         self._assert_not_empty()
-        return [filter_pred for filter_pred in self.filters() if table in filter_pred.tables()]
+        applicable_filters = [filter_pred for filter_pred in self.filters() if filter_pred.contains_table(table)]
+        return CompoundPredicate.create_and(applicable_filters) if applicable_filters else None
 
     @functools.cache
     def joins_for(self, table: base.TableReference) -> Collection[AbstractPredicate]:
         """Provides all join predicates that reference the given table.
 
+        Each entry in the resulting collection is a join predicate between the given table and a (set of) partner
+        tables, such that the partner tables between different entries in the collection are also different. If
+        multiple join predicates are specified between the given table and a specific (set of) partner tables, these
+        predicates are aggregated into one large conjunction.
+
         The determination of matching join predicates is the same as for the `joins()` method.
         """
         self._assert_not_empty()
-        return [join_pred for join_pred in self.joins() if table in join_pred.tables()]
+        applicable_joins: list[AbstractPredicate] = [join_pred for join_pred in self.joins()
+                                                     if join_pred.contains_table(table)]
+        distinct_joins: dict[frozenset[base.TableReference], list[AbstractPredicate]] = collections.defaultdict(list)
+        for join_predicate in applicable_joins:
+            partners = {column.table for column in join_predicate.join_partners_of(table)}
+            distinct_joins[frozenset(partners)].append(join_predicate)
+
+        aggregated_predicates = []
+        for join_group in distinct_joins.values():
+            aggregated_predicates.append(CompoundPredicate.create_and(join_group))
+        return aggregated_predicates
 
     @functools.cache
-    def joins_between(self, first_table: base.TableReference,
-                      second_table: base.TableReference) -> Optional[AbstractPredicate]:
-        """Provides the (conjunctive) join predicate that joins the given tables."""
+    def joins_between(self, first_table: base.TableReference | Iterable[base.TableReference],
+                      second_table: base.TableReference | Iterable[base.TableReference]) -> Optional[AbstractPredicate]:
+        """Provides the (conjunctive) join predicate that joins the given tables.
+
+        If `first_table` or `second_table` contain multiple tables, all join predicates between tables from the
+        different sets are returned (but joins between tables from `first_table` or from `second_table` are not).
+
+        Notice that the returned predicate might also include other tables, if they are part of a join predicate that
+        also joins the given two tables.
+        """
         self._assert_not_empty()
-        first_joins = self.joins_for(first_table)
-        matching_joins = [join_pred for join_pred in first_joins if join_pred.joins_table(second_table)]
+        if isinstance(first_table, base.TableReference) and isinstance(second_table, base.TableReference):
+            first_joins: Collection[AbstractPredicate] = self.joins_for(first_table)
+            matching_joins = [join for join in first_joins if join.joins_table(second_table)]
+            return CompoundPredicate.create_and(matching_joins) if matching_joins else None
+
+        matching_joins = []
+        first_table, second_table = collection_utils.enlist(first_table), collection_utils.enlist(second_table)
+        for first in frozenset(first_table):
+            for second in frozenset(second_table):
+                join_predicate = self.joins_between(first, second)
+                if not join_predicate:
+                    continue
+                matching_joins.append(join_predicate)
         return CompoundPredicate.create_and(matching_joins) if matching_joins else None
 
     def joins_tables(self, tables: base.TableReference | Iterable[base.TableReference],
@@ -999,6 +1037,9 @@ class QueryPredicates:
 
     def __iter__(self) -> Iterator[AbstractPredicate]:
         return (list(self.filters()) + list(self.joins())).__iter__()
+
+    def __bool__(self) -> bool:
+        return not self.is_empty()
 
     def __hash__(self) -> int:
         return self._hash_val

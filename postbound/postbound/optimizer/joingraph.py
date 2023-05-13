@@ -238,6 +238,10 @@ class JoinGraph(Mapping[base.TableReference, TableInfo]):
             components.append(JoinGraph(component_query, self._db_schema))
         return components
 
+    def joined_tables(self) -> frozenset[base.TableReference]:
+        """Provides all non-free tables in the join graph."""
+        return frozenset(table for table in self if not self.is_free_table(table))
+
     def all_joins(self) -> Iterable[tuple[base.TableReference, base.TableReference]]:
         """Provides all edges in the join graph, no matter whether they are available or not."""
         return list(self._graph.edges)
@@ -418,10 +422,14 @@ class JoinGraph(Mapping[base.TableReference, TableInfo]):
 
         If no join predicate is supplied, no index structures are updated.
         """
-        # TODO: allow auto-update
-
         self._graph.nodes[table]["free"] = False
+        if len(self.joined_tables()) == 1:
+            return
+
+        join_edge = join_edge if join_edge else self.query.predicates().joins_between(table, self.joined_tables())
         if not join_edge:
+            # We still need this check even though we already know that there are at least two tables joined, since
+            # these two tables might have nothing to do with each other (e.g. different components in the join graph)
             return
 
         partner_table = collection_utils.simplify({col.table for col in join_edge.join_partners_of(table)})

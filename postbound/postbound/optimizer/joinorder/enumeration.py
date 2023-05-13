@@ -52,41 +52,6 @@ class JoinOrderOptimizer(abc.ABC):
         return validation.EmptyPreCheck()
 
 
-@functools.cache
-def _fetch_filters(query: qal.SqlQuery, table: base.TableReference) -> preds.AbstractPredicate | None:
-    """Merges all filters for the given table into one predicate."""
-    all_filters = query.predicates().filters_for(table)
-    predicate = preds.CompoundPredicate.create_and(all_filters) if all_filters else None
-    return predicate
-
-
-@functools.cache
-def _fetch_joins(query: qal.SqlQuery, joined_tables: base.TableReference | frozenset[base.TableReference],
-                 intermediate_tables: base.TableReference | frozenset[base.TableReference]
-                 ) -> Optional[preds.AbstractPredicate]:
-    """Provides all join predicates between the given sets of tables.
-
-    Join predicates between tables within each set are not considered. If no predicates are found, `None` is returned.
-    Otherwise, the predicate will be the conjunction of all individual predicates.
-
-    Theoretically speaking, the joined tables are intended as a new set of tables that have not been included in an
-    intermediate join result of the input query, whereas the intermediate tables are supposed to form the intermediate.
-    However, this is never actually enforced.
-    """
-    predicates = query.predicates()
-    joins = []
-    for joined_table in frozenset(joined_tables):
-        for intermediate_table in frozenset(intermediate_tables):
-            current_predicates = predicates.joins_between(joined_table, intermediate_table)
-            if not current_predicates:
-                continue
-            joins.append(current_predicates)
-
-    if not joins:
-        return None
-    return preds.CompoundPredicate.create_and(joins)
-
-
 def _sample_join_path_snippet(query: qal.SqlQuery, join_snippet: Sequence[base.TableReference], *,
                               may_contain_cross_products: bool = False) -> Generator[jointree.LogicalJoinTree]:
     """Generates a random join path for the given excerpt of the query's tables.
@@ -101,7 +66,7 @@ def _sample_join_path_snippet(query: qal.SqlQuery, join_snippet: Sequence[base.T
 
     if len(join_snippet) == 1:
         base_table = join_snippet[0]
-        base_annotation = jointree.LogicalBaseTableMetadata(_fetch_filters(query, base_table))
+        base_annotation = jointree.LogicalBaseTableMetadata(query.predicates().filters_for(base_table))
         yield jointree.LogicalJoinTree.for_base_table(base_table, base_annotation)
         return
     elif len(join_snippet) == 2:
@@ -112,10 +77,10 @@ def _sample_join_path_snippet(query: qal.SqlQuery, join_snippet: Sequence[base.T
         if not may_contain_cross_products and not join_predicate:
             return
 
-        base_annotation = jointree.LogicalBaseTableMetadata(_fetch_filters(query, base_table))
+        base_annotation = jointree.LogicalBaseTableMetadata(query.predicates().filters_for(base_table))
         base_tree = jointree.LogicalJoinTree.for_base_table(base_table, base_annotation)
-        joined_annotation = jointree.LogicalBaseTableMetadata(_fetch_filters(query, joined_table))
-        join_annotation = jointree.LogicalJoinMetadata(_fetch_filters(query, joined_table))
+        joined_annotation = jointree.LogicalBaseTableMetadata(query.predicates().filters_for(joined_table))
+        join_annotation = jointree.LogicalJoinMetadata(query.predicates().joins_between(base_table, joined_table))
         join_tree = base_tree.join_with_base_table(joined_table, joined_annotation, join_annotation)
         yield join_tree
         return
@@ -127,7 +92,7 @@ def _sample_join_path_snippet(query: qal.SqlQuery, join_snippet: Sequence[base.T
 
         head_tables = join_snippet[:split_idx]
         tail_tables = join_snippet[split_idx:]
-        join_predicate = _fetch_joins(query, frozenset(head_tables), frozenset(tail_tables))
+        join_predicate = query.predicates().joins_between(head_tables, tail_tables)
         if not may_contain_cross_products and not join_predicate:
             continue
 
@@ -202,7 +167,7 @@ def _all_join_tree_snippets(query: qal.SqlQuery, join_sequence: Sequence[base.Ta
 
     if len(join_sequence) == 1:
         base_table = join_sequence[0]
-        annotation = jointree.LogicalBaseTableMetadata(_fetch_filters(query, base_table))
+        annotation = jointree.LogicalBaseTableMetadata(query.predicates().filters_for(base_table))
         yield jointree.LogicalJoinTree.for_base_table(base_table, annotation)
         return
     elif len(join_sequence) == 2:
@@ -211,9 +176,9 @@ def _all_join_tree_snippets(query: qal.SqlQuery, join_sequence: Sequence[base.Ta
         if not may_contain_cross_products and not join_predicate:
             return
 
-        base_annotation = jointree.LogicalBaseTableMetadata(_fetch_filters(query, base_table))
+        base_annotation = jointree.LogicalBaseTableMetadata(query.predicates().filters_for(base_table))
         base_tree = jointree.LogicalJoinTree.for_base_table(base_table, base_annotation)
-        joined_annotation = jointree.LogicalBaseTableMetadata(_fetch_filters(query, joined_table))
+        joined_annotation = jointree.LogicalBaseTableMetadata(query.predicates().filters_for(joined_table))
         join_annotation = jointree.LogicalJoinMetadata(join_predicate)
         join_tree = base_tree.join_with_base_table(joined_table, joined_annotation, join_annotation)
         yield join_tree
@@ -222,7 +187,7 @@ def _all_join_tree_snippets(query: qal.SqlQuery, join_sequence: Sequence[base.Ta
     for split_idx in range(1, len(join_sequence)):
         head_tables = join_sequence[:split_idx]
         tail_tables = join_sequence[split_idx:]
-        join_predicate = _fetch_joins(query, frozenset(head_tables), frozenset(tail_tables))
+        join_predicate = query.predicates().joins_between(head_tables, tail_tables)
         if not may_contain_cross_products and not join_predicate:
             continue
         for head_tree in _all_join_tree_snippets(query, head_tables,

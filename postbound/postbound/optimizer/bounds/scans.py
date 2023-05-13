@@ -5,7 +5,7 @@ import abc
 from typing import Optional
 
 from postbound.db import db
-from postbound.qal import base, clauses, predicates, qal
+from postbound.qal import base, clauses, qal
 from postbound.optimizer import validation
 
 
@@ -72,13 +72,13 @@ class NativeCardinalityEstimator(BaseTableCardinalityEstimator):
         self.query = query
 
     def estimate_for(self, table: base.TableReference) -> int:
-        filters = list(self.query.predicates().filters_for(table))
+        filters = self.query.predicates().filters_for(table)
         if not filters:
             return self.estimate_total_rows(table)
 
         select_clause = clauses.Select(clauses.BaseProjection.star())
         from_clause = clauses.ImplicitFromClause(table)
-        where_clause = clauses.Where(predicates.CompoundPredicate.create_and(filters))
+        where_clause = clauses.Where(filters) if filters else None
 
         emulated_query = qal.ImplicitSqlQuery(select_clause=select_clause,
                                               from_clause=from_clause,
@@ -114,7 +114,7 @@ class PreciseCardinalityEstimator(BaseTableCardinalityEstimator):
         from_clause = clauses.ImplicitFromClause(table)
 
         filters = self.query.predicates().filters_for(table)
-        where_clause = clauses.Where(predicates.CompoundPredicate.create_and(filters)) if filters else None
+        where_clause = clauses.Where(filters) if filters else None
 
         emulated_query = qal.ImplicitSqlQuery(select_clause=select_clause,
                                               from_clause=from_clause,

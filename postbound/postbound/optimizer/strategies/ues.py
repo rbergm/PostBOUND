@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import abc
 import copy
-import functools
 import math
 import operator
 import typing
@@ -34,7 +33,7 @@ MaxFrequency = typing.NewType("MaxFrequency", int)
 The maximum frequency of a column is the maximum number of occurrences of a column value within that column.
 
 For example, consider a column `R.a` with values `[a, b, a, a, b, c]`. In this case, maximum column frequency for `R.a`
-is 3. 
+is 3.
 """
 
 MostCommonElements = typing.NewType("MostCommonElements", list[tuple[Generic[ColumnType], int]])
@@ -208,14 +207,6 @@ class MaxFrequencyStatsContainer(StatisticsContainer[MaxFrequency]):
     def _update_third_party_column_frequency(self, joined_column: base.ColumnReference,
                                              third_party_column: base.ColumnReference) -> None:
         self.attribute_frequencies[third_party_column] *= self.attribute_frequencies[joined_column]
-
-
-@functools.cache
-def _fetch_filters(query: qal.SqlQuery, table: base.TableReference) -> predicates.AbstractPredicate | None:
-    """Merges all filters for the given table into one predicate."""
-    all_filters = query.predicates().filters_for(table)
-    predicate = predicates.CompoundPredicate.create_and(all_filters) if all_filters else None
-    return predicate
 
 
 class UESJoinBoundEstimator(join_bounds.JoinBoundCardinalityEstimator):
@@ -439,7 +430,7 @@ class UESJoinOrderOptimizer(enumeration.JoinOrderOptimizer):
                     lowest_bound_table = candidate_table
 
             if join_tree.is_empty():
-                filter_pred = _fetch_filters(query, lowest_bound_table)
+                filter_pred = query.predicates().filters_for(lowest_bound_table)
                 annotation = jointree.LogicalBaseTableMetadata(filter_pred, lowest_bound)
                 join_tree = jointree.LogicalJoinTree.for_base_table(lowest_bound_table, annotation)
                 join_graph.mark_joined(lowest_bound_table)
@@ -449,7 +440,7 @@ class UESJoinOrderOptimizer(enumeration.JoinOrderOptimizer):
                 for pk_join in pk_joins:
                     target_table = pk_join.target_table
                     base_cardinality = self.stats_container.base_table_estimates[target_table]
-                    filter_pred = _fetch_filters(query, target_table)
+                    filter_pred = query.predicates().filters_for(target_table)
                     join_bound = self.join_estimation.estimate_for(pk_join.join_condition, join_graph)
                     join_graph.mark_joined(target_table, pk_join.join_condition)
                     base_annotation = jointree.LogicalBaseTableMetadata(filter_pred, base_cardinality)
@@ -471,7 +462,7 @@ class UESJoinOrderOptimizer(enumeration.JoinOrderOptimizer):
                                   for pk_join in direct_pk_joins)
             candidate_table = selected_candidate.target_table
             all_pk_joins = join_graph.available_deep_pk_join_paths_for(candidate_table)
-            candidate_filters = _fetch_filters(query, candidate_table)
+            candidate_filters = query.predicates().filters_for(candidate_table)
             candidate_base_cardinality = self.stats_container.base_table_estimates[candidate_table]
             join_annotation = jointree.LogicalJoinMetadata(selected_candidate.join_condition, lowest_bound)
             base_annotation = jointree.LogicalBaseTableMetadata(candidate_filters, candidate_base_cardinality)
@@ -510,8 +501,8 @@ class UESJoinOrderOptimizer(enumeration.JoinOrderOptimizer):
         large_card = self.stats_container.base_table_estimates[large_table]
         small_card = self.stats_container.base_table_estimates[small_table]
 
-        large_filter = _fetch_filters(query, large_table)
-        small_filter = _fetch_filters(query, small_table)
+        large_filter = query.predicates().filters_for(large_table)
+        small_filter = query.predicates().filters_for(small_table)
 
         join_predicate = query.predicates().joins_between(large_table, small_table)
         join_bound = self.join_estimation.estimate_for(join_predicate, join_graph)
@@ -536,7 +527,7 @@ class UESJoinOrderOptimizer(enumeration.JoinOrderOptimizer):
                 lowest_bound_join = candidate_join
 
         start_table = lowest_bound_join.start_table
-        start_filters = _fetch_filters(query, start_table)
+        start_filters = query.predicates().filters_for(start_table)
         start_annotation = jointree.LogicalBaseTableMetadata(start_filters,
                                                              self.stats_container.base_table_estimates[start_table])
         join_tree = jointree.LogicalJoinTree.for_base_table(start_table, start_annotation)
@@ -554,8 +545,8 @@ class UESJoinOrderOptimizer(enumeration.JoinOrderOptimizer):
                     lowest_bound = current_bound
                     lowest_bound_join = candidate_join
 
-            join_tree = self._apply_pk_fk_join(query, lowest_bound_join, join_bound=lowest_bound, join_graph=join_graph,
-                                               current_join_tree=join_tree)
+            join_tree = self._apply_pk_fk_join(query, lowest_bound_join, join_bound=lowest_bound,
+                                               join_graph=join_graph, current_join_tree=join_tree)
 
         return join_tree
 
@@ -568,7 +559,7 @@ class UESJoinOrderOptimizer(enumeration.JoinOrderOptimizer):
                           current_join_tree: jointree.LogicalJoinTree) -> jointree.LogicalJoinTree:
         """Includes the given  pk/fk join into the join tree, taking care of all necessary updates."""
         target_table = pk_fk_join.target_table
-        target_filters = _fetch_filters(query, target_table)
+        target_filters = query.predicates().filters_for(target_table)
         target_cardinality = self.stats_container.base_table_estimates[target_table]
         base_annotation = jointree.LogicalBaseTableMetadata(target_filters, target_cardinality)
         join_annotation = jointree.LogicalJoinMetadata(pk_fk_join.join_condition, join_bound)
@@ -586,7 +577,7 @@ class UESJoinOrderOptimizer(enumeration.JoinOrderOptimizer):
             pk_table = pk_join.target_table
             if not join_graph.is_free_table(pk_table):
                 continue
-            pk_filters = _fetch_filters(query, pk_table)
+            pk_filters = query.predicates().filters_for(pk_table)
             pk_join_bound = self.join_estimation.estimate_for(pk_join.join_condition, join_graph)
             pk_base_cardinality = self.stats_container.base_table_estimates[pk_table]
             base_annotation = jointree.LogicalBaseTableMetadata(pk_filters, pk_base_cardinality)
