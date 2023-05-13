@@ -114,7 +114,7 @@ def generate_all_join_orders(query: qal.SqlQuery, exhaustive_enumerator: enumera
                              config: ExperimentConfig = ExperimentConfig.default()) -> list[jointree.LogicalJoinTree]:
     exhaustive_join_order_generator = exhaustive_enumerator.all_join_orders_for(query)
     join_order_plans = []
-    for i in range(config.exhaustive_join_ordering_limit):
+    for __ in range(config.exhaustive_join_ordering_limit):
         try:
             next_join_order = next(exhaustive_join_order_generator)
             join_order_plans.append(next_join_order)
@@ -133,16 +133,27 @@ def generate_random_join_orders(query: qal.SqlQuery, *, config: ExperimentConfig
     random_plan_hashes = set()
     current_plan_idx = 0
     random_join_order_generator = random_enumerator.random_join_order_generator(query)
+
+    max_tries = 3 * config.exhaustive_join_ordering_limit
+    current_try = 0
     while current_plan_idx < config.exhaustive_join_ordering_limit:
+        current_try += 1
+        if current_try > max_tries:
+            print("... Stopping sampling since max tries have been reached")
+            break
+
         next_join_order = next(random_join_order_generator)
         next_hash = hash(next_join_order)
         if next_hash in random_plan_hashes:
             continue
+
         random_plan_hashes.add(next_hash)
         join_order_plans.append(next_join_order)
         current_plan_idx += 1
+
         if current_plan_idx % 100 == 0:
             print("...", len(join_order_plans), "plans sampled")
+
     return join_order_plans
 
 
@@ -234,6 +245,8 @@ def execute_single_query(label: str, query: qal.SqlQuery, join_order: jointree.L
     else:
         query_runtime = query_duration_receiver.recv()
     query_execution_worker.close()
+    query_duration_receiver.close()
+    query_duration_sender.close()
 
     query_plan = db_instance.execute_query(transform.as_explain(optimized_query), cache_enabled=False)
     cost_estimate = db_instance.cost_estimate(optimized_query)
