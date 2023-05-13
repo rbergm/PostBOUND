@@ -11,7 +11,7 @@ import unittest
 
 sys.path.append("../../")
 
-from postbound.qal import base, parser  # noqa: E402
+from postbound.qal import base, parser, expressions, predicates  # noqa: E402
 
 from postbound.tests import regression_suite  # noqa: E402
 
@@ -199,6 +199,21 @@ class PredicateTests(unittest.TestCase):
         parsed = parser.parse_query(query)
         self.assertFalse(parsed.predicates().joins())
         self.assertTrue(len(parsed.predicates().filters()) == 4)
+
+    def test_nested_conjunction_disjunction_predicates(self) -> None:
+        query = textwrap.dedent("""
+                                SELECT *
+                                FROM title t
+                                    JOIN movie_info mi ON t.id = mi.movie_id
+                                WHERE t.production_year < 2021
+                                  OR t.season_nr > 10
+                                  AND mi.info LIKE '%cartoon%'
+                                  """)
+        parsed = parser.parse_query(query)
+        root_predicate = parsed.where_clause.predicate
+        self.assertTrue(isinstance(root_predicate, predicates.CompoundPredicate))
+        self.assertTrue(root_predicate.operation == expressions.LogicalSqlCompoundOperators.Or,
+                        "OR predicate should come first")
 
 
 class MockSchemaLookup:
