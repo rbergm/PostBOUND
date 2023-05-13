@@ -284,7 +284,7 @@ class IntermediateJoinNode(AbstractJoinTreeNode[JoinMetadataType, BaseTableMetad
     @property
     def children(self) -> tuple[AbstractJoinTreeNode[JoinMetadataType, BaseTableMetadataType],
                                 AbstractJoinTreeNode[JoinMetadataType, BaseTableMetadataType]]:
-        return (self._left_child, self._right_child)
+        return self._left_child, self._right_child
 
     @property
     def annotation(self) -> Optional[JoinMetadataType]:
@@ -595,6 +595,9 @@ class JoinTree(Container[base.TableReference], Iterable[IntermediateJoinNode[Joi
         """Raises an error if this tree is empty."""
         if self.is_empty():
             raise errors.StateError("Empty join tree")
+
+    def __bool__(self) -> bool:
+        return not self.is_empty()
 
     def __contains__(self, __x: object) -> bool:
         return __x in self._root if self._root else False

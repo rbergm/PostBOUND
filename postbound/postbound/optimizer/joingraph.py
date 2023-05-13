@@ -2,9 +2,9 @@
 from __future__ import annotations
 
 import collections
-from collections.abc import Collection
+from collections.abc import Callable, Collection, Iterable, Iterator, Mapping
 from dataclasses import dataclass
-from typing import Callable, Iterable, Optional
+from typing import Optional
 
 import networkx as nx
 
@@ -130,11 +130,18 @@ class IndexInfo:
             return f"SECONDARY INDEX({self.column}){invalid_state}"
 
 
+@dataclass(frozen=True)
+class TableInfo:
+    """Captures information about the state of tables in the join graph."""
+    free: bool
+    index_info: Collection[IndexInfo]
+
+
 _PredicateMap = collections.defaultdict[frozenset[base.TableReference], list[predicates.AbstractPredicate]]
 """Type alias for an (internally used) predicate map"""
 
 
-class JoinGraph:
+class JoinGraph(Mapping[base.TableReference, TableInfo]):
     """The `JoinGraph` models the connection between different tables of in a query.
 
     All tables that are referenced in the query are represented as the nodes of the graph. If two tables are joined
@@ -230,6 +237,10 @@ class JoinGraph:
             component_query = transform.extract_query_fragment(self.query, component)
             components.append(JoinGraph(component_query, self._db_schema))
         return components
+
+    def all_joins(self) -> Iterable[tuple[base.TableReference, base.TableReference]]:
+        """Provides all edges in the join graph, no matter whether they are available or not."""
+        return list(self._graph.edges)
 
     def available_join_paths(self) -> Iterable[JoinPath]:
         """Provides all joins that can be executed in the current join graph.
@@ -460,3 +471,23 @@ class JoinGraph:
         if (first_table, second_table) not in self._graph.edges:
             return None
         return self._graph.edges[first_table, second_table]["predicate"]
+
+    def _index_info_for(self, table: base.TableReference) -> Collection[IndexInfo]:
+        """Provides all index info for the given table (i.e. for each column that belongs to the table)."""
+        return [info for info in self._index_structures.values() if info.column.belongs_to(table)]
+
+    def __len__(self) -> int:
+        return len(self._graph)
+
+    def __iter__(self) -> Iterator[base.TableReference]:
+        return iter(self._graph.nodes)
+
+    def __contains__(self, x: object) -> bool:
+        return x in self._graph.nodes
+
+    def __getitem__(self, key: base.TableReference) -> TableInfo:
+        if key not in self:
+            raise KeyError(f"Table {key} is not part of the join graph")
+        free = self.is_free_table(key)
+        index_info = self._index_info_for(key)
+        return TableInfo(free, index_info)
