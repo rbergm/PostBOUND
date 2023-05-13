@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import collections
 import typing
-from collections.abc import Hashable, Iterable
+from collections.abc import Callable, Hashable, Iterable
 
 import networkx as nx
 import numpy as np
@@ -11,7 +11,7 @@ import numpy as np
 T = typing.TypeVar("T", bound=Hashable)
 
 
-def force_directed_layout(elements: Iterable[T], difference_score: callable[[T, T], float]) -> dict[T, np.ndarray]:
+def force_directed_layout(elements: Iterable[T], difference_score: Callable[[T, T], float]) -> dict[T, np.ndarray]:
     """Lays out the supplied elements in a 2D-space according to the difference score.
 
     Pairs of points with a large difference score are positioned further apart than points with a low difference score.
@@ -21,7 +21,7 @@ def force_directed_layout(elements: Iterable[T], difference_score: callable[[T, 
     return DefaultLayoutEngine(elements, difference_score)
 
 
-def kamada_kawai_layout(elements: Iterable[T], difference_score: callable[[T, T], float]) -> dict[T, np.ndarray]:
+def kamada_kawai_layout(elements: Iterable[T], difference_score: Callable[[T, T], float]) -> dict[T, np.ndarray]:
     elements = list(elements)
     layout_graph = nx.complete_graph(elements)
 
@@ -35,14 +35,14 @@ def kamada_kawai_layout(elements: Iterable[T], difference_score: callable[[T, T]
     return nx.kamada_kawai_layout(layout_graph, dist=distance_map)
 
 
-def fruchterman_reingold_layout(elements: Iterable[T], difference_score: callable[[T, T], float], *,
+def fruchterman_reingold_layout(elements: Iterable[T], similarity_score: Callable[[T, T], float], *,
                                 n_iter: int = 100) -> dict[T, np.ndarray]:
     elements = list(elements)
     layout_graph = nx.Graph()
     layout_graph.add_nodes_from(elements)
     for a_idx, a in enumerate(elements):
         for b in elements[a_idx:]:
-            layout_graph.add_edge(a, b, attraction=1 / max(difference_score(a, b), 1e-5))
+            layout_graph.add_edge(a, b, attraction=similarity_score(a, b))
     return nx.spring_layout(layout_graph, weight="attraction", iterations=n_iter)
 
 

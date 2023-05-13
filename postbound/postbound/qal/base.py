@@ -134,6 +134,10 @@ class ColumnReference(jsonize.Jsonizable):
         """Checks, whether this column is bound to a table."""
         return self.table is not None
 
+    def belongs_to(self, table: TableReference) -> bool:
+        """Checks, if the column is part of the given table."""
+        return table == self.table
+
     def __json__(self) -> object:
         return {"name": self._name, "table": self._table}
 
