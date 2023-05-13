@@ -26,7 +26,7 @@ class JoinOrderOptimizer(abc.ABC):
 
     @abc.abstractmethod
     def optimize_join_order(self, query: qal.SqlQuery
-                            ) -> Optional[jointree.LogicalJoinTree, jointree.PhysicalQueryPlan]:
+                            ) -> Optional[jointree.LogicalJoinTree | jointree.PhysicalQueryPlan]:
         """Performs the actual join ordering process.
 
         If for some reason there is no valid join order for the given query (e.g. queries with just a single selected

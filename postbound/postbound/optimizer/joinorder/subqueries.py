@@ -5,7 +5,7 @@ import abc
 from typing import Optional
 
 from postbound.qal import qal, predicates
-from postbound.optimizer import data, validation
+from postbound.optimizer import joingraph, validation
 
 
 class SubqueryGenerationPolicy(abc.ABC):
@@ -28,7 +28,7 @@ class SubqueryGenerationPolicy(abc.ABC):
         raise NotImplementedError
 
     @abc.abstractmethod
-    def generate_subquery_for(self, join: predicates.AbstractPredicate, join_graph: data.JoinGraph) -> bool:
+    def generate_subquery_for(self, join: predicates.AbstractPredicate, join_graph: joingraph.JoinGraph) -> bool:
         """Decides whether the given join should be executed in a subquery.
 
         Notice that the supplied join predicate really is the one that should be executed in a subquery, it is not the
@@ -55,7 +55,7 @@ class LinearSubqueryGenerationPolicy(SubqueryGenerationPolicy):
     def setup_for_query(self, query: qal.SqlQuery) -> None:
         pass
 
-    def generate_subquery_for(self, join: predicates.AbstractPredicate, join_graph: data.JoinGraph) -> bool:
+    def generate_subquery_for(self, join: predicates.AbstractPredicate, join_graph: joingraph.JoinGraph) -> bool:
         return False
 
     def describe(self) -> dict:

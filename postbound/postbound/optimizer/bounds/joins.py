@@ -5,7 +5,7 @@ import abc
 from typing import Optional
 
 from postbound.qal import qal, predicates
-from postbound.optimizer import data, validation
+from postbound.optimizer import joingraph, validation
 
 
 class JoinBoundCardinalityEstimator(abc.ABC):
@@ -32,7 +32,7 @@ class JoinBoundCardinalityEstimator(abc.ABC):
         pass
 
     @abc.abstractmethod
-    def estimate_for(self, join_edge: predicates.AbstractPredicate, join_graph: data.JoinGraph) -> int:
+    def estimate_for(self, join_edge: predicates.AbstractPredicate, join_graph: joingraph.JoinGraph) -> int:
         """Calculates the cardinality estimate for the given join predicate, given the current state in the join graph.
 
         How the join predicate should be interpreted is completely up to the estimator implementation.
