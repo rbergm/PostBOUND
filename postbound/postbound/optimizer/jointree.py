@@ -283,7 +283,7 @@ class IntermediateJoinNode(AbstractJoinTreeNode[JoinMetadataType, BaseTableMetad
 
     @property
     def children(self) -> tuple[AbstractJoinTreeNode[JoinMetadataType, BaseTableMetadataType],
-                                AbstractJoinTreeNode[JoinMetadataType, BaseTableMetadataType]]:
+    AbstractJoinTreeNode[JoinMetadataType, BaseTableMetadataType]]:
         return self._left_child, self._right_child
 
     @property
@@ -343,6 +343,8 @@ class IntermediateJoinNode(AbstractJoinTreeNode[JoinMetadataType, BaseTableMetad
         return "\n".join([own_inspection, left_inspection, right_inspection])
 
     def __contains__(self, item) -> bool:
+        if item == self:
+            return True
         if self.annotation and self.annotation.join_predicate == item:
             return True
         return item in self.left_child or item in self.right_child
@@ -416,6 +418,8 @@ class BaseTableNode(AbstractJoinTreeNode[JoinMetadataType, BaseTableMetadataType
         return f"{prefix} SCAN :: {self.table}{annotation_str}"
 
     def __contains__(self, item) -> bool:
+        if item == self:
+            return True
         if isinstance(item, predicates.AbstractPredicate):
             return self.annotation.filter_predicate == item if self.annotation else False
         return item == self._table
@@ -437,8 +441,7 @@ JoinTreeType = typing.TypeVar("JoinTreeType", bound="JoinTree")
 AnnotationMerger = Optional[Callable[[Optional[BaseMetadata], Optional[BaseMetadata]], Optional[BaseMetadata]]]
 
 
-class JoinTree(Container[base.TableReference], Iterable[IntermediateJoinNode[JoinMetadataType, BaseTableMetadataType]],
-               Generic[JoinMetadataType, BaseTableMetadataType]):
+class JoinTree(Container[base.TableReference], Generic[JoinMetadataType, BaseTableMetadataType]):
 
     @staticmethod
     def cross_product_of(*trees: JoinTreeType, annotation_supplier: AnnotationMerger = None) -> JoinTreeType:
@@ -604,9 +607,6 @@ class JoinTree(Container[base.TableReference], Iterable[IntermediateJoinNode[Joi
 
     def __len__(self) -> int:
         return 0 if self.is_empty() else len(self._root)
-
-    def __iter__(self) -> Iterator[IntermediateJoinNode[JoinMetadataType]]:
-        return iter(self.join_sequence())
 
     def __hash__(self) -> int:
         return hash(self._root)
