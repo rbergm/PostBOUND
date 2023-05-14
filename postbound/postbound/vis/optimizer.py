@@ -19,7 +19,7 @@ def _join_tree_labels(node: jointree.AbstractJoinTreeNode) -> str:
 
 
 def _join_tree_traversal(node: jointree.AbstractJoinTreeNode) -> Sequence[jointree.AbstractJoinTreeNode]:
-    if not node.is_join_node():
+    if node.is_base_table_node():
         return ()
     assert isinstance(node, jointree.IntermediateJoinNode)
     return node.children

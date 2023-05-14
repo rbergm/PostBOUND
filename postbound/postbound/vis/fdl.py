@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import collections
+import random
 import typing
 from collections.abc import Callable, Hashable, Iterable
 
@@ -32,7 +33,8 @@ def kamada_kawai_layout(elements: Iterable[T], difference_score: Callable[[T, T]
             distance_map[a][b] = current_score
             distance_map[b][a] = current_score
 
-    return nx.kamada_kawai_layout(layout_graph, dist=distance_map)
+    initial_pos = {elem: (random.random(), random.random()) for elem in elements}
+    return nx.kamada_kawai_layout(layout_graph, dist=distance_map, pos=initial_pos)
 
 
 def fruchterman_reingold_layout(elements: Iterable[T], similarity_score: Callable[[T, T], float], *,
