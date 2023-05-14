@@ -1,10 +1,8 @@
 """Regression tests to ensure the PostBOUND examples work correctly."""
 
-import sys
 import unittest
 
-sys.path.append("../../")
-pg_connect_dir = "../.."
+pg_connect_dir = "."
 
 
 class ReadmeExampleTests(unittest.TestCase):

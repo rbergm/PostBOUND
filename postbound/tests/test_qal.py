@@ -5,15 +5,12 @@ queried for joins, etc.
 """
 from __future__ import annotations
 
-import sys
 import textwrap
 import unittest
 
-sys.path.append("../../")
+from postbound.qal import base, parser, expressions, predicates
 
-from postbound.qal import base, parser, expressions, predicates  # noqa: E402
-
-from postbound.tests import regression_suite  # noqa: E402
+from tests import regression_suite
 
 
 class SqlQueryTests(unittest.TestCase):

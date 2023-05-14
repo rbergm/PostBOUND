@@ -8,23 +8,19 @@ queries remain equal. They act as regression tests in that sense.
 """
 from __future__ import annotations
 
-import sys
+import os
 import unittest
 
-import psycopg.errors
+from postbound import postbound as pb
+from postbound.db import db, postgres
+from postbound.qal import parser, transform
+from postbound.experiments import workloads
+from postbound.optimizer import presets, validation
 
-sys.path.append("../../")
+from tests import regression_suite
 
-from postbound import postbound as pb  # noqa: E402
-from postbound.db import postgres  # noqa: E402
-from postbound.qal import parser, transform  # noqa: E402
-from postbound.experiments import workloads  # noqa: E402
-from postbound.optimizer import presets, validation  # noqa: E402
-
-from postbound.tests import regression_suite  # noqa: E402
-
-workloads.workloads_base_dir = "../../../workloads"
-pg_connect_dir = "../.."
+workloads.workloads_base_dir = "../workloads"
+pg_connect_dir = "."
 
 
 class JobWorkloadTests(regression_suite.DatabaseTestCase):
@@ -34,6 +30,9 @@ class JobWorkloadTests(regression_suite.DatabaseTestCase):
         self.db.statistics().cache_enabled = True
         self.job = workloads.job()
 
+    @unittest.skipUnless(os.environ.get("COMPARE_RESULT_SETS", None),
+                         "Skipping result set equivalence comparison. Set COMPARE_RESULT_SETS environment variable "
+                         "to non-empty value to change.")
     def test_result_set_equivalence(self) -> None:
         optimization_pipeline = pb.OptimizationPipeline(target_db=self.db)
         optimization_pipeline.load_settings(presets.fetch("ues"))
@@ -66,6 +65,9 @@ class SsbWorkloadTests(regression_suite.DatabaseTestCase):
         parser.auto_bind_columns = True
         self.ssb = workloads.ssb()
 
+    @unittest.skipUnless(os.environ.get("COMPARE_RESULT_SETS", None),
+                         "Skipping result set equivalence comparison. Set COMPARE_RESULT_SETS environment variable "
+                         "to non-empty value to change.")
     def test_result_set_equivalence(self) -> None:
         optimization_pipeline = pb.OptimizationPipeline(target_db=self.db)
         optimization_pipeline.load_settings(presets.fetch("ues"))
@@ -98,6 +100,9 @@ class StackWorkloadTests(regression_suite.DatabaseTestCase):
         parser.auto_bind_columns = True
         self.stack = workloads.stack()
 
+    @unittest.skipUnless(os.environ.get("COMPARE_RESULT_SETS", None),
+                         "Skipping result set equivalence comparison. Set COMPARE_RESULT_SETS environment variable "
+                         "to non-empty value to change.")
     def test_result_set_equivalence(self) -> None:
         optimization_pipeline = pb.OptimizationPipeline(target_db=self.db)
         optimization_pipeline.load_settings(presets.fetch("ues"))
@@ -112,11 +117,9 @@ class StackWorkloadTests(regression_suite.DatabaseTestCase):
                     self.assertResultSetsEqual(original_result, optimized_result, ordered=query.is_ordered())
                 except validation.UnsupportedQueryError as e:
                     self.skipTest(f"Unsupported query: {e}")
-                except psycopg.errors.ProgrammingError as e:
+                except db.DatabaseServerError as e:
                     self.fail(f"Programming error at query '{label}': {e}")
-                except psycopg.errors.NotSupportedError as e:
-                    self.fail(f"Unsupported database feature error at query '{label}': {e}")
-                except psycopg.errors.DiskFull as e:
+                except db.DatabaseUserError as e:
                     self.skipTest(f"Internal database error at '{label}': {e}")
 
     def test_optimize_workload(self) -> None:

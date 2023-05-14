@@ -1,12 +1,10 @@
 from __future__ import annotations
 
 import dataclasses
-import sys
 import unittest
 from collections.abc import Collection, Iterator
 
-sys.path.append("../../")
-from postbound.util import collections as collection_utils  # noqa: E402
+from postbound.util import collections as collection_utils
 
 
 @dataclasses.dataclass(frozen=True)
