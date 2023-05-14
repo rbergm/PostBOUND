@@ -17,7 +17,7 @@ def _quick_format_select(select_clause: clauses.Select) -> list[str]:
                              else f"SELECT DISTINCT {first_target}"]
         formatted_targets += [((" " * FORMAT_INDENT_DEPTH) + str(target)) for target in remaining_targets]
         for i in range(len(formatted_targets) - 1):
-            formatted_targets += ","
+            formatted_targets[i] += ","
         return formatted_targets
     else:
         return [str(select_clause)]
@@ -39,7 +39,8 @@ def _quick_format_implicit_from(from_clause: clauses.ImplicitFromClause) -> list
             formatted_tables[i] += ","
         return formatted_tables
     else:
-        return [f"FROM {tables[0]}"]
+        tables_str = ", ".join(str(tab) for tab in tables)
+        return [f"FROM {tables_str}"]
 
 
 def _quick_format_explicit_from(from_clause: clauses.ExplicitFromClause) -> list[str]:
