@@ -5,17 +5,23 @@ from __future__ import annotations
 import collections
 import concurrent
 import concurrent.futures
+import math
 import os
 import textwrap
 import threading
 from collections.abc import Iterable, Sequence
+from dataclasses import dataclass
 from typing import Any, Optional
 
 import psycopg
 import psycopg.rows
 
 from postbound.db import db
-from postbound.qal import qal, base, clauses, transform
+from postbound.db.db import HintService
+from postbound.qal import qal, base, clauses, transform, formatter
+from postbound.optimizer import jointree
+from postbound.optimizer.physops import operators as physops
+from postbound.optimizer.planmeta import hints as planmeta
 from postbound.util import collections as collection_utils, logging, misc as utils
 
 HintBlock = collections.namedtuple("HintBlock", ["preparatory_statements", "hints", "query"])
@@ -46,6 +52,9 @@ class PostgresInterface(db.Database):
             self._db_stats.cache_enabled = cache_enabled
         return self._db_stats
 
+    def hinting(self) -> HintService:
+        return PostgresHintService()
+
     def execute_query(self, query: qal.SqlQuery | str, *, cache_enabled: Optional[bool] = None) -> Any:
         cache_enabled = cache_enabled or (cache_enabled is None and self._cache_enabled)
         query = self._prepare_query_execution(query)
@@ -56,9 +65,12 @@ class PostgresInterface(db.Database):
             try:
                 self._cursor.execute(query)
                 query_result = self._cursor.fetchall()
+            except (psycopg.InternalError, psycopg.OperationalError) as e:
+                msg = "\n".join([f"At {utils.current_timestamp()}", "For query:", str(query), "Message:", str(e)])
+                raise db.DatabaseServerError(msg, e)
             except psycopg.Error as e:
-                print("[ERROR]", utils.current_timestamp(), " :: for query:", query, "message =", str(e))
-                raise e
+                msg = "\n".join([f"At {utils.current_timestamp()}", "For query:", str(query), "Message:", str(e)])
+                raise db.DatabaseUserError(msg, e)
             if cache_enabled:
                 self._query_cache[query] = query_result
 
@@ -149,7 +161,7 @@ class PostgresInterface(db.Database):
         if query.hints and query.hints.preparatory_statements:
             self._cursor.execute(query.hints.preparatory_statements)
             query = transform.drop_hints(query, preparatory_statements_only=True)
-        return str(query)
+        return self.hinting().format_query(query)
 
     def _obtain_query_plan(self, query: str) -> dict:
         """Provides the query plan (without ANALYZE) for the given query."""
@@ -303,6 +315,236 @@ class PostgresStatisticsInterface(db.DatabaseStatistics):
         return self._db.cursor().fetchall()[:k]
 
 
+@dataclass
+class HintParts:
+    """Captures the different kinds of Postgres-hints to collect them more easily."""
+    settings: list[str]
+    hints: list[str]
+
+    @staticmethod
+    def empty() -> HintParts:
+        """An empty hint parts object, i.e. no hints have been specified, yet."""
+        return HintParts([], [])
+
+    def merge_with(self, other: HintParts) -> HintParts:
+        """Combines the hints that are contained in this hint parts object with all hints in the other object.
+
+        This construct new hint parts and leaves the current object unmodified.
+        """
+        merged_settings = self.settings + [setting for setting in other.settings if setting not in self.settings]
+        merged_hints = self.hints + [hint for hint in other.hints if hint not in self.hints]
+        return HintParts(merged_settings, merged_hints)
+
+
+def _is_hash_join(join_tree_node: jointree.IntermediateJoinNode,
+                  operator_assignment: Optional[physops.PhysicalOperatorAssignment]) -> bool:
+    """Checks, whether the given node should be executed as a hash join.
+
+    Fails gracefully for base table and unspecified operator assignments (by returning False).
+    """
+    if not operator_assignment:
+        return False
+    selected_operators: Optional[physops.JoinOperatorAssignment] = operator_assignment[join_tree_node.tables()]
+    if not selected_operators:
+        return False
+    return selected_operators.operator == physops.JoinOperators.HashJoin
+
+
+def _generate_leading_hint_content(join_tree_node: jointree.AbstractJoinTreeNode,
+                                   operator_assignment: Optional[physops.PhysicalOperatorAssignment] = None) -> str:
+    """Builds part of the Leading hint to enforce join order and join direction for the given join node."""
+    if isinstance(join_tree_node, jointree.IntermediateJoinNode):
+        left, right = join_tree_node.left_child, join_tree_node.right_child
+        left_hint = _generate_leading_hint_content(left, operator_assignment)
+        right_hint = _generate_leading_hint_content(right, operator_assignment)
+        left_bound = left.upper_bound if left.upper_bound and not math.isnan(left.upper_bound) else -math.inf
+        right_bound = right.upper_bound if right.upper_bound and not math.isnan(right.upper_bound) else math.inf
+
+        # for Postgres, the inner relation of a Hash join is the one that gets the hash table and the outer relation is
+        # the one being probed. For all other joins, the inner/outer relation actually is the inner/outer relation
+        # Therefore, we want to have the smaller relation as the inner relation for hash joins and the other way around
+        # for all other joins
+
+        if _is_hash_join(join_tree_node, operator_assignment):
+            left_hint, right_hint = (left_hint, right_hint) if right_bound > left_bound else (right_hint, left_hint)
+        elif left_bound > right_bound:
+            left_hint, right_hint = right_hint, left_hint
+
+        return f"({left_hint} {right_hint})"
+    elif isinstance(join_tree_node, jointree.BaseTableNode):
+        return join_tree_node.table.identifier()
+    else:
+        raise ValueError(f"Unknown join tree node: {join_tree_node}")
+
+
+def _generate_pg_join_order_hint(query: qal.SqlQuery,
+                                 join_order: jointree.LogicalJoinTree | jointree.PhysicalQueryPlan,
+                                 operator_assignment: Optional[physops.PhysicalOperatorAssignment] = None
+                                 ) -> tuple[qal.SqlQuery, Optional[HintParts]]:
+    """Generates the Leading hint to enforce join order and join direction for the given query.
+
+    This function needs access to the operator assignment in addition to the join tree, because the actual join
+    directions in the leading hint depend on the selected join operators.
+
+    More specifically, the join tree assumes that the left join partner of a join node acts as the outer relation
+    whereas the right partner acts as the inner relation. For hash joins this means that the inner relation should be
+    probed whereas the hash table is created for the outer relation. However, Postgres denotes the directions
+    exactly the other way around. Therefore, the direction has to be swapped for hash joins.
+    """
+    if len(join_order) < 2:
+        return query, None
+    leading_hint = _generate_leading_hint_content(join_order.root, operator_assignment)
+    leading_hint = f"Leading({leading_hint})"
+    hints = HintParts([], [leading_hint])
+    return query, hints
+
+
+PostgresOptimizerSettings = {
+    physops.JoinOperators.NestedLoopJoin: "enable_nestloop",
+    physops.JoinOperators.HashJoin: "enable_hashjoin",
+    physops.JoinOperators.SortMergeJoin: "enable_mergejoin",
+    physops.ScanOperators.SequentialScan: "enable_seqscan",
+    physops.ScanOperators.IndexScan: "enable_indexscan",
+    physops.ScanOperators.IndexOnlyScan: "enable_indexonlyscan"
+}
+"""Denotes all (session-global) optimizer settings that modify the allowed physical operators."""
+
+# based on PG_HINT_PLAN extension (https://github.com/ossc-db/pg_hint_plan)
+# see https://github.com/ossc-db/pg_hint_plan#hints-list for details
+PostgresOptimizerHints = {
+    physops.JoinOperators.NestedLoopJoin: "NestLoop",
+    physops.JoinOperators.HashJoin: "HashJoin",
+    physops.JoinOperators.SortMergeJoin: "MergeJoin",
+    physops.ScanOperators.SequentialScan: "SeqScan",
+    physops.ScanOperators.IndexScan: "IndexOnlyScan",
+    physops.ScanOperators.IndexOnlyScan: "IndexOnlyScan"
+}
+"""Denotes all physical operators that can be enforced for individual parts of a query.
+
+These settings overwrite the session-global optimizer settings.
+"""
+
+
+def _generate_join_key(tables: Iterable[base.TableReference]) -> str:
+    """Builds a PG_HINT_PLAN-compatible identifier for the join consisting of the given tables."""
+    return " ".join(tab.identifier() for tab in tables)
+
+
+def _generate_pg_operator_hints(physical_operators: physops.PhysicalOperatorAssignment) -> HintParts:
+    """Generates the hints and preparatory statements to enforce the selected optimization in Postgres."""
+    settings = []
+    for operator, enabled in physical_operators.global_settings.items():
+        setting = "on" if enabled else "off"
+        operator_key = PostgresOptimizerSettings[operator]
+        settings.append(f"SET {operator_key} = '{setting}';")
+
+    hints = []
+    for table, scan_assignment in physical_operators.scan_operators.items():
+        table_key = table.identifier()
+        scan_assignment = PostgresOptimizerHints[scan_assignment.operator]
+        hints.append(f"{scan_assignment}({table_key})")
+
+    if hints:
+        hints.append("")
+    for join, join_assignment in physical_operators.join_operators.items():
+        join_key = _generate_join_key(join)
+        join_assignment = PostgresOptimizerHints[join_assignment.operator]
+        hints.append(f"{join_assignment}({join_key})")
+
+    if not settings and not hints:
+        return HintParts.empty()
+
+    return HintParts(settings, hints)
+
+
+def _escape_setting(setting) -> str:
+    """Transforms the setting variable into a string that can be used in an SQL query."""
+    if isinstance(setting, float) or isinstance(setting, int):
+        return str(setting)
+    elif isinstance(setting, bool):
+        return "TRUE" if setting else "FALSE"
+    return f"'{setting}'"
+
+
+def _generate_pg_parameter_hints(plan_parameters: planmeta.PlanParameterization) -> HintParts:
+    """Produces the cardinality and parallelization hints for Postgres."""
+    hints, settings = [], []
+    for join, cardinality_hint in plan_parameters.cardinality_hints.items():
+        if len(join) < 2:
+            # pg_hint_plan can only generate cardinality hints for joins
+            continue
+        join_key = _generate_join_key(join)
+        hints.append(f"Rows({join_key} #{cardinality_hint})")
+
+    for join, num_workers in plan_parameters.parallel_worker_hints.items():
+        if len(join) != 1:
+            # pg_hint_plan can only generate parallelization hints for single tables
+            continue
+        table: base.TableReference = collection_utils.simplify(join)
+        hints.append(f"Parallel({table.identifier()} {num_workers} hard)")
+
+    for operator, setting in plan_parameters.system_specific_settings.items():
+        setting = _escape_setting(setting)
+        settings.append(f"SET {operator} = {setting};")
+
+    return HintParts(settings, hints)
+
+
+def _generate_hint_block(parts: HintParts) -> Optional[clauses.Hint]:
+    """Constructs the hint block for the given hint parts"""
+    settings, hints = parts.settings, parts.hints
+    if not settings and not hints:
+        return None
+    settings_block = "\n".join(settings)
+    hints_block = "\n".join(["/*+"] + ["  " + hint for hint in hints] + ["*/"]) if hints else ""
+    return clauses.Hint(settings_block, hints_block)
+
+
+def _apply_hint_block_to_query(query: qal.SqlQuery, hint_block: Optional[clauses.Hint]) -> qal.SqlQuery:
+    """Generates a new query with the given hint block."""
+    return transform.add_clause(query, hint_block) if hint_block else query
+
+
+PostgresJoinHints = {physops.JoinOperators.NestedLoopJoin, physops.JoinOperators.IndexNestedLoopJoin,
+                     physops.JoinOperators.HashJoin, physops.JoinOperators.SortMergeJoin}
+PostgresScanHints = {physops.ScanOperators.SequentialScan, physops.ScanOperators.IndexScan,
+                     physops.ScanOperators.IndexOnlyScan}
+PostgresPlanHints = {planmeta.HintType.CardinalityHint, planmeta.HintType.ParallelizationHint,
+                     planmeta.HintType.JoinOrderHint, planmeta.HintType.JoinDirectionHint}
+
+
+class PostgresHintService(db.HintService):
+
+    def generate_hints(self, query: qal.SqlQuery,
+                       join_order: Optional[jointree.LogicalJoinTree | jointree.PhysicalQueryPlan] = None,
+                       physical_operators: Optional[physops.PhysicalOperatorAssignment] = None,
+                       plan_parameters: Optional[planmeta.PlanParameterization] = None) -> qal.SqlQuery:
+        adapted_query = query
+        hint_parts = None
+
+        if join_order:
+            adapted_query, hint_parts = _generate_pg_join_order_hint(adapted_query, join_order, physical_operators)
+
+        hint_parts = hint_parts if hint_parts else HintParts.empty()
+        if physical_operators:
+            operator_hints = _generate_pg_operator_hints(physical_operators)
+            hint_parts = hint_parts.merge_with(operator_hints)
+
+        if plan_parameters:
+            plan_hints = _generate_pg_parameter_hints(plan_parameters)
+            hint_parts = hint_parts.merge_with(plan_hints)
+
+        hint_block = _generate_hint_block(hint_parts)
+        adapted_query = _apply_hint_block_to_query(adapted_query, hint_block)
+        return adapted_query
+
+    def format_query(self, query: qal.SqlQuery) -> str:
+        return formatter.format_quick(query)
+
+    def supports_hint(self, hint: physops.PhysicalOperator | planmeta.HintType) -> bool:
+        return hint in PostgresJoinHints | PostgresScanHints | PostgresPlanHints
+
+
 def connect(*, name: str = "postgres", connect_string: str | None = None,
             config_file: str | None = ".psycopg_connection", cache_enabled: bool = True,
             private: bool = False) -> PostgresInterface:
@@ -416,3 +658,40 @@ class ParallelQueryExecutor:
 
         return (f"Concurrent query pool of {self._n_threads} workers, {len(self._tasks)} tasks "
                 f"(run={len(running_workers)} fin={len(completed_workers)})")
+
+
+PostgresJoinNodes = {"Hash Join", "Merge Join", "Nested Loop"}
+PostgresScanNodes = {"Bitmap Heap Scan", "Index Scan", "Index Only Scan", "Sequential Scan"}
+
+
+class PostgresExplainNode:
+    def __init__(self, explain_data: dict) -> None:
+        self.node_type = explain_data.get("Node Type", None)
+
+        self.cost = explain_data.get("Total Cost", math.nan)
+        self.cardinality_estimate = explain_data.get("Plan Rows", math.nan)
+        self.execution_time = explain_data.get("Actual Total Time", math.nan)
+        self.true_cardinality = explain_data.get("Actual Rows", math.nan)
+
+        self.relation_name = explain_data.get("Relation Name", None)
+        self.relation_alias = explain_data.get("Alias", None)
+        self.index_name = explain_data.get("Index Name", None)
+
+        self.filter_condition = explain_data.get("Filter", None)
+        self.index_condition = explain_data.get("Index Cond", None)
+        self.join_filter = explain_data.get("Join Filter", None)
+        self.hash_condition = explain_data.get("Hash Cond", None)
+        self.recheck_condition = explain_data.get("Recheck Cond", None)
+
+        self.parent_relationship = explain_data.get("Parent Relationship", None)
+        self.parallel_workers = explain_data.get("Workers Planned", math.nan)
+
+        self.children = [PostgresExplainNode(child) for child in explain_data.get("Plans", [])]
+
+
+class PostgresExplainPlan:
+    def __init__(self, explain_data: dict) -> None:
+        explain_data = explain_data[0] if isinstance(explain_data, list) else explain_data
+        self.planning_time = explain_data.get("Planning Time", math.nan)
+        self.execution_time = explain_data.get("Execution Time", math.nan)
+        self.query_plan = PostgresExplainNode(explain_data["Plan"])

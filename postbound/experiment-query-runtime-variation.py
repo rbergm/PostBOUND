@@ -16,7 +16,6 @@ import numpy as np
 import pandas as pd
 
 from postbound.db import db, postgres
-from postbound.db.systems import systems
 from postbound.qal import qal, transform, parser
 from postbound.experiments import workloads
 from postbound.optimizer import jointree
@@ -207,9 +206,9 @@ def true_cardinality_hints(label: str, config: ExperimentConfig) -> params.PlanP
 
 def execute_single_query(label: str, query: qal.SqlQuery, join_order: jointree.LogicalJoinTree, *,
                          n_executed_plans: int = 0, total_query_runtime: float = 0,
-                         db_system: systems.DatabaseSystem, db_instance: db.Database,
+                         db_instance: db.Database,
                          config: ExperimentConfig = ExperimentConfig.default()) -> EvaluationResult:
-    query_generator = db_system.query_adaptor()
+    query_generator = db_instance.hinting()
 
     if config.operator_selection == "native":
         operator_selection = None
@@ -223,8 +222,9 @@ def execute_single_query(label: str, query: qal.SqlQuery, join_order: jointree.L
     else:
         raise ValueError("Unknown operator selection strategy: " + config.operator_selection)
 
-    optimized_query = query_generator.adapt_query(query, join_order=join_order, physical_operators=operator_selection,
-                                                  plan_parameters=plan_params)
+    optimized_query = query_generator.generate_hints(query, join_order=join_order,
+                                                     physical_operators=operator_selection,
+                                                     plan_parameters=plan_params)
 
     query_timeout = determine_timeout(label, total_query_runtime, n_executed_plans, config=config)
     query_duration_receiver, query_duration_sender = mp.Pipe(False)
@@ -266,7 +266,7 @@ def prewarm_database(query: qal.SqlQuery, db_instance: db.Database, *,
         db_instance.execute_query(f"SELECT pg_prewarm('{table.full_name}');", cache_enabled=False)
 
 
-def evaluate_query(label: str, query: qal.SqlQuery, *, db_instance: db.Database, db_system: systems.DatabaseSystem,
+def evaluate_query(label: str, query: qal.SqlQuery, *, db_instance: db.Database,
                    config: ExperimentConfig = ExperimentConfig.default()) -> Iterable[EvaluationResult]:
     print("... Building all plans")
     exhaustive_enumerator = enumeration.ExhaustiveJoinOrderGenerator()
@@ -297,8 +297,7 @@ def evaluate_query(label: str, query: qal.SqlQuery, *, db_instance: db.Database,
     for join_order in join_order_plans:
         evaluation_result = execute_single_query(label, query, join_order, n_executed_plans=n_executed_plans,
                                                  total_query_runtime=total_query_runtime,
-                                                 db_system=db_system, db_instance=db_instance,
-                                                 config=config)
+                                                 db_instance=db_instance, config=config)
         n_executed_plans += 1
         total_query_runtime += (evaluation_result.execution_time if np.isfinite(evaluation_result.execution_time)
                                 else evaluation_result.timeout)
@@ -380,7 +379,6 @@ def main():
     config, labels = read_config()
     os.makedirs(config.output_directory, exist_ok=True)
     pg_db = postgres.connect(config_file=".psycopg_connection_job")
-    pg_system = systems.Postgres(pg_db)
 
     workload = workloads.job()
 
@@ -397,7 +395,7 @@ def main():
 
     for label, query in workload.entries():
         print(".. Now evaluating query", label, "time =", misc.current_timestamp())
-        query_runtimes = evaluate_query(label, query, db_instance=pg_db, db_system=pg_system, config=config)
+        query_runtimes = evaluate_query(label, query, db_instance=pg_db, config=config)
 
         result_df = pd.DataFrame(query_runtimes)
         result_df["db_config"] = [pg_db.inspect()] * len(result_df)

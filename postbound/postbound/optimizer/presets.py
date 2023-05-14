@@ -5,7 +5,6 @@ import abc
 from typing import Optional
 
 from postbound.db import db
-from postbound.db.systems import systems
 from postbound.qal import parser
 from postbound.optimizer import validation
 from postbound.optimizer.bounds import scans
@@ -88,7 +87,7 @@ class UESOptimizationSettings(OptimizationSettings):
         return enumerator
 
     def build_physical_operator_selection(self) -> selection.PhysicalOperatorSelection | None:
-        return ues.UESOperatorSelection(systems.DatabaseSystemRegistry.load_system_for(self.database))
+        return ues.UESOperatorSelection(self.database)
 
     def build_plan_parameterization(self) -> plan_param.ParameterGeneration | None:
         return None

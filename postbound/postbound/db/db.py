@@ -21,7 +21,10 @@ from collections.abc import Iterable, Sequence
 from typing import Any, Optional
 
 from postbound.qal import base, qal
-from postbound.util import dicts as dict_utils, misc
+from postbound.optimizer import jointree
+from postbound.optimizer.physops import operators as physops
+from postbound.optimizer.planmeta import hints as planmeta
+from postbound.util import collections as collection_utils, dicts as dict_utils, misc
 
 
 class Cursor(typing.Protocol):
@@ -76,6 +79,36 @@ class Connection(typing.Protocol):
         raise NotImplementedError
 
 
+class HintService(abc.ABC):
+    """Provides tools that enable queries to be executed on a specific database system, based on fixed query plans.
+
+    Hints are PostBOUNDs way to enforce that decisions made in the optimization pipeline are respected by the native
+    query optimizer once the query is executed in an actual database system.
+    """
+
+    @abc.abstractmethod
+    def generate_hints(self, query: qal.SqlQuery,
+                       join_order: Optional[jointree.LogicalJoinTree | jointree.PhysicalQueryPlan] = None,
+                       physical_operators: Optional[physops.PhysicalOperatorAssignment] = None,
+                       plan_parameters: Optional[planmeta.PlanParameterization] = None) -> qal.SqlQuery:
+        """Generates the appropriate hints to enforce the optimized execution of the given query.
+
+        All hints are placed in a `Hint` clause on the query. In addition, if the query needs to be transformed in some
+        way, this also happens here.
+        """
+        raise NotImplementedError
+
+    @abc.abstractmethod
+    def format_query(self, query: qal.SqlQuery) -> str:
+        """Transforms the query into a database-specific string, mostly to incorporate deviations from standard SQL."""
+        raise NotImplementedError
+
+    @abc.abstractmethod
+    def supports_hint(self, hint: physops.PhysicalOperator | planmeta.HintType) -> bool:
+        """Checks, whether the database system is capable of using the specified hint or operator."""
+        raise NotImplementedError
+
+
 class Database(abc.ABC):
     """A `Database` is PostBOUND's logical abstraction of physical database management systems.
 
@@ -85,6 +118,7 @@ class Database(abc.ABC):
     - executing arbitrary SQL queries
     - retrieving schema information, most importantly about primary keys and foreign keys
     - accessing statistical information, such as most common values or the number of rows in a table
+    - query formatting and generation of query hints to enforce optimizer decisions (join orders, operators, etc.)
 
     Notice, that all this information is by design read-only and functionality to write queries is intentionally not
     implemented (although one could issue `INSERT`/`UPDATE`/`DELETE` queries via the query execution functionality).
@@ -115,6 +149,11 @@ class Database(abc.ABC):
     @abc.abstractmethod
     def statistics(self, emulated: bool | None = None, cache_enabled: Optional[bool] = None) -> DatabaseStatistics:
         """Provides access to different tables and columns of the database."""
+        raise NotImplementedError
+
+    @abc.abstractmethod
+    def hinting(self) -> HintService:
+        """Provides access to the hint generation facilities for the current database system."""
         raise NotImplementedError
 
     @abc.abstractmethod
@@ -532,17 +571,40 @@ class UnsupportedDatabaseFeatureError(RuntimeError):
         self.feature = feature
 
 
-class QueryExecutionPlan:
-    """Abstraction for the smalles common denominator of query plan features.
+class DatabaseServerError(RuntimeError):
+    """Indicates an error caused by the database server occured while executing a database operation.
 
-    This can be used when information from a query plan is required to implement other functionality. A plan simply consists
-    of a number of nodes which contain information specific to the actual node type.
+    The error was not due to a mistake in the user input (such as an SQL syntax error or access privilege violation),
+    but an implementation issue instead (such as out of memory during query execution).
+    """
+
+    def __init__(self, message: str = "", context: Optional[object] = None) -> None:
+        super().__init__(message)
+        self.ctx = context
+
+
+class DatabaseUserError(RuntimeError):
+    """Indicates that a database operation failed due to an error on the user's end.
+
+    The error could be due to an SQL syntax error, access privilege violation, etc.
+    """
+
+    def __init__(self, message: str = "", context: Optional[object] = None) -> None:
+        super().__init__(message)
+        self.ctx = context
+
+
+class QueryExecutionPlan:
+    """Abstraction for the smallest common denominator of query plan features.
+
+    This can be used when information from a query plan is required to implement other functionality. A plan simply
+    consists of a number of nodes which contain information specific to the actual node type.
     """
 
     def __init__(self, node_type: str, is_join: bool, is_scan: bool, *, table: Optional[base.TableReference] = None,
                  children: Optional[Iterable[QueryExecutionPlan]] = None, index: str = "", condition: str = "",
-                 estimated_cost: float = math.nan, estimated_cardinality: float = math.nan, true_cardinality: float = math.nan,
-                 execution_time: float = math.nan) -> None:
+                 estimated_cost: float = math.nan, estimated_cardinality: float = math.nan,
+                 true_cardinality: float = math.nan, execution_time: float = math.nan) -> None:
         self.node_type = node_type
         self.is_join = is_join
         self.is_scan = is_scan
@@ -560,3 +622,8 @@ class QueryExecutionPlan:
     def is_analyze(self) -> bool:
         """Checks, whether the current node also contains information about actual execution properties."""
         return not math.isnan(self.true_cardinality) or not math.isnan(self.execution_time)
+
+    def tables(self) -> frozenset[base.TableReference]:
+        """Provides all tables that are referenced in and below the current plan node."""
+        own_table = [self.table] if self.table else []
+        return frozenset(own_table + collection_utils.flatten(child.tables() for child in self.children))

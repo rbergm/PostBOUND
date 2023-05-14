@@ -2,12 +2,11 @@
 from __future__ import annotations
 
 import enum
+import math
 import typing
 from collections.abc import Collection
 from dataclasses import dataclass
-from typing import Any, Iterable
-
-import numpy as np
+from typing import Iterable
 
 from postbound.qal import base
 
@@ -37,7 +36,7 @@ class JoinOperators(enum.Enum):
 class ScanOperatorAssignment:
     operator: ScanOperators
     table: base.TableReference
-    parallel_workers: float | int = np.nan
+    parallel_workers: float | int = math.nan
 
     def inspect(self) -> str:
         return f"USING {self.operator}" if self.operator else ""
@@ -45,7 +44,7 @@ class ScanOperatorAssignment:
 
 class JoinOperatorAssignment:
     def __init__(self, operator: JoinOperators, join: Collection[base.TableReference], *,
-                 parallel_workers: float | int = np.nan) -> None:
+                 parallel_workers: float | int = math.nan) -> None:
         if not join:
             raise ValueError("Joined tables must be given")
         self._operator = operator
@@ -90,7 +89,7 @@ class JoinOperatorAssignment:
 
 class DirectionalJoinOperatorAssignment(JoinOperatorAssignment):
     def __init__(self, operator: JoinOperators, inner: Collection[base.TableReference],
-                 outer: Collection[base.TableReference], *, parallel_workers: float | int = np.nan) -> None:
+                 outer: Collection[base.TableReference], *, parallel_workers: float | int = math.nan) -> None:
         if not inner or not outer:
             raise ValueError("Both inner and outer relations must be given")
         self._inner = frozenset(inner)
@@ -134,10 +133,6 @@ class PhysicalOperatorAssignment:
     overwrite the global settings, i.e. it is possible to assign a nested loop join to a specific set of tables, but
     disable NLJ globally. In this case, only the specified join will be executed as an NLJ and other algorithms are
     used for all other joins
-    - `system_specific_settings` do not fit in any of the above categories and only work for a known target database
-    system. These should be used sparingly since they defeat the purpose of optimization algorithms that are
-    independent of specific database systems. For example, they could modify the assignment strategy of the native
-    database system. Their value also depends on the specific setting.
 
     The basic assumption here is that for all joins and scans that have no assignment, the database system that handles
     the actual query execution should determine the best operators by itself.
@@ -151,7 +146,6 @@ class PhysicalOperatorAssignment:
         self.global_settings: dict[ScanOperators | JoinOperators, bool] = {}
         self.join_operators: dict[frozenset[base.TableReference], JoinOperatorAssignment] = {}
         self.scan_operators: dict[base.TableReference, ScanOperatorAssignment] = {}
-        self.system_specific_settings: dict[str, Any] = {}
 
     def set_operator_enabled_globally(self, operator: ScanOperators | JoinOperators, enabled: bool, *,
                                       overwrite_fine_grained_selection: bool = False) -> None:
@@ -182,29 +176,6 @@ class PhysicalOperatorAssignment:
         """Enforces the specified scan operator for the given base table."""
         self.scan_operators[scan_operator.table] = scan_operator
 
-    def set_system_settings(self, setting_name: str = "", setting_value: Any = None, **kwargs) -> None:
-        """Stores the given system setting.
-
-        This may happen in one of two ways: giving the setting name and value as two different parameters, or combining
-        their assignment in the keyword parameters. While the first is limited to a single parameter, the second can
-        be used to assign an arbitrary number of settings. However, this is limited to setting names that form valid
-        keyword names.
-
-        Example usage with separate setting name and value: `set_system_settings("join_collapse_limit", 1)`
-        Example usage with kwargs: `set_system_settings(join_collapse_limit=1, jit=False)`
-        Both examples are specific to Postgres (see https://www.postgresql.org/docs/current/runtime-config-query.html).
-        """
-        # TODO: system settings should be moved to the plan parameters
-        if setting_name and kwargs:
-            raise ValueError("Only setting or kwargs can be supplied")
-        elif not setting_name and not kwargs:
-            raise ValueError("setting_name or kwargs required!")
-
-        if setting_name:
-            self.system_specific_settings[setting_name] = setting_value
-        else:
-            self.system_specific_settings |= kwargs
-
     def merge_with(self, other_assignment: PhysicalOperatorAssignment) -> PhysicalOperatorAssignment:
         """Combines the current optimization settings with the settings from the `other_assignment`.
 
@@ -214,15 +185,12 @@ class PhysicalOperatorAssignment:
         merged_assignment.global_settings = self.global_settings | other_assignment.global_settings
         merged_assignment.join_operators = self.join_operators | other_assignment.join_operators
         merged_assignment.scan_operators = self.scan_operators | other_assignment.scan_operators
-        merged_assignment.system_specific_settings = (self.system_specific_settings
-                                                      | other_assignment.system_specific_settings)
         return merged_assignment
 
     def global_settings_only(self) -> PhysicalOperatorAssignment:
         """Provides only those settings of the assignment that affect all operators."""
         global_assignment = PhysicalOperatorAssignment()
         global_assignment.global_settings = dict(self.global_settings)
-        global_assignment.system_specific_settings = dict(self.system_specific_settings)
         return global_assignment
 
     def clone(self) -> PhysicalOperatorAssignment:
@@ -231,7 +199,6 @@ class PhysicalOperatorAssignment:
         cloned_assignment.global_settings = dict(self.global_settings)
         cloned_assignment.join_operators = dict(self.join_operators)
         cloned_assignment.scan_operators = dict(self.scan_operators)
-        cloned_assignment.system_specific_settings = dict(self.system_specific_settings)
         return cloned_assignment
 
     def __getitem__(self, item: base.TableReference | Iterable[base.TableReference] | ScanOperators | JoinOperators

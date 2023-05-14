@@ -17,7 +17,6 @@ sys.path.append("../../")
 
 from postbound import postbound as pb  # noqa: E402
 from postbound.db import postgres  # noqa: E402
-from postbound.db.systems import systems  # noqa: E402
 from postbound.qal import parser, transform  # noqa: E402
 from postbound.experiments import workloads  # noqa: E402
 from postbound.optimizer import presets, validation  # noqa: E402
@@ -36,7 +35,7 @@ class JobWorkloadTests(regression_suite.DatabaseTestCase):
         self.job = workloads.job()
 
     def test_result_set_equivalence(self) -> None:
-        optimization_pipeline = pb.OptimizationPipeline(target_dbs=systems.Postgres(self.db))
+        optimization_pipeline = pb.OptimizationPipeline(target_db=self.db)
         optimization_pipeline.load_settings(presets.fetch("ues"))
         optimization_pipeline.build()
         for label, query in self.job.entries():
@@ -48,7 +47,7 @@ class JobWorkloadTests(regression_suite.DatabaseTestCase):
                 self.assertResultSetsEqual(original_result, optimized_result, ordered=query.is_ordered())
 
     def test_optimize_workload(self) -> None:
-        optimization_pipeline = pb.OptimizationPipeline(target_dbs=systems.Postgres(self.db))
+        optimization_pipeline = pb.OptimizationPipeline(target_db=self.db)
         optimization_pipeline.load_settings(presets.fetch("ues"))
         optimization_pipeline.build()
         for label, query in self.job.entries():
@@ -68,7 +67,7 @@ class SsbWorkloadTests(regression_suite.DatabaseTestCase):
         self.ssb = workloads.ssb()
 
     def test_result_set_equivalence(self) -> None:
-        optimization_pipeline = pb.OptimizationPipeline(target_dbs=systems.Postgres(self.db))
+        optimization_pipeline = pb.OptimizationPipeline(target_db=self.db)
         optimization_pipeline.load_settings(presets.fetch("ues"))
         optimization_pipeline.build()
         for label, query in self.ssb.entries():
@@ -80,7 +79,7 @@ class SsbWorkloadTests(regression_suite.DatabaseTestCase):
                 self.assertResultSetsEqual(original_result, optimized_result, ordered=query.is_ordered())
 
     def test_optimize_workload(self) -> None:
-        optimization_pipeline = pb.OptimizationPipeline(target_dbs=systems.Postgres(self.db))
+        optimization_pipeline = pb.OptimizationPipeline(target_db=self.db)
         optimization_pipeline.load_settings(presets.fetch("ues"))
         optimization_pipeline.build()
         for label, query in self.ssb.entries():
@@ -100,7 +99,7 @@ class StackWorkloadTests(regression_suite.DatabaseTestCase):
         self.stack = workloads.stack()
 
     def test_result_set_equivalence(self) -> None:
-        optimization_pipeline = pb.OptimizationPipeline(target_dbs=systems.Postgres(self.db))
+        optimization_pipeline = pb.OptimizationPipeline(target_db=self.db)
         optimization_pipeline.load_settings(presets.fetch("ues"))
         optimization_pipeline.build()
         for label, query in self.stack.entries():
@@ -121,7 +120,7 @@ class StackWorkloadTests(regression_suite.DatabaseTestCase):
                     self.skipTest(f"Internal database error at '{label}': {e}")
 
     def test_optimize_workload(self) -> None:
-        optimization_pipeline = pb.OptimizationPipeline(target_dbs=systems.Postgres(self.db))
+        optimization_pipeline = pb.OptimizationPipeline(target_db=self.db)
         optimization_pipeline.load_settings(presets.fetch("ues"))
         optimization_pipeline.build()
         for label, query in self.stack.entries():

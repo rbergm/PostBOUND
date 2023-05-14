@@ -7,7 +7,7 @@ from typing import Optional
 from postbound.qal import qal
 from postbound.optimizer import jointree, validation
 from postbound.optimizer.physops import operators
-from postbound.db.systems import systems
+from postbound.db import db
 
 
 class PhysicalOperatorSelection(abc.ABC):
@@ -22,9 +22,8 @@ class PhysicalOperatorSelection(abc.ABC):
     overwrite the previous selection.
     """
 
-    def __init__(self, target_system: systems.DatabaseSystem) -> None:
+    def __init__(self) -> None:
         self.next_selection: PhysicalOperatorSelection | None = None
-        self.target_system = target_system
 
     def select_physical_operators(self, query: qal.SqlQuery,
                                   join_order: Optional[jointree.LogicalJoinTree | jointree.PhysicalQueryPlan]

@@ -6,7 +6,7 @@ from postbound.optimizer import presets, validation
 from postbound.optimizer.joinorder import enumeration
 from postbound.optimizer.physops import selection
 from postbound.optimizer.planmeta import parameterization as plan_param
-from postbound.db.systems import systems as db_sys
+from postbound.db import db
 from postbound.util import errors
 
 
@@ -36,8 +36,8 @@ class OptimizationPipeline:
     systems.
     """
 
-    def __init__(self, target_dbs: db_sys.DatabaseSystem) -> None:
-        self.target_dbs = target_dbs
+    def __init__(self, target_db: db.Database) -> None:
+        self.target_db = target_db
         self.pre_check: validation.OptimizationPreCheck | None = None
         self.join_order_enumerator: enumeration.JoinOrderOptimizer | None = None
         self.physical_operator_selection: selection.PhysicalOperatorSelection | None = None
@@ -128,7 +128,7 @@ class OptimizationPipeline:
         if not self.join_order_enumerator:
             self.join_order_enumerator = enumeration.EmptyJoinOrderOptimizer()
         if not self.physical_operator_selection:
-            self.physical_operator_selection = selection.EmptyPhysicalOperatorSelection(self.target_dbs)
+            self.physical_operator_selection = selection.EmptyPhysicalOperatorSelection()
         if not self.plan_parameterization:
             self.plan_parameterization = plan_param.EmptyParameterization()
 
@@ -172,15 +172,13 @@ class OptimizationPipeline:
         if join_order:
             join_order.plan_parameterization = None
 
-        return self.target_dbs.query_adaptor().adapt_query(query,
-                                                           join_order=join_order,
-                                                           physical_operators=operators,
-                                                           plan_parameters=plan_parameters)
+        return self.target_db.hinting().generate_hints(query, join_order=join_order, physical_operators=operators,
+                                                       plan_parameters=plan_parameters)
 
     def describe(self) -> dict:
         """Provides a representation of the selected optimization strategies and the database settings."""
         return {
-            "database_system": self.target_dbs.interface().inspect(),
+            "database_system": self.target_db.inspect(),
             "query_pre_check": self.pre_check.describe() if self.pre_check else None,
             "join_ordering": self.join_order_enumerator.describe() if self.join_order_enumerator else None,
             "operator_selection": (self.physical_operator_selection.describe() if self.physical_operator_selection

@@ -244,7 +244,7 @@ def optimize_and_execute_query(query: qal.SqlQuery, optimization_pipeline: pb.Op
         optimization_time = (end_time - start_time).total_seconds()
 
         execution_result = execute_query(optimized_query, repetitions=repetitions, query_preparation=query_preparation,
-                                         database=optimization_pipeline.target_dbs.interface(),
+                                         database=optimization_pipeline.target_db,
                                          post_process=post_process, _optimization_time=optimization_time)
         execution_result[COL_T_OPT] = optimization_time
         execution_result[COL_OPT_SUCCESS] = True

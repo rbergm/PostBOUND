@@ -11,7 +11,6 @@ from typing import Generic, Optional
 import numpy as np
 
 from postbound.db import db
-from postbound.db.systems import systems
 from postbound.qal import base, qal, predicates
 from postbound.optimizer import joingraph, jointree, validation
 from postbound.optimizer.bounds import joins as join_bounds, scans as scan_bounds
@@ -623,8 +622,9 @@ class UESOperatorSelection(opsel.PhysicalOperatorSelection):
     See Hertzschuch et al.: "Simplicity Done Right for Join Ordering", CIDR'2021 for more details.
     """
 
-    def __init__(self, target_system: systems.DatabaseSystem) -> None:
-        super().__init__(target_system)
+    def __init__(self, database: db.Database) -> None:
+        super().__init__()
+        self.database = database
 
     def _apply_selection(self, query: qal.SqlQuery,
                          join_order: Optional[jointree.LogicalJoinTree | jointree.PhysicalQueryPlan]
@@ -634,7 +634,7 @@ class UESOperatorSelection(opsel.PhysicalOperatorSelection):
         else:
             assignment = physops.PhysicalOperatorAssignment()
 
-        if self.target_system.supports_hint(physops.JoinOperators.NestedLoopJoin):
+        if self.database.hinting().supports_hint(physops.JoinOperators.NestedLoopJoin):
             assignment.set_operator_enabled_globally(physops.JoinOperators.NestedLoopJoin, False,
                                                      overwrite_fine_grained_selection=True)
         return assignment

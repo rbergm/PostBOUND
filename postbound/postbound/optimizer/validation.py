@@ -5,7 +5,7 @@ import abc
 from dataclasses import dataclass
 from typing import Iterable
 
-from postbound.db.systems import systems
+from postbound.db import db
 from postbound.qal import qal, predicates, expressions as expr
 from postbound.util import collections as collection_utils
 
@@ -193,10 +193,10 @@ class UnsupportedSystemError(RuntimeError):
     For example, this error can be raised if a join algorithm was chosen that the database system does not support.
     """
 
-    def __init__(self, db_system: systems.DatabaseSystem, reason: str = "") -> None:
-        error_msg = f"Unsupported database system: {db_system}"
+    def __init__(self, db_instance: db.Database, reason: str = "") -> None:
+        error_msg = f"Unsupported database system: {db_instance}"
         if reason:
             error_msg += f" ({reason})"
         super().__init__(error_msg)
-        self.db_system = db_system
+        self.db_system = db_instance
         self.reason = reason

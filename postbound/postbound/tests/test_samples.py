@@ -12,7 +12,6 @@ class ReadmeExampleTests(unittest.TestCase):
         from postbound import postbound as pb
         from postbound.optimizer import presets
         from postbound.db import postgres
-        from postbound.db.systems import systems
         from postbound.experiments import workloads
 
         postgres_instance = postgres.connect(config_file=f"{pg_connect_dir}/.psycopg_connection_job")
@@ -20,7 +19,7 @@ class ReadmeExampleTests(unittest.TestCase):
         job_workload = workloads.job()
         ues_settings = presets.fetch("ues")
 
-        optimization_pipeline = pb.OptimizationPipeline(systems.Postgres(postgres_instance))
+        optimization_pipeline = pb.OptimizationPipeline(postgres_instance)
         optimization_pipeline.load_settings(ues_settings)
         optimization_pipeline.build()
 
