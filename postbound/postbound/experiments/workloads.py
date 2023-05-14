@@ -44,7 +44,7 @@ import pandas as pd
 from postbound.qal import qal, parser
 from postbound.util import dicts as dict_utils
 
-workloads_base_dir = "../../../workloads"
+workloads_base_dir = "../workloads"
 """Indicates the PostBOUND directory that contains all natively supported workloads.
 
 Can be changed to match the project-specific file layout.
