@@ -10,8 +10,7 @@ The expected directory layout is the following:
 ```
 / <workloads_base_dir>
   +- JOB-Queries/
-    +- implicit/
-      +- <queries>
+    +- <queries>
   +- SSB-Queries/
     +- <queries>
   +- Stack-Queries/
@@ -279,7 +278,7 @@ def generate_workload(queries: Iterable[qal.SqlQuery], *, name: str = "",
     return Workload(workload_contents, name, workload_root)
 
 
-def job(file_encoding: str = "utf-8") -> Workload[str]:
+def job(file_encoding: str = "utf-8", *, simplified: bool = True) -> Workload[str]:
     """Provides an instance of the Join Order Benchmark.
 
     Queries will be read from the JOB directory relative to `workloads_base_dir`. The expected layout is:
@@ -288,7 +287,8 @@ def job(file_encoding: str = "utf-8") -> Workload[str]:
     ---
     see: Viktor Leis et al.: How Good Are Query Optimizers, Really? (Proc. VLDB Endow. 9, 3 (2015))
     """
-    return Workload.read(f"{workloads_base_dir}/JOB-Queries/implicit", name="JOB", file_encoding=file_encoding)
+    simplified_dir = "/simplified" if simplified else ""
+    return Workload.read(f"{workloads_base_dir}/JOB-Queries{simplified_dir}", name="JOB", file_encoding=file_encoding)
 
 
 def ssb(file_encoding: str = "utf-8") -> Workload[str]:
