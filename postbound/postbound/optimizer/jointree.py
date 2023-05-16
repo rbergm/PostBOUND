@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import abc
 import typing
-from collections.abc import Container, Iterable, Sequence
-from typing import Callable, Generic, Optional, Union, Iterator
+from collections.abc import Callable, Container, Sequence
+from typing import Generic, Optional, Union
 
 import numpy as np
 
@@ -14,17 +14,25 @@ from postbound.util import collections as collection_utils, errors, stats
 
 
 class BaseMetadata(abc.ABC):
-    def __init__(self, upper_bound: float = np.nan) -> None:
-        self._upper_bound = upper_bound
+    """Common metadata information that is present on all join and base table nodes.
+
+    The interpretation of the data can vary depending on the context in which the join tree is being used.
+
+    For example, the cardinality to could either be a traditional cardinality estimate, a guaranteed upper bound, or
+    the true cardinality of a join or scan.
+    """
+
+    def __init__(self, cardinality: float = np.nan) -> None:
+        self._cardinality = cardinality
 
     @property
-    def upper_bound(self) -> float:
-        return self._upper_bound
+    def cardinality(self) -> float:
+        return self._cardinality
 
 
 class JoinMetadata(BaseMetadata, abc.ABC):
-    def __init__(self, predicate: Optional[predicates.AbstractPredicate] = None, upper_bound: float = np.nan) -> None:
-        super().__init__(upper_bound)
+    def __init__(self, predicate: Optional[predicates.AbstractPredicate] = None, cardinality: float = np.nan) -> None:
+        super().__init__(cardinality)
         self._join_predicate = predicate
 
     @property
@@ -36,9 +44,9 @@ class JoinMetadata(BaseMetadata, abc.ABC):
 
 
 class LogicalJoinMetadata(JoinMetadata):
-    def __init__(self, predicate: Optional[predicates.AbstractPredicate] = None, upper_bound: float = np.nan) -> None:
-        super().__init__(predicate, upper_bound)
-        self._hash_val = hash((predicate, upper_bound))
+    def __init__(self, predicate: Optional[predicates.AbstractPredicate] = None, cardinality: float = np.nan) -> None:
+        super().__init__(predicate, cardinality)
+        self._hash_val = hash((predicate, cardinality))
 
     def __hash__(self) -> int:
         return self._hash_val
@@ -46,21 +54,21 @@ class LogicalJoinMetadata(JoinMetadata):
     def __eq__(self, __value: object) -> bool:
         return (isinstance(__value, type(self))
                 and self.join_predicate == __value.join_predicate
-                and self.upper_bound == __value.upper_bound)
+                and self.cardinality == __value.cardinality)
 
     def __repr__(self) -> str:
         return str(self)
 
     def __str__(self) -> str:
-        return f"predicate={self.join_predicate}, upper bound={self.upper_bound}"
+        return f"predicate={self.join_predicate}, cardinality={self.cardinality}"
 
 
 class PhysicalJoinMetadata(JoinMetadata):
-    def __init__(self, predicate: Optional[predicates.AbstractPredicate] = None, upper_bound: float = np.nan,
+    def __init__(self, predicate: Optional[predicates.AbstractPredicate] = None, cardinality: float = np.nan,
                  join_info: Optional[physops.JoinOperatorAssignment] = None) -> None:
-        super().__init__(predicate, upper_bound)
+        super().__init__(predicate, cardinality)
         self._operator_assignment = join_info
-        self._hash_val = hash((predicate, upper_bound, join_info))
+        self._hash_val = hash((predicate, cardinality, join_info))
 
     @property
     def operator(self) -> physops.JoinOperatorAssignment:
@@ -76,19 +84,19 @@ class PhysicalJoinMetadata(JoinMetadata):
     def __eq__(self, __value: object) -> bool:
         return (isinstance(__value, type(self))
                 and self.join_predicate == __value.join_predicate
-                and self.upper_bound == __value.upper_bound
+                and self.cardinality == __value.cardinality
                 and self.operator == __value.operator)
 
     def __repr__(self) -> str:
         return str(self)
 
     def __str__(self) -> str:
-        return f"predicate={self.join_predicate}, upper bound={self.upper_bound}, operator={self.operator}"
+        return f"predicate={self.join_predicate}, cardinality={self.cardinality}, operator={self.operator}"
 
 
 class BaseTableMetadata(BaseMetadata, abc.ABC):
-    def __init__(self, filter_predicate: Optional[predicates.AbstractPredicate], upper_bound: float = np.nan) -> None:
-        super().__init__(upper_bound)
+    def __init__(self, filter_predicate: Optional[predicates.AbstractPredicate], cardinality: float = np.nan) -> None:
+        super().__init__(cardinality)
         self._filter_predicate = filter_predicate
 
     @property
@@ -100,9 +108,9 @@ class BaseTableMetadata(BaseMetadata, abc.ABC):
 
 
 class LogicalBaseTableMetadata(BaseTableMetadata):
-    def __init__(self, filter_predicate: Optional[predicates.AbstractPredicate], upper_bound: float = np.nan) -> None:
-        super().__init__(filter_predicate, upper_bound)
-        self._hash_val = hash((filter_predicate, upper_bound))
+    def __init__(self, filter_predicate: Optional[predicates.AbstractPredicate], cardinality: float = np.nan) -> None:
+        super().__init__(filter_predicate, cardinality)
+        self._hash_val = hash((filter_predicate, cardinality))
 
     def __hash__(self) -> int:
         return self._hash_val
@@ -110,15 +118,15 @@ class LogicalBaseTableMetadata(BaseTableMetadata):
     def __eq__(self, __value: object) -> bool:
         return (isinstance(__value, type(self))
                 and self.filter_predicate == __value.filter_predicate
-                and self.upper_bound == __value.upper_bound)
+                and self.cardinality == __value.cardinality)
 
 
 class PhysicalBaseTableMetadata(BaseTableMetadata):
-    def __init__(self, filter_predicate: Optional[predicates.AbstractPredicate], upper_bound: float = np.nan,
+    def __init__(self, filter_predicate: Optional[predicates.AbstractPredicate], cardinality: float = np.nan,
                  scan_info: Optional[physops.ScanOperatorAssignment] = None) -> None:
-        super().__init__(filter_predicate, upper_bound)
+        super().__init__(filter_predicate, cardinality)
         self._operator_assignment = scan_info
-        self._hash_val = hash((filter_predicate, upper_bound, scan_info))
+        self._hash_val = hash((filter_predicate, cardinality, scan_info))
 
     @property
     def operator(self) -> Optional[physops.ScanOperatorAssignment]:
@@ -134,14 +142,14 @@ class PhysicalBaseTableMetadata(BaseTableMetadata):
     def __eq__(self, __value: object) -> bool:
         return (isinstance(__value, type(self))
                 and self.filter_predicate == __value.filter_predicate
-                and self.upper_bound == __value.upper_bound
+                and self.cardinality == __value.cardinality
                 and self.operator == __value.operator)
 
     def __repr__(self) -> str:
         return str(self)
 
     def __str__(self) -> str:
-        return f"predicate={self.filter_predicate}, upper bound={self.upper_bound}, operator={self.operator}"
+        return f"predicate={self.filter_predicate}, upper bound={self.cardinality}, operator={self.operator}"
 
 
 JoinMetadataType = typing.TypeVar("JoinMetadataType", bound=JoinMetadata)
@@ -166,7 +174,7 @@ class AbstractJoinTreeNode(abc.ABC, Container[base.TableReference], Generic[Join
 
     @property
     def upper_bound(self) -> float:
-        return self.annotation.upper_bound if self.annotation else np.nan
+        return self.annotation.cardinality if self.annotation else np.nan
 
     @abc.abstractmethod
     def is_join_node(self) -> bool:
@@ -492,7 +500,7 @@ class JoinTree(Container[base.TableReference], Generic[JoinMetadataType, BaseTab
         """Provides the current upper bound or cardinality estimate of this join tree (i.e. its root node)."""
         if self.is_empty():
             return np.nan
-        return self._root.annotation.upper_bound if self._root.annotation else np.nan
+        return self._root.annotation.cardinality if self._root.annotation else np.nan
 
     def is_empty(self) -> bool:
         """Checks, whether there is at least one table in the join tree."""
@@ -696,7 +704,7 @@ def logical_join_tree_annotation_merger(first_annotation: Optional[LogicalTreeMe
                                         second_annotation: Optional[LogicalTreeMetadata]) -> LogicalJoinMetadata:
     if not first_annotation or not second_annotation:
         return LogicalJoinMetadata()
-    return LogicalJoinMetadata(upper_bound=first_annotation.upper_bound * second_annotation.upper_bound)
+    return LogicalJoinMetadata(cardinality=first_annotation.cardinality * second_annotation.cardinality)
 
 
 PhysicalPlanMetadata = typing.Union[PhysicalBaseTableMetadata, PhysicalJoinMetadata]
@@ -812,7 +820,7 @@ def physical_join_tree_annotation_merger(first_annotation: Optional[PhysicalPlan
                                          second_annotation: Optional[PhysicalPlanMetadata]) -> PhysicalJoinMetadata:
     if not first_annotation or not second_annotation:
         return PhysicalJoinMetadata()
-    return PhysicalJoinMetadata(upper_bound=first_annotation.upper_bound * second_annotation.upper_bound)
+    return PhysicalJoinMetadata(cardinality=first_annotation.cardinality * second_annotation.cardinality)
 
 
 def top_down_similarity(a: JoinTree | AbstractJoinTreeNode, b: JoinTree | AbstractJoinTreeNode, *,
