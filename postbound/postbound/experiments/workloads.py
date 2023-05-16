@@ -287,8 +287,9 @@ def job(file_encoding: str = "utf-8", *, simplified: bool = True) -> Workload[st
     ---
     see: Viktor Leis et al.: How Good Are Query Optimizers, Really? (Proc. VLDB Endow. 9, 3 (2015))
     """
-    simplified_dir = "/simplified" if simplified else ""
-    return Workload.read(f"{workloads_base_dir}/JOB-Queries{simplified_dir}", name="JOB", file_encoding=file_encoding)
+    simplified_dir = "/simplified/implicit" if simplified else ""
+    job_dir = f"{workloads_base_dir}/JOB-Queries{simplified_dir}"
+    return Workload.read(job_dir, name="JOB", file_encoding=file_encoding)
 
 
 def ssb(file_encoding: str = "utf-8") -> Workload[str]:
