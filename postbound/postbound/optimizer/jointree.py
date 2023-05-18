@@ -303,6 +303,9 @@ class IntermediateJoinNode(AbstractJoinTreeNode[JoinMetadataType, BaseTableMetad
     def is_join_node(self) -> bool:
         return True
 
+    def is_base_table_join(self) -> bool:
+        return self.left_child.is_base_table_node() and self.right_child.is_base_table_node()
+
     def tables(self) -> frozenset[base.TableReference]:
         return frozenset(self._left_child.tables() | self._right_child.tables())
 
@@ -904,3 +907,37 @@ def bottom_up_similarity(a: JoinTree, b: JoinTree) -> float:
     a_subtrees = {join.tables() for join in a.join_sequence()}
     b_subtrees = {join.tables() for join in b.join_sequence()}
     return stats.jaccard(a_subtrees, b_subtrees)
+
+
+_DepthState = collections.namedtuple("_DepthState", ["current_level", "depths"])
+
+
+def _traverse_join_tree_depth(current_node: AbstractJoinTreeNode, current_depth: _DepthState) -> _DepthState:
+    if isinstance(current_node, BaseTableNode):
+        return _DepthState(1, current_depth.depths | {current_node.table: 1})
+
+    if not isinstance(current_node, IntermediateJoinNode):
+        raise TypeError("Unknown current node type: " + str(current_node))
+
+    left_child, right_child = current_node.left_child, current_node.right_child
+    if isinstance(left_child, BaseTableNode) and isinstance(right_child, BaseTableNode):
+        return _DepthState(1, current_depth.depths | {left_child.table: 1, right_child.table: 1})
+    elif isinstance(left_child, BaseTableNode):
+        right_depth = _traverse_join_tree_depth(right_child, current_depth)
+        updated_depth = right_depth.current_level + 1
+        return _DepthState(updated_depth, right_depth.depths | {left_child.table: updated_depth})
+    elif isinstance(right_child, BaseTableNode):
+        left_depth = _traverse_join_tree_depth(left_child, current_depth)
+        updated_depth = left_depth.current_level + 1
+        return _DepthState(updated_depth, left_depth.depths | {right_child.table: updated_depth})
+    else:
+        left_depth = _traverse_join_tree_depth(left_child, current_depth)
+        right_depth = _traverse_join_tree_depth(right_child, current_depth)
+        updated_depth = max(left_depth.current_level, right_depth.current_level) + 1
+        return _DepthState(updated_depth, left_depth.depths | right_depth.depths)
+
+
+def join_depth(join_tree: JoinTree) -> dict[base.TableReference, int]:
+    if join_tree.is_empty():
+        return {}
+    return _traverse_join_tree_depth(join_tree.root, _DepthState(0, {})).depths
