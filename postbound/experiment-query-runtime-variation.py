@@ -249,7 +249,7 @@ def execute_single_query(label: str, query: qal.SqlQuery, join_order: jointree.L
     query_duration_sender.close()
 
     query_plan = db_instance.execute_query(transform.as_explain(optimized_query), cache_enabled=False)
-    cost_estimate = db_instance.cost_estimate(optimized_query)
+    cost_estimate = db_instance.optimizer().cost_estimate(optimized_query)
     query_hints, planner_options = ((optimized_query.hints.query_hints, optimized_query.hints.preparatory_statements)
                                     if optimized_query.hints else ("", ""))
     return EvaluationResult(label=label, query=query, join_order=join_order,

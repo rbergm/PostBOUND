@@ -15,3 +15,11 @@ def deprecated(func: Callable) -> Callable:
         return func(*args, **kwargs)
 
     return deprecation_wrapper
+
+
+def module_local(func: Callable) -> Callable:
+    """
+    Marker decorator to show that a seemingly private method of a class is intended to be used by other objects from
+    the same module.
+    """
+    return func

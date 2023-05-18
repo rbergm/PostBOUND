@@ -83,7 +83,7 @@ class NativeCardinalityEstimator(BaseTableCardinalityEstimator):
         emulated_query = qal.ImplicitSqlQuery(select_clause=select_clause,
                                               from_clause=from_clause,
                                               where_clause=where_clause)
-        return self.database.cardinality_estimate(emulated_query)
+        return self.database.optimizer().cardinality_estimate(emulated_query)
 
     def estimate_total_rows(self, table: base.TableReference) -> int:
         return self.database.statistics().total_rows(table, emulated=True)

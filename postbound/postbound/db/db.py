@@ -157,6 +157,15 @@ class Database(abc.ABC):
         raise NotImplementedError
 
     @abc.abstractmethod
+    def optimizer(self) -> OptimizerInterface:
+        """Provides access to optimizer-related functionality of the database system.
+
+        This method can raise an `UnsupportedDatabaseFeatureError` if it does not provide external access to the
+        optimizer.
+        """
+        raise NotImplementedError
+
+    @abc.abstractmethod
     def execute_query(self, query: qal.SqlQuery | str, *, cache_enabled: Optional[bool] = None) -> Any:
         """Executes the given query and returns the associated result set.
 
@@ -171,16 +180,6 @@ class Database(abc.ABC):
         such that a result set of a single row of a single value will be returned as that single value directly. In all
         other cases, the result will be a list consisting of the different result tuples.
         """
-        raise NotImplementedError
-
-    @abc.abstractmethod
-    def cardinality_estimate(self, query: qal.SqlQuery | str) -> int:
-        """Queries the DBMS query optimizer for its cardinality estimate, instead of executing the query."""
-        raise NotImplementedError
-
-    @abc.abstractmethod
-    def cost_estimate(self, query: qal.SqlQuery | str) -> float:
-        """Queries the DBMS query optimizer for the estimated cost of executing the query."""
         raise NotImplementedError
 
     @abc.abstractmethod
@@ -602,17 +601,17 @@ class QueryExecutionPlan:
     """
 
     def __init__(self, node_type: str, is_join: bool, is_scan: bool, *, table: Optional[base.TableReference] = None,
-                 children: Optional[Iterable[QueryExecutionPlan]] = None, index: str = "", condition: str = "",
+                 children: Optional[Iterable[QueryExecutionPlan]] = None, parallel_workers: float = math.nan,
                  estimated_cost: float = math.nan, estimated_cardinality: float = math.nan,
                  true_cardinality: float = math.nan, execution_time: float = math.nan) -> None:
         self.node_type = node_type
         self.is_join = is_join
         self.is_scan = is_scan
+
+        self.parallel_workers = parallel_workers
         self.children: Sequence[QueryExecutionPlan] = list(children) if children else []
 
         self.table = table
-        self.index = index
-        self.condition = condition
 
         self.estimated_cost = estimated_cost
         self.estimated_cardinality = estimated_cardinality
@@ -627,3 +626,47 @@ class QueryExecutionPlan:
         """Provides all tables that are referenced in and below the current plan node."""
         own_table = [self.table] if self.table else []
         return frozenset(own_table + collection_utils.flatten(child.tables() for child in self.children))
+
+    def total_processed_rows(self) -> float:
+        if not self.is_analyze():
+            return math.nan
+        return self.true_cardinality + sum(child.total_processed_rows() for child in self.children)
+
+    def inspect(self, *, _current_indentation: int = 0):
+        padding = " " * _current_indentation
+        prefix = f"{padding}<- " if padding else ""
+        own_inspection = [prefix + str(self)]
+        child_inspections = [child.inspect(_current_indentation=_current_indentation + 2) for child in self.children]
+        return "\n".join(own_inspection + child_inspections)
+
+    def __repr__(self) -> str:
+        return str(self)
+
+    def __str__(self) -> str:
+        if self.is_analyze():
+            analyze_str = f" (execution time={self.execution_time} true cardinality={self.true_cardinality})"
+        else:
+            analyze_str = ""
+
+        table_str = f" :: {self.table}" if self.table else ""
+        plan_str = f" (cost={self.estimated_cost} estimated cardinality={self.estimated_cardinality})"
+        return "".join((self.node_type, table_str, plan_str, analyze_str))
+
+
+class OptimizerInterface(abc.ABC):
+    """This interface provides high-level access to internal optimizer-related data for the database system."""
+
+    @abc.abstractmethod
+    def query_plan(self, query: qal.SqlQuery | str) -> QueryExecutionPlan:
+        """Obtains the query execution plan for the given query."""
+        raise NotImplementedError
+
+    @abc.abstractmethod
+    def cardinality_estimate(self, query: qal.SqlQuery | str) -> int:
+        """Queries the DBMS query optimizer for its cardinality estimate, instead of executing the query."""
+        raise NotImplementedError
+
+    @abc.abstractmethod
+    def cost_estimate(self, query: qal.SqlQuery | str) -> float:
+        """Queries the DBMS query optimizer for the estimated cost of executing the query."""
+        raise NotImplementedError

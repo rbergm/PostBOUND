@@ -16,13 +16,14 @@ from typing import Any, Optional
 import psycopg
 import psycopg.rows
 
+from db.db import OptimizerInterface, QueryExecutionPlan
 from postbound.db import db
 from postbound.db.db import HintService
 from postbound.qal import qal, base, clauses, transform, formatter
 from postbound.optimizer import jointree
 from postbound.optimizer.physops import operators as physops
 from postbound.optimizer.planmeta import hints as planmeta
-from postbound.util import collections as collection_utils, logging, misc as utils
+from postbound.util import collections as collection_utils, logging, misc as utils, typing as type_utils
 
 HintBlock = collections.namedtuple("HintBlock", ["preparatory_statements", "hints", "query"])
 
@@ -83,17 +84,8 @@ class PostgresInterface(db.Database):
             query_result = [row[0] for row in query_result]  # if it is just one column, unwrap it
         return query_result if len(query_result) > 1 else query_result[0]  # if it is just one row, unwrap it
 
-    def cardinality_estimate(self, query: qal.SqlQuery | str) -> int:
-        query = self._prepare_query_execution(query, drop_explain=True)
-        query_plan = self._obtain_query_plan(query)
-        estimate = query_plan[0]["Plan"]["Plan Rows"]
-        return estimate
-
-    def cost_estimate(self, query: qal.SqlQuery | str) -> float:
-        query = self._prepare_query_execution(query, drop_explain=True)
-        query_plan = self._obtain_query_plan(query)
-        estimate = query_plan[0]["Plan"]["Total Cost"]
-        return estimate
+    def optimizer(self) -> OptimizerInterface:
+        return PostgresOptimizer(self)
 
     def database_name(self) -> str:
         self._cursor.execute("SELECT CURRENT_DATABASE();")
@@ -146,6 +138,7 @@ class PostgresInterface(db.Database):
         prewarm_query = f"SELECT {prewarm_text}"
         self._cursor.execute(prewarm_query)
 
+    @type_utils.module_local
     def _prepare_query_execution(self, query: qal.SqlQuery | str, *, drop_explain: bool = False) -> str:
         """Provides the query in a unified format, taking care of preparatory statements as necessary.
 
@@ -163,6 +156,7 @@ class PostgresInterface(db.Database):
             query = transform.drop_hints(query, preparatory_statements_only=True)
         return self.hinting().format_query(query)
 
+    @type_utils.module_local
     def _obtain_query_plan(self, query: str) -> dict:
         """Provides the query plan (without ANALYZE) for the given query."""
         if not query.upper().startswith("EXPLAIN (FORMAT JSON)"):
@@ -545,6 +539,30 @@ class PostgresHintService(db.HintService):
         return hint in PostgresJoinHints | PostgresScanHints | PostgresPlanHints
 
 
+# noinspection PyProtectedMember
+class PostgresOptimizer(db.OptimizerInterface):
+    def __init__(self, postgres_instance: PostgresInterface) -> None:
+        self._pg_instance = postgres_instance
+
+    def query_plan(self, query: qal.SqlQuery | str) -> QueryExecutionPlan:
+        query = self._pg_instance._prepare_query_execution(query, drop_explain=True)
+        raw_query_plan = self._pg_instance._obtain_query_plan(query)
+        query_plan = PostgresExplainPlan(raw_query_plan)
+        return query_plan.as_query_execution_plan()
+
+    def cardinality_estimate(self, query: qal.SqlQuery | str) -> int:
+        query = self._pg_instance._prepare_query_execution(query, drop_explain=True)
+        query_plan = self._pg_instance._obtain_query_plan(query)
+        estimate = query_plan[0]["Plan"]["Plan Rows"]
+        return estimate
+
+    def cost_estimate(self, query: qal.SqlQuery | str) -> float:
+        query = self._pg_instance._prepare_query_execution(query, drop_explain=True)
+        query_plan = self._pg_instance._obtain_query_plan(query)
+        estimate = query_plan[0]["Plan"]["Total Cost"]
+        return estimate
+
+
 def connect(*, name: str = "postgres", connect_string: str | None = None,
             config_file: str | None = ".psycopg_connection", cache_enabled: bool = True,
             private: bool = False) -> PostgresInterface:
@@ -672,6 +690,7 @@ class PostgresExplainNode:
         self.cardinality_estimate = explain_data.get("Plan Rows", math.nan)
         self.execution_time = explain_data.get("Actual Total Time", math.nan)
         self.true_cardinality = explain_data.get("Actual Rows", math.nan)
+        self.loops = explain_data.get("Actual Loops", 1)
 
         self.relation_name = explain_data.get("Relation Name", None)
         self.relation_alias = explain_data.get("Alias", None)
@@ -684,9 +703,28 @@ class PostgresExplainNode:
         self.recheck_condition = explain_data.get("Recheck Cond", None)
 
         self.parent_relationship = explain_data.get("Parent Relationship", None)
-        self.parallel_workers = explain_data.get("Workers Planned", math.nan)
+        self.parallel_workers = explain_data.get("Workers Launched", math.nan)
 
         self.children = [PostgresExplainNode(child) for child in explain_data.get("Plans", [])]
+
+    def as_query_execution_plan(self) -> db.QueryExecutionPlan:
+        child_nodes = [child.as_query_execution_plan() for child in self.children]
+        table = self._parse_table()
+        is_scan = self.node_type in PostgresScanNodes
+        is_join = self.node_type in PostgresJoinNodes
+        par_workers = self.parallel_workers + 1  # in Postgres the control worker also processes input
+        true_card = self.true_cardinality * self.loops
+
+        return db.QueryExecutionPlan(self.node_type, is_join=is_join, is_scan=is_scan, table=table,
+                                     children=child_nodes, parallel_workers=par_workers,
+                                     estimated_cost=self.cost, estimated_cardinality=self.cardinality_estimate,
+                                     true_cardinality=true_card, execution_time=self.execution_time)
+
+    def _parse_table(self) -> Optional[base.TableReference]:
+        if not self.relation_name:
+            return None
+        alias = self.relation_alias if self.relation_alias is not None else ""
+        return base.TableReference(self.relation_name, alias)
 
 
 class PostgresExplainPlan:
@@ -695,3 +733,6 @@ class PostgresExplainPlan:
         self.planning_time = explain_data.get("Planning Time", math.nan)
         self.execution_time = explain_data.get("Execution Time", math.nan)
         self.query_plan = PostgresExplainNode(explain_data["Plan"])
+
+    def as_query_execution_plan(self) -> db.QueryExecutionPlan:
+        return self.query_plan.as_query_execution_plan()
