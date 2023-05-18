@@ -1,13 +1,15 @@
 from __future__ import annotations
 
 import abc
+import collections
 import typing
 from collections.abc import Callable, Container, Sequence
 from typing import Generic, Optional, Union
 
 import numpy as np
 
-from postbound.qal import base, predicates
+from postbound.qal import base, predicates, qal
+from postbound.db import db
 from postbound.optimizer.physops import operators as physops
 from postbound.optimizer.planmeta import hints as params
 from postbound.util import collections as collection_utils, errors, stats
@@ -694,6 +696,34 @@ class LogicalJoinTree(JoinTree[LogicalJoinMetadata, LogicalBaseTableMetadata]):
             else:
                 current_join_tree = current_join_tree.join_with_base_table(join, insert_left=False)
         return current_join_tree
+
+    @staticmethod
+    def load_from_query_plan(query_plan: db.QueryExecutionPlan,
+                             query: Optional[qal.SqlQuery] = None) -> LogicalJoinTree:
+        if query_plan.is_scan:
+            current_join_tree = LogicalJoinTree()
+            table = query_plan.table
+            if not table:
+                raise ValueError(f"Scan nodes must have an associated table: {query_plan}")
+            filter_predicate = query.predicates().filters_for(table) if query else None
+            cardinality = query_plan.true_cardinality if query_plan.is_analyze() else query_plan.estimated_cardinality
+            table_annotation = LogicalBaseTableMetadata(filter_predicate, cardinality)
+            return current_join_tree.join_with_base_table(table, table_annotation)
+        elif query_plan.is_join:
+            if len(query_plan.children) != 2:
+                raise ValueError(f"Join nodes must have exactly two child nodes: {query_plan}")
+            outer_child, inner_child = query_plan.children
+            outer_tree = LogicalJoinTree.load_from_query_plan(outer_child, query)
+            inner_tree = LogicalJoinTree.load_from_query_plan(inner_child, query)
+            join_predicate = (query.predicates().joins_between(outer_tree.tables(), inner_tree.tables())
+                              if query else None)
+            cardinality = query_plan.true_cardinality if query_plan.is_analyze() else query_plan.estimated_cardinality
+            join_annotation = LogicalJoinMetadata(join_predicate, cardinality)
+            return inner_tree.join_with_subtree(outer_tree, join_annotation)
+
+        if len(query_plan.children) != 1:
+            raise ValueError(f"Non join/scan nodes must have exactly one child: {query_plan}")
+        return LogicalJoinTree.load_from_query_plan(query_plan.children[0], query)
 
     def __init__(self: LogicalJoinTree,
                  root: Optional[AbstractJoinTreeNode[LogicalJoinMetadata, LogicalBaseTableMetadata]] = None) -> None:

@@ -1,5 +1,4 @@
 """Contains the Postgres implementation of the Database interface."""
-
 from __future__ import annotations
 
 import collections
@@ -16,9 +15,7 @@ from typing import Any, Optional
 import psycopg
 import psycopg.rows
 
-from db.db import OptimizerInterface, QueryExecutionPlan
 from postbound.db import db
-from postbound.db.db import HintService
 from postbound.qal import qal, base, clauses, transform, formatter
 from postbound.optimizer import jointree
 from postbound.optimizer.physops import operators as physops
@@ -53,7 +50,7 @@ class PostgresInterface(db.Database):
             self._db_stats.cache_enabled = cache_enabled
         return self._db_stats
 
-    def hinting(self) -> HintService:
+    def hinting(self) -> db.HintService:
         return PostgresHintService()
 
     def execute_query(self, query: qal.SqlQuery | str, *, cache_enabled: Optional[bool] = None) -> Any:
@@ -84,7 +81,7 @@ class PostgresInterface(db.Database):
             query_result = [row[0] for row in query_result]  # if it is just one column, unwrap it
         return query_result if len(query_result) > 1 else query_result[0]  # if it is just one row, unwrap it
 
-    def optimizer(self) -> OptimizerInterface:
+    def optimizer(self) -> db.OptimizerInterface:
         return PostgresOptimizer(self)
 
     def database_name(self) -> str:
@@ -544,7 +541,7 @@ class PostgresOptimizer(db.OptimizerInterface):
     def __init__(self, postgres_instance: PostgresInterface) -> None:
         self._pg_instance = postgres_instance
 
-    def query_plan(self, query: qal.SqlQuery | str) -> QueryExecutionPlan:
+    def query_plan(self, query: qal.SqlQuery | str) -> db.QueryExecutionPlan:
         query = self._pg_instance._prepare_query_execution(query, drop_explain=True)
         raw_query_plan = self._pg_instance._obtain_query_plan(query)
         query_plan = PostgresExplainPlan(raw_query_plan)
@@ -679,7 +676,7 @@ class ParallelQueryExecutor:
 
 
 PostgresJoinNodes = {"Hash Join", "Merge Join", "Nested Loop"}
-PostgresScanNodes = {"Bitmap Heap Scan", "Index Scan", "Index Only Scan", "Sequential Scan"}
+PostgresScanNodes = {"Bitmap Heap Scan", "Index Scan", "Index Only Scan", "Seq Scan"}
 
 
 class PostgresExplainNode:
