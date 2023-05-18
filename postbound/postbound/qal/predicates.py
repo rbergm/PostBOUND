@@ -903,7 +903,6 @@ class QueryPredicates:
         only true for a single predicate, that predicate will be returned directly.
         - NOT predicates are included if their child predicate is a filter.
         """
-        self._assert_not_empty()
         return _collect_filter_predicates(self._root)
 
     @functools.cache
@@ -917,7 +916,6 @@ class QueryPredicates:
         true for a single predicate, that predicate will be returned directly.
         - NOT predicates are included if their child predicate is a join.
         """
-        self._assert_not_empty()
         return _collect_join_predicates(self._root)
 
     @functools.cache
@@ -927,6 +925,9 @@ class QueryPredicates:
         Nodes correspond to tables and edges to predicates that join those tables.
         """
         join_graph = nx.Graph()
+        if self.is_empty():
+            return join_graph
+
         tables = self._root.tables()
         join_graph.add_nodes_from(tables)
         for join in self.joins():
@@ -943,7 +944,8 @@ class QueryPredicates:
 
         The determination of matching filter predicates is the same as for the `filters()` method.
         """
-        self._assert_not_empty()
+        if self.is_empty():
+            return None
         applicable_filters = [filter_pred for filter_pred in self.filters() if filter_pred.contains_table(table)]
         return CompoundPredicate.create_and(applicable_filters) if applicable_filters else None
 
@@ -958,7 +960,9 @@ class QueryPredicates:
 
         The determination of matching join predicates is the same as for the `joins()` method.
         """
-        self._assert_not_empty()
+        if self.is_empty():
+            return []
+
         applicable_joins: list[AbstractPredicate] = [join_pred for join_pred in self.joins()
                                                      if join_pred.contains_table(table)]
         distinct_joins: dict[frozenset[base.TableReference], list[AbstractPredicate]] = collections.defaultdict(list)
@@ -982,7 +986,9 @@ class QueryPredicates:
         Notice that the returned predicate might also include other tables, if they are part of a join predicate that
         also joins the given two tables.
         """
-        self._assert_not_empty()
+        if self.is_empty():
+            return None
+
         if isinstance(first_table, base.TableReference) and isinstance(second_table, base.TableReference):
             first_joins: Collection[AbstractPredicate] = self.joins_for(first_table)
             matching_joins = [join for join in first_joins if join.joins_table(second_table)]
@@ -1006,17 +1012,24 @@ class QueryPredicates:
         of tables must at least be connected through a sequence of other tables. From a graph theory-centric point of
         view this means that the join (sub-) graph induced by the given tables is connected.
         """
+        if self.is_empty():
+            return False
         tables = [tables] if not isinstance(tables, Iterable) else list(tables)
         tables = frozenset(set(tables) | set(more_tables))
         return self._join_tables_check(tables)
 
     def and_(self, other_predicate: QueryPredicates | AbstractPredicate) -> QueryPredicates:
         """Combines the given predicates with the predicates in this query via a conjunction."""
+        if self.is_empty() and isinstance(other_predicate, QueryPredicates) and other_predicate.is_empty():
+            return self
+        elif isinstance(other_predicate, QueryPredicates) and other_predicate.is_empty():
+            return self
+
         other_predicate = other_predicate._root if isinstance(other_predicate, QueryPredicates) else other_predicate
-        if self._root is None:
+        if self.is_empty():
             return QueryPredicates(other_predicate)
 
-        merged_predicate = CompoundPredicate(expr.LogicalSqlCompoundOperators.And, [self._root, other_predicate])
+        merged_predicate = CompoundPredicate.create_and([self._root, other_predicate])
         return QueryPredicates(merged_predicate)
 
     @functools.cache

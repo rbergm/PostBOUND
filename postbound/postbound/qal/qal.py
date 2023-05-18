@@ -190,7 +190,7 @@ class SqlQuery(Generic[FromClauseType], abc.ABC):
         return collection_utils.set_union(clause.columns() for clause in self.clauses())
 
     @functools.cache
-    def predicates(self) -> Optional[preds.QueryPredicates]:
+    def predicates(self) -> preds.QueryPredicates:
         """Provides all predicates in this query.
 
         This includes predicates in the FROM clause, as well as the WHERE clause.
@@ -201,8 +201,6 @@ class SqlQuery(Generic[FromClauseType], abc.ABC):
         from_predicate = self.from_clause.predicates()
         if from_predicate:
             return where_predicates.and_(from_predicate)
-        elif where_predicates.is_empty():
-            return None
         else:
             return where_predicates
 
