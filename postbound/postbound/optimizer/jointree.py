@@ -160,6 +160,16 @@ NestedTableSequence = typing.NewType("NestedTableSequence",
                                      Union[Sequence["NestedTableSequence"], base.TableReference])
 
 
+def parse_nested_table_sequence(sequence: list[dict | list]) -> NestedTableSequence:
+    if isinstance(sequence, list):
+        return [parse_nested_table_sequence(item) for item in sequence]
+    elif isinstance(sequence, dict):
+        table_name, alias = sequence["full_name"], sequence.get("alias", "")
+        return base.TableReference(table_name, alias)
+    else:
+        raise TypeError(f"Unknown list element: {sequence}")
+
+
 class AbstractJoinTreeNode(abc.ABC, Container[base.TableReference], Generic[JoinMetadataType, BaseTableMetadataType]):
     """The fundamental type to construct a join tree. This node contains the actual entries/data.
 
