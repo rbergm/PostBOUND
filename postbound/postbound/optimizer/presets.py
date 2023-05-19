@@ -10,7 +10,7 @@ from postbound.optimizer import validation
 from postbound.optimizer.bounds import scans
 from postbound.optimizer.joinorder import enumeration
 from postbound.optimizer.physops import selection
-from postbound.optimizer.strategies import ues
+from postbound.optimizer.strategies import ues, native
 from postbound.optimizer.planmeta import parameterization as plan_param
 
 
@@ -93,6 +93,23 @@ class UESOptimizationSettings(OptimizationSettings):
         return None
 
 
+class NativeOptimizationSettings(OptimizationSettings):
+    def __init__(self, database: Optional[db.Database] = None) -> None:
+        self.database = database
+
+    def query_pre_check(self) -> validation.OptimizationPreCheck | None:
+        return None
+
+    def build_join_order_optimizer(self) -> enumeration.JoinOrderOptimizer | None:
+        return native.NativeJoinOrderOptimizer(self.database)
+
+    def build_physical_operator_selection(self) -> selection.PhysicalOperatorSelection | None:
+        return native.NativePhysicalOperatorSelection(self.database)
+
+    def build_plan_parameterization(self) -> plan_param.ParameterGeneration | None:
+        pass
+
+
 def fetch(key: str, *, database: Optional[db.Database] = None) -> OptimizationSettings:
     """Provides the optimization settings registered under the given key. Keys are case-insensitive.
 
@@ -100,7 +117,10 @@ def fetch(key: str, *, database: Optional[db.Database] = None) -> OptimizationSe
 
     - `UESOptimizationSettings`, available under key "ues"
     """
+    database = db.DatabasePool.get_instance().current_database() if database is None else database
     if key.upper() == "UES":
         return UESOptimizationSettings(database)
+    elif key == "native":
+        return NativeOptimizationSettings(database)
     else:
         raise ValueError(f"Unknown presets for key '{key}'")
