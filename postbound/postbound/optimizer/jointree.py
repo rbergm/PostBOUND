@@ -891,7 +891,7 @@ class PhysicalQueryPlan(JoinTree[PhysicalJoinMetadata, PhysicalBaseTableMetadata
 
         if self.is_empty():
             return subtree
-        left, right = (subtree, self.root) if insert_left else (self.root, subtree)
+        left, right = (subtree.root, self.root) if insert_left else (self.root, subtree.root)
         join_node = IntermediateJoinNode(left, right, annotation)
         merged_global_settings = self.global_settings.merge_with(subtree.global_settings)
         return PhysicalQueryPlan(join_node, global_operator_settings=merged_global_settings)
