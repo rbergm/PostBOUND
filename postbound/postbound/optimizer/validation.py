@@ -22,8 +22,12 @@ class PreCheckResult:
     `passed` indicates whether the query can be optimized by the specific strategy. If the query is not supported,
     `failure_reason` provides descriptions of what went wrong.
     """
-    passed: bool
-    failure_reason: str | list[str]
+    passed: bool = True
+    failure_reason: str | list[str] = ""
+
+    @staticmethod
+    def with_all_passed() -> PreCheckResult:
+        return PreCheckResult()
 
 
 class OptimizationPreCheck(abc.ABC):
@@ -164,8 +168,8 @@ class EmptyPreCheck(OptimizationPreCheck):
     def __init__(self) -> None:
         super().__init__("empty")
 
-    def check_supported_query(self, query: qal.SqlQuery) -> tuple[bool, str | list[str]]:
-        return True, ""
+    def check_supported_query(self, query: qal.SqlQuery) -> PreCheckResult:
+        return PreCheckResult.with_all_passed()
 
     def describe(self) -> dict:
         return {"name": "no_check"}
