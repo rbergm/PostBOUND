@@ -677,8 +677,13 @@ class ParallelQueryExecutor:
                 f"(run={len(running_workers)} fin={len(completed_workers)})")
 
 
-PostgresJoinNodes = {"Hash Join", "Merge Join", "Nested Loop"}
-PostgresScanNodes = {"Bitmap Heap Scan", "Index Scan", "Index Only Scan", "Seq Scan"}
+PostgresExplainJoinNodes = {"Nested Loop": physops.JoinOperators.NestedLoopJoin,
+                            "Hash Join": physops.JoinOperators.HashJoin,
+                            "Merge Join": physops.JoinOperators.SortMergeJoin}
+PostgresExplainScanNodes = {"Seq Scan": physops.ScanOperators.SequentialScan,
+                            "Index Scan": physops.ScanOperators.IndexScan,
+                            "Index Only Scan": physops.ScanOperators.IndexOnlyScan,
+                            "Bitmap Heap Scan": physops.ScanOperators.BitmapScan}
 
 
 class PostgresExplainNode:
@@ -707,17 +712,37 @@ class PostgresExplainNode:
         self.children = [PostgresExplainNode(child) for child in explain_data.get("Plans", [])]
 
     def as_query_execution_plan(self) -> db.QueryExecutionPlan:
-        child_nodes = [child.as_query_execution_plan() for child in self.children]
+        if self.children and len(self.children) > 2:
+            raise ValueError("Cannot transform parent node > 2 children")
+        elif self.children and len(self.children) == 1:
+            child_nodes = [self.children[0].as_query_execution_plan()]
+            inner_child = None
+        elif self.children:
+            first_child, second_child = self.children
+            child_nodes = [first_child.as_query_execution_plan(), second_child.as_query_execution_plan()]
+            inner_child = child_nodes[0] if first_child.parent_relationship == "Inner" else child_nodes[1]
+        else:
+            child_nodes = None
+            inner_child = None
+
         table = self._parse_table()
-        is_scan = self.node_type in PostgresScanNodes
-        is_join = self.node_type in PostgresJoinNodes
+        is_scan = self.node_type in PostgresExplainScanNodes
+        is_join = self.node_type in PostgresExplainJoinNodes
         par_workers = self.parallel_workers + 1  # in Postgres the control worker also processes input
         true_card = self.true_cardinality * self.loops
+
+        if is_scan:
+            operator = PostgresExplainScanNodes.get(self.node_type, None)
+        elif is_join:
+            operator = PostgresExplainJoinNodes.get(self.node_type, None)
+        else:
+            operator = None
 
         return db.QueryExecutionPlan(self.node_type, is_join=is_join, is_scan=is_scan, table=table,
                                      children=child_nodes, parallel_workers=par_workers,
                                      estimated_cost=self.cost, estimated_cardinality=self.cardinality_estimate,
-                                     true_cardinality=true_card, execution_time=self.execution_time)
+                                     true_cardinality=true_card, execution_time=self.execution_time,
+                                     physical_operator=operator, inner_child=inner_child)
 
     def _parse_table(self) -> Optional[base.TableReference]:
         if not self.relation_name:

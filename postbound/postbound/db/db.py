@@ -6,7 +6,6 @@ as a utility to easily obtain database connections.
 Take a look at the central `Database` class for more details. All concrete database systems need to implement this
 interface.
 """
-
 from __future__ import annotations
 
 import abc
@@ -601,15 +600,28 @@ class QueryExecutionPlan:
     """
 
     def __init__(self, node_type: str, is_join: bool, is_scan: bool, *, table: Optional[base.TableReference] = None,
-                 children: Optional[Iterable[QueryExecutionPlan]] = None, parallel_workers: float = math.nan,
-                 estimated_cost: float = math.nan, estimated_cardinality: float = math.nan,
-                 true_cardinality: float = math.nan, execution_time: float = math.nan) -> None:
+                 children: Optional[Iterable[QueryExecutionPlan, QueryExecutionPlan]] = None,
+                 parallel_workers: float = math.nan, estimated_cost: float = math.nan,
+                 estimated_cardinality: float = math.nan, true_cardinality: float = math.nan,
+                 execution_time: float = math.nan, physical_operator: Optional[physops.PhysicalOperator] = None,
+                 inner_child: Optional[QueryExecutionPlan] = None) -> None:
         self.node_type = node_type
+        self.physical_operator = physical_operator
         self.is_join = is_join
         self.is_scan = is_scan
+        if is_scan and not isinstance(physical_operator, physops.ScanOperators):
+            warnings.warn(f"Supplied operator is scan operator but node is created as non-scan node")
+        if is_join and not isinstance(physical_operator, physops.JoinOperators):
+            warnings.warn(f"Supplied operator is join operator but node is created as non-join node")
 
         self.parallel_workers = parallel_workers
-        self.children: Sequence[QueryExecutionPlan] = list(children) if children else []
+        self.children: Sequence[QueryExecutionPlan] = children if children else []
+        self.inner_child = inner_child
+        if self.inner_child and len(self.children) == 2:
+            first_child, second_child = self.children
+            self.outer_child = first_child if self.inner_child == second_child else second_child
+        else:
+            self.outer_child = None
 
         self.table = table
 
@@ -631,6 +643,16 @@ class QueryExecutionPlan:
         if not self.is_analyze():
             return math.nan
         return self.true_cardinality + sum(child.total_processed_rows() for child in self.children)
+
+    def scan_nodes(self) -> frozenset[QueryExecutionPlan]:
+        own_node = [self] if self.is_scan else []
+        child_scans = collection_utils.flatten(child.scan_nodes() for child in self.children)
+        return frozenset(own_node + child_scans)
+
+    def join_nodes(self) -> frozenset[QueryExecutionPlan]:
+        own_node = [self] if self.is_join else []
+        child_joins = collection_utils.flatten(child.join_nodes() for child in self.children)
+        return frozenset(own_node + child_joins)
 
     def inspect(self, *, _current_indentation: int = 0):
         padding = " " * _current_indentation
