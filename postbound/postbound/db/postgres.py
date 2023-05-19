@@ -344,28 +344,41 @@ def _is_hash_join(join_tree_node: jointree.IntermediateJoinNode,
 def _generate_leading_hint_content(join_tree_node: jointree.AbstractJoinTreeNode,
                                    operator_assignment: Optional[physops.PhysicalOperatorAssignment] = None) -> str:
     """Builds part of the Leading hint to enforce join order and join direction for the given join node."""
-    if isinstance(join_tree_node, jointree.IntermediateJoinNode):
+    if isinstance(join_tree_node, jointree.BaseTableNode):
+        return join_tree_node.table.identifier()
+    if not isinstance(join_tree_node, jointree.IntermediateJoinNode):
+        raise ValueError(f"Unknown join tree node: {join_tree_node}")
+
+    # for Postgres, the inner relation of a Hash join is the one that gets the hash table and the outer relation is
+    # the one being probed. For all other joins, the inner/outer relation actually is the inner/outer relation
+    # Therefore, we want to have the smaller relation as the inner relation for hash joins and the other way around
+    # for all other joins
+
+    has_directional_information = isinstance(join_tree_node.annotation, physops.DirectionalJoinOperatorAssignment)
+    if has_directional_information:
+        annotation: physops.DirectionalJoinOperatorAssignment = join_tree_node.annotation
+        inner_tables, outer_tables = annotation.inner, annotation.outer
+        inner_child = (join_tree_node.left_child if join_tree_node.left_child.tables() == inner_tables
+                       else join_tree_node.right_child)
+        outer_child = (join_tree_node.left_child if inner_child == join_tree_node.right_child
+                       else join_tree_node.right_child)
+        inner_child, outer_child = ((outer_child, inner_child) if annotation.operator == physops.JoinOperators.HashJoin
+                                    else (inner_child, outer_child))
+    else:
         left, right = join_tree_node.left_child, join_tree_node.right_child
-        left_hint = _generate_leading_hint_content(left, operator_assignment)
-        right_hint = _generate_leading_hint_content(right, operator_assignment)
         left_bound = left.upper_bound if left.upper_bound and not math.isnan(left.upper_bound) else -math.inf
         right_bound = right.upper_bound if right.upper_bound and not math.isnan(right.upper_bound) else math.inf
 
-        # for Postgres, the inner relation of a Hash join is the one that gets the hash table and the outer relation is
-        # the one being probed. For all other joins, the inner/outer relation actually is the inner/outer relation
-        # Therefore, we want to have the smaller relation as the inner relation for hash joins and the other way around
-        # for all other joins
-
         if _is_hash_join(join_tree_node, operator_assignment):
-            left_hint, right_hint = (left_hint, right_hint) if right_bound > left_bound else (right_hint, left_hint)
+            inner_child, outer_child = (left, right) if right_bound > left_bound else (right, left)
         elif left_bound > right_bound:
-            left_hint, right_hint = right_hint, left_hint
+            inner_child, outer_child = right, left
+        else:
+            inner_child, outer_child = left, right
 
-        return f"({left_hint} {right_hint})"
-    elif isinstance(join_tree_node, jointree.BaseTableNode):
-        return join_tree_node.table.identifier()
-    else:
-        raise ValueError(f"Unknown join tree node: {join_tree_node}")
+    inner_hint = _generate_leading_hint_content(inner_child, operator_assignment)
+    outer_hint = _generate_leading_hint_content(outer_child, operator_assignment)
+    return f"({outer_hint} {inner_hint})"
 
 
 def _generate_pg_join_order_hint(query: qal.SqlQuery,
