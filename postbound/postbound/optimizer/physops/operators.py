@@ -42,6 +42,12 @@ class ScanOperatorAssignment:
     def inspect(self) -> str:
         return f"USING {self.operator}" if self.operator else ""
 
+    def __repr__(self) -> str:
+        return str(self)
+
+    def __str__(self) -> str:
+        return f"{self.operator.value}({self.table})"
+
 
 class JoinOperatorAssignment:
     def __init__(self, operator: JoinOperators, join: Collection[base.TableReference], *,
@@ -85,7 +91,8 @@ class JoinOperatorAssignment:
         return str(self)
 
     def __str__(self) -> str:
-        return f"{self.operator}({self.join})"
+        join_str = ", ".join(str(tab) for tab in self.join)
+        return f"{self.operator.value}({join_str})"
 
 
 class DirectionalJoinOperatorAssignment(JoinOperatorAssignment):
