@@ -396,7 +396,8 @@ PostgresOptimizerSettings = {
     physops.JoinOperators.SortMergeJoin: "enable_mergejoin",
     physops.ScanOperators.SequentialScan: "enable_seqscan",
     physops.ScanOperators.IndexScan: "enable_indexscan",
-    physops.ScanOperators.IndexOnlyScan: "enable_indexonlyscan"
+    physops.ScanOperators.IndexOnlyScan: "enable_indexonlyscan",
+    physops.ScanOperators.BitmapScan: "enable_bitmapscan"
 }
 """Denotes all (session-global) optimizer settings that modify the allowed physical operators."""
 
@@ -408,7 +409,8 @@ PostgresOptimizerHints = {
     physops.JoinOperators.SortMergeJoin: "MergeJoin",
     physops.ScanOperators.SequentialScan: "SeqScan",
     physops.ScanOperators.IndexScan: "IndexOnlyScan",
-    physops.ScanOperators.IndexOnlyScan: "IndexOnlyScan"
+    physops.ScanOperators.IndexOnlyScan: "IndexOnlyScan",
+    physops.ScanOperators.BitmapScan: "BitmapScan"
 }
 """Denotes all physical operators that can be enforced for individual parts of a query.
 
@@ -499,7 +501,7 @@ def _apply_hint_block_to_query(query: qal.SqlQuery, hint_block: Optional[clauses
 PostgresJoinHints = {physops.JoinOperators.NestedLoopJoin, physops.JoinOperators.IndexNestedLoopJoin,
                      physops.JoinOperators.HashJoin, physops.JoinOperators.SortMergeJoin}
 PostgresScanHints = {physops.ScanOperators.SequentialScan, physops.ScanOperators.IndexScan,
-                     physops.ScanOperators.IndexOnlyScan}
+                     physops.ScanOperators.IndexOnlyScan, physops.ScanOperators.BitmapScan}
 PostgresPlanHints = {planmeta.HintType.CardinalityHint, planmeta.HintType.ParallelizationHint,
                      planmeta.HintType.JoinOrderHint, planmeta.HintType.JoinDirectionHint}
 

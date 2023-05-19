@@ -19,6 +19,7 @@ class ScanOperators(enum.Enum):
     SequentialScan = "Seq. Scan"
     IndexScan = "Idx. Scan"
     IndexOnlyScan = "Idx-only Scan"
+    BitmapScan = "Bitmap Scan"
 
 
 class JoinOperators(enum.Enum):
