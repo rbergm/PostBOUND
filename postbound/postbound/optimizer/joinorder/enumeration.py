@@ -21,9 +21,6 @@ class JoinOrderOptimizer(abc.ABC):
     can apply an entire green-field approach.
     """
 
-    def __init__(self, name: str):
-        self.name = name
-
     @abc.abstractmethod
     def optimize_join_order(self, query: qal.SqlQuery
                             ) -> Optional[jointree.LogicalJoinTree | jointree.PhysicalQueryPlan]:
@@ -143,7 +140,7 @@ class RandomJoinOrderOptimizer(JoinOrderOptimizer):
     """
 
     def __init__(self) -> None:
-        super().__init__("Random enumeration")
+        super().__init__()
         self._generator = RandomJoinOrderGenerator()
 
     def optimize_join_order(self, query: qal.SqlQuery) -> Optional[jointree.LogicalJoinTree]:
@@ -240,7 +237,7 @@ class EmptyJoinOrderOptimizer(JoinOrderOptimizer):
     """Dummy implementation of the join order optimizer that does not actually optimize anything."""
 
     def __init__(self) -> None:
-        super().__init__("empty")
+        super().__init__()
 
     def optimize_join_order(self, query: qal.SqlQuery) -> Optional[jointree.LogicalJoinTree]:
         return None

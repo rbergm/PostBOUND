@@ -12,7 +12,7 @@ from postbound.optimizer.joinorder import enumeration
 class NativeJoinOrderOptimizer(enumeration.JoinOrderOptimizer):
 
     def __init__(self, db_instance: db.Database) -> None:
-        super().__init__("Native join ordering")
+        super().__init__()
         self.db_instance = db_instance
 
     def optimize_join_order(self, query: qal.SqlQuery) -> Optional[jointree.LogicalJoinTree]:

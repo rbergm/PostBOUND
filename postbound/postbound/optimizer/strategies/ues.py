@@ -340,7 +340,7 @@ class UESJoinOrderOptimizer(enumeration.JoinOrderOptimizer):
                  subquery_policy: UESSubqueryGenerationPolicy,
                  stats_container: StatisticsContainer,
                  database: db.Database, verbose: bool = False) -> None:
-        super().__init__("UES enumeration")
+        super().__init__()
         self.base_table_estimation = base_table_estimation
         self.join_estimation = join_estimation
         self.subquery_policy = subquery_policy
