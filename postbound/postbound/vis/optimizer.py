@@ -11,11 +11,11 @@ from postbound.optimizer import joingraph, jointree
 from postbound.vis import trees as tree_viz
 
 
-def _join_tree_labels(node: jointree.AbstractJoinTreeNode) -> str:
+def _join_tree_labels(node: jointree.AbstractJoinTreeNode) -> tuple[str, dict]:
     if node.is_join_node():
-        return "⋈"
+        return "⋈", {"style": "bold"}
     assert isinstance(node, jointree.BaseTableNode)
-    return str(node.table)
+    return node.table.full_name, {"color": "grey"}
 
 
 def _join_tree_traversal(node: jointree.AbstractJoinTreeNode) -> Sequence[jointree.AbstractJoinTreeNode]:
