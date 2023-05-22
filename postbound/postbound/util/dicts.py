@@ -1,12 +1,14 @@
 """Contains utilities to access and modify dictionaries more conveniently."""
 from __future__ import annotations
 
+import numpy as np
+
 import collections
-import collections.abc
 import itertools
 import numbers
 import typing
 import warnings
+from collections.abc import Callable, Iterable, Sequence
 from typing import Callable, Optional
 
 T = typing.TypeVar("T")
@@ -123,6 +125,14 @@ def invert_multi(mapping: dict[K, list[V]]) -> dict[V, list[K]]:
     return level2
 
 
+def aggregate(dictionaries: Iterable[dict[K, V]]) -> dict[K, Sequence[V]]:
+    aggregated_dict = collections.defaultdict(list)
+    for d in dictionaries:
+        for k, v in d.items():
+            aggregated_dict[k].append(v)
+    return aggregated_dict
+
+
 def invert(mapping: dict[K, V]) -> dict[V, K]:
     """Inverts the `key -> value` mapping of a dict to become `value -> key` instead.
 
@@ -140,6 +150,11 @@ def argmin(mapping: dict[K, numbers.Number]) -> K:
     values `v'` it holds that `v <= v'`.
     """
     return min(mapping, key=mapping.get)
+
+
+def dict_to_numpy(data: dict[K, V]) -> np.array[V]:
+    sorted_dict = {k: data[k] for k in sorted(data)}
+    return np.asarray(sorted_dict.values())
 
 
 class CustomHashDict(collections.UserDict[K, V]):

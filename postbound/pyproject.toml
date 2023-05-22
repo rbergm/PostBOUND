@@ -25,7 +25,11 @@ dependencies = [
 ]
 
 optional-dependencies = [
-    "mysql-connector-python"
+    "mysql-connector-python",
+    "matplotlib",
+    "seaborn",
+    "plotly",
+    "graphviz"
 ]
 
 [project.urls]

@@ -10,6 +10,11 @@ import networkx as nx
 import numpy as np
 
 T = typing.TypeVar("T", bound=Hashable)
+Debug = True
+
+if Debug:
+    random.seed = 321
+    np.random.seed(321)
 
 
 def force_directed_layout(elements: Iterable[T], difference_score: Callable[[T, T], float]) -> dict[T, np.ndarray]:
