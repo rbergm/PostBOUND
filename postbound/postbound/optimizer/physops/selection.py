@@ -43,6 +43,8 @@ class PhysicalOperatorSelection(abc.ABC):
         assignments contained in the join tree do not matter anymore.
         """
         assignment = self._apply_selection(query, join_order)
+        join_order = (join_order.as_logical_join_tree() if isinstance(join_order, jointree.PhysicalQueryPlan)
+                      else join_order)
         if self.next_selection:
             next_assignment = self.next_selection.select_physical_operators(query, join_order)
             assignment = assignment.merge_with(next_assignment)
