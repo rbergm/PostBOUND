@@ -601,7 +601,7 @@ class QueryExecutionPlan:
 
     def __init__(self, node_type: str, is_join: bool, is_scan: bool, *, table: Optional[base.TableReference] = None,
                  children: Optional[Iterable[QueryExecutionPlan, QueryExecutionPlan]] = None,
-                 parallel_workers: float = math.nan, estimated_cost: float = math.nan,
+                 parallel_workers: float = math.nan, cost: float = math.nan,
                  estimated_cardinality: float = math.nan, true_cardinality: float = math.nan,
                  execution_time: float = math.nan, physical_operator: Optional[physops.PhysicalOperator] = None,
                  inner_child: Optional[QueryExecutionPlan] = None) -> None:
@@ -625,7 +625,7 @@ class QueryExecutionPlan:
 
         self.table = table
 
-        self.estimated_cost = estimated_cost
+        self.cost = cost
         self.estimated_cardinality = estimated_cardinality
         self.true_cardinality = true_cardinality
         self.execution_time = execution_time
@@ -671,7 +671,7 @@ class QueryExecutionPlan:
             analyze_str = ""
 
         table_str = f" :: {self.table}" if self.table else ""
-        plan_str = f" (cost={self.estimated_cost} estimated cardinality={self.estimated_cardinality})"
+        plan_str = f" (cost={self.cost} estimated cardinality={self.estimated_cardinality})"
         return "".join((self.node_type, table_str, plan_str, analyze_str))
 
 

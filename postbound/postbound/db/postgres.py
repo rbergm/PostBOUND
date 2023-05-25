@@ -753,7 +753,7 @@ class PostgresExplainNode:
 
         return db.QueryExecutionPlan(self.node_type, is_join=is_join, is_scan=is_scan, table=table,
                                      children=child_nodes, parallel_workers=par_workers,
-                                     estimated_cost=self.cost, estimated_cardinality=self.cardinality_estimate,
+                                     cost=self.cost, estimated_cardinality=self.cardinality_estimate,
                                      true_cardinality=true_card, execution_time=self.execution_time,
                                      physical_operator=operator, inner_child=inner_child)
 
