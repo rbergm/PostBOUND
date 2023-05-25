@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import abc
 import collections
+import functools
 import typing
 from collections.abc import Callable, Container, Sequence
 from typing import Generic, Optional, Union
@@ -755,6 +756,24 @@ PhysicalAnnotationMerger = Optional[
     Callable[[Optional[PhysicalPlanMetadata], Optional[PhysicalPlanMetadata]], Optional[PhysicalPlanMetadata]]]
 
 
+def _physical_to_logical(physical_node: AbstractJoinTreeNode[PhysicalJoinMetadata, PhysicalBaseTableMetadata]
+                         ) -> AbstractJoinTreeNode[LogicalJoinMetadata, LogicalBaseTableMetadata]:
+    if isinstance(physical_node, BaseTableNode):
+        physical_annotation = physical_node.annotation
+        logical_annotation = (LogicalBaseTableMetadata(physical_annotation.filter_predicate,
+                                                       physical_annotation.cardinality)
+                              if physical_annotation else None)
+        return BaseTableNode(physical_node.table, logical_annotation)
+
+    assert isinstance(physical_node, IntermediateJoinNode)
+    left_logical = _physical_to_logical(physical_node.left_child)
+    right_logical = _physical_to_logical(physical_node.right_child)
+    physical_annotation = physical_node.annotation
+    logical_annotation = (LogicalJoinMetadata(physical_annotation.join_predicate, physical_annotation.cardinality)
+                          if physical_annotation else None)
+    return IntermediateJoinNode(left_logical, right_logical, logical_annotation)
+
+
 class PhysicalQueryPlan(JoinTree[PhysicalJoinMetadata, PhysicalBaseTableMetadata]):
 
     @staticmethod
@@ -895,6 +914,12 @@ class PhysicalQueryPlan(JoinTree[PhysicalJoinMetadata, PhysicalBaseTableMetadata
         join_node = IntermediateJoinNode(left, right, annotation)
         merged_global_settings = self.global_settings.merge_with(subtree.global_settings)
         return PhysicalQueryPlan(join_node, global_operator_settings=merged_global_settings)
+
+    @functools.cache
+    def as_logical_join_tree(self) -> LogicalJoinTree:
+        if self.is_empty():
+            return LogicalJoinTree()
+        return LogicalJoinTree(_physical_to_logical(self.root))
 
 
 def physical_join_tree_annotation_merger(first_annotation: Optional[PhysicalPlanMetadata],
