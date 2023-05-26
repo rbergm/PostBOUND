@@ -22,7 +22,7 @@ class NativeJoinOrderOptimizer(enumeration.JoinOrderOptimizer):
         return jointree.PhysicalQueryPlan.load_from_query_plan(query_plan, query)
 
     def describe(self) -> dict:
-        return {"name": "native", "database_system": self.db_instance.inspect()}
+        return {"name": "native", "database_system": self.db_instance.describe()}
 
 
 class NativePhysicalOperatorSelection(selection.PhysicalOperatorSelection):
@@ -41,7 +41,7 @@ class NativePhysicalOperatorSelection(selection.PhysicalOperatorSelection):
         return join_tree.physical_operators()
 
     def _description(self) -> dict:
-        return {"name": "native", "database_system": self.db_instance.inspect()}
+        return {"name": "native", "database_system": self.db_instance.describe()}
 
 
 class NativePlanParameterization(parameterization.ParameterGeneration):
@@ -61,4 +61,4 @@ class NativePlanParameterization(parameterization.ParameterGeneration):
         return join_tree.plan_parameters()
 
     def describe(self) -> dict:
-        return {"name": "native", "database_system": self.db_instance.inspect()}
+        return {"name": "native", "database_system": self.db_instance.describe()}

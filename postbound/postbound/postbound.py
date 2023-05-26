@@ -178,7 +178,7 @@ class OptimizationPipeline:
     def describe(self) -> dict:
         """Provides a representation of the selected optimization strategies and the database settings."""
         return {
-            "database_system": self.target_db.inspect(),
+            "database_system": self.target_db.describe(),
             "query_pre_check": self.pre_check.describe() if self.pre_check else None,
             "join_ordering": self.join_order_enumerator.describe() if self.join_order_enumerator else None,
             "operator_selection": (self.physical_operator_selection.describe() if self.physical_operator_selection

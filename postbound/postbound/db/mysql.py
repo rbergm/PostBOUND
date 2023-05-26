@@ -100,7 +100,7 @@ class MysqlInterface(db.Database):
         version = self._cur.fetchone()[0]
         return misc.Version(version)
 
-    def inspect(self) -> dict:
+    def describe(self) -> dict:
         base_info = {
             "system_name": self.database_system_name(),
             "system_version": self.database_system_version(),

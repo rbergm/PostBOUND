@@ -398,7 +398,7 @@ def main():
         query_runtimes = evaluate_query(label, query, db_instance=pg_db, config=config)
 
         result_df = pd.DataFrame(query_runtimes)
-        result_df["db_config"] = [pg_db.inspect()] * len(result_df)
+        result_df["db_config"] = [pg_db.describe()] * len(result_df)
         out_file = config.output_directory + config.output_file_format.format(label=label)
         result_df = prepare_for_export(result_df)
         result_df.to_csv(out_file, index=False)

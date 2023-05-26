@@ -95,7 +95,7 @@ class PostgresInterface(db.Database):
         # version looks like "PostgreSQL 14.6 on x86_64-pc-linux-gnu, compiled by gcc (...)
         return utils.Version(pg_ver.split(" ")[1])
 
-    def inspect(self) -> dict:
+    def describe(self) -> dict:
         base_info = {
             "system_name": self.database_system_name(),
             "system_version": self.database_system_version(),

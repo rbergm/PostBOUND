@@ -25,7 +25,7 @@ class BenchmarkResult:
 workloads.workloads_base_dir = "../workloads/"
 pg_db = postgres.connect(config_file=".psycopg_connection_job")
 pg_db.cache_enabled = False
-db_config = pg_db.inspect()
+db_config = pg_db.describe()
 
 benchmark_results = []
 for label, query in workloads.job().entries():

@@ -196,7 +196,7 @@ class Database(abc.ABC):
         raise NotImplementedError
 
     @abc.abstractmethod
-    def inspect(self) -> dict:
+    def describe(self) -> dict:
         """Provides a representation of the current database connection as well as the system settings."""
         raise NotImplementedError
 
