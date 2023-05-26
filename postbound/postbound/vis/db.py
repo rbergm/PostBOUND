@@ -39,3 +39,17 @@ def plot_query_plan(plan: db.QueryExecutionPlan,
         return gv.Graph()
     return tree_viz.plot_tree(plan, functools.partial(_query_plan_labels, annotation_generator=annotation_generator),
                               _query_plan_traversal)
+
+
+def _explain_analyze_annotations(node: db.QueryExecutionPlan) -> str:
+    card_row = f"[Rows expected={node.estimated_cardinality} actual={node.true_cardinality}]"
+    runtime_row = f"[Exec time={node.execution_time}s]"
+    return card_row + "\n" + runtime_row
+
+
+def plot_analyze_plan(plan: db.QueryExecutionPlan) -> gv.Graph:
+    if not plan:
+        return gv.Graph()
+    return tree_viz.plot_tree(plan, functools.partial(_query_plan_labels,
+                                                      annotation_generator=_explain_analyze_annotations),
+                              _query_plan_traversal)
