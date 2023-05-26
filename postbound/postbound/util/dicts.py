@@ -154,7 +154,7 @@ def argmin(mapping: dict[K, numbers.Number]) -> K:
 
 def dict_to_numpy(data: dict[K, V]) -> np.array[V]:
     sorted_dict = {k: data[k] for k in sorted(data)}
-    return np.asarray(sorted_dict.values())
+    return np.asarray(list(sorted_dict.values()))
 
 
 class CustomHashDict(collections.UserDict[K, V]):
