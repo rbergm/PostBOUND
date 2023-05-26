@@ -38,7 +38,8 @@ def kamada_kawai_layout(elements: Iterable[T], difference_score: Callable[[T, T]
             distance_map[a][b] = current_score
             distance_map[b][a] = current_score
 
-    initial_pos = {elem: (random.random(), random.random()) for elem in elements}
+    elem_pos_spread = len(elements)
+    initial_pos = {elem: (random.random() * elem_pos_spread, random.random() * elem_pos_spread) for elem in elements}
     return nx.kamada_kawai_layout(layout_graph, dist=distance_map, pos=initial_pos)
 
 
