@@ -3,11 +3,10 @@ from __future__ import annotations
 import abc
 import collections
 import functools
+import math
 import typing
 from collections.abc import Callable, Container, Sequence
 from typing import Generic, Optional, Union
-
-import numpy as np
 
 from postbound.qal import base, predicates, qal
 from postbound.db import db
@@ -25,7 +24,7 @@ class BaseMetadata(abc.ABC):
     the true cardinality of a join or scan.
     """
 
-    def __init__(self, cardinality: float = np.nan) -> None:
+    def __init__(self, cardinality: float = math.nan) -> None:
         self._cardinality = cardinality
 
     @property
@@ -34,7 +33,7 @@ class BaseMetadata(abc.ABC):
 
 
 class JoinMetadata(BaseMetadata, abc.ABC):
-    def __init__(self, predicate: Optional[predicates.AbstractPredicate] = None, cardinality: float = np.nan) -> None:
+    def __init__(self, predicate: Optional[predicates.AbstractPredicate] = None, cardinality: float = math.nan) -> None:
         super().__init__(cardinality)
         self._join_predicate = predicate
 
@@ -47,7 +46,7 @@ class JoinMetadata(BaseMetadata, abc.ABC):
 
 
 class LogicalJoinMetadata(JoinMetadata):
-    def __init__(self, predicate: Optional[predicates.AbstractPredicate] = None, cardinality: float = np.nan) -> None:
+    def __init__(self, predicate: Optional[predicates.AbstractPredicate] = None, cardinality: float = math.nan) -> None:
         super().__init__(predicate, cardinality)
         self._hash_val = hash((predicate, cardinality))
 
@@ -67,7 +66,7 @@ class LogicalJoinMetadata(JoinMetadata):
 
 
 class PhysicalJoinMetadata(JoinMetadata):
-    def __init__(self, predicate: Optional[predicates.AbstractPredicate] = None, cardinality: float = np.nan,
+    def __init__(self, predicate: Optional[predicates.AbstractPredicate] = None, cardinality: float = math.nan,
                  join_info: Optional[physops.JoinOperatorAssignment] = None) -> None:
         super().__init__(predicate, cardinality)
         self._operator_assignment = join_info
@@ -98,7 +97,7 @@ class PhysicalJoinMetadata(JoinMetadata):
 
 
 class BaseTableMetadata(BaseMetadata, abc.ABC):
-    def __init__(self, filter_predicate: Optional[predicates.AbstractPredicate], cardinality: float = np.nan) -> None:
+    def __init__(self, filter_predicate: Optional[predicates.AbstractPredicate], cardinality: float = math.nan) -> None:
         super().__init__(cardinality)
         self._filter_predicate = filter_predicate
 
@@ -111,7 +110,7 @@ class BaseTableMetadata(BaseMetadata, abc.ABC):
 
 
 class LogicalBaseTableMetadata(BaseTableMetadata):
-    def __init__(self, filter_predicate: Optional[predicates.AbstractPredicate], cardinality: float = np.nan) -> None:
+    def __init__(self, filter_predicate: Optional[predicates.AbstractPredicate], cardinality: float = math.nan) -> None:
         super().__init__(filter_predicate, cardinality)
         self._hash_val = hash((filter_predicate, cardinality))
 
@@ -125,7 +124,7 @@ class LogicalBaseTableMetadata(BaseTableMetadata):
 
 
 class PhysicalBaseTableMetadata(BaseTableMetadata):
-    def __init__(self, filter_predicate: Optional[predicates.AbstractPredicate], cardinality: float = np.nan,
+    def __init__(self, filter_predicate: Optional[predicates.AbstractPredicate], cardinality: float = math.nan,
                  scan_info: Optional[physops.ScanOperatorAssignment] = None) -> None:
         super().__init__(filter_predicate, cardinality)
         self._operator_assignment = scan_info
@@ -158,7 +157,7 @@ class PhysicalBaseTableMetadata(BaseTableMetadata):
 JoinMetadataType = typing.TypeVar("JoinMetadataType", bound=JoinMetadata)
 BaseTableMetadataType = typing.TypeVar("BaseTableMetadataType", bound=BaseTableMetadata)
 NestedTableSequence = typing.NewType("NestedTableSequence",
-                                     Union[Sequence["NestedTableSequence"], base.TableReference])
+                                     Union[Sequence["NestedTableSequence"], base.TableReference].__class__)
 
 
 def parse_nested_table_sequence(sequence: list[dict | list]) -> NestedTableSequence:
@@ -187,7 +186,7 @@ class AbstractJoinTreeNode(abc.ABC, Container[base.TableReference], Generic[Join
 
     @property
     def upper_bound(self) -> float:
-        return self.annotation.cardinality if self.annotation else np.nan
+        return self.annotation.cardinality if self.annotation else math.nan
 
     @abc.abstractmethod
     def is_join_node(self) -> bool:
@@ -197,6 +196,24 @@ class AbstractJoinTreeNode(abc.ABC, Container[base.TableReference], Generic[Join
     def is_base_table_node(self) -> bool:
         """Checks, whether this node is a base table node."""
         return not self.is_join_node()
+
+    @abc.abstractmethod
+    def is_left_deep(self) -> bool:
+        raise NotImplementedError
+
+    @abc.abstractmethod
+    def is_right_deep(self) -> bool:
+        raise NotImplementedError
+
+    @abc.abstractmethod
+    def is_zigzag(self) -> bool:
+        raise NotImplementedError
+
+    def is_linear(self) -> bool:
+        return self.is_right_deep() or self.is_left_deep() or self.is_zigzag()
+
+    def is_bushy(self) -> bool:
+        return not self.is_linear()
 
     @abc.abstractmethod
     def tables(self) -> frozenset[base.TableReference]:
@@ -304,7 +321,7 @@ class IntermediateJoinNode(AbstractJoinTreeNode[JoinMetadataType, BaseTableMetad
 
     @property
     def children(self) -> tuple[AbstractJoinTreeNode[JoinMetadataType, BaseTableMetadataType],
-    AbstractJoinTreeNode[JoinMetadataType, BaseTableMetadataType]]:
+                                AbstractJoinTreeNode[JoinMetadataType, BaseTableMetadataType]]:
         return self._left_child, self._right_child
 
     @property
@@ -316,6 +333,21 @@ class IntermediateJoinNode(AbstractJoinTreeNode[JoinMetadataType, BaseTableMetad
 
     def is_base_table_join(self) -> bool:
         return self.left_child.is_base_table_node() and self.right_child.is_base_table_node()
+
+    def is_left_deep(self) -> bool:
+        if not self.right_child.is_base_table_node():
+            return False
+        return self.left_child.is_left_deep()
+
+    def is_right_deep(self) -> bool:
+        if not self.left_child.is_base_table_node():
+            return False
+        return self.right_child.is_right_deep()
+
+    def is_zigzag(self) -> bool:
+        if self.left_child.is_join_node() and self.right_child.is_join_node():
+            return False
+        return self.left_child.is_zigzag() and self.right_child.is_zigzag()
 
     def tables(self) -> frozenset[base.TableReference]:
         return frozenset(self._left_child.tables() | self._right_child.tables())
@@ -409,6 +441,15 @@ class BaseTableNode(AbstractJoinTreeNode[JoinMetadataType, BaseTableMetadataType
 
     def is_join_node(self) -> bool:
         return False
+
+    def is_left_deep(self) -> bool:
+        return True
+
+    def is_right_deep(self) -> bool:
+        return True
+
+    def is_zigzag(self) -> bool:
+        return True
 
     def tables(self) -> frozenset[base.TableReference]:
         return frozenset({self._table})
@@ -515,12 +556,30 @@ class JoinTree(Container[base.TableReference], Generic[JoinMetadataType, BaseTab
     def upper_bound(self) -> float:
         """Provides the current upper bound or cardinality estimate of this join tree (i.e. its root node)."""
         if self.is_empty():
-            return np.nan
-        return self._root.annotation.cardinality if self._root.annotation else np.nan
+            return math.nan
+        return self._root.annotation.cardinality if self._root.annotation else math.nan
 
     def is_empty(self) -> bool:
         """Checks, whether there is at least one table in the join tree."""
         return self._root is None
+
+    def is_right_deep(self) -> bool:
+        """Checks, whether the join tree is a right-deep join tree. Returns `True` for empty trees."""
+        return self.is_empty() or self.root.is_right_deep()
+
+    def is_left_deep(self) -> bool:
+        """Checks, whether the join tree is a left-deep join tree. Returns `True` for empty trees."""
+        return self.is_empty() or self.root.is_left_deep()
+
+    def is_zigzag(self) -> bool:
+        """Checks, whether the join tree is a zig-zag join tree. Returns `True` for empty trees."""
+        return self.is_empty() or self.root.is_zigzag()
+
+    def is_linear(self) -> bool:
+        return self.is_empty() or self.root.is_linear()
+
+    def is_bushy(self) -> bool:
+        return self.is_empty() or self.root.is_bushy()
 
     def traverse(self) -> Optional[AbstractJoinTreeNode[JoinMetadataType, BaseTableMetadataType]]:
         """Accesses the root element of this join tree if there is any."""
@@ -877,12 +936,12 @@ class PhysicalQueryPlan(JoinTree[PhysicalJoinMetadata, PhysicalBaseTableMetadata
         parameters = params.PlanParameterization()
 
         for base_table in self.table_sequence():
-            if np.isnan(base_table.upper_bound):
+            if math.isnan(base_table.upper_bound):
                 continue
             parameters.add_cardinality_hint(base_table.tables(), base_table.upper_bound)
 
         for join in self.join_sequence():
-            if np.isnan(join.upper_bound):
+            if math.isnan(join.upper_bound):
                 continue
             parameters.add_cardinality_hint(join.tables(), join.upper_bound)
 
