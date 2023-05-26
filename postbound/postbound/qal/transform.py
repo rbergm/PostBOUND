@@ -2,14 +2,19 @@
 from __future__ import annotations
 
 import typing
-from typing import Iterable, Optional
+from collections.abc import Callable, Iterable
+from typing import Optional
 
 from postbound.db import db
 from postbound.qal import qal, base, clauses, expressions as expr, joins, predicates as preds
 from postbound.util import collections as collection_utils
 
+# TODO: at a later point in time, the entire query traversal/modification logic could be refactored to use unified access
+# instead of implementing the same pattern matching and traversal logic all over again
+
 QueryType = typing.TypeVar("QueryType", bound=qal.SqlQuery)
 ClauseType = typing.TypeVar("ClauseType", bound=clauses.BaseClause)
+PredicateType = typing.TypeVar("PredicateType", bound=preds.AbstractPredicate)
 
 
 def flatten_and_predicate(predicate: preds.AbstractPredicate) -> preds.AbstractPredicate:
@@ -219,6 +224,84 @@ def replace_clause(query: QueryType, replacements: clauses.BaseClause | Iterable
     clauses_to_replace = {type(clause): clause for clause in replacements}
     replaced_clauses = [clauses_to_replace.get(type(current_clause), current_clause)
                         for current_clause in query.clauses()]
+    return qal.build_query(replaced_clauses)
+
+
+def _replace_expression_in_predicate(predicate: PredicateType,
+                                     replacement: Callable[[expr.SqlExpression], expr.SqlExpression]) -> PredicateType:
+    if not predicate:
+        return None
+
+    if isinstance(predicate, preds.BinaryPredicate):
+        renamed_first_arg = replacement(predicate.first_argument)
+        renamed_second_arg = replacement(predicate.second_argument)
+        return preds.BinaryPredicate(predicate.operation, renamed_first_arg, renamed_second_arg)
+    elif isinstance(predicate, preds.BetweenPredicate):
+        renamed_col = replacement(predicate.column)
+        renamed_interval_start = replacement(predicate.interval_start)
+        renamed_interval_end = replacement(predicate.interval_end)
+        return preds.BetweenPredicate(renamed_col, (renamed_interval_start, renamed_interval_end))
+    elif isinstance(predicate, preds.InPredicate):
+        renamed_col = replacement(predicate.column)
+        renamed_vals = [replacement(val) for val in predicate.values]
+        return preds.InPredicate(renamed_col, renamed_vals)
+    elif isinstance(predicate, preds.UnaryPredicate):
+        return preds.UnaryPredicate(replacement(predicate.column), predicate.operation)
+    elif isinstance(predicate, preds.CompoundPredicate):
+        renamed_children = ([replacement(predicate.children)] if predicate.operation == expr.LogicalSqlCompoundOperators.Not
+                            else [replacement(child) for child in predicate.children])
+        return preds.CompoundPredicate(predicate.operation, renamed_children)
+    else:
+        raise ValueError("Unknown predicate type: " + str(predicate))
+
+
+def _replace_expressions_in_clause(clause: ClauseType,
+                                   replacement: Callable[[expr.SqlExpression], expr.SqlExpression]) -> ClauseType:
+    if not clause:
+        return None
+
+    if isinstance(clause, clauses.Hint) or isinstance(clause, clauses.Explain):
+        return clause
+    if isinstance(clause, clauses.Select):
+        renamed_targets = [clauses.BaseProjection(replacement(proj.expression), proj.target_name) for proj in clause.targets]
+        return clauses.Select(renamed_targets, clause.projection_type)
+    elif isinstance(clause, clauses.ImplicitFromClause):
+        return clause
+    elif isinstance(clause, clauses.ExplicitFromClause):
+        renamed_joins = []
+        for join in clause.joined_tables:
+            if isinstance(join, joins.TableJoin):
+                renamed_join = joins.TableJoin(join.joined_table,
+                                               _replace_expression_in_predicate(join.join_condition, replacement),
+                                               join_type=join.join_type)
+                renamed_joins.append(renamed_join)
+            elif isinstance(join, joins.SubqueryJoin):
+                renamed_join_condition = _replace_expression_in_predicate(join.join_condition, replacement)
+                renamed_join = joins.SubqueryJoin(join.subquery, join.alias, renamed_join_condition,
+                                                  join_type=join.join_type)
+                renamed_joins.append(renamed_join)
+            else:
+                raise ValueError("Unknown join type: " + str(join))
+        return clauses.ExplicitFromClause(clause.base_table, renamed_joins)
+    elif isinstance(clause, clauses.Where):
+        return clauses.Where(_replace_expression_in_predicate(clause.predicate, replacement))
+    elif isinstance(clause, clauses.GroupBy):
+        renamed_cols = [replacement(col) for col in clause.group_columns]
+        return clauses.GroupBy(renamed_cols, clause.distinct)
+    elif isinstance(clause, clauses.Having):
+        return clauses.Having(_replace_expression_in_predicate(clause.condition, replacement))
+    elif isinstance(clause, clauses.OrderBy):
+        renamed_cols = [clauses.OrderByExpression(replacement(col.column), col.ascending, col.nulls_first)
+                        for col in clause.expressions]
+        return clauses.OrderBy(renamed_cols)
+    elif isinstance(clause, clauses.Limit):
+        return clause
+    else:
+        raise ValueError("Unknown clause: " + str(clause))
+
+
+def replace_expressions(query: QueryType, replacement: Callable[[expr.SqlExpression], expr.SqlExpression]) -> QueryType:
+    replaced_clauses = [_replace_expressions_in_clause(clause, replacement) for clause in query.clauses()]
     return qal.build_query(replaced_clauses)
 
 
