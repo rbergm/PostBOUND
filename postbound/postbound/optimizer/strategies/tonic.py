@@ -120,7 +120,7 @@ class QepsNode:
         self._subquery_root.integrate_costs(query, _iterate_query_plan(query_plan))
 
     def current_recommendation(self) -> Optional[physops.JoinOperators]:
-        return dict_utils.argmin(self.operator_costs) if self.operator_costs else None
+        return dict_utils.argmin(self.operator_costs) if len(self.operator_costs) > 1 else None
 
     def update_costs(self, operator: physops.JoinOperators, cost: float) -> None:
         current_cost = self.operator_costs[operator]
@@ -197,8 +197,7 @@ class TonicOperatorSelection(opsel.PhysicalOperatorSelection):
         self._db = database if database else db.DatabasePool.get_instance().current_database()
 
     def integrate_cost(self, query: qal.SqlQuery, query_plan: Optional[db.QueryExecutionPlan] = None) -> None:
-        query_plan = (self._db.optimizer().query_plan(query) if query_plan is None
-                      else query_plan)
+        query_plan = self._db.optimizer().query_plan(query) if query_plan is None else query_plan
         self.qeps.integrate_costs(query, query_plan)
 
     def simulate_feedback(self, query: qal.SqlQuery) -> None:
