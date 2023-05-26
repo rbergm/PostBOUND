@@ -358,7 +358,7 @@ def _generate_leading_hint_content(join_tree_node: jointree.AbstractJoinTreeNode
     has_directional_information = isinstance(join_tree_node.annotation, physops.DirectionalJoinOperatorAssignment)
     if has_directional_information:
         annotation: physops.DirectionalJoinOperatorAssignment = join_tree_node.annotation
-        inner_tables, outer_tables = annotation.inner, annotation.outer
+        inner_tables = annotation.inner
         inner_child = (join_tree_node.left_child if join_tree_node.left_child.tables() == inner_tables
                        else join_tree_node.right_child)
         outer_child = (join_tree_node.left_child if inner_child == join_tree_node.right_child
@@ -452,7 +452,7 @@ def _generate_pg_operator_hints(physical_operators: physops.PhysicalOperatorAssi
         hints.append(f"{scan_assignment}({table_key})")
 
     if hints:
-        hints.append("")
+        hints.append("")  # insert empty hint to force empty line between scan and join operators
     for join, join_assignment in physical_operators.join_operators.items():
         join_key = _generate_join_key(join)
         join_assignment = PostgresOptimizerHints[join_assignment.operator]
@@ -569,7 +569,6 @@ class PostgresOptimizer(db.OptimizerInterface):
         raw_query_plan = self._pg_instance.cursor().fetchone()[0]
         query_plan = PostgresExplainPlan(raw_query_plan)
         return query_plan.as_query_execution_plan()
-
 
     def cardinality_estimate(self, query: qal.SqlQuery | str) -> int:
         query = self._pg_instance._prepare_query_execution(query, drop_explain=True)
