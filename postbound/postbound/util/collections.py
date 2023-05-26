@@ -39,6 +39,13 @@ def enlist(obj: T | ContainerType[T], *, enlist_tuples: bool = False) -> Contain
     return [obj]
 
 
+def get_any(elems: Iterable[T]) -> T:
+    """Provides any element from the supplied Iterable. There is no guarantee which one will be returned.
+
+    Notice that this method can potentially iterate over the entire Iterable!
+    """
+    return list(elems)[0]
+
 def simplify(obj: Collection[T]) -> T | Iterable[T]:
     """Unwraps singular containers.
 
