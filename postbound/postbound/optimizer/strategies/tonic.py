@@ -201,6 +201,12 @@ class TonicOperatorSelection(opsel.PhysicalOperatorSelection):
                       else query_plan)
         self.qeps.integrate_costs(query, query_plan)
 
+    def simulate_feedback(self, query: qal.SqlQuery) -> None:
+        analyze_plan = self._db.optimizer().analyze_plan(query)
+        physical_qep = jointree.PhysicalQueryPlan.load_from_query_plan(analyze_plan, query)
+        hinted_query = self._db.hinting().generate_hints(query, physical_qep)
+        self.integrate_cost(hinted_query)
+
     def _apply_selection(self, query: qal.SqlQuery,
                          join_order: Optional[jointree.LogicalJoinTree | jointree.PhysicalQueryPlan]
                          ) -> physops.PhysicalOperatorAssignment:

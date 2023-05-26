@@ -15,6 +15,7 @@ from typing import Any, Optional
 import psycopg
 import psycopg.rows
 
+from db.db import QueryExecutionPlan
 from postbound.db import db
 from postbound.qal import qal, base, clauses, transform, formatter
 from postbound.optimizer import jointree
@@ -561,6 +562,14 @@ class PostgresOptimizer(db.OptimizerInterface):
         raw_query_plan = self._pg_instance._obtain_query_plan(query)
         query_plan = PostgresExplainPlan(raw_query_plan)
         return query_plan.as_query_execution_plan()
+
+    def analyze_plan(self, query: qal.SqlQuery | str) -> QueryExecutionPlan:
+        query = self._pg_instance._prepare_query_execution(transform.as_explain_analyze(query))
+        self._pg_instance.cursor().execute(query)
+        raw_query_plan = self._pg_instance.cursor().fetchone()[0]
+        query_plan = PostgresExplainPlan(raw_query_plan)
+        return query_plan.as_query_execution_plan()
+
 
     def cardinality_estimate(self, query: qal.SqlQuery | str) -> int:
         query = self._pg_instance._prepare_query_execution(query, drop_explain=True)

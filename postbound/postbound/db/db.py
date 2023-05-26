@@ -684,6 +684,11 @@ class OptimizerInterface(abc.ABC):
         raise NotImplementedError
 
     @abc.abstractmethod
+    def analyze_plan(self, query: qal.SqlQuery | str) -> QueryExecutionPlan:
+        """Executes the given query and provides the query execution plan supplemented with runtime information."""
+        raise NotImplementedError
+
+    @abc.abstractmethod
     def cardinality_estimate(self, query: qal.SqlQuery | str) -> int:
         """Queries the DBMS query optimizer for its cardinality estimate, instead of executing the query."""
         raise NotImplementedError
