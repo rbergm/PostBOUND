@@ -335,17 +335,18 @@ class UESJoinOrderOptimizer(enumeration.JoinOrderOptimizer):
     table estimates
     """
 
-    def __init__(self, *, base_table_estimation: scan_bounds.BaseTableCardinalityEstimator,
-                 join_estimation: UESJoinBoundEstimator,
-                 subquery_policy: UESSubqueryGenerationPolicy,
-                 stats_container: StatisticsContainer,
-                 database: db.Database, verbose: bool = False) -> None:
+    def __init__(self, *, base_table_estimation: Optional[scan_bounds.BaseTableCardinalityEstimator] = None,
+                 join_estimation: Optional[join_bounds.JoinBoundCardinalityEstimator] = None,
+                 subquery_policy: Optional[subqueries.SubqueryGenerationPolicy] = None,
+                 stats_container: Optional[StatisticsContainer] = None,
+                 database: Optional[db.Database] = None, verbose: bool = False) -> None:
         super().__init__()
-        self.base_table_estimation = base_table_estimation
-        self.join_estimation = join_estimation
-        self.subquery_policy = subquery_policy
-        self.stats_container = stats_container
-        self.database = database
+        self.database = database if database else db.DatabasePool().get_instance().current_database()
+        self.base_table_estimation = (base_table_estimation if base_table_estimation
+                                      else scan_bounds.NativeCardinalityEstimator(self.database))
+        self.join_estimation = join_estimation if join_estimation else UESJoinBoundEstimator()
+        self.subquery_policy = subquery_policy if subquery_policy else UESSubqueryGenerationPolicy()
+        self.stats_container = stats_container if stats_container else MaxFrequencyStatsContainer(self.database.statistics())
         self._logging_enabled = verbose
 
     def optimize_join_order(self, query: qal.SqlQuery
