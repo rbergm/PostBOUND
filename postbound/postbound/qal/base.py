@@ -57,6 +57,12 @@ class TableReference(jsonize.Jsonizable):
         """
         return self.alias if self.alias else self.full_name
 
+    def drop_alias(self) -> TableReference:
+        """Removes the alias from the current table if there is one. Returns the tabel as-is otherwise."""
+        if self.virtual:
+            raise errors.StateError("An alias cannot be dropped from a virtual table!")
+        return TableReference(self.full_name)
+
     def __json__(self) -> object:
         return {"full_name": self._full_name, "alias": self._alias}
 

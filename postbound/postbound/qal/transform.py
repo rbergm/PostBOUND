@@ -9,8 +9,8 @@ from postbound.db import db
 from postbound.qal import qal, base, clauses, expressions as expr, joins, predicates as preds
 from postbound.util import collections as collection_utils
 
-# TODO: at a later point in time, the entire query traversal/modification logic could be refactored to use unified access
-# instead of implementing the same pattern matching and traversal logic all over again
+# TODO: at a later point in time, the entire query traversal/modification logic could be refactored to use unified
+# access instead of implementing the same pattern matching and traversal logic all over again
 
 QueryType = typing.TypeVar("QueryType", bound=qal.SqlQuery)
 ClauseType = typing.TypeVar("ClauseType", bound=clauses.BaseClause)
@@ -248,7 +248,8 @@ def _replace_expression_in_predicate(predicate: PredicateType,
     elif isinstance(predicate, preds.UnaryPredicate):
         return preds.UnaryPredicate(replacement(predicate.column), predicate.operation)
     elif isinstance(predicate, preds.CompoundPredicate):
-        renamed_children = ([replacement(predicate.children)] if predicate.operation == expr.LogicalSqlCompoundOperators.Not
+        renamed_children = ([replacement(predicate.children)]
+                            if predicate.operation == expr.LogicalSqlCompoundOperators.Not
                             else [replacement(child) for child in predicate.children])
         return preds.CompoundPredicate(predicate.operation, renamed_children)
     else:
@@ -263,7 +264,8 @@ def _replace_expressions_in_clause(clause: ClauseType,
     if isinstance(clause, clauses.Hint) or isinstance(clause, clauses.Explain):
         return clause
     if isinstance(clause, clauses.Select):
-        renamed_targets = [clauses.BaseProjection(replacement(proj.expression), proj.target_name) for proj in clause.targets]
+        renamed_targets = [clauses.BaseProjection(replacement(proj.expression), proj.target_name)
+                           for proj in clause.targets]
         return clauses.Select(renamed_targets, clause.projection_type)
     elif isinstance(clause, clauses.ImplicitFromClause):
         return clause
@@ -300,7 +302,8 @@ def _replace_expressions_in_clause(clause: ClauseType,
         raise ValueError("Unknown clause: " + str(clause))
 
 
-def replace_expressions(query: QueryType, replacement: Callable[[expr.SqlExpression], expr.SqlExpression]) -> QueryType:
+def replace_expressions(query: QueryType,
+                        replacement: Callable[[expr.SqlExpression], expr.SqlExpression]) -> QueryType:
     replaced_clauses = [_replace_expressions_in_clause(clause, replacement) for clause in query.clauses()]
     return qal.build_query(replaced_clauses)
 
@@ -412,9 +415,9 @@ def _rename_columns_in_expression(expression: Optional[expr.SqlExpression],
         raise ValueError("Unknown expression type: " + str(expression))
 
 
-def _rename_columns_in_predicate(predicate: Optional[preds.AbstractPredicate],
-                                 available_renamings: dict[base.ColumnReference, base.ColumnReference]
-                                 ) -> Optional[preds.AbstractPredicate]:
+def rename_columns_in_predicate(predicate: Optional[preds.AbstractPredicate],
+                                available_renamings: dict[base.ColumnReference, base.ColumnReference]
+                                ) -> Optional[preds.AbstractPredicate]:
     """Renames all columns in the given predicate according to the available renamings.
 
     A renaming maps the current column to the column that should be used instead.
@@ -440,9 +443,9 @@ def _rename_columns_in_predicate(predicate: Optional[preds.AbstractPredicate],
         return preds.UnaryPredicate(_rename_columns_in_expression(predicate.column, available_renamings),
                                     predicate.operation)
     elif isinstance(predicate, preds.CompoundPredicate):
-        renamed_children = ([_rename_columns_in_predicate(predicate.children, available_renamings)]
+        renamed_children = ([rename_columns_in_predicate(predicate.children, available_renamings)]
                             if predicate.operation == expr.LogicalSqlCompoundOperators.Not
-                            else [_rename_columns_in_predicate(child, available_renamings)
+                            else [rename_columns_in_predicate(child, available_renamings)
                                   for child in predicate.children])
         return preds.CompoundPredicate(predicate.operation, renamed_children)
     else:
@@ -473,11 +476,11 @@ def rename_columns_in_clause(clause: Optional[ClauseType],
         for join in clause.joined_tables:
             if isinstance(join, joins.TableJoin):
                 renamed_join = joins.TableJoin(join.joined_table,
-                                               _rename_columns_in_predicate(join.join_condition, available_renamings),
+                                               rename_columns_in_predicate(join.join_condition, available_renamings),
                                                join_type=join.join_type)
                 renamed_joins.append(renamed_join)
             elif isinstance(join, joins.SubqueryJoin):
-                renamed_join_condition = _rename_columns_in_predicate(join.join_condition, available_renamings)
+                renamed_join_condition = rename_columns_in_predicate(join.join_condition, available_renamings)
                 renamed_join = joins.SubqueryJoin(join.subquery, join.alias, renamed_join_condition,
                                                   join_type=join.join_type)
                 renamed_joins.append(renamed_join)
@@ -485,12 +488,12 @@ def rename_columns_in_clause(clause: Optional[ClauseType],
                 raise ValueError("Unknown join type: " + str(join))
         return clauses.ExplicitFromClause(clause.base_table, renamed_joins)
     elif isinstance(clause, clauses.Where):
-        return clauses.Where(_rename_columns_in_predicate(clause.predicate, available_renamings))
+        return clauses.Where(rename_columns_in_predicate(clause.predicate, available_renamings))
     elif isinstance(clause, clauses.GroupBy):
         renamed_cols = [_rename_columns_in_expression(col, available_renamings) for col in clause.group_columns]
         return clauses.GroupBy(renamed_cols, clause.distinct)
     elif isinstance(clause, clauses.Having):
-        return clauses.Having(_rename_columns_in_predicate(clause.condition, available_renamings))
+        return clauses.Having(rename_columns_in_predicate(clause.condition, available_renamings))
     elif isinstance(clause, clauses.OrderBy):
         renamed_cols = [clauses.OrderByExpression(_rename_columns_in_expression(col.column, available_renamings),
                                                   col.ascending, col.nulls_first)

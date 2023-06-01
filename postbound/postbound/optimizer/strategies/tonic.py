@@ -5,7 +5,7 @@ import math
 from collections.abc import Iterable, Sequence
 from typing import Optional
 
-from postbound.qal import qal, base, predicates
+from postbound.qal import qal, base, predicates, transform
 from postbound.db import db
 from postbound.optimizer import jointree
 from postbound.optimizer.physops import selection as opsel, operators as physops
@@ -42,13 +42,26 @@ def _iterate_query_plan(current_node: db.QueryExecutionPlan) -> Sequence[db.Quer
     return list(_iterate_query_plan(right_child)) + [current_node]
 
 
+def _normalize_filter_predicate(tables: base.TableReference | Iterable[base.TableReference],
+                                filter_predicate: Optional[predicates.AbstractPredicate]
+                                ) -> Optional[predicates.AbstractPredicate]:
+    if not filter_predicate:
+        return None
+    tables: set[base.TableReference] = set(collection_utils.enlist(tables))
+    referenced_tables = tables & filter_predicate.tables()
+    renamed_tables = {table: table.drop_alias() for table in referenced_tables}
+    renamed_columns = {col: base.ColumnReference(col.name, renamed_tables[col.table])
+                       for col in filter_predicate.columns() if col.table in renamed_tables}
+    return transform.rename_columns_in_predicate(filter_predicate, renamed_columns)
+
+
 class QepsIdentifier:
     def __init__(self, tables: base.TableReference | Iterable[base.TableReference],
                  filter_predicate: Optional[predicates.AbstractPredicate] = None) -> None:
         if not tables:
             raise ValueError("Tables required")
-        self._tables = frozenset(collection_utils.enlist(tables))
-        self._filter_predicate = filter_predicate
+        self._tables = frozenset(tab.drop_alias() for tab in collection_utils.enlist(tables))
+        self._filter_predicate = _normalize_filter_predicate(tables, filter_predicate)
         self._hash_val = hash((self._tables, self._filter_predicate))
 
     @property
@@ -239,7 +252,7 @@ class QepsNode:
 
     def _cost_str(self) -> str:
         cost_content = ", ".join(f"{operator.value}={cost}" for operator, cost in self.operator_costs.items())
-        return f"[{cost_content}]" if self.operator_costs else f"[no cost]"
+        return f"[{cost_content}]" if self.operator_costs else "[no cost]"
 
     def __bool__(self) -> bool:
         return len(self.child_nodes) > 0 or len(self.operator_costs) > 0
