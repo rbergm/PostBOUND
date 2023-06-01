@@ -169,3 +169,14 @@ class CustomHashDict(collections.UserDict[K, V]):
 
     def __setitem__(self, k: K, item: V) -> None:
         super().__setitem__(self.hash_function(k), item)
+
+
+class DynamicDefaultDict(collections.UserDict[K, V]):
+    def __init__(self, factory: Callable[[K], V]):
+        super().__init__()
+        self.factory = factory
+
+    def __getitem__(self, k: K) -> V:
+        if k not in self.data:
+            self.data[k] = self.factory(k)
+        return self.data[k]
