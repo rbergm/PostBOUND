@@ -610,12 +610,12 @@ class QueryExecutionPlan:
         self.is_join = is_join
         self.is_scan = is_scan
         if is_scan and not isinstance(physical_operator, physops.ScanOperators):
-            warnings.warn(f"Supplied operator is scan operator but node is created as non-scan node")
+            warnings.warn("Supplied operator is scan operator but node is created as non-scan node")
         if is_join and not isinstance(physical_operator, physops.JoinOperators):
-            warnings.warn(f"Supplied operator is join operator but node is created as non-join node")
+            warnings.warn("Supplied operator is join operator but node is created as non-join node")
 
         self.parallel_workers = parallel_workers
-        self.children: Sequence[QueryExecutionPlan] = children if children else []
+        self.children: Sequence[QueryExecutionPlan] = tuple(children) if children else ()
         self.inner_child = inner_child
         if self.inner_child and len(self.children) == 2:
             first_child, second_child = self.children
@@ -639,6 +639,25 @@ class QueryExecutionPlan:
         own_table = [self.table] if self.table else []
         return frozenset(own_table + collection_utils.flatten(child.tables() for child in self.children))
 
+    def is_base_join(self) -> bool:
+        return self.is_join and all(child.is_scan_branch() for child in self.children)
+
+    def is_bushy_join(self) -> bool:
+        return self.is_join and all(child.is_join_branch() for child in self.children)
+
+    def is_scan_branch(self) -> bool:
+        return self.is_scan or (len(self.children) == 1 and self.children[0].is_scan_branch())
+
+    def is_join_branch(self) -> bool:
+        return self.is_join or (len(self.children) == 1 and self.children[0].is_join_branch())
+
+    def fetch_base_table(self) -> Optional[base.TableReference]:
+        if not self.is_scan_branch():
+            raise ValueError("No unique base table for non-scan branches!")
+        if self.table:
+            return self.table
+        return self.children[0].fetch_base_table()
+
     def total_processed_rows(self) -> float:
         if not self.is_analyze():
             return math.nan
@@ -654,12 +673,51 @@ class QueryExecutionPlan:
         child_joins = collection_utils.flatten(child.join_nodes() for child in self.children)
         return frozenset(own_node + child_joins)
 
-    def inspect(self, *, _current_indentation: int = 0):
+    def plan_depth(self) -> int:
+        return 1 + max((child.plan_depth() for child in self.children), default=0)
+
+    def simplify(self) -> Optional[QueryExecutionPlan]:
+        if not self.is_join and not self.is_scan:
+            if len(self.children) != 1:
+                return None
+            return self.children[0].simplify()
+
+        simplified_children = [child.simplify() for child in self.children] if not self.is_scan else []
+        simplified_inner = self.inner_child.simplify() if not self.is_scan and self.inner_child else None
+        return QueryExecutionPlan(self.node_type, self.is_join, self.is_scan,
+                                  table=self.table,
+                                  children=simplified_children,
+                                  parallel_workers=self.parallel_workers,
+                                  cost=self.cost,
+                                  estimated_cardinality=self.estimated_cardinality,
+                                  true_cardinality=self.true_cardinality,
+                                  execution_time=self.execution_time,
+                                  physical_operator=self.physical_operator,
+                                  inner_child=simplified_inner)
+
+    def inspect(self, *, skip_intermediates: bool = False, _current_indentation: int = 0):
         padding = " " * _current_indentation
         prefix = f"{padding}<- " if padding else ""
         own_inspection = [prefix + str(self)]
-        child_inspections = [child.inspect(_current_indentation=_current_indentation + 2) for child in self.children]
-        return "\n".join(own_inspection + child_inspections)
+        child_inspections = [
+            child.inspect(skip_intermediates=skip_intermediates, _current_indentation=_current_indentation + 2)
+            for child in self.children]
+
+        if not skip_intermediates or self.is_join or self.is_scan or not _current_indentation:
+            return "\n".join(own_inspection + child_inspections)
+        else:
+            return "\n".join(child_inspections)
+
+    def __hash__(self) -> int:
+        return hash((self.node_type, self.table, self.true_cardinality, tuple(self.children)))
+
+    def __eq__(self, other: object) -> bool:
+        return (isinstance(other, type(self))
+                and self.node_type == other.node_type and self.table == other.table
+                and self.children == other.children and
+                (self.true_cardinality == other.true_cardinality
+                 or (math.isnan(self.true_cardinality) and math.isnan(other.true_cardinality)))
+                )
 
     def __repr__(self) -> str:
         return str(self)
