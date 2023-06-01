@@ -15,7 +15,6 @@ from typing import Any, Optional
 import psycopg
 import psycopg.rows
 
-from db.db import QueryExecutionPlan
 from postbound.db import db
 from postbound.qal import qal, base, clauses, transform, formatter
 from postbound.optimizer import jointree
@@ -533,6 +532,14 @@ class PostgresHintService(db.HintService):
             adapted_query, hint_parts = _generate_pg_join_order_hint(adapted_query, join_order, physical_operators)
 
         hint_parts = hint_parts if hint_parts else HintParts.empty()
+
+        physical_operators = (join_order.physical_operators()
+                              if not physical_operators and isinstance(join_order, jointree.PhysicalQueryPlan)
+                              else physical_operators)
+        plan_parameters = (join_order.plan_parameters()
+                           if not plan_parameters and isinstance(join_order, jointree.PhysicalQueryPlan)
+                           else plan_parameters)
+
         if physical_operators:
             operator_hints = _generate_pg_operator_hints(physical_operators)
             hint_parts = hint_parts.merge_with(operator_hints)
@@ -563,7 +570,7 @@ class PostgresOptimizer(db.OptimizerInterface):
         query_plan = PostgresExplainPlan(raw_query_plan)
         return query_plan.as_query_execution_plan()
 
-    def analyze_plan(self, query: qal.SqlQuery | str) -> QueryExecutionPlan:
+    def analyze_plan(self, query: qal.SqlQuery | str) -> db.QueryExecutionPlan:
         query = self._pg_instance._prepare_query_execution(transform.as_explain_analyze(query))
         self._pg_instance.cursor().execute(query)
         raw_query_plan = self._pg_instance.cursor().fetchone()[0]
