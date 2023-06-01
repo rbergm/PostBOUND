@@ -219,3 +219,14 @@ class PhysicalOperatorAssignment:
             return self.join_operators.get(frozenset(item), None)
         else:
             return None
+
+    def __repr__(self) -> str:
+        return str(self)
+
+    def __str__(self) -> str:
+        global_str = ", ".join(f"{op.value}: {enabled}" for op, enabled in self.global_settings.items())
+        scans_str = ", ".join(
+            f"{scan.table.identifier()}: {scan.operator.value}" for scan in self.scan_operators.values())
+        joins_keys = ((join, "⨝".join(tab.identifier() for tab in join.join)) for join in self.join_operators.values())
+        joins_str = ", ".join(f"{key}: {join.operator.value}" for join, key in joins_keys)
+        return f"global=[{global_str}] scans=[{scans_str}] joins=[{joins_str}]"
