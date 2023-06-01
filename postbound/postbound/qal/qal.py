@@ -12,7 +12,7 @@ import typing
 from collections.abc import Collection, Iterable, Sequence
 from typing import Generic, Optional
 
-from postbound.qal import base, clauses, joins, expressions as expr, predicates as preds
+from postbound.qal import base, clauses, expressions as expr, predicates as preds
 from postbound.util import collections as collection_utils
 
 
@@ -32,6 +32,18 @@ def _collect_subqueries_in_expression(expression: expr.SqlExpression) -> set[Sql
                                       for child_expr in expression.iterchildren())
 
 
+def _collect_subqueries_in_table_source(table_source: clauses.TableSource) -> set[SqlQuery]:
+    if isinstance(table_source, clauses.SubqueryTableSource):
+        return {table_source.query}
+    elif isinstance(table_source, clauses.JoinTableSource):
+        source_subqueries = _collect_subqueries_in_table_source(table_source.source)
+        condition_subqueries = (collection_utils.set_union(_collect_subqueries_in_expression(cond_expr) for cond_expr
+                                                           in table_source.join_condition.iterexpressions())
+                                if table_source.join_condition else set())
+        return source_subqueries | condition_subqueries
+    else:
+        return set()
+
 def _collect_subqueries(clause: clauses.BaseClause) -> set[SqlQuery]:
     """Provides all the subqueries that are contained in the given clause."""
     if isinstance(clause, clauses.Hint) or isinstance(clause, clauses.Limit) or isinstance(clause, clauses.Explain):
@@ -42,8 +54,8 @@ def _collect_subqueries(clause: clauses.BaseClause) -> set[SqlQuery]:
                                           for target in clause.targets)
     elif isinstance(clause, clauses.ImplicitFromClause):
         return set()
-    elif isinstance(clause, clauses.ExplicitFromClause):
-        return {join.subquery for join in clause.joined_tables if isinstance(join, joins.SubqueryJoin)}
+    elif isinstance(clause, clauses.From):
+        return collection_utils.set_union(_collect_subqueries_in_table_source(src) for src in clause.contents)
     elif isinstance(clause, clauses.Where):
         where_predicate = clause.predicate
         return collection_utils.set_union(_collect_subqueries_in_expression(expression)
@@ -61,21 +73,20 @@ def _collect_subqueries(clause: clauses.BaseClause) -> set[SqlQuery]:
         raise ValueError(f"Unknown clause type: {clause}")
 
 
+def _collect_bound_tables_from_source(table_source: clauses.TableSource) -> set[base.TableReference]:
+    if isinstance(table_source, clauses.DirectTableSource):
+        return {table_source.table}
+    elif isinstance(table_source, clauses.SubqueryTableSource):
+        return _collect_bound_tables(table_source.query.from_clause)
+    elif isinstance(table_source, clauses.JoinTableSource):
+        return _collect_bound_tables_from_source(table_source.source)
+
 def _collect_bound_tables(from_clause: clauses.From) -> set[base.TableReference]:
     """Provides all tables that are bound in the given clause. See `bound_tables` in SqlQuery for details."""
     if isinstance(from_clause, clauses.ImplicitFromClause):
         return from_clause.tables()
-    elif isinstance(from_clause, clauses.ExplicitFromClause):
-        bound_tables = {from_clause.base_table}
-        for join in from_clause.joined_tables:
-            if isinstance(join, joins.TableJoin):
-                bound_tables |= {join.joined_table}
-            elif isinstance(join, joins.SubqueryJoin):
-                bound_tables |= join.subquery.bound_tables()
-            else:
-                raise ValueError(f"Unknown JOIN clause: {join}")
     else:
-        raise ValueError(f"Unknown FROM clause: {from_clause}")
+        return collection_utils.set_union(_collect_bound_tables_from_source(src) for src in from_clause.contents)
 
 
 FromClauseType = typing.TypeVar("FromClauseType", bound=clauses.From)
@@ -167,11 +178,12 @@ class SqlQuery(Generic[FromClauseType], abc.ABC):
     @abc.abstractmethod
     def is_implicit(self) -> bool:
         """Checks, whether this query is in implicit form."""
-        raise NotImplementedError()
+        raise NotImplementedError
 
+    @abc.abstractmethod
     def is_explicit(self) -> bool:
         """Checks, whether this query is in explicit form."""
-        return not self.is_implicit()
+        raise NotImplementedError
 
     @functools.cache
     def tables(self) -> set[base.TableReference]:
@@ -313,6 +325,9 @@ class ImplicitSqlQuery(SqlQuery[clauses.ImplicitFromClause]):
     def is_implicit(self) -> bool:
         return True
 
+    def is_explicit(self) -> bool:
+        return False
+
 
 class ExplicitSqlQuery(SqlQuery[clauses.ExplicitFromClause]):
     """Represents an explicit SQL query.
@@ -343,6 +358,33 @@ class ExplicitSqlQuery(SqlQuery[clauses.ExplicitFromClause]):
                          explain=explain_clause, hints=hints)
 
     def is_implicit(self) -> bool:
+        return False
+
+    def is_explicit(self) -> bool:
+        return True
+
+
+class MixedSqlQuery(SqlQuery[clauses.From]):
+    def __init__(self, *, select_clause: clauses.Select,
+                 from_clause: Optional[clauses.From] = None,
+                 where_clause: Optional[clauses.Where] = None,
+                 groupby_clause: Optional[clauses.GroupBy] = None,
+                 having_clause: Optional[clauses.Having] = None,
+                 orderby_clause: Optional[clauses.OrderBy] = None,
+                 limit_clause: Optional[clauses.Limit] = None,
+                 explain_clause: Optional[clauses.Explain] = None,
+                 hints: Optional[clauses.Hint] = None) -> None:
+        if isinstance(from_clause, clauses.ExplicitFromClause) or isinstance(from_clause, clauses.ImplicitFromClause):
+            raise ValueError("MixedSqlQuery cannot be combined with explicit/implicit FROM clause")
+        super().__init__(select_clause=select_clause, from_clause=from_clause, where_clause=where_clause,
+                         groupby_clause=groupby_clause, having_clause=having_clause,
+                         orderby_clause=orderby_clause, limit_clause=limit_clause,
+                         explain=explain_clause, hints=hints)
+
+    def is_implicit(self) -> bool:
+        return False
+
+    def is_explicit(self) -> bool:
         return False
 
 

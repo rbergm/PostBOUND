@@ -6,7 +6,7 @@ import enum
 from collections.abc import Sequence
 from typing import Iterable, Optional
 
-from postbound.qal import base, expressions as expr, joins, predicates as preds
+from postbound.qal import base, expressions as expr, qal, predicates as preds
 from postbound.util import collections as collection_utils
 
 
@@ -353,61 +353,37 @@ class Select(BaseClause):
         return f"{select_str} {parts_str}"
 
 
-class From(BaseClause, abc.ABC):
-    """FROM clause of the query.
-
-    PostBOUND distinguishes between two types of FROM clauses:
-    - implicit FROM clauses simply list all referenced tables as in `SELECT * FROM R, S, T WHERE ...`
-    - explicit FROM clauses on the other hand combine the source using the `JOIN ON` syntax as in
-    `SELECT * FROM R JOIN S ON ... JOIN T ON ... WHERE ...`
-
-    Note that these types of clauses are mutually exclusive for PostBOUND even though a combination of implicit
-    references and JOIN statements could be used in a valid SQL query. I.e., a query can only be either implicit or
-    explicit. This behaviour might change in the future to allow for a mixture of both types of references.
-    """
+class TableSource(abc.ABC):
+    @abc.abstractmethod
+    def tables(self) -> set[base.TableReference]:
+        raise NotImplementedError
 
     @abc.abstractmethod
+    def columns(self) -> set[base.ColumnReference]:
+        raise NotImplementedError
+
+    @abc.abstractmethod
+    def iterexpressions(self) -> Iterable[expr.SqlExpression]:
+        raise NotImplementedError
+
+    @abc.abstractmethod
+    def itercolumns(self) -> Iterable[base.ColumnReference]:
+        raise NotImplementedError
+
     def predicates(self) -> preds.QueryPredicates | None:
         raise NotImplementedError
 
-    __hash__ = BaseClause.__hash__
 
-    @abc.abstractmethod
-    def __eq__(self, other) -> bool:
-        raise NotImplementedError
-
-    @abc.abstractmethod
-    def __str__(self) -> str:
-        raise NotImplementedError
-
-
-class ImplicitFromClause(From):
-    """The implicit FROM clause lists all referenced tables without specifying their relation.
-
-    See `FromClause` for details.
-
-    One limitation of implicit FROM clauses is that currently they may only be composed of tables and not subqueries.
-    """
-
-    # TODO: we could also have subqueries in an implicit from clause!
-
-    def __init__(self, tables: base.TableReference | list[base.TableReference] | None = None):
-        self._tables = tuple(collection_utils.enlist(tables)) if tables is not None else ()
-        super().__init__(hash(self._tables))
+class DirectTableSource(TableSource):
+    def __init__(self, table: base.TableReference) -> None:
+        self._table = table
 
     @property
-    def target_tables(self) -> Sequence[base.TableReference]:
-        """Gets the tables in this FROM clause in exactly the sequence in which they were specified."""
-        return self._tables
+    def table(self) -> base.TableReference:
+        return self._table
 
     def tables(self) -> set[base.TableReference]:
-        return set(self._tables)
-
-    def itertables(self) -> Iterable[base.TableReference]:
-        return self._tables
-
-    def predicates(self) -> preds.QueryPredicates | None:
-        return None
+        return {self._table}
 
     def columns(self) -> set[base.ColumnReference]:
         return set()
@@ -418,15 +394,217 @@ class ImplicitFromClause(From):
     def itercolumns(self) -> Iterable[base.ColumnReference]:
         return []
 
+    def predicates(self) -> preds.QueryPredicates | None:
+        return None
+
+    def __hash__(self) -> int:
+        return hash(self._table)
+
+    def __eq__(self, other: object) -> bool:
+        return isinstance(other, type(self)) and self._table == other._table
+
+    def __repr__(self) -> str:
+        return str(self._table)
+
+    def __str__(self) -> str:
+        return str(self._table)
+
+
+class SubqueryTableSource(TableSource):
+    def __init__(self, query: qal.SqlQuery, target_name: str) -> None:
+        self._query = query
+        self._target_name = target_name
+        self._hash_val = hash((self._query, self._target_name))
+
+    @property
+    def query(self) -> qal.SqlQuery:
+        return self._query
+
+    @property
+    def target_name(self) -> str:
+        return self._target_name
+
+    def tables(self) -> set[base.TableReference]:
+        return self._query.tables()
+
+    def columns(self) -> set[base.ColumnReference]:
+        return self._query.columns()
+
+    def iterexpressions(self) -> Iterable[expr.SqlExpression]:
+        return self._query.iterexpressions()
+
+    def itercolumns(self) -> Iterable[base.ColumnReference]:
+        return self._query.itercolumns()
+
+    def predicates(self) -> preds.QueryPredicates | None:
+        return self._query.predicates()
+
+    def __hash__(self) -> int:
+        return self._hash_val
+
+    def __eq__(self, other: object) -> bool:
+        return (isinstance(other, type(self)) and self._query == other._query
+                and self._target_name == other._target_name)
+
+    def __repr__(self) -> str:
+        return str(self._query)
+
+    def __str__(self) -> str:
+        query_str = str(self._query).removesuffix(";")
+        return f"({query_str}) AS {self._target_name}"
+
+
+class JoinType(enum.Enum):
+    """Indicates the actual JOIN type, e.g. OUTER JOIN or NATURAL JOIN."""
+    InnerJoin = "JOIN"
+    OuterJoin = "OUTER JOIN"
+    LeftJoin = "LEFT JOIN"
+    RightJoin = "RIGHT JOIN"
+    CrossJoin = "CROSS JOIN"
+
+    NaturalInnerJoin = "NATURAL JOIN"
+    NaturalOuterJoin = "NATURAL OUTER JOIN"
+    NaturalLeftJoin = "NATURAL LEFT JOIN"
+    NaturalRightJoin = "NATURAL RIGHT JOIN"
+
+    def __repr__(self) -> str:
+        return str(self)
+
+    def __str__(self) -> str:
+        return self.value
+
+
+class JoinTableSource(TableSource):
+    def __init__(self, source: TableSource, join_condition: Optional[preds.AbstractPredicate] = None, *,
+                 join_type: JoinType = JoinType.InnerJoin) -> None:
+        if isinstance(source, JoinTableSource):
+            raise ValueError("JOIN statements cannot have another JOIN statement as source")
+        self._source = source
+        self._join_condition = join_condition
+        self._join_type = join_type if join_condition else JoinType.CrossJoin
+        self._hash_val = hash((self._source, self._join_condition, self._join_type))
+
+    @property
+    def source(self) -> TableSource:
+        return self._source
+
+    @property
+    def join_condition(self) -> Optional[preds.AbstractPredicate]:
+        return self._join_condition
+
+    @property
+    def join_type(self) -> JoinType:
+        return self._join_type
+
+    def tables(self) -> set[base.TableReference]:
+        return self._source.tables()
+
+    def columns(self) -> set[base.ColumnReference]:
+        condition_columns = self._join_condition.columns() if self._join_condition else set()
+        return self._source.columns() | condition_columns
+
+    def iterexpressions(self) -> Iterable[expr.SqlExpression]:
+        source_expressions = list(self._source.iterexpressions())
+        condition_expressions = list(self._join_condition.iterexpressions()) if self._join_condition else []
+        return source_expressions + condition_expressions
+
+    def itercolumns(self) -> Iterable[base.ColumnReference]:
+        source_columns = list(self._source.itercolumns())
+        condition_columns = list(self._join_condition.itercolumns()) if self._join_condition else []
+        return source_columns + condition_columns
+
+    def predicates(self) -> preds.QueryPredicates | None:
+        source_predicates = self._source.predicates()
+        condition_predicates = preds.QueryPredicates(self._join_condition) if self._join_condition else None
+
+        if source_predicates and condition_predicates:
+            return source_predicates.and_(condition_predicates)
+        elif source_predicates:
+            return source_predicates
+        elif condition_predicates:
+            return condition_predicates
+        else:
+            return None
+
+    def __hash__(self) -> int:
+        return self._hash_val
+
+    def __eq__(self, other: object) -> bool:
+        return (isinstance(other, type(self)) and self._source == other._source
+                and self._join_condition == other._join_condition
+                and self._join_type == other._join_type)
+
+    def __repr__(self) -> str:
+        return str(self)
+
+    def __str__(self) -> str:
+        join_str = str(self.join_type)
+        join_prefix = f"{join_str} {self.source}"
+        if self.join_condition:
+            condition_str = (f"({self.join_condition})" if self.join_condition.is_compound()
+                             else str(self.join_condition))
+            return join_prefix + f" ON {condition_str}"
+        else:
+            return join_prefix
+
+
+class From(BaseClause):
+    def __init__(self, contents: TableSource | Iterable[TableSource]):
+        self._contents: tuple[TableSource] = tuple(collection_utils.enlist(contents))
+        super().__init__(hash(self._contents))
+
+    @property
+    def contents(self) -> Sequence[TableSource]:
+        return self._contents
+
+    def tables(self) -> set[base.TableReference]:
+        return collection_utils.set_union(src.tables() for src in self._contents)
+
+    def columns(self) -> set[base.ColumnReference]:
+        return collection_utils.set_union(src.columns() for src in self._contents)
+
+    def iterexpressions(self) -> Iterable[expr.SqlExpression]:
+        return collection_utils.flatten(src.iterexpressions() for src in self._contents)
+
+    def itercolumns(self) -> Iterable[base.ColumnReference]:
+        return collection_utils.flatten(src.itercolumns() for src in self._contents)
+
+    def predicates(self) -> preds.QueryPredicates | None:
+        source_predicates = [src.predicates() for src in self._contents]
+        if not any(source_predicates):
+            return None
+        actual_predicates = [src_pred.root() for src_pred in source_predicates if src_pred]
+        merged_predicate = preds.CompoundPredicate.create_and(actual_predicates)
+        return preds.QueryPredicates(merged_predicate)
+
     __hash__ = BaseClause.__hash__
 
     def __eq__(self, other) -> bool:
-        return isinstance(other, type(self)) and self._tables == other._tables
+        return isinstance(other, type(self)) and self._contents == other._contents
 
     def __str__(self) -> str:
-        if not self._tables:
-            return "[NO TABLES]"
-        return "FROM " + ", ".join(str(table) for table in self._tables)
+        fixture = "FROM "
+        contents_str = []
+        for src in self._contents:
+            if isinstance(src, JoinTableSource):
+                contents_str.append(" " + str(src))
+            elif contents_str:
+                contents_str.append(", " + str(src))
+            else:
+                contents_str.append(str(src))
+        return fixture + "".join(contents_str)
+
+class ImplicitFromClause(From):
+
+    @staticmethod
+    def create_for(tables: base.TableReference | Iterable[base.TableReference]) -> ImplicitFromClause:
+        tables = collection_utils.enlist(tables)
+        return ImplicitFromClause([DirectTableSource(tab) for tab in tables])
+    def __init__(self, tables: DirectTableSource | Iterable[DirectTableSource] | None = None):
+        super().__init__(tables)
+
+    def itertables(self) -> Sequence[base.TableReference]:
+        return [src.table for src in self.contents]
 
 
 class ExplicitFromClause(From):
@@ -435,68 +613,22 @@ class ExplicitFromClause(From):
     See `FromClause` for details.
     """
 
-    def __init__(self, base_table: base.TableReference, joined_tables: list[joins.Join]):
+    def __init__(self, base_table: DirectTableSource | SubqueryTableSource, joined_tables: Iterable[JoinTableSource]):
+        super().__init__([base_table] + list(joined_tables))
         self._base_table = base_table
         self._joined_tables = tuple(joined_tables)
-
-        hash_val = hash((self.base_table, self.joined_tables))
-        super().__init__(hash_val)
+        if not self._joined_tables:
+            raise ValueError("At least one joined table expected!")
 
     @property
-    def base_table(self) -> base.TableReference:
+    def base_table(self) -> DirectTableSource | SubqueryTableSource:
         """Get the first table that is part of the FROM clause."""
         return self._base_table
 
     @property
-    def joined_tables(self) -> Sequence[joins.Join]:
+    def joined_tables(self) -> Sequence[JoinTableSource]:
         """Get all tables that are defined in the JOIN ON syntax."""
         return self._joined_tables
-
-    def tables(self) -> set[base.TableReference]:
-        all_tables = [self.base_table]
-        for join in self.joined_tables:
-            all_tables.extend(join.tables())
-        return set(all_tables)
-
-    def predicates(self) -> preds.QueryPredicates | None:
-        predicate_handler = preds.DefaultPredicateHandler
-        all_predicates = predicate_handler.empty_predicate()
-        for join in self.joined_tables:
-            if isinstance(join, joins.TableJoin):
-                if join.join_condition:
-                    all_predicates = all_predicates.and_(join.join_condition)
-                continue
-
-            if not isinstance(join, joins.SubqueryJoin):
-                TypeError("Unknown join type: " + str(type(join)))
-            subquery_join: joins.SubqueryJoin = join
-
-            subquery_predicates = subquery_join.subquery.predicates()
-            if subquery_predicates:
-                all_predicates = all_predicates.and_(subquery_predicates)
-            if subquery_join.join_condition:
-                all_predicates = all_predicates.and_(subquery_join.join_condition)
-
-        return all_predicates
-
-    def columns(self) -> set[base.ColumnReference]:
-        return collection_utils.set_union(join.columns() for join in self.joined_tables)
-
-    def iterexpressions(self) -> Iterable[expr.SqlExpression]:
-        return collection_utils.flatten(join.iterexpressions() for join in self.joined_tables)
-
-    def itercolumns(self) -> Iterable[base.ColumnReference]:
-        return collection_utils.flatten(join.itercolumns() for join in self.joined_tables)
-
-    __hash__ = BaseClause.__hash__
-
-    def __eq__(self, other) -> bool:
-        return (isinstance(other, type(self))
-                and self.base_table == other.base_table
-                and self.joined_tables == other.joined_tables)
-
-    def __str__(self) -> str:
-        return f"FROM {self.base_table} " + " ".join(str(join) for join in self.joined_tables)
 
 
 class Where(BaseClause):

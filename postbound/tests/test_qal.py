@@ -8,7 +8,7 @@ from __future__ import annotations
 import textwrap
 import unittest
 
-from postbound.qal import base, parser, expressions, predicates
+from postbound.qal import base, parser, expressions, predicates, qal
 
 from tests import regression_suite
 
@@ -347,6 +347,30 @@ class ParserTests(regression_suite.QueryTestCase):
         parsed = parser.parse_query(query)
         self.assertQueriesEqual(query, parsed, "Did not parse/format unary UDF filter correctly.")
         self.assertTrue(len(parsed.predicates().filters()) == 1, "Should detect 1 filter for unary UDF filter")
+
+    def test_implicit_from_clause(self) -> None:
+        query = "SELECT * FROM R, S, T WHERE R.a = S.b AND S.b = T.c"
+        parsed = parser.parse_query(query)
+        self.assertIsInstance(parsed, qal.ImplicitSqlQuery, "Query should be parsed as implicit query")
+
+        query = "SELECT * FROM R r, S s, T t WHERE r.a = s.b AND s.b = t.c"
+        parsed = parser.parse_query(query)
+        self.assertIsInstance(parsed, qal.ImplicitSqlQuery, "Query should be parsed as implicit query")
+    def test_explicit_from_clause(self) -> None:
+        query = "SELECT * FROM R JOIN S ON R.a = S.b WHERE R.c LIKE '%42%' AND R.c < S.b"
+        parsed = parser.parse_query(query)
+        self.assertQueriesEqual(query, parsed, "Did not parse/format explicit FROM clause correctly.")
+        self.assertTrue(len(parsed.predicates().filters()) == 1, "Should detect 1 filter in WHERE clause")
+        self.assertTrue(len(parsed.predicates().joins()) == 2, "Should detect 2 joins in WHERE clause")
+        self.assertIsInstance(parsed, qal.ExplicitSqlQuery, "Query should be parsed as explicit query")
+
+    def test_from_clause_subquery(self) -> None:
+        query = "SELECT * FROM R, (SELECT * FROM S WHERE S.d < 42) AS s WHERE R.a = s.b"
+        parsed = parser.parse_query(query)
+        self.assertQueriesEqual(query, parsed, "Did not parse/format FROM clause with subquery correctly.")
+        self.assertTrue(len(parsed.predicates().filters()) == 1, "Should detect 1 filter in WHERE clause")
+        self.assertTrue(len(parsed.predicates().joins()) == 1, "Should detect 1 join in WHERE clause")
+        self.assertIsInstance(parsed, qal.MixedSqlQuery, "Query should be parsed as mixed query")
 
 
 class RegressionTests(unittest.TestCase):

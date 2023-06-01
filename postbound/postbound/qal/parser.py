@@ -17,7 +17,7 @@ from typing import Any, Optional
 
 import mo_sql_parsing as mosp
 
-from postbound.qal import base, qal, clauses, expressions as expr, joins, predicates as preds
+from postbound.qal import base, qal, clauses, expressions as expr, predicates as preds
 from postbound.qal import transform
 from postbound.db import db
 from postbound.util import collections as collection_utils, dicts as dict_utils
@@ -39,40 +39,40 @@ _MospSelectTypes = {
 
 _MospJoinTypes = {  # see https://www.postgresql.org/docs/current/queries-table-expressions.html#QUERIES-JOIN
     # INNER JOIN
-    "join": joins.JoinType.InnerJoin,
-    "inner join": joins.JoinType.InnerJoin,
+    "join": clauses.JoinType.InnerJoin,
+    "inner join": clauses.JoinType.InnerJoin,
 
     # CROSS JOIN
-    "cross join": joins.JoinType.CrossJoin,
+    "cross join": clauses.JoinType.CrossJoin,
 
     # FULL OUTER JOIN
-    "full join": joins.JoinType.OuterJoin,
-    "outer join": joins.JoinType.OuterJoin,
-    "full outer join": joins.JoinType.OuterJoin,
+    "full join": clauses.JoinType.OuterJoin,
+    "outer join": clauses.JoinType.OuterJoin,
+    "full outer join": clauses.JoinType.OuterJoin,
 
     # LEFT OUTER JOIN
-    "left join": joins.JoinType.LeftJoin,
-    "left outer join": joins.JoinType.LeftJoin,
+    "left join": clauses.JoinType.LeftJoin,
+    "left outer join": clauses.JoinType.LeftJoin,
 
     # RIGHT OUTER JOIN
-    "right join": joins.JoinType.RightJoin,
-    "right outer join": joins.JoinType.RightJoin,
+    "right join": clauses.JoinType.RightJoin,
+    "right outer join": clauses.JoinType.RightJoin,
 
     # NATURAL INNER JOIN
-    "natural join": joins.JoinType.NaturalInnerJoin,
-    "natural inner join": joins.JoinType.NaturalInnerJoin,
+    "natural join": clauses.JoinType.NaturalInnerJoin,
+    "natural inner join": clauses.JoinType.NaturalInnerJoin,
 
     # NATURAL OUTER JOIN
-    "natural outer join": joins.JoinType.NaturalOuterJoin,
-    "natural full outer join": joins.JoinType.NaturalOuterJoin,
+    "natural outer join": clauses.JoinType.NaturalOuterJoin,
+    "natural full outer join": clauses.JoinType.NaturalOuterJoin,
 
     # NATURAL LEFT OUTER JOIN
-    "natural left join": joins.JoinType.NaturalLeftJoin,
-    "natural left outer join": joins.JoinType.NaturalLeftJoin,
+    "natural left join": clauses.JoinType.NaturalLeftJoin,
+    "natural left outer join": clauses.JoinType.NaturalLeftJoin,
 
     # NATURAL RIGHT OUTER JOIN
-    "natural right join": joins.JoinType.NaturalRightJoin,
-    "natural right outer join": joins.JoinType.NaturalRightJoin
+    "natural right join": clauses.JoinType.NaturalRightJoin,
+    "natural right outer join": clauses.JoinType.NaturalRightJoin
 }
 
 _MospAggregateOperations = {"count", "sum", "min", "max", "avg"}
@@ -283,10 +283,13 @@ def _parse_implicit_from_clause(mosp_data: dict) -> clauses.ImplicitFromClause:
         return clauses.ImplicitFromClause()
     from_clause = mosp_data["from"]
     if isinstance(from_clause, str):
-        return clauses.ImplicitFromClause(_parse_table_reference(from_clause))
+        return clauses.ImplicitFromClause(clauses.DirectTableSource(_parse_table_reference(from_clause)))
     elif isinstance(from_clause, dict):
-        return clauses.ImplicitFromClause(_parse_table_reference(from_clause))
-    return clauses.ImplicitFromClause([_parse_table_reference(table) for table in from_clause])
+        return clauses.ImplicitFromClause(clauses.DirectTableSource(_parse_table_reference(from_clause)))
+    elif not isinstance(from_clause, list):
+        raise TypeError("Unknown FROM clause structure: " + str(from_clause))
+    parsed_sources = [clauses.DirectTableSource(_parse_table_reference(table)) for table in from_clause]
+    return clauses.ImplicitFromClause(parsed_sources)
 
 
 def _parse_explicit_from_clause(mosp_data: dict) -> clauses.ExplicitFromClause:
@@ -311,22 +314,70 @@ def _parse_explicit_from_clause(mosp_data: dict) -> clauses.ExplicitFromClause:
             # we found a subquery
             joined_subquery = _MospQueryParser(join_source["value"], mosp.format(join_source)).parse_query()
             join_alias = joined_table.get("name", None)
-            parsed_joins.append(joins.SubqueryJoin(joined_subquery, join_alias, join_condition,
-                                                   join_type=parsed_join_type))
+            parsed_joins.append(clauses.JoinTableSource(clauses.SubqueryTableSource(joined_subquery, join_alias),
+                                                        join_condition, join_type=parsed_join_type))
         elif isinstance(join_source, dict):
             # we found a normal table join with an alias
             table_name = join_source["value"]
             table_alias = join_source.get("name", None)
             table = base.TableReference(table_name, table_alias)
-            parsed_joins.append(joins.TableJoin(table, join_condition, join_type=parsed_join_type))
+            parsed_joins.append(clauses.JoinTableSource(clauses.DirectTableSource(table), join_condition,
+                                                        join_type=parsed_join_type))
         elif isinstance(join_source, str):
             # we found a normal table join without an alias
             table_name = join_source
             table = base.TableReference(table_name)
-            parsed_joins.append(joins.TableJoin(table, join_condition, join_type=parsed_join_type))
+            parsed_joins.append(clauses.JoinTableSource(clauses.DirectTableSource(table), join_condition,
+                                                        join_type=parsed_join_type))
         else:
             raise ValueError("Unknown JOIN format: " + str(joined_table))
-    return clauses.ExplicitFromClause(initial_table, parsed_joins)
+    return clauses.ExplicitFromClause(clauses.DirectTableSource(initial_table), parsed_joins)
+
+
+def _parse_base_table_source(mosp_data: dict) -> clauses.DirectTableSource | clauses.SubqueryTableSource:
+    if isinstance(mosp_data, str):
+        return clauses.DirectTableSource(_parse_table_reference(mosp_data))
+    if not isinstance(mosp_data, dict) or "value" not in mosp_data or "name" not in mosp_data:
+        raise TypeError("Unknown FROM clause target: " + str(mosp_data))
+
+    value_target = mosp_data["value"]
+    if isinstance(value_target, str):
+        return clauses.DirectTableSource(_parse_table_reference(mosp_data))
+    is_subquery_table = (isinstance(value_target, dict)
+                         and any(select_type in value_target for select_type in _MospSelectTypes))
+    if not is_subquery_table:
+        raise TypeError("Unknown FROM clause target: " + str(mosp_data))
+    parsed_subquery = _MospQueryParser(value_target, mosp.format(value_target)).parse_query()
+    subquery_target = mosp_data["name"]
+    return clauses.SubqueryTableSource(parsed_subquery, subquery_target)
+
+def _parse_join_table_source(mosp_data: dict) -> clauses.JoinTableSource:
+    join_type = next(jt for jt in _MospJoinTypes.keys() if jt in mosp_data)
+    join_target = mosp_data[join_type]
+    parsed_target = _parse_base_table_source(join_target)
+    parsed_join_type = _MospJoinTypes[join_type]
+    join_condition = _parse_mosp_predicate(mosp_data["on"]) if "on" in mosp_data else None
+    return clauses.JoinTableSource(parsed_target, join_condition, join_type=parsed_join_type)
+
+
+def _parsed_mixed_from_clause(mosp_data: dict) -> clauses.From:
+    if "from" not in mosp_data:
+        return clauses.From([])
+    from_clause = mosp_data["from"]
+
+    if isinstance(from_clause, str):
+        return clauses.From(clauses.DirectTableSource(_parse_table_reference(from_clause)))
+    elif isinstance(from_clause, dict):
+        return clauses.From(_parse_base_table_source(from_clause))
+    elif not isinstance(from_clause, list):
+        raise TypeError("Unknown FROM clause type: " + str(from_clause))
+
+    parsed_from_clause_entries = []
+    for entry in from_clause:
+        join_entry = isinstance(entry, dict) and any(join_type in entry for join_type in _MospJoinTypes)
+        parsed_entry = _parse_join_table_source(entry) if join_entry else _parse_base_table_source(entry)
+        parsed_from_clause_entries.append(parsed_entry)
+    return clauses.From(parsed_from_clause_entries)
 
 
 def _parse_groupby_clause(mosp_data: dict | list) -> clauses.GroupBy:
@@ -381,7 +432,12 @@ def _is_implicit_query(mosp_data: dict) -> bool:
         return True
 
     for table in from_clause:
-        if isinstance(table, dict) and any(join_type in table for join_type in _MospJoinTypes):
+        if not isinstance(table, dict):
+            continue
+        explicit_join = any(join_type in table for join_type in _MospJoinTypes)
+        subquery_table = any(select_type in table for select_type in _MospSelectTypes)
+        nested_subquery = "value" in table and any(select_type in table["value"] for select_type in _MospSelectTypes)
+        if explicit_join or subquery_table or nested_subquery:
             return False
     return True
 
@@ -399,7 +455,10 @@ def _is_explicit_query(mosp_data: dict) -> bool:
     for table in join_statements:
         if isinstance(table, str):
             return False
-        if isinstance(table, dict) and not any(join_type in table for join_type in _MospJoinTypes):
+        explicit_join = isinstance(table, dict) and any(join_type in table for join_type in _MospJoinTypes)
+        subquery_table = (isinstance(table, dict)
+                          and (any(select_type in table for select_type in _MospSelectTypes) or "value" in table))
+        if not explicit_join or subquery_table:
             return False
     return True
 
@@ -422,13 +481,14 @@ class _MospQueryParser:
 
     def parse_query(self) -> qal.SqlQuery:
         if _is_implicit_query(self._mosp_data):
-            implicit = True
+            implicit, explicit = True, False
             from_clause = _parse_implicit_from_clause(self._mosp_data)
         elif _is_explicit_query(self._mosp_data):
-            implicit = False
+            implicit, explicit = False, True
             from_clause = _parse_explicit_from_clause(self._mosp_data)
         else:
-            raise QueryFormatError(self._raw_query)
+            implicit, explicit = False, False
+            from_clause = _parsed_mixed_from_clause(self._mosp_data)
         select_clause = _parse_select_clause(self._mosp_data)
         where_clause = _parse_where_clause(self._mosp_data["where"]) if "where" in self._mosp_data else None
 
@@ -456,14 +516,18 @@ class _MospQueryParser:
         else:
             limit_clause = None
 
-        if implicit:
+        if implicit and not explicit:
             return qal.ImplicitSqlQuery(select_clause=select_clause, from_clause=from_clause, where_clause=where_clause,
                                         groupby_clause=groupby_clause, having_clause=having_clause,
                                         orderby_clause=orderby_clause, limit_clause=limit_clause)
-        else:
+        elif not implicit and explicit:
             return qal.ExplicitSqlQuery(select_clause=select_clause, from_clause=from_clause, where_clause=where_clause,
                                         groupby_clause=groupby_clause, having_clause=having_clause,
                                         orderby_clause=orderby_clause, limit_clause=limit_clause)
+        else:
+            return qal.MixedSqlQuery(select_clause=select_clause, from_clause=from_clause, where_clause=where_clause,
+                                     groupby_clause=groupby_clause, having_clause=having_clause,
+                                     orderby_clause=orderby_clause, limit_clause=limit_clause)
 
     def _prepare_query(self) -> None:
         if "explain" in self._mosp_data:

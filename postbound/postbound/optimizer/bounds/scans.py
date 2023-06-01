@@ -77,7 +77,7 @@ class NativeCardinalityEstimator(BaseTableCardinalityEstimator):
             return self.estimate_total_rows(table)
 
         select_clause = clauses.Select(clauses.BaseProjection.star())
-        from_clause = clauses.ImplicitFromClause(table)
+        from_clause = clauses.ImplicitFromClause.create_for(table)
         where_clause = clauses.Where(filters) if filters else None
 
         emulated_query = qal.ImplicitSqlQuery(select_clause=select_clause,
@@ -111,7 +111,7 @@ class PreciseCardinalityEstimator(BaseTableCardinalityEstimator):
 
     def estimate_for(self, table: base.TableReference) -> int:
         select_clause = clauses.Select(clauses.BaseProjection.count_star())
-        from_clause = clauses.ImplicitFromClause(table)
+        from_clause = clauses.ImplicitFromClause.create_for(table)
 
         filters = self.query.predicates().filters_for(table)
         where_clause = clauses.Where(filters) if filters else None
