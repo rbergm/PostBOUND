@@ -1,4 +1,3 @@
-
 from __future__ import annotations
 
 import random
@@ -7,6 +6,7 @@ from typing import Optional
 import graphviz as gv
 
 from postbound.optimizer.strategies import tonic
+
 
 def _unique_node_identifier(identifier: tonic.QepsIdentifier) -> str:
     return str(hash((identifier, random.random())))
@@ -20,6 +20,7 @@ def _render_subquery_path(qeps: tonic.QepsNode, current_node: str, current_graph
         current_graph.edge(current_node, node_identifier, style="dashed")
         _render_subquery_path(qeps_child, node_identifier, current_graph)
 
+
 def _make_node_label(identifier: tonic.QepsIdentifier, node: tonic.QepsNode) -> str:
     cost_str = ("[" + ", ".join(f"{operator.value}={cost}" for operator, cost in node.operator_costs.items()) + "]"
                 if node.operator_costs else "")
@@ -27,10 +28,15 @@ def _make_node_label(identifier: tonic.QepsIdentifier, node: tonic.QepsNode) -> 
     return label + "\n" + cost_str
 
 
-def plot_tonic_qeps(qeps: tonic.QepsNode, *, _current_node: Optional[str] = None,
+def plot_tonic_qeps(qeps: tonic.QepsNode | tonic.QueryExecutionPlanSynopsis, *, _current_node: Optional[str] = None,
                     _current_graph: Optional[gv.Digraph] = None) -> gv.Digraph:
     if not _current_graph:
         _current_graph = gv.Digraph()
+
+    if isinstance(qeps, tonic.QueryExecutionPlanSynopsis):
+        _current_node = "∅"
+        _current_graph.node(_current_node, style="dotted")
+        qeps = qeps.root
 
     if qeps.subquery_root:
         _render_subquery_path(qeps.subquery_root, _current_node, _current_graph)

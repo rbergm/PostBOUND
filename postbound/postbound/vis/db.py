@@ -50,7 +50,7 @@ def annotate_estimates(node: db.QueryExecutionPlan) -> str:
 
 
 def plot_query_plan(plan: db.QueryExecutionPlan,
-                    annotation_generator: Optional[Callable[[db.QueryExecutionPlan], str]] = None,
+                    annotation_generator: Optional[Callable[[db.QueryExecutionPlan], str]] = None, *,
                     skip_intermediates: bool = False) -> gv.Graph:
     if not plan:
         return gv.Graph()
@@ -67,5 +67,6 @@ def _explain_analyze_annotations(node: db.QueryExecutionPlan) -> str:
 def plot_analyze_plan(plan: db.QueryExecutionPlan, *, skip_intermediates: bool = False) -> gv.Graph:
     if not plan:
         return gv.Graph()
-    return tree_viz.plot_tree(plan, functools.partial(_query_plan_labels, annotation_generator=_explain_analyze_annotations),
+    return tree_viz.plot_tree(plan,
+                              functools.partial(_query_plan_labels, annotation_generator=_explain_analyze_annotations),
                               functools.partial(_query_plan_traversal, skip_intermediates=skip_intermediates))

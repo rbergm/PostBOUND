@@ -12,11 +12,22 @@ from postbound.optimizer.physops import selection as opsel, operators as physops
 from postbound.util import collections as collection_utils, dicts as dict_utils
 
 
+def _left_query_plan_child(node: db.QueryExecutionPlan) -> db.QueryExecutionPlan:
+    return node.outer_child if node.outer_child else node.children[0]
+
+
+def _right_query_plan_child(node: db.QueryExecutionPlan) -> db.QueryExecutionPlan:
+    return node.inner_child if node.inner_child else node.children[1]
+
+
 def _iterate_join_tree(current_node: jointree.AbstractJoinTreeNode) -> Sequence[jointree.IntermediateJoinNode]:
     if isinstance(current_node, jointree.BaseTableNode):
         return []
     assert isinstance(current_node, jointree.IntermediateJoinNode)
-    return list(_iterate_join_tree(current_node.right_child)) + [current_node]
+    left_child, right_child = current_node.left_child, current_node.right_child
+    left_child, right_child = ((right_child, left_child) if right_child.tree_depth() < left_child.tree_depth()
+                               else (left_child, right_child))
+    return list(_iterate_join_tree(right_child)) + [current_node]
 
 
 def _iterate_query_plan(current_node: db.QueryExecutionPlan) -> Sequence[db.QueryExecutionPlan]:
@@ -25,13 +36,17 @@ def _iterate_query_plan(current_node: db.QueryExecutionPlan) -> Sequence[db.Quer
     if not current_node.is_join:
         assert len(current_node.children) == 1
         return _iterate_query_plan(current_node.children[0])
-    right_child = current_node.inner_child if current_node.inner_child else current_node.children[1]
+    left_child, right_child = _left_query_plan_child(current_node), _right_query_plan_child(current_node)
+    left_child, right_child = ((right_child, left_child) if right_child.plan_depth() < left_child.plan_depth()
+                               else (left_child, right_child))
     return list(_iterate_query_plan(right_child)) + [current_node]
 
 
 class QepsIdentifier:
     def __init__(self, tables: base.TableReference | Iterable[base.TableReference],
                  filter_predicate: Optional[predicates.AbstractPredicate] = None) -> None:
+        if not tables:
+            raise ValueError("Tables required")
         self._tables = frozenset(collection_utils.enlist(tables))
         self._filter_predicate = filter_predicate
         self._hash_val = hash((self._tables, self._filter_predicate))
@@ -68,41 +83,79 @@ class QepsIdentifier:
 
 
 class QepsNode:
-    def __init__(self, filter_aware: bool, gamma: float) -> None:
+    def __init__(self, filter_aware: bool, gamma: float, *,
+                 identifier: Optional[QepsIdentifier] = None, parent: Optional[QepsNode] = None) -> None:
         self.filter_aware = filter_aware
         self.gamma = gamma
         self.operator_costs: dict[physops.JoinOperators, float] = collections.defaultdict(float)
-        self.child_nodes: dict[QepsIdentifier, QepsNode] = collections.defaultdict(self._init_qeps)
+        self.child_nodes = dict_utils.DynamicDefaultDict(self._init_qeps)
         self._subquery_root: Optional[QepsNode] = None  # only used for subquery nodes
+        self._parent = parent
+        self._identifier = identifier
 
     @property
     def subquery_root(self) -> QepsNode:
-        if not self._subquery_root:
+        if self._subquery_root is None:
             self._subquery_root = QepsNode(self.filter_aware, self.gamma)
         return self._subquery_root
 
+    def path(self) -> Optional[Sequence[QepsIdentifier]]:
+        if not self._identifier:
+            return None
+        parent_path = self._parent.path() if self._parent else []
+        return parent_path + [self._identifier] if parent_path else [self._identifier]
+
+    def tables(self) -> frozenset[base.TableReference]:
+        qeps_path = self.path()
+        if not qeps_path:
+            return frozenset()
+        return frozenset(collection_utils.set_union(qeps_id.tables for qeps_id in qeps_path))
+
     def recommend_operators(self, query: qal.SqlQuery, join_order: Sequence[jointree.IntermediateJoinNode],
-                            current_assignment: physops.PhysicalOperatorAssignment) -> None:
+                            current_assignment: physops.PhysicalOperatorAssignment, *,
+                            _skip_first_table: bool = False) -> None:
         if not join_order:
             return
 
         next_join, *remaining_joins = join_order
         recommendation = self.current_recommendation()
         if recommendation:
-            current_assignment.set_join_operator(physops.JoinOperatorAssignment(recommendation, next_join.tables()))
+            current_assignment.set_join_operator(physops.JoinOperatorAssignment(recommendation, self.tables()))
 
-        next_node: jointree.AbstractJoinTreeNode = next_join.left_child
-        if next_node.is_base_table_node():
-            assert isinstance(next_node, jointree.BaseTableNode)
-            child_node = self.child_nodes[self._make_identifier(query, next_node.table)]
-            child_node.recommend_operators(query, remaining_joins, current_assignment)
-        elif next_node.is_join_node():
-            assert isinstance(next_node, jointree.IntermediateJoinNode)
-            subquery_node = self.child_nodes[QepsIdentifier(next_node.tables())]
-            subquery_node.subquery_recommendation(query, next_node, current_assignment)
-            subquery_node.recommend_operators(query, remaining_joins, current_assignment)
+        if next_join.is_bushy_join():
+            first_child, second_child = next_join.left_child, next_join.right_child
+            first_child, second_child = ((second_child, first_child)
+                                         if second_child.tree_depth() < first_child.tree_depth()
+                                         else (first_child, second_child))
+            qeps_subquery_id = QepsIdentifier(first_child.tables())
+            qeps_subquery_node = self.child_nodes[qeps_subquery_id]
+            qeps_subquery_node.subquery_root.recommend_operators(query, _iterate_join_tree(first_child),
+                                                                 current_assignment)
+            qeps_subquery_node.recommend_operators(query, remaining_joins, current_assignment)
+            return
+        elif next_join.is_base_join():
+            first_table, second_table = next_join.left_child.table, next_join.right_child.table
+            first_table, second_table = ((second_table, first_table) if second_table < first_table
+                                         else (first_table, second_table))
 
-    def integrate_costs(self, query: qal.SqlQuery, query_plan: Sequence[db.QueryExecutionPlan]) -> None:
+            if not _skip_first_table:
+                qeps_child_id = self._make_identifier(query, first_table)
+                qeps_child_node = self.child_nodes[qeps_child_id]
+                qeps_child_node.recommend_operators(query, join_order, current_assignment, _skip_first_table=True)
+                return
+            else:
+                next_table = second_table
+        else:
+            # join between intermediate (our current QEP-S path) and a base table (next node in our QEP-S path)
+            next_table = (next_join.left_child.table if next_join.left_child.is_base_table_node()
+                          else next_join.right_child.table)
+
+        qeps_child_id = self._make_identifier(query, next_table)
+        qeps_child_node = self.child_nodes[qeps_child_id]
+        qeps_child_node.recommend_operators(query, remaining_joins, current_assignment)
+
+    def integrate_costs(self, query: qal.SqlQuery, query_plan: Sequence[db.QueryExecutionPlan], *,
+                        _skip_first_table: bool = False) -> None:
         if not query_plan:
             return
 
@@ -110,23 +163,44 @@ class QepsNode:
         if not next_node.is_join:
             self.integrate_costs(query, remaining_nodes)
 
-        child_node: db.QueryExecutionPlan = next_node.outer_child if next_node.outer_child else next_node.children[0]
-        if child_node.is_scan:
-            self._integrate_base_join_costs(query, next_node, remaining_nodes)
-        elif child_node.is_join:
-            self._integrate_subquery_join_costs(query, next_node, remaining_nodes)
+        first_child, second_child = _left_query_plan_child(next_node), _right_query_plan_child(next_node)
+        if next_node.is_bushy_join():
+            first_child, second_child = ((second_child, first_child)
+                                         if second_child.plan_depth() < first_child.plan_depth()
+                                         else (first_child, second_child))
+            qeps_subquery_id = QepsIdentifier(first_child.tables())
+            qeps_subquery_node = self.child_nodes[qeps_subquery_id]
+            qeps_subquery_node.update_costs(next_node.physical_operator, next_node.cost)
+            qeps_subquery_node.subquery_root.integrate_costs(query, _iterate_query_plan(first_child))
+            qeps_subquery_node.integrate_costs(query, remaining_nodes)
+            return
+        elif next_node.is_base_join():
+            first_child, second_child = ((second_child, first_child)
+                                         if second_child.fetch_base_table() < first_child.fetch_base_table()
+                                         else (first_child, second_child))
+            if not _skip_first_table:
+                qeps_child_id = self._make_identifier(query, first_child.fetch_base_table())
+                qeps_child_node = self.child_nodes[qeps_child_id]
+                qeps_child_node.integrate_costs(query, query_plan, _skip_first_table=True)
+                return
+            else:
+                child_node = second_child
+        else:
+            # join between intermediate (our current QEP-S path) and a base table (next node in our QEP-S path)
+            child_node = (first_child if first_child.is_scan_branch() else second_child)
 
-    def subquery_recommendation(self, query: qal.SqlQuery, node: jointree.IntermediateJoinNode,
-                                current_assignment: physops.PhysicalOperatorAssignment) -> None:
-        self.subquery_root.recommend_operators(query, _iterate_join_tree(node), current_assignment)
-
-    def integrate_subquery_costs(self, query: qal.SqlQuery, query_plan: db.QueryExecutionPlan):
-        self.subquery_root.integrate_costs(query, _iterate_query_plan(query_plan))
+        child_table = child_node.fetch_base_table()
+        qeps_child_id = self._make_identifier(query, child_table)
+        qeps_child_node = self.child_nodes[qeps_child_id]
+        qeps_child_node.update_costs(next_node.physical_operator, next_node.cost)
+        qeps_child_node.integrate_costs(query, remaining_nodes)
 
     def current_recommendation(self) -> Optional[physops.JoinOperators]:
         return dict_utils.argmin(self.operator_costs) if len(self.operator_costs) > 1 else None
 
     def update_costs(self, operator: physops.JoinOperators, cost: float) -> None:
+        if not operator or math.isinf(cost):
+            raise ValueError("Operator and cost required")
         current_cost = self.operator_costs[operator]
         self.operator_costs[operator] = cost + self.gamma * current_cost
 
@@ -136,38 +210,24 @@ class QepsNode:
 
         prefix = " " * _current_indentation
 
-        cost_str = "[" + ", ".join(f"{operator.value}={cost}" for operator, cost in self.operator_costs.items()) + "]"
-        subquery_content = (self.subquery_root.inspect(_current_indentation=_current_indentation)
-                            if self.subquery_root else "")
-        child_str = self._child_inspect(_current_indentation)
+        cost_str = prefix + self._cost_str()
+        subquery_content = (self.subquery_root.inspect(_current_indentation=_current_indentation + 2)
+                            if self._subquery_root else "")
+        subquery_str = f"{prefix}[SQ] ->\n{subquery_content}" if subquery_content else ""
+        child_content = self._child_inspect(_current_indentation)
+        child_str = f"{prefix}[CHILD] ->\n{child_content}" if child_content else f"{prefix}[no children]"
 
-        inspect_entries = [prefix + cost_str, prefix + subquery_content if subquery_content else "", child_str]
+        inspect_entries = [cost_str, subquery_str, child_str]
         return "\n".join(entry for entry in inspect_entries if entry)
 
-    def _init_qeps(self) -> QepsNode:
-        return QepsNode(self.filter_aware, self.gamma)
+    def _init_qeps(self, identifier: QepsIdentifier) -> QepsNode:
+        return QepsNode(self.filter_aware, self.gamma, parent=self, identifier=identifier)
 
-    def _make_identifier(self, query: qal.SqlQuery, table: base.TableReference) -> QepsIdentifier:
+    def _make_identifier(self, query: qal.SqlQuery,
+                         table: base.TableReference | Iterable[base.TableReference]) -> QepsIdentifier:
+        table = collection_utils.simplify(table)
         filter_predicate = query.predicates().filters_for(table) if self.filter_aware else None
         return QepsIdentifier(table, filter_predicate)
-
-    def _integrate_base_join_costs(self, query: qal.SqlQuery, current_node: db.QueryExecutionPlan,
-                                   remaining_nodes: Sequence[db.QueryExecutionPlan]) -> None:
-        if not current_node.table or not current_node.physical_operator or math.isnan(current_node.cost):
-            raise ValueError("Plan node for QEP-S update must contain table, operator and cost")
-        child_identifier = self._make_identifier(query, current_node.table)
-        child_node = self.child_nodes[child_identifier]
-        child_node.update_costs(current_node.physical_operator, current_node.cost)
-        child_node.integrate_costs(query, remaining_nodes)
-
-    def _integrate_subquery_join_costs(self, query: qal.SqlQuery, current_node: db.QueryExecutionPlan,
-                                       remaining_nodes: Sequence[db.QueryExecutionPlan]) -> None:
-        if not current_node.table or not current_node.physical_operator or math.isnan(current_node.cost):
-            raise ValueError("Plan node for QEP-S update must contain table, operator and cost")
-        subquery_plan_node = current_node.outer_child if current_node.outer_child else current_node.children[0]
-        subquery_qeps_node = self.child_nodes[QepsIdentifier(subquery_plan_node.tables())]
-        subquery_qeps_node.integrate_subquery_costs(query, subquery_plan_node)
-        subquery_qeps_node.integrate_costs(query, remaining_nodes)
 
     def _child_inspect(self, indentation: int) -> str:
         prefix = " " * indentation
@@ -175,10 +235,23 @@ class QepsNode:
         for identifier, child_node in self.child_nodes.items():
             child_inspect = child_node.inspect(_current_indentation=indentation + 2)
             child_content.append(f"{prefix}QEP-S node {identifier}\n{child_inspect}")
-        return f"{prefix}-----\n".join(child for child in child_content)
+        return f"\n{prefix}-----\n".join(child for child in child_content)
+
+    def _cost_str(self) -> str:
+        cost_content = ", ".join(f"{operator.value}={cost}" for operator, cost in self.operator_costs.items())
+        return f"[{cost_content}]" if self.operator_costs else f"[no cost]"
 
     def __bool__(self) -> bool:
         return len(self.child_nodes) > 0 or len(self.operator_costs) > 0
+
+    def __repr__(self) -> str:
+        return str(self)
+
+    def __str__(self) -> str:
+        qeps_path = self.path()
+        identifier = " -> ".join(str(qeps_id) for qeps_id in qeps_path) if qeps_path else "[ROOT]"
+        costs = self._cost_str()
+        return f"{identifier} {costs}"
 
 
 class QueryExecutionPlanSynopsis:
@@ -198,7 +271,10 @@ class QueryExecutionPlanSynopsis:
         return current_assignment
 
     def integrate_costs(self, query: qal.SqlQuery, query_plan: db.QueryExecutionPlan) -> None:
-        self.root.integrate_costs(query, _iterate_query_plan(query_plan))
+        self.root.integrate_costs(query, _iterate_query_plan(query_plan.simplify()))
+
+    def reset(self) -> None:
+        self.root = QepsNode(self.root.filter_aware, self.root.gamma)
 
     def inspect(self) -> str:
         return self.root.inspect()
@@ -210,6 +286,7 @@ def make_qeps(path: Iterable[base.TableReference], root: Optional[QepsNode] = No
     for table in path:
         current_node = current_node.child_nodes[QepsIdentifier(table)]
     return root
+
 
 class TonicOperatorSelection(opsel.PhysicalOperatorSelection):
 
@@ -235,6 +312,9 @@ class TonicOperatorSelection(opsel.PhysicalOperatorSelection):
         physical_qep = jointree.PhysicalQueryPlan.load_from_query_plan(analyze_plan, query)
         hinted_query = self._db.hinting().generate_hints(query, physical_qep)
         self.integrate_cost(hinted_query)
+
+    def reset(self) -> None:
+        self.qeps.reset()
 
     def _apply_selection(self, query: qal.SqlQuery,
                          join_order: Optional[jointree.LogicalJoinTree | jointree.PhysicalQueryPlan]
