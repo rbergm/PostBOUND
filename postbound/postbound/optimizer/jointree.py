@@ -156,8 +156,7 @@ class PhysicalBaseTableMetadata(BaseTableMetadata):
 
 JoinMetadataType = typing.TypeVar("JoinMetadataType", bound=JoinMetadata)
 BaseTableMetadataType = typing.TypeVar("BaseTableMetadataType", bound=BaseTableMetadata)
-NestedTableSequence = typing.NewType("NestedTableSequence",
-                                     Union[Sequence["NestedTableSequence"], base.TableReference].__class__)
+NestedTableSequence = typing.NewType("NestedTableSequence", Union[Sequence["NestedTableSequence"], base.TableReference])
 
 
 def parse_nested_table_sequence(sequence: list[dict | list]) -> NestedTableSequence:
@@ -214,6 +213,15 @@ class AbstractJoinTreeNode(abc.ABC, Container[base.TableReference], Generic[Join
 
     def is_bushy(self) -> bool:
         return not self.is_linear()
+
+    @abc.abstractmethod
+    def tree_depth(self) -> int:
+        """Provides the maximum number of nodes that need to be passed until a base table node is reached.
+
+        The depth treats the base table as a node that needs to be passed as well, i.e. calling `tree_depth` on
+        a base table node will return `1`.
+        """
+        raise NotImplementedError
 
     @abc.abstractmethod
     def tables(self) -> frozenset[base.TableReference]:
@@ -331,8 +339,11 @@ class IntermediateJoinNode(AbstractJoinTreeNode[JoinMetadataType, BaseTableMetad
     def is_join_node(self) -> bool:
         return True
 
-    def is_base_table_join(self) -> bool:
+    def is_base_join(self) -> bool:
         return self.left_child.is_base_table_node() and self.right_child.is_base_table_node()
+
+    def is_bushy_join(self) -> bool:
+        return self.left_child.is_join_node() and self.right_child.is_join_node()
 
     def is_left_deep(self) -> bool:
         if not self.right_child.is_base_table_node():
@@ -348,6 +359,9 @@ class IntermediateJoinNode(AbstractJoinTreeNode[JoinMetadataType, BaseTableMetad
         if self.left_child.is_join_node() and self.right_child.is_join_node():
             return False
         return self.left_child.is_zigzag() and self.right_child.is_zigzag()
+
+    def tree_depth(self) -> int:
+        return 1 + max(self.left_child.tree_depth(), self.right_child.tree_depth())
 
     def tables(self) -> frozenset[base.TableReference]:
         return frozenset(self._left_child.tables() | self._right_child.tables())
@@ -450,6 +464,9 @@ class BaseTableNode(AbstractJoinTreeNode[JoinMetadataType, BaseTableMetadataType
 
     def is_zigzag(self) -> bool:
         return True
+
+    def tree_depth(self) -> int:
+        return 1
 
     def tables(self) -> frozenset[base.TableReference]:
         return frozenset({self._table})
