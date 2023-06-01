@@ -46,11 +46,15 @@ def get_any(elems: Iterable[T]) -> T:
     """
     return list(elems)[0]
 
-def simplify(obj: Collection[T]) -> T | Iterable[T]:
+
+def simplify(obj: Collection[T] | T) -> T | Collection[T]:
     """Unwraps singular containers.
 
     For example `[1]` is simplified to `1`. On the other hand, `[1,2]` is returned unmodified.
     """
+    if "__len__" not in dir(obj) or "__iter__" not in dir(obj):
+        return obj
+
     if len(obj) == 1:
         return list(obj)[0]
     return obj
