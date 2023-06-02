@@ -561,7 +561,20 @@ class CompoundPredicate(AbstractPredicate):
             raise ValueError("No predicates supplied.")
         if len(parts) == 1:
             return parts[0]
-        return CompoundPredicate(expr.LogicalSqlCompoundOperators.And, list(parts))
+        return CompoundPredicate(expr.LogicalSqlCompoundOperators.And, parts)
+
+    @staticmethod
+    def create_not(predicate: AbstractPredicate) -> CompoundPredicate:
+        return CompoundPredicate(expr.LogicalSqlCompoundOperators.Not, predicate)
+
+    @staticmethod
+    def create_or(parts: Collection[AbstractPredicate]) -> AbstractPredicate:
+        parts = list(parts)
+        if not parts:
+            raise ValueError("No predicates supplied.")
+        if len(parts) == 1:
+            return parts[0]
+        return CompoundPredicate(expr.LogicalSqlCompoundOperators.Or, parts)
 
     def __init__(self, operation: expr.LogicalSqlCompoundOperators,
                  children: AbstractPredicate | Sequence[AbstractPredicate]):
