@@ -742,7 +742,7 @@ class OptimizerInterface(abc.ABC):
         raise NotImplementedError
 
     @abc.abstractmethod
-    def analyze_plan(self, query: qal.SqlQuery | str) -> QueryExecutionPlan:
+    def analyze_plan(self, query: qal.SqlQuery) -> QueryExecutionPlan:
         """Executes the given query and provides the query execution plan supplemented with runtime information."""
         raise NotImplementedError
 
