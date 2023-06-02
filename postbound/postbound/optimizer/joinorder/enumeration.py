@@ -2,14 +2,13 @@
 from __future__ import annotations
 
 import abc
-import functools
 import random
 from collections.abc import Sequence
 from typing import Optional, Generator
 
 import networkx as nx
 
-from postbound.qal import qal, base, predicates as preds
+from postbound.qal import qal, base
 from postbound.optimizer import jointree, validation
 from postbound.util import networkx as nx_utils
 

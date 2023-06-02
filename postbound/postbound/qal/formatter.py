@@ -10,7 +10,8 @@ FORMAT_INDENT_DEPTH = 2
 
 
 class FormattingSubqueryExpression(expr.SubqueryExpression):
-    def __init__(self, original_expression: expr.SubqueryExpression, inline_hint_block: bool, indentation: int) -> None:
+    def __init__(self, original_expression: expr.SubqueryExpression, inline_hint_block: bool,
+                 indentation: int) -> None:
         super().__init__(original_expression.query)
         self._inline_hint_block = inline_hint_block
         self._indentation = indentation
@@ -25,7 +26,8 @@ class FormattingSubqueryExpression(expr.SubqueryExpression):
         return "\n".join(indented_lines)
 
 
-def _quick_format_select(select_clause: clauses.Select, *, inlined_hint_block: Optional[clauses.Hint] = None) -> list[str]:
+def _quick_format_select(select_clause: clauses.Select, *,
+                         inlined_hint_block: Optional[clauses.Hint] = None) -> list[str]:
     """Quick and dirty formatting logic for SELECT clauses.
 
     Up to 3 targets on the same line, otherwise one target per line.
@@ -33,7 +35,8 @@ def _quick_format_select(select_clause: clauses.Select, *, inlined_hint_block: O
     hint_text = f"{inlined_hint_block} " if inlined_hint_block else ""
     if len(select_clause.targets) > 3:
         first_target, *remaining_targets = select_clause.targets
-        formatted_targets = [f"SELECT {hint_text}{first_target}" if select_clause.projection_type == clauses.SelectType.Select
+        formatted_targets = [f"SELECT {hint_text}{first_target}"
+                             if select_clause.projection_type == clauses.SelectType.Select
                              else f"SELECT DISTINCT {hint_text}{first_target}"]
         formatted_targets += [((" " * FORMAT_INDENT_DEPTH) + str(target)) for target in remaining_targets]
         for i in range(len(formatted_targets) - 1):
@@ -92,7 +95,8 @@ def _quick_format_where(where_clause: clauses.Where) -> list[str]:
     return [f"WHERE {first_pred}"] + [((" " * FORMAT_INDENT_DEPTH) + str(pred)) for pred in additional_preds]
 
 
-def _subquery_replacement(expression: expr.SqlExpression, *, inline_hints: bool, indentation: int) -> expr.SqlExpression:
+def _subquery_replacement(expression: expr.SqlExpression, *, inline_hints: bool,
+                          indentation: int) -> expr.SqlExpression:
     if not isinstance(expression, expr.SubqueryExpression):
         return expression
     return FormattingSubqueryExpression(expression, inline_hints, indentation)
@@ -111,7 +115,8 @@ def format_quick(query: qal.SqlQuery, *, inline_hint_block: bool = False) -> str
     """
     pretty_query_parts = []
     inlined_hint_block = None
-    subquery_update = functools.partial(_subquery_replacement, inline_hints=inline_hint_block, indentation=FORMAT_INDENT_DEPTH)
+    subquery_update = functools.partial(_subquery_replacement, inline_hints=inline_hint_block,
+                                        indentation=FORMAT_INDENT_DEPTH)
     query = transform.replace_expressions(query, subquery_update)
 
     for clause in query.clauses():

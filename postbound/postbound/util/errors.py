@@ -1,4 +1,4 @@
-"""Contains various errors that extend the base errors from Python and are not specific to certain parts of PostBOUND."""
+"""Contains various general errors that extend Python's base errors."""
 from __future__ import annotations
 
 

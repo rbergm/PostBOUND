@@ -346,7 +346,8 @@ class UESJoinOrderOptimizer(enumeration.JoinOrderOptimizer):
                                       else scan_bounds.NativeCardinalityEstimator(self.database))
         self.join_estimation = join_estimation if join_estimation else UESJoinBoundEstimator()
         self.subquery_policy = subquery_policy if subquery_policy else UESSubqueryGenerationPolicy()
-        self.stats_container = stats_container if stats_container else MaxFrequencyStatsContainer(self.database.statistics())
+        self.stats_container = (stats_container if stats_container
+                                else MaxFrequencyStatsContainer(self.database.statistics()))
         self._logging_enabled = verbose
 
     def optimize_join_order(self, query: qal.SqlQuery

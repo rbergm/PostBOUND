@@ -977,7 +977,8 @@ class QueryPredicates:
 
     @functools.cache
     def joins_between(self, first_table: base.TableReference | Iterable[base.TableReference],
-                      second_table: base.TableReference | Iterable[base.TableReference]) -> Optional[AbstractPredicate]:
+                      second_table: base.TableReference | Iterable[base.TableReference]
+                      ) -> Optional[AbstractPredicate]:
         """Provides the (conjunctive) join predicate that joins the given tables.
 
         If `first_table` or `second_table` contain multiple tables, all join predicates between tables from the

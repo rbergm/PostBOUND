@@ -11,7 +11,7 @@ ContainerType = typing.TypeVar("ContainerType", list, tuple, set, frozenset)
 
 def flatten(deep_list: Iterable[Iterable[T] | T]) -> list[T]:
     """Transforms a nested list into a flat list: `[[1, 2], [3]]` is turned into `[1, 2, 3]`"""
-    flattened = []
+    flattened: list[T] = []
     for nested in deep_list:
         if isinstance(nested, Iterable) and not isinstance(nested, str):
             flattened.extend(nested)

@@ -117,7 +117,10 @@ _MospBinaryOperations = {
     "between": expr.LogicalSqlOperators.Between
 }
 
-_MospOperationSql = _MospCompoundOperations | _MospUnaryOperations | _MospMathematicalOperations | _MospBinaryOperations
+_MospOperationSql = (_MospCompoundOperations
+                     | _MospUnaryOperations
+                     | _MospMathematicalOperations
+                     | _MospBinaryOperations)
 
 
 def _parse_where_clause(mosp_data: dict) -> clauses.Where:
@@ -173,7 +176,8 @@ def _parse_in_predicate(mosp_data: dict) -> preds.InPredicate:
         # At the same time, an IN literal of a single value must be handled as well (e.g. IN ('foo')), which is parsed
         # by mosp as {"literal": "foo"} without any lists
         # Therefore we enlist the literal values first, and then construct individual literal clauses for each of them.
-        parsed_values = [_parse_mosp_expression({"literal": val}) for val in collection_utils.enlist(values["literal"])]
+        parsed_values = [_parse_mosp_expression({"literal": val})
+                         for val in collection_utils.enlist(values["literal"])]
     else:
         parsed_values = [_parse_mosp_expression(values)]
     return preds.InPredicate(parsed_column, parsed_values)
@@ -351,6 +355,7 @@ def _parse_base_table_source(mosp_data: dict) -> clauses.DirectTableSource | cla
     subquery_target = mosp_data["name"]
     return clauses.SubqueryTableSource(parsed_subquery, subquery_target)
 
+
 def _parse_join_table_source(mosp_data: dict) -> clauses.JoinTableSource:
     join_type = next(jt for jt in _MospJoinTypes.keys() if jt in mosp_data)
     join_target = mosp_data[join_type]
@@ -517,15 +522,18 @@ class _MospQueryParser:
             limit_clause = None
 
         if implicit and not explicit:
-            return qal.ImplicitSqlQuery(select_clause=select_clause, from_clause=from_clause, where_clause=where_clause,
+            return qal.ImplicitSqlQuery(select_clause=select_clause, from_clause=from_clause,
+                                        where_clause=where_clause,
                                         groupby_clause=groupby_clause, having_clause=having_clause,
                                         orderby_clause=orderby_clause, limit_clause=limit_clause)
         elif not implicit and explicit:
-            return qal.ExplicitSqlQuery(select_clause=select_clause, from_clause=from_clause, where_clause=where_clause,
+            return qal.ExplicitSqlQuery(select_clause=select_clause, from_clause=from_clause,
+                                        where_clause=where_clause,
                                         groupby_clause=groupby_clause, having_clause=having_clause,
                                         orderby_clause=orderby_clause, limit_clause=limit_clause)
         else:
-            return qal.MixedSqlQuery(select_clause=select_clause, from_clause=from_clause, where_clause=where_clause,
+            return qal.MixedSqlQuery(select_clause=select_clause, from_clause=from_clause,
+                                     where_clause=where_clause,
                                      groupby_clause=groupby_clause, having_clause=having_clause,
                                      orderby_clause=orderby_clause, limit_clause=limit_clause)
 

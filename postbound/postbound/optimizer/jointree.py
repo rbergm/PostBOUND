@@ -33,7 +33,8 @@ class BaseMetadata(abc.ABC):
 
 
 class JoinMetadata(BaseMetadata, abc.ABC):
-    def __init__(self, predicate: Optional[predicates.AbstractPredicate] = None, cardinality: float = math.nan) -> None:
+    def __init__(self, predicate: Optional[predicates.AbstractPredicate] = None,
+                 cardinality: float = math.nan) -> None:
         super().__init__(cardinality)
         self._join_predicate = predicate
 
@@ -46,7 +47,8 @@ class JoinMetadata(BaseMetadata, abc.ABC):
 
 
 class LogicalJoinMetadata(JoinMetadata):
-    def __init__(self, predicate: Optional[predicates.AbstractPredicate] = None, cardinality: float = math.nan) -> None:
+    def __init__(self, predicate: Optional[predicates.AbstractPredicate] = None,
+                 cardinality: float = math.nan) -> None:
         super().__init__(predicate, cardinality)
         self._hash_val = hash((predicate, cardinality))
 
@@ -97,7 +99,8 @@ class PhysicalJoinMetadata(JoinMetadata):
 
 
 class BaseTableMetadata(BaseMetadata, abc.ABC):
-    def __init__(self, filter_predicate: Optional[predicates.AbstractPredicate], cardinality: float = math.nan) -> None:
+    def __init__(self, filter_predicate: Optional[predicates.AbstractPredicate],
+                 cardinality: float = math.nan) -> None:
         super().__init__(cardinality)
         self._filter_predicate = filter_predicate
 
@@ -110,7 +113,8 @@ class BaseTableMetadata(BaseMetadata, abc.ABC):
 
 
 class LogicalBaseTableMetadata(BaseTableMetadata):
-    def __init__(self, filter_predicate: Optional[predicates.AbstractPredicate], cardinality: float = math.nan) -> None:
+    def __init__(self, filter_predicate: Optional[predicates.AbstractPredicate],
+                 cardinality: float = math.nan) -> None:
         super().__init__(filter_predicate, cardinality)
         self._hash_val = hash((filter_predicate, cardinality))
 
@@ -156,7 +160,7 @@ class PhysicalBaseTableMetadata(BaseTableMetadata):
 
 JoinMetadataType = typing.TypeVar("JoinMetadataType", bound=JoinMetadata)
 BaseTableMetadataType = typing.TypeVar("BaseTableMetadataType", bound=BaseTableMetadata)
-NestedTableSequence = typing.NewType("NestedTableSequence", Union[Sequence["NestedTableSequence"], base.TableReference])
+NestedTableSequence = Union[Sequence["NestedTableSequence"], base.TableReference]
 
 
 def parse_nested_table_sequence(sequence: list[dict | list]) -> NestedTableSequence:

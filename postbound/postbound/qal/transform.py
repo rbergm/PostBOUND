@@ -277,6 +277,7 @@ def _replace_expression_in_table_source(table_source: clauses.TableSource,
     else:
         raise TypeError("Unknown table source type: " + str(table_source))
 
+
 def _replace_expressions_in_clause(clause: ClauseType, replacement: Callable[[expr.SqlExpression], expr.SqlExpression]
                                    ) -> Optional[ClauseType]:
     if not clause:
@@ -286,7 +287,7 @@ def _replace_expressions_in_clause(clause: ClauseType, replacement: Callable[[ex
         return clause
     if isinstance(clause, clauses.Select):
         replaced_targets = [clauses.BaseProjection(replacement(proj.expression), proj.target_name)
-                           for proj in clause.targets]
+                            for proj in clause.targets]
         return clauses.Select(replaced_targets, clause.projection_type)
     elif isinstance(clause, clauses.ImplicitFromClause):
         return clause
@@ -305,7 +306,7 @@ def _replace_expressions_in_clause(clause: ClauseType, replacement: Callable[[ex
         return clauses.Having(_replace_expression_in_predicate(clause.condition, replacement))
     elif isinstance(clause, clauses.OrderBy):
         replaced_cols = [clauses.OrderByExpression(replacement(col.column), col.ascending, col.nulls_first)
-                        for col in clause.expressions]
+                         for col in clause.expressions]
         return clauses.OrderBy(replaced_cols)
     elif isinstance(clause, clauses.Limit):
         return clause
@@ -394,9 +395,9 @@ def _rename_columns_in_query(query: QueryType,
                                     hints=query.hints, explain_clause=query.explain)
     elif isinstance(query, qal.MixedSqlQuery):
         return qal.MixedSqlQuery(select_clause=renamed_select, from_clause=renamed_from, where_clause=renamed_where,
-                                    groupby_clause=renamed_groupby, having_clause=renamed_having,
-                                    orderby_clause=renamed_orderby, limit_clause=query.limit_clause,
-                                    hints=query.hints, explain_clause=query.explain)
+                                 groupby_clause=renamed_groupby, having_clause=renamed_having,
+                                 orderby_clause=renamed_orderby, limit_clause=query.limit_clause,
+                                 hints=query.hints, explain_clause=query.explain)
     else:
         raise TypeError("Unknown query type: " + str(query))
 

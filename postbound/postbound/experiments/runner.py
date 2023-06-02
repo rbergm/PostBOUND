@@ -130,8 +130,8 @@ def execute_query(query: qal.SqlQuery, database: db.Database, *,
     - the current repetition is indicated in the `COL_REP` column
     - the actual query (without hints) is provided in the `COL_QUERY` column
     - the query hints are contained in the `COL_QUERY_HINTS` column
-    - the execution time (end-to-end, i.e. until the last byte of the result set has been transferred back to PostBOUND)
-      is provided in the `COL_T_EXEC` column (in seconds)
+    - the execution time (end-to-end, i.e. until the last byte of the result set has been transferred back to
+      PostBOUND) is provided in the `COL_T_EXEC` column (in seconds)
     - the query result of each repetition is contained in the `COL_RESULT` column
     """
     original_query = query
@@ -262,7 +262,9 @@ def optimize_and_execute_query(query: qal.SqlQuery, optimization_pipeline: pb.Op
 
 def optimize_and_execute_workload(queries: Iterable[qal.SqlQuery] | workloads.Workload,
                                   optimization_pipeline: pb.OptimizationPipeline, *,
-                                  workload_repetitions: int = 1, per_query_repetitions: int = 1, shuffled: bool = False,
+                                  workload_repetitions: int = 1,
+                                  per_query_repetitions: int = 1,
+                                  shuffled: bool = False,
                                   query_preparation: Optional[QueryPreparationService] = None,
                                   include_labels: bool = False,
                                   post_process: Optional[Callable[[ExecutionResult], None]] = None) -> pd.DataFrame:

@@ -15,7 +15,7 @@ def _df_from_dict(data: dict[Any, Collection[Any]], key_name: Optional[str] = No
     else:
         column_name_map = {idx: col for idx, col in enumerate(column_names)}
 
-    df_container = {col: [] for col in column_name_map.values()}
+    df_container: dict[str, list[Any]] = {col: [] for col in column_name_map.values()}
     for row in data.values():
         for col_idx, col in enumerate(row):
             col_name = column_name_map[col_idx]
@@ -29,7 +29,7 @@ def _df_from_dict(data: dict[Any, Collection[Any]], key_name: Optional[str] = No
 
 def _df_from_list(data: Collection[dict[Any, Any]]) -> pd.DataFrame:
     data_template = next(iter(data))
-    df_container = {col: [] for col in data_template.keys()}
+    df_container: dict[str, list[Any]] = {col: [] for col in data_template.keys()}
     for row in data:
         for key in df_container.keys():
             df_container[key].append(row[key])

@@ -44,6 +44,7 @@ def _collect_subqueries_in_table_source(table_source: clauses.TableSource) -> se
     else:
         return set()
 
+
 def _collect_subqueries(clause: clauses.BaseClause) -> set[SqlQuery]:
     """Provides all the subqueries that are contained in the given clause."""
     if isinstance(clause, clauses.Hint) or isinstance(clause, clauses.Limit) or isinstance(clause, clauses.Explain):
@@ -80,6 +81,7 @@ def _collect_bound_tables_from_source(table_source: clauses.TableSource) -> set[
         return _collect_bound_tables(table_source.query.from_clause)
     elif isinstance(table_source, clauses.JoinTableSource):
         return _collect_bound_tables_from_source(table_source.source)
+
 
 def _collect_bound_tables(from_clause: clauses.From) -> set[base.TableReference]:
     """Provides all tables that are bound in the given clause. See `bound_tables` in SqlQuery for details."""

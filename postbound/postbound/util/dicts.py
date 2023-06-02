@@ -9,7 +9,7 @@ import numbers
 import typing
 import warnings
 from collections.abc import Callable, Iterable, Sequence
-from typing import Callable, Optional
+from typing import Optional
 
 T = typing.TypeVar("T")
 K = typing.TypeVar("K")
@@ -23,8 +23,7 @@ def key(dictionary: dict[K, V]) -> K:
     """
     if not len(dictionary) == 1:
         raise ValueError("Dictionary must contain exactly 1 entry, not " + str(len(dictionary)))
-    for k in dictionary:
-        return k
+    return next(iter(dictionary.keys()))
 
 
 def value(dictionary: dict[K, V]) -> V:
@@ -34,8 +33,7 @@ def value(dictionary: dict[K, V]) -> V:
     """
     if not len(dictionary) == 1:
         raise ValueError("Dictionary must contain exactly 1 entry, not " + str(len(dictionary)))
-    for v in dictionary.values():
-        return v
+    return next(iter(dictionary.values()))
 
 
 def merge(a: dict[K, V], b: dict[K, V], *, updater: Optional[Callable[[K, V, V], V]] = None) -> dict[K, V]:
@@ -68,7 +66,7 @@ def update(dictionary: dict[K, V], updater: Callable[[K, V], T]) -> dict[K, T]:
 
 def explode(dictionary: dict[K, list[V]]) -> list[tuple[K, V]]:
     """Transforms dicts mapping keys to lists of values to a list of key/value pairs."""
-    values = []
+    values: list[tuple[K, V]] = []
     for k, dict_values in dictionary.items():
         values.extend(zip(itertools.cycle([k]), dict_values))
     return values
@@ -130,7 +128,7 @@ def aggregate(dictionaries: Iterable[dict[K, V]]) -> dict[K, Sequence[V]]:
     for d in dictionaries:
         for k, v in d.items():
             aggregated_dict[k].append(v)
-    return aggregated_dict
+    return dict(aggregated_dict)
 
 
 def invert(mapping: dict[K, V]) -> dict[V, K]:

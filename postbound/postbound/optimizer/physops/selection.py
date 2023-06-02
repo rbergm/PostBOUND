@@ -7,7 +7,6 @@ from typing import Optional
 from postbound.qal import qal
 from postbound.optimizer import jointree, validation
 from postbound.optimizer.physops import operators
-from postbound.db import db
 
 
 class PhysicalOperatorSelection(abc.ABC):

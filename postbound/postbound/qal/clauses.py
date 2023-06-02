@@ -594,12 +594,14 @@ class From(BaseClause):
                 contents_str.append(str(src))
         return fixture + "".join(contents_str)
 
+
 class ImplicitFromClause(From):
 
     @staticmethod
     def create_for(tables: base.TableReference | Iterable[base.TableReference]) -> ImplicitFromClause:
         tables = collection_utils.enlist(tables)
         return ImplicitFromClause([DirectTableSource(tab) for tab in tables])
+
     def __init__(self, tables: DirectTableSource | Iterable[DirectTableSource] | None = None):
         super().__init__(tables)
 
