@@ -288,7 +288,12 @@ class Select(BaseClause):
         """Shortcut to create a SELECT * clause."""
         return Select(BaseProjection.star())
 
-    def __init__(self, targets: BaseProjection | list[BaseProjection],
+    def create_for(columns: Iterable[base.ColumnReference],
+                   projection_type: SelectType = SelectType.Select) -> Select:
+        target_columns = [BaseProjection.column(column) for column in columns]
+        return Select(target_columns, projection_type)
+
+    def __init__(self, targets: BaseProjection | Sequence[BaseProjection],
                  projection_type: SelectType = SelectType.Select) -> None:
         if not targets:
             raise ValueError("At least one target must be specified")
