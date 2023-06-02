@@ -975,7 +975,6 @@ class QueryPredicates:
             aggregated_predicates.append(CompoundPredicate.create_and(join_group))
         return aggregated_predicates
 
-    @functools.cache
     def joins_between(self, first_table: base.TableReference | Iterable[base.TableReference],
                       second_table: base.TableReference | Iterable[base.TableReference]
                       ) -> Optional[AbstractPredicate]:

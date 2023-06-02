@@ -105,7 +105,7 @@ def _get_predicate_fragment(predicate: preds.AbstractPredicate,
 
 
 def extract_query_fragment(source_query: qal.ImplicitSqlQuery,
-                           referenced_tables: Iterable[base.TableReference]) -> qal.ImplicitSqlQuery | None:
+                           referenced_tables: Iterable[base.TableReference]) -> Optional[qal.ImplicitSqlQuery]:
     """Filters the `source_query` to only include the given tables.
 
     This constructs a new query from the given query that contains exactly those parts of the original query's clauses
