@@ -60,7 +60,8 @@ def plot_query_plan(plan: db.QueryExecutionPlan,
 
 def _explain_analyze_annotations(node: db.QueryExecutionPlan) -> str:
     card_row = f"[Rows expected={node.estimated_cardinality} actual={node.true_cardinality}]"
-    runtime_row = f"[Exec time={node.execution_time}s]"
+    exec_time = round(node.execution_time, 4)
+    runtime_row = f"[Exec time={exec_time}s]"
     return card_row + "\n" + runtime_row
 
 
