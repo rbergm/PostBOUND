@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import dataclasses
+import math
 import multiprocessing as mp
 import multiprocessing.connection
 import os
@@ -32,11 +33,11 @@ workloads.workloads_base_dir = "../workloads"
 
 @dataclasses.dataclass(frozen=True)
 class ExperimentConfig:
-    exhaustive_join_ordering_limit: int = 500
+    exhaustive_join_ordering_limit: int = 1000
     query_slowdown_tolerance_factor: int = 3
     min_queries_until_dynamic_timeout: int = 10
     default_query_timeout: int = 120
-    minimum_query_timeout: int = 30
+    minimum_query_timeout: int = 15
     timeout_mode: str = "native"  # allowed values: "native" / "dynamic"
     native_runtimes_df: str = "results/job/job-native-runtimes.csv"
 
@@ -103,10 +104,10 @@ def execute_query_handler(query: qal.SqlQuery, database: db.Database,
                           duration_sender: multiprocessing.connection.Connection) -> None:
     signal.signal(signal.SIGINT, signal.SIG_IGN)
     start_time = datetime.now()
-    database.execute_query(query, cache_enabled=False)
+    result_plan = database.execute_query(query, cache_enabled=False)
     end_time = datetime.now()
     query_duration = (end_time - start_time).total_seconds()
-    duration_sender.send(query_duration)
+    duration_sender.send((result_plan, query_duration))
 
 
 def generate_all_join_orders(query: qal.SqlQuery, exhaustive_enumerator: enumeration.ExhaustiveJoinOrderGenerator, *,
@@ -164,7 +165,6 @@ class EvaluationResult:
     query_hints: str
     planner_options: str
     query_plan: dict
-    cost_estimate: float
     execution_time: float
     timeout: float
 
@@ -225,6 +225,7 @@ def execute_single_query(label: str, query: qal.SqlQuery, join_order: jointree.L
     optimized_query = query_generator.generate_hints(query, join_order=join_order,
                                                      physical_operators=operator_selection,
                                                      plan_parameters=plan_params)
+    optimized_query = transform.as_explain_analyze(optimized_query)
 
     query_timeout = determine_timeout(label, total_query_runtime, n_executed_plans, config=config)
     query_duration_receiver, query_duration_sender = mp.Pipe(False)
@@ -241,20 +242,19 @@ def execute_single_query(label: str, query: qal.SqlQuery, join_order: jointree.L
         query_execution_worker.join()
         db_instance.reset_connection()
 
+        query_plan = db_instance.execute_query(transform.as_explain(optimized_query), cache_enabled=False)
         query_runtime = np.inf
     else:
-        query_runtime = query_duration_receiver.recv()
+        query_plan, query_runtime = query_duration_receiver.recv()
     query_execution_worker.close()
     query_duration_receiver.close()
     query_duration_sender.close()
 
-    query_plan = db_instance.execute_query(transform.as_explain(optimized_query), cache_enabled=False)
-    cost_estimate = db_instance.optimizer().cost_estimate(optimized_query)
     query_hints, planner_options = ((optimized_query.hints.query_hints, optimized_query.hints.preparatory_statements)
                                     if optimized_query.hints else ("", ""))
     return EvaluationResult(label=label, query=query, join_order=join_order,
                             query_hints=query_hints, planner_options=planner_options,
-                            query_plan=query_plan, cost_estimate=cost_estimate, execution_time=query_runtime,
+                            query_plan=query_plan, execution_time=query_runtime,
                             timeout=query_timeout)
 
 
@@ -290,7 +290,7 @@ def evaluate_query(label: str, query: qal.SqlQuery, *, db_instance: db.Database,
         join_order_plans = generate_random_join_orders(query, config=config)
 
     n_executed_plans = 0
-    total_query_runtime = 0
+    total_query_runtime = 0.0
     query_runtimes = []
     prewarm_database(query, db_instance, config=config)
     print("... Starting query execution")
@@ -299,7 +299,7 @@ def evaluate_query(label: str, query: qal.SqlQuery, *, db_instance: db.Database,
                                                  total_query_runtime=total_query_runtime,
                                                  db_instance=db_instance, config=config)
         n_executed_plans += 1
-        total_query_runtime += (evaluation_result.execution_time if np.isfinite(evaluation_result.execution_time)
+        total_query_runtime += (evaluation_result.execution_time if math.isfinite(evaluation_result.execution_time)
                                 else evaluation_result.timeout)
         query_runtimes.append(evaluation_result)
 
@@ -328,14 +328,14 @@ def read_config() -> tuple[ExperimentConfig, Sequence[str]]:
     arg_parser = argparse.ArgumentParser(description="Determines the difference in query runtime depending on the "
                                                      "selected join order for queries in the Join Order Benchmark.")
 
-    arg_parser.add_argument("--max-plans", action="store", type=int, default=500,
+    arg_parser.add_argument("--max-plans", action="store", type=int, default=1000,
                             help="The maximum number of join orders to evaluate per query.")
     arg_parser.add_argument("--slowdown-tolerance", action="store", type=float, default=2.5,
                             help="Maximum factor a query can be slower than the dynamic timeout before being "
                                  "cancelled.")
     arg_parser.add_argument("--default-timeout", action="store", type=int, default=120,
                             help="Default static query timeout.")
-    arg_parser.add_argument("--min-timeout", action="store", type=int, default=30,
+    arg_parser.add_argument("--min-timeout", action="store", type=int, default=15,
                             help="Minimum dynamic query timeout.")
     arg_parser.add_argument("--timeout-mode", action="store", default="dynamic", choices=["native", "dynamic"],
                             help="Calculate timeout based on current average runtime ('dynamic'), or based on the "
@@ -380,7 +380,7 @@ def main():
     os.makedirs(config.output_directory, exist_ok=True)
     pg_db = postgres.connect(config_file=".psycopg_connection_job")
 
-    workload = workloads.job()
+    workload = workloads.job(simplified=False)
 
     if labels:
         print(".. Filtering workload for queries", labels)
