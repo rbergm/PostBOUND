@@ -100,9 +100,9 @@ def pairs(lst: Iterable[T]) -> Iterable[tuple[T, T]]:
     return all_pairs
 
 
-def set_union(sets: Iterable[set | frozenset]) -> set:
+def set_union(sets: Iterable[set[T] | frozenset[T]]) -> set[T]:
     """Combines the elements of all input sets into one large set."""
-    union_set = set()
+    union_set: set[T] = set()
     for s in sets:
         union_set |= s
     return union_set
