@@ -565,12 +565,13 @@ class PostgresOptimizer(db.OptimizerInterface):
         self._pg_instance = postgres_instance
 
     def query_plan(self, query: qal.SqlQuery | str) -> db.QueryExecutionPlan:
-        query = self._pg_instance._prepare_query_execution(query, drop_explain=True)
+        if isinstance(query, qal.SqlQuery):
+            query = self._pg_instance._prepare_query_execution(query, drop_explain=True)
         raw_query_plan = self._pg_instance._obtain_query_plan(query)
         query_plan = PostgresExplainPlan(raw_query_plan)
         return query_plan.as_query_execution_plan()
 
-    def analyze_plan(self, query: qal.SqlQuery | str) -> db.QueryExecutionPlan:
+    def analyze_plan(self, query: qal.SqlQuery) -> db.QueryExecutionPlan:
         query = self._pg_instance._prepare_query_execution(transform.as_explain_analyze(query))
         self._pg_instance.cursor().execute(query)
         raw_query_plan = self._pg_instance.cursor().fetchone()[0]
@@ -578,13 +579,15 @@ class PostgresOptimizer(db.OptimizerInterface):
         return query_plan.as_query_execution_plan()
 
     def cardinality_estimate(self, query: qal.SqlQuery | str) -> int:
-        query = self._pg_instance._prepare_query_execution(query, drop_explain=True)
+        if isinstance(query, qal.SqlQuery):
+            query = self._pg_instance._prepare_query_execution(query, drop_explain=True)
         query_plan = self._pg_instance._obtain_query_plan(query)
         estimate = query_plan[0]["Plan"]["Plan Rows"]
         return estimate
 
     def cost_estimate(self, query: qal.SqlQuery | str) -> float:
-        query = self._pg_instance._prepare_query_execution(query, drop_explain=True)
+        if isinstance(query, qal.SqlQuery):
+            query = self._pg_instance._prepare_query_execution(query, drop_explain=True)
         query_plan = self._pg_instance._obtain_query_plan(query)
         estimate = query_plan[0]["Plan"]["Total Cost"]
         return estimate
@@ -769,7 +772,7 @@ class PostgresExplainNode:
         return db.QueryExecutionPlan(self.node_type, is_join=is_join, is_scan=is_scan, table=table,
                                      children=child_nodes, parallel_workers=par_workers,
                                      cost=self.cost, estimated_cardinality=self.cardinality_estimate,
-                                     true_cardinality=true_card, execution_time=self.execution_time,
+                                     true_cardinality=true_card, execution_time=self.execution_time / 1000,
                                      physical_operator=operator, inner_child=inner_child)
 
     def _parse_table(self) -> Optional[base.TableReference]:
