@@ -170,6 +170,68 @@ def extract_query_fragment(source_query: qal.ImplicitSqlQuery,
                                 orderby_clause=orderby_clause, limit_clause=source_query.limit_clause)
 
 
+def _default_subquery_name(tables: Iterable[base.TableReference]) -> str:
+    return "_".join(table.identifier() for table in tables)
+
+
+def move_into_subquery(query: qal.SqlQuery, tables: Iterable[base.TableReference],
+                       subquery_name: str = "") -> qal.SqlQuery:
+    if not query.from_clause:
+        raise ValueError("Cannot create a subquery for a query without a FROM clause")
+    predicates = query.predicates()
+    tables = set(tables)
+    if len(tables) < 2:
+        raise ValueError("At least two tables required")
+    all_referenced_columns = collection_utils.set_union(clause.columns() for clause in query.clauses()
+                                                        if not isinstance(clause, clauses.From))
+    columns_from_subquery_tables = {column for column in all_referenced_columns if column.table in tables}
+    if len({column.name for column in columns_from_subquery_tables}) < len(columns_from_subquery_tables):
+        raise ValueError("Cannot create subquery: subquery tables export columns of the same name")
+
+    subquery_name = subquery_name if subquery_name else _default_subquery_name(tables)
+    subquery_table = base.TableReference.create_virtual(subquery_name)
+    renamed_columns = {column: base.ColumnReference(column.name, subquery_table)
+                       for column in columns_from_subquery_tables}
+
+    subquery_predicates: list[preds.AbstractPredicate] = []
+    for table in tables:
+        filter_predicate = predicates.filters_for(table)
+        if not filter_predicate:
+            continue
+        subquery_predicates.append(filter_predicate)
+    join_predicates = predicates.joins_between(tables, tables)
+    if join_predicates:
+        subquery_predicates.append(join_predicates)
+
+    subquery_select = clauses.Select.create_for(columns_from_subquery_tables)
+    subquery_from = clauses.ImplicitFromClause.create_for(tables)
+    subquery_where = (clauses.Where(preds.CompoundPredicate.create_and(subquery_predicates))
+                      if subquery_predicates else None)
+    subquery_clauses = [subquery_select, subquery_from, subquery_where]
+    subquery = qal.build_query(clause for clause in subquery_clauses if clause)
+    subquery_table_source = clauses.SubqueryTableSource(subquery, subquery_name)
+
+    updated_from_sources = [table_source for table_source in query.from_clause.contents
+                            if not table_source.tables() < tables]
+    update_from_clause = clauses.ImplicitFromClause.create_for(updated_from_sources + [subquery_table_source])
+    updated_predicate = query.where_clause.predicate if query.where_clause else None
+    for predicate in subquery_predicates:
+        updated_predicate = remove_predicate(updated_predicate, predicate)
+    updated_where_clause = clauses.Where(updated_predicate) if updated_predicate else None
+
+    updated_query = drop_clause(query, [clauses.From, clauses.Where])
+    updated_query = add_clause(updated_query, [update_from_clause, updated_where_clause])
+
+    updated_other_clauses: list[clauses.BaseClause] = []
+    for clause in updated_query.clauses():
+        if isinstance(clause, clauses.From):
+            continue
+        renamed_clause = rename_columns_in_clause(clause, renamed_columns)
+        updated_other_clauses.append(renamed_clause)
+    final_query = replace_clause(updated_query, updated_other_clauses)
+    return final_query
+
+
 def as_count_star_query(source_query: QueryType) -> QueryType:
     """Replaces the SELECT clause of the given query with a COUNT(*) statement."""
     # TODO: how to work with column aliases from the SELECT clause that are referenced later on?
@@ -195,6 +257,27 @@ def as_explain(query: QueryType, explain: clauses.Explain = clauses.Explain.plan
 def as_explain_analyze(query: QueryType) -> QueryType:
     """Transforms the given query into an EXPLAIN ANALYZE query."""
     return as_explain(query, clauses.Explain.explain_analyze())
+
+
+def remove_predicate(predicate: Optional[preds.AbstractPredicate],
+                     predicate_to_remove: preds.AbstractPredicate) -> Optional[preds.AbstractPredicate]:
+    if not predicate or predicate == predicate_to_remove:
+        return None
+    if not isinstance(predicate, preds.CompoundPredicate):
+        return predicate
+
+    if predicate.operation == expr.LogicalSqlCompoundOperators.Not:
+        updated_child = remove_predicate(predicate.children, predicate_to_remove)
+        return preds.CompoundPredicate.create_not(updated_child) if updated_child else None
+
+    updated_children = [remove_predicate(child_pred, predicate_to_remove) for child_pred in predicate.children]
+    updated_children = [child_pred for child_pred in updated_children if child_pred]
+    if not updated_children:
+        return None
+    elif len(updated_children) == 1:
+        return updated_children[0]
+    else:
+        return preds.CompoundPredicate(predicate.operation, updated_children)
 
 
 def add_clause(query: qal.SqlQuery, clauses_to_add: clauses.BaseClause | Iterable[clauses.BaseClause]) -> qal.SqlQuery:
