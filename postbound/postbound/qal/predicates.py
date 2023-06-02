@@ -1003,18 +1003,20 @@ class QueryPredicates:
             return None
 
         if isinstance(first_table, base.TableReference) and isinstance(second_table, base.TableReference):
+            if first_table == second_table:
+                return None
             first_joins: Collection[AbstractPredicate] = self.joins_for(first_table)
-            matching_joins = [join for join in first_joins if join.joins_table(second_table)]
+            matching_joins = {join for join in first_joins if join.joins_table(second_table)}
             return CompoundPredicate.create_and(matching_joins) if matching_joins else None
 
-        matching_joins = []
+        matching_joins = set()
         first_table, second_table = collection_utils.enlist(first_table), collection_utils.enlist(second_table)
         for first in frozenset(first_table):
             for second in frozenset(second_table):
                 join_predicate = self.joins_between(first, second)
                 if not join_predicate:
                     continue
-                matching_joins.append(join_predicate)
+                matching_joins.add(join_predicate)
         return CompoundPredicate.create_and(matching_joins) if matching_joins else None
 
     def joins_tables(self, tables: base.TableReference | Iterable[base.TableReference],
