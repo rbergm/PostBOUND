@@ -416,46 +416,52 @@ class DirectTableSource(TableSource):
 
 
 class SubqueryTableSource(TableSource):
-    def __init__(self, query: qal.SqlQuery, target_name: str) -> None:
-        self._query = query
+
+    def __init__(self, query: qal.SqlQuery | expr.SubqueryExpression, target_name: str) -> None:
+        self._subquery_expression = (query if isinstance(query, expr.SubqueryExpression)
+                                     else expr.SubqueryExpression(query))
         self._target_name = target_name
-        self._hash_val = hash((self._query, self._target_name))
+        self._hash_val = hash((self._subquery_expression, self._target_name))
 
     @property
     def query(self) -> qal.SqlQuery:
-        return self._query
+        return self._subquery_expression.query
 
     @property
     def target_name(self) -> str:
         return self._target_name
 
+    @property
+    def expression(self) -> expr.SubqueryExpression:
+        return self._subquery_expression
+
     def tables(self) -> set[base.TableReference]:
-        return self._query.tables()
+        return self._subquery_expression.tables()
 
     def columns(self) -> set[base.ColumnReference]:
-        return self._query.columns()
+        return self._subquery_expression.columns()
 
     def iterexpressions(self) -> Iterable[expr.SqlExpression]:
-        return self._query.iterexpressions()
+        return [self._subquery_expression]
 
     def itercolumns(self) -> Iterable[base.ColumnReference]:
-        return self._query.itercolumns()
+        return self._subquery_expression.itercolumns()
 
     def predicates(self) -> preds.QueryPredicates | None:
-        return self._query.predicates()
+        return self._subquery_expression.query.predicates()
 
     def __hash__(self) -> int:
         return self._hash_val
 
     def __eq__(self, other: object) -> bool:
-        return (isinstance(other, type(self)) and self._query == other._query
+        return (isinstance(other, type(self)) and self._subquery_expression == other._subquery_expression
                 and self._target_name == other._target_name)
 
     def __repr__(self) -> str:
-        return str(self._query)
+        return str(self._subquery_expression)
 
     def __str__(self) -> str:
-        query_str = str(self._query).removesuffix(";")
+        query_str = str(self._subquery_expression.query).removesuffix(";")
         return f"({query_str}) AS {self._target_name}"
 
 

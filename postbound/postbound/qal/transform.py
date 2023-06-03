@@ -351,7 +351,9 @@ def _replace_expression_in_table_source(table_source: clauses.TableSource,
     if isinstance(table_source, clauses.DirectTableSource):
         return table_source
     elif isinstance(table_source, clauses.SubqueryTableSource):
-        replaced_subquery = replace_expressions(table_source.query, replacement)
+        replaced_subquery = replacement(table_source.expression)
+        assert isinstance(replaced_subquery, expr.SubqueryExpression)
+        replaced_subquery = replace_expressions(replaced_subquery.query, replacement)
         return clauses.SubqueryTableSource(replaced_subquery, table_source.target_name)
     elif isinstance(table_source, clauses.JoinTableSource):
         replaced_source = _replace_expression_in_table_source(table_source.source, replacement)
