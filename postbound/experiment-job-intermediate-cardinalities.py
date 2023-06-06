@@ -35,13 +35,14 @@ for label, query in job_benchmark.entries():
         if not query_predicates.joins_tables(joined_tables):
             continue
 
+        joined_tables = sorted(joined_tables)
         query_fragment = transform.extract_query_fragment(query, joined_tables)
         assert query_fragment is not None
         query_fragment = transform.as_count_star_query(query_fragment)
+        fragment_to_queries_map[query_fragment].append(query)
         if query_fragment in explored_queries:
             continue
         explored_queries.add(query_fragment)
-        fragment_to_queries_map[query_fragment].append(query)
         db_pool.queue_query(query_fragment)
 
 print(".. All queries submitted to DB pool")
