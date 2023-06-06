@@ -187,6 +187,10 @@ class SqlQuery(Generic[FromClauseType], abc.ABC):
         """Checks, whether this query is in explicit form."""
         raise NotImplementedError
 
+    def is_explain(self) -> bool:
+        """Checks, whether this query is an EXPLAIN query rather than a normal SQL query."""
+        return self.explain is not None
+
     @functools.cache
     def tables(self) -> set[base.TableReference]:
         """Provides all tables that are referenced at any place in the query.

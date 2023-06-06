@@ -89,3 +89,12 @@ def annotate_filter_cards(table: base.TableReference, *, query: qal.SqlQuery, da
     count_query = transform.as_count_star_query(filter_query)
     card = database.execute_query(count_query, cache_enabled=True)
     return f"[{card} rows]"
+
+
+def annotate_cards(table: base.TableReference, *, query: qal.SqlQuery, database: Optional[db.Database] = None) -> str:
+    database = database if database is not None else db.DatabasePool.get_instance().current_database()
+    filter_query = transform.extract_query_fragment(query, [table])
+    count_query = transform.as_count_star_query(filter_query)
+    filter_card = database.execute_query(count_query, cache_enabled=True)
+    total_card = database.statistics().total_rows(table, emulated=True, cache_enabled=True)
+    return f"|R| = {total_card} |σ(R)| = {filter_card}"

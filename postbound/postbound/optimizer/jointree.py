@@ -5,7 +5,7 @@ import collections
 import functools
 import math
 import typing
-from collections.abc import Callable, Container, Sequence
+from collections.abc import Callable, Container, Iterable, Sequence
 from typing import Generic, Optional, Union
 
 from postbound.qal import base, predicates, qal
@@ -218,6 +218,10 @@ class AbstractJoinTreeNode(abc.ABC, Container[base.TableReference], Generic[Join
     def is_bushy(self) -> bool:
         return not self.is_linear()
 
+    def lookup(self,
+               tables: set[base.TableReference]) -> Optional[AbstractJoinTreeNode[JoinMetadataType, BaseTableMetadataType]]:
+        raise NotImplementedError
+
     @abc.abstractmethod
     def tree_depth(self) -> int:
         """Provides the maximum number of nodes that need to be passed until a base table node is reached.
@@ -363,6 +367,24 @@ class IntermediateJoinNode(AbstractJoinTreeNode[JoinMetadataType, BaseTableMetad
         if self.left_child.is_join_node() and self.right_child.is_join_node():
             return False
         return self.left_child.is_zigzag() and self.right_child.is_zigzag()
+
+    def lookup(self, tables: set[base.TableReference]) -> Optional[base.TableReference]:
+        own_tables = self.tables()
+        if len(own_tables) < len(tables):
+            return None
+
+        if len(own_tables) == len(tables):
+            return self if own_tables == tables else None
+
+        left_tables = self.left_child.tables()
+        if tables <= left_tables:
+            return self.left_child.lookup(tables)
+
+        right_tables = self.right_child.tables()
+        if tables <= right_tables:
+            return self.right_child.lookup(tables)
+
+        return None
 
     def tree_depth(self) -> int:
         return 1 + max(self.left_child.tree_depth(), self.right_child.tree_depth())
@@ -605,6 +627,14 @@ class JoinTree(Container[base.TableReference], Generic[JoinMetadataType, BaseTab
     def traverse(self) -> Optional[AbstractJoinTreeNode[JoinMetadataType, BaseTableMetadataType]]:
         """Accesses the root element of this join tree if there is any."""
         return self._root
+
+    def lookup(self, tables: Iterable[base.TableReference]) -> Optional[AbstractJoinTreeNode]:
+        if self.is_empty():
+            return None
+        tables = set(tables)
+        if not tables:
+            return None
+        return self._root.lookup(tables)
 
     def tables(self) -> frozenset[base.TableReference]:
         """Provides all tables that are currently contained in the join tree."""
