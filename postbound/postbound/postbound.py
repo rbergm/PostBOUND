@@ -163,14 +163,8 @@ class OptimizationPipeline:
             raise ValueError(f"Unknown query type '{type(query)}' for query '{query}'")
 
         join_order = self.join_order_enumerator.optimize_join_order(query)
-
         operators = self.physical_operator_selection.select_physical_operators(query, join_order)
-        if join_order:
-            join_order.operator_assignment = None
-
         plan_parameters = self.plan_parameterization.generate_plan_parameters(query, join_order, operators)
-        if join_order:
-            join_order.plan_parameterization = None
 
         return self.target_db.hinting().generate_hints(query, join_order=join_order, physical_operators=operators,
                                                        plan_parameters=plan_parameters)
