@@ -57,10 +57,10 @@ def _plot_join_graph_directly(join_graph: joingraph.JoinGraph,
         node_label += ("\n" + table_annotations(table)) if table_annotations is not None else ""
         gv_graph.node(str(table), label=node_label, color=node_color)
     for start, target in join_graph.all_joins():
-        if join_graph.is_pk_fk_join(start, target):
-            gv_graph.edge(str(target), str(start))
-        elif join_graph.is_pk_fk_join(target, start):
-            gv_graph.edge(str(start), str(target))
+        if join_graph.is_pk_fk_join(start, target):  # start is FK, target is PK
+            gv_graph.edge(str(start), str(target))  # edge arrow goes from start to target (i.e. FK to PK)
+        elif join_graph.is_pk_fk_join(target, start):  # target is FK, start is PK
+            gv_graph.edge(str(target), str(start))  # edge arrow goes form target to start (i.e. FK to PK)
         else:
             gv_graph.edge(str(start), str(target), dir="none")
     return gv_graph
@@ -83,7 +83,8 @@ def estimated_cards(table: base.TableReference, *, query: qal.SqlQuery, database
     return f"[{card_est} rows estimated]"
 
 
-def annotate_filter_cards(table: base.TableReference, *, query: qal.SqlQuery, database: Optional[db.Database] = None) -> str:
+def annotate_filter_cards(table: base.TableReference, *, query: qal.SqlQuery,
+                          database: Optional[db.Database] = None) -> str:
     database = database if database is not None else db.DatabasePool.get_instance().current_database()
     filter_query = transform.extract_query_fragment(query, [table])
     count_query = transform.as_count_star_query(filter_query)
