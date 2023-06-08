@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import dataclasses
+import json
 import math
 import multiprocessing as mp
 import multiprocessing.connection
@@ -9,15 +10,15 @@ import os
 import pathlib
 import re
 import signal
-from collections.abc import Sequence
+from collections.abc import Callable, Iterable, Sequence
 from datetime import datetime
-from typing import Iterable
+from typing import Optional
 
 import numpy as np
 import pandas as pd
 
 from postbound.db import db, postgres
-from postbound.qal import qal, transform, parser
+from postbound.qal import qal, base, transform, parser
 from postbound.experiments import workloads
 from postbound.optimizer import jointree
 from postbound.optimizer.joinorder import enumeration
@@ -74,7 +75,9 @@ def skip_existing_results(workload: workloads.Workload, *,
     if not existing_results:
         return workload
     skipped_workload = workload.filter_by(lambda l, __: l not in existing_results)
-    print(".. Skipping existing results until label", skipped_workload.head()[0])
+    next_query = skipped_workload.head()
+    assert next_query is not None
+    print(".. Skipping existing results until label", next_query[0])
     return skipped_workload
 
 
@@ -187,11 +190,18 @@ def determine_timeout(label: str, total_query_runtime: float, n_executed_plans: 
     return max(timeout, config.minimum_query_timeout)
 
 
-def restrict_to_hash_join() -> operators.PhysicalOperatorAssignment:
+OperatorSelection = tuple[Optional[operators.PhysicalOperatorAssignment], Optional[params.PlanParameterization]]
+
+
+def native_operator_selection(join_order: jointree.JoinTree) -> OperatorSelection:
+    return None, None
+
+
+def restrict_to_hash_join(join_order: jointree.JoinTree) -> OperatorSelection:
     operator_selection = operators.PhysicalOperatorAssignment()
     operator_selection.set_operator_enabled_globally(operators.JoinOperators.NestedLoopJoin, False)
     operator_selection.set_operator_enabled_globally(operators.JoinOperators.SortMergeJoin, False)
-    return operator_selection
+    return operator_selection, None
 
 
 def true_cardinality_hints(label: str, config: ExperimentConfig) -> params.PlanParameterization:
@@ -204,24 +214,51 @@ def true_cardinality_hints(label: str, config: ExperimentConfig) -> params.PlanP
     return plan_params
 
 
+def parse_tables_list(tables: str) -> set[base.TableReference]:
+    jsonized = json.loads(tables)
+    return {base.TableReference(tab["full_name"], tab.get("alias")) for tab in jsonized}
+
+
+class TrueCardinalityGenerator:
+    def __init__(self, config: ExperimentConfig = ExperimentConfig.default()) -> None:
+        self._card_df = pd.read_csv(config.true_cardinalities_df)
+        self._card_df["tables"] = self._card_df["tables"].apply(parse_tables_list)
+        self._current_label: Optional[str] = None
+        self._relevant_queries: Optional[pd.DataFrame] = None
+
+    def setup_for_query(self, label: str, query: qal.SqlQuery) -> None:
+        self._current_label = label
+        self._relevant_queries = self._card_df[self._card_df.label == label].copy()
+
+    def __call__(self, join_order: jointree.JoinTree) -> OperatorSelection:
+        assert self._relevant_queries is not None
+        plan_params = params.PlanParameterization()
+        for intermediate_join in join_order.join_sequence():
+            joined_tables = intermediate_join.tables()
+            current_cardinality = self._relevant_queries[self._relevant_queries.tables == joined_tables]
+            if current_cardinality.empty:
+                print("[CARD ERROR] No cardinality found for intermediate", intermediate_join, "at label", self._current_label)
+                continue
+            cardinality = current_cardinality.iloc[0]["cardinality"]
+            plan_params.add_cardinality_hint(joined_tables, cardinality)
+        for base_table in join_order.table_sequence():
+            table = base_table.table
+            current_cardinality = self._relevant_queries[self._relevant_queries.tables == {table}]
+            if current_cardinality.empty:
+                print("[CARD ERROR] No cardinality found for base table", intermediate_join, "at label", self._current_label)
+                continue
+            cardinality = current_cardinality.iloc[0]["cardinality"]
+            plan_params.add_cardinality_hint([table], cardinality)
+        return None, plan_params
+
+
 def execute_single_query(label: str, query: qal.SqlQuery, join_order: jointree.LogicalJoinTree, *,
                          n_executed_plans: int = 0, total_query_runtime: float = 0,
-                         db_instance: db.Database,
+                         db_instance: db.Database, operator_generator: Callable[[jointree.JoinTree], OperatorSelection],
                          config: ExperimentConfig = ExperimentConfig.default()) -> EvaluationResult:
     query_generator = db_instance.hinting()
 
-    if config.operator_selection == "native":
-        operator_selection = None
-        plan_params = None
-    elif config.operator_selection == "hashjoin":
-        operator_selection = restrict_to_hash_join()
-        plan_params = None
-    elif config.operator_selection == "optimal":
-        operator_selection = None
-        plan_params = true_cardinality_hints(label, config)
-    else:
-        raise ValueError("Unknown operator selection strategy: " + config.operator_selection)
-
+    operator_selection, plan_params = operator_generator(join_order)
     optimized_query = query_generator.generate_hints(query, join_order=join_order,
                                                      physical_operators=operator_selection,
                                                      plan_parameters=plan_params)
@@ -289,6 +326,16 @@ def evaluate_query(label: str, query: qal.SqlQuery, *, db_instance: db.Database,
         print("... Falling back to random sampling of join orders")
         join_order_plans = generate_random_join_orders(query, config=config)
 
+    if config.operator_selection == "native":
+        operator_generator = native_operator_selection
+    elif config.operator_selection == "hashjoin":
+        operator_generator = restrict_to_hash_join
+    elif config.operator_selection == "optimal":
+        operator_generator = TrueCardinalityGenerator(config)
+        operator_generator.setup_for_query(label, query)
+    else:
+        raise ValueError("Unknown operator selection strategy: " + config.operator_selection)
+
     n_executed_plans = 0
     total_query_runtime = 0.0
     query_runtimes = []
@@ -297,7 +344,7 @@ def evaluate_query(label: str, query: qal.SqlQuery, *, db_instance: db.Database,
     for join_order in join_order_plans:
         evaluation_result = execute_single_query(label, query, join_order, n_executed_plans=n_executed_plans,
                                                  total_query_runtime=total_query_runtime,
-                                                 db_instance=db_instance, config=config)
+                                                 db_instance=db_instance, operator_generator=operator_generator, config=config)
         n_executed_plans += 1
         total_query_runtime += (evaluation_result.execution_time if math.isfinite(evaluation_result.execution_time)
                                 else evaluation_result.timeout)
@@ -323,7 +370,7 @@ def prepare_for_export(df: pd.DataFrame) -> pd.DataFrame:
 
 def read_config() -> tuple[ExperimentConfig, Sequence[str]]:
     if not Interactive:
-        return ExperimentConfig.default(), ["1a"]
+        return ExperimentConfig(operator_selection="optimal"), ["1a"]
 
     arg_parser = argparse.ArgumentParser(description="Determines the difference in query runtime depending on the "
                                                      "selected join order for queries in the Join Order Benchmark.")
