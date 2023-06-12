@@ -16,7 +16,7 @@ import psycopg
 import psycopg.rows
 
 from postbound.db import db
-from postbound.qal import qal, base, clauses, transform, formatter
+from postbound.qal import qal, base, expressions, clauses, transform, formatter
 from postbound.optimizer import jointree
 from postbound.optimizer.physops import operators as physops
 from postbound.optimizer.planmeta import hints as planmeta
@@ -50,7 +50,7 @@ class PostgresInterface(db.Database):
             self._db_stats.cache_enabled = cache_enabled
         return self._db_stats
 
-    def hinting(self) -> db.HintService:
+    def hinting(self) -> PostgresHintService:
         return PostgresHintService()
 
     def execute_query(self, query: qal.SqlQuery | str, *, cache_enabled: Optional[bool] = None) -> Any:
@@ -81,7 +81,7 @@ class PostgresInterface(db.Database):
             query_result = [row[0] for row in query_result]  # if it is just one column, unwrap it
         return query_result if len(query_result) > 1 else query_result[0]  # if it is just one row, unwrap it
 
-    def optimizer(self) -> db.OptimizerInterface:
+    def optimizer(self) -> PostgresOptimizer:
         return PostgresOptimizer(self)
 
     def database_name(self) -> str:
@@ -516,7 +516,19 @@ PostgresJoinHints = {physops.JoinOperators.NestedLoopJoin, physops.JoinOperators
 PostgresScanHints = {physops.ScanOperators.SequentialScan, physops.ScanOperators.IndexScan,
                      physops.ScanOperators.IndexOnlyScan, physops.ScanOperators.BitmapScan}
 PostgresPlanHints = {planmeta.HintType.CardinalityHint, planmeta.HintType.ParallelizationHint,
-                     planmeta.HintType.JoinOrderHint, planmeta.HintType.JoinDirectionHint}
+                     planmeta.HintType.JoinOrderHint, planmeta.HintType.JoinSubqueryHint, planmeta.HintType.JoinDirectionHint}
+
+
+class _PostgresCastExpression(expressions.CastExpression):
+    def __init__(self, original_cast: expressions.CastExpression) -> None:
+        super().__init__(original_cast.casted_expression, original_cast.target_type)
+
+    def __str__(self) -> str:
+        return f"{self.casted_expression}::{self.target_type}"
+
+
+def _replace_postgres_cast_expressions(expression: expressions.SqlExpression) -> expressions.SqlExpression:
+    return _PostgresCastExpression(expression) if isinstance(expression, expressions.CastExpression) else expression
 
 
 class PostgresHintService(db.HintService):
@@ -553,6 +565,7 @@ class PostgresHintService(db.HintService):
         return adapted_query
 
     def format_query(self, query: qal.SqlQuery) -> str:
+        query = transform.replace_expressions(query, _replace_postgres_cast_expressions)
         return formatter.format_quick(query)
 
     def supports_hint(self, hint: physops.PhysicalOperator | planmeta.HintType) -> bool:
@@ -723,7 +736,7 @@ class PostgresExplainNode:
 
         self.cost = explain_data.get("Total Cost", math.nan)
         self.cardinality_estimate = explain_data.get("Plan Rows", math.nan)
-        self.execution_time = explain_data.get("Actual Total Time", math.nan)
+        self.execution_time = explain_data.get("Actual Total Time", math.nan) / 1000
         self.true_cardinality = explain_data.get("Actual Rows", math.nan)
         self.loops = explain_data.get("Actual Loops", 1)
 
@@ -741,6 +754,9 @@ class PostgresExplainNode:
         self.parallel_workers = explain_data.get("Workers Launched", math.nan)
 
         self.children = [PostgresExplainNode(child) for child in explain_data.get("Plans", [])]
+
+    def is_analyze(self) -> bool:
+        return not math.isnan(self.execution_time) or not math.isnan(self.true_cardinality)
 
     def as_query_execution_plan(self) -> db.QueryExecutionPlan:
         if self.children and len(self.children) > 2:
@@ -772,7 +788,7 @@ class PostgresExplainNode:
         return db.QueryExecutionPlan(self.node_type, is_join=is_join, is_scan=is_scan, table=table,
                                      children=child_nodes, parallel_workers=par_workers,
                                      cost=self.cost, estimated_cardinality=self.cardinality_estimate,
-                                     true_cardinality=true_card, execution_time=self.execution_time / 1000,
+                                     true_cardinality=true_card, execution_time=self.execution_time,
                                      physical_operator=operator, inner_child=inner_child)
 
     def _parse_table(self) -> Optional[base.TableReference]:
@@ -785,9 +801,23 @@ class PostgresExplainNode:
 class PostgresExplainPlan:
     def __init__(self, explain_data: dict) -> None:
         explain_data = explain_data[0] if isinstance(explain_data, list) else explain_data
-        self.planning_time = explain_data.get("Planning Time", math.nan)
-        self.execution_time = explain_data.get("Execution Time", math.nan)
+        self.planning_time = explain_data.get("Planning Time", math.nan) / 1000
+        self.execution_time = explain_data.get("Execution Time", math.nan) / 1000
         self.query_plan = PostgresExplainNode(explain_data["Plan"])
+
+    def is_analyze(self) -> bool:
+        return self.query_plan.is_analyze()
 
     def as_query_execution_plan(self) -> db.QueryExecutionPlan:
         return self.query_plan.as_query_execution_plan()
+
+    def __repr__(self) -> str:
+        return str(self)
+
+    def __str__(self) -> str:
+        if self.is_analyze():
+            prefix = f"EXPLAIN ANALYZE (plan time={self.planning_time}, exec time={self.execution_time})"
+        else:
+            prefix = "EXPLAIN"
+
+        return f"{prefix} root: {self.query_plan}"

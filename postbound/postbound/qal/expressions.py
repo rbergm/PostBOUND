@@ -192,7 +192,7 @@ class CastExpression(SqlExpression):
                 and self.target_type == other.target_type)
 
     def __str__(self) -> str:
-        return f"{self.casted_expression}::{self.target_type}"
+        return f"CAST({self.casted_expression} AS {self.target_type})"
 
 
 class MathematicalExpression(SqlExpression):
