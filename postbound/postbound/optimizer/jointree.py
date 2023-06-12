@@ -386,6 +386,7 @@ class IntermediateJoinNode(AbstractJoinTreeNode[JoinMetadataType, BaseTableMetad
 
         return None
 
+    @functools.cache
     def tree_depth(self) -> int:
         return 1 + max(self.left_child.tree_depth(), self.right_child.tree_depth())
 
@@ -397,21 +398,25 @@ class IntermediateJoinNode(AbstractJoinTreeNode[JoinMetadataType, BaseTableMetad
                              if self.annotation and self.annotation.join_predicate else set())
         return frozenset(self._left_child.columns() | self._right_child.columns() | predicate_columns)
 
+    def children_by_depth(self) -> tuple[AbstractJoinTreeNode[JoinMetadataType, BaseTableMetadataType],
+                                         AbstractJoinTreeNode[JoinMetadataType, BaseTableMetadataType]]:
+        return ((self.left_child, self.right_child) if self.left_child.tree_depth() >= self.right_child.tree_depth()
+                else (self.right_child, self.left_child))
+
     def join_sequence(self) -> Sequence[IntermediateJoinNode[JoinMetadataType, BaseTableMetadataType]]:
-        is_final_join = not self.left_child.is_join_node() and not self.right_child.is_join_node()
-        if is_final_join:
+        if self.is_base_join():
             return [self]
 
-        sequence = []
-        if self.right_child.is_join_node():
-            sequence.extend(self.right_child.join_sequence())
-        if self.left_child.is_join_node():
-            sequence.extend(self.left_child.join_sequence())
-        sequence.append(self)
-        return sequence
+        deep_child, flat_child = self.children_by_depth()
+        return list(deep_child) + list(flat_child) + [self]
 
     def table_sequence(self) -> Sequence[BaseTableNode[JoinMetadataType, BaseTableMetadataType]]:
-        return list(self.right_child.table_sequence()) + list(self.left_child.table_sequence())
+        if self.is_base_join():
+            assert isinstance(self.left_child, BaseTableNode) and isinstance(self.right_child, BaseTableNode)
+            return [self.left_child.table, self.right_child.table]
+
+        deep_child, flat_child = self.children_by_depth()
+        return list(deep_child.table_sequence()) + list(flat_child.table_sequence())
 
     def as_list(self) -> NestedTableSequence:
         return [self.left_child.as_list(), self.right_child.as_list()]
@@ -457,9 +462,10 @@ class IntermediateJoinNode(AbstractJoinTreeNode[JoinMetadataType, BaseTableMetad
                 and self.right_child == __value.right_child)
 
     def __str__(self) -> str:
-        left_str = f"({self.left_child})" if self.left_child.is_join_node() else str(self.left_child)
-        right_str = str(self.right_child)
-        return f"{right_str} ⋈ {left_str}"
+        deep_child, flat_child = self.children_by_depth()
+        deep_str = str(deep_child)
+        flat_str = f"({flat_child})" if flat_child.is_join_node() else str(flat_child)
+        return f"{deep_str} ⋈ {flat_str}"
 
 
 class BaseTableNode(AbstractJoinTreeNode[JoinMetadataType, BaseTableMetadataType],
