@@ -75,5 +75,6 @@ class HintType(enum.Enum):
     """Contains all hint types that are supported by PostBOUND (or at least should be supported in the future)."""
     JoinOrderHint = "Join order"
     JoinDirectionHint = "Join direction"
+    JoinSubqueryHint = "Bushy join order"
     ParallelizationHint = "Par. workers"
     CardinalityHint = "Cardinality"
