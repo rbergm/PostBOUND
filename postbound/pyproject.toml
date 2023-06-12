@@ -16,6 +16,7 @@ classifiers = [
     "Operating System :: OS Independent",
 ]
 dependencies = [
+    "levenshtein",
     "mo-sql-parsing",
     "natsort",
     "networkx",

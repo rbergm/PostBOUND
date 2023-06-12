@@ -1,4 +1,5 @@
 graphviz
+levenshtein
 matplotlib
 mo-sql-parsing
 mysql-connector-python
