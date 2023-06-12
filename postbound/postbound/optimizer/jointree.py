@@ -8,6 +8,8 @@ import typing
 from collections.abc import Callable, Container, Iterable, Sequence
 from typing import Generic, Optional, Union
 
+import Levenshtein
+
 from postbound.qal import base, predicates, qal
 from postbound.db import db
 from postbound.optimizer.physops import operators as physops
@@ -1096,6 +1098,10 @@ def bottom_up_similarity(a: JoinTree, b: JoinTree) -> float:
     a_subtrees = {join.tables() for join in a.join_sequence()}
     b_subtrees = {join.tables() for join in b.join_sequence()}
     return stats.jaccard(a_subtrees, b_subtrees)
+
+
+def linearized_levenshtein_distance(a: JoinTree, b: JoinTree) -> int:
+    return Levenshtein.distance(a.table_sequence(), b.table_sequence())
 
 
 _DepthState = collections.namedtuple("_DepthState", ["current_level", "depths"])
