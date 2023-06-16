@@ -168,6 +168,16 @@ class PostgresSchemaInterface(db.DatabaseSchema):
     def __int__(self, postgres_db: PostgresInterface) -> None:
         super().__init__(postgres_db)
 
+    def tables(self) -> set[base.TableReference]:
+        query_template = textwrap.dedent("""
+                                         SELECT table_name
+                                         FROM information_schema.tables
+                                         WHERE table_catalog = %s AND table_schema = 'public'""")
+        self._db.cursor().execute(query_template, (self._db.database_name(),))
+        result_set = self._db.cursor().fetchall()
+        assert result_set is not None
+        return set(base.TableReference(row[0]) for row in result_set)
+
     def lookup_column(self, column: base.ColumnReference | str,
                       candidate_tables: list[base.TableReference]) -> base.TableReference:
         column = column.name if isinstance(column, base.ColumnReference) else column
@@ -680,7 +690,7 @@ class ParallelQueryExecutor:
     Postgres-specific.
     """
 
-    def __init__(self, connect_string: str, n_threads: int = None, *, verbose: bool = False) -> None:
+    def __init__(self, connect_string: str, n_threads: Optional[int] = None, *, verbose: bool = False) -> None:
         self._n_threads = n_threads if n_threads is not None and n_threads > 0 else os.cpu_count()
         self._connect_string = connect_string
         self._verbose = verbose

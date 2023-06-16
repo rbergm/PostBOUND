@@ -135,7 +135,7 @@ class Database(abc.ABC):
         self.system_name = system_name
 
         self._cache_enabled = cache_enabled
-        self._query_cache = {}
+        self._query_cache: dict[str, list[tuple]] = {}
         if self._cache_enabled:
             self.__inflate_query_cache()
         atexit.register(self.close)
@@ -278,6 +278,45 @@ class DatabaseSchema(abc.ABC):
 
     def __init__(self, db: Database):
         self._db = db
+
+    def tables(self) -> set[base.TableReference]:
+        """Fetches all user-defined tables that are contained in the current database.
+
+        Returns
+        -------
+        set[base.TableReference]
+            All tables in the current schema, including materialized views, etc.
+        """
+        query_template = "SELECT table_name FROM information_schema.tables WHERE table_catalog = %s"
+        self._db.cursor().execute(query_template, (self._db.database_name(),))
+        result_set = self._db.cursor().fetchall()
+        assert result_set is not None
+        return set(base.TableReference(row[0]) for row in result_set)
+
+    def columns(self, table: base.TableReference | str) -> set[base.ColumnReference]:
+        """Fetches all columns of the given table.
+
+        Parameters
+        ----------
+        table : base.TableReference | str
+            A table in the current schema
+
+        Returns
+        -------
+        set[base.ColumnReference]
+            All columns for the given table. Will be empty if the table is not found or does not contain any columns.
+        """
+        table = table if isinstance(table, base.TableReference) else base.TableReference(table)
+        query_template = textwrap.dedent("""
+                                         SELECT column_name
+                                         FROM information_schema.columns
+                                         WHERE table_catalog = %s AND table_name = %s
+                                         """)
+        db_name = self._db.database_name()
+        self._db.cursor().execute(query_template, (db_name, table.full_name))
+        result_set = self._db.cursor().fetchall()
+        assert result_set is not None
+        return set(base.ColumnReference(row[0], table) for row in result_set)
 
     @abc.abstractmethod
     def lookup_column(self, column: base.ColumnReference | str,
@@ -504,7 +543,7 @@ class DatabaseStatistics(abc.ABC):
         """
         raise NotImplementedError
 
-    def _determine_caching_behaviour(self, local_cache_enabled: Optional[bool]) -> bool:
+    def _determine_caching_behaviour(self, local_cache_enabled: Optional[bool]) -> Optional[bool]:
         return self.cache_enabled if local_cache_enabled is None else local_cache_enabled
 
     def __repr__(self) -> str:
@@ -600,7 +639,7 @@ class QueryExecutionPlan:
     """
 
     def __init__(self, node_type: str, is_join: bool, is_scan: bool, *, table: Optional[base.TableReference] = None,
-                 children: Optional[Iterable[QueryExecutionPlan, QueryExecutionPlan]] = None,
+                 children: Optional[Iterable[QueryExecutionPlan]] = None,
                  parallel_workers: float = math.nan, cost: float = math.nan,
                  estimated_cardinality: float = math.nan, true_cardinality: float = math.nan,
                  execution_time: float = math.nan, physical_operator: Optional[physops.PhysicalOperator] = None,
@@ -617,11 +656,10 @@ class QueryExecutionPlan:
         self.parallel_workers = parallel_workers
         self.children: Sequence[QueryExecutionPlan] = tuple(children) if children else ()
         self.inner_child = inner_child
+        self.outer_child: Optional[QueryExecutionPlan] = None
         if self.inner_child and len(self.children) == 2:
             first_child, second_child = self.children
             self.outer_child = first_child if self.inner_child == second_child else second_child
-        else:
-            self.outer_child = None
 
         self.table = table
 
