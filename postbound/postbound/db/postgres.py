@@ -20,7 +20,8 @@ from postbound.qal import qal, base, expressions, clauses, transform, formatter
 from postbound.optimizer import jointree
 from postbound.optimizer.physops import operators as physops
 from postbound.optimizer.planmeta import hints as planmeta
-from postbound.util import collections as collection_utils, logging, misc as utils, typing as type_utils
+from postbound.util import collections as collection_utils, dicts as dict_utils, logging
+from postbound.util import misc as utils, typing as type_utils
 
 HintBlock = collections.namedtuple("HintBlock", ["preparatory_statements", "hints", "query"])
 
@@ -262,6 +263,27 @@ class PostgresStatisticsInterface(db.DatabaseStatistics):
 
     def __init__(self, postgres_db: PostgresInterface) -> None:
         super().__init__(postgres_db)
+
+    def update_statistics(self, columns: Optional[base.ColumnReference | Iterable[base.ColumnReference]] = None, *,
+                          tables: Optional[base.TableReference | Iterable[base.TableReference]] = None) -> None:
+        if not columns and not tables:
+            tables = self._db.schema().tables()
+        if not columns and tables:
+            tables = collection_utils.enlist(tables)
+            columns = collection_utils.set_union(self._db.schema().columns(tab) for tab in tables)
+
+        assert columns is not None
+        columns = collection_utils.enlist(columns)
+        columns_map: dict[base.TableReference, list[str]] = dict_utils.generate_multi((col.table, col.name)
+                                                                                      for col in columns)
+
+        columns_str = {table: ", ".join(col for col in columns) for table, columns in columns_map.items()}
+        tables_and_columns = ", ".join(f"{table.full_name}({cols})" for table, cols in columns_str.items())
+
+        query_template = f"ANALYZE {tables_and_columns}"
+        print(query_template)
+        return
+        self._db.cursor().execute(query_template)
 
     def _retrieve_total_rows_from_stats(self, table: base.TableReference) -> Optional[int]:
         count_query = f"SELECT reltuples FROM pg_class WHERE oid = '{table.full_name}'::regclass"
@@ -526,7 +548,8 @@ PostgresJoinHints = {physops.JoinOperators.NestedLoopJoin, physops.JoinOperators
 PostgresScanHints = {physops.ScanOperators.SequentialScan, physops.ScanOperators.IndexScan,
                      physops.ScanOperators.IndexOnlyScan, physops.ScanOperators.BitmapScan}
 PostgresPlanHints = {planmeta.HintType.CardinalityHint, planmeta.HintType.ParallelizationHint,
-                     planmeta.HintType.JoinOrderHint, planmeta.HintType.JoinSubqueryHint, planmeta.HintType.JoinDirectionHint}
+                     planmeta.HintType.JoinOrderHint, planmeta.HintType.JoinSubqueryHint,
+                     planmeta.HintType.JoinDirectionHint}
 
 
 class _PostgresCastExpression(expressions.CastExpression):
@@ -700,14 +723,14 @@ class ParallelQueryExecutor:
                                                                   initializer=_parallel_query_initializer,
                                                                   initargs=(self._connect_string, self._thread_data,))
         self._tasks: list[concurrent.futures.Future] = []
-        self._results = []
+        self._results: list[Any] = []
 
     def queue_query(self, query: qal.SqlQuery | str) -> None:
         """Adds a new query to the queue, to be executed as soon as possible."""
         future = self._thread_pool.submit(_parallel_query_worker, query, self._thread_data, self._verbose)
         self._tasks.append(future)
 
-    def drain_queue(self, timeout: float = None) -> None:
+    def drain_queue(self, timeout: Optional[float] = None) -> None:
         """Blocks, until all queries currently queued have terminated."""
         for future in concurrent.futures.as_completed(self._tasks, timeout=timeout):
             self._results.append(future.result())
