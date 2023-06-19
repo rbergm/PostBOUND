@@ -418,6 +418,7 @@ def read_config() -> tuple[ExperimentConfig, Sequence[str]]:
                               query_slowdown_tolerance_factor=args.slowdown_tolerance,
                               default_query_timeout=args.default_timeout,
                               minimum_query_timeout=args.min_timeout,
+                              timeout_mode=args.timeout_mode,
                               enable_prewarming=args.prewarm,
                               operator_selection=args.operator_selection,
                               output_directory=args.out_dir if args.out_dir.endswith("/") else args.out_dir + "/",
