@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import dataclasses
 import json
+import logging
 import math
 import multiprocessing as mp
 import multiprocessing.connection
@@ -24,11 +25,13 @@ from postbound.optimizer import jointree
 from postbound.optimizer.joinorder import enumeration
 from postbound.optimizer.physops import operators
 from postbound.optimizer.planmeta import hints as params
-from postbound.util import jsonize, misc, logging
+from postbound.util import jsonize
 
 StopEvaluation = False
 CancelEvaluation = False
 Interactive = True
+logging_format = "%(asctime)s %(levelname)s %(message)s"
+logging_level = logging.DEBUG
 workloads.workloads_base_dir = "../workloads"
 
 
@@ -77,7 +80,7 @@ def skip_existing_results(workload: workloads.Workload, *,
     skipped_workload = workload.filter_by(lambda l, __: l not in existing_results)
     next_query = skipped_workload.head()
     assert next_query is not None
-    print(".. Skipping existing results until label", next_query[0])
+    logging.info("Skipping existing results until label %s", next_query[0])
     return skipped_workload
 
 
@@ -122,9 +125,9 @@ def generate_all_join_orders(query: qal.SqlQuery, exhaustive_enumerator: enumera
             next_join_order = next(exhaustive_join_order_generator)
             join_order_plans.append(next_join_order)
             if len(join_order_plans) % 100 == 0:
-                print("... Generated", len(join_order_plans), "plans")
+                logging.debug("Generated %s plans", len(join_order_plans))
         except StopIteration:
-            print("... All join orders generated,", len(join_order_plans), "total")
+            logging.debug("All join orders generated, %s total", len(join_order_plans))
             break
     return join_order_plans
 
@@ -142,7 +145,7 @@ def generate_random_join_orders(query: qal.SqlQuery, *, config: ExperimentConfig
     while current_plan_idx < config.exhaustive_join_ordering_limit:
         current_try += 1
         if current_try > max_tries:
-            print("... Stopping sampling since max tries have been reached")
+            logging.debug("Stopping sampling since max tries have been reached")
             break
 
         next_join_order = next(random_join_order_generator)
@@ -155,7 +158,7 @@ def generate_random_join_orders(query: qal.SqlQuery, *, config: ExperimentConfig
         current_plan_idx += 1
 
         if current_plan_idx % 100 == 0:
-            print("...", len(join_order_plans), "plans sampled")
+            logging.debug("%s plans sampled", len(join_order_plans))
 
     return join_order_plans
 
@@ -237,7 +240,7 @@ class TrueCardinalityGenerator:
             joined_tables = intermediate_join.tables()
             current_cardinality = self._relevant_queries[self._relevant_queries.tables == joined_tables]
             if current_cardinality.empty:
-                print("[CARD ERROR] No cardinality found for intermediate", intermediate_join, "at label", self._current_label)
+                logging.warning("No cardinality found for intermediate %s at label %s", intermediate_join, self._current_label)
                 continue
             cardinality = current_cardinality.iloc[0]["cardinality"]
             plan_params.add_cardinality_hint(joined_tables, cardinality)
@@ -245,7 +248,7 @@ class TrueCardinalityGenerator:
             table = base_table.table
             current_cardinality = self._relevant_queries[self._relevant_queries.tables == {table}]
             if current_cardinality.empty:
-                print("[CARD ERROR] No cardinality found for base table", intermediate_join, "at label", self._current_label)
+                logging.warning("No cardinality found for base table %s at label %s", intermediate_join, self._current_label)
                 continue
             cardinality = current_cardinality.iloc[0]["cardinality"]
             plan_params.add_cardinality_hint([table], cardinality)
@@ -305,7 +308,7 @@ def prewarm_database(query: qal.SqlQuery, db_instance: db.Database, *,
 
 def evaluate_query(label: str, query: qal.SqlQuery, *, db_instance: db.Database,
                    config: ExperimentConfig = ExperimentConfig.default()) -> Iterable[EvaluationResult]:
-    print("... Building all plans")
+    logging.debug("Building all plans for query %s", label)
     exhaustive_enumerator = enumeration.ExhaustiveJoinOrderGenerator()
     join_order_plans = generate_all_join_orders(query, exhaustive_enumerator, config=config)
 
@@ -323,7 +326,7 @@ def evaluate_query(label: str, query: qal.SqlQuery, *, db_instance: db.Database,
             should_sample_randomly = False
 
     if should_sample_randomly:
-        print("... Falling back to random sampling of join orders")
+        logging.debug("Falling back to random sampling of join orders for query %s", label)
         join_order_plans = generate_random_join_orders(query, config=config)
 
     if config.operator_selection == "native":
@@ -340,7 +343,7 @@ def evaluate_query(label: str, query: qal.SqlQuery, *, db_instance: db.Database,
     total_query_runtime = 0.0
     query_runtimes = []
     prewarm_database(query, db_instance, config=config)
-    print("... Starting query execution")
+    logging.debug("Starting query execution for query %s", label)
     for join_order in join_order_plans:
         evaluation_result = execute_single_query(label, query, join_order, n_executed_plans=n_executed_plans,
                                                  total_query_runtime=total_query_runtime,
@@ -351,12 +354,12 @@ def evaluate_query(label: str, query: qal.SqlQuery, *, db_instance: db.Database,
         query_runtimes.append(evaluation_result)
 
         if n_executed_plans % 100 == 0:
-            print("...", n_executed_plans, "plans executed")
+            logging.debug("%s plans executed", n_executed_plans)
         if CancelEvaluation:
-            print("... Cancel")
+            logging.info("Cancel")
             break
 
-    print("... All plans executed")
+    logging.debug("All plans executed for query %s", label)
     return query_runtimes
 
 
@@ -420,23 +423,29 @@ def read_config() -> tuple[ExperimentConfig, Sequence[str]]:
                               output_directory=args.out_dir if args.out_dir.endswith("/") else args.out_dir + "/",
                               skip_existing_results=not args.execute_all)
     labels = list(args.labels)
-    logging.tee_stdout(args.log_file)
+
+    logging.basicConfig(level=logging_level, format=logging_format, filename=args.log_file, filemode="w")
+    console_logger = logging.StreamHandler()
+    console_logger.setLevel(logging.DEBUG)
+    console_logger.setFormatter(logging.Formatter(logging_format))
+    logging.getLogger().addHandler(console_logger)
+
     return config, labels
 
 
 def main():
     signal.signal(signal.SIGINT, stop_evaluation)
-    print(".. Reading config")
     config, labels = read_config()
+    logging.debug("Experiment config finalized")
     os.makedirs(config.output_directory, exist_ok=True)
-    print(".. Obtaining database connection")
     pg_db = postgres.connect(config_file=".psycopg_connection_job")
+    logging.debug("Obtained database connection")
 
-    print(".. Reading raw workload")
     workload = workloads.job(simplified=False)
+    logging.debug("Raw workload read")
 
     if labels:
-        print(".. Filtering workload for queries", labels)
+        logging.debug("Filtering workload for queries %s", labels)
         workload = filter_for_label(workload, labels)
     else:
         workload = skip_existing_results(workload, config=config)
@@ -446,9 +455,9 @@ def main():
         # exit here
         return
 
-    print(".. Starting workload execution")
+    logging.info("Starting workload execution")
     for label, query in workload.entries():
-        print(".. Now evaluating query", label, "time =", misc.current_timestamp())
+        logging.info("Now evaluating query %s", label)
         query_runtimes = evaluate_query(label, query, db_instance=pg_db, config=config)
 
         result_df = pd.DataFrame(query_runtimes)
@@ -458,7 +467,7 @@ def main():
         result_df.to_csv(out_file, index=False)
 
         if StopEvaluation or CancelEvaluation:
-            print(".. Ctl+C received, terminating evaluation")
+            logging.info(".. Ctl+C received, terminating evaluation")
             break
 
 
