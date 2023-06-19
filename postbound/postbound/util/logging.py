@@ -1,6 +1,7 @@
 """Contains utilities to conveniently log different information."""
 from __future__ import annotations
 
+import atexit
 import pprint
 import functools
 import sys
@@ -51,3 +52,18 @@ def print_if(should_print: bool, *args, **kwargs) -> None:
     """A normal `print` that only prints something if `should_print` evaluates true-ish."""
     if should_print:
         print(*args, **kwargs)
+
+
+class _TeeLogger:
+    def __init__(self, target_file: str, output_mode: str = "a") -> None:
+        self._original_stdout = sys.stdout
+        self._log_out = open(target_file, output_mode)
+        atexit.register(lambda: self._log_out.close())
+
+    def write(self, message: str) -> None:
+        self._original_stdout.write(message)
+        self._log_out.write(message)
+
+
+def tee_stdout(target_file: str, output_mode: str = "a") -> None:
+    sys.stdout = _TeeLogger(target_file, output_mode)

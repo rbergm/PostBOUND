@@ -24,7 +24,7 @@ from postbound.optimizer import jointree
 from postbound.optimizer.joinorder import enumeration
 from postbound.optimizer.physops import operators
 from postbound.optimizer.planmeta import hints as params
-from postbound.util import jsonize, misc
+from postbound.util import jsonize, misc, logging
 
 StopEvaluation = False
 CancelEvaluation = False
@@ -397,6 +397,8 @@ def read_config() -> tuple[ExperimentConfig, Sequence[str]]:
 
     arg_parser.add_argument("--out-dir", action="store", type=str, default="results/query-runtime-variation/",
                             help="Directory where to store the experiment results.")
+    arg_parser.add_argument("--log-file", "-l", action="store", type=str, default="query-runtime-variation.log",
+                            help="File to write logging information to")
 
     arg_parser.add_argument("--execute-all", action="store_true", default=False,
                             help="Force evaluation of all benchmark queries.")
@@ -418,15 +420,19 @@ def read_config() -> tuple[ExperimentConfig, Sequence[str]]:
                               output_directory=args.out_dir if args.out_dir.endswith("/") else args.out_dir + "/",
                               skip_existing_results=not args.execute_all)
     labels = list(args.labels)
+    logging.tee_stdout(args.log_file)
     return config, labels
 
 
 def main():
     signal.signal(signal.SIGINT, stop_evaluation)
+    print(".. Reading config")
     config, labels = read_config()
     os.makedirs(config.output_directory, exist_ok=True)
+    print(".. Obtaining database connection")
     pg_db = postgres.connect(config_file=".psycopg_connection_job")
 
+    print(".. Reading raw workload")
     workload = workloads.job(simplified=False)
 
     if labels:
@@ -440,6 +446,7 @@ def main():
         # exit here
         return
 
+    print(".. Starting workload execution")
     for label, query in workload.entries():
         print(".. Now evaluating query", label, "time =", misc.current_timestamp())
         query_runtimes = evaluate_query(label, query, db_instance=pg_db, config=config)
