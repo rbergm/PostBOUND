@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import abc
+import math
 import random
 from collections.abc import Sequence
 from typing import Optional, Generator
@@ -101,17 +102,24 @@ def _sample_join_path_snippet(query: qal.SqlQuery, join_snippet: Sequence[base.T
                 yield join_tree
 
 
-def _sample_join_path(query: qal.SqlQuery, linear_join_path: nx_utils.GraphWalk | Sequence[base.TableReference]
-                      ) -> Generator[jointree.LogicalJoinTree]:
+def _sample_join_path(query: qal.SqlQuery, linear_join_path: nx_utils.GraphWalk | Sequence[base.TableReference], *,
+                      max_retries: float = math.inf) -> Generator[jointree.LogicalJoinTree]:
     """Provides a random (potentially bushy) join path based on the given linear join path.
 
     The join order only includes cross products if they are already contained in the input query.
     """
     n_cross_products = len(list(nx.connected_components(query.predicates().join_graph()))) - 1
     nodes = linear_join_path.nodes() if isinstance(linear_join_path, nx_utils.GraphWalk) else linear_join_path
+    snippet_tries = 0
     for join_tree in _sample_join_path_snippet(query, nodes, may_contain_cross_products=n_cross_products > 0):
+        if snippet_tries > max_retries:
+            # if we tried really hard and did not find a godd snippet, we cancel
+            raise StopIteration
+
+        snippet_tries += 1
         if join_tree.count_cross_product_joins() > n_cross_products:
             continue
+
         yield join_tree
 
 
@@ -126,7 +134,7 @@ class RandomJoinOrderGenerator:
         while True:
             join_permutation = [tab for tab in nx_utils.nx_random_walk(query.predicates().join_graph())]
             try:
-                join_order = next(_sample_join_path(query, join_permutation))
+                join_order = next(_sample_join_path(query, join_permutation, max_retries=20 * len(join_permutation)))
                 yield join_order
             except StopIteration:
                 continue
