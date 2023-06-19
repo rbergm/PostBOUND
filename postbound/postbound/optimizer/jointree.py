@@ -410,12 +410,12 @@ class IntermediateJoinNode(AbstractJoinTreeNode[JoinMetadataType, BaseTableMetad
             return [self]
 
         deep_child, flat_child = self.children_by_depth()
-        return list(deep_child) + list(flat_child) + [self]
+        return list(deep_child.join_sequence()) + list(flat_child.join_sequence()) + [self]
 
     def table_sequence(self) -> Sequence[BaseTableNode[JoinMetadataType, BaseTableMetadataType]]:
         if self.is_base_join():
             assert isinstance(self.left_child, BaseTableNode) and isinstance(self.right_child, BaseTableNode)
-            return [self.left_child.table, self.right_child.table]
+            return [self.left_child, self.right_child]
 
         deep_child, flat_child = self.children_by_depth()
         return list(deep_child.table_sequence()) + list(flat_child.table_sequence())
