@@ -95,6 +95,12 @@ class PhysicalOperatorSelection(abc.ABC):
         """
         raise NotImplementedError
 
+    def __repr__(self) -> str:
+        return str(self)
+
+    def __str__(self) -> str:
+        return str(type(self).__name__)
+
 
 class EmptyPhysicalOperatorSelection(PhysicalOperatorSelection):
     """Dummy implementation of operator optimization that does not actually optimize anything."""

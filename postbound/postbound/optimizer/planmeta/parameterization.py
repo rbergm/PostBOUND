@@ -72,6 +72,12 @@ class ParameterGeneration(abc.ABC):
         """Provides requirements that an input query has to satisfy in order for the generator to work properly."""
         return None
 
+    def __repr__(self) -> str:
+        return str(self)
+
+    def __str__(self) -> str:
+        return str(type(self).__name__)
+
 
 class EmptyParameterization(ParameterGeneration):
     """Dummy implementation of the plan parameterization that does not actually generate any parameters."""

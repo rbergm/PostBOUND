@@ -47,6 +47,12 @@ class JoinOrderOptimizer(abc.ABC):
         """Provides requirements that an input query has to satisfy in order for the optimizer to work properly."""
         return validation.EmptyPreCheck()
 
+    def __repr__(self) -> str:
+        return str(self)
+
+    def __str__(self) -> str:
+        return str(type(self).__name__)
+
 
 def _sample_join_path_snippet(query: qal.SqlQuery, join_snippet: Sequence[base.TableReference], *,
                               may_contain_cross_products: bool = False) -> Generator[jointree.LogicalJoinTree]:

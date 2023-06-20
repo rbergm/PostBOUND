@@ -184,3 +184,11 @@ class OptimizationPipeline:
         """Raises an error if the pipeline has not been build yet."""
         if not self._build:
             raise errors.StateError("Pipeline has not been build")
+
+    def __repr__(self) -> str:
+        return str(self)
+
+    def __str__(self) -> str:
+        components = [self.join_order_enumerator, self.physical_operator_selection, self.plan_parameterization]
+        opt_chain = " -> ".join(str(comp) for comp in components)
+        return f"OptimizationPipeline [{opt_chain}]"
