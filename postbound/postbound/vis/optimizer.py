@@ -79,6 +79,7 @@ def plot_join_graph(query_or_join_graph: qal.SqlQuery | joingraph.JoinGraph,
 def estimated_cards(table: base.TableReference, *, query: qal.SqlQuery, database: Optional[db.Database] = None) -> str:
     database = database if database is not None else db.DatabasePool.get_instance().current_database()
     filter_query = transform.extract_query_fragment(query, [table])
+    filter_query = transform.as_star_query(filter_query)
     card_est = database.optimizer().cardinality_estimate(filter_query)
     return f"[{card_est} rows estimated]"
 

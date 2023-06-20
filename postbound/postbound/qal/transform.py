@@ -232,6 +232,12 @@ def move_into_subquery(query: qal.SqlQuery, tables: Iterable[base.TableReference
     return final_query
 
 
+def as_star_query(source_query: QueryType) -> QueryType:
+    select = clauses.Select.star()
+    query_clauses = [clause for clause in source_query.clauses() if not isinstance(clause, clauses.Select)]
+    return qal.build_query(query_clauses + [select])
+
+
 def as_count_star_query(source_query: QueryType) -> QueryType:
     """Replaces the SELECT clause of the given query with a COUNT(*) statement."""
     # TODO: how to work with column aliases from the SELECT clause that are referenced later on?
