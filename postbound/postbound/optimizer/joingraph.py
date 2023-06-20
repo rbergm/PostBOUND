@@ -420,8 +420,11 @@ class JoinGraph(Mapping[base.TableReference, TableInfo]):
         This procedure also changes the available index structures according to the kind of join that was executed.
         This is determined based on the current state of the join graph, as well as the supplied join predicate.
 
-        If no join predicate is supplied, no index structures are updated.
+        If no join predicate is supplied, it is inferred from the query predicates.
         """
+
+        # TODO: check, if we actually need to handle transient index updates here as well
+
         self._graph.nodes[table]["free"] = False
         if len(self.joined_tables()) == 1:
             return
@@ -432,30 +435,31 @@ class JoinGraph(Mapping[base.TableReference, TableInfo]):
             # these two tables might have nothing to do with each other (e.g. different components in the join graph)
             return
 
-        partner_table = collection_utils.simplify({col.table for col in join_edge.join_partners_of(table)})
-        pk_fk_join = self.is_pk_fk_join(table, partner_table)
-        fk_pk_join = self.is_pk_fk_join(partner_table, table)
+        partner_tables = {col.table for col in join_edge.join_partners_of(table)}
+        for partner_table in partner_tables:
+            pk_fk_join = self.is_pk_fk_join(table, partner_table)
+            fk_pk_join = self.is_pk_fk_join(partner_table, table)
 
-        if pk_fk_join and fk_pk_join:  # PK/PK join
-            return
-
-        for col1, col2 in join_edge.join_partners():
-            joined_col, partner_col = (col1, col2) if col1.table == table else (col2, col1)
-            if pk_fk_join:
-                self._index_structures[partner_col].invalidate()
-            elif fk_pk_join:
-                self._index_structures[joined_col].invalidate()
-            else:
-                self._index_structures[partner_col].invalidate()
-                self._index_structures[joined_col].invalidate()
-
-        if pk_fk_join:
-            return
-
-        for table, is_free in self._graph.nodes.data("free"):
-            if is_free or table == partner_table:
+            if pk_fk_join and fk_pk_join:  # PK/PK join
                 continue
-            self._invalidate_indexes_on(table)
+
+            for col1, col2 in join_edge.join_partners():
+                joined_col, partner_col = (col1, col2) if col1.table == table else (col2, col1)
+                if pk_fk_join:
+                    self._index_structures[partner_col].invalidate()
+                elif fk_pk_join:
+                    self._index_structures[joined_col].invalidate()
+                else:
+                    self._index_structures[partner_col].invalidate()
+                    self._index_structures[joined_col].invalidate()
+
+            if pk_fk_join:
+                continue
+
+            for table, is_free in self._graph.nodes.data("free"):
+                if is_free or table == partner_table:
+                    continue
+                self._invalidate_indexes_on(table)
 
     def _check_pk_fk_join(self, pk_table: base.TableReference, edge_data: dict) -> bool:
         """Checks, whether the given table acts as a primary key in the join as indicated by the join graph edge."""
