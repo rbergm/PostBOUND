@@ -464,10 +464,15 @@ class IntermediateJoinNode(AbstractJoinTreeNode[JoinMetadataType, BaseTableMetad
                 and self.right_child == __value.right_child)
 
     def __str__(self) -> str:
-        deep_child, flat_child = self.children_by_depth()
-        deep_str = str(deep_child)
-        flat_str = f"({flat_child})" if flat_child.is_join_node() else str(flat_child)
-        return f"{deep_str} ⋈ {flat_str}"
+        left_str = str(self.left_child)
+        if self.left_child.is_join_node():
+            left_str = f"({left_str})"
+
+        right_str = str(self.right_child)
+        if self.right_child.is_join_node():
+            right_str = f"({right_str})"
+
+        return f"{left_str} ⋈ {right_str}"
 
 
 class BaseTableNode(AbstractJoinTreeNode[JoinMetadataType, BaseTableMetadataType],
@@ -550,7 +555,7 @@ class BaseTableNode(AbstractJoinTreeNode[JoinMetadataType, BaseTableMetadataType
         return isinstance(__value, type(self)) and self._table == __value._table
 
     def __str__(self) -> str:
-        return str(self._table)
+        return self._table.identifier()
 
 
 JoinTreeType = typing.TypeVar("JoinTreeType", bound="JoinTree")
