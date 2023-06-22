@@ -941,11 +941,14 @@ class QueryPredicates:
         if self.is_empty():
             return join_graph
 
-        tables = self._root.tables()
-        join_graph.add_nodes_from(tables)
+        for table in self._root.tables():
+            filter_predicates = self.filters_for(table)
+            join_graph.add_node(table, predicate=filter_predicates)
+
         for join in self.joins():
             for first_col, second_col in join.join_partners():
                 join_graph.add_edge(first_col.table, second_col.table, predicate=join)
+
         return join_graph.copy()
 
     @functools.cache
