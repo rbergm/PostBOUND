@@ -1061,6 +1061,9 @@ class QueryPredicates:
             raise errors.StateError("No query predicates!")
 
     def _init_join_predicate_map(self) -> dict[frozenset[base.TableReference], AbstractPredicate]:
+        if self.is_empty():
+            return {}
+
         predicate_map: dict[frozenset[base.TableReference], AbstractPredicate] = {}
         for table in self._root.tables():
             join_partners = self.joins_for(table)
