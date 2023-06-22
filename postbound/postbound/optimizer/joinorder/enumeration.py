@@ -3,14 +3,12 @@ from __future__ import annotations
 
 import abc
 import random
-from collections.abc import Sequence
 from typing import Optional, Generator
 
 import networkx as nx
 
 from postbound.qal import qal, base
 from postbound.optimizer import jointree, validation
-from postbound.util import networkx as nx_utils
 
 
 class JoinOrderOptimizer(abc.ABC):
@@ -54,95 +52,81 @@ class JoinOrderOptimizer(abc.ABC):
         return str(type(self).__name__)
 
 
-def _sample_join_path_snippet(query: qal.SqlQuery, join_snippet: Sequence[base.TableReference], *,
-                              may_contain_cross_products: bool = False) -> Generator[jointree.LogicalJoinTree]:
-    """Generates a random join path for the given excerpt of the query's tables.
+def _merge_nodes(start: jointree.LogicalJoinTree | base.TableReference,
+                 end: jointree.LogicalJoinTree | base.TableReference) -> jointree.LogicalJoinTree:
+    start = jointree.LogicalJoinTree.for_base_table(start) if isinstance(start, base.TableReference) else start
+    end = jointree.LogicalJoinTree.for_base_table(end) if isinstance(end, base.TableReference) else end
+    return start.join_with_subtree(end)
 
-    The join order only includes cross products if they are already contained in the input query.
 
-    `may_contain_cross_products` indicates whether the input query contains any cross-products and speeds up the check
-    whether a join order is valid significantly for queries that do not contain cross products.
-    """
-    if not join_snippet:
-        raise ValueError("Empty join snippet")
+def _sample_join_graph(join_graph: nx.Graph) -> jointree.LogicalJoinTree:
+    while len(join_graph.nodes) > 1:
+        join_predicates = list(join_graph.edges)
+        next_edge = random.choice(join_predicates)
+        start_node, target_node = next_edge
+        join_tree = _merge_nodes(start_node, target_node) if random.random() < 0.5 else _merge_nodes(target_node, start_node)
 
-    if len(join_snippet) == 1:
-        base_table = join_snippet[0]
-        base_annotation = jointree.LogicalBaseTableMetadata(query.predicates().filters_for(base_table))
-        yield jointree.LogicalJoinTree.for_base_table(base_table, base_annotation)
-        return
-    elif len(join_snippet) == 2:
-        base_table, joined_table = join_snippet
-        if random.random() < 0.5:
-            base_table, joined_table = joined_table, base_table
-        join_predicate = query.predicates().joins_between(base_table, joined_table)
-        if not may_contain_cross_products and not join_predicate:
-            return
+        join_graph = nx.contracted_nodes(join_graph, start_node, target_node, self_loops=False)
+        join_graph = nx.relabel_nodes(join_graph, {start_node: join_tree})
 
-        base_annotation = jointree.LogicalBaseTableMetadata(query.predicates().filters_for(base_table))
-        base_tree = jointree.LogicalJoinTree.for_base_table(base_table, base_annotation)
-        joined_annotation = jointree.LogicalBaseTableMetadata(query.predicates().filters_for(joined_table))
-        join_annotation = jointree.LogicalJoinMetadata(query.predicates().joins_between(base_table, joined_table))
-        join_tree = base_tree.join_with_base_table(joined_table, joined_annotation, join_annotation)
-        yield join_tree
+    final_node = list(join_graph.nodes)[0]
+    return final_node
+
+
+def _enumerate_join_graph(join_graph: nx.Graph) -> Generator[jointree.JoinTree]:
+    if len(join_graph.nodes) == 1:
+        node = list(join_graph.nodes)[0]
+        yield node
         return
 
-    available_splits = list(range(1, len(join_snippet)))
-    while available_splits:
-        split_idx = random.choice(available_splits)
-        available_splits.remove(split_idx)
+    for edge in join_graph.edges:
+        start_node, target_node = edge
+        merged_graph = nx.contracted_nodes(join_graph, start_node, target_node, self_loops=False, copy=True)
 
-        head_tables = join_snippet[:split_idx]
-        tail_tables = join_snippet[split_idx:]
-        join_predicate = query.predicates().joins_between(head_tables, tail_tables)
-        if not may_contain_cross_products and not join_predicate:
-            continue
+        start_end_tree = _merge_nodes(start_node, target_node)
+        start_end_graph = nx.relabel_nodes(merged_graph, {start_node: start_end_tree}, copy=True)
+        yield from _enumerate_join_graph(start_end_graph)
 
-        for head_tree in _sample_join_path_snippet(query, head_tables,
-                                                   may_contain_cross_products=may_contain_cross_products):
-            for tail_tree in _sample_join_path_snippet(query, tail_tables,
-                                                       may_contain_cross_products=may_contain_cross_products):
-                annotation = jointree.LogicalJoinMetadata(join_predicate)
-                join_tree = jointree.LogicalJoinTree.joining(tail_tree, head_tree, annotation)
-                yield join_tree
-
-
-def _sample_join_path(query: qal.SqlQuery, linear_join_path: nx_utils.GraphWalk | Sequence[base.TableReference]
-                      ) -> Generator[jointree.LogicalJoinTree]:
-    """Provides a random (potentially bushy) join path based on the given linear join path.
-
-    The join order only includes cross products if they are already contained in the input query.
-    """
-    n_cross_products = len(list(nx.connected_components(query.predicates().join_graph()))) - 1
-    nodes = linear_join_path.nodes() if isinstance(linear_join_path, nx_utils.GraphWalk) else linear_join_path
-    for join_tree in _sample_join_path_snippet(query, nodes, may_contain_cross_products=n_cross_products > 0):
-        if join_tree.count_cross_product_joins() > n_cross_products:
-            continue
-        yield join_tree
+        end_start_tree = _merge_nodes(target_node, start_node)
+        end_start_graph = nx.relabel_nodes(merged_graph, {start_node: end_start_tree}, copy=True)
+        yield from _enumerate_join_graph(end_start_graph)
 
 
 class RandomJoinOrderGenerator:
     """Utility service that provides access to a generator to produce random join orders."""
 
-    def random_join_order_generator(self, query: qal.SqlQuery) -> Generator[jointree.LogicalJoinTree]:
-        """Generator that produces a new random (bushy) join order for the given input query upon each next-call.
+    def __init__(self, eliminate_duplicates: bool = False) -> None:
+        self._eliminate_duplicates = eliminate_duplicates
 
-        The join order only includes cross products if they are already contained in the input query.
-        """
+    def random_join_order_generator(self, query: qal.SqlQuery) -> Generator[jointree.LogicalJoinTree]:
+        """Generator that produces a new random (bushy) join order for the given input query upon each next-call."""
+        join_graph = query.predicates().join_graph()
+        if len(join_graph.nodes) == 0:
+            return
+        elif len(join_graph.nodes) == 1:
+            base_table = list(join_graph.nodes)[0]
+            base_annotation = jointree.LogicalBaseTableMetadata(query.predicates().filters_for(base_table))
+            join_tree = jointree.LogicalJoinTree.for_base_table(base_table, base_annotation)
+            while True:
+                yield join_tree
+        elif not nx.is_connected(join_graph):
+            raise ValueError("Cross products are not yet supported for random join order generation!")
+
+        join_order_hashes = set()
         while True:
-            join_permutation = [tab for tab in nx_utils.nx_random_walk(query.predicates().join_graph())]
-            try:
-                join_order = next(_sample_join_path(query, join_permutation))
-                yield join_order
-            except StopIteration:
-                continue
+            current_join_order = _sample_join_graph(join_graph)
+            if self._eliminate_duplicates:
+                current_hash = hash(current_join_order)
+                if current_hash in join_order_hashes:
+                    continue
+                else:
+                    join_order_hashes.add(current_hash)
+
+            yield current_join_order
 
 
 class RandomJoinOrderOptimizer(JoinOrderOptimizer):
-    """Optimizer that generates a (not entirely) random join order.
-
-    The join order only introduces cross-products, if those are necessary based on the input query.
-    """
+    """Optimizer that generates a (not entirely) random join order."""
 
     def __init__(self) -> None:
         super().__init__()
@@ -153,66 +137,6 @@ class RandomJoinOrderOptimizer(JoinOrderOptimizer):
 
     def describe(self) -> dict:
         return {"name": "random"}
-
-
-def _all_join_tree_snippets(query: qal.SqlQuery, join_sequence: Sequence[base.TableReference], *,
-                            may_contain_cross_products: bool = False) -> Generator[jointree.LogicalJoinTree]:
-    """Provides all possible (potentially bushy) join trees that can be derived from the given tables.
-
-    The join order only includes cross products if they are already contained in the input query.
-
-    `may_contain_cross_products` indicates whether the input query contains any cross-products and speeds up the check
-    whether a join order is valid significantly for queries that do not contain cross products.
-    """
-    if not join_sequence:
-        raise ValueError("Empty join sequence")
-
-    if len(join_sequence) == 1:
-        base_table = join_sequence[0]
-        annotation = jointree.LogicalBaseTableMetadata(query.predicates().filters_for(base_table))
-        yield jointree.LogicalJoinTree.for_base_table(base_table, annotation)
-        return
-    elif len(join_sequence) == 2:
-        base_table, joined_table = join_sequence
-        join_predicate = query.predicates().joins_between(base_table, joined_table)
-        if not may_contain_cross_products and not join_predicate:
-            return
-
-        base_annotation = jointree.LogicalBaseTableMetadata(query.predicates().filters_for(base_table))
-        base_tree = jointree.LogicalJoinTree.for_base_table(base_table, base_annotation)
-        joined_annotation = jointree.LogicalBaseTableMetadata(query.predicates().filters_for(joined_table))
-        join_annotation = jointree.LogicalJoinMetadata(join_predicate)
-        join_tree = base_tree.join_with_base_table(joined_table, joined_annotation, join_annotation)
-        yield join_tree
-        return
-
-    for split_idx in range(1, len(join_sequence)):
-        head_tables = join_sequence[:split_idx]
-        tail_tables = join_sequence[split_idx:]
-        join_predicate = query.predicates().joins_between(head_tables, tail_tables)
-        if not may_contain_cross_products and not join_predicate:
-            continue
-        for head_tree in _all_join_tree_snippets(query, head_tables,
-                                                 may_contain_cross_products=may_contain_cross_products):
-            for tail_tree in _all_join_tree_snippets(query, tail_tables,
-                                                     may_contain_cross_products=may_contain_cross_products):
-                annotation = jointree.LogicalJoinMetadata(join_predicate)
-                join_tree = jointree.LogicalJoinTree.joining(tail_tree, head_tree, annotation)
-                yield join_tree
-
-
-def _all_branching_join_paths(query: qal.SqlQuery, linear_join_path: nx_utils.GraphWalk | Sequence[base.TableReference]
-                              ) -> Generator[jointree.LogicalJoinTree]:
-    """Generates all possible (bushy) join trees from the given linear join path.
-
-    The join order only includes cross products if they are already contained in the input query.
-    """
-    n_cross_products = len(list(nx.connected_components(query.predicates().join_graph()))) - 1
-    nodes = linear_join_path.nodes() if isinstance(linear_join_path, nx_utils.GraphWalk) else linear_join_path
-    for join_tree in _all_join_tree_snippets(query, nodes, may_contain_cross_products=n_cross_products > 0):
-        if join_tree.count_cross_product_joins() > n_cross_products:
-            continue
-        yield join_tree
 
 
 class ExhaustiveJoinOrderGenerator:
@@ -226,16 +150,27 @@ class ExhaustiveJoinOrderGenerator:
 
         The join trees can be bushy and only include cross products if they are already specified in the input query.
         """
-        linear_join_path_hashes = set()
-        for linear_join_sequence in nx_utils.nx_frontier_walks(query.predicates().join_graph()):
-            linear_join_sequence = tuple(linear_join_sequence.nodes())
+        join_graph = query.predicates().join_graph()
+        if len(join_graph.nodes) == 0:
+            return
+        elif len(join_graph.nodes) == 1:
+            base_table = list(join_graph.nodes)[0]
+            base_annotation = jointree.LogicalBaseTableMetadata(query.predicates().filters_for(base_table))
+            join_tree = jointree.LogicalJoinTree.for_base_table(base_table, base_annotation)
+            yield join_tree
+            return
+        elif not nx.is_connected(join_graph):
+            raise ValueError("Cross products are not yet supported for random join order generation!")
 
-            current_hash = hash(linear_join_sequence)
-            if current_hash in linear_join_path_hashes:
+        join_order_hashes = set()
+        join_order_generator = _enumerate_join_graph(join_graph)
+        for join_order in join_order_generator:
+            current_hash = hash(join_order)
+            if current_hash in join_order_hashes:
                 continue
-            linear_join_path_hashes.add(current_hash)
 
-            yield from _all_branching_join_paths(query, linear_join_sequence)
+            join_order_hashes.add(current_hash)
+            yield join_order
 
 
 class EmptyJoinOrderOptimizer(JoinOrderOptimizer):
