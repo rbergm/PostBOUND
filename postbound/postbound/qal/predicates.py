@@ -6,7 +6,7 @@ import collections
 import functools
 import itertools
 from collections.abc import Collection, Iterable, Iterator, Sequence
-from typing import Type, Union, Optional
+from typing import Type, Union, Optional, Literal
 
 import networkx as nx
 
@@ -895,6 +895,7 @@ class QueryPredicates:
     def __init__(self, root: Optional[AbstractPredicate]):
         self._root = root
         self._hash_val = hash(self._root)
+        self._join_predicate_map: dict[frozenset[base.TableReference], AbstractPredicate] = self._init_join_predicate_map()
 
     def is_empty(self) -> bool:
         """Checks, whether this predicate handler contains any actual predicates."""
@@ -992,8 +993,8 @@ class QueryPredicates:
         return aggregated_predicates
 
     def joins_between(self, first_table: base.TableReference | Iterable[base.TableReference],
-                      second_table: base.TableReference | Iterable[base.TableReference]
-                      ) -> Optional[AbstractPredicate]:
+                      second_table: base.TableReference | Iterable[base.TableReference], *,
+                      _computation: Literal["legacy", "graph", "map"] = "map") -> Optional[AbstractPredicate]:
         """Provides the (conjunctive) join predicate that joins the given tables.
 
         If `first_table` or `second_table` contain multiple tables, all join predicates between tables from the
@@ -1005,22 +1006,15 @@ class QueryPredicates:
         if self.is_empty():
             return None
 
-        if isinstance(first_table, base.TableReference) and isinstance(second_table, base.TableReference):
-            if first_table == second_table:
-                return None
-            first_joins: Collection[AbstractPredicate] = self.joins_for(first_table)
-            matching_joins = {join for join in first_joins if join.joins_table(second_table)}
-            return CompoundPredicate.create_and(matching_joins) if matching_joins else None
-
-        matching_joins = set()
-        first_table, second_table = collection_utils.enlist(first_table), collection_utils.enlist(second_table)
-        for first in frozenset(first_table):
-            for second in frozenset(second_table):
-                join_predicate = self.joins_between(first, second)
-                if not join_predicate:
-                    continue
-                matching_joins.add(join_predicate)
-        return CompoundPredicate.create_and(matching_joins) if matching_joins else None
+        if _computation == "legacy":
+            return self._legacy_joins_between(first_table, second_table)
+        elif _computation == "graph":
+            return self._graph_based_joins_between(first_table, second_table)
+        elif _computation == "map":
+            return self._map_based_joins_between(first_table, second_table)
+        else:
+            raise ValueError("Unknown computation method. Allowed values are 'legacy', 'graph', or 'map', ",
+                             f"not '{_computation}'")
 
     def joins_tables(self, tables: base.TableReference | Iterable[base.TableReference],
                      *more_tables: base.TableReference) -> bool:
@@ -1065,6 +1059,80 @@ class QueryPredicates:
         """Raises a `StateError` if this predicates instance is empty."""
         if self._root is None:
             raise errors.StateError("No query predicates!")
+
+    def _init_join_predicate_map(self) -> dict[frozenset[base.TableReference], AbstractPredicate]:
+        predicate_map: dict[frozenset[base.TableReference], AbstractPredicate] = {}
+        for table in self._root.tables():
+            join_partners = self.joins_for(table)
+            for join_predicate in join_partners:
+                partner_tables = join_predicate.join_partners_of(table)
+                map_key = frozenset(partner_tables | {table})
+                if map_key in predicate_map:
+                    continue
+                predicate_map[map_key] = join_predicate
+        return predicate_map
+
+    def _legacy_joins_between(self, first_table: base.TableReference | Iterable[base.TableReference],
+                              second_table: base.TableReference | Iterable[base.TableReference]
+                              ) -> Optional[AbstractPredicate]:
+        if isinstance(first_table, base.TableReference) and isinstance(second_table, base.TableReference):
+            if first_table == second_table:
+                return None
+            first_joins: Collection[AbstractPredicate] = self.joins_for(first_table)
+            matching_joins = {join for join in first_joins if join.joins_table(second_table)}
+            return CompoundPredicate.create_and(matching_joins) if matching_joins else None
+
+        matching_joins = set()
+        first_table, second_table = collection_utils.enlist(first_table), collection_utils.enlist(second_table)
+        for first in frozenset(first_table):
+            for second in frozenset(second_table):
+                join_predicate = self.joins_between(first, second)
+                if not join_predicate:
+                    continue
+                matching_joins.add(join_predicate)
+        return CompoundPredicate.create_and(matching_joins) if matching_joins else None
+
+    def _graph_based_joins_between(self, first_table: base.TableReference | Iterable[base.TableReference],
+                                   second_table: base.TableReference | Iterable[base.TableReference]
+                                   ) -> Optional[AbstractPredicate]:
+        join_graph = self.join_graph()
+        first_table, second_table = collection_utils.enlist(first_table), collection_utils.enlist(second_table)
+
+        if len(first_table) > 1:
+            first_first_table, *remaining_first_tables = first_table
+            for remaining_first_table in remaining_first_tables:
+                join_graph = nx.contracted_nodes(join_graph, first_first_table, remaining_first_table)
+            first_hook = first_first_table
+        else:
+            first_hook = collection_utils.simplify(first_table)
+
+        if len(second_table) > 1:
+            first_second_table, *remaining_second_tables = second_table
+            for remaining_second_table in remaining_second_tables:
+                join_graph = nx.contracted_nodes(join_graph, first_second_table, remaining_second_table)
+            second_hook = first_second_table
+        else:
+            second_hook = collection_utils.simplify(second_table)
+
+        if (first_hook, second_hook) not in join_graph.edges:
+            return None
+        return join_graph.edges[first_hook, second_hook]["predicate"]
+
+    def _map_based_joins_between(self, first_table: base.TableReference | Iterable[base.TableReference],
+                                 second_table: base.TableReference | Iterable[base.TableReference]
+                                 ) -> Optional[AbstractPredicate]:
+        join_predicates = set()
+        first_table, second_table = collection_utils.enlist(first_table), collection_utils.enlist(second_table)
+        for first in first_table:
+            for second in second_table:
+                map_key = frozenset((first, second))
+                if map_key not in self._join_predicate_map:
+                    continue
+                current_predicate = self._join_predicate_map[map_key]
+                join_predicates.add(current_predicate)
+        if not join_predicates:
+            return None
+        return CompoundPredicate.create_and(join_predicates)
 
     def __iter__(self) -> Iterator[AbstractPredicate]:
         return (list(self.filters()) + list(self.joins())).__iter__()
