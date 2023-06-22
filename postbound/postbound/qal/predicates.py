@@ -945,8 +945,8 @@ class QueryPredicates:
         join_graph.add_nodes_from(tables)
         for join in self.joins():
             for first_col, second_col in join.join_partners():
-                join_graph.add_edge(first_col.table, second_col.table)
-        return join_graph
+                join_graph.add_edge(first_col.table, second_col.table, predicate=join)
+        return join_graph.copy()
 
     @functools.cache
     def filters_for(self, table: base.TableReference) -> Optional[AbstractPredicate]:
