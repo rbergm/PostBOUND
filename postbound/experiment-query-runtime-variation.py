@@ -442,6 +442,16 @@ def main():
     pg_db = postgres.connect(config_file=".psycopg_connection_job")
     logging.debug("Obtained database connection")
 
+    # HOTFIX: the Leading() hint of pg_hint_plan does not work if Postgres decides to use the GeQO
+    # optimizer (likely b/c they only instrumented the Dynamic Programming-based optimizer)
+    # Therefore, for all JOB queries with >= 12 tables, native optimization would take place!
+    # To fix this, we need to disable the GeQO optimizer for our workload
+    # A cleaner solution will likely be to integrate cleanup actions into the Hint clause and make
+    # the Postgres interface insert a GeQO disable command before each optimized query is executed along
+    # with a GeQO enable command after the query has been executed. Until then, this hotfix should work fine.
+    logging.debug("Disabling GeQO")
+    pg_db.execute_query("SET geqo = 'off';", cache_enabled=False)
+
     workload = workloads.job(simplified=False)
     logging.debug("Raw workload read")
 
