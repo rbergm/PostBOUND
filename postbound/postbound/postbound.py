@@ -37,19 +37,45 @@ class OptimizationPipeline:
     """
 
     def __init__(self, target_db: db.Database) -> None:
-        self.target_db = target_db
-        self.pre_check: validation.OptimizationPreCheck | None = None
-        self.join_order_enumerator: enumeration.JoinOrderOptimizer | None = None
-        self.physical_operator_selection: selection.PhysicalOperatorSelection | None = None
-        self.plan_parameterization: plan_param.ParameterGeneration | None = None
+        self._target_db = target_db
+        self._pre_check: validation.OptimizationPreCheck | None = None
+        self._join_order_enumerator: enumeration.JoinOrderOptimizer | None = None
+        self._physical_operator_selection: selection.PhysicalOperatorSelection | None = None
+        self._plan_parameterization: plan_param.ParameterGeneration | None = None
         self._build = False
+
+    @property
+    def target_db(self) -> db.Database:
+        return self._target_db
+
+    @target_db.setter
+    def target_db(self, new_db: db.Database) -> None:
+        self._target_db = new_db
+        self._build = False
+
+    @property
+    def pre_check(self) -> validation.OptimizationPreCheck:
+        return self._pre_check
+
+    @property
+    def join_order_enumerator(self) -> enumeration.JoinOrderOptimizer:
+        return self._join_order_enumerator
+
+    @property
+    def physical_operator_selection(self) -> selection.PhysicalOperatorSelection:
+        return self._physical_operator_selection
+
+    @property
+    def plan_parameterization(self) -> plan_param.ParameterGeneration:
+        return self._plan_parameterization
 
     def setup_query_support_check(self, check: validation.OptimizationPreCheck) -> OptimizationPipeline:
         """Configures the pre-check to be executed for each query.
 
         This check will be combined with any additional checks that are required by the actual optimization strategies.
         """
-        self.pre_check = check
+        self._pre_check = check
+        self._build = False
         return self
 
     def setup_join_order_optimization(self, enumerator: enumeration.JoinOrderOptimizer) -> OptimizationPipeline:
@@ -57,7 +83,8 @@ class OptimizationPipeline:
 
         This algorithm may optionally also determine an initial assignment of physical operators.
         """
-        self.join_order_enumerator = enumerator
+        self._join_order_enumerator = enumerator
+        self._build = False
         return self
 
     def setup_physical_operator_selection(self, selector: selection.PhysicalOperatorSelection, *,
@@ -73,10 +100,11 @@ class OptimizationPipeline:
         is chained with the older strategy, i.e. the new strategy can overwrite assignments produced by the old
         strategy. See `PhysicalOperatorSelection.chain_with` for details.
         """
-        if not overwrite and self.physical_operator_selection:
-            self.physical_operator_selection = self.physical_operator_selection.chain_with(selector)
+        if not overwrite and self._physical_operator_selection:
+            self._physical_operator_selection = self._physical_operator_selection.chain_with(selector)
         else:
-            self.physical_operator_selection = selector
+            self._physical_operator_selection = selector
+        self._build = False
         return self
 
     def setup_plan_parameterization(self, param_generator: plan_param.ParameterGeneration, *,
@@ -91,10 +119,11 @@ class OptimizationPipeline:
         is chained with the older strategy, i.e. the new strategy can overwrite parameters produced by the old
         strategy. See `ParameterGeneration.chain_with` for details.
         """
-        if not overwrite and self.plan_parameterization:
-            self.plan_parameterization = self.plan_parameterization.chain_with(param_generator)
+        if not overwrite and self._plan_parameterization:
+            self._plan_parameterization = self._plan_parameterization.chain_with(param_generator)
         else:
-            self.plan_parameterization = param_generator
+            self._plan_parameterization = param_generator
+        self._build = False
         return self
 
     def load_settings(self, optimization_settings: presets.OptimizationSettings) -> OptimizationPipeline:
@@ -115,6 +144,7 @@ class OptimizationPipeline:
         plan_parameterization = optimization_settings.build_plan_parameterization()
         if plan_parameterization:
             self.setup_plan_parameterization(plan_parameterization, overwrite=True)
+        self._build = False
         return self
 
     def build(self) -> OptimizationPipeline:
@@ -123,20 +153,21 @@ class OptimizationPipeline:
          This includes filling all undefined optimization steps with empty strategies. Afterwards, the pipeline is
          ready to optimize queries.
          """
-        if not self.pre_check:
-            self.pre_check = validation.EmptyPreCheck()
-        if not self.join_order_enumerator:
-            self.join_order_enumerator = enumeration.EmptyJoinOrderOptimizer()
-        if not self.physical_operator_selection:
-            self.physical_operator_selection = selection.EmptyPhysicalOperatorSelection()
-        if not self.plan_parameterization:
-            self.plan_parameterization = plan_param.EmptyParameterization()
+        if not self._pre_check:
+            self._pre_check = validation.EmptyPreCheck()
+        if not self._join_order_enumerator:
+            self._join_order_enumerator = enumeration.EmptyJoinOrderOptimizer()
+        if not self._physical_operator_selection:
+            self._physical_operator_selection = selection.EmptyPhysicalOperatorSelection()
+        if not self._plan_parameterization:
+            self._plan_parameterization = plan_param.EmptyParameterization()
 
-        all_pre_checks = [self.pre_check] + [check for check in [self.join_order_enumerator.pre_check(),
-                                                                 self.physical_operator_selection.pre_check(),
-                                                                 self.plan_parameterization.pre_check()]
-                                             if check]
-        self.pre_check = validation.merge_checks(all_pre_checks)
+        all_pre_checks = [self._pre_check] + [check for check in [self._join_order_enumerator.pre_check(),
+                                                                  self._physical_operator_selection.pre_check(),
+                                                                  self._plan_parameterization.pre_check()]
+                                              if check]
+        self._pre_check = validation.merge_checks(all_pre_checks)
+        self._pre_check.check_supported_database_system(self._target_db)
 
         self._build = True
         return self
@@ -153,7 +184,7 @@ class OptimizationPipeline:
         join order.
         """
         self._assert_is_build()
-        supported_query_check = self.pre_check.check_supported_query(query)
+        supported_query_check = self._pre_check.check_supported_query(query)
         if not supported_query_check.passed:
             raise validation.UnsupportedQueryError(query, supported_query_check.failure_reason)
 
@@ -162,22 +193,22 @@ class OptimizationPipeline:
         elif not isinstance(query, qal.ImplicitSqlQuery):
             raise ValueError(f"Unknown query type '{type(query)}' for query '{query}'")
 
-        join_order = self.join_order_enumerator.optimize_join_order(query)
-        operators = self.physical_operator_selection.select_physical_operators(query, join_order)
-        plan_parameters = self.plan_parameterization.generate_plan_parameters(query, join_order, operators)
+        join_order = self._join_order_enumerator.optimize_join_order(query)
+        operators = self._physical_operator_selection.select_physical_operators(query, join_order)
+        plan_parameters = self._plan_parameterization.generate_plan_parameters(query, join_order, operators)
 
-        return self.target_db.hinting().generate_hints(query, join_order=join_order, physical_operators=operators,
-                                                       plan_parameters=plan_parameters)
+        return self._target_db.hinting().generate_hints(query, join_order=join_order, physical_operators=operators,
+                                                        plan_parameters=plan_parameters)
 
     def describe(self) -> dict:
         """Provides a representation of the selected optimization strategies and the database settings."""
         return {
-            "database_system": self.target_db.describe(),
-            "query_pre_check": self.pre_check.describe() if self.pre_check else None,
-            "join_ordering": self.join_order_enumerator.describe() if self.join_order_enumerator else None,
-            "operator_selection": (self.physical_operator_selection.describe() if self.physical_operator_selection
+            "database_system": self._target_db.describe(),
+            "query_pre_check": self._pre_check.describe() if self._pre_check else None,
+            "join_ordering": self._join_order_enumerator.describe() if self._join_order_enumerator else None,
+            "operator_selection": (self._physical_operator_selection.describe() if self._physical_operator_selection
                                    else None),
-            "plan_parameterization": self.plan_parameterization.describe() if self.plan_parameterization else None
+            "plan_parameterization": self._plan_parameterization.describe() if self._plan_parameterization else None
         }
 
     def _assert_is_build(self) -> None:
@@ -189,6 +220,6 @@ class OptimizationPipeline:
         return str(self)
 
     def __str__(self) -> str:
-        components = [self.join_order_enumerator, self.physical_operator_selection, self.plan_parameterization]
+        components = [self._join_order_enumerator, self._physical_operator_selection, self._plan_parameterization]
         opt_chain = " -> ".join(str(comp) for comp in components)
         return f"OptimizationPipeline [{opt_chain}]"
