@@ -1,7 +1,15 @@
 """This module provides PostBOUNDs basic interaction with databases.
 
-More specifically, this includes an interface to interact with databases, schema information and statistics as well
-as a utility to easily obtain database connections.
+More specifically, this includes
+
+- an interface to interact with databases (the `Database` interface)
+- an interface to retrieve schema information (the `DatabaseSchema` interface)
+- an interface to obtain different table-level and column-level statistics (the `DatabaseStatistics` interface)
+- an interface to modify queries such that optimization decisions are respected during the actual query execution (the
+`HintService` interface)
+- a simple model to represent query plans of the database systems (the `QueryExecutionPlan` class)
+- an interface to access information of the native optimizer of the database system (the `OptimizerInterface` class)
+- a utility to easily obtain database connections (the `DatabasePool` singleton class).
 
 Take a look at the central `Database` class for more details. All concrete database systems need to implement this
 interface.
@@ -78,36 +86,6 @@ class Connection(typing.Protocol):
         raise NotImplementedError
 
 
-class HintService(abc.ABC):
-    """Provides tools that enable queries to be executed on a specific database system, based on fixed query plans.
-
-    Hints are PostBOUNDs way to enforce that decisions made in the optimization pipeline are respected by the native
-    query optimizer once the query is executed in an actual database system.
-    """
-
-    @abc.abstractmethod
-    def generate_hints(self, query: qal.SqlQuery,
-                       join_order: Optional[jointree.LogicalJoinTree | jointree.PhysicalQueryPlan] = None,
-                       physical_operators: Optional[physops.PhysicalOperatorAssignment] = None,
-                       plan_parameters: Optional[planmeta.PlanParameterization] = None) -> qal.SqlQuery:
-        """Generates the appropriate hints to enforce the optimized execution of the given query.
-
-        All hints are placed in a `Hint` clause on the query. In addition, if the query needs to be transformed in some
-        way, this also happens here.
-        """
-        raise NotImplementedError
-
-    @abc.abstractmethod
-    def format_query(self, query: qal.SqlQuery) -> str:
-        """Transforms the query into a database-specific string, mostly to incorporate deviations from standard SQL."""
-        raise NotImplementedError
-
-    @abc.abstractmethod
-    def supports_hint(self, hint: physops.PhysicalOperator | planmeta.HintType) -> bool:
-        """Checks, whether the database system is capable of using the specified hint or operator."""
-        raise NotImplementedError
-
-
 class Database(abc.ABC):
     """A `Database` is PostBOUND's logical abstraction of physical database management systems.
 
@@ -131,7 +109,7 @@ class Database(abc.ABC):
     necessary information.
     """
 
-    def __init__(self, system_name: str, *, cache_enabled: bool = True) -> None:
+    def __init__(self, system_name: str, *, cache_enabled: bool = False) -> None:
         self.system_name = system_name
 
         self._cache_enabled = cache_enabled
@@ -146,7 +124,7 @@ class Database(abc.ABC):
         raise NotImplementedError
 
     @abc.abstractmethod
-    def statistics(self, emulated: bool | None = None, cache_enabled: Optional[bool] = None) -> DatabaseStatistics:
+    def statistics(self, emulated: bool | None = None, cache_enabled: Optional[bool] = True) -> DatabaseStatistics:
         """Provides access to different tables and columns of the database."""
         raise NotImplementedError
 
@@ -553,82 +531,34 @@ class DatabaseStatistics(abc.ABC):
         return f"Database statistics of {self._db}"
 
 
-_DB_POOL: DatabasePool | None = None
+class HintService(abc.ABC):
+    """Provides tools that enable queries to be executed on a specific database system, based on fixed query plans.
 
-
-class DatabasePool:
-    """The `DatabasePool` allows different parts of the code base to easily obtain access to a database.
-
-    This is achieved by maintaining one global pool of database connections which is shared by the entire system.
-    New database instances can be registered and retrieved via unique keys. As long as there is just a single database
-    instance, it can be accessed via the `current_database` method.
+    Hints are PostBOUNDs way to enforce that decisions made in the optimization pipeline are respected by the native
+    query optimizer once the query is executed in an actual database system.
     """
 
-    @staticmethod
-    def get_instance():
-        """Provides access to the database pool, creating a new pool instance if necessary."""
-        global _DB_POOL
-        if _DB_POOL is None:
-            _DB_POOL = DatabasePool()
-        return _DB_POOL
+    @abc.abstractmethod
+    def generate_hints(self, query: qal.SqlQuery,
+                       join_order: Optional[jointree.LogicalJoinTree | jointree.PhysicalQueryPlan] = None,
+                       physical_operators: Optional[physops.PhysicalOperatorAssignment] = None,
+                       plan_parameters: Optional[planmeta.PlanParameterization] = None) -> qal.SqlQuery:
+        """Generates the appropriate hints to enforce the optimized execution of the given query.
 
-    def __init__(self):
-        self._pool = {}
+        All hints are placed in a `Hint` clause on the query. In addition, if the query needs to be transformed in some
+        way, this also happens here.
+        """
+        raise NotImplementedError
 
-    def current_database(self) -> Database:
-        """Provides the database that is currently stored in the pool, provided there is just one."""
-        return dict_utils.value(self._pool)
+    @abc.abstractmethod
+    def format_query(self, query: qal.SqlQuery) -> str:
+        """Transforms the query into a database-specific string, mostly to incorporate deviations from standard SQL."""
+        raise NotImplementedError
 
-    def register_database(self, key: str, db: Database) -> None:
-        """Stores a new database to be accessed via `key`."""
-        self._pool[key] = db
-
-    def retrieve_database(self, key: str) -> Database:
-        """Retrieves the database stored under `key`."""
-        return self._pool[key]
-
-    def __repr__(self) -> str:
-        return str(self)
-
-    def __str__(self) -> str:
-        return f"DatabasePool {self._pool}"
-
-
-class UnsupportedDatabaseFeatureError(RuntimeError):
-    """Indicates that some requested feature is not supported by the database.
-
-    For example, PostgreSQL (at least up to version 15) does not capture minimum or maximum column values in its
-    system statistics. Therefore, forcing the DBS to retrieve such information from its metadata could result in this
-    error.
-    """
-
-    def __init__(self, database: Database, feature: str) -> None:
-        super().__init__(f"Database {database.system_name} does not support feature {feature}")
-        self.database = database
-        self.feature = feature
-
-
-class DatabaseServerError(RuntimeError):
-    """Indicates an error caused by the database server occured while executing a database operation.
-
-    The error was not due to a mistake in the user input (such as an SQL syntax error or access privilege violation),
-    but an implementation issue instead (such as out of memory during query execution).
-    """
-
-    def __init__(self, message: str = "", context: Optional[object] = None) -> None:
-        super().__init__(message)
-        self.ctx = context
-
-
-class DatabaseUserError(RuntimeError):
-    """Indicates that a database operation failed due to an error on the user's end.
-
-    The error could be due to an SQL syntax error, access privilege violation, etc.
-    """
-
-    def __init__(self, message: str = "", context: Optional[object] = None) -> None:
-        super().__init__(message)
-        self.ctx = context
+    @abc.abstractmethod
+    def supports_hint(self, hint: physops.PhysicalOperator | planmeta.HintType) -> bool:
+        """Checks, whether the database system is capable of using the specified hint or operator."""
+        raise NotImplementedError
 
 
 class QueryExecutionPlan:
@@ -793,3 +723,81 @@ class OptimizerInterface(abc.ABC):
     def cost_estimate(self, query: qal.SqlQuery | str) -> float:
         """Queries the DBMS query optimizer for the estimated cost of executing the query."""
         raise NotImplementedError
+
+
+_DB_POOL: DatabasePool | None = None
+
+
+class DatabasePool:
+    """The `DatabasePool` allows different parts of the code base to easily obtain access to a database.
+
+    This is achieved by maintaining one global pool of database connections which is shared by the entire system.
+    New database instances can be registered and retrieved via unique keys. As long as there is just a single database
+    instance, it can be accessed via the `current_database` method.
+    """
+
+    @staticmethod
+    def get_instance():
+        """Provides access to the database pool, creating a new pool instance if necessary."""
+        global _DB_POOL
+        if _DB_POOL is None:
+            _DB_POOL = DatabasePool()
+        return _DB_POOL
+
+    def __init__(self):
+        self._pool = {}
+
+    def current_database(self) -> Database:
+        """Provides the database that is currently stored in the pool, provided there is just one."""
+        return dict_utils.value(self._pool)
+
+    def register_database(self, key: str, db: Database) -> None:
+        """Stores a new database to be accessed via `key`."""
+        self._pool[key] = db
+
+    def retrieve_database(self, key: str) -> Database:
+        """Retrieves the database stored under `key`."""
+        return self._pool[key]
+
+    def __repr__(self) -> str:
+        return str(self)
+
+    def __str__(self) -> str:
+        return f"DatabasePool {self._pool}"
+
+
+class UnsupportedDatabaseFeatureError(RuntimeError):
+    """Indicates that some requested feature is not supported by the database.
+
+    For example, PostgreSQL (at least up to version 15) does not capture minimum or maximum column values in its
+    system statistics. Therefore, forcing the DBS to retrieve such information from its metadata could result in this
+    error.
+    """
+
+    def __init__(self, database: Database, feature: str) -> None:
+        super().__init__(f"Database {database.system_name} does not support feature {feature}")
+        self.database = database
+        self.feature = feature
+
+
+class DatabaseServerError(RuntimeError):
+    """Indicates an error caused by the database server occured while executing a database operation.
+
+    The error was not due to a mistake in the user input (such as an SQL syntax error or access privilege violation),
+    but an implementation issue instead (such as out of memory during query execution).
+    """
+
+    def __init__(self, message: str = "", context: Optional[object] = None) -> None:
+        super().__init__(message)
+        self.ctx = context
+
+
+class DatabaseUserError(RuntimeError):
+    """Indicates that a database operation failed due to an error on the user's end.
+
+    The error could be due to an SQL syntax error, access privilege violation, etc.
+    """
+
+    def __init__(self, message: str = "", context: Optional[object] = None) -> None:
+        super().__init__(message)
+        self.ctx = context
