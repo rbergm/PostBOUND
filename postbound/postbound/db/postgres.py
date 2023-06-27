@@ -29,7 +29,7 @@ HintBlock = collections.namedtuple("HintBlock", ["preparatory_statements", "hint
 class PostgresInterface(db.Database):
     """Database implementation for PostgreSQL backends."""
 
-    def __init__(self, connect_string: str, system_name: str = "Postgres", *, cache_enabled: bool = True) -> None:
+    def __init__(self, connect_string: str, system_name: str = "Postgres", *, cache_enabled: bool = False) -> None:
         self.connect_string = connect_string
         self._connection = psycopg.connect(connect_string, application_name="PostBOUND",
                                            row_factory=psycopg.rows.tuple_row)
@@ -44,7 +44,7 @@ class PostgresInterface(db.Database):
     def schema(self) -> db.DatabaseSchema:
         return self._db_schema
 
-    def statistics(self, emulated: bool | None = None, cache_enabled: Optional[bool] = None) -> db.DatabaseStatistics:
+    def statistics(self, emulated: bool | None = None, cache_enabled: Optional[bool] = True) -> db.DatabaseStatistics:
         if emulated is not None:
             self._db_stats.emulated = emulated
         if cache_enabled is not None:
@@ -63,7 +63,7 @@ class PostgresInterface(db.Database):
         else:
             try:
                 self._cursor.execute(query)
-                query_result = self._cursor.fetchall()
+                query_result = self._cursor.fetchall() if self._cursor.rowcount >= 0 else None
             except (psycopg.InternalError, psycopg.OperationalError) as e:
                 msg = "\n".join([f"At {utils.current_timestamp()}", "For query:", str(query), "Message:", str(e)])
                 raise db.DatabaseServerError(msg, e)
@@ -398,15 +398,18 @@ def _generate_leading_hint_content(join_tree_node: jointree.AbstractJoinTreeNode
                                     else (inner_child, outer_child))
     else:
         left, right = join_tree_node.left_child, join_tree_node.right_child
-        left_bound = left.upper_bound if left.upper_bound and not math.isnan(left.upper_bound) else -math.inf
-        right_bound = right.upper_bound if right.upper_bound and not math.isnan(right.upper_bound) else math.inf
+        has_left_bound = math.isfinite(left.upper_bound)
+        has_right_bound = math.isfinite(right.upper_bound)
 
-        if _is_hash_join(join_tree_node, operator_assignment):
-            inner_child, outer_child = (left, right) if right_bound > left_bound else (right, left)
-        elif left_bound > right_bound:
+        if not has_left_bound or not has_right_bound:
             inner_child, outer_child = right, left
+        # At this point we know that both child nodes have upper bounds
+        elif _is_hash_join(join_tree_node, operator_assignment):
+            # Apply the same Hash join direction correction as above
+            inner_child, outer_child = (left, right) if left.upper_bound < right.upper_bound else (right, left)
         else:
-            inner_child, outer_child = left, right
+            # Otherwise have the smaller relation be the outer one
+            inner_child, outer_child = (right, left) if right.upper_bound < left.upper_bound else (left, right)
 
     inner_hint = _generate_leading_hint_content(inner_child, operator_assignment)
     outer_hint = _generate_leading_hint_content(outer_child, operator_assignment)
@@ -788,8 +791,44 @@ class PostgresExplainNode:
 
         self.children = [PostgresExplainNode(child) for child in explain_data.get("Plans", [])]
 
+    def is_scan(self) -> bool:
+        return self.node_type in PostgresExplainScanNodes
+
+    def is_join(self) -> bool:
+        return self.node_type in PostgresExplainJoinNodes
+
     def is_analyze(self) -> bool:
         return not math.isnan(self.execution_time) or not math.isnan(self.true_cardinality)
+
+    def filter_conditions(self) -> dict[str, str]:
+        conditions: dict[str, str] = {}
+        if self.filter_condition is not None:
+            conditions["Filter"] = self.filter_condition
+        if self.index_condition is not None:
+            conditions["Index Cond"] = self.index_condition
+        if self.join_filter is not None:
+            conditions["Join Filter"] = self.join_filter
+        if self.hash_condition is not None:
+            conditions["Hash Cond"] = self.hash_condition
+        if self.recheck_condition is not None:
+            conditions["Recheck Cond"] = self.recheck_condition
+        return conditions
+
+    def inner_outer_children(self) -> Sequence[PostgresExplainNode]:
+        if len(self.children) < 2:
+            return self.children
+        assert len(self.children) == 2
+
+        first_child, second_child = self.children
+        inner_child = first_child if first_child.parent_relationship == "Inner" else second_child
+        outer_child = first_child if second_child == inner_child else second_child
+        return (inner_child, outer_child)
+
+    def parse_table(self) -> Optional[base.TableReference]:
+        if not self.relation_name:
+            return None
+        alias = self.relation_alias if self.relation_alias is not None else ""
+        return base.TableReference(self.relation_name, alias)
 
     def as_query_execution_plan(self) -> db.QueryExecutionPlan:
         if self.children and len(self.children) > 2:
@@ -801,13 +840,17 @@ class PostgresExplainNode:
             first_child, second_child = self.children
             child_nodes = [first_child.as_query_execution_plan(), second_child.as_query_execution_plan()]
             inner_child = child_nodes[0] if first_child.parent_relationship == "Inner" else child_nodes[1]
+
+            if self.node_type == "Hash Join":
+                inner_child = second_child if inner_child == first_child else second_child
+                inner_child = inner_child.as_query_execution_plan()
         else:
             child_nodes = None
             inner_child = None
 
-        table = self._parse_table()
-        is_scan = self.node_type in PostgresExplainScanNodes
-        is_join = self.node_type in PostgresExplainJoinNodes
+        table = self.parse_table()
+        is_scan = self.is_scan()
+        is_join = self.is_join()
         par_workers = self.parallel_workers + 1  # in Postgres the control worker also processes input
         true_card = self.true_cardinality * self.loops
 
@@ -824,11 +867,24 @@ class PostgresExplainNode:
                                      true_cardinality=true_card, execution_time=self.execution_time,
                                      physical_operator=operator, inner_child=inner_child)
 
-    def _parse_table(self) -> Optional[base.TableReference]:
-        if not self.relation_name:
-            return None
-        alias = self.relation_alias if self.relation_alias is not None else ""
-        return base.TableReference(self.relation_name, alias)
+    def inspect(self, *, _indentation: int = 0) -> str:
+        padding = " " * _indentation
+        prefix = f"{padding}<- " if padding else ""
+        own_inspection = [prefix + str(self)]
+        child_inspections = [child.inspect(_indentation=_indentation+2) for child in self.inner_outer_children()]
+        return "\n".join(own_inspection + child_inspections)
+
+    def __repr__(self) -> str:
+        return str(self)
+
+    def __str__(self) -> str:
+        analyze_content = (f" (actual time={self.execution_time}s rows={self.true_cardinality} loops={self.loops})"
+                           if self.is_analyze() else "")
+        explain_content = f"(cost={self.cost} rows={self.cardinality_estimate})"
+        conditions = " ".join(f"{condition}: {value}" for condition, value in self.filter_conditions().items())
+        conditions = " " + conditions if conditions else ""
+        scan_info = f" on {self.parse_table().identifier()}" if self.is_scan() else ""
+        return self.node_type + scan_info + explain_content + analyze_content + conditions
 
 
 class PostgresExplainPlan:
@@ -843,6 +899,9 @@ class PostgresExplainPlan:
 
     def as_query_execution_plan(self) -> db.QueryExecutionPlan:
         return self.query_plan.as_query_execution_plan()
+
+    def inspect(self) -> str:
+        return self.query_plan.inspect()
 
     def __repr__(self) -> str:
         return str(self)
