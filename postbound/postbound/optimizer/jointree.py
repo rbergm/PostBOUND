@@ -849,14 +849,17 @@ class LogicalJoinTree(JoinTree[LogicalJoinMetadata, LogicalBaseTableMetadata]):
         elif query_plan.is_join:
             if len(query_plan.children) != 2:
                 raise ValueError(f"Join nodes must have exactly two child nodes: {query_plan}")
-            outer_child, inner_child = query_plan.children
+            if query_plan.inner_child is None:
+                outer_child, inner_child = query_plan.children
+            else:
+                outer_child, inner_child = query_plan.outer_child, query_plan.inner_child
             outer_tree = LogicalJoinTree.load_from_query_plan(outer_child, query)
             inner_tree = LogicalJoinTree.load_from_query_plan(inner_child, query)
             join_predicate = (query.predicates().joins_between(outer_tree.tables(), inner_tree.tables())
                               if query else None)
             cardinality = query_plan.true_cardinality if query_plan.is_analyze() else query_plan.estimated_cardinality
             join_annotation = LogicalJoinMetadata(join_predicate, cardinality)
-            return inner_tree.join_with_subtree(outer_tree, join_annotation)
+            return outer_tree.join_with_subtree(inner_tree, join_annotation)
 
         if len(query_plan.children) != 1:
             raise ValueError(f"Non join/scan nodes must have exactly one child: {query_plan}")
@@ -964,7 +967,7 @@ class PhysicalQueryPlan(JoinTree[PhysicalJoinMetadata, PhysicalBaseTableMetadata
                                                                    parallel_workers=query_plan.parallel_workers)
                          if query_plan.physical_operator else None)
             join_annotation = PhysicalJoinMetadata(join_predicate, cardinality, join_info)
-            return inner_tree.join_with_subtree(outer_tree, join_annotation)
+            return outer_tree.join_with_subtree(inner_tree, join_annotation)
 
         if len(query_plan.children) != 1:
             raise ValueError(f"Non join/scan nodes must have exactly one child: {query_plan}")
