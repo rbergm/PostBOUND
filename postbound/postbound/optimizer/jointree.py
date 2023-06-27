@@ -717,7 +717,7 @@ class JoinTree(Container[base.TableReference], Generic[JoinMetadataType, BaseTab
 
     def join_with_base_table(self, table: base.TableReference, base_annotation: Optional[BaseTableMetadataType] = None,
                              join_annotation: Optional[JoinMetadataType] = None, *,
-                             insert_left: bool = True) -> JoinTreeType:
+                             insert_left: bool = False) -> JoinTreeType:
         if self.is_empty() and join_annotation:
             raise ValueError("Cannot use join_annotation for join with empty JoinTree")
 
@@ -729,7 +729,7 @@ class JoinTree(Container[base.TableReference], Generic[JoinMetadataType, BaseTab
         return JoinTree(join_node)
 
     def join_with_subtree(self, subtree: JoinTreeType, annotation: Optional[JoinMetadataType] = None, *,
-                          insert_left: bool = True) -> JoinTreeType:
+                          insert_left: bool = False) -> JoinTreeType:
         if subtree.is_empty():
             raise ValueError("Cannot join with empty join tree")
         if self.is_empty() and annotation:
