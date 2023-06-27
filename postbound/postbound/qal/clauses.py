@@ -198,6 +198,44 @@ class Explain(BaseClause):
         return explain_prefix + explain_body
 
 
+class CommonTableExpression(BaseClause):
+    def __init__(self, query: qal.SqlQuery, target_name: str) -> None:
+        self._query = query
+        self._target_name = target_name
+        super().__init__(hash((query, target_name)))
+
+    @property
+    def query(self) -> qal.SqlQuery:
+        return self._query
+
+    @property
+    def target_name(self) -> str:
+        return self._target_name
+
+    @property
+    def target_table(self) -> base.TableReference:
+        return base.TableReference.create_virtual(self.target_name)
+
+    def columns(self) -> set[base.ColumnReference]:
+        return self._query.columns()
+
+    def iterexpressions(self) -> Iterable[expr.SqlExpression]:
+        return self._query.iterexpressions()
+
+    def itercolumns(self) -> Iterable[base.ColumnReference]:
+        return self._query.itercolumns()
+
+    __hash__ = BaseClause.__hash__
+
+    def __eq__(self, other) -> bool:
+        return (isinstance(other, type(self))
+                and self._target_name == other._target_name
+                and self._query == other._query)
+
+    def __str__(self) -> str:
+        return f"WITH {self._target_name} AS ({self._query})"
+
+
 class BaseProjection:
     """The `BaseProjection` forms the fundamental ingredient for a SELECT clause.
 
