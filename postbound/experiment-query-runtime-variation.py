@@ -194,9 +194,8 @@ def determine_timeout(label: str, total_query_runtime: float, n_executed_plans: 
 
 
 def assert_correct_query_plan(label: str, query: qal.SqlQuery, expected_join_order: jointree.JoinTree,
-                              actual_query_plan: dict | db.QueryExecutionPlan) -> None:
-    parsed_actual_plan = (postgres.PostgresExplainPlan(actual_query_plan).as_query_execution_plan()
-                          if not isinstance(actual_query_plan, db.QueryExecutionPlan) else actual_query_plan)
+                              actual_query_plan: dict) -> None:
+    parsed_actual_plan = postgres.PostgresExplainPlan(actual_query_plan).as_query_execution_plan()
     actual_join_order = jointree.LogicalJoinTree.load_from_query_plan(parsed_actual_plan, query)
     if expected_join_order != actual_join_order:
         logging.error("Join order was not enforced correctly for label %s", label)
@@ -291,7 +290,9 @@ def execute_single_query(label: str, query: qal.SqlQuery, join_order: jointree.L
         query_execution_worker.join()
         db_instance.reset_connection()
 
-        query_plan = db_instance.optimizer().query_plan(optimized_query)
+        # We cannot use db.optimizer().query_plan() here, b/c we need to JSON-serialize the raw plan later on. This is
+        # currently not supported by the QueryExecutionPlan
+        query_plan = db_instance.execute_query(transform.as_explain(optimized_query), cache_enabled=False)
         query_runtime = np.inf
     else:
         query_plan, query_runtime = query_duration_receiver.recv()
