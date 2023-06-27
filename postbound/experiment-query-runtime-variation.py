@@ -193,6 +193,14 @@ def determine_timeout(label: str, total_query_runtime: float, n_executed_plans: 
     return max(timeout, config.minimum_query_timeout)
 
 
+def assert_correct_query_plan(label: str, query: qal.SqlQuery, expected_join_order: jointree.JoinTree,
+                              actual_query_plan: dict) -> None:
+    parsed_actual_plan = postgres.PostgresExplainPlan(actual_query_plan).as_query_execution_plan()
+    actual_join_order = jointree.LogicalJoinTree.load_from_query_plan(parsed_actual_plan, query)
+    if expected_join_order != actual_join_order:
+        logging.error("Join order was not enforced correctly for label %s", label)
+
+
 OperatorSelection = tuple[Optional[operators.PhysicalOperatorAssignment], Optional[params.PlanParameterization]]
 
 
@@ -282,13 +290,15 @@ def execute_single_query(label: str, query: qal.SqlQuery, join_order: jointree.L
         query_execution_worker.join()
         db_instance.reset_connection()
 
-        query_plan = db_instance.execute_query(transform.as_explain(optimized_query), cache_enabled=False)
+        query_plan = db_instance.optimizer().query_plan(optimized_query)
         query_runtime = np.inf
     else:
         query_plan, query_runtime = query_duration_receiver.recv()
     query_execution_worker.close()
     query_duration_receiver.close()
     query_duration_sender.close()
+
+    assert_correct_query_plan(label, query, join_order, query_plan)
 
     query_hints, planner_options = ((optimized_query.hints.query_hints, optimized_query.hints.preparatory_statements)
                                     if optimized_query.hints else ("", ""))
@@ -298,15 +308,14 @@ def execute_single_query(label: str, query: qal.SqlQuery, join_order: jointree.L
                             timeout=query_timeout)
 
 
-def prewarm_database(query: qal.SqlQuery, db_instance: db.Database, *,
+def prewarm_database(query: qal.SqlQuery, db_instance: postgres.PostgresInterface, *,
                      config: ExperimentConfig = ExperimentConfig.default()) -> None:
     if not config.enable_prewarming:
         return
-    for table in query.tables():
-        db_instance.execute_query(f"SELECT pg_prewarm('{table.full_name}');", cache_enabled=False)
+    db_instance.prewarm_tables(query.tables())
 
 
-def evaluate_query(label: str, query: qal.SqlQuery, *, db_instance: db.Database,
+def evaluate_query(label: str, query: qal.SqlQuery, *, db_instance: postgres.PostgresInterface,
                    config: ExperimentConfig = ExperimentConfig.default()) -> Iterable[EvaluationResult]:
     logging.debug("Building all plans for query %s", label)
     exhaustive_enumerator = enumeration.ExhaustiveJoinOrderGenerator()
@@ -373,6 +382,11 @@ def prepare_for_export(df: pd.DataFrame) -> pd.DataFrame:
 
 def read_config() -> tuple[ExperimentConfig, Sequence[str]]:
     if not Interactive:
+        logging.basicConfig(level=logging_level, format=logging_format, filename="experiment-test.log", filemode="w")
+        console_logger = logging.StreamHandler()
+        console_logger.setLevel(logging.DEBUG)
+        console_logger.setFormatter(logging.Formatter(logging_format))
+        logging.getLogger().addHandler(console_logger)
         return ExperimentConfig(operator_selection="optimal"), ["1a"]
 
     arg_parser = argparse.ArgumentParser(description="Determines the difference in query runtime depending on the "
