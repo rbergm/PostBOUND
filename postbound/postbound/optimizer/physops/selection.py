@@ -9,6 +9,10 @@ from postbound.optimizer import jointree, validation
 from postbound.optimizer.physops import operators
 
 
+# TODO: Refactor: get rid of chaining behavior built into the selection stratgies themselves.
+# Instead, introduce a new ChainedOperatorSelectionStrategy
+
+
 class PhysicalOperatorSelection(abc.ABC):
     """The `PhysicalOperatorSelection` assigns scan and join operators to the tables of the input query.
 
@@ -99,7 +103,7 @@ class PhysicalOperatorSelection(abc.ABC):
         return str(self)
 
     def __str__(self) -> str:
-        return str(type(self).__name__)
+        return type(self).__name__
 
 
 class EmptyPhysicalOperatorSelection(PhysicalOperatorSelection):

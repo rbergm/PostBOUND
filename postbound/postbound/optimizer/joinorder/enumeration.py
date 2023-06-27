@@ -49,7 +49,7 @@ class JoinOrderOptimizer(abc.ABC):
         return str(self)
 
     def __str__(self) -> str:
-        return str(type(self).__name__)
+        return type(self).__name__
 
 
 def _merge_nodes(start: jointree.LogicalJoinTree | base.TableReference,

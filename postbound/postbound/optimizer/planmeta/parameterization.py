@@ -11,7 +11,9 @@ from postbound.optimizer.physops import operators as physops
 from postbound.optimizer.planmeta import hints as plan_params
 
 
-# TODO: implement chaining rules
+# TODO: Refactor: get rid of chaining behavior built into the selection stratgies themselves.
+# Instead, introduce a new ChainedParameterizationStrategy
+
 
 class ParameterGeneration(abc.ABC):
     """The `ParameterGeneration` assigns additional meta parameters to a query plan.
@@ -76,7 +78,7 @@ class ParameterGeneration(abc.ABC):
         return str(self)
 
     def __str__(self) -> str:
-        return str(type(self).__name__)
+        return type(self).__name__
 
 
 class EmptyParameterization(ParameterGeneration):

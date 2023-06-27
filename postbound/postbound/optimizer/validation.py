@@ -44,6 +44,9 @@ class OptimizationPreCheck(abc.ABC):
         """Performs the actual validation to check, whether the query contains unsupported features."""
         raise NotImplementedError
 
+    def check_supported_database_system(self, database_instance: db.Database) -> PreCheckResult:
+        return PreCheckResult.with_all_passed()
+
     @abc.abstractmethod
     def describe(self) -> dict:
         """Provides the description for this check. This should include the query features that are validated."""
