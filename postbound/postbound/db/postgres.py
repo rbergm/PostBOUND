@@ -838,12 +838,10 @@ class PostgresExplainNode:
             inner_child = None
         elif self.children:
             first_child, second_child = self.children
-            child_nodes = [first_child.as_query_execution_plan(), second_child.as_query_execution_plan()]
-            inner_child = child_nodes[0] if first_child.parent_relationship == "Inner" else child_nodes[1]
-
-            if self.node_type == "Hash Join":
-                inner_child = second_child if inner_child == first_child else second_child
-                inner_child = inner_child.as_query_execution_plan()
+            first_plan, second_plan = first_child.as_query_execution_plan(), second_child.as_query_execution_plan()
+            child_nodes = first_plan, second_plan
+            inner_child = (first_plan if first_child.parent_relationship == "Inner" and self.node_type != "Hash Join"
+                           else second_plan)
         else:
             child_nodes = None
             inner_child = None
