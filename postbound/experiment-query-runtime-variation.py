@@ -19,7 +19,7 @@ import numpy as np
 import pandas as pd
 
 from postbound.db import db, postgres
-from postbound.qal import qal, base, transform, parser
+from postbound.qal import qal, base, transform
 from postbound.experiments import workloads
 from postbound.optimizer import jointree
 from postbound.optimizer.joinorder import enumeration
@@ -205,24 +205,19 @@ OperatorSelection = tuple[Optional[operators.PhysicalOperatorAssignment], Option
 
 
 def native_operator_selection(join_order: jointree.JoinTree) -> OperatorSelection:
-    return None, None
+    plan_params = params.PlanParameterization()
+    plan_params.set_system_settings(geqo="off")
+    return None, plan_params
 
 
 def restrict_to_hash_join(join_order: jointree.JoinTree) -> OperatorSelection:
     operator_selection = operators.PhysicalOperatorAssignment()
     operator_selection.set_operator_enabled_globally(operators.JoinOperators.NestedLoopJoin, False)
     operator_selection.set_operator_enabled_globally(operators.JoinOperators.SortMergeJoin, False)
-    return operator_selection, None
 
-
-def true_cardinality_hints(label: str, config: ExperimentConfig) -> params.PlanParameterization:
-    card_df = pd.read_csv(config.true_cardinalities_df)
-    relevant_queries = card_df[card_df.label == label].copy()
-    relevant_queries["query_fragment"] = relevant_queries["query_fragment"].apply(parser.parse_query)
     plan_params = params.PlanParameterization()
-    for __, row in relevant_queries.iterrows():
-        plan_params.add_cardinality_hint(row["query_fragment"].tables(), row["cardinality"])
-    return plan_params
+    plan_params.set_system_settings(geqo="off")
+    return operator_selection, plan_params
 
 
 def parse_tables_list(tables: str) -> set[base.TableReference]:
@@ -248,7 +243,8 @@ class TrueCardinalityGenerator:
             joined_tables = intermediate_join.tables()
             current_cardinality = self._relevant_queries[self._relevant_queries.tables == joined_tables]
             if current_cardinality.empty:
-                logging.warning("No cardinality found for intermediate %s at label %s", intermediate_join, self._current_label)
+                logging.warning("No cardinality found for intermediate %s at label %s", intermediate_join,
+                                self._current_label)
                 continue
             cardinality = current_cardinality.iloc[0]["cardinality"]
             plan_params.add_cardinality_hint(joined_tables, cardinality)
@@ -256,16 +252,20 @@ class TrueCardinalityGenerator:
             table = base_table.table
             current_cardinality = self._relevant_queries[self._relevant_queries.tables == {table}]
             if current_cardinality.empty:
-                logging.warning("No cardinality found for base table %s at label %s", intermediate_join, self._current_label)
+                logging.warning("No cardinality found for base table %s at label %s", intermediate_join,
+                                self._current_label)
                 continue
             cardinality = current_cardinality.iloc[0]["cardinality"]
             plan_params.add_cardinality_hint([table], cardinality)
+
+        plan_params.set_system_settings(geqo="off")
         return None, plan_params
 
 
 def execute_single_query(label: str, query: qal.SqlQuery, join_order: jointree.LogicalJoinTree, *,
                          n_executed_plans: int = 0, total_query_runtime: float = 0,
-                         db_instance: db.Database, operator_generator: Callable[[jointree.JoinTree], OperatorSelection],
+                         db_instance: db.Database,
+                         operator_generator: Callable[[jointree.JoinTree], OperatorSelection],
                          config: ExperimentConfig = ExperimentConfig.default()) -> EvaluationResult:
     query_generator = db_instance.hinting()
 
@@ -358,7 +358,8 @@ def evaluate_query(label: str, query: qal.SqlQuery, *, db_instance: postgres.Pos
     for join_order in join_order_plans:
         evaluation_result = execute_single_query(label, query, join_order, n_executed_plans=n_executed_plans,
                                                  total_query_runtime=total_query_runtime,
-                                                 db_instance=db_instance, operator_generator=operator_generator, config=config)
+                                                 db_instance=db_instance, operator_generator=operator_generator,
+                                                 config=config)
         n_executed_plans += 1
         total_query_runtime += (evaluation_result.execution_time if math.isfinite(evaluation_result.execution_time)
                                 else evaluation_result.timeout)
