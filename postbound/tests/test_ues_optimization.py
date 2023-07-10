@@ -34,7 +34,7 @@ class JobWorkloadTests(regression_suite.DatabaseTestCase):
                          "Skipping result set equivalence comparison. Set COMPARE_RESULT_SETS environment variable "
                          "to non-empty value to change.")
     def test_result_set_equivalence(self) -> None:
-        optimization_pipeline = pb.OptimizationPipeline(target_db=self.db)
+        optimization_pipeline = pb.TwoStageOptimizationPipeline(target_db=self.db)
         optimization_pipeline.load_settings(presets.fetch("ues"))
         optimization_pipeline.build()
         for label, query in self.job.entries():
@@ -46,7 +46,7 @@ class JobWorkloadTests(regression_suite.DatabaseTestCase):
                 self.assertResultSetsEqual(original_result, optimized_result, ordered=query.is_ordered())
 
     def test_optimize_workload(self) -> None:
-        optimization_pipeline = pb.OptimizationPipeline(target_db=self.db)
+        optimization_pipeline = pb.TwoStageOptimizationPipeline(target_db=self.db)
         optimization_pipeline.load_settings(presets.fetch("ues"))
         optimization_pipeline.build()
         for label, query in self.job.entries():
@@ -69,7 +69,7 @@ class SsbWorkloadTests(regression_suite.DatabaseTestCase):
                          "Skipping result set equivalence comparison. Set COMPARE_RESULT_SETS environment variable "
                          "to non-empty value to change.")
     def test_result_set_equivalence(self) -> None:
-        optimization_pipeline = pb.OptimizationPipeline(target_db=self.db)
+        optimization_pipeline = pb.TwoStageOptimizationPipeline(target_db=self.db)
         optimization_pipeline.load_settings(presets.fetch("ues"))
         optimization_pipeline.build()
         for label, query in self.ssb.entries():
@@ -81,7 +81,7 @@ class SsbWorkloadTests(regression_suite.DatabaseTestCase):
                 self.assertResultSetsEqual(original_result, optimized_result, ordered=query.is_ordered())
 
     def test_optimize_workload(self) -> None:
-        optimization_pipeline = pb.OptimizationPipeline(target_db=self.db)
+        optimization_pipeline = pb.TwoStageOptimizationPipeline(target_db=self.db)
         optimization_pipeline.load_settings(presets.fetch("ues"))
         optimization_pipeline.build()
         for label, query in self.ssb.entries():
@@ -104,7 +104,7 @@ class StackWorkloadTests(regression_suite.DatabaseTestCase):
                          "Skipping result set equivalence comparison. Set COMPARE_RESULT_SETS environment variable "
                          "to non-empty value to change.")
     def test_result_set_equivalence(self) -> None:
-        optimization_pipeline = pb.OptimizationPipeline(target_db=self.db)
+        optimization_pipeline = pb.TwoStageOptimizationPipeline(target_db=self.db)
         optimization_pipeline.load_settings(presets.fetch("ues"))
         optimization_pipeline.build()
         for label, query in self.stack.entries():
@@ -123,7 +123,7 @@ class StackWorkloadTests(regression_suite.DatabaseTestCase):
                     self.skipTest(f"Internal database error at '{label}': {e}")
 
     def test_optimize_workload(self) -> None:
-        optimization_pipeline = pb.OptimizationPipeline(target_db=self.db)
+        optimization_pipeline = pb.TwoStageOptimizationPipeline(target_db=self.db)
         optimization_pipeline.load_settings(presets.fetch("ues"))
         optimization_pipeline.build()
         for label, query in self.stack.entries():

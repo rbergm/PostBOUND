@@ -27,7 +27,7 @@ class DefaultTonicTests(unittest.TestCase):
                 query_plan = self.db.optimizer().query_plan(query)
                 tonic_optimizer.integrate_cost(query, query_plan)
 
-        optimization_pipeline = pb.OptimizationPipeline(self.db)
+        optimization_pipeline = pb.TwoStageOptimizationPipeline(self.db)
         optimization_pipeline.setup_physical_operator_selection(tonic_optimizer)
         optimization_pipeline.build()
         for label, query in self.job.entries():

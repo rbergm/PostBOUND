@@ -1,6 +1,8 @@
 """Provides PostBOUND's main optimization pipeline."""
 from __future__ import annotations
 
+import typing
+
 from postbound.qal import qal, transform
 from postbound.optimizer import presets, validation
 from postbound.optimizer.joinorder import enumeration
@@ -10,8 +12,21 @@ from postbound.db import db
 from postbound.util import errors
 
 
-class OptimizationPipeline:
-    """The optimization pipeline is the main tool to apply and combine different optimization strategies.
+class OptimizationPipeline(typing.Protocol):
+
+    def optimize_query(self, query: qal.SqlQuery) -> qal.SqlQuery:
+        pass
+
+    def describe(self) -> dict:
+        pass
+
+
+class IntegratedOptimizationPipeline(OptimizationPipeline):
+    pass
+
+
+class TwoStageOptimizationPipeline(OptimizationPipeline):
+    """This optimization pipeline is the main tool to apply and combine different optimization strategies.
 
     Each pipeline consists of up to four steps, which completely specify the optimization settings that should be
     applied to an incoming query. For each of the steps general interface exist that must be implemented by the
@@ -69,7 +84,7 @@ class OptimizationPipeline:
     def plan_parameterization(self) -> plan_param.ParameterGeneration:
         return self._plan_parameterization
 
-    def setup_query_support_check(self, check: validation.OptimizationPreCheck) -> OptimizationPipeline:
+    def setup_query_support_check(self, check: validation.OptimizationPreCheck) -> TwoStageOptimizationPipeline:
         """Configures the pre-check to be executed for each query.
 
         This check will be combined with any additional checks that are required by the actual optimization strategies.
@@ -78,7 +93,8 @@ class OptimizationPipeline:
         self._build = False
         return self
 
-    def setup_join_order_optimization(self, enumerator: enumeration.JoinOrderOptimizer) -> OptimizationPipeline:
+    def setup_join_order_optimization(self,
+                                      enumerator: enumeration.JoinOrderOptimizer) -> TwoStageOptimizationPipeline:
         """Configures the algorithm to obtain an optimized join order.
 
         This algorithm may optionally also determine an initial assignment of physical operators.
@@ -88,7 +104,7 @@ class OptimizationPipeline:
         return self
 
     def setup_physical_operator_selection(self, selector: selection.PhysicalOperatorSelection, *,
-                                          overwrite: bool = False) -> OptimizationPipeline:
+                                          overwrite: bool = False) -> TwoStageOptimizationPipeline:
         """Configures the algorithm to assign physical operators to the query.
 
         This algorithm receives the input query as well as the join order (if there is one) as input. In a special
@@ -108,7 +124,7 @@ class OptimizationPipeline:
         return self
 
     def setup_plan_parameterization(self, param_generator: plan_param.ParameterGeneration, *,
-                                    overwrite: bool = False) -> OptimizationPipeline:
+                                    overwrite: bool = False) -> TwoStageOptimizationPipeline:
         """Configures the algorithm to parameterize the query plan.
 
         This algorithm receives the input query as well as the join order and the physical operators (if those have
@@ -126,7 +142,7 @@ class OptimizationPipeline:
         self._build = False
         return self
 
-    def load_settings(self, optimization_settings: presets.OptimizationSettings) -> OptimizationPipeline:
+    def load_settings(self, optimization_settings: presets.OptimizationSettings) -> TwoStageOptimizationPipeline:
         """Applies all the optimization settings from a pre-defined optimization strategy to the pipeline.
 
         This is just a shorthand method to skip calling all setup methods individually for a fixed combination of
@@ -147,7 +163,7 @@ class OptimizationPipeline:
         self._build = False
         return self
 
-    def build(self) -> OptimizationPipeline:
+    def build(self) -> TwoStageOptimizationPipeline:
         """Constructs the optimization pipeline.
 
          This includes filling all undefined optimization steps with empty strategies. Afterwards, the pipeline is
@@ -223,3 +239,7 @@ class OptimizationPipeline:
         components = [self._join_order_enumerator, self._physical_operator_selection, self._plan_parameterization]
         opt_chain = " -> ".join(str(comp) for comp in components)
         return f"OptimizationPipeline [{opt_chain}]"
+
+
+class IncrementalOptimizationPipeline(OptimizationPipeline):
+    pass
