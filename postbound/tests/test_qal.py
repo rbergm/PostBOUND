@@ -356,6 +356,7 @@ class ParserTests(regression_suite.QueryTestCase):
         query = "SELECT * FROM R r, S s, T t WHERE r.a = s.b AND s.b = t.c"
         parsed = parser.parse_query(query)
         self.assertIsInstance(parsed, qal.ImplicitSqlQuery, "Query should be parsed as implicit query")
+
     def test_explicit_from_clause(self) -> None:
         query = "SELECT * FROM R JOIN S ON R.a = S.b WHERE R.c LIKE '%42%' AND R.c < S.b"
         parsed = parser.parse_query(query)
