@@ -1,3 +1,4 @@
 [submodule "util/ssb-kit"]
-	path = util/ssb-kit
+	path = postgres/ssb-kit
 	url = https://github.com/gregrahn/ssb-kit.git
+	ignore = dirty

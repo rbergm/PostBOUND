@@ -10,7 +10,7 @@ fi
 root=$(pwd)
 
 echo ".. Building SSB utility"
-patch -fs ssb-kit/dbgen/bm_utils.c ssb_dbgen.patch
+patch -fs ssb-kit/dbgen/bm_utils.c ../util/ssb_dbgen.patch
 cd ssb-kit/dbgen
 make MACHINE=LINUX DATABASE=POSTGRESQL
 
@@ -33,9 +33,8 @@ echo ".. Inserting SSB data into database"
 wget -nv --output-document ../ssb_data/pg_load.sql https://raw.githubusercontent.com/gregrahn/ssb-kit/master/scripts/pg_load.sql
 
 # this patch may never fail since we just downloaded the live version (unless this version is changed)
-patch ../ssb_data/pg_load.sql ssb_pg_load.patch
+patch ../ssb_data/pg_load.sql ../util/ssb_pg_load.patch
 psql ssb -f ../ssb_data/pg_load.sql
 
-
 echo ".. Creating SSB Foreign Key indices"
-psql ssb -f ssb_fk_indexes.sql
+psql ssb -f workload-ssb-fk-indexes.sql
