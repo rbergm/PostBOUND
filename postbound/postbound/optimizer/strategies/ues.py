@@ -248,7 +248,7 @@ class UESJoinBoundEstimator(card_policy.JoinBoundCardinalityEstimator):
     def pre_check(self) -> Optional[validation.OptimizationPreCheck]:
         # TODO: the UES check is slightly too restrictive here.
         # It suffices to check that there are only conjunctive equi joins.
-        return validation.UESOptimizationPreCheck()
+        return UESOptimizationPreCheck()
 
     def _estimate_pk_fk_join(self, fk_column: base.ColumnReference, pk_column: base.ColumnReference) -> int:
         """Estimation formula for primary key/foreign key joins."""
@@ -404,7 +404,7 @@ class UESJoinOrderOptimizer(stages.JoinOrderOptimization):
                                                 self.join_estimation.pre_check(),
                                                 self.subquery_policy.pre_check()]
                             if check]
-        specified_checks.append(validation.UESOptimizationPreCheck())
+        specified_checks.append(UESOptimizationPreCheck())
         return validation.merge_checks(specified_checks)
 
     def _default_ues_optimizer(self, query: qal.SqlQuery, join_graph: joingraph.JoinGraph) -> jointree.LogicalJoinTree:
@@ -626,9 +626,9 @@ class UESOperatorSelection(stages.PhysicalOperatorSelection):
         super().__init__()
         self.database = database
 
-    def _apply_selection(self, query: qal.SqlQuery,
-                         join_order: Optional[jointree.LogicalJoinTree | jointree.PhysicalQueryPlan]
-                         ) -> physops.PhysicalOperatorAssignment:
+    def select_physical_operators(self, query: qal.SqlQuery,
+                                  join_order: Optional[jointree.LogicalJoinTree | jointree.PhysicalQueryPlan]
+                                  ) -> physops.PhysicalOperatorAssignment:
         if isinstance(join_order, jointree.PhysicalQueryPlan):
             assignment = join_order.physical_operators().clone()
         else:
@@ -639,7 +639,7 @@ class UESOperatorSelection(stages.PhysicalOperatorSelection):
                                                      overwrite_fine_grained_selection=True)
         return assignment
 
-    def _description(self) -> dict:
+    def describe(self) -> dict:
         return {"name": "ues"}
 
 

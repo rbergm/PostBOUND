@@ -23,15 +23,12 @@ class EmptyJoinOrderOptimizer(stages.JoinOrderOptimization):
 class EmptyPhysicalOperatorSelection(stages.PhysicalOperatorSelection):
     """Dummy implementation of operator optimization that does not actually optimize anything."""
 
-    def chain_with(self, next_selection: stages.PhysicalOperatorSelection) -> stages.PhysicalOperatorSelection:
-        return next_selection
-
-    def _apply_selection(self, query: qal.SqlQuery,
-                         join_order: Optional[jointree.LogicalJoinTree | jointree.PhysicalQueryPlan]
-                         ) -> physops.PhysicalOperatorAssignment:
+    def select_physical_operators(self, query: qal.SqlQuery,
+                                  join_order: Optional[jointree.LogicalJoinTree | jointree.PhysicalQueryPlan]
+                                  ) -> physops.PhysicalOperatorAssignment:
         return physops.PhysicalOperatorAssignment()
 
-    def _description(self) -> dict:
+    def describe(self) -> dict:
         return {"name": "no_selection"}
 
 

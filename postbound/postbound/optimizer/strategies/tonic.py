@@ -328,14 +328,14 @@ class TonicOperatorSelection(stages.PhysicalOperatorSelection):
     def reset(self) -> None:
         self.qeps.reset()
 
-    def _apply_selection(self, query: qal.SqlQuery,
-                         join_order: Optional[jointree.LogicalJoinTree | jointree.PhysicalQueryPlan]
-                         ) -> physops.PhysicalOperatorAssignment:
+    def select_physical_operators(self, query: qal.SqlQuery,
+                                  join_order: Optional[jointree.LogicalJoinTree | jointree.PhysicalQueryPlan]
+                                  ) -> physops.PhysicalOperatorAssignment:
         if not join_order or join_order.is_empty():
             join_order = self._obtain_native_join_order(query)
         return self.qeps.recommend_operators(query, join_order)
 
-    def _description(self) -> dict:
+    def describe(self) -> dict:
         return {"name": "tonic", "filter_aware": self.filter_aware, "gamma": self.gamma}
 
     def _obtain_native_join_order(self, query: qal.SqlQuery) -> jointree.LogicalJoinTree:

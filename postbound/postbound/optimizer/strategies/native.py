@@ -28,16 +28,16 @@ class NativePhysicalOperatorSelection(stages.PhysicalOperatorSelection):
         super().__init__()
         self.db_instance = db_instance
 
-    def _apply_selection(self, query: qal.SqlQuery,
-                         join_order: Optional[jointree.LogicalJoinTree | jointree.PhysicalQueryPlan]
-                         ) -> physops.PhysicalOperatorAssignment:
+    def select_physical_operators(self, query: qal.SqlQuery,
+                                  join_order: Optional[jointree.LogicalJoinTree | jointree.PhysicalQueryPlan]
+                                  ) -> physops.PhysicalOperatorAssignment:
         if join_order:
             query = self.db_instance.hinting().generate_hints(query, join_order)
         query_plan = self.db_instance.optimizer().query_plan(query)
         join_tree = jointree.PhysicalQueryPlan.load_from_query_plan(query_plan)
         return join_tree.physical_operators()
 
-    def _description(self) -> dict:
+    def describe(self) -> dict:
         return {"name": "native", "database_system": self.db_instance.describe()}
 
 
