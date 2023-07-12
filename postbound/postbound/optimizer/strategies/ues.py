@@ -13,8 +13,8 @@ import numpy as np
 from postbound.db import db
 from postbound.qal import base, qal, predicates
 from postbound.optimizer import joingraph, jointree, validation
-from postbound.optimizer.bounds import joins as join_bounds, scans as scan_bounds
-from postbound.optimizer.joinorder import subqueries, enumeration
+from postbound.optimizer.policies import cardinalities as card_policy, jointree as tree_policy
+from postbound.optimizer.joinorder import enumeration
 from postbound.optimizer.physops import selection as opsel, operators as physops
 from postbound.util import collections as collection_utils, dicts as dict_utils
 
@@ -75,10 +75,10 @@ class StatisticsContainer(abc.ABC, Generic[StatsType]):
         self.attribute_frequencies: dict[base.ColumnReference, StatsType] = {}
 
         self.query: qal.SqlQuery | None = None
-        self.base_table_estimator: scan_bounds.BaseTableCardinalityEstimator | None = None
+        self.base_table_estimator: card_policy.BaseTableCardinalityEstimator | None = None
 
     def setup_for_query(self, query: qal.SqlQuery,
-                        base_table_estimator: scan_bounds.BaseTableCardinalityEstimator) -> None:
+                        base_table_estimator: card_policy.BaseTableCardinalityEstimator) -> None:
         """Initializes the internal data of the statistics container for th given query.
 
         The `base_table_estimator` is used to inflate the `base_table_estimates` using the tables that are contained
@@ -208,7 +208,7 @@ class MaxFrequencyStatsContainer(StatisticsContainer[MaxFrequency]):
         self.attribute_frequencies[third_party_column] *= self.attribute_frequencies[joined_column]
 
 
-class UESJoinBoundEstimator(join_bounds.JoinBoundCardinalityEstimator):
+class UESJoinBoundEstimator(card_policy.JoinBoundCardinalityEstimator):
     """Join cardinality estimator that produces upper bounds according to the formula described in the UES paper.
 
     This requires maximum frequency statistics over the join columns in order to work properly.
@@ -280,7 +280,7 @@ class UESJoinBoundEstimator(join_bounds.JoinBoundCardinalityEstimator):
                 else self.stats_container.base_table_estimates[table])
 
 
-class UESSubqueryGenerationPolicy(subqueries.SubqueryGenerationPolicy):
+class UESSubqueryGenerationPolicy(tree_policy.BranchGenerationPolicy):
     """The subquery strategy as proposed in the UES paper.
 
     In short, this strategy generates subqueries if they guarantee a reduction of the upper bounds of the higher-level
@@ -335,15 +335,15 @@ class UESJoinOrderOptimizer(enumeration.JoinOrderOptimizer):
     table estimates
     """
 
-    def __init__(self, *, base_table_estimation: Optional[scan_bounds.BaseTableCardinalityEstimator] = None,
-                 join_estimation: Optional[join_bounds.JoinBoundCardinalityEstimator] = None,
-                 subquery_policy: Optional[subqueries.SubqueryGenerationPolicy] = None,
+    def __init__(self, *, base_table_estimation: Optional[card_policy.BaseTableCardinalityEstimator] = None,
+                 join_estimation: Optional[card_policy.JoinBoundCardinalityEstimator] = None,
+                 subquery_policy: Optional[tree_policy.BranchGenerationPolicy] = None,
                  stats_container: Optional[StatisticsContainer] = None,
                  database: Optional[db.Database] = None, verbose: bool = False) -> None:
         super().__init__()
         self.database = database if database else db.DatabasePool().get_instance().current_database()
         self.base_table_estimation = (base_table_estimation if base_table_estimation
-                                      else scan_bounds.NativeCardinalityEstimator(self.database))
+                                      else card_policy.NativeCardinalityEstimator(self.database))
         self.join_estimation = join_estimation if join_estimation else UESJoinBoundEstimator()
         self.subquery_policy = subquery_policy if subquery_policy else UESSubqueryGenerationPolicy()
         self.stats_container = (stats_container if stats_container

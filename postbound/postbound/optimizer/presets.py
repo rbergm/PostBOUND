@@ -7,7 +7,7 @@ from typing import Optional
 from postbound.db import db
 from postbound.qal import parser
 from postbound.optimizer import validation
-from postbound.optimizer.bounds import scans
+from postbound.optimizer.policies import cardinalities
 from postbound.optimizer.joinorder import enumeration
 from postbound.optimizer.physops import selection
 from postbound.optimizer.strategies import ues, native
@@ -75,7 +75,7 @@ class UESOptimizationSettings(OptimizationSettings):
         return validation.UESOptimizationPreCheck()
 
     def build_join_order_optimizer(self) -> enumeration.JoinOrderOptimizer | None:
-        base_table_estimator = scans.NativeCardinalityEstimator(self.database)
+        base_table_estimator = cardinalities.NativeCardinalityEstimator(self.database)
         join_cardinality_estimator = ues.UESJoinBoundEstimator()
         subquery_policy = ues.UESSubqueryGenerationPolicy()
         stats_container = ues.MaxFrequencyStatsContainer(self.database.statistics())

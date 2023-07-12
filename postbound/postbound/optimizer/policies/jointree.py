@@ -8,7 +8,7 @@ from postbound.qal import qal, predicates
 from postbound.optimizer import joingraph, validation
 
 
-class SubqueryGenerationPolicy(abc.ABC):
+class BranchGenerationPolicy(abc.ABC):
     """This policy allows to adapt the structure of the resulting join tree during join order optimization.
 
     It is intended to customize when branches should be created in a join tree and to compare different such
@@ -46,7 +46,7 @@ class SubqueryGenerationPolicy(abc.ABC):
         return None
 
 
-class LinearSubqueryGenerationPolicy(SubqueryGenerationPolicy):
+class LinearJoinTreeGenerationPolicy(BranchGenerationPolicy):
     """Subquery strategy that leaves all join paths linear, i.e. does not generate subqueries at all."""
 
     def __init__(self):
