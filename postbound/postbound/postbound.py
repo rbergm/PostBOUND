@@ -1,24 +1,35 @@
 """Provides PostBOUND's main optimization pipeline."""
 from __future__ import annotations
 
+import abc
 import typing
 
 from postbound.qal import qal, transform
-from postbound.optimizer import presets, validation
-from postbound.optimizer.joinorder import enumeration
-from postbound.optimizer.physops import selection
-from postbound.optimizer.planmeta import parameterization as plan_param
+from postbound.optimizer import presets, stages, validation
 from postbound.db import db
 from postbound.util import errors
 
 
 class OptimizationPipeline(typing.Protocol):
+    """The optimization pipeline is the main tool to apply different strategies to optimize SQL queries.
 
+    Depending on the specific scenario, different concrete pipeline implementations exist. For example, to apply
+    a two-stage optimization design (e.g. consisting of join ordering and a subsequent physical operator selection),
+    the `TwoStageOptimizationPipeline` exists. Similarly, for optimization algorithms that perform join ordering and
+    operator selection in one process (as in the traditional dynamic programming-based approach),
+    an `IntegratedOptimizationPipeline` is available. Lastly, to model approaches that subsequently improve query plans
+    by correcting some optimization decisions (e.g. transforming a hash join to a nested loop join), the
+    `IncrementalOptimizationPipeline` is provided. Consult the individual pipeline documentation for more details. This
+    protocol class only describes the basic interface that is shared by all the pipeline implementations.
+    """
+
+    @abc.abstractmethod
     def optimize_query(self, query: qal.SqlQuery) -> qal.SqlQuery:
-        pass
+        raise NotImplementedError
 
+    @abc.abstractmethod
     def describe(self) -> dict:
-        pass
+        raise NotImplementedError
 
 
 class IntegratedOptimizationPipeline(OptimizationPipeline):
@@ -28,9 +39,10 @@ class IntegratedOptimizationPipeline(OptimizationPipeline):
 class TwoStageOptimizationPipeline(OptimizationPipeline):
     """This optimization pipeline is the main tool to apply and combine different optimization strategies.
 
-    Each pipeline consists of up to four steps, which completely specify the optimization settings that should be
-    applied to an incoming query. For each of the steps general interface exist that must be implemented by the
-    selected strategies.
+    The pipeline is organized in two large stages (join ordering and physical operator selection), which are
+    accompanied by initial pre check and a final plan parameterization steps. In total, those four individual steps
+    completely specify the optimization settings that should be applied to an incoming query. For each of the steps
+    general interface exist that must be implemented by the selected strategies.
 
     The steps are applied in consecutive order and perform the following tasks:
 
@@ -54,9 +66,9 @@ class TwoStageOptimizationPipeline(OptimizationPipeline):
     def __init__(self, target_db: db.Database) -> None:
         self._target_db = target_db
         self._pre_check: validation.OptimizationPreCheck | None = None
-        self._join_order_enumerator: enumeration.JoinOrderOptimizer | None = None
-        self._physical_operator_selection: selection.PhysicalOperatorSelection | None = None
-        self._plan_parameterization: plan_param.ParameterGeneration | None = None
+        self._join_order_enumerator: stages.JoinOrderOptimization | None = None
+        self._physical_operator_selection: stages.PhysicalOperatorSelection | None = None
+        self._plan_parameterization: stages.ParameterGeneration | None = None
         self._build = False
 
     @property
@@ -73,15 +85,15 @@ class TwoStageOptimizationPipeline(OptimizationPipeline):
         return self._pre_check
 
     @property
-    def join_order_enumerator(self) -> enumeration.JoinOrderOptimizer:
+    def join_order_enumerator(self) -> stages.JoinOrderOptimization:
         return self._join_order_enumerator
 
     @property
-    def physical_operator_selection(self) -> selection.PhysicalOperatorSelection:
+    def physical_operator_selection(self) -> stages.PhysicalOperatorSelection:
         return self._physical_operator_selection
 
     @property
-    def plan_parameterization(self) -> plan_param.ParameterGeneration:
+    def plan_parameterization(self) -> stages.ParameterGeneration:
         return self._plan_parameterization
 
     def setup_query_support_check(self, check: validation.OptimizationPreCheck) -> TwoStageOptimizationPipeline:
@@ -94,7 +106,7 @@ class TwoStageOptimizationPipeline(OptimizationPipeline):
         return self
 
     def setup_join_order_optimization(self,
-                                      enumerator: enumeration.JoinOrderOptimizer) -> TwoStageOptimizationPipeline:
+                                      enumerator: stages.JoinOrderOptimization) -> TwoStageOptimizationPipeline:
         """Configures the algorithm to obtain an optimized join order.
 
         This algorithm may optionally also determine an initial assignment of physical operators.
@@ -103,7 +115,7 @@ class TwoStageOptimizationPipeline(OptimizationPipeline):
         self._build = False
         return self
 
-    def setup_physical_operator_selection(self, selector: selection.PhysicalOperatorSelection, *,
+    def setup_physical_operator_selection(self, selector: stages.PhysicalOperatorSelection, *,
                                           overwrite: bool = False) -> TwoStageOptimizationPipeline:
         """Configures the algorithm to assign physical operators to the query.
 
@@ -123,7 +135,7 @@ class TwoStageOptimizationPipeline(OptimizationPipeline):
         self._build = False
         return self
 
-    def setup_plan_parameterization(self, param_generator: plan_param.ParameterGeneration, *,
+    def setup_plan_parameterization(self, param_generator: stages.ParameterGeneration, *,
                                     overwrite: bool = False) -> TwoStageOptimizationPipeline:
         """Configures the algorithm to parameterize the query plan.
 
@@ -172,11 +184,11 @@ class TwoStageOptimizationPipeline(OptimizationPipeline):
         if not self._pre_check:
             self._pre_check = validation.EmptyPreCheck()
         if not self._join_order_enumerator:
-            self._join_order_enumerator = enumeration.EmptyJoinOrderOptimizer()
+            self._join_order_enumerator = stages.EmptyJoinOrderOptimizer()
         if not self._physical_operator_selection:
-            self._physical_operator_selection = selection.EmptyPhysicalOperatorSelection()
+            self._physical_operator_selection = stages.EmptyPhysicalOperatorSelection()
         if not self._plan_parameterization:
-            self._plan_parameterization = plan_param.EmptyParameterization()
+            self._plan_parameterization = stages.EmptyParameterization()
 
         all_pre_checks = [self._pre_check] + [check for check in [self._join_order_enumerator.pre_check(),
                                                                   self._physical_operator_selection.pre_check(),
@@ -210,10 +222,11 @@ class TwoStageOptimizationPipeline(OptimizationPipeline):
             raise ValueError(f"Unknown query type '{type(query)}' for query '{query}'")
 
         join_order = self._join_order_enumerator.optimize_join_order(query)
-        operators = self._physical_operator_selection.select_physical_operators(query, join_order)
-        plan_parameters = self._plan_parameterization.generate_plan_parameters(query, join_order, operators)
+        physical_operators = self._physical_operator_selection.select_physical_operators(query, join_order)
+        plan_parameters = self._plan_parameterization.generate_plan_parameters(query, join_order, physical_operators)
 
-        return self._target_db.hinting().generate_hints(query, join_order=join_order, physical_operators=operators,
+        return self._target_db.hinting().generate_hints(query, join_order=join_order,
+                                                        physical_operators=physical_operators,
                                                         plan_parameters=plan_parameters)
 
     def describe(self) -> dict:

@@ -28,9 +28,7 @@ from collections.abc import Iterable, Sequence
 from typing import Any, Optional
 
 from postbound.qal import base, qal
-from postbound.optimizer import jointree
-from postbound.optimizer.physops import operators as physops
-from postbound.optimizer.planmeta import hints as planmeta
+from postbound.optimizer import jointree, physops, planparams
 from postbound.util import collections as collection_utils, dicts as dict_utils, misc
 
 
@@ -542,7 +540,7 @@ class HintService(abc.ABC):
     def generate_hints(self, query: qal.SqlQuery,
                        join_order: Optional[jointree.LogicalJoinTree | jointree.PhysicalQueryPlan] = None,
                        physical_operators: Optional[physops.PhysicalOperatorAssignment] = None,
-                       plan_parameters: Optional[planmeta.PlanParameterization] = None) -> qal.SqlQuery:
+                       plan_parameters: Optional[planparams.PlanParameterization] = None) -> qal.SqlQuery:
         """Generates the appropriate hints to enforce the optimized execution of the given query.
 
         All hints are placed in a `Hint` clause on the query. In addition, if the query needs to be transformed in some
@@ -556,7 +554,7 @@ class HintService(abc.ABC):
         raise NotImplementedError
 
     @abc.abstractmethod
-    def supports_hint(self, hint: physops.PhysicalOperator | planmeta.HintType) -> bool:
+    def supports_hint(self, hint: physops.PhysicalOperator | planparams.HintType) -> bool:
         """Checks, whether the database system is capable of using the specified hint or operator."""
         raise NotImplementedError
 

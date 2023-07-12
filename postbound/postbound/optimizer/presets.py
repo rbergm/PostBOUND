@@ -6,12 +6,9 @@ from typing import Optional
 
 from postbound.db import db
 from postbound.qal import parser
-from postbound.optimizer import validation
+from postbound.optimizer import stages, validation
 from postbound.optimizer.policies import cardinalities
-from postbound.optimizer.joinorder import enumeration
-from postbound.optimizer.physops import selection
 from postbound.optimizer.strategies import ues, native
-from postbound.optimizer.planmeta import parameterization as plan_param
 
 
 def apply_standard_system_options(database: Optional[db.Database] = None) -> None:
@@ -47,17 +44,17 @@ class OptimizationSettings(abc.ABC):
         raise NotImplementedError
 
     @abc.abstractmethod
-    def build_join_order_optimizer(self) -> enumeration.JoinOrderOptimizer | None:
+    def build_join_order_optimizer(self) -> stages.JoinOrderOptimization | None:
         """The algorithm that is used to obtain the optimized join order."""
         raise NotImplementedError
 
     @abc.abstractmethod
-    def build_physical_operator_selection(self) -> selection.PhysicalOperatorSelection | None:
+    def build_physical_operator_selection(self) -> stages.PhysicalOperatorSelection | None:
         """The algorithm that is used to determine the physical operators."""
         raise NotImplementedError
 
     @abc.abstractmethod
-    def build_plan_parameterization(self) -> plan_param.ParameterGeneration | None:
+    def build_plan_parameterization(self) -> stages.ParameterGeneration | None:
         """The algorithm that is used to further parameterize the query plan."""
         raise NotImplementedError
 
@@ -74,7 +71,7 @@ class UESOptimizationSettings(OptimizationSettings):
     def query_pre_check(self) -> validation.OptimizationPreCheck | None:
         return validation.UESOptimizationPreCheck()
 
-    def build_join_order_optimizer(self) -> enumeration.JoinOrderOptimizer | None:
+    def build_join_order_optimizer(self) -> stages.JoinOrderOptimization | None:
         base_table_estimator = cardinalities.NativeCardinalityEstimator(self.database)
         join_cardinality_estimator = ues.UESJoinBoundEstimator()
         subquery_policy = ues.UESSubqueryGenerationPolicy()
@@ -86,10 +83,10 @@ class UESOptimizationSettings(OptimizationSettings):
                                                database=self.database)
         return enumerator
 
-    def build_physical_operator_selection(self) -> selection.PhysicalOperatorSelection | None:
+    def build_physical_operator_selection(self) -> stages.PhysicalOperatorSelection | None:
         return ues.UESOperatorSelection(self.database)
 
-    def build_plan_parameterization(self) -> plan_param.ParameterGeneration | None:
+    def build_plan_parameterization(self) -> stages.ParameterGeneration | None:
         return None
 
 
@@ -100,13 +97,13 @@ class NativeOptimizationSettings(OptimizationSettings):
     def query_pre_check(self) -> validation.OptimizationPreCheck | None:
         return None
 
-    def build_join_order_optimizer(self) -> enumeration.JoinOrderOptimizer | None:
+    def build_join_order_optimizer(self) -> stages.JoinOrderOptimization | None:
         return native.NativeJoinOrderOptimizer(self.database)
 
-    def build_physical_operator_selection(self) -> selection.PhysicalOperatorSelection | None:
+    def build_physical_operator_selection(self) -> stages.PhysicalOperatorSelection | None:
         return native.NativePhysicalOperatorSelection(self.database)
 
-    def build_plan_parameterization(self) -> plan_param.ParameterGeneration | None:
+    def build_plan_parameterization(self) -> stages.ParameterGeneration | None:
         pass
 
 

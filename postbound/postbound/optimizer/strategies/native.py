@@ -5,13 +5,10 @@ from typing import Optional
 
 from postbound.db import db
 from postbound.qal import qal
-from postbound.optimizer import jointree
-from postbound.optimizer.joinorder import enumeration
-from postbound.optimizer.physops import operators, selection
-from postbound.optimizer.planmeta import parameterization, hints
+from postbound.optimizer import jointree, physops, planparams, stages
 
 
-class NativeJoinOrderOptimizer(enumeration.JoinOrderOptimizer):
+class NativeJoinOrderOptimizer(stages.JoinOrderOptimization):
 
     def __init__(self, db_instance: db.Database) -> None:
         super().__init__()
@@ -25,7 +22,7 @@ class NativeJoinOrderOptimizer(enumeration.JoinOrderOptimizer):
         return {"name": "native", "database_system": self.db_instance.describe()}
 
 
-class NativePhysicalOperatorSelection(selection.PhysicalOperatorSelection):
+class NativePhysicalOperatorSelection(stages.PhysicalOperatorSelection):
 
     def __init__(self, db_instance: db.Database) -> None:
         super().__init__()
@@ -33,7 +30,7 @@ class NativePhysicalOperatorSelection(selection.PhysicalOperatorSelection):
 
     def _apply_selection(self, query: qal.SqlQuery,
                          join_order: Optional[jointree.LogicalJoinTree | jointree.PhysicalQueryPlan]
-                         ) -> operators.PhysicalOperatorAssignment:
+                         ) -> physops.PhysicalOperatorAssignment:
         if join_order:
             query = self.db_instance.hinting().generate_hints(query, join_order)
         query_plan = self.db_instance.optimizer().query_plan(query)
@@ -44,7 +41,7 @@ class NativePhysicalOperatorSelection(selection.PhysicalOperatorSelection):
         return {"name": "native", "database_system": self.db_instance.describe()}
 
 
-class NativePlanParameterization(parameterization.ParameterGeneration):
+class NativePlanParameterization(stages.ParameterGeneration):
 
     def __init__(self, db_instance: db.Database) -> None:
         super().__init__()
@@ -52,8 +49,8 @@ class NativePlanParameterization(parameterization.ParameterGeneration):
 
     def generate_plan_parameters(self, query: qal.SqlQuery,
                                  join_order: Optional[jointree.LogicalJoinTree | jointree.PhysicalQueryPlan],
-                                 operator_assignment: Optional[operators.PhysicalOperatorAssignment]
-                                 ) -> Optional[hints.PlanParameterization]:
+                                 operator_assignment: Optional[physops.PhysicalOperatorAssignment]
+                                 ) -> Optional[planparams.PlanParameterization]:
         if join_order or operator_assignment:
             query = self.db_instance.hinting().generate_hints(query, join_order, operator_assignment)
         query_plan = self.db_instance.optimizer().query_plan(query)

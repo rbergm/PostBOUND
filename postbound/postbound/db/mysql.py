@@ -1,27 +1,28 @@
 """Contains the MySQL implementation of the Database interface.
 
-The current implementation has a number of limitations. Some are caused by fundamental restrictions of how MySQL optimizes and
-executes queries, while others are caused by the sheer implementation effort that would have to be invested to implement the
-corresponding feature in MySQL.
+The current implementation has a number of limitations. Some are caused by fundamental restrictions of how MySQL
+optimizes and executes queries, while others are caused by the sheer implementation effort that would have to be
+invested to implement the corresponding feature in MySQL.
 
 The most important restrictions are as follows:
 
 No support for parsing EXPLAIN ANALYZE plans. Calling the corresponding MysqlOptimizer.analyze_plan method raises a
-``NotImplementedError``. This is because MySQL currently (i.e. as of version 8.0) only provides EXPLAIN ANALYZE plans in TREE
-output format, which is not exhaustively documented and appears fairly irregular. This makes parsing the output fairly hard.
+``NotImplementedError``. This is because MySQL currently (i.e. as of version 8.0) only provides EXPLAIN ANALYZE plans
+in TREE output format, which is not exhaustively documented and appears fairly irregular. This makes parsing the
+output fairly hard.
 
-Restrictions of the query hint generation: query execution in MySQL differs fundamentally from the way queries are executed
-in more traditional systems such as PostgreSQL or Oracle. MySQL makes heavy usage of clustered indexes, meaning that all tuples
-in a table are automatically stored in a B-Tree according to the primary key index. As a consequence, MySQL strongly favors
-the usage of (Index-) Nested Loop Joins during query execution and rarely resorts to other operators. In fact, the only
-fundamentally different join operator available is the Hash Join. This operator is only used if a equality join should be
-executed between columns that do not have an index available. Therefore, it is not possible to disable Nested Loop Joins
-entirely, nor can the usage of Hash Joins be enforced. Instead, query hints can only disable the usage of Hash Joins, or
-*recommend* their usage. But whether or not they are actually applied is up to the MySQL query optimizer.
-A similar thing happens for the join order: although MySQL provides a number of hints related to the join order optimization,
-these hints are not always enforced. More specifically, to the best of our knowledge, it is not possible to enforce the
-branches in the join order and MySQL heavily favors left-deep query plans. Therefore, the generation of join order hints only
-works for linear join orders for now.
+Restrictions of the query hint generation: query execution in MySQL differs fundamentally from the way queries are
+executed in more traditional systems such as PostgreSQL or Oracle. MySQL makes heavy usage of clustered indexes,
+meaning that all tuples in a table are automatically stored in a B-Tree according to the primary key index. As a
+consequence, MySQL strongly favors the usage of (Index-) Nested Loop Joins during query execution and rarely resorts to
+other operators. In fact, the only fundamentally different join operator available is the Hash Join. This operator is
+only used if a equality join should be executed between columns that do not have an index available. Therefore, it is
+not possible to disable Nested Loop Joins entirely, nor can the usage of Hash Joins be enforced. Instead, query hints
+can only disable the usage of Hash Joins, or *recommend* their usage. But whether or not they are actually applied is
+up to the MySQL query optimizer. A similar thing happens for the join order: although MySQL provides a number of hints
+related to the join order optimization, these hints are not always enforced. More specifically, to the best of our
+knowledge, it is not possible to enforce the branches in the join order and MySQL heavily favors left-deep query plans.
+Therefore, the generation of join order hints only works for linear join orders for now.
 """
 from __future__ import annotations
 
@@ -40,9 +41,7 @@ import mysql.connector
 from postbound.db import db
 from postbound.db.db import QueryExecutionPlan
 from postbound.qal import qal, base, expressions as expr, clauses, transform, formatter
-from postbound.optimizer import jointree
-from postbound.optimizer.physops import operators as physops
-from postbound.optimizer.planmeta import hints as planmeta
+from postbound.optimizer import jointree, physops, planparams
 from postbound.util import misc
 
 
@@ -50,7 +49,8 @@ from postbound.util import misc
 class MysqlConnectionArguments:
     """Captures all relevant parameters that customize the way the connection to a MySQL instance is establised.
 
-    The only required parameters are the user that should connect to the database and the name of the database to connect to.
+    The only required parameters are the user that should connect to the database and the name of the database to
+    connect to.
     See [1]_ for the different parameters' meaning.
 
     .. [1] https://dev.mysql.com/doc/connector-python/en/connector-python-connectargs.html
@@ -88,8 +88,8 @@ class MysqlInterface(db.Database):
         connection_args : MysqlConnectionArguments
             Configuration and required information to establish a connection to some MySQL instance.
         system_name : str, optional
-            The name of the current database. Typically, this can be used to query the `DatabasePool` for this very instance.
-            Defaults to ``"MySQL"``.
+            The name of the current database. Typically, this can be used to query the `DatabasePool` for this very
+            instance. Defaults to ``"MySQL"``.
         cache_enabled : bool, optional
             Whether or not caching of complicated database queries should be enabled by default. Defaults to ``True``.
         """
@@ -154,8 +154,8 @@ class MysqlInterface(db.Database):
         Returns
         -------
         str
-            The ``sql_mode`` value, exactly as it is returned by the server. Typically, this is a list of comma-separated
-            features.
+            The ``sql_mode`` value, exactly as it is returned by the server. Typically, this is a list of
+            comma-separated features.
         """
         self._cur.execute("SELECT @@session.sql_mode")
         return self._cur.fetchone()[0]
@@ -247,7 +247,8 @@ class MysqlSchemaInterface(db.DatabaseSchema):
     def datatype(self, column: base.ColumnReference) -> str:
         if not column.table:
             raise base.UnboundColumnError(column)
-        query_template = "SELECT column_type FROM information_schema.columns WHERE table_name = %s AND column_name = %s"
+        query_template = ("SELECT column_type FROM information_schema.columns "
+                          "WHERE table_name = %s AND column_name = %s")
         self._db.cursor().execute(query_template, (column.table.full_name, column.name))
         result_set = self._db.cursor().fetchone()
         return str(result_set[0])
@@ -281,7 +282,8 @@ class MysqlStatisticsInterface(db.DatabaseStatistics):
         return count
 
     def _retrieve_distinct_values_from_stats(self, column: base.ColumnReference) -> Optional[int]:
-        stats_query = "SELECT cardinality FROM information_schema.statistics WHERE table_name = %s AND column_name = %s"
+        stats_query = ("SELECT cardinality FROM information_schema.statistics "
+                       "WHERE table_name = %s AND column_name = %s")
         self._db.cursor().execute(stats_query, (column.table.full_name, column.name))
         distinct_vals: Optional[int] = self._db.cursor().fetchone()
         if distinct_vals is None and not self.enable_emulation_fallback:
@@ -305,7 +307,7 @@ class MysqlStatisticsInterface(db.DatabaseStatistics):
 
 MysqlJoinHints = {physops.JoinOperators.HashJoin, physops.JoinOperators.NestedLoopJoin}
 MysqlScanHints = {physops.ScanOperators.IndexScan, physops.ScanOperators.SequentialScan}
-MysqlPlanHints = {planmeta.HintType.JoinOrderHint}
+MysqlPlanHints = {planparams.HintType.JoinOrderHint}
 
 
 class _MysqlExplainClause(clauses.Explain):
@@ -407,7 +409,7 @@ def _escape_setting(setting) -> str:
 
 
 def _generate_prep_statements(physical_operators: Optional[physops.PhysicalOperatorAssignment],
-                              plan_parameters: Optional[planmeta.PlanParameterization]) -> str:
+                              plan_parameters: Optional[planparams.PlanParameterization]) -> str:
     statements = []
     if physical_operators:
         switchable_optimizations = []
@@ -426,8 +428,8 @@ def _generate_prep_statements(physical_operators: Optional[physops.PhysicalOpera
 
 
 def _obtain_plan_parameters(join_order: Optional[jointree.LogicalJoinTree | jointree.PhysicalQueryPlan],
-                            plan_parameters: Optional[planmeta.PlanParameterization]
-                            ) -> Optional[planmeta.PlanParameterization]:
+                            plan_parameters: Optional[planparams.PlanParameterization]
+                            ) -> Optional[planparams.PlanParameterization]:
     if not isinstance(join_order, jointree.PhysicalQueryPlan):
         return plan_parameters
     if not plan_parameters:
@@ -443,7 +445,7 @@ class MysqlHintService(db.HintService):
     def generate_hints(self, query: qal.SqlQuery,
                        join_order: Optional[jointree.LogicalJoinTree | jointree.PhysicalQueryPlan] = None,
                        physical_operators: Optional[physops.PhysicalOperatorAssignment] = None,
-                       plan_parameters: Optional[planmeta.PlanParameterization] = None) -> qal.SqlQuery:
+                       plan_parameters: Optional[planparams.PlanParameterization] = None) -> qal.SqlQuery:
         if join_order and not join_order.is_linear():
             raise db.UnsupportedDatabaseFeatureError(self._mysql_instance,
                                                      "Can only enforce join order for linear join trees for now")
@@ -473,7 +475,7 @@ class MysqlHintService(db.HintService):
 
         return formatter.format_quick(updated_query, inline_hint_block=True)
 
-    def supports_hint(self, hint: physops.PhysicalOperator | planmeta.HintType) -> bool:
+    def supports_hint(self, hint: physops.PhysicalOperator | planparams.HintType) -> bool:
         return hint in MysqlJoinHints | MysqlScanHints | MysqlPlanHints
 
 
@@ -510,7 +512,8 @@ def _parse_mysql_connection(config_file: str) -> MysqlConnectionArguments:
     mysql_config = config["MYSQL"]
 
     if "User" not in mysql_config or "Database" not in mysql_config:
-        raise ValueError("Malformed MySQL config file: 'User' and 'Database' keys are required in the [MYSQL] section.")
+        raise ValueError("Malformed MySQL config file: "
+                         "'User' and 'Database' keys are required in the [MYSQL] section.")
     user = mysql_config["User"]
     database = mysql_config["Database"]
 
@@ -539,43 +542,46 @@ def connect(*, name: str = "mysql", connection_args: Optional[MysqlConnectionArg
     return mysql_db
 
 
-# The next several functions are concerned with MySQL EXPLAIN query plans. Although in theory MySQL offers some great tools to
-# inspect query plans produced by the optimizer (having 3 different output formats: tabular, human-readable plan trees and JSON
-# data), these output formats differ in the information they provide. Only the JSON format provides all the details that we are
-# interested in (and makes them harder to access then when using the tree output for example). Sadly, the JSON output is not
-# available when using EXPLAIN ANALYZE to match the optimizer's expectation with the reality encoutered upon query execution.
-# Since parsing the EXPLAIN trees is quite difficult, we restrict ourselves to plain EXPLAIN plans for now and maybe integrate
-# EXPLAIN ANALYZE plans in the future along with a dedicated parser for its structure.
-# What makes the situation with the JSON-formatted EXPLAIN plans pretty bad is the fact that the structure of the provided
-# JSON document is barely documented and seems incosistent at best (see https://mariadb.com/kb/en/explain-format-json/ for
-# example). Therefore, our JSON-based parser strongly follows a similar implementation, namely the "visual explain" feature
-# of the MySQL Workbench. They also need to traverse the JSON-based EXPLAIN plans, but this time to generate a graphical
-# representation of the information. Still, the traversal and attribute access logic can be re-used by a great deal. It is even
-# implemented in Python! Nevertheless, the code there is often barely documented so a lot of guesswork is still left for us to
-# do. See https://github.com/mysql/mysql-workbench/blob/8.0/plugins/wb.query.analysis/explain_renderer.py for Workbench
-# implementation that our code is based on. The best explanation of how the different attributes in the JSON document should
-# be interpreted is contained in the MySQL worklog entry to implement parts of the JSON output:
+# The next several functions are concerned with MySQL EXPLAIN query plans. Although in theory MySQL offers some great
+# tools to inspect query plans produced by the optimizer (having 3 different output formats: tabular, human-readable
+# plan trees and JSON data), these output formats differ in the information they provide. Only the JSON format provides
+# all the details that we are interested in (and makes them harder to access then when using the tree output for
+# example).
+# Sadly, the JSON output is not available when using EXPLAIN ANALYZE to match the optimizer's expectation
+# with the reality encoutered upon query execution. Since parsing the EXPLAIN trees is quite difficult, we restrict
+# ourselves to plain EXPLAIN plans for now and maybe integrate EXPLAIN ANALYZE plans in the future along with a
+# dedicated parser for its structure.
+# What makes the situation with the JSON-formatted EXPLAIN plans pretty bad is the fact that the structure of the
+# provided JSON document is barely documented and seems incosistent at best (see
+# https://mariadb.com/kb/en/explain-format-json/ for example). Therefore, our JSON-based parser strongly follows a
+# similar implementation, namely the "visual explain" feature of the MySQL Workbench. They also need to traverse the
+# JSON-based EXPLAIN plans, but this time to generate a graphical representation of the information. Still, the
+# traversal and attribute access logic can be re-used by a great deal. It is even implemented in Python! Nevertheless,
+# the code there is often barely documented so a lot of guesswork is still left for us to do. See
+# https://github.com/mysql/mysql-workbench/blob/8.0/plugins/wb.query.analysis/explain_renderer.py for the Workbench
+# implementation that our code is based on. The best explanation of how the different attributes in the JSON document
+# should be interpreted is contained in the MySQL worklog entry to implement parts of the JSON output:
 # https://dev.mysql.com/worklog/task/?id=6510
 
 def _lookup_table(alias: str, candidate_tables: Iterable[base.TableReference]) -> base.TableReference:
     """Searches for a specific table in a list of candidate tables.
 
-    If no candidate table has the given `alias`, the full names are used instead. If still no table matches, a `KeyError`
-    is raised.
+    If no candidate table has the given `alias`, the full names are used instead. If still no table matches, a
+    `KeyError` is raised.
 
-    This function is necessary, because MySQL does not contain the complete table names in the output. If that were the case,
-    we could construct our `TableReference` objects directly based on this information. Instead, MySQL provides the
-    "identifier" of the tables, i.e. the alias if the tables was aliased or the full name otherwise. In order to build the
-    correct `TableReference` objects that also line up with the tables contained in the `SqlQuery` object for the same query,
-    we need to take this detour and lookup the correct tables.
+    This function is necessary, because MySQL does not contain the complete table names in the output. If that were
+    the case, we could construct our `TableReference` objects directly based on this information. Instead, MySQL
+    provides the "identifier" of the tables, i.e. the alias if the tables was aliased or the full name otherwise. In
+    order to build the correct `TableReference` objects that also line up with the tables contained in the `SqlQuery`
+    object for the same query, we need to take this detour and lookup the correct tables.
 
     Parameters
     ----------
     alias : str
         The table alias to search for. This does not have to be an alias, but could be a full table name just as well.
     candidate_tables : Iterable[TableReference]
-        The tables that could potentially have the given alias. `_lookup_table` assumes that at least one of the candidates
-        matches.
+        The tables that could potentially have the given alias. `_lookup_table` assumes that at least one of the
+        candidates matches.
 
     Returns
     -------
@@ -583,7 +589,9 @@ def _lookup_table(alias: str, candidate_tables: Iterable[base.TableReference]) -
         The table with the given alias or full name.
     """
     table_map = {tab.full_name: tab for tab in candidate_tables}
-    table_map |= {tab.alias: tab for tab in candidate_tables}  # alias takes precedence over full_name in case of conflicts
+
+    # alias takes precedence over full_name in case of conflicts
+    table_map |= {tab.alias: tab for tab in candidate_tables}
     return table_map[alias]
 
 
@@ -600,8 +608,8 @@ Derived from ExplainContext.handle_query_block in mysql_renderer.py
 _MysqlMetadataNodes = {"cost_info", "rows_examined_per_scan", "rows_produced_per_join", "filtered"}
 """The metadata contained in the MySQL EXPLAIN output that we are interested in.
 
-For some reason, the MySQL authors decided that it was a good idea to merge this information with the normal operator nodes and
-not denote the operator tree in any special way.
+For some reason, the MySQL authors decided that it was a good idea to merge this information with the normal operator
+nodes and not denote the operator tree in any special way.
 """
 
 _Cost, _IdxLookup, _IdxMerge, _TabScan = "Const", "Index Lookup", "Index Merge", "Table Scan"
@@ -649,8 +657,8 @@ def _parse_cost_info(explain_data: dict) -> tuple[float, float]:
     Returns
     -------
     tuple[float, float]
-        A tuple of ``(scan cost, join cost)``. Remember that MySQL merges join nodes and scan nodes in the JSON-based EXPLAIN
-        output. If the node does not contain any cost information, a ``NaN`` tuple will be returned instead.
+        A tuple of ``(scan cost, join cost)``. Remember that MySQL merges join nodes and scan nodes in the JSON-based
+        EXPLAIN output. If the node does not contain any cost information, a ``NaN`` tuple will be returned instead.
     """
     if "cost_info" not in explain_data:
         return math.nan, math.nan
@@ -681,9 +689,9 @@ def _parse_cardinality_info(explain_data: dict) -> tuple[float, float]:
     Returns
     -------
     tuple[float, float]
-        A tuple of ``(scan cardinality, join cardinality)``. Remember that MySQL merges join nodes and scan nodes in the
-        JSON-based EXPLAIN output. The scan cardinality accounts for all filter predicates. If no scan or join cardinality can
-        be determined, a ``NaN`` is used instead.
+        A tuple of ``(scan cardinality, join cardinality)``. Remember that MySQL merges join nodes and scan nodes in
+        the JSON-based EXPLAIN output. The scan cardinality accounts for all filter predicates. If no scan or join
+        cardinality can be determined, a ``NaN`` is used instead.
     """
     table_cardinality = explain_data.get("rows_examined_per_scan", "")
     table_cardinality = float(table_cardinality) if table_cardinality else math.nan
@@ -704,7 +712,8 @@ def _determine_join_type(explain_data: dict) -> str:
     return _MysqlJoinTypes[explain_data["using_join_buffer"]]
 
 
-def _parse_mysql_join_node(query: Optional[qal.SqlQuery], node_name: str, explain_data: list) -> Optional[MysqlExplainNode]:
+def _parse_mysql_join_node(query: Optional[qal.SqlQuery], node_name: str,
+                           explain_data: list) -> Optional[MysqlExplainNode]:
     first_table, *remaining_tables = explain_data
     first_node = _parse_next_mysql_explain_node(query, first_table)
     current_node = first_node
@@ -715,7 +724,8 @@ def _parse_mysql_join_node(query: Optional[qal.SqlQuery], node_name: str, explai
     return first_node
 
 
-def _parse_mysql_table_node(query: Optional[qal.SqlQuery], node_name: str, explain_data: dict) -> Optional[MysqlExplainNode]:
+def _parse_mysql_table_node(query: Optional[qal.SqlQuery], node_name: str,
+                            explain_data: dict) -> Optional[MysqlExplainNode]:
     scanned_table = _lookup_table(explain_data["table_name"], query.tables()) if query is not None else None
     scan_type = _MysqlJoinSourceTypes[explain_data["access_type"]]  # tables are mostly scanned as part of a join
     join_type = _determine_join_type(explain_data)
@@ -731,7 +741,8 @@ def _parse_mysql_table_node(query: Optional[qal.SqlQuery], node_name: str, expla
     return table_node
 
 
-def _parse_mysql_wrapper_node(query: Optional[qal.SqlQuery], node_name: str, explain_data: dict) -> Optional[MysqlExplainNode]:
+def _parse_mysql_wrapper_node(query: Optional[qal.SqlQuery], node_name: str,
+                              explain_data: dict) -> Optional[MysqlExplainNode]:
     scan_cost, join_cost = _parse_cost_info(explain_data)
     scan_card, join_card = _parse_cardinality_info(explain_data)
     source_node = _parse_next_mysql_explain_node(query, explain_data)
@@ -769,8 +780,8 @@ def parse_mysql_explain_plan(query: Optional[qal.SqlQuery], explain_data: dict) 
     query_cost = explain_data.get("cost_info", {}).get("query_cost", math.nan)
 
     # the EXPLAIN plan should only have a single root node, but we do not know which operator it is (the JSON document
-    # contains the nodes directly as keys, not under a normalized name, remember?). Therefore, we simply iterate over all
-    # entries in the JSON document and check if the current key is a valid operator name. This is exactly, what
+    # contains the nodes directly as keys, not under a normalized name, remember?). Therefore, we simply iterate over
+    # all entries in the JSON document and check if the current key is a valid operator name. This is exactly, what
     # _parse_next_mysql_explain_node does.
     plan_root = _parse_next_mysql_explain_node(query, explain_data)
     assert plan_root is not None

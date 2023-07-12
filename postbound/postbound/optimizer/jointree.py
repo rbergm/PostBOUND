@@ -12,8 +12,7 @@ import Levenshtein
 
 from postbound.qal import base, predicates, qal
 from postbound.db import db
-from postbound.optimizer.physops import operators as physops
-from postbound.optimizer.planmeta import hints as params
+from postbound.optimizer import physops, planparams
 from postbound.util import collections as collection_utils, errors, stats
 
 
@@ -220,8 +219,8 @@ class AbstractJoinTreeNode(abc.ABC, Container[base.TableReference], Generic[Join
     def is_bushy(self) -> bool:
         return not self.is_linear()
 
-    def lookup(self,
-               tables: set[base.TableReference]) -> Optional[AbstractJoinTreeNode[JoinMetadataType, BaseTableMetadataType]]:
+    def lookup(self, tables: set[base.TableReference]
+               ) -> Optional[AbstractJoinTreeNode[JoinMetadataType, BaseTableMetadataType]]:
         raise NotImplementedError
 
     @abc.abstractmethod
@@ -999,8 +998,8 @@ class PhysicalQueryPlan(JoinTree[PhysicalJoinMetadata, PhysicalBaseTableMetadata
 
         return assignment
 
-    def plan_parameters(self) -> params.PlanParameterization:
-        parameters = params.PlanParameterization()
+    def plan_parameters(self) -> planparams.PlanParameterization:
+        parameters = planparams.PlanParameterization()
 
         for base_table in self.table_sequence():
             if math.isnan(base_table.upper_bound):

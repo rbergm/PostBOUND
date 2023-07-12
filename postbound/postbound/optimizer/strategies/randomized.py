@@ -8,8 +8,7 @@ from typing import Optional
 import networkx as nx
 
 from postbound.qal import base, qal
-from postbound.optimizer import jointree
-from postbound.optimizer.joinorder import enumeration
+from postbound.optimizer import jointree, stages
 
 
 def _merge_nodes(start: jointree.LogicalJoinTree | base.TableReference,
@@ -67,7 +66,7 @@ class RandomJoinOrderGenerator:
             yield current_join_order
 
 
-class RandomJoinOrderOptimizer(enumeration.JoinOrderOptimizer):
+class RandomJoinOrderOptimizer(stages.JoinOrderOptimization):
     """Optimizer that generates a (not entirely) random join order."""
 
     def __init__(self) -> None:

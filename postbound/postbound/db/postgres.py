@@ -17,9 +17,7 @@ import psycopg.rows
 
 from postbound.db import db
 from postbound.qal import qal, base, expressions, clauses, transform, formatter
-from postbound.optimizer import jointree
-from postbound.optimizer.physops import operators as physops
-from postbound.optimizer.planmeta import hints as planmeta
+from postbound.optimizer import jointree, physops, planparams
 from postbound.util import collections as collection_utils, dicts as dict_utils, logging
 from postbound.util import misc as utils, typing as type_utils
 
@@ -507,7 +505,7 @@ def _escape_setting(setting) -> str:
     return f"'{setting}'"
 
 
-def _generate_pg_parameter_hints(plan_parameters: planmeta.PlanParameterization) -> HintParts:
+def _generate_pg_parameter_hints(plan_parameters: planparams.PlanParameterization) -> HintParts:
     """Produces the cardinality and parallelization hints for Postgres."""
     hints, settings = [], []
     for join, cardinality_hint in plan_parameters.cardinality_hints.items():
@@ -550,9 +548,9 @@ PostgresJoinHints = {physops.JoinOperators.NestedLoopJoin, physops.JoinOperators
                      physops.JoinOperators.HashJoin, physops.JoinOperators.SortMergeJoin}
 PostgresScanHints = {physops.ScanOperators.SequentialScan, physops.ScanOperators.IndexScan,
                      physops.ScanOperators.IndexOnlyScan, physops.ScanOperators.BitmapScan}
-PostgresPlanHints = {planmeta.HintType.CardinalityHint, planmeta.HintType.ParallelizationHint,
-                     planmeta.HintType.JoinOrderHint, planmeta.HintType.JoinSubqueryHint,
-                     planmeta.HintType.JoinDirectionHint}
+PostgresPlanHints = {planparams.HintType.CardinalityHint, planparams.HintType.ParallelizationHint,
+                     planparams.HintType.JoinOrderHint, planparams.HintType.JoinSubqueryHint,
+                     planparams.HintType.JoinDirectionHint}
 
 
 class _PostgresCastExpression(expressions.CastExpression):
@@ -572,7 +570,7 @@ class PostgresHintService(db.HintService):
     def generate_hints(self, query: qal.SqlQuery,
                        join_order: Optional[jointree.LogicalJoinTree | jointree.PhysicalQueryPlan] = None,
                        physical_operators: Optional[physops.PhysicalOperatorAssignment] = None,
-                       plan_parameters: Optional[planmeta.PlanParameterization] = None) -> qal.SqlQuery:
+                       plan_parameters: Optional[planparams.PlanParameterization] = None) -> qal.SqlQuery:
         adapted_query = query
         hint_parts = None
 
@@ -604,7 +602,7 @@ class PostgresHintService(db.HintService):
         query = transform.replace_expressions(query, _replace_postgres_cast_expressions)
         return formatter.format_quick(query)
 
-    def supports_hint(self, hint: physops.PhysicalOperator | planmeta.HintType) -> bool:
+    def supports_hint(self, hint: physops.PhysicalOperator | planparams.HintType) -> bool:
         return hint in PostgresJoinHints | PostgresScanHints | PostgresPlanHints
 
 

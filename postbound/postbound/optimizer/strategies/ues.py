@@ -12,10 +12,8 @@ import numpy as np
 
 from postbound.db import db
 from postbound.qal import base, qal, predicates
-from postbound.optimizer import joingraph, jointree, validation
+from postbound.optimizer import joingraph, jointree, physops, stages, validation
 from postbound.optimizer.policies import cardinalities as card_policy, jointree as tree_policy
-from postbound.optimizer.joinorder import enumeration
-from postbound.optimizer.physops import selection as opsel, operators as physops
 from postbound.util import collections as collection_utils, dicts as dict_utils
 
 # TODO: adjust documentation
@@ -317,7 +315,7 @@ class UESSubqueryGenerationPolicy(tree_policy.BranchGenerationPolicy):
         return {"name": "defensive"}
 
 
-class UESJoinOrderOptimizer(enumeration.JoinOrderOptimizer):
+class UESJoinOrderOptimizer(stages.JoinOrderOptimization):
     """Implementation of the UES join order algorithm.
 
     See Hertzschuch et al.: "Simplicity Done Right for Join Ordering", CIDR'2021 for a formal introduction into the
@@ -375,7 +373,7 @@ class UESJoinOrderOptimizer(enumeration.JoinOrderOptimizer):
                 # FIXME: join components might consist of single tables!
                 optimized_component = self._clone().optimize_join_order(component.query)
                 if not optimized_component:
-                    raise enumeration.JoinOrderOptimizationError(component.query)
+                    raise stages.JoinOrderOptimizationError(component.query)
                 optimized_components.append(optimized_component)
 
             # insert cross-products such that the smaller partitions are joined first
@@ -613,7 +611,7 @@ class UESJoinOrderOptimizer(enumeration.JoinOrderOptimizer):
         print(log_message)
 
 
-class UESOperatorSelection(opsel.PhysicalOperatorSelection):
+class UESOperatorSelection(stages.PhysicalOperatorSelection):
     """Implementation of the operator selection for the UES algorithm.
 
     UES is actually not concerned with operator selection and focuses exclusively on join orders. Therefore, this

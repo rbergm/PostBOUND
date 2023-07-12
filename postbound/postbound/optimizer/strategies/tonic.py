@@ -7,8 +7,7 @@ from typing import Optional
 
 from postbound.qal import qal, base, predicates, transform
 from postbound.db import db
-from postbound.optimizer import jointree
-from postbound.optimizer.physops import selection as opsel, operators as physops
+from postbound.optimizer import jointree, physops, stages
 from postbound.util import collections as collection_utils, dicts as dict_utils
 
 
@@ -301,7 +300,7 @@ def make_qeps(path: Iterable[base.TableReference], root: Optional[QepsNode] = No
     return root
 
 
-class TonicOperatorSelection(opsel.PhysicalOperatorSelection):
+class TonicOperatorSelection(stages.PhysicalOperatorSelection):
 
     def __init__(self, filter_aware: bool = False, gamma: float = 0.8, *,
                  database: Optional[db.Database] = None) -> None:
