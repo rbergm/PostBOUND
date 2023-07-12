@@ -1,5 +1,8 @@
 FROM oraclelinux:8
 
+EXPOSE 1521
+EXPOSE 5500
+
 ARG ORACLE_PASSWORD=mypass
 ARG XE_RPM_NAME=oracle-database-xe-21c-1.0-1.ol8.x86_64.rpm
 ARG XE_DOWNLOAD_PATH=https://download.oracle.com/otn-pub/otn_software/db-express/${XE_RPM_NAME}

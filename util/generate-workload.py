@@ -14,9 +14,9 @@ def main():
     parser.add_argument("directory", action="store", default=".", nargs="?",
                         help="Directory containing the source files (working directory per default).")
     parser.add_argument("--pattern", "-p", action="store", default="*.sql",
-                        help="Filename pattern to match source files.")
+                        help="Filename pattern to match source files. '*.sql' per default.")
     parser.add_argument("--generate-labels", action="store_true", default=False,
-                        help="Use the filenames as query labels.")
+                        help="Use the filenames as query labels. Adds a 'label' column.")
     parser.add_argument("--query-col", action="store", default="query",
                         help="CSV column to write the queries to ('query' per default).")
     parser.add_argument("--out", "-o", action="store", default=sys.stdout,
