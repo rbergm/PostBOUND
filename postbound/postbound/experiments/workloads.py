@@ -282,7 +282,7 @@ def job(file_encoding: str = "utf-8") -> Workload[str]:
     """Provides an instance of the Join Order Benchmark.
 
     Queries will be read from the JOB directory relative to `workloads_base_dir`. The expected layout is:
-    `<workloads_base_dir>/JOB-Queries/implicit/<queries>`.
+    `<workloads_base_dir>/JOB-Queries/<queries>`.
 
     ---
     see: Viktor Leis et al.: How Good Are Query Optimizers, Really? (Proc. VLDB Endow. 9, 3 (2015))
