@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import abc
-import typing
+from typing import Optional, Protocol
 
 from postbound.qal import qal, transform
 from postbound.optimizer import presets, stages, validation
@@ -11,7 +11,7 @@ from postbound.db import db
 from postbound.util import errors
 
 
-class OptimizationPipeline(typing.Protocol):
+class OptimizationPipeline(Protocol):
     """The optimization pipeline is the main tool to apply different strategies to optimize SQL queries.
 
     Depending on the specific scenario, different concrete pipeline implementations exist. For example, to apply
@@ -34,7 +34,39 @@ class OptimizationPipeline(typing.Protocol):
 
 
 class IntegratedOptimizationPipeline(OptimizationPipeline):
-    pass
+    def __init__(self, target_db: Optional[db.Database] = None) -> None:
+        self.target_db = (target_db if target_db is not None
+                          else db.DatabasePool.get_instance().current_database())
+        self._optimization_algorithm: Optional[stages.CompleteOptimizationAlgorithm] = None
+        super().__init__()
+
+    @property
+    def optimization_algorithm(self) -> Optional[stages.CompleteOptimizationAlgorithm]:
+        return self._optimization_algorithm
+
+    @optimization_algorithm.setter
+    def optimization_algorithm(self, algorithm: stages.CompleteOptimizationAlgorithm) -> None:
+        pre_check = algorithm.pre_check()
+        if pre_check:
+            pre_check.check_supported_database_system(self.target_db)
+        self._optimization_algorithm = algorithm
+
+    def optimize_query(self, query: qal.SqlQuery) -> qal.SqlQuery:
+        if self.optimization_algorithm is None:
+            raise errors.StateError("No algorithm has been selected")
+
+        pre_check = self.optimization_algorithm.pre_check()
+        if pre_check is not None:
+            pre_check.check_supported_query(query)
+
+        physical_qep = self.optimization_algorithm.optimize_query(query)
+
+        return self.target_db.hinting().generate_hints(query, physical_qep)
+
+    def describe(self) -> dict:
+        algorithm_description = (self._optimization_algorithm.describe() if self._optimization_algorithm is not None
+                                 else "no_algorithm")
+        return {"target_dbs": self.target_db.describe(), "optimization_algorithm": algorithm_description}
 
 
 class TwoStageOptimizationPipeline(OptimizationPipeline):

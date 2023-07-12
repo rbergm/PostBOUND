@@ -7,6 +7,20 @@ from postbound.qal import qal
 from postbound.optimizer import jointree, physops, planparams, validation
 
 
+class CompleteOptimizationAlgorithm(abc.ABC):
+
+    @abc.abstractmethod
+    def optimize_query(self, query: qal.SqlQuery) -> jointree.PhysicalQueryPlan:
+        raise NotImplementedError
+
+    @abc.abstractmethod
+    def describe(self) -> dict:
+        raise NotImplementedError
+
+    def pre_check(self) -> validation.OptimizationPreCheck:
+        return validation.EmptyPreCheck()
+
+
 class JoinOrderOptimization(abc.ABC):
     """The `JoinOrderOptimizer` handles the entire process of obtaining a join order for input queries.
 
