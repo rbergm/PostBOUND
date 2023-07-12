@@ -21,9 +21,7 @@ import pandas as pd
 from postbound.db import db, postgres
 from postbound.qal import qal, base, transform
 from postbound.experiments import workloads
-from postbound.optimizer import jointree
-from postbound.optimizer.physops import operators
-from postbound.optimizer.planmeta import hints as params
+from postbound.optimizer import jointree, physops, planparams
 from postbound.optimizer.strategies import enumeration, randomized
 from postbound.util import jsonize
 
@@ -201,21 +199,21 @@ def assert_correct_query_plan(label: str, query: qal.SqlQuery, expected_join_ord
         logging.error("Join order was not enforced correctly for label %s", label)
 
 
-OperatorSelection = tuple[Optional[operators.PhysicalOperatorAssignment], Optional[params.PlanParameterization]]
+OperatorSelection = tuple[Optional[physops.PhysicalOperatorAssignment], Optional[planparams.PlanParameterization]]
 
 
 def native_operator_selection(join_order: jointree.JoinTree) -> OperatorSelection:
-    plan_params = params.PlanParameterization()
+    plan_params = planparams.PlanParameterization()
     plan_params.set_system_settings(geqo="off")
     return None, plan_params
 
 
 def restrict_to_hash_join(join_order: jointree.JoinTree) -> OperatorSelection:
-    operator_selection = operators.PhysicalOperatorAssignment()
-    operator_selection.set_operator_enabled_globally(operators.JoinOperators.NestedLoopJoin, False)
-    operator_selection.set_operator_enabled_globally(operators.JoinOperators.SortMergeJoin, False)
+    operator_selection = physops.PhysicalOperatorAssignment()
+    operator_selection.set_operator_enabled_globally(physops.JoinOperators.NestedLoopJoin, False)
+    operator_selection.set_operator_enabled_globally(physops.JoinOperators.SortMergeJoin, False)
 
-    plan_params = params.PlanParameterization()
+    plan_params = planparams.PlanParameterization()
     plan_params.set_system_settings(geqo="off")
     return operator_selection, plan_params
 
@@ -238,7 +236,7 @@ class TrueCardinalityGenerator:
 
     def __call__(self, join_order: jointree.JoinTree) -> OperatorSelection:
         assert self._relevant_queries is not None
-        plan_params = params.PlanParameterization()
+        plan_params = planparams.PlanParameterization()
         for intermediate_join in join_order.join_sequence():
             joined_tables = intermediate_join.tables()
             current_cardinality = self._relevant_queries[self._relevant_queries.tables == joined_tables]
@@ -469,7 +467,7 @@ def main():
     logging.debug("Disabling GeQO")
     pg_db.execute_query("SET geqo = 'off';", cache_enabled=False)
 
-    workload = workloads.job(simplified=False)
+    workload = workloads.job()
     logging.debug("Raw workload read")
 
     if labels:

@@ -14,7 +14,7 @@ workloads.workloads_base_dir = "../workloads"
 
 postgres_db = postgres.connect(config_file=".psycopg_connection_job")
 db_pool = postgres.ParallelQueryExecutor(postgres_db.connect_string, n_threads=12)
-job_benchmark = workloads.job(simplified=False)
+job_benchmark = workloads.job()
 
 explored_queries: set[qal.SqlQuery] = set()
 fragment_to_queries_map: dict[qal.SqlQuery, list[qal.SqlQuery]] = collections.defaultdict(list)
