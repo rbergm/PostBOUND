@@ -231,3 +231,18 @@ class ParameterGeneration(abc.ABC):
 
     def __str__(self) -> str:
         return type(self).__name__
+
+
+class IncrementalOptimizationStep(abc.ABC):
+
+    @abc.abstractmethod
+    def optimize_query(self, query: qal.SqlQuery,
+                       current_plan: jointree.PhysicalQueryPlan) -> jointree.PhysicalQueryPlan:
+        raise NotImplementedError
+
+    @abc.abstractmethod
+    def describe(self) -> dict:
+        raise NotImplementedError
+
+    def pre_check(self) -> Optional[validation.OptimizationPreCheck]:
+        return None

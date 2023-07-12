@@ -22,6 +22,9 @@ class OptimizationPipeline(Protocol):
     by correcting some optimization decisions (e.g. transforming a hash join to a nested loop join), the
     `IncrementalOptimizationPipeline` is provided. Consult the individual pipeline documentation for more details. This
     protocol class only describes the basic interface that is shared by all the pipeline implementations.
+
+    If in doubt what the best pipeline implementation is, it is probably best to start with the
+    `TwoStageOptimizationPipeline` since it is the most flexible.
     """
 
     @abc.abstractmethod
@@ -48,7 +51,7 @@ class IntegratedOptimizationPipeline(OptimizationPipeline):
     def optimization_algorithm(self, algorithm: stages.CompleteOptimizationAlgorithm) -> None:
         pre_check = algorithm.pre_check()
         if pre_check:
-            pre_check.check_supported_database_system(self.target_db)
+            pre_check.check_supported_database_system(self.target_db).ensure_all_passed()
         self._optimization_algorithm = algorithm
 
     def optimize_query(self, query: qal.SqlQuery) -> qal.SqlQuery:
@@ -57,7 +60,7 @@ class IntegratedOptimizationPipeline(OptimizationPipeline):
 
         pre_check = self.optimization_algorithm.pre_check()
         if pre_check is not None:
-            pre_check.check_supported_query(query)
+            pre_check.check_supported_query(query).ensure_all_passed()
 
         physical_qep = self.optimization_algorithm.optimize_query(query)
 
@@ -228,7 +231,9 @@ class TwoStageOptimizationPipeline(OptimizationPipeline):
                                                                   self._plan_parameterization.pre_check()]
                                               if check]
         self._pre_check = validation.merge_checks(all_pre_checks)
-        self._pre_check.check_supported_database_system(self._target_db)
+        db_check_result = self._pre_check.check_supported_database_system(self._target_db)
+        if not db_check_result.passed:
+            raise validation.UnsupportedSystemError(self.target_db, db_check_result.failure_reason)
 
         self._build = True
         return self
@@ -288,4 +293,69 @@ class TwoStageOptimizationPipeline(OptimizationPipeline):
 
 
 class IncrementalOptimizationPipeline(OptimizationPipeline):
-    pass
+    def __init__(self, target_db: db.Database) -> None:
+        self._target_db = target_db
+        self._initial_plan_generator: Optional[stages.CompleteOptimizationAlgorithm] = None
+        self._optimization_steps: list[stages.IncrementalOptimizationStep] = []
+
+    @property
+    def target_db(self) -> db.Database:
+        return self._target_db
+
+    @target_db.setter
+    def target_db(self, database: db.Database) -> None:
+        self._ensure_pipeline_integrity(database=database)
+        self._target_db = database
+
+    @property
+    def initial_plan_generator(self) -> Optional[stages.CompleteOptimizationAlgorithm]:
+        return self._initial_plan_generator
+
+    @initial_plan_generator.setter
+    def initial_plan_generator(self, plan_generator: Optional[stages.CompleteOptimizationAlgorithm]) -> None:
+        self._ensure_pipeline_integrity(initial_plan_generator=plan_generator)
+        self._initial_plan_generator = plan_generator
+
+    def add_optimization_step(self, next_step: stages.IncrementalOptimizationStep) -> IncrementalOptimizationPipeline:
+        self._ensure_pipeline_integrity(additional_optimization_step=next_step)
+        self._optimization_steps.append(next_step)
+        return self
+
+    def optimize_query(self, query: qal.SqlQuery) -> qal.SqlQuery:
+        self._ensure_supported_query(query)
+        current_plan = (self.initial_plan_generator.optimize_query(query) if self.initial_plan_generator is not None
+                        else self.target_db.optimizer().query_plan(query))
+        for optimization_step in self._optimization_steps:
+            current_plan = optimization_step.optimize_query(query, current_plan)
+
+        return self.target_db.hinting().generate_hints(query, current_plan)
+
+    def _ensure_pipeline_integrity(self, *, database: Optional[db.Database] = None,
+                                   initial_plan_generator: Optional[stages.CompleteOptimizationAlgorithm] = None,
+                                   additional_optimization_step: Optional[stages.IncrementalOptimizationStep] = None,
+                                   ) -> None:
+        database = self.target_db if database is None else database
+        initial_plan_generator = (self._initial_plan_generator if initial_plan_generator is None
+                                  else initial_plan_generator)
+
+        if initial_plan_generator is not None and initial_plan_generator.pre_check() is not None:
+            initial_plan_generator.pre_check().check_supported_database_system(database).ensure_all_passed(database)
+
+        if additional_optimization_step is not None and additional_optimization_step.pre_check() is not None:
+            (additional_optimization_step
+             .pre_check()
+             .check_supported_database_system(database)
+             .ensure_all_passed(database))
+
+        for incremental_step in self._optimization_steps:
+            if incremental_step.pre_check() is None:
+                continue
+            incremental_step.pre_check().check_supported_database_system(database).ensure_all_passed(database)
+
+    def _ensure_supported_query(self, query: qal.SqlQuery) -> None:
+        if self._initial_plan_generator is not None and self._initial_plan_generator.pre_check() is not None:
+            self._initial_plan_generator.pre_check().check_supported_query(query).ensure_all_passed(query)
+        for incremental_step in self._optimization_steps:
+            if incremental_step.pre_check() is None:
+                continue
+            incremental_step.pre_check().check_supported_query(query).ensure_all_passed(query)

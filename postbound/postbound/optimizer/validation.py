@@ -2,14 +2,14 @@
 from __future__ import annotations
 
 import abc
+from collections.abc import Iterable
 from dataclasses import dataclass
-from typing import Iterable
 
 import networkx as nx
 
 from postbound.db import db
 from postbound.qal import qal, expressions, predicates
-from postbound.util import collections as collection_utils
+from postbound.util import collections as collection_utils, errors
 
 FAILURE_EXPLICIT_FROM_CLAUSE = "EXPLICIT_FROM_CLAUSE"
 FAILURE_NON_EQUI_JOIN = "NON_EQUI_JOIN"
@@ -33,6 +33,27 @@ class PreCheckResult:
     @staticmethod
     def with_all_passed() -> PreCheckResult:
         return PreCheckResult()
+
+    def ensure_all_passed(self, context: qal.SqlQuery | db.Database | None = None) -> None:
+        if self.passed:
+            return
+        if context is None:
+            raise errors.StateError(f"Pre check failed {self._generate_failure_str()}")
+        elif isinstance(context, qal.SqlQuery):
+            raise UnsupportedQueryError(context, self.failure_reason)
+        elif isinstance(context, db.Database):
+            raise UnsupportedSystemError(context, self.failure_reason)
+
+    def _generate_failure_str(self) -> str:
+        if not self.failure_reason:
+            return ""
+        elif isinstance(self.failure_reason, str):
+            inner_contents = self.failure_reason
+        elif isinstance(self.failure_reason, Iterable):
+            inner_contents = " | ".join(reason for reason in self.failure_reason)
+        else:
+            raise ValueError("Unexpected failure reason type: " + str(self.failure_reason))
+        return f"[{inner_contents}]"
 
 
 class OptimizationPreCheck(abc.ABC):
