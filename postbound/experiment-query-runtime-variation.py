@@ -22,9 +22,9 @@ from postbound.db import db, postgres
 from postbound.qal import qal, base, transform
 from postbound.experiments import workloads
 from postbound.optimizer import jointree
-from postbound.optimizer.joinorder import enumeration
 from postbound.optimizer.physops import operators
 from postbound.optimizer.planmeta import hints as params
+from postbound.optimizer.strategies import enumeration, randomized
 from postbound.util import jsonize
 
 StopEvaluation = False
@@ -134,7 +134,7 @@ def generate_all_join_orders(query: qal.SqlQuery, exhaustive_enumerator: enumera
 
 def generate_random_join_orders(query: qal.SqlQuery, *, config: ExperimentConfig = ExperimentConfig.default()
                                 ) -> list[jointree.LogicalJoinTree]:
-    random_enumerator = enumeration.RandomJoinOrderGenerator()
+    random_enumerator = randomized.RandomJoinOrderGenerator()
     join_order_plans = []
     random_plan_hashes = set()
     current_plan_idx = 0
