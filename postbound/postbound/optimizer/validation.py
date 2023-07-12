@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from typing import Iterable
 
 from postbound.db import db
-from postbound.qal import qal, predicates, expressions as expr
+from postbound.qal import qal
 from postbound.util import collections as collection_utils
 
 FAILURE_EXPLICIT_FROM_CLAUSE = "EXPLICIT_FROM_CLAUSE"
@@ -117,52 +117,6 @@ def merge_checks(checks: OptimizationPreCheck | Iterable[OptimizationPreCheck], 
     if not merged_checks:
         return EmptyPreCheck()
     return CompoundCheck(merged_checks) if len(merged_checks) > 1 else collection_utils.simplify(merged_checks)
-
-
-def _detect_dependent_subqueries(expression: expr.SqlExpression) -> bool:
-    if isinstance(expression, expr.SubqueryExpression):
-        return expression.query.is_dependent()
-
-    return any(_detect_dependent_subqueries(child_expr) for child_expr in expression.iterchildren())
-
-
-class UESOptimizationPreCheck(OptimizationPreCheck):
-    """Asserts that the provided query can be optimized by UES.
-
-    It may not contain dependent subqueries and all joins have to be equi-joins or conjunctions of equi-joins.
-    """
-
-    def __init__(self) -> None:
-        super().__init__("UES check")
-
-    def check_supported_query(self, query: qal.SqlQuery) -> PreCheckResult:
-        failures = set()
-        if query.is_explicit():
-            failures.add(FAILURE_EXPLICIT_FROM_CLAUSE)
-
-        if not query.predicates():
-            return PreCheckResult(not failures, list(failures))
-
-        for join_predicate in query.predicates().joins():
-            if not isinstance(join_predicate, predicates.BasePredicate):
-                failures.add(FAILURE_NON_CONJUNCTIVE_JOIN)
-
-            if join_predicate.operation != expr.LogicalSqlOperators.Equal:
-                failures.add(FAILURE_NON_EQUI_JOIN)
-
-        for predicate in query.predicates():
-            for base_predicate in predicate.base_predicates():
-                if any(_detect_dependent_subqueries(expression) for expression in base_predicate.iterexpressions()):
-                    failures.add(FAILURE_DEPENDENT_SUBQUERY)
-                    break
-            if FAILURE_DEPENDENT_SUBQUERY in failures:
-                break
-
-        return PreCheckResult(not failures, list(failures))
-
-    def describe(self) -> dict:
-        return {"name": "ues", "features": [FAILURE_EXPLICIT_FROM_CLAUSE, FAILURE_DEPENDENT_SUBQUERY,
-                                            FAILURE_NON_CONJUNCTIVE_JOIN, FAILURE_NON_EQUI_JOIN]}
 
 
 class EmptyPreCheck(OptimizationPreCheck):

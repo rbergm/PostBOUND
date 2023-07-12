@@ -11,7 +11,7 @@ from typing import Generic, Optional
 import numpy as np
 
 from postbound.db import db
-from postbound.qal import base, qal, predicates
+from postbound.qal import base, qal, predicates, expressions as expr
 from postbound.optimizer import joingraph, jointree, physops, stages, validation
 from postbound.optimizer.policies import cardinalities as card_policy, jointree as tree_policy
 from postbound.util import collections as collection_utils, dicts as dict_utils
@@ -641,3 +641,51 @@ class UESOperatorSelection(stages.PhysicalOperatorSelection):
 
     def _description(self) -> dict:
         return {"name": "ues"}
+
+
+def _detect_dependent_subqueries(expression: expr.SqlExpression) -> bool:
+    if isinstance(expression, expr.SubqueryExpression):
+        return expression.query.is_dependent()
+
+    return any(_detect_dependent_subqueries(child_expr) for child_expr in expression.iterchildren())
+
+
+class UESOptimizationPreCheck(validation.OptimizationPreCheck):
+    """Asserts that the provided query can be optimized by UES.
+
+    It may not contain dependent subqueries and all joins have to be equi-joins or conjunctions of equi-joins.
+    """
+
+    def __init__(self) -> None:
+        super().__init__("UES check")
+
+    def check_supported_query(self, query: qal.SqlQuery) -> validation.PreCheckResult:
+        failures = set()
+        if query.is_explicit():
+            failures.add(validation.FAILURE_EXPLICIT_FROM_CLAUSE)
+
+        if not query.predicates():
+            return validation.PreCheckResult(not failures, list(failures))
+
+        for join_predicate in query.predicates().joins():
+            if not isinstance(join_predicate, predicates.BasePredicate):
+                failures.add(validation.FAILURE_NON_CONJUNCTIVE_JOIN)
+
+            if join_predicate.operation != expr.LogicalSqlOperators.Equal:
+                failures.add(validation.FAILURE_NON_EQUI_JOIN)
+
+        for predicate in query.predicates():
+            for base_predicate in predicate.base_predicates():
+                if any(_detect_dependent_subqueries(expression) for expression in base_predicate.iterexpressions()):
+                    failures.add(validation.FAILURE_DEPENDENT_SUBQUERY)
+                    break
+            if validation.FAILURE_DEPENDENT_SUBQUERY in failures:
+                break
+
+        return validation.PreCheckResult(not failures, list(failures))
+
+    def describe(self) -> dict:
+        return {"name": "ues", "features": [validation.FAILURE_EXPLICIT_FROM_CLAUSE,
+                                            validation.FAILURE_DEPENDENT_SUBQUERY,
+                                            validation.FAILURE_NON_CONJUNCTIVE_JOIN,
+                                            validation.FAILURE_NON_EQUI_JOIN]}
