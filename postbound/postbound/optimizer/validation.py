@@ -5,14 +5,19 @@ import abc
 from dataclasses import dataclass
 from typing import Iterable
 
+import networkx as nx
+
 from postbound.db import db
-from postbound.qal import qal
+from postbound.qal import qal, expressions, predicates
 from postbound.util import collections as collection_utils
 
 FAILURE_EXPLICIT_FROM_CLAUSE = "EXPLICIT_FROM_CLAUSE"
 FAILURE_NON_EQUI_JOIN = "NON_EQUI_JOIN"
 FAILURE_NON_CONJUNCTIVE_JOIN = "NON_CONJUNCTIVE_JOIN"
 FAILURE_DEPENDENT_SUBQUERY = "DEPENDENT_SUBQUERY"
+FAILURE_HAS_CROSS_PRODUCT = "CROSS_PRODUCT"
+FAILURE_VIRTUAL_TABLES = "VIRTUAL_TABLES"
+FAILURE_JOIN_PREDICATE = "BAD_JOIN_PREDICATE"
 
 
 @dataclass
@@ -130,6 +135,87 @@ class EmptyPreCheck(OptimizationPreCheck):
 
     def describe(self) -> dict:
         return {"name": "no_check"}
+
+
+class CrossProductPreCheck(OptimizationPreCheck):
+    def __init__(self) -> None:
+        super().__init__("no-cross-products")
+
+    def check_supported_query(self, query: qal.SqlQuery) -> PreCheckResult:
+        no_cross_products = nx.is_connected(query.predicates().join_graph())
+        failure_reason = "" if no_cross_products else FAILURE_HAS_CROSS_PRODUCT
+        return PreCheckResult(no_cross_products, failure_reason)
+
+    def describe(self) -> dict:
+        return {"name": "no_cross_products"}
+
+
+class VirtualTablesPreCheck(OptimizationPreCheck):
+    def __init__(self) -> None:
+        super().__init__("no-virtual-tables")
+
+    def check_supported_query(self, query: qal.SqlQuery) -> PreCheckResult:
+        no_virtual_tables = all(not table.virtual for table in query.tables())
+        failure_reason = "" if no_virtual_tables else FAILURE_VIRTUAL_TABLES
+        return PreCheckResult(no_virtual_tables, failure_reason)
+
+    def describe(self) -> dict:
+        return {"name": "no_virtual_tables"}
+
+
+class EquiJoinPreCheck(OptimizationPreCheck):
+    def __init__(self, *, allow_conjunctions: bool = False, allow_nesting: bool = False) -> None:
+        super().__init__("equi-joins-only")
+        self._allow_conjunctions = allow_conjunctions
+        self._allow_nesting = allow_nesting
+
+    def check_supported_query(self, query: qal.SqlQuery) -> PreCheckResult:
+        join_predicates = query.predicates().joins()
+        all_passed = all(self._perform_predicate_check(join_pred) for join_pred in join_predicates)
+        failure_reason = "" if all_passed else FAILURE_JOIN_PREDICATE
+        return PreCheckResult(all_passed, failure_reason)
+
+    def describe(self) -> dict:
+        return {
+            "name": "equi_joins_only",
+            "allow_conjunctions": self._allow_conjunctions,
+            "allow_nesting": self._allow_nesting
+        }
+
+    def _perform_predicate_check(self, predicate: predicates.AbstractPredicate) -> bool:
+        if isinstance(predicate, predicates.BasePredicate):
+            return self._perform_base_predicate_check(predicate)
+        elif isinstance(predicate, predicates.CompoundPredicate):
+            return self._perform_compound_predicate_check(predicate)
+        else:
+            return False
+
+    def _perform_base_predicate_check(self, predicate: predicates.BasePredicate) -> bool:
+        if not isinstance(predicate, predicates.BinaryPredicate) or len(predicate.columns()) != 2:
+            return False
+        if predicate.operation != expressions.LogicalSqlOperators.Equal:
+            return False
+
+        if self._allow_nesting:
+            return True
+        first_is_col = isinstance(predicate.first_argument, expressions.ColumnExpression)
+        second_is_col = isinstance(predicate.second_argument, expressions.ColumnExpression)
+        return first_is_col and second_is_col
+
+    def _perform_compound_predicate_check(self, predicate: predicates.CompoundPredicate) -> bool:
+        if not self._allow_conjunctions:
+            return False
+        elif predicate.operation != expressions.LogicalSqlCompoundOperators.And:
+            return False
+        return all(self._perform_predicate_check(child_pred) for child_pred in predicate.children)
+
+    def __eq__(self, other: object) -> bool:
+        return (isinstance(other, type(self))
+                and self._allow_conjunctions == other._allow_conjunctions
+                and self._allow_nesting == other._allow_nesting)
+
+    def __hash__(self) -> int:
+        return hash((self.name, self._allow_conjunctions, self._allow_nesting))
 
 
 class UnsupportedQueryError(RuntimeError):

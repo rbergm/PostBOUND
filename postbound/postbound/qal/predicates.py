@@ -895,7 +895,7 @@ class QueryPredicates:
     def __init__(self, root: Optional[AbstractPredicate]):
         self._root = root
         self._hash_val = hash(self._root)
-        self._join_predicate_map: dict[frozenset[base.TableReference], AbstractPredicate] = self._init_join_predicate_map()
+        self._join_predicate_map = self._init_join_predicate_map()
 
     def is_empty(self) -> bool:
         """Checks, whether this predicate handler contains any actual predicates."""
