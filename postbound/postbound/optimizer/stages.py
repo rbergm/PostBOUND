@@ -48,19 +48,6 @@ class JoinOrderOptimization(abc.ABC):
         return type(self).__name__
 
 
-class EmptyJoinOrderOptimizer(JoinOrderOptimization):
-    """Dummy implementation of the join order optimizer that does not actually optimize anything."""
-
-    def __init__(self) -> None:
-        super().__init__()
-
-    def optimize_join_order(self, query: qal.SqlQuery) -> Optional[jointree.LogicalJoinTree]:
-        return None
-
-    def describe(self) -> dict:
-        return {"name": "no_ordering"}
-
-
 class JoinOrderOptimizationError(RuntimeError):
     """Error to indicate that something went wrong while optimizing the join order."""
 
@@ -162,21 +149,6 @@ class PhysicalOperatorSelection(abc.ABC):
         return type(self).__name__
 
 
-class EmptyPhysicalOperatorSelection(PhysicalOperatorSelection):
-    """Dummy implementation of operator optimization that does not actually optimize anything."""
-
-    def chain_with(self, next_selection: PhysicalOperatorSelection) -> PhysicalOperatorSelection:
-        return next_selection
-
-    def _apply_selection(self, query: qal.SqlQuery,
-                         join_order: Optional[jointree.LogicalJoinTree | jointree.PhysicalQueryPlan]
-                         ) -> physops.PhysicalOperatorAssignment:
-        return physops.PhysicalOperatorAssignment()
-
-    def _description(self) -> dict:
-        return {"name": "no_selection"}
-
-
 # TODO: Refactor: get rid of chaining behavior built into the selection stratgies themselves.
 # Instead, introduce a new ChainedParameterizationStrategy
 
@@ -245,16 +217,3 @@ class ParameterGeneration(abc.ABC):
 
     def __str__(self) -> str:
         return type(self).__name__
-
-
-class EmptyParameterization(ParameterGeneration):
-    """Dummy implementation of the plan parameterization that does not actually generate any parameters."""
-
-    def generate_plan_parameters(self, query: qal.SqlQuery,
-                                 join_order: Optional[jointree.LogicalJoinTree | jointree.PhysicalQueryPlan],
-                                 operator_assignment: Optional[physops.PhysicalOperatorAssignment]
-                                 ) -> Optional[planparams.PlanParameterization]:
-        return None
-
-    def describe(self) -> dict:
-        return {"name": "no_parameterization"}

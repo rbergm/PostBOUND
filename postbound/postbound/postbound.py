@@ -6,6 +6,7 @@ import typing
 
 from postbound.qal import qal, transform
 from postbound.optimizer import presets, stages, validation
+from postbound.optimizer.strategies import noopt
 from postbound.db import db
 from postbound.util import errors
 
@@ -184,11 +185,11 @@ class TwoStageOptimizationPipeline(OptimizationPipeline):
         if not self._pre_check:
             self._pre_check = validation.EmptyPreCheck()
         if not self._join_order_enumerator:
-            self._join_order_enumerator = stages.EmptyJoinOrderOptimizer()
+            self._join_order_enumerator = noopt.EmptyJoinOrderOptimizer()
         if not self._physical_operator_selection:
-            self._physical_operator_selection = stages.EmptyPhysicalOperatorSelection()
+            self._physical_operator_selection = noopt.EmptyPhysicalOperatorSelection()
         if not self._plan_parameterization:
-            self._plan_parameterization = stages.EmptyParameterization()
+            self._plan_parameterization = noopt.EmptyParameterization()
 
         all_pre_checks = [self._pre_check] + [check for check in [self._join_order_enumerator.pre_check(),
                                                                   self._physical_operator_selection.pre_check(),
