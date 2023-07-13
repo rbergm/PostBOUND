@@ -16,9 +16,6 @@ from postbound.qal import base, clauses, expressions as expr, predicates as pred
 from postbound.util import collections as collection_utils
 
 
-# TODO: add support for CTEs. This _should_ be pretty straightforward. Just remember to output the columns/tables at
-# the appropriate places
-
 def _stringify_clause(clause: clauses.BaseClause) -> str:
     """Provides a refined string for the given clause, to be used by the SqlQuery __str__ method."""
     return str(clause) + "\n" if isinstance(clause, clauses.Hint) else str(clause) + " "
@@ -113,7 +110,9 @@ class SqlQuery(Generic[FromClauseType], abc.ABC):
                  from_clause: Optional[FromClauseType] = None, where_clause: Optional[clauses.Where] = None,
                  groupby_clause: Optional[clauses.GroupBy] = None, having_clause: Optional[clauses.Having] = None,
                  orderby_clause: Optional[clauses.OrderBy] = None, limit_clause: Optional[clauses.Limit] = None,
+                 cte_clause: Optional[clauses.CommonTableExpression] = None,
                  hints: Optional[clauses.Hint] = None, explain: Optional[clauses.Explain] = None) -> None:
+        self._cte_clause = cte_clause
         self._select_clause = select_clause
         self._from_clause = from_clause
         self._where_clause = where_clause
@@ -125,9 +124,14 @@ class SqlQuery(Generic[FromClauseType], abc.ABC):
         self._explain = explain
 
         self._hash_val = hash((self._hints, self._explain,
+                               self._cte_clause,
                                self._select_clause, self._from_clause, self._where_clause,
                                self._groupby_clause, self._having_clause,
                                self._orderby_clause, self._limit_clause))
+
+    @property
+    def cte_clause(self) -> Optional[clauses.CommonTableExpression]:
+        return self._cte_clause
 
     @property
     def select_clause(self) -> clauses.Select:
@@ -198,10 +202,11 @@ class SqlQuery(Generic[FromClauseType], abc.ABC):
         This really means at any place, i.e. if a table only appears in the SELECT clause, it will still be returned
         here.
         """
+        cte_tables = self.cte_clause.tables() if self.cte_clause else set()
         select_tables = self.select_clause.tables()
         from_tables = self.from_clause.tables() if self.from_clause else set()
         where_tables = self.where_clause.predicate.tables() if self.where_clause else set()
-        return select_tables | from_tables | where_tables
+        return cte_tables | select_tables | from_tables | where_tables
 
     def columns(self) -> set[base.ColumnReference]:
         """Provides all columns that are referenced at any place in the query."""
@@ -211,19 +216,29 @@ class SqlQuery(Generic[FromClauseType], abc.ABC):
     def predicates(self) -> preds.QueryPredicates:
         """Provides all predicates in this query.
 
-        This includes predicates in the FROM clause, as well as the WHERE clause.
+        This includes predicates in the FROM clause, the WHERE clause, as well as any predicates from CTEs.
         """
         predicate_handler = preds.DefaultPredicateHandler
-        where_predicates = (predicate_handler(self.where_clause.predicate) if self.where_clause is not None
-                            else predicate_handler.empty_predicate())
-        from_predicate = self.from_clause.predicates()
-        if from_predicate:
-            return where_predicates.and_(from_predicate)
-        else:
-            return where_predicates
+        current_predicate = predicate_handler.empty_predicate()
+
+        if self.cte_clause:
+            for with_query in self.cte_clause.queries:
+                current_predicate = current_predicate.and_(with_query.query.predicates())
+
+        if self.where_clause:
+            current_predicate = current_predicate.and_(self.where_clause.predicate)
+
+        from_predicates = self.from_clause.predicates()
+        if from_predicates:
+            current_predicate = current_predicate.and_(from_predicates)
+
+        return current_predicate
 
     def subqueries(self) -> Collection[SqlQuery]:
-        """Provides all subqueries that are referenced in this query."""
+        """Provides all subqueries that are referenced in this query.
+
+        Notice that CTEs are ignored by this method, since they can be accessed directly via the `cte_clause` property.
+        """
         return collection_utils.set_union(_collect_subqueries(clause) for clause in self.clauses())
 
     def clauses(self) -> Sequence[clauses.BaseClause]:
@@ -231,7 +246,7 @@ class SqlQuery(Generic[FromClauseType], abc.ABC):
 
         To distinguish the individual clauses, type checks are necessary.
         """
-        all_clauses = [self.hints, self.explain,
+        all_clauses = [self.hints, self.explain, self.cte_clause,
                        self.select_clause, self.from_clause, self.where_clause,
                        self.groupby_clause, self.having_clause,
                        self.orderby_clause, self.limit_clause]
@@ -246,17 +261,29 @@ class SqlQuery(Generic[FromClauseType], abc.ABC):
         """
         subquery_produced_tables = collection_utils.set_union(subquery.bound_tables()
                                                               for subquery in self.subqueries())
+        cte_produced_tables = self.cte_clause.tables() if self.cte_clause else set()
         own_produced_tables = _collect_bound_tables(self.from_clause)
-        return own_produced_tables | subquery_produced_tables
+        return own_produced_tables | subquery_produced_tables | cte_produced_tables
 
     def unbound_tables(self) -> set[base.TableReference]:
         """Provides all tables that are referenced in this query but not bound.
 
         While `tables()` provides all tables that are referenced in this query in any way, `bound_tables` restricts
         these tables. This method provides the complementary set to `bound_tables` i.e.
-        `tables = bound_tables ⊕ unbound_tables`.
+        ``tables = bound_tables ⊕ unbound_tables``.
         """
-        return self.tables() - self.bound_tables()
+        if self.from_clause:
+            virtual_subquery_targets = {subquery_source.target_table for subquery_source in self.from_clause.contents
+                                        if isinstance(subquery_source, clauses.SubqueryTableSource)}
+        else:
+            virtual_subquery_targets = set()
+
+        if self.cte_clause:
+            virtual_cte_targets = {with_query.target_table for with_query in self.cte_clause.queries}
+        else:
+            virtual_cte_targets = set()
+
+        return self.tables() - self.bound_tables() - virtual_subquery_targets - virtual_cte_targets
 
     def is_ordered(self) -> bool:
         """Checks, whether this query produces its result tuples in order."""
@@ -286,6 +313,10 @@ class SqlQuery(Generic[FromClauseType], abc.ABC):
         """
         return collection_utils.flatten(clause.itercolumns() for clause in self.clauses())
 
+    def stringify(self, *, trailing_delimiter: bool = True) -> str:
+        delim = ";" if trailing_delimiter else ""
+        return "".join(_stringify_clause(clause) for clause in self.clauses()).rstrip() + delim
+
     def __hash__(self) -> int:
         return self._hash_val
 
@@ -296,7 +327,7 @@ class SqlQuery(Generic[FromClauseType], abc.ABC):
         return str(self)
 
     def __str__(self) -> str:
-        return "".join(_stringify_clause(clause) for clause in self.clauses()).rstrip() + ";"
+        return self.stringify(trailing_delimiter=True)
 
 
 class ImplicitSqlQuery(SqlQuery[clauses.ImplicitFromClause]):
@@ -321,11 +352,13 @@ class ImplicitSqlQuery(SqlQuery[clauses.ImplicitFromClause]):
                  having_clause: Optional[clauses.Having] = None,
                  orderby_clause: Optional[clauses.OrderBy] = None,
                  limit_clause: Optional[clauses.Limit] = None,
+                 cte_clause: Optional[clauses.CommonTableExpression] = None,
                  explain_clause: Optional[clauses.Explain] = None,
                  hints: Optional[clauses.Hint] = None) -> None:
         super().__init__(select_clause=select_clause, from_clause=from_clause, where_clause=where_clause,
                          groupby_clause=groupby_clause, having_clause=having_clause,
                          orderby_clause=orderby_clause, limit_clause=limit_clause,
+                         cte_clause=cte_clause,
                          explain=explain_clause, hints=hints)
 
     def is_implicit(self) -> bool:
@@ -356,11 +389,13 @@ class ExplicitSqlQuery(SqlQuery[clauses.ExplicitFromClause]):
                  having_clause: Optional[clauses.Having] = None,
                  orderby_clause: Optional[clauses.OrderBy] = None,
                  limit_clause: Optional[clauses.Limit] = None,
+                 cte_clause: Optional[clauses.CommonTableExpression] = None,
                  explain_clause: Optional[clauses.Explain] = None,
                  hints: Optional[clauses.Hint] = None) -> None:
         super().__init__(select_clause=select_clause, from_clause=from_clause, where_clause=where_clause,
                          groupby_clause=groupby_clause, having_clause=having_clause,
                          orderby_clause=orderby_clause, limit_clause=limit_clause,
+                         cte_clause=cte_clause,
                          explain=explain_clause, hints=hints)
 
     def is_implicit(self) -> bool:
@@ -378,6 +413,7 @@ class MixedSqlQuery(SqlQuery[clauses.From]):
                  having_clause: Optional[clauses.Having] = None,
                  orderby_clause: Optional[clauses.OrderBy] = None,
                  limit_clause: Optional[clauses.Limit] = None,
+                 cte_clause: Optional[clauses.CommonTableExpression] = None,
                  explain_clause: Optional[clauses.Explain] = None,
                  hints: Optional[clauses.Hint] = None) -> None:
         if isinstance(from_clause, clauses.ExplicitFromClause) or isinstance(from_clause, clauses.ImplicitFromClause):
@@ -385,6 +421,7 @@ class MixedSqlQuery(SqlQuery[clauses.From]):
         super().__init__(select_clause=select_clause, from_clause=from_clause, where_clause=where_clause,
                          groupby_clause=groupby_clause, having_clause=having_clause,
                          orderby_clause=orderby_clause, limit_clause=limit_clause,
+                         cte_clause=cte_clause,
                          explain=explain_clause, hints=hints)
 
     def is_implicit(self) -> bool:
@@ -401,8 +438,9 @@ def build_query(query_clauses: Iterable[clauses.BaseClause]) -> SqlQuery:
     type of query (i.e. implicit or explicit) is inferred from the clauses (i.e. occurrence of an implicit FROM clause
     enforces an ImplicitSqlQuery and vice-versa). The overwriting rules apply here as well.
     """
-    build_implicit_query = True
+    build_implicit_query, build_explicit_query = True, True
 
+    cte_clause = None
     select_clause, from_clause, where_clause = None, None, None
     groupby_clause, having_clause = None, None
     orderby_clause, limit_clause = None, None
@@ -411,14 +449,19 @@ def build_query(query_clauses: Iterable[clauses.BaseClause]) -> SqlQuery:
         if not clause:
             continue
 
-        if isinstance(clause, clauses.Select):
+        if isinstance(clause, clauses.CommonTableExpression):
+            cte_clause = clause
+        elif isinstance(clause, clauses.Select):
             select_clause = clause
         elif isinstance(clause, clauses.ImplicitFromClause):
             from_clause = clause
-            build_implicit_query = True
+            build_implicit_query, build_explicit_query = True, False
         elif isinstance(clause, clauses.ExplicitFromClause):
             from_clause = clause
-            build_implicit_query = False
+            build_implicit_query, build_explicit_query = False, True
+        elif isinstance(clause, clauses.From):
+            from_clause = clause
+            build_implicit_query, build_explicit_query = False, False
         elif isinstance(clause, clauses.Where):
             where_clause = clause
         elif isinstance(clause, clauses.GroupBy):
@@ -440,9 +483,17 @@ def build_query(query_clauses: Iterable[clauses.BaseClause]) -> SqlQuery:
         return ImplicitSqlQuery(select_clause=select_clause, from_clause=from_clause, where_clause=where_clause,
                                 groupby_clause=groupby_clause, having_clause=having_clause,
                                 orderby_clause=orderby_clause, limit_clause=limit_clause,
+                                cte_clause=cte_clause,
                                 hints=hints_clause, explain_clause=explain_clause)
-    else:
+    elif build_explicit_query:
         return ExplicitSqlQuery(select_clause=select_clause, from_clause=from_clause, where_clause=where_clause,
                                 groupby_clause=groupby_clause, having_clause=having_clause,
                                 orderby_clause=orderby_clause, limit_clause=limit_clause,
+                                cte_clause=cte_clause,
                                 hints=hints_clause, explain_clause=explain_clause)
+    else:
+        return MixedSqlQuery(select_clause=select_clause, from_clause=from_clause, where_clause=where_clause,
+                             groupby_clause=groupby_clause, having_clause=having_clause,
+                             orderby_clause=orderby_clause, limit_clause=limit_clause,
+                             cte_clause=cte_clause,
+                             hints=hints_clause, explain_clause=explain_clause)

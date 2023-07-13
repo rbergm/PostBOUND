@@ -81,7 +81,8 @@ def explicit_to_implicit(source_query: qal.ExplicitSqlQuery) -> qal.ImplicitSqlQ
     return qal.ImplicitSqlQuery(select_clause=source_query.select_clause, from_clause=final_from_clause,
                                 where_clause=final_where_clause,
                                 groupby_clause=source_query.groupby_clause, having_clause=source_query.having_clause,
-                                orderby_clause=source_query.orderby_clause, limit_clause=source_query.limit_clause)
+                                orderby_clause=source_query.orderby_clause, limit_clause=source_query.limit_clause,
+                                cte_clause=source_query.cte_clause)
 
 
 def _get_predicate_fragment(predicate: preds.AbstractPredicate,
@@ -119,6 +120,11 @@ def extract_query_fragment(source_query: qal.ImplicitSqlQuery,
     referenced_tables = set(referenced_tables)
     if not referenced_tables.issubset(source_query.tables()):
         return None
+
+    cte_fragment = ([with_query for with_query
+                     in source_query.cte_clause.queries if with_query.target_table in referenced_tables]
+                    if source_query.cte_clause else [])
+    cte_clause = clauses.CommonTableExpression(cte_fragment) if cte_fragment else None
 
     select_fragment = []
     for target in source_query.select_clause.targets:
@@ -167,7 +173,8 @@ def extract_query_fragment(source_query: qal.ImplicitSqlQuery,
 
     return qal.ImplicitSqlQuery(select_clause=select_clause, from_clause=from_clause, where_clause=where_clause,
                                 groupby_clause=groupby_clause, having_clause=having_clause,
-                                orderby_clause=orderby_clause, limit_clause=source_query.limit_clause)
+                                orderby_clause=orderby_clause, limit_clause=source_query.limit_clause,
+                                cte_clause=cte_clause)
 
 
 def _default_subquery_name(tables: Iterable[base.TableReference]) -> str:
@@ -178,10 +185,14 @@ def move_into_subquery(query: qal.SqlQuery, tables: Iterable[base.TableReference
                        subquery_name: str = "") -> qal.SqlQuery:
     if not query.from_clause:
         raise ValueError("Cannot create a subquery for a query without a FROM clause")
-    predicates = query.predicates()
+    if any(table.virtual for table in query.tables()):
+        raise ValueError("Cannot move into subquery for queries with virtual tables")
     tables = set(tables)
+    if query.cte_clause is not None and tables & query.cte_clause.tables():
+        raise ValueError("Cannot move tables into subquery that are part of a CTE clause")
     if len(tables) < 2:
         raise ValueError("At least two tables required")
+    predicates = query.predicates()
     all_referenced_columns = collection_utils.set_union(clause.columns() for clause in query.clauses()
                                                         if not isinstance(clause, clauses.From))
     columns_from_subquery_tables = {column for column in all_referenced_columns if column.table in tables}
@@ -376,6 +387,10 @@ def _replace_expressions_in_clause(clause: ClauseType, replacement: Callable[[ex
 
     if isinstance(clause, clauses.Hint) or isinstance(clause, clauses.Explain):
         return clause
+    if isinstance(clause, clauses.CommonTableExpression):
+        replaced_queries = [clauses.WithQuery(replace_expressions(cte.query, replacement), cte.target_name)
+                            for cte in clause.queries]
+        return clauses.CommonTableExpression(replaced_queries)
     if isinstance(clause, clauses.Select):
         replaced_targets = [clauses.BaseProjection(replacement(proj.expression), proj.target_name)
                             for proj in clause.targets]
@@ -434,13 +449,13 @@ def replace_predicate(query: qal.ImplicitSqlQuery, predicate_to_replace: preds.A
                       new_predicate: preds.AbstractPredicate) -> qal.ImplicitSqlQuery:
     """Rewrites the given query to use `new_predicate` in all occurrences of the other predicate.
 
-    In the current implementation this does only work for top-level predicates, i.e. subqueries are not considered.
+    In the current implementation this does only work for top-level predicates, i.e. subqueries and CTEs are not considered.
     Furthermore, only the WHERE clause and the HAVING clause are modified.
 
     If the predicate to replace is not found, nothing happens.
     """
     # TODO: also allow replacement in explicit SQL queries
-    # TODO: allow predicate replacement in subqueries
+    # TODO: allow predicate replacement in subqueries / CTEs
     if not query.where_clause and not query.having_clause:
         return query
 
@@ -467,6 +482,7 @@ def _rename_columns_in_query(query: QueryType,
 
     A renaming maps the current column to the column that should be used instead.
     """
+    renamed_cte = rename_columns_in_clause(query.cte_clause, available_renamings)
     renamed_select = rename_columns_in_clause(query.select_clause, available_renamings)
     renamed_from = rename_columns_in_clause(query.from_clause, available_renamings)
     renamed_where = rename_columns_in_clause(query.where_clause, available_renamings)
@@ -478,16 +494,19 @@ def _rename_columns_in_query(query: QueryType,
         return qal.ImplicitSqlQuery(select_clause=renamed_select, from_clause=renamed_from, where_clause=renamed_where,
                                     groupby_clause=renamed_groupby, having_clause=renamed_having,
                                     orderby_clause=renamed_orderby, limit_clause=query.limit_clause,
+                                    cte_clause=renamed_cte,
                                     hints=query.hints, explain_clause=query.explain)
     elif isinstance(query, qal.ExplicitSqlQuery):
         return qal.ExplicitSqlQuery(select_clause=renamed_select, from_clause=renamed_from, where_clause=renamed_where,
                                     groupby_clause=renamed_groupby, having_clause=renamed_having,
                                     orderby_clause=renamed_orderby, limit_clause=query.limit_clause,
+                                    cte_clause=renamed_cte,
                                     hints=query.hints, explain_clause=query.explain)
     elif isinstance(query, qal.MixedSqlQuery):
         return qal.MixedSqlQuery(select_clause=renamed_select, from_clause=renamed_from, where_clause=renamed_where,
                                  groupby_clause=renamed_groupby, having_clause=renamed_having,
                                  orderby_clause=renamed_orderby, limit_clause=query.limit_clause,
+                                 cte_clause=renamed_cte,
                                  hints=query.hints, explain_clause=query.explain)
     else:
         raise TypeError("Unknown query type: " + str(query))
@@ -592,6 +611,10 @@ def rename_columns_in_clause(clause: Optional[ClauseType],
 
     if isinstance(clause, clauses.Hint) or isinstance(clause, clauses.Explain):
         return clause
+    if isinstance(clause, clauses.CommonTableExpression):
+        renamed_ctes = [clauses.WithQuery(_rename_columns_in_query(cte.query, available_renamings), cte.target_name)
+                        for cte in clause.queries]
+        return clauses.CommonTableExpression(renamed_ctes)
     if isinstance(clause, clauses.Select):
         renamed_targets = [clauses.BaseProjection(_rename_columns_in_expression(proj.expression, available_renamings),
                                                   proj.target_name)
@@ -650,7 +673,7 @@ def bind_columns(query: QueryType, *, with_schema: bool = True,
     """
 
     table_alias_map: dict[str, base.TableReference] = {table.identifier(): table for table in query.tables()
-                                                       if table.full_name}
+                                                       if table.full_name or table.virtual}
     unbound_columns: list[base.ColumnReference] = []
     necessary_renamings: dict[base.ColumnReference, base.ColumnReference] = {}
     for column in query.columns():

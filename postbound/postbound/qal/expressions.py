@@ -404,26 +404,24 @@ class SubqueryExpression(SqlExpression):
         return self._query
 
     def columns(self) -> set[base.ColumnReference]:
-        predicates = self.query.predicates()
-        return predicates.root().columns() if predicates else set()
+        return self._query.columns()
 
     def itercolumns(self) -> Iterable[base.ColumnReference]:
-        predicates = self.query.predicates()
-        return predicates.root().itercolumns() if predicates else []
+        return self._query.itercolumns()
 
     def iterchildren(self) -> Iterable[SqlExpression]:
         return []
 
     def tables(self) -> set[base.TableReference]:
-        return self.query.tables()
+        return self._query.tables()
 
     __hash__ = SqlExpression.__hash__
 
     def __eq__(self, other) -> bool:
-        return isinstance(other, type(self)) and self.query == other.query
+        return isinstance(other, type(self)) and self._query == other._query
 
     def __str__(self) -> str:
-        query_str = str(self.query).removesuffix(";")
+        query_str = str(self._query).removesuffix(";")
         return f"({query_str})"
 
 

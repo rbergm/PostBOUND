@@ -5,7 +5,6 @@ import abc
 import enum
 from collections.abc import Sequence
 from typing import Iterable, Optional
-
 from postbound.qal import base, expressions as expr, qal, predicates as preds
 from postbound.util import collections as collection_utils
 
@@ -198,15 +197,20 @@ class Explain(BaseClause):
         return explain_prefix + explain_body
 
 
-class CommonTableExpression(BaseClause):
+class WithQuery:
     def __init__(self, query: qal.SqlQuery, target_name: str) -> None:
         self._query = query
+        self._subquery_expression = expr.SubqueryExpression(query)
         self._target_name = target_name
-        super().__init__(hash((query, target_name)))
+        self._hash_val = hash((query, target_name))
 
     @property
     def query(self) -> qal.SqlQuery:
         return self._query
+
+    @property
+    def subquery(self) -> expr.SubqueryExpression:
+        return self._subquery_expression
 
     @property
     def target_name(self) -> str:
@@ -216,24 +220,68 @@ class CommonTableExpression(BaseClause):
     def target_table(self) -> base.TableReference:
         return base.TableReference.create_virtual(self.target_name)
 
+    def tables(self) -> set[base.TableReference]:
+        return self._query.tables()
+
     def columns(self) -> set[base.ColumnReference]:
         return self._query.columns()
 
     def iterexpressions(self) -> Iterable[expr.SqlExpression]:
-        return self._query.iterexpressions()
+        return [self._subquery_expression]
 
     def itercolumns(self) -> Iterable[base.ColumnReference]:
         return self._query.itercolumns()
 
-    __hash__ = BaseClause.__hash__
+    def __hash__(self) -> int:
+        return self._hash_val
 
-    def __eq__(self, other) -> bool:
+    def __eq__(self, other: object) -> bool:
         return (isinstance(other, type(self))
                 and self._target_name == other._target_name
                 and self._query == other._query)
 
+    def __repr__(self) -> str:
+        return str(self)
+
     def __str__(self) -> str:
-        return f"WITH {self._target_name} AS ({self._query})"
+        query_str = self._query.stringify(trailing_delimiter=False)
+        return f"{self._target_name} AS ({query_str})"
+
+
+class CommonTableExpression(BaseClause):
+    def __init__(self, with_queries: Iterable[WithQuery]):
+        self._with_queries = tuple(with_queries)
+        if not self._with_queries:
+            raise ValueError("With queries cannnot be empty")
+        super().__init__(hash(self._with_queries))
+
+    @property
+    def queries(self) -> Sequence[WithQuery]:
+        return self._with_queries
+
+    def tables(self) -> set[base.TableReference]:
+        all_tables: set[base.TableReference] = set()
+        for cte in self._with_queries:
+            all_tables |= cte.tables() | {cte.target_table}
+        return all_tables
+
+    def columns(self) -> set[base.ColumnReference]:
+        return collection_utils.set_union(with_query.columns() for with_query in self._with_queries)
+
+    def iterexpressions(self) -> Iterable[expr.SqlExpression]:
+        return collection_utils.flatten(with_query.iterexpressions() for with_query in self._with_queries)
+
+    def itercolumns(self) -> Iterable[base.ColumnReference]:
+        return collection_utils.flatten(with_query.itercolumns() for with_query in self._with_queries)
+
+    __hash__ = BaseClause.__hash__
+
+    def __eq__(self, other: object) -> bool:
+        return isinstance(other, type(self)) and self._with_queries == other._with_queries
+
+    def __str__(self) -> str:
+        query_str = ", ".join(str(with_query) for with_query in self._with_queries)
+        return "WITH " + query_str
 
 
 class BaseProjection:
@@ -470,6 +518,10 @@ class SubqueryTableSource(TableSource):
         return self._target_name
 
     @property
+    def target_table(self) -> base.TableReference:
+        return base.TableReference.create_virtual(self._target_name)
+
+    @property
     def expression(self) -> expr.SubqueryExpression:
         return self._subquery_expression
 
@@ -499,7 +551,7 @@ class SubqueryTableSource(TableSource):
         return str(self._subquery_expression)
 
     def __str__(self) -> str:
-        query_str = str(self._subquery_expression.query).removesuffix(";")
+        query_str = self._subquery_expression.query.stringify(trailing_delimiter=False)
         return f"({query_str}) AS {self._target_name}"
 
 
@@ -546,6 +598,8 @@ class JoinTableSource(TableSource):
         return self._join_type
 
     def tables(self) -> set[base.TableReference]:
+        if isinstance(self._source, SubqueryTableSource):
+            return self._source.tables() | {self._source.target_table}
         return self._source.tables()
 
     def columns(self) -> set[base.ColumnReference]:
@@ -699,6 +753,9 @@ class Where(BaseClause):
     def predicate(self) -> preds.AbstractPredicate:
         """Get the root predicate that contains all filters and joins in the WHERE clause."""
         return self._predicate
+
+    def tables(self) -> set[base.TableReference]:
+        return self._predicate.tables()
 
     def columns(self) -> set[base.ColumnReference]:
         return self.predicate.columns()

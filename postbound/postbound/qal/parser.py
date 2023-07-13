@@ -225,6 +225,23 @@ def _parse_mosp_expression(mosp_data: Any) -> expr.SqlExpression:
     return expr.FunctionExpression(operation, parsed_arguments, distinct=distinct)
 
 
+def _parse_with_query(mosp_data: dict) -> clauses.WithQuery:
+    target_name = mosp_data["name"]
+    mosp_query = mosp_data["value"]
+    parsed_query = _MospQueryParser(mosp_query).parse_query()
+    return clauses.WithQuery(parsed_query, target_name)
+
+
+def _parse_cte_clause(mosp_data: dict | list) -> clauses.CommonTableExpression:
+    if isinstance(mosp_data, list):
+        with_queries = [_parse_with_query(mosp_with) for mosp_with in mosp_data]
+    elif isinstance(mosp_data, dict):
+        with_queries = [_parse_with_query(mosp_data)]
+    else:
+        raise ValueError("Unknown WITH format: " + str(mosp_data))
+    return clauses.CommonTableExpression(with_queries)
+
+
 def _parse_select_statement(mosp_data: dict | str) -> clauses.BaseProjection:
     if isinstance(mosp_data, dict):
         select_target = copy.copy(mosp_data["value"])
@@ -500,6 +517,11 @@ class _MospQueryParser:
         # TODO: support for EXPLAIN queries
         # TODO: support for CTEs
 
+        if "with" in self._mosp_data:
+            cte_clause = _parse_cte_clause(self._mosp_data["with"])
+        else:
+            cte_clause = None
+
         if "groupby" in self._mosp_data:
             groupby_clause = _parse_groupby_clause(self._mosp_data["groupby"])
         else:
@@ -525,17 +547,20 @@ class _MospQueryParser:
             return qal.ImplicitSqlQuery(select_clause=select_clause, from_clause=from_clause,
                                         where_clause=where_clause,
                                         groupby_clause=groupby_clause, having_clause=having_clause,
-                                        orderby_clause=orderby_clause, limit_clause=limit_clause)
+                                        orderby_clause=orderby_clause, limit_clause=limit_clause,
+                                        cte_clause=cte_clause)
         elif not implicit and explicit:
             return qal.ExplicitSqlQuery(select_clause=select_clause, from_clause=from_clause,
                                         where_clause=where_clause,
                                         groupby_clause=groupby_clause, having_clause=having_clause,
-                                        orderby_clause=orderby_clause, limit_clause=limit_clause)
+                                        orderby_clause=orderby_clause, limit_clause=limit_clause,
+                                        cte_clause=cte_clause)
         else:
             return qal.MixedSqlQuery(select_clause=select_clause, from_clause=from_clause,
                                      where_clause=where_clause,
                                      groupby_clause=groupby_clause, having_clause=having_clause,
-                                     orderby_clause=orderby_clause, limit_clause=limit_clause)
+                                     orderby_clause=orderby_clause, limit_clause=limit_clause,
+                                     cte_clause=cte_clause)
 
     def _prepare_query(self) -> None:
         if "explain" in self._mosp_data:

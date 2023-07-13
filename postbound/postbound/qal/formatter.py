@@ -9,6 +9,12 @@ from postbound.qal import qal, clauses, expressions as expr, predicates as preds
 FORMAT_INDENT_DEPTH = 2
 
 
+def _increase_indentation(content: str, indentation: Optional[int] = None) -> str:
+    indentation = FORMAT_INDENT_DEPTH if indentation is None else indentation
+    indent_prefix = "\n" + " " * indentation
+    return " " * indentation + indent_prefix.join(content.split("\n"))
+
+
 class FormattingSubqueryExpression(expr.SubqueryExpression):
     def __init__(self, original_expression: expr.SubqueryExpression, inline_hint_block: bool,
                  indentation: int) -> None:
@@ -24,6 +30,28 @@ class FormattingSubqueryExpression(expr.SubqueryExpression):
 
         indented_lines = [""] + [prefix + line for line in formatted.split("\n")] + [""]
         return "\n".join(indented_lines)
+
+
+def _quick_format_cte(cte_clause: clauses.CommonTableExpression) -> list[str]:
+    if len(cte_clause.queries) == 1:
+        cte_query = cte_clause.queries[0]
+        cte_header = f"WITH {cte_query.target_name} AS ("
+        cte_content = _increase_indentation(format_quick(cte_query.query).removesuffix(";"))
+        cte_footer = ")"
+        return [cte_header, cte_content, cte_footer]
+
+    first_cte, *remaining_ctes = cte_clause.queries
+    first_content = _increase_indentation(format_quick(first_cte.query)).removesuffix(";")
+    formatted_parts: list[str] = [f"WITH {first_cte.target_name} AS (", first_content]
+    for next_cte in remaining_ctes:
+        current_header = f"), {next_cte.target_name} AS ("
+        cte_content = _increase_indentation(format_quick(next_cte.query).removesuffix(";"))
+
+        formatted_parts.append(current_header)
+        formatted_parts.append(cte_content)
+
+    formatted_parts.append(")")
+    return formatted_parts
 
 
 def _quick_format_select(select_clause: clauses.Select, *,
@@ -124,7 +152,9 @@ def format_quick(query: qal.SqlQuery, *, inline_hint_block: bool = False) -> str
             inlined_hint_block = clause
             continue
 
-        if isinstance(clause, clauses.Select):
+        if isinstance(clause, clauses.CommonTableExpression):
+            pretty_query_parts.extend(_quick_format_cte(clause))
+        elif isinstance(clause, clauses.Select):
             pretty_query_parts.extend(_quick_format_select(clause, inlined_hint_block=inlined_hint_block))
         elif isinstance(clause, clauses.ImplicitFromClause):
             pretty_query_parts.extend(_quick_format_implicit_from(clause))

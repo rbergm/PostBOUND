@@ -309,6 +309,37 @@ class TransformationTests(unittest.TestCase):
             self.assertSetEqual(parsed.columns(), {col_r_a, col_r_b, col_s_c})
             self.assertSetEqual(parsed.tables(), {tab_r, tab_s})
 
+    def test_subquery_binding(self) -> None:
+        tab_r = base.TableReference("R")
+        col_r_a = base.ColumnReference("a", tab_r)
+        col_r_b = base.ColumnReference("b", tab_r)
+
+        tab_s = base.TableReference("S")
+        col_s_b = base.ColumnReference("b", tab_s)
+        col_s_c = base.ColumnReference("c", tab_s)
+
+        query = "SELECT SUM(R.b) FROM R WHERE R.a < (SELECT MIN(S.c) FROM S)"
+        all_cols = {col_r_a, col_r_b, col_s_c}
+        with self.subTest("Column binding in anonymous subquery", query=query):
+            parsed = parser.parse_query(query)
+            self.assertSetEqual(parsed.columns(), all_cols)
+
+        query = "SELECT SUM(R.b) FROM R, (SELECT S.b, MIN(S.c) FROM S GROUP BY S.b) sub_s WHERE R.a = sub_s.b"
+        sub_s = base.TableReference.create_virtual("sub_s")
+        col_sub_s_b = base.ColumnReference("b", sub_s)
+        all_cols = {col_r_a, col_r_b, col_s_b, col_s_c, col_sub_s_b, col_sub_s_b}
+        with self.subTest("Column binding in virtual subquery", query=query):
+            parsed = parser.parse_query(query)
+            self.assertSetEqual(parsed.columns(), all_cols)
+
+        query = "WITH s_cte AS (SELECT MIN(S.c) FROM S) SELECT SUM(R.b) FROM R WHERE R.a = s_cte.c"
+        cte_s = base.TableReference.create_virtual("s_cte")
+        col_cte_s_c = base.ColumnReference("c", cte_s)
+        all_cols = {col_r_a, col_r_b, col_s_c, col_cte_s_c}
+        with self.subTest("Column binding in CTE", query=query):
+            parsed = parser.parse_query(query)
+            self.assertSetEqual(parsed.columns(), all_cols)
+
 
 class ParserTests(regression_suite.QueryTestCase):
 
@@ -372,6 +403,18 @@ class ParserTests(regression_suite.QueryTestCase):
         self.assertTrue(len(parsed.predicates().filters()) == 1, "Should detect 1 filter in WHERE clause")
         self.assertTrue(len(parsed.predicates().joins()) == 1, "Should detect 1 join in WHERE clause")
         self.assertIsInstance(parsed, qal.MixedSqlQuery, "Query should be parsed as mixed query")
+
+    def test_single_cte(self) -> None:
+        query = "WITH cte_r AS (SELECT * FROM R) SELECT * FROM cte_r JOIN R ON cte_r.id = R.id"
+        parsed = parser.parse_query(query)
+        self.assertQueriesEqual(query, parsed, "Did not parse/format CTE query correctly")
+        self.assertTrue(len(parsed.cte_clause.queries) == 1, "Did not recognize CTE correctly")
+
+    def test_multiple_cte(self) -> None:
+        query = "WITH cte_r AS (SELECT * FROM R), cte_s AS (SELECT MIN(S.c) FROM S WHERE S.c < 42) SELECT * FROM cte_r, cte_s"
+        parsed = parser.parse_query(query)
+        self.assertQueriesEqual(query, parsed, "Did not parse/format CTE query correctly")
+        self.assertTrue(len(parsed.cte_clause.queries) == 2, "Did not recognize CTEs correctly")
 
 
 class RegressionTests(unittest.TestCase):
