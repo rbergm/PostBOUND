@@ -80,7 +80,7 @@ class TableReference(jsonize.Jsonizable):
                 and self._alias == __value._alias)
 
     def __repr__(self) -> str:
-        return str(self)
+        return f"TableReference(full_name='{self.full_name}', alias='{self.alias}', virtual={self.virtual})"
 
     def __str__(self) -> str:
         if self.full_name and self.alias:
@@ -165,7 +165,7 @@ class ColumnReference(jsonize.Jsonizable):
         return isinstance(other, type(self)) and self.name == other.name and self.table == other.table
 
     def __repr__(self) -> str:
-        return str(self)
+        return f"ColumnReference(name='{self.name}', table={repr(self.table)})"
 
     def __str__(self) -> str:
         if self.table and self.table.alias:
