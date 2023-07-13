@@ -16,22 +16,16 @@ classifiers = [
     "Operating System :: OS Independent",
 ]
 dependencies = [
+    "graphviz",
     "levenshtein",
     "mo-sql-parsing",
+    "mysql-connector-python",
     "natsort",
     "networkx",
     "numpy",
     "pandas",
-    "psycopg[binary]"
-]
-
-optional-dependencies = [
-    "mysql-connector-python",
-    "scipy",
-    "matplotlib",
-    "seaborn",
-    "plotly",
-    "graphviz"
+    "psycopg[binary]",
+    "scipy"
 ]
 
 [project.urls]
