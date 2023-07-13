@@ -1068,7 +1068,7 @@ class QueryPredicates:
         for table in self._root.tables():
             join_partners = self.joins_for(table)
             for join_predicate in join_partners:
-                partner_tables = join_predicate.join_partners_of(table)
+                partner_tables = {partner.table for partner in join_predicate.join_partners_of(table)}
                 map_key = frozenset(partner_tables | {table})
                 if map_key in predicate_map:
                     continue
