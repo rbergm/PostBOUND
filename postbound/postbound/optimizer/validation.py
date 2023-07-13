@@ -11,7 +11,7 @@ from postbound.db import db
 from postbound.qal import qal, expressions, predicates
 from postbound.util import collections as collection_utils, errors
 
-FAILURE_EXPLICIT_FROM_CLAUSE = "EXPLICIT_FROM_CLAUSE"
+FAILURE_NO_IMPLICIT_FROM_CLAUSE = "NO_IMPLICIT_FROM_CLAUSE"
 FAILURE_NON_EQUI_JOIN = "NON_EQUI_JOIN"
 FAILURE_NON_CONJUNCTIVE_JOIN = "NON_CONJUNCTIVE_JOIN"
 FAILURE_DEPENDENT_SUBQUERY = "DEPENDENT_SUBQUERY"
@@ -135,6 +135,7 @@ def merge_checks(checks: OptimizationPreCheck | Iterable[OptimizationPreCheck], 
     if not checks:
         return EmptyPreCheck()
     all_checks = ({checks} if isinstance(checks, OptimizationPreCheck) else set(checks)) | set(more_checks)
+    all_checks = {check for check in all_checks if check}
     compound_checks = [check for check in all_checks if isinstance(check, CompoundCheck)]
     atomic_checks = {check for check in all_checks if not isinstance(check, CompoundCheck)}
     compound_check_children = collection_utils.set_union(set(check.checks) for check in compound_checks)
@@ -156,6 +157,19 @@ class EmptyPreCheck(OptimizationPreCheck):
 
     def describe(self) -> dict:
         return {"name": "no_check"}
+
+
+class ImplicitQueryPreCheck(OptimizationPreCheck):
+    def __init__(self) -> None:
+        super().__init__("implicit-query")
+
+    def check_supported_query(self, query: qal.SqlQuery) -> PreCheckResult:
+        passed = isinstance(query, qal.ImplicitSqlQuery)
+        failure_reason = "" if passed else FAILURE_NO_IMPLICIT_FROM_CLAUSE
+        return PreCheckResult(passed, failure_reason)
+
+    def describe(self) -> dict:
+        return {"name": "implicit_query"}
 
 
 class CrossProductPreCheck(OptimizationPreCheck):
@@ -237,6 +251,19 @@ class EquiJoinPreCheck(OptimizationPreCheck):
 
     def __hash__(self) -> int:
         return hash((self.name, self._allow_conjunctions, self._allow_nesting))
+
+
+class DependentSubqueryPreCheck(OptimizationPreCheck):
+    def __init__(self) -> None:
+        super().__init__("no-dependent-subquery")
+
+    def check_supported_query(self, query: qal.SqlQuery) -> PreCheckResult:
+        passed = not any(subquery.is_dependent() for subquery in query.subqueries())
+        failure_reason = "" if passed else FAILURE_DEPENDENT_SUBQUERY
+        return PreCheckResult(passed, failure_reason)
+
+    def describe(self) -> dict:
+        return {"name": "no_dependent_subquery"}
 
 
 class UnsupportedQueryError(RuntimeError):
