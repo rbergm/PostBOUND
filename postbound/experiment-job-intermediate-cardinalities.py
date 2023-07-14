@@ -1,7 +1,10 @@
 #!/usr/bin/env python3
 
+import argparse
 import collections
 import warnings
+from collections.abc import Generator
+from dataclasses import dataclass
 
 import pandas as pd
 
@@ -12,55 +15,102 @@ from postbound.util import collections as collection_utils, jsonize
 
 workloads.workloads_base_dir = "../workloads"
 
-postgres_db = postgres.connect(config_file=".psycopg_connection_job")
-db_pool = postgres.ParallelQueryExecutor(postgres_db.connect_string, n_threads=12)
-job_benchmark = workloads.job()
 
-explored_queries: set[qal.SqlQuery] = set()
-fragment_to_queries_map: dict[qal.SqlQuery, list[qal.SqlQuery]] = collections.defaultdict(list)
+@dataclass
+class QueryIntermediate:
+    label: str
+    full_query: qal.SqlQuery
+    query_fragment: qal.SqlQuery
 
-for label, query in job_benchmark.entries():
-    if not isinstance(query, qal.ImplicitSqlQuery):
-        warnings.warn(f"Skipping query {label} b/c query fragments can currently "
-                      "only be created for implicit queries.")
-        continue
 
-    tables = query.tables()
-    query_predicates = query.predicates()
-    candidate_joins = collection_utils.powerset(tables)
-
-    for joined_tables in candidate_joins:
-        if not joined_tables:
-            continue
-        if not query_predicates.joins_tables(joined_tables):
+def iter_intermediates(workload: workloads.Workload) -> Generator[QueryIntermediate, None, None]:
+    for label, query in workload.entries():
+        if not isinstance(query, qal.ImplicitSqlQuery):
+            warnings.warn(f"Skipping query {label} b/c query fragments can currently "
+                          "only be created for implicit queries.")
             continue
 
-        joined_tables = sorted(joined_tables)
-        query_fragment = transform.extract_query_fragment(query, joined_tables)
-        assert query_fragment is not None
-        query_fragment = transform.as_count_star_query(query_fragment)
-        fragment_to_queries_map[query_fragment].append(query)
-        if query_fragment in explored_queries:
+        tables = query.tables()
+        query_predicates = query.predicates()
+        candidate_joins = collection_utils.powerset(tables)
+
+        for joined_tables in candidate_joins:
+            if not joined_tables:
+                continue
+            if not query_predicates.joins_tables(joined_tables):
+                continue
+
+            joined_tables = sorted(joined_tables)
+            query_fragment = transform.extract_query_fragment(query, joined_tables)
+            assert query_fragment is not None
+            query_fragment = transform.as_count_star_query(query_fragment)
+            yield QueryIntermediate(label, query, query_fragment)
+
+
+def simulate_intermediate_generation(out_file: str, workload: workloads.Workload):
+    unique_intermediates = set()
+    intermediates_per_query: dict[qal.SqlQuery, int] = collections.defaultdict(int)
+    for intermediate in iter_intermediates(workload):
+        unique_intermediates.add(intermediate.query_fragment)
+        intermediates_per_query[intermediate.full_query] += 1
+
+    result_df = pd.DataFrame(intermediates_per_query.items(), columns=["query", "n_intermediates"])
+    result_df.to_csv(out_file, index=False)
+    print("unique", len(unique_intermediates), "total", sum(intermediates_per_query.values()))
+
+
+def determine_intermediates(out_file: str = "results/job/job-intermediate-cardinalities.csv",
+                            simulate_only: bool = False) -> None:
+    postgres_db = postgres.connect(config_file=".psycopg_connection_job")
+    job_benchmark = workloads.job()
+
+    if simulate_only:
+        simulate_intermediate_generation(out_file, job_benchmark)
+        return
+
+    db_pool = postgres.ParallelQueryExecutor(postgres_db.connect_string, n_threads=12)
+
+    explored_queries: set[qal.SqlQuery] = set()
+    fragment_to_queries_map: dict[qal.SqlQuery, list[qal.SqlQuery]] = collections.defaultdict(list)
+
+    for intermediate in iter_intermediates(job_benchmark):
+        fragment_to_queries_map[intermediate.query_fragment].append(intermediate.full_query)
+        if intermediate.query_fragment in explored_queries:
             continue
-        explored_queries.add(query_fragment)
-        db_pool.queue_query(query_fragment)
+        explored_queries.add(intermediate.query_fragment)
+        db_pool.queue_query(intermediate.query_fragment)
 
-print(".. All queries submitted to DB pool")
-db_pool.drain_queue()
-fragment_cardinalities: dict[qal.SqlQuery, int] = db_pool.result_set()
+    print(".. All queries submitted to DB pool")
+    db_pool.drain_queue()
+    fragment_cardinalities: dict[qal.SqlQuery, int] = db_pool.result_set()
 
-queries, fragments, labels, fragment_tables, cardinalities = [], [], [], [], []
-for result_fragment, cardinality in fragment_cardinalities.items():
-    for query in fragment_to_queries_map[result_fragment]:
-        query_label = job_benchmark.label_of(query)
-        queries.append(query)
-        fragments.append(result_fragment)
-        labels.append(query_label)
-        fragment_tables.append(jsonize.to_json(list(result_fragment.tables())))
-        cardinalities.append(cardinality)
+    queries, fragments, labels, fragment_tables, cardinalities = [], [], [], [], []
+    for result_fragment, cardinality in fragment_cardinalities.items():
+        for query in fragment_to_queries_map[result_fragment]:
+            query_label = job_benchmark.label_of(query)
+            queries.append(query)
+            fragments.append(result_fragment)
+            labels.append(query_label)
+            fragment_tables.append(jsonize.to_json(list(result_fragment.tables())))
+            cardinalities.append(cardinality)
 
-result_df = pd.DataFrame({"label": labels, "query": queries,
-                          "query_fragment": fragments, "tables": fragment_tables,
-                          "cardinality": cardinalities})
-result_df = analysis.sort_results(result_df, "label")
-result_df.to_csv("job-intermediate-cardinalities.csv", index=False)
+    result_df = pd.DataFrame({"label": labels, "query": queries,
+                              "query_fragment": fragments, "tables": fragment_tables,
+                              "cardinality": cardinalities})
+    result_df = analysis.sort_results(result_df, "label")
+    result_df.to_csv(out_file, index=False)
+
+
+def main():
+    parser = argparse.ArgumentParser(description="Calculates the cardinalities of all possible intermediate results of the "
+                                     "Join Order Benchmark")
+    parser.add_argument("--out", "-o", action="store", help="Name and location of the output CSV file")
+    parser.add_argument("--dry", action="store_true", help="Don't actually calculate the intermediates. Instead, determine "
+                        "which intermediates would be calculated")
+    args = parser.parse_args()
+
+    determine_intermediates(args.out, simulate_only=args.dry)
+
+
+if __name__ == "__main__":
+    main()
