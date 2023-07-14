@@ -442,7 +442,7 @@ def read_config() -> tuple[ExperimentConfig, Sequence[str]]:
 
     logging.basicConfig(level=logging_level, format=logging_format, filename=args.log_file, filemode="w")
     console_logger = logging.StreamHandler()
-    console_logger.setLevel(logging.DEBUG)
+    console_logger.setLevel(logging_level)
     console_logger.setFormatter(logging.Formatter(logging_format))
     logging.getLogger().addHandler(console_logger)
 
