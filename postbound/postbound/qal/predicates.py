@@ -1026,8 +1026,16 @@ class QueryPredicates:
         """
         if self.is_empty():
             return False
+
         tables = [tables] if not isinstance(tables, Iterable) else list(tables)
         tables = frozenset(set(tables) | set(more_tables))
+
+        if not tables:
+            raise ValueError("Cannot perform check for empty tables")
+        if len(tables) == 1:
+            table = collection_utils.simplify(tables)
+            return table in self._root.tables()
+
         return self._join_tables_check(tables)
 
     def and_(self, other_predicate: QueryPredicates | AbstractPredicate) -> QueryPredicates:
