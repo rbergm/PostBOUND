@@ -1,4 +1,9 @@
-"""Provides PostBOUND's main optimization pipeline."""
+"""Provides PostBOUND's main optimization pipeline.
+
+In fact, PostBOUND does not provide a single pipeline implementation. Rather, different pipeline types exists to accomodate
+different use-cases. See the documentation of the general `OptimizationPipeline` protocol for details. That class serves as the
+smallest common denominator among all pipeline implementations.
+"""
 from __future__ import annotations
 
 import abc
@@ -19,39 +24,164 @@ class OptimizationPipeline(Protocol):
     the `TwoStageOptimizationPipeline` exists. Similarly, for optimization algorithms that perform join ordering and
     operator selection in one process (as in the traditional dynamic programming-based approach),
     an `IntegratedOptimizationPipeline` is available. Lastly, to model approaches that subsequently improve query plans
-    by correcting some optimization decisions (e.g. transforming a hash join to a nested loop join), the
+    by correcting some previous optimization decisions (e.g. transforming a hash join to a nested loop join), the
     `IncrementalOptimizationPipeline` is provided. Consult the individual pipeline documentation for more details. This
     protocol class only describes the basic interface that is shared by all the pipeline implementations.
 
     If in doubt what the best pipeline implementation is, it is probably best to start with the
-    `TwoStageOptimizationPipeline` since it is the most flexible.
+    `TwoStageOptimizationPipeline`, since it is the most flexible.
     """
 
     @abc.abstractmethod
     def optimize_query(self, query: qal.SqlQuery) -> qal.SqlQuery:
+        """Applies the current pipeline configuration to optimize the input query.
+
+        This process also involges the generation of appropriate optimization information that enforces the selected
+        optimization decision when the query is executed on an actual database system.
+
+        Parameters
+        ----------
+        query : qal.SqlQuery
+            The query that should be optimized
+
+        Returns
+        -------
+        qal.SqlQuery
+            A transformed query that encapsulates all the optimization decisions made by the pipeline. What this actually means
+            depends on the selected optimization strategies, as well as specifics of the target database system:
+
+            Depending on the optimization strategy the optimization decisions can range from simple operator selections (such
+            as "no nested loop join for this join") to entire physical query execution plans (consisting of a join order, as
+            well as scan and join operators for all parts of the plan) and anything in between. For novel cardinality
+            estimation approaches, the optimization info could also be structured such that the default cardinality estimates
+            are overwritten.
+
+            Secondly, the way the optimization info is expressed depends on the selected database system. Most systems do not
+            allow direct a direct modification of the query optimizer's implementation. Therefore, PostBOUND takes an indirect
+            approach: it emits system-specific hints that enable corrections for individual optimizer decisions (such as
+            disabling a specific physical operator). For example, PostgreSQL allows to use planner options such as
+            ``SET enable_nestloop = 'off'`` to disable nested loop joins for the all subsequent queries in the current
+            connection. MySQL provides hints like ``BNL(R S)`` to recommend a block-nested loop join or hash join (depending on
+            the MySQL version) to the optimizer for a specific join. These hints are inserted into comment blocks in the final
+            SQL query. Likewise, some systems treat certain SQL keywords differently or provide their own extensions. This also
+            allows to modify the underlying plans. For example, when SQLite encouters a ``CROSS JOIN`` syntax in the ``FROM``
+            clause, it does not try to optimize the join order and uses the order in which the tables are specified in the
+            relation instead.
+
+            Therefore, the resulting query will differ from the original input query in a number of ways. However, the produced
+            result sets should still be equivalent. If this is not the case, something went severly wrong during query
+            optimization. Take a look at the `db` module for more details on the database system support and the query
+            generation capabilities.
+
+        Raises
+        ------
+        validation.UnsupportedQueryError
+            If the selected optimization algorithms cannot be applied to the specific query, e.g. because it contains
+            unsupported features.
+
+
+        References
+        ----------
+
+        .. [1] PostgreSQL query planning options: https://www.postgresql.org/docs/15/runtime-config-query.html
+        .. [2] MySQL optimizer hints: https://dev.mysql.com/doc/refman/8.0/en/optimizer-hints.html
+        """
         raise NotImplementedError
 
     @abc.abstractmethod
     def describe(self) -> dict:
+        """Generates a description of the current pipeline configuration.
+
+        This description is intended to transparently document which optimization strategies have been selected and how they
+        have been instantiated. It can be JSON-serialized and will be included by most of the output of the utilities in the
+        `runner` module of the `experiments` package.
+
+        Returns
+        -------
+        dict
+            The actual description
+        """
         raise NotImplementedError
 
 
 class IntegratedOptimizationPipeline(OptimizationPipeline):
+    """This pipeline closely models the behaviour of a *traditional* optimization algorithm, such as dynamic programming.
+
+    *Traditional* in this context means that all required optimization information is calculated in one algorithm, e.g. both
+    join order and physical operators are derived in one pass. To configure the pipeline, assign the selected strategy to the
+    `optimization_algorithm` property.
+
+    Parameters
+    ----------
+    target_db : Optional[db.Database], optional
+        The database for which the optimized queries should be generated. If this is not given, he default database is
+        extracted from the `DatabasePool`.
+    optimization_algorithm
+    """
+
     def __init__(self, target_db: Optional[db.Database] = None) -> None:
-        self.target_db = (target_db if target_db is not None
-                          else db.DatabasePool.get_instance().current_database())
+        self._target_db = (target_db if target_db is not None
+                           else db.DatabasePool.get_instance().current_database())
         self._optimization_algorithm: Optional[stages.CompleteOptimizationAlgorithm] = None
         super().__init__()
 
     @property
+    def target_db(self) -> db.Database:
+        """The database for which optimized queries should be generated.
+
+        When assigning a new target database, compatibility with the current `optimization_algorithm` will be checked.
+
+        Returns
+        -------
+        db.Database
+            The currently selected database system
+
+        Raises
+        ------
+        validation.UnsupportedSystemError
+            If the current optimization algorithm is not compatible with the new target database system
+
+        See Also
+        --------
+        optimizer.stages.CompleteOptimizationAlgorithm.pre_check
+        """
+        return self._target_db
+
+    @target_db.setter
+    def target_db(self, system: db.Database) -> None:
+        if self._optimization_algorithm is not None:
+            pre_check = self._optimization_algorithm.pre_check()
+            pre_check.check_supported_database_system(system).ensure_all_passed()
+        self._target_db = system
+
+    @property
     def optimization_algorithm(self) -> Optional[stages.CompleteOptimizationAlgorithm]:
+        """The optimization algorithm is used each time a query should be optimized.
+
+        When assigning a new algorithm, it is checked for compatibility with `target_db`.
+
+        Returns
+        -------
+        Optional[stages.CompleteOptimizationAlgorithm]
+            The currently selected optimization algorithm, if any.
+
+        Raises
+        ------
+        validation.UnsupportedSystemError
+            If the new optimization algorithm is not compatible with the current target database system.
+
+        See Also
+        --------
+        optimizer.stages.CompleteOptimizationAlgorithm.pre_check
+
+        """
         return self._optimization_algorithm
 
     @optimization_algorithm.setter
     def optimization_algorithm(self, algorithm: stages.CompleteOptimizationAlgorithm) -> None:
         pre_check = algorithm.pre_check()
         if pre_check:
-            pre_check.check_supported_database_system(self.target_db).ensure_all_passed()
+            pre_check.check_supported_database_system(self._target_db).ensure_all_passed()
         self._optimization_algorithm = algorithm
 
     def optimize_query(self, query: qal.SqlQuery) -> qal.SqlQuery:
@@ -64,12 +194,14 @@ class IntegratedOptimizationPipeline(OptimizationPipeline):
 
         physical_qep = self.optimization_algorithm.optimize_query(query)
 
-        return self.target_db.hinting().generate_hints(query, physical_qep)
+        return self._target_db.hinting().generate_hints(query, physical_qep)
 
     def describe(self) -> dict:
         algorithm_description = (self._optimization_algorithm.describe() if self._optimization_algorithm is not None
                                  else "no_algorithm")
-        return {"target_dbs": self.target_db.describe(), "optimization_algorithm": algorithm_description}
+        return {"name": "integrated_pipeline",
+                "database_system": self._target_db.describe(),
+                "optimization_algorithm": algorithm_description}
 
 
 class TwoStageOptimizationPipeline(OptimizationPipeline):
@@ -89,7 +221,7 @@ class TwoStageOptimizationPipeline(OptimizationPipeline):
 
     All steps are optional. If they are not specified, no operation will be performed at the specific stage.
 
-    Once the optimization settings have been selected via the _setup_ methods (or alternatively via the `load_settings`
+    Once the optimization settings have been selected via the *setup* methods (or alternatively via the `load_settings`
     functionality), the pipeline has to be build using the `build` method. Afterwards, it is ready to optimize
     input queries.
 
@@ -97,6 +229,19 @@ class TwoStageOptimizationPipeline(OptimizationPipeline):
     input query (i.e. to apply the specifics that enforce the optimized query plan during query execution for the
     database system). This field can be changed between optimization calls to use the same pipeline for different
     systems.
+
+    Parameters
+    ----------
+    target_db : db.Database
+        The database for which the optimized queries should be generated.
+
+
+    Examples
+    --------
+    >>> pipeline = pb.TwoStageOptimizationPipline(postgres_db)
+    >>> pipeline.load_settings(ues_settings)
+    >>> pipeline.build()
+    >>> pipeline.optimize_query(join_order_benchmark["1a"])
     """
 
     def __init__(self, target_db: db.Database) -> None:
@@ -109,6 +254,15 @@ class TwoStageOptimizationPipeline(OptimizationPipeline):
 
     @property
     def target_db(self) -> db.Database:
+        """The database for which optimized queries should be generated.
+
+        When assigning a new target database, the pipeline needs to be build again.
+
+        Returns
+        -------
+        db.Database
+            The currently selected database system
+        """
         return self._target_db
 
     @target_db.setter
@@ -117,76 +271,137 @@ class TwoStageOptimizationPipeline(OptimizationPipeline):
         self._build = False
 
     @property
-    def pre_check(self) -> validation.OptimizationPreCheck:
+    def pre_check(self) -> Optional[validation.OptimizationPreCheck]:
+        """An overarching check that should be applied to all queries before they are optimized.
+
+        This check complements the pre checks of the individual stages and can be used to enforce experiment-specific
+        constraints.
+
+        Returns
+        -------
+        Optional[validation.OptimizationPreCheck]
+            The current check, if any. Can also be an `validation.EmptyPreCheck` instance.
+        """
         return self._pre_check
 
     @property
-    def join_order_enumerator(self) -> stages.JoinOrderOptimization:
+    def join_order_enumerator(self) -> Optional[stages.JoinOrderOptimization]:
+        """The selected join order optimization algorithm.
+
+        Returns
+        -------
+        Optional[stages.JoinOrderOptimization]
+            The current algorithm, if any has been selected.
+        """
         return self._join_order_enumerator
 
     @property
-    def physical_operator_selection(self) -> stages.PhysicalOperatorSelection:
+    def physical_operator_selection(self) -> Optional[stages.PhysicalOperatorSelection]:
+        """The selected operator selection algorithm.
+
+        Returns
+        -------
+        Optional[stages.PhysicalOperatorSelection]
+            The current algorithm, if any has been selected.
+        """
         return self._physical_operator_selection
 
     @property
-    def plan_parameterization(self) -> stages.ParameterGeneration:
+    def plan_parameterization(self) -> Optional[stages.ParameterGeneration]:
+        """The selected parameterization algorithm.
+
+        Returns
+        -------
+        Optional[stages.ParameterGeneration]
+            The current algorithm, if any has been selected.
+        """
         return self._plan_parameterization
 
     def setup_query_support_check(self, check: validation.OptimizationPreCheck) -> TwoStageOptimizationPipeline:
-        """Configures the pre-check to be executed for each query.
+        """Configures the pre-check that should be executed for each query.
 
         This check will be combined with any additional checks that are required by the actual optimization strategies.
+        Setting a new check requires the pipeline to be build again.
+
+        Parameters
+        ----------
+        check : validation.OptimizationPreCheck
+            The new check
+
+        Returns
+        -------
+        self
+            The current pipeline to allow for easy method-chaining.
         """
         self._pre_check = check
         self._build = False
         return self
 
-    def setup_join_order_optimization(self,
-                                      enumerator: stages.JoinOrderOptimization) -> TwoStageOptimizationPipeline:
-        """Configures the algorithm to obtain an optimized join order.
+    def setup_join_order_optimization(self, enumerator: stages.JoinOrderOptimization) -> TwoStageOptimizationPipeline:
+        """Configures the pipeline to obtain an optimized join order.
 
-        This algorithm may optionally also determine an initial assignment of physical operators.
+        The actual strategy can either produce a purely logical join order, or an initial physical query execution plan
+        that also specifies how the individual joins should be executed. All later stages are expected to work with these
+        two cases.
+
+        Setting a new algorithm requires the pipeline to be build again.
+
+        Parameters
+        ----------
+        enumerator : stages.JoinOrderOptimization
+            The new join order optimization algorithm
+
+        Returns
+        -------
+        self
+            The current pipeline to allow for easy method-chaining.
         """
         self._join_order_enumerator = enumerator
         self._build = False
         return self
 
-    def setup_physical_operator_selection(self, selector: stages.PhysicalOperatorSelection, *,
-                                          overwrite: bool = False) -> TwoStageOptimizationPipeline:
+    def setup_physical_operator_selection(self, selector: stages.PhysicalOperatorSelection) -> TwoStageOptimizationPipeline:
         """Configures the algorithm to assign physical operators to the query.
 
         This algorithm receives the input query as well as the join order (if there is one) as input. In a special
         case, this join order can also provide an initial assignment of physical operators. These settings can then
         be further adapted by the selected algorithm (or completely overwritten).
 
-        The `overwrite` parameter specifies what should happen if this setup method is called multiple times:
-        if `overwrite` is `True`, the new algorithm completely replaces any old strategy. Otherwise, the new strategy
-        is chained with the older strategy, i.e. the new strategy can overwrite assignments produced by the old
-        strategy. See `PhysicalOperatorSelection.chain_with` for details.
+        Setting a new algorithm requires the pipeline to be build again.
+
+        Paramters
+        ---------
+        selector : stages.PhysicalOperatorSelection
+            The new operator selection algorithm
+
+        Returns
+        -------
+        self
+            The current pipeline to allow for easy method-chaining.
         """
-        if not overwrite and self._physical_operator_selection:
-            self._physical_operator_selection = self._physical_operator_selection.chain_with(selector)
-        else:
-            self._physical_operator_selection = selector
+        self._physical_operator_selection = selector
         self._build = False
         return self
 
-    def setup_plan_parameterization(self, param_generator: stages.ParameterGeneration, *,
-                                    overwrite: bool = False) -> TwoStageOptimizationPipeline:
+    def setup_plan_parameterization(self, param_generator: stages.ParameterGeneration) -> TwoStageOptimizationPipeline:
         """Configures the algorithm to parameterize the query plan.
 
         This algorithm receives the input query as well as the join order and the physical operators (if those have
         been determined yet) as input.
 
-        The `overwrite` parameter specifies what should happen if this setup method is called multiple times:
-        if `overwrite` is `True`, the new algorithm completely replaces any old strategy. Otherwise, the new strategy
-        is chained with the older strategy, i.e. the new strategy can overwrite parameters produced by the old
-        strategy. See `ParameterGeneration.chain_with` for details.
+        Setting a new algorithm requires the pipeline to be build again.
+
+        Parameters
+        ----------
+        param_generator : stages.ParameterGeneration
+            The new parameterization algorithm
+
+        Returns
+        -------
+        self
+            The current pipeline to allow for easy method-chaining.
         """
-        if not overwrite and self._plan_parameterization:
-            self._plan_parameterization = self._plan_parameterization.chain_with(param_generator)
-        else:
-            self._plan_parameterization = param_generator
+        self._plan_parameterization = param_generator
         self._build = False
         return self
 
@@ -194,7 +409,19 @@ class TwoStageOptimizationPipeline(OptimizationPipeline):
         """Applies all the optimization settings from a pre-defined optimization strategy to the pipeline.
 
         This is just a shorthand method to skip calling all setup methods individually for a fixed combination of
-        optimization.
+        optimization settings. After the settings have been loaded, they can be overwritten again using the *setup* methods.
+
+        Loading new presets requires the pipeline to be build again.
+
+        Parameters
+        ----------
+        optimization_settings : presets.OptimizationSettings
+            The specific settings
+
+        Returns
+        -------
+        self
+            The current pipeline to allow for easy method-chaining.
         """
         support_check = optimization_settings.query_pre_check()
         if support_check:
@@ -214,9 +441,19 @@ class TwoStageOptimizationPipeline(OptimizationPipeline):
     def build(self) -> TwoStageOptimizationPipeline:
         """Constructs the optimization pipeline.
 
-         This includes filling all undefined optimization steps with empty strategies. Afterwards, the pipeline is
-         ready to optimize queries.
-         """
+        This includes filling all undefined optimization steps with empty strategies and checking all strategies for
+        compatibility with the `target_db`. Afterwards, the pipeline is ready to optimize queries.
+
+        Returns
+        -------
+        self
+            The current pipeline to allow for easy method-chaining.
+
+        Raises
+        ------
+        validation.UnsupportedSystemError
+            If any of the selected optimization stages is not compatible with the `target_db`.
+        """
         if not self._pre_check:
             self._pre_check = validation.EmptyPreCheck()
         if not self._join_order_enumerator:
@@ -239,16 +476,6 @@ class TwoStageOptimizationPipeline(OptimizationPipeline):
         return self
 
     def optimize_query(self, query: qal.SqlQuery) -> qal.SqlQuery:
-        """Optimizes the given input query.
-
-        The output query will be optimized such that the selected target database system is forced to adhere to the
-        optimized query plan. What that means exactly depends on the target dbs.
-
-        For example, for Postgres the join order could be enforced using a combination of JOIN ON statements instead
-        of implicit joins in combination with the `SET join_collapse_limit = 1` parameter.
-        MySQL queries could contain a query hint block in the SELECT clause that specifies physical operators and
-        join order.
-        """
         self._assert_is_build()
         supported_query_check = self._pre_check.check_supported_query(query)
         if not supported_query_check.passed:
@@ -268,8 +495,8 @@ class TwoStageOptimizationPipeline(OptimizationPipeline):
                                                         plan_parameters=plan_parameters)
 
     def describe(self) -> dict:
-        """Provides a representation of the selected optimization strategies and the database settings."""
         return {
+            "name": "two_stage_pipeline",
             "database_system": self._target_db.describe(),
             "query_pre_check": self._pre_check.describe() if self._pre_check else None,
             "join_ordering": self._join_order_enumerator.describe() if self._join_order_enumerator else None,
@@ -293,6 +520,19 @@ class TwoStageOptimizationPipeline(OptimizationPipeline):
 
 
 class IncrementalOptimizationPipeline(OptimizationPipeline):
+    """This optimization pipeline can be thought of as a generalization of the `TwoStageOptimizationPipeline`.
+
+    Instead of only operating in two stages, an arbitrary amount of optimization steps can be applied. During each step,
+    an entire physical query execution plan is received as input and also produced as output. Therefore, partial operator
+    assignments or cardinality estimates are not supported by this pipeline. The incremental nature probably makes it the
+    most usefull for optimization strategies that continously improve query plans.
+
+    Parameters
+    ----------
+    target_db : db.Database
+        The database for which the optimized queries should be generated.
+    """
+
     def __init__(self, target_db: db.Database) -> None:
         self._target_db = target_db
         self._initial_plan_generator: Optional[stages.CompleteOptimizationAlgorithm] = None
@@ -300,6 +540,20 @@ class IncrementalOptimizationPipeline(OptimizationPipeline):
 
     @property
     def target_db(self) -> db.Database:
+        """The database for which optimized queries should be generated.
+
+        When a new target database is selected, all optimization steps are checked for support of the new database.
+
+        Returns
+        -------
+        db.Database
+            _description_
+
+        Raises
+        ------
+        validation.UnsupportedSystemError
+            If any of the optimization steps or the initial plan generator cannot work with the target database
+        """
         return self._target_db
 
     @target_db.setter
@@ -309,6 +563,20 @@ class IncrementalOptimizationPipeline(OptimizationPipeline):
 
     @property
     def initial_plan_generator(self) -> Optional[stages.CompleteOptimizationAlgorithm]:
+        """Strategy to construct the first physical query execution plan to start the incremental optimization.
+
+        If no initial generator is selected, the initial plan will be derived from the optimizer of the target database.
+
+        Returns
+        -------
+        Optional[stages.CompleteOptimizationAlgorithm]
+            The current initial generator.
+
+        Raises
+        ------
+        validation.UnsupportedSystemError
+            If the initial generator does not work with the current `target_db`
+        """
         return self._initial_plan_generator
 
     @initial_plan_generator.setter
@@ -317,6 +585,22 @@ class IncrementalOptimizationPipeline(OptimizationPipeline):
         self._initial_plan_generator = plan_generator
 
     def add_optimization_step(self, next_step: stages.IncrementalOptimizationStep) -> IncrementalOptimizationPipeline:
+        """Expands the optimization pipeline by another stage.
+
+        The given step will be applied at the end of the pipeline. The very first optimization steps receives an initial plan
+        that has either been generated via the `initial_plan_generator` (if it has been setup), or by retrieving the
+        query execution plan from the `target_db`.
+
+        Parameters
+        ----------
+        next_step : stages.IncrementalOptimizationStep
+            The next optimization stage
+
+        Returns
+        -------
+        IncrementalOptimizationPipeline
+            If any of the optimization steps does not work with the target database
+        """
         self._ensure_pipeline_integrity(additional_optimization_step=next_step)
         self._optimization_steps.append(next_step)
         return self
@@ -330,10 +614,36 @@ class IncrementalOptimizationPipeline(OptimizationPipeline):
 
         return self.target_db.hinting().generate_hints(query, current_plan)
 
+    def describe(self) -> dict:
+        return {
+            "name": "incremental_pipeline",
+            "database_system": self._target_db.describe(),
+            "initial_plan": self._initial_plan_generator.describe() if self._initial_plan_generator is not None else "native",
+            "steps": [step.describe() for step in self._optimization_steps]}
+
     def _ensure_pipeline_integrity(self, *, database: Optional[db.Database] = None,
                                    initial_plan_generator: Optional[stages.CompleteOptimizationAlgorithm] = None,
                                    additional_optimization_step: Optional[stages.IncrementalOptimizationStep] = None,
                                    ) -> None:
+        """Checks that all selected optimization strategies work with the target database.
+
+        This method should be called when individual parts of the pipeline have been updated. The updated parts are supplied
+        as parameters. All other parameters are inferred from the current pipeline state.
+
+        Parameters
+        ----------
+        database : Optional[db.Database], optional
+            The new target database system if it has been updated, by default None
+        initial_plan_generator : Optional[stages.CompleteOptimizationAlgorithm], optional
+            The new initial plan generator if it has been updated, by default None
+        additional_optimization_step : Optional[stages.IncrementalOptimizationStep], optional
+            The next optimization step, if a new one has been added, by default None
+
+        Raises
+        ------
+        validation.UnsupportedSystemError
+            If one of the optimization algorithms is not compatible with the target database
+        """
         database = self.target_db if database is None else database
         initial_plan_generator = (self._initial_plan_generator if initial_plan_generator is None
                                   else initial_plan_generator)
@@ -353,6 +663,18 @@ class IncrementalOptimizationPipeline(OptimizationPipeline):
             incremental_step.pre_check().check_supported_database_system(database).ensure_all_passed(database)
 
     def _ensure_supported_query(self, query: qal.SqlQuery) -> None:
+        """Applies all relevant pre-checks to the input query.
+
+        Parameters
+        ----------
+        query : qal.SqlQuery
+            The input query
+
+        Raises
+        ------
+        validation.UnsupportedQueryError
+            If one of the optimization algorithms is not compatible with the input query
+        """
         if self._initial_plan_generator is not None and self._initial_plan_generator.pre_check() is not None:
             self._initial_plan_generator.pre_check().check_supported_query(query).ensure_all_passed(query)
         for incremental_step in self._optimization_steps:
