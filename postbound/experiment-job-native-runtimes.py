@@ -90,7 +90,7 @@ def main():
 
     logging.basicConfig(level=logging_level, format=logging_format)
 
-    postgres_db = postgres.connect()
+    postgres_db = postgres.connect(config_file=".psycopg_connection_job")
     postgres_db.cache_enabled = False
     job = workloads.job()
 
