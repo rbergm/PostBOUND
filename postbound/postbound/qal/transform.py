@@ -449,8 +449,8 @@ def replace_predicate(query: qal.ImplicitSqlQuery, predicate_to_replace: preds.A
                       new_predicate: preds.AbstractPredicate) -> qal.ImplicitSqlQuery:
     """Rewrites the given query to use `new_predicate` in all occurrences of the other predicate.
 
-    In the current implementation this does only work for top-level predicates, i.e. subqueries and CTEs are not considered.
-    Furthermore, only the WHERE clause and the HAVING clause are modified.
+    In the current implementation this does only work for top-level predicates, i.e. subqueries and CTEs are not
+    considered. Furthermore, only the WHERE clause and the HAVING clause are modified.
 
     If the predicate to replace is not found, nothing happens.
     """

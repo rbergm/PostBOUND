@@ -1,8 +1,8 @@
 """Provides PostBOUND's main optimization pipeline.
 
-In fact, PostBOUND does not provide a single pipeline implementation. Rather, different pipeline types exists to accomodate
-different use-cases. See the documentation of the general `OptimizationPipeline` protocol for details. That class serves as the
-smallest common denominator among all pipeline implementations.
+In fact, PostBOUND does not provide a single pipeline implementation. Rather, different pipeline types exists to
+accomodate different use-cases. See the documentation of the general `OptimizationPipeline` protocol for details. That
+class serves as the smallest common denominator among all pipeline implementations.
 """
 from __future__ import annotations
 
@@ -47,31 +47,32 @@ class OptimizationPipeline(Protocol):
         Returns
         -------
         qal.SqlQuery
-            A transformed query that encapsulates all the optimization decisions made by the pipeline. What this actually means
-            depends on the selected optimization strategies, as well as specifics of the target database system:
+            A transformed query that encapsulates all the optimization decisions made by the pipeline. What this
+            actually means depends on the selected optimization strategies, as well as specifics of the target database
+            system:
 
-            Depending on the optimization strategy the optimization decisions can range from simple operator selections (such
-            as "no nested loop join for this join") to entire physical query execution plans (consisting of a join order, as
-            well as scan and join operators for all parts of the plan) and anything in between. For novel cardinality
-            estimation approaches, the optimization info could also be structured such that the default cardinality estimates
-            are overwritten.
+            Depending on the optimization strategy the optimization decisions can range from simple operator selections
+            (such as "no nested loop join for this join") to entire physical query execution plans (consisting of a
+            join order, as well as scan and join operators for all parts of the plan) and anything in between. For
+            novel cardinality estimation approaches, the optimization info could also be structured such that the
+            default cardinality estimates are overwritten.
 
-            Secondly, the way the optimization info is expressed depends on the selected database system. Most systems do not
-            allow direct a direct modification of the query optimizer's implementation. Therefore, PostBOUND takes an indirect
-            approach: it emits system-specific hints that enable corrections for individual optimizer decisions (such as
-            disabling a specific physical operator). For example, PostgreSQL allows to use planner options such as
-            ``SET enable_nestloop = 'off'`` to disable nested loop joins for the all subsequent queries in the current
-            connection. MySQL provides hints like ``BNL(R S)`` to recommend a block-nested loop join or hash join (depending on
-            the MySQL version) to the optimizer for a specific join. These hints are inserted into comment blocks in the final
-            SQL query. Likewise, some systems treat certain SQL keywords differently or provide their own extensions. This also
-            allows to modify the underlying plans. For example, when SQLite encouters a ``CROSS JOIN`` syntax in the ``FROM``
-            clause, it does not try to optimize the join order and uses the order in which the tables are specified in the
-            relation instead.
+            Secondly, the way the optimization info is expressed depends on the selected database system. Most systems
+            do not allow direct a direct modification of the query optimizer's implementation. Therefore, PostBOUND
+            takes an indirect approach: it emits system-specific hints that enable corrections for individual optimizer
+            decisions (such as disabling a specific physical operator). For example, PostgreSQL allows to use planner
+            options such as ``SET enable_nestloop = 'off'`` to disable nested loop joins for the all subsequent queries
+            in the current connection. MySQL provides hints like ``BNL(R S)`` to recommend a block-nested loop join or
+            hash join (depending on the MySQL version) to the optimizer for a specific join. These hints are inserted
+            into comment blocks in the final SQL query. Likewise, some systems treat certain SQL keywords differently
+            or provide their own extensions. This also allows to modify the underlying plans. For example, when SQLite
+            encouters a ``CROSS JOIN`` syntax in the ``FROM`` clause, it does not try to optimize the join order and
+            uses the order in which the tables are specified in the relation instead.
 
-            Therefore, the resulting query will differ from the original input query in a number of ways. However, the produced
-            result sets should still be equivalent. If this is not the case, something went severly wrong during query
-            optimization. Take a look at the `db` module for more details on the database system support and the query
-            generation capabilities.
+            Therefore, the resulting query will differ from the original input query in a number of ways. However, the
+            produced result sets should still be equivalent. If this is not the case, something went severly wrong
+            during query optimization. Take a look at the `db` module for more details on the database system support
+            and the query generation capabilities.
 
         Raises
         ------
@@ -85,6 +86,18 @@ class OptimizationPipeline(Protocol):
 
         .. [1] PostgreSQL query planning options: https://www.postgresql.org/docs/15/runtime-config-query.html
         .. [2] MySQL optimizer hints: https://dev.mysql.com/doc/refman/8.0/en/optimizer-hints.html
+        .. [3] SQLite ``CROSS JOIN`` handling: https://www.sqlite.org/optoverview.html#crossjoin
+        """
+        raise NotImplementedError
+
+    @abc.abstractmethod
+    def target_database(self) -> db.Database:
+        """Provides the current target database.
+
+        Returns
+        -------
+        db.Database
+            The database for which the input queries should be optimized
         """
         raise NotImplementedError
 
@@ -92,9 +105,9 @@ class OptimizationPipeline(Protocol):
     def describe(self) -> dict:
         """Generates a description of the current pipeline configuration.
 
-        This description is intended to transparently document which optimization strategies have been selected and how they
-        have been instantiated. It can be JSON-serialized and will be included by most of the output of the utilities in the
-        `runner` module of the `experiments` package.
+        This description is intended to transparently document which optimization strategies have been selected and
+        how they have been instantiated. It can be JSON-serialized and will be included by most of the output of the
+        utilities in the `runner` module of the `experiments` package.
 
         Returns
         -------
@@ -105,11 +118,11 @@ class OptimizationPipeline(Protocol):
 
 
 class IntegratedOptimizationPipeline(OptimizationPipeline):
-    """This pipeline closely models the behaviour of a *traditional* optimization algorithm, such as dynamic programming.
+    """This pipeline is modeled after a *traditional* optimization algorithm, such as dynamic programming.
 
-    *Traditional* in this context means that all required optimization information is calculated in one algorithm, e.g. both
-    join order and physical operators are derived in one pass. To configure the pipeline, assign the selected strategy to the
-    `optimization_algorithm` property.
+    *Traditional* in this context means that all required optimization information is calculated in one algorithm,
+    e.g. both join order and physical operators are derived in one pass. To configure the pipeline, assign the selected
+    strategy to the `optimization_algorithm` property.
 
     Parameters
     ----------
@@ -195,6 +208,9 @@ class IntegratedOptimizationPipeline(OptimizationPipeline):
         physical_qep = self.optimization_algorithm.optimize_query(query)
 
         return self._target_db.hinting().generate_hints(query, physical_qep)
+
+    def target_database(self) -> db.Database:
+        return self._target_db
 
     def describe(self) -> dict:
         algorithm_description = (self._optimization_algorithm.describe() if self._optimization_algorithm is not None
@@ -341,8 +357,8 @@ class TwoStageOptimizationPipeline(OptimizationPipeline):
         """Configures the pipeline to obtain an optimized join order.
 
         The actual strategy can either produce a purely logical join order, or an initial physical query execution plan
-        that also specifies how the individual joins should be executed. All later stages are expected to work with these
-        two cases.
+        that also specifies how the individual joins should be executed. All later stages are expected to work with
+        these two cases.
 
         Setting a new algorithm requires the pipeline to be build again.
 
@@ -360,7 +376,8 @@ class TwoStageOptimizationPipeline(OptimizationPipeline):
         self._build = False
         return self
 
-    def setup_physical_operator_selection(self, selector: stages.PhysicalOperatorSelection) -> TwoStageOptimizationPipeline:
+    def setup_physical_operator_selection(self,
+                                          selector: stages.PhysicalOperatorSelection) -> TwoStageOptimizationPipeline:
         """Configures the algorithm to assign physical operators to the query.
 
         This algorithm receives the input query as well as the join order (if there is one) as input. In a special
@@ -409,7 +426,8 @@ class TwoStageOptimizationPipeline(OptimizationPipeline):
         """Applies all the optimization settings from a pre-defined optimization strategy to the pipeline.
 
         This is just a shorthand method to skip calling all setup methods individually for a fixed combination of
-        optimization settings. After the settings have been loaded, they can be overwritten again using the *setup* methods.
+        optimization settings. After the settings have been loaded, they can be overwritten again using the *setup*
+        methods.
 
         Loading new presets requires the pipeline to be build again.
 
@@ -475,6 +493,9 @@ class TwoStageOptimizationPipeline(OptimizationPipeline):
         self._build = True
         return self
 
+    def target_database(self) -> db.Database:
+        return self.target_db
+
     def optimize_query(self, query: qal.SqlQuery) -> qal.SqlQuery:
         self._assert_is_build()
         supported_query_check = self._pre_check.check_supported_query(query)
@@ -522,10 +543,10 @@ class TwoStageOptimizationPipeline(OptimizationPipeline):
 class IncrementalOptimizationPipeline(OptimizationPipeline):
     """This optimization pipeline can be thought of as a generalization of the `TwoStageOptimizationPipeline`.
 
-    Instead of only operating in two stages, an arbitrary amount of optimization steps can be applied. During each step,
-    an entire physical query execution plan is received as input and also produced as output. Therefore, partial operator
-    assignments or cardinality estimates are not supported by this pipeline. The incremental nature probably makes it the
-    most usefull for optimization strategies that continously improve query plans.
+    Instead of only operating in two stages, an arbitrary amount of optimization steps can be applied. During each
+    step an entire physical query execution plan is received as input and also produced as output. Therefore, partial
+    operator assignments or cardinality estimates are not supported by this pipeline. The incremental nature probably
+    makes it the most usefull for optimization strategies that continously improve query plans.
 
     Parameters
     ----------
@@ -565,7 +586,8 @@ class IncrementalOptimizationPipeline(OptimizationPipeline):
     def initial_plan_generator(self) -> Optional[stages.CompleteOptimizationAlgorithm]:
         """Strategy to construct the first physical query execution plan to start the incremental optimization.
 
-        If no initial generator is selected, the initial plan will be derived from the optimizer of the target database.
+        If no initial generator is selected, the initial plan will be derived from the optimizer of the target
+        database.
 
         Returns
         -------
@@ -587,9 +609,9 @@ class IncrementalOptimizationPipeline(OptimizationPipeline):
     def add_optimization_step(self, next_step: stages.IncrementalOptimizationStep) -> IncrementalOptimizationPipeline:
         """Expands the optimization pipeline by another stage.
 
-        The given step will be applied at the end of the pipeline. The very first optimization steps receives an initial plan
-        that has either been generated via the `initial_plan_generator` (if it has been setup), or by retrieving the
-        query execution plan from the `target_db`.
+        The given step will be applied at the end of the pipeline. The very first optimization steps receives an
+        initial plan that has either been generated via the `initial_plan_generator` (if it has been setup), or by
+        retrieving the query execution plan from the `target_db`.
 
         Parameters
         ----------
@@ -605,6 +627,9 @@ class IncrementalOptimizationPipeline(OptimizationPipeline):
         self._optimization_steps.append(next_step)
         return self
 
+    def target_database(self) -> db.Database:
+        return self.target_db
+
     def optimize_query(self, query: qal.SqlQuery) -> qal.SqlQuery:
         self._ensure_supported_query(query)
         current_plan = (self.initial_plan_generator.optimize_query(query) if self.initial_plan_generator is not None
@@ -618,7 +643,8 @@ class IncrementalOptimizationPipeline(OptimizationPipeline):
         return {
             "name": "incremental_pipeline",
             "database_system": self._target_db.describe(),
-            "initial_plan": self._initial_plan_generator.describe() if self._initial_plan_generator is not None else "native",
+            "initial_plan": (self._initial_plan_generator.describe() if self._initial_plan_generator is not None
+                             else "native"),
             "steps": [step.describe() for step in self._optimization_steps]}
 
     def _ensure_pipeline_integrity(self, *, database: Optional[db.Database] = None,
@@ -627,8 +653,8 @@ class IncrementalOptimizationPipeline(OptimizationPipeline):
                                    ) -> None:
         """Checks that all selected optimization strategies work with the target database.
 
-        This method should be called when individual parts of the pipeline have been updated. The updated parts are supplied
-        as parameters. All other parameters are inferred from the current pipeline state.
+        This method should be called when individual parts of the pipeline have been updated. The updated parts are
+        supplied as parameters. All other parameters are inferred from the current pipeline state.
 
         Parameters
         ----------

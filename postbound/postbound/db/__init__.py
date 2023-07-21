@@ -1,18 +1,21 @@
-"""Contains utilities to interact with various database instances.
+"""The `db` module provides tools to interact with various database instances.
 
-This includes accessing *schema information* such as primary key/foreign key indices, retrieving *metadata* such as
-tuple counts or histograms, and the ability to execute arbitrary *SQL queries* on the database.
+Generally speaking, the interactions are bidirectional: on the one hand, common database concepts like retrieving
+statistical information, introspecting the logical schema or obtaining physical query execution plans are enabled
+through abstract interfaces. On the other hand, the `db` modules provides tools to enforce optimization decisions made
+as part of an optimization pipeline or other modules when executing the query on the actual database system.
 
-In addition, this package contains functionality to generate system-specific query information for (optimized) SQL
-queries. Such information is used to enforce the otimization decisions made by PostBOUND when actually executing a query.
+Recall that PostBOUND does not interact with the query optimizer directly and instead relies on system-specific hints
+or other special properties of the target database system to influence the optimizer behaviour. Therefore, the
+optimization process usually terminates with transforming the original input query to a logically equivalent query that
+at the same time contains the necessary modifications for optimization.
 
-Furthermore, a basic model of query plans (as commonly obtained by running an ``EXPLAIN`` query) is also provided. This model
-should not be confused with the query plans that are generated in the `optimizer` package. The model provided by the `db`
-package is much more relaxed. It should be thought of as a  concept that just happens to share a lot of structure and
-attributes with PostBOUND's optimizer plans.
+The central entrypoint to all database interaction is the abstract `Database` class. This class is inherited by all
+supported database systems (currently PostgreSQL and MySQL). Each `Database` instace provides some basic functionality
+on its own (such as the ability to execute queries), but delegates most of the work to specific and tailored
+interfaces. For example, the `DatabaseSchema` models all access to the logical schema of a database and the
+`OptimizerInterface` encapsulates the functionality to retrieve cost estimates or phyiscal query execution plans. All
+of these interfaces are once again abstract and implemented according to the specifics of the actual database system.
 
-The `db` package follows an interface/implementation approach: for each aspect of database functionality (e.g.
-retrieving statistics or generating queries) a basic abstract interface exists. In order to make this functionality
-accessible for a specific database system (e.g. PostgreSQL, MySQL, Oracle...), the interfaces must be implemented
-according to the concrete rules of the database system.
+Take a look at the individual interfaces for further information about their functionality and intended usage.
 """

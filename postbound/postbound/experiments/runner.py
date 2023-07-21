@@ -31,6 +31,8 @@ COL_OPT_SETTINGS = "optimization_settings"
 COL_OPT_SUCCESS = "optimization_success"
 COL_OPT_FAILURE_REASON = "optimization_failure_reason"
 
+COL_DB_CONFIG = "db_config"
+
 
 @dataclass
 class ExecutionResult:
@@ -91,14 +93,15 @@ class QueryPreparationService:
         return self.preparatory_stmts
 
 
-def _failed_execution_result(query: qal.SqlQuery, repetitions: int = 1) -> pd.DataFrame:
+def _failed_execution_result(query: qal.SqlQuery, database: db.Database, repetitions: int = 1) -> pd.DataFrame:
     """Constructs a simple data frame that indicates a failed query execution."""
     return pd.DataFrame({
         COL_QUERY: [transform.drop_hints(query)] * repetitions,
         COL_QUERY_HINTS: [query.hints] * repetitions,
         COL_T_EXEC: [np.nan] * repetitions,
         COL_RESULT: [np.nan] * repetitions,
-        COL_REP: list(range(1, repetitions + 1))
+        COL_REP: list(range(1, repetitions + 1)),
+        COL_DB_CONFIG: [database.describe()] * repetitions
     })
 
 
@@ -158,7 +161,8 @@ def execute_query(query: qal.SqlQuery, database: db.Database, *,
         COL_QUERY_HINTS: [original_query.hints] * repetitions,
         COL_T_EXEC: execution_times,
         COL_RESULT: query_results,
-        COL_REP: list(range(1, repetitions + 1))
+        COL_REP: list(range(1, repetitions + 1)),
+        COL_DB_CONFIG: [database.describe()] * repetitions
     })
 
 
@@ -244,13 +248,13 @@ def optimize_and_execute_query(query: qal.SqlQuery, optimization_pipeline: pb.Op
         optimization_time = (end_time - start_time).total_seconds()
 
         execution_result = execute_query(optimized_query, repetitions=repetitions, query_preparation=query_preparation,
-                                         database=optimization_pipeline.target_db(),
+                                         database=optimization_pipeline.target_database(),
                                          post_process=post_process, _optimization_time=optimization_time)
         execution_result[COL_T_OPT] = optimization_time
         execution_result[COL_OPT_SUCCESS] = True
         execution_result[COL_OPT_FAILURE_REASON] = None
     except validation.UnsupportedQueryError as e:
-        execution_result = _failed_execution_result(query, repetitions)
+        execution_result = _failed_execution_result(query, optimization_pipeline.target_database(), repetitions)
         execution_result[COL_T_OPT] = np.nan
         execution_result[COL_OPT_SUCCESS] = False
         execution_result[COL_OPT_FAILURE_REASON] = e.features
@@ -303,5 +307,5 @@ def optimize_and_execute_workload(queries: Iterable[qal.SqlQuery] | workloads.Wo
                       COL_WORKLOAD_ITER, COL_REP,
                       COL_T_OPT, COL_T_EXEC, COL_RESULT,
                       COL_OPT_SUCCESS, COL_OPT_FAILURE_REASON,
-                      COL_ORIG_QUERY, COL_OPT_SETTINGS]
+                      COL_ORIG_QUERY, COL_OPT_SETTINGS, COL_DB_CONFIG]
     return result_df[target_labels]

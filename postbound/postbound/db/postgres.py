@@ -27,26 +27,22 @@ HintBlock = collections.namedtuple("HintBlock", ["preparatory_statements", "hint
 class PostgresInterface(db.Database):
     """Database implementation for PostgreSQL backends."""
 
-    def __init__(self, connect_string: str, system_name: str = "Postgres", *, cache_enabled: bool = False) -> None:
+    def __init__(self, connect_string: str, system_name: str = "Postgres", *, cache_enabled: bool = True) -> None:
         self.connect_string = connect_string
         self._connection = psycopg.connect(connect_string, application_name="PostBOUND",
                                            row_factory=psycopg.rows.tuple_row)
         self._connection.autocommit = True
         self._cursor = self._connection.cursor()
 
-        self._db_schema = PostgresSchemaInterface(self)
         self._db_stats = PostgresStatisticsInterface(self)
+        self._db_schema = PostgresSchemaInterface(self)
 
         super().__init__(system_name, cache_enabled=cache_enabled)
 
-    def schema(self) -> db.DatabaseSchema:
+    def schema(self) -> PostgresSchemaInterface:
         return self._db_schema
 
-    def statistics(self, emulated: bool | None = None, cache_enabled: Optional[bool] = True) -> db.DatabaseStatistics:
-        if emulated is not None:
-            self._db_stats.emulated = emulated
-        if cache_enabled is not None:
-            self._db_stats.cache_enabled = cache_enabled
+    def statistics(self) -> PostgresStatisticsInterface:
         return self._db_stats
 
     def hinting(self) -> PostgresHintService:
@@ -69,6 +65,7 @@ class PostgresInterface(db.Database):
                 msg = "\n".join([f"At {utils.current_timestamp()}", "For query:", str(query), "Message:", str(e)])
                 raise db.DatabaseUserError(msg, e)
             if cache_enabled:
+                self._inflate_query_cache()
                 self._query_cache[query] = query_result
 
         # simplify the query result as much as possible: [(42, 24)] becomes (42, 24) and [(1,), (2,)] becomes [1, 2]
@@ -190,12 +187,16 @@ class PostgresSchemaInterface(db.DatabaseSchema):
     def is_primary_key(self, column: base.ColumnReference) -> bool:
         if not column.table:
             raise base.UnboundColumnError(column)
+        if column.table.virtual:
+            raise base.VirtualTableError(column.table)
         index_map = self._fetch_indexes(column.table)
         return index_map.get(column.name, False)
 
     def has_secondary_index(self, column: base.ColumnReference) -> bool:
         if not column.table:
             raise base.UnboundColumnError(column)
+        if column.table.virtual:
+            raise base.VirtualTableError(column.table)
         index_map = self._fetch_indexes(column.table)
 
         # The index map contains an entry for each attribute that actually has an index. The value is True, if the
@@ -208,6 +209,8 @@ class PostgresSchemaInterface(db.DatabaseSchema):
     def datatype(self, column: base.ColumnReference) -> str:
         if not column.table:
             raise base.UnboundColumnError(column)
+        if column.table.virtual:
+            raise base.VirtualTableError(column.table)
         query_template = textwrap.dedent("""
             SELECT data_type FROM information_schema.columns
             WHERE table_name = {tab} AND column_name = {col}""".format(tab=column.table.full_name, col=column.name))
@@ -259,8 +262,10 @@ _DTypeArrayConverters = {
 class PostgresStatisticsInterface(db.DatabaseStatistics):
     """Statistics-specific parts of the Postgres interface."""
 
-    def __init__(self, postgres_db: PostgresInterface) -> None:
-        super().__init__(postgres_db)
+    def __init__(self, postgres_db: PostgresInterface, *, emulated: bool = True,
+                 enable_emulation_fallback: bool = True, cache_enabled: Optional[bool] = True) -> None:
+        super().__init__(postgres_db, emulated=emulated, enable_emulation_fallback=enable_emulation_fallback,
+                         cache_enabled=cache_enabled)
 
     def update_statistics(self, columns: Optional[base.ColumnReference | Iterable[base.ColumnReference]] = None, *,
                           tables: Optional[base.TableReference | Iterable[base.TableReference]] = None) -> None:

@@ -53,6 +53,8 @@ class MysqlConnectionArguments:
     connect to.
     See [1]_ for the different parameters' meaning.
 
+    References
+    ----------
     .. [1] https://dev.mysql.com/doc/connector-python/en/connector-python-connectargs.html
     """
     user: str
@@ -101,14 +103,10 @@ class MysqlInterface(db.Database):
         self._db_stats = MysqlStatisticsInterface(self)
         super().__init__(system_name, cache_enabled=cache_enabled)
 
-    def schema(self) -> db.DatabaseSchema:
+    def schema(self) -> MysqlSchemaInterface:
         return self._db_schema
 
-    def statistics(self, emulated: bool | None = None, cache_enabled: Optional[bool] = None) -> db.DatabaseStatistics:
-        if emulated is not None:
-            self._db_stats.emulated = emulated
-        if cache_enabled is not None:
-            self._db_stats.cache_enabled = cache_enabled
+    def statistics(self) -> MysqlStatisticsInterface:
         return self._db_stats
 
     def hinting(self) -> db.HintService:
@@ -124,6 +122,7 @@ class MysqlInterface(db.Database):
             self._cur.execute(query)
             query_result = self._cur.fetchall()
             if cache_enabled:
+                self._inflate_query_cache()
                 self._query_cache[query] = query_result
 
         # simplify the query result as much as possible: [(42, 24)] becomes (42, 24) and [(1,), (2,)] becomes [1, 2]
@@ -229,12 +228,16 @@ class MysqlSchemaInterface(db.DatabaseSchema):
     def is_primary_key(self, column: base.ColumnReference) -> bool:
         if not column.table:
             raise base.UnboundColumnError(column)
+        if column.table.virtual:
+            raise base.VirtualTableError(column.table)
         index_map = self._fetch_indexes(column.table)
         return index_map.get(column.name, False)
 
     def has_secondary_index(self, column: base.ColumnReference) -> bool:
         if not column.table:
             raise base.UnboundColumnError(column)
+        if column.table.virtual:
+            raise base.VirtualTableError(column.table)
         index_map = self._fetch_indexes(column.table)
 
         # The index map contains an entry for each attribute that actually has an index. The value is True, if the
@@ -247,6 +250,8 @@ class MysqlSchemaInterface(db.DatabaseSchema):
     def datatype(self, column: base.ColumnReference) -> str:
         if not column.table:
             raise base.UnboundColumnError(column)
+        if column.table.virtual:
+            raise base.VirtualTableError(column.table)
         query_template = ("SELECT column_type FROM information_schema.columns "
                           "WHERE table_name = %s AND column_name = %s")
         self._db.cursor().execute(query_template, (column.table.full_name, column.name))
