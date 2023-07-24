@@ -13,7 +13,10 @@ it can also be build and installed as a local package using pip. See the section
 In addition to the Python packages, PostBOUND also needs a database connection in order to optimize and execute queries.
 Currently, PostgreSQL and MySQL are supported, with the MySQL features being a bit more limited due to restrictions of
 the system. The root directory of the PostBOUND repository contains setup utilities for some database systems, databases
-and workloads.
+and workloads. Notice that you need to supply the database connection information to PostBOUND in order to interact with
+instances of Postgres or MySQL. Typically this is done by creating a hidden file that contains the connection information. For
+Postgres, a utility called `postgres-psycopg-setup.sh` exists in the root `postgres` directory. The resulting file then needs
+to be placed in the root directory from which you are starting the script execution. MySQL uses a similar strategy.
 
 The best way to familiarize yourself with PostBOUND is to study the examples and the documentation of the used classes
 and functions. A high-level documentation is also being worked on, but still subject to change and not entirely
