@@ -984,6 +984,12 @@ class Limit(BaseClause):
         return isinstance(other, type(self)) and self.limit == other.limit and self.offset == other.offset
 
     def __str__(self) -> str:
-        limit_str = f"LIMIT {self.limit}" if self.limit is not None else ""
-        offset_str = f"OFFSET {self.offset}" if self.offset is not None else ""
-        return limit_str + offset_str
+        offset_str = f"OFFSET {self.offset} ROWS" if self.offset is not None else ""
+        limit_str = f"FETCH FIRST {self.limit} ROWS ONLY" if self.limit is not None else ""
+        if offset_str and limit_str:
+            return offset_str + " " + limit_str
+        elif offset_str:
+            return offset_str
+        elif limit_str:
+            return limit_str
+        return ""

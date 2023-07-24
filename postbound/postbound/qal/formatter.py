@@ -123,6 +123,16 @@ def _quick_format_where(where_clause: clauses.Where) -> list[str]:
     return [f"WHERE {first_pred}"] + [((" " * FORMAT_INDENT_DEPTH) + str(pred)) for pred in additional_preds]
 
 
+def _quick_format_limit(limit_clause: clauses.Limit) -> list[str]:
+    if limit_clause.offset and limit_clause.limit:
+        return [f"OFFSET {limit_clause.offset} ROWS", f"FETCH FIRST {limit_clause.limit} ROWS ONLY"]
+    elif limit_clause.offset:
+        return [f"OFFSET {limit_clause.offset} ROWS"]
+    elif limit_clause.limit:
+        return [f"FETCH FIRST {limit_clause.limit} ROWS ONLY"]
+    return []
+
+
 def _subquery_replacement(expression: expr.SqlExpression, *, inline_hints: bool,
                           indentation: int) -> expr.SqlExpression:
     if not isinstance(expression, expr.SubqueryExpression):
@@ -162,6 +172,8 @@ def format_quick(query: qal.SqlQuery, *, inline_hint_block: bool = False) -> str
             pretty_query_parts.extend(_quick_format_explicit_from(clause))
         elif isinstance(clause, clauses.Where):
             pretty_query_parts.extend(_quick_format_where(clause))
+        elif isinstance(clause, clauses.Limit):
+            pretty_query_parts.extend(_quick_format_limit(clause))
         else:
             pretty_query_parts.append(str(clause))
 

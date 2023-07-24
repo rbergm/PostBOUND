@@ -1,4 +1,11 @@
-"""Contains the Postgres implementation of the Database interface."""
+"""Contains the Postgres implementation of the Database interface.
+
+In many ways the Postgres implementation can be thought of as the reference or blueprint implementation of the database
+interface. This is due to two main reasons: first up, Postgres' capabilities follow a traditional architecture and its
+features cover most of the general aspects of query optimization (i.e. supported operators, join orders and statistics).
+Secondly, and on a more pragmatic note Potsgres was the first database system that was supported by PostBOUND and therefore
+a lot of the original Postgres interfaces eventually evolved into the more abstract database-independent interfaces.
+"""
 from __future__ import annotations
 
 import collections
@@ -26,6 +33,36 @@ from postbound.util import misc as utils, typing as type_utils
 # Probably inspired by the join order/join direction handling?
 
 HintBlock = collections.namedtuple("HintBlock", ["preparatory_statements", "hints", "query"])
+
+
+def _simplify_result_set(result_set: list[tuple[Any]]) -> Any:
+    """Implementation of the result set simplification logic outlined in `Database.execute_query`.
+
+    Parameters
+    ----------
+    result_set : list[tuple[Any]]
+        Result set to simplify: each entry in the list corresponds to one row in the result set and each component of the
+        tuples corresponds to one column in the result set
+
+    Returns
+    -------
+    Any
+        The simplified result set: if the result set consists just of a single row, this row is unwrapped from the list. If the
+        result set contains just a single column, this is unwrapped from the tuple. Both simplifications are also combined,
+        such that a result set of a single row of a single column is turned into the single value.
+    """
+    # simplify the query result as much as possible: [(42, 24)] becomes (42, 24) and [(1,), (2,)] becomes [1, 2]
+    # [(42, 24), (4.2, 2.4)] is left as-is
+    if not result_set:
+        return []
+
+    result_structure = result_set[0]  # what do the result tuples look like?
+    if len(result_structure) == 1:  # do we have just one column?
+        result_set = [row[0] for row in result_set]  # if it is just one column, unwrap it
+
+    if len(result_set) == 1:  # if it is just one row, unwrap it
+        return result_set[0]
+    return result_set
 
 
 class PostgresInterface(db.Database):
@@ -82,14 +119,7 @@ class PostgresInterface(db.Database):
                 self._inflate_query_cache()
                 self._query_cache[query] = query_result
 
-        # simplify the query result as much as possible: [(42, 24)] becomes (42, 24) and [(1,), (2,)] becomes [1, 2]
-        # [(42, 24), (4.2, 2.4)] is left as-is
-        if not query_result:
-            return []
-        result_structure = query_result[0]  # what do the result tuples look like?
-        if len(result_structure) == 1:  # do we have just one column?
-            query_result = [row[0] for row in query_result]  # if it is just one column, unwrap it
-        return query_result if len(query_result) > 1 else query_result[0]  # if it is just one row, unwrap it
+        return _simplify_result_set(query_result)
 
     def optimizer(self) -> PostgresOptimizer:
         return PostgresOptimizer(self)
@@ -950,6 +980,29 @@ class _PostgresCastExpression(expressions.CastExpression):
         return f"{self.casted_expression}::{self.target_type}"
 
 
+class PostgresLimitClause(clauses.Limit):
+    """A specialized ``LIMIT`` clause implementation to handle Postgres custom syntax for limits / offsets
+
+    Parameters
+    ----------
+    original_clause : clauses.Limit
+        The actual ``LIMIT`` clause. The new limit clause acts as a decorator around the original clause.
+    """
+
+    def __init__(self, *, original_clause: clauses.Limit) -> None:
+        super().__init__(limit=original_clause.limit, offset=original_clause.offset)
+
+    def __str__(self) -> str:
+        if self.limit and self.offset:
+            return f"LIMIT {self.limit} OFFSET {self.offset}"
+        elif self.limit:
+            return f"LIMIT {self.limit}"
+        elif self.offset:
+            return f"OFFSET {self.offset}"
+        else:
+            return ""
+
+
 def _replace_postgres_cast_expressions(expression: expressions.SqlExpression) -> expressions.SqlExpression:
     """Wraps a given expression by a `_PostgresCastExpression` if necessary.
 
@@ -974,6 +1027,31 @@ def _replace_postgres_cast_expressions(expression: expressions.SqlExpression) ->
 
 
 class PostgresHintService(db.HintService):
+    """Postgres-specific implementation of the hinting capabilities.
+
+    Most importantly, this service implements a mapping from the abstract optimization descisions (join order + operators) to
+    their counterparts in the pg_hint_plan extension and integrates Postgres' few deviations from standard SQL syntax (``CAST``
+    expressions and ``LIMIT`` clauses).
+
+    Notice that by delegating the adaptation of Postgres' native optimizer to the pg_hint_plan extension, a couple of
+    undesired side-effects have to be accepted:
+
+    1. forcing a join order also involves forcing a specific join direction. Our implementation applies a couple of heuristics
+       to mitigate a bad impact on performance
+    2. the extension only instruments the dynamic programming-based optimizer. If the ``geqo_threshold`` is reached and the
+       genetic optimizer takes over, no modifications are applied. Therefore, it is best to disable GeQO while working with
+       Postgres. At the same time, this means that certain scenarios like custom cardinality estimation for the genetic
+       optimizer cannot currently be tested
+
+    See Also
+    --------
+    _generate_pg_join_order_hint
+
+    References
+    ----------
+    .. pg_hint_plan extension: https://github.com/ossc-db/pg_hint_plan
+    .. Postgres query planning configuration: https://www.postgresql.org/docs/current/runtime-config-query.html
+    """
 
     def generate_hints(self, query: qal.SqlQuery,
                        join_order: Optional[jointree.LogicalJoinTree | jointree.PhysicalQueryPlan] = None,
@@ -1008,6 +1086,8 @@ class PostgresHintService(db.HintService):
 
     def format_query(self, query: qal.SqlQuery) -> str:
         query = transform.replace_expressions(query, _replace_postgres_cast_expressions)
+        if query.limit_clause:
+            query = transform.replace_clause(query, PostgresLimitClause(query.limit_clause))
         return formatter.format_quick(query)
 
     def supports_hint(self, hint: physops.PhysicalOperator | planparams.HintType) -> bool:
@@ -1015,6 +1095,14 @@ class PostgresHintService(db.HintService):
 
 
 class PostgresOptimizer(db.OptimizerInterface):
+    """Optimizer introspection for Postgres.
+
+    Parameters
+    ----------
+    postgres_instance : PostgresInterface
+        The database whose optimizer should be introspected
+    """
+
     def __init__(self, postgres_instance: PostgresInterface) -> None:
         self._pg_instance = postgres_instance
 
@@ -1058,13 +1146,39 @@ def connect(*, name: str = "postgres", connect_string: str | None = None,
     2. if the connect-string is not supplied, it is read from the file indicated by `config_file`
     3. if the `config_file` does not exist, an error is raised
 
-    The Postgres instance can be supplied a name via the `name` parameter if multiple connections to different
-    Postgres instances should be maintained simultaneously. Otherwise, the parameter defaults to `postgres`.
+    After a connection to the Postgres instance has been obtained, it is registered automatically on the current
+    `DatabasePool` instance. This can be changed via the `private` parameter.
 
-    Caching behaviour of the Postgres instance can be controlled via the `cache_enabled` parameter.
+    Parameters
+    ----------
+    name : str, optional
+        A name to identify the current connection if multiple connections to different Postgres instances should be maintained.
+        This is used to register the instance on the `DatabasePool`. Defaults to ``"postgres"``.
+    connect_string : str | None, optional
+        A Psycopg-compatible connect string for the database. Supplying this parameter overwrites any other connection
+        data
+    config_file : str | None, optional
+        A file containing a Psycopg-compatible connect string for the database. This is the default and preferred method of
+        connecting to a Postgres database. Defaults to ``".psycopg_connection"``
+    cache_enabled : bool, optional
+        Controls the default caching behaviour of the Postgres instance, by default ``True``
+    private : bool, optional
+        If ```True```, skips registration of the new instance on the `DatabasePool`. Defaults to  ``False``
 
-    After a connection to the Postgres instance has been obtained, it is registered automatically by the current
-    `DatabasePool` instance, unless `private` is set to `True`.
+    Returns
+    -------
+    PostgresInterface
+        The Postgres database object
+
+    Raises
+    ------
+    ValueError
+        If neither a config file nor a connect string was given, or if the connect file should be used but does not exist
+
+    References
+    ----------
+    .. Psyopg v3: https://www.psycopg.org/psycopg3/ This is used internally by the Postgres interface to interact with the
+       database
     """
     db_pool = db.DatabasePool.get_instance()
     if config_file and not connect_string:
@@ -1082,7 +1196,22 @@ def connect(*, name: str = "postgres", connect_string: str | None = None,
 
 
 def _parallel_query_initializer(connect_string: str, local_data: threading.local, verbose: bool = False) -> None:
-    """Internal function for the `ParallelQueryExecutor` to setup worker connections."""
+    """Internal function for the `ParallelQueryExecutor` to setup worker connections.
+
+    Parameters
+    ----------
+    connect_string : str
+        Connection info to establish a network connection to the Postgres instance. Delegates to Psycopg
+    local_data : threading.local
+        Data object to store the opened connection
+    verbose : bool, optional
+        Whether to print logging information, by default ``False``
+
+    References
+    ----------
+    .. Psyopg v3: https://www.psycopg.org/psycopg3/ This is used internally by the Postgres interface to interact with the
+       database
+    """
     log = logging.make_logger(verbose)
     tid = threading.get_ident()
     connection = psycopg.connect(connect_string, application_name=f"PostBOUND parallel worker ID {tid}")
@@ -1091,8 +1220,28 @@ def _parallel_query_initializer(connect_string: str, local_data: threading.local
     log(f"[worker id={tid}, ts={logging.timestamp()}] Connected")
 
 
-def _parallel_query_worker(query: str | qal.SqlQuery, local_data: threading.local, verbose: bool = False) -> Any:
-    """Internal function for the `ParallelQueryExecutor` to run individual queries."""
+def _parallel_query_worker(query: str | qal.SqlQuery, local_data: threading.local,
+                           verbose: bool = False) -> tuple[qal.SqlQuery | str, Any]:
+    """Internal function for the `ParallelQueryExecutor` to run individual queries.
+
+    Parameters
+    ----------
+    query : str | qal.SqlQuery
+        The query to execute. The parallel executor does not make use of caching whatsoever, so no additional parameters are
+        required.
+    local_data : threading.local
+        Data object that contains the database connection to use. This should have been initialized by
+        `_parallel_query_initializer`
+    verbose : bool, optional
+        Whether to print logging information, by default ``False``
+
+    Returns
+    -------
+    tuple[qal.SqlQuery | str, Any]
+        A tuple of the original query and the (simplified) result set. See `Database.execute_query` for an outline of the
+        simplification process. This method applies the same rules. The query is also provided to distinguish the different
+        result sets that arrive in parallel.
+    """
     log = logging.make_logger(verbose)
     connection: psycopg.connection.Connection = local_data.connection
     connection.rollback()
@@ -1104,10 +1253,8 @@ def _parallel_query_worker(query: str | qal.SqlQuery, local_data: threading.loca
 
     result_set = cursor.fetchall()
     cursor.close()
-    while (isinstance(result_set, list) or isinstance(result_set, tuple)) and len(result_set) == 1:
-        result_set = result_set[0]
 
-    return query, result_set
+    return query, _simplify_result_set(result_set)
 
 
 class ParallelQueryExecutor:
@@ -1119,6 +1266,25 @@ class ParallelQueryExecutor:
 
     This parallel executor has nothing to do with the Database interface and acts entirely independently and
     Postgres-specific.
+
+    Parameters
+    ----------
+    connect_string : str
+        Connection info to establish a network connection to the Postgres instance. Delegates to Psycopg
+    n_threads : Optional[int], optional
+        The maximum number of parallel workers to use. If this is not specified, uses ``os.cpu_count()`` many workers.
+    verbose : bool, optional
+        Whether to print logging information during the query execution, by default ``False``
+
+    See Also
+    --------
+    postbound.db.db.Database
+    PostgresInterface
+
+    References
+    ----------
+    .. Psyopg v3: https://www.psycopg.org/psycopg3/ This is used internally by the Postgres interface to interact with the
+       database
     """
 
     def __init__(self, connect_string: str, n_threads: Optional[int] = None, *, verbose: bool = False) -> None:
@@ -1134,17 +1300,41 @@ class ParallelQueryExecutor:
         self._results: list[Any] = []
 
     def queue_query(self, query: qal.SqlQuery | str) -> None:
-        """Adds a new query to the queue, to be executed as soon as possible."""
+        """Adds a new query to the queue, to be executed as soon as possible.
+
+        Parameters
+        ----------
+        query : qal.SqlQuery | str
+            The query to execute
+        """
         future = self._thread_pool.submit(_parallel_query_worker, query, self._thread_data, self._verbose)
         self._tasks.append(future)
 
     def drain_queue(self, timeout: Optional[float] = None) -> None:
-        """Blocks, until all queries currently queued have terminated."""
+        """Blocks, until all queries currently queued have terminated.
+
+        Parameters
+        ----------
+        timeout : Optional[float], optional
+            The number of seconds to wait until the calculation is aborted. Defaults to ``None``, which indicates no timeout,
+            i.e. wait forever.
+
+        Raises
+        ------
+        TimeoutError or concurrent.futures.TimeoutError
+            If queries took longer than the given `timeout` to execute
+        """
         for future in concurrent.futures.as_completed(self._tasks, timeout=timeout):
             self._results.append(future.result())
 
     def result_set(self) -> dict[str | qal.SqlQuery, Any]:
-        """Provides the results of all queries that have terminated already, mapping query -> result set"""
+        """Provides the results of all queries that have terminated already, mapping query -> result set
+
+        Returns
+        -------
+        dict[str | qal.SqlQuery, Any]
+            The query results. The result set is simplified according to similar rules as `Database.execute_query`
+        """
         return dict(self._results)
 
     def close(self) -> None:
@@ -1165,56 +1355,83 @@ class ParallelQueryExecutor:
 PostgresExplainJoinNodes = {"Nested Loop": physops.JoinOperators.NestedLoopJoin,
                             "Hash Join": physops.JoinOperators.HashJoin,
                             "Merge Join": physops.JoinOperators.SortMergeJoin}
+"""A mapping from Postgres EXPLAIN node names to the corresponding join operators."""
+
 PostgresExplainScanNodes = {"Seq Scan": physops.ScanOperators.SequentialScan,
                             "Index Scan": physops.ScanOperators.IndexScan,
                             "Index Only Scan": physops.ScanOperators.IndexOnlyScan,
                             "Bitmap Heap Scan": physops.ScanOperators.BitmapScan}
+"""A mapping from Postgres EXPLAIN node names to the corresponding scan operators."""
 
 
 class PostgresExplainNode:
-    """_summary_
+    """Simplified model of a plan node as provided by Postgres' ``EXPLAIN`` output in JSON format.
+
+    Generally speaking, a node stores all the information about the plan node that we currently care about. This is mostly
+    focused on optimizer statistics, along with some additional data. Explain nodes form a hierarchichal structure with each
+    node containing an arbitrary number of child nodes. Notice that this model is very loose in the sense that no constraints
+    are enforced and no sanity checking is performed. For example, this means that nodes can contain more than two children
+    even though this can never happen in a real ``EXPLAIN`` plan. Similarly, the correspondence between filter predicates and
+    the node typse (e.g. join filter for a join node) is not checked.
+
+    All relevant data from the explain node is exposed as attributes on the objects. Even though these are mutable, they should
+    be thought of as read-only data objects.
 
     Parameters
     ----------
     explain_data : dict
-        _description_
+        The JSON data of the current explain node. This is parsed and prepared as part of the ``__init__`` method.
 
     Attributes
     ----------
     node_type : str | None, default None
-        _description_
+        The node type. This should never be empty or ``None``, even though it is technically allowed.
     cost : float, default NaN
-        _description_
+        The optimizer's cost estimation for this node. This includes the cost of all child nodes as well. This should normally
+        not be ``NaN``, even though it is technically allowed.
     cardinality_estimate : float, default NaN
-        _description_
+        The optimizer's estimation of the number of tuples that will be *produced* by this operator. This should normally not
+        be ``NaN``, even though it is technically allowed.
     execution_time : float, default NaN
-        _description_
+        For ``EXPLAIN ANALYZE`` plans, this is the actual total execution time of the node in seconds. For pure ``EXPLAIN``
+        plans, this is ``NaN``
     true_cardinality : float, default NaN
-        _description_
+        For ``EXPLAIN ANALYZE`` plans, this is the average of the number of tuples that were actually produced for each loop of
+        the node. For pure ``EXPLAIN`` plans, this is ``NaN``
     loops : int, default 1
-        _description_
+        For ``EXPLAIN ANALYZE`` plans, this is the number of times the operator was invoked. The number of invocations can mean
+        a number of different things: for parallel operators, this normally matches the number of parallel workers. For scans,
+        this matches the number of times a new tuple was requested (e.g. for an index nested-loop join the number of loops of
+        the index scan part indicates how many times the index was probed).
     relation_name : str | None, default None
-        _description_
+        The name of the relation/table that is processed by this node. This should be defined on scan nodes, but could also
+        be present on other nodes.
     relation_alias : str | None, default None
-        _description_
+        The alias of the relation/table under which the relation was accessed in th equery plan. See `relation_name`.
     index_name : str | None, default None
-        _description_
+        The name of the index that was probed. This should be defined on index scans and index-only scans, but could also be
+        present on other nodes.
     filter_condition : str | None, default None
-        _description_
+        A post-processing filter that is applied to all rows emitted by this operator. This is most important for scan
+        operations with an attached filter predicate, but can also be present on some joins.
     index_condition : str | None, default None
-        _description_
+        The condition that is used to locate the matching tuples in an index scan or index-only scan
     join_filter : str | None, default None
-        _description_
+        The condition that is used to determine matching tuples in a join
     hash_condition : str | None, default None
-        _description_
+        The condition that is used to determine matching tuples in a hash join
     recheck_condition : str | None, default None
-        _description_
+        For lossy bitmap scans or bitmap scans based on lossy indexes, this is post-processing check for whether the produced
+        tuples actually match the filter condition
     parent_relationship : str | None, default None
-        _description_
-    parallel_workers : str | None, default None
-        _description_
+        Describes the role that this node plays in relation to its parent. Common values are ``"inner"`` which denotes that
+        this is the inner child of a join and ``"outer"`` which denotes the opposite.
+    parallel_workers : str | None, default NaN
+        For parallel operators in ``EXPLAIN ANALYZE`` plans, this is the actual number of worker processes that were started.
+        Notice that in total there is one additional worker. This process takes care of spawning the other workers and
+        managing them, but can also take part in the input processing.
     children : list[PostgresExplainNode]
-        _description_
+        All child / input nodes for the current node
     """
     def __init__(self, explain_data: dict) -> None:
         self.node_type = explain_data.get("Node Type", None)
@@ -1241,15 +1458,51 @@ class PostgresExplainNode:
         self.children = [PostgresExplainNode(child) for child in explain_data.get("Plans", [])]
 
     def is_scan(self) -> bool:
+        """Checks, whether the current node corresponds to a scan node.
+
+        For Bitmap index scans, which are multi-level scan operators, this is true for the heap scan part that takes care of
+        actually reading the tuples according to the bitmap provided by the bitmap index scan operators.
+
+        Returns
+        -------
+        bool
+            Whether the node is a scan node
+        """
         return self.node_type in PostgresExplainScanNodes
 
     def is_join(self) -> bool:
+        """Checks, whether the current node corresponds to a join node.
+
+        Returns
+        -------
+        bool
+            Whether the node is a join node
+        """
         return self.node_type in PostgresExplainJoinNodes
 
     def is_analyze(self) -> bool:
+        """Checks, whether this ``EXPLAIN`` plan is an ``EXPLAIN ANALYZE`` plan or a pure ``EXPLAIN`` plan.
+
+        The analyze variant does not only obtain the plan, but actually executes it. This enables the comparison of the
+        optimizer's estimates to the actual values. If a plan is an ``EXPLAIN ANALYZE`` plan, some attributes of this node
+        receive actual values. These include `execution_time`, `true_cardinality`, `loops` and `parallel_workers`.
+
+
+        Returns
+        -------
+        bool
+            Whether the node represents part of an ``EXPLAIN ANALYZE`` plan
+        """
         return not math.isnan(self.execution_time) or not math.isnan(self.true_cardinality)
 
     def filter_conditions(self) -> dict[str, str]:
+        """Collects all filter conditions that are defined on this node
+
+        Returns
+        -------
+        dict[str, str]
+            A dictionary mapping the type of filter condition (e.g. index condition or join filter) to the actual filter value.
+        """
         conditions: dict[str, str] = {}
         if self.filter_condition is not None:
             conditions["Filter"] = self.filter_condition
@@ -1264,6 +1517,16 @@ class PostgresExplainNode:
         return conditions
 
     def inner_outer_children(self) -> Sequence[PostgresExplainNode]:
+        """Provides the children of this node in a sequence of inner, outer if applicable.
+
+        For all nodes where this structure is not meaningful (e.g. intermediate nodes that operate on a single relation or
+        scan nodes), the child nodes are returned as-is (e.g. as a list of a single child or an empty list).
+
+        Returns
+        -------
+        Sequence[PostgresExplainNode]
+            The children of the current node in a unified format
+        """
         if len(self.children) < 2:
             return self.children
         assert len(self.children) == 2
@@ -1274,12 +1537,38 @@ class PostgresExplainNode:
         return (inner_child, outer_child)
 
     def parse_table(self) -> Optional[base.TableReference]:
+        """Provides the table that is processed by this node.
+
+        Returns
+        -------
+        Optional[base.TableReference]
+            The table being scanned. For non-scan nodes, or nodes where no table can be inferred, ``None`` will be returned.
+        """
         if not self.relation_name:
             return None
         alias = self.relation_alias if self.relation_alias is not None else ""
         return base.TableReference(self.relation_name, alias)
 
     def as_query_execution_plan(self) -> db.QueryExecutionPlan:
+        """Transforms the postgres-specific plan to a standardized `QueryExecutionPlan` instance.
+
+        Notice that this transformation is lossy since not all information from the Postgres plan can be represented in query
+        execution plan instances. Furthermore, this transformation can be problematic for complicated queries that use
+        special Postgres features. Most importantly, for queries involving subqueries, special node types and parent
+        relationships can be contained in the plan, that cannot be represented by other parts of PostBOUND. If this method
+        and the resulting query execution plans should be used on complex workloads, it is advisable to check the plans twice
+        before continuing.
+
+        Returns
+        -------
+        db.QueryExecutionPlan
+            The equivalent query execution plan for this node
+
+        Raises
+        ------
+        ValueError
+            If the node contains more than two children.
+        """
         if self.children and len(self.children) > 2:
             raise ValueError("Cannot transform parent node > 2 children")
         elif self.children and len(self.children) == 1:
@@ -1315,6 +1604,19 @@ class PostgresExplainNode:
                                      physical_operator=operator, inner_child=inner_child)
 
     def inspect(self, *, _indentation: int = 0) -> str:
+        """Provides a pretty string representation of the ``EXPLAIN`` sub-plan that can be printed.
+
+        Parameters
+        ----------
+        _indentation : int, optional
+            This parameter is internal to the method and ensures that the correct indentation is used for the child nodes
+            of the plan. When inspecting the root node, this value is set to its default value of `0`.
+
+        Returns
+        -------
+        str
+            A string representation of the ``EXPLAIN`` sub-plan.
+        """
         padding = " " * _indentation
         prefix = f"{padding}<- " if padding else ""
         own_inspection = [prefix + str(self)]
@@ -1335,6 +1637,27 @@ class PostgresExplainNode:
 
 
 class PostgresExplainPlan:
+    """Models an entire ``EXPLAIN`` plan produced by Postgres
+
+    In contrast to `PostgresExplainNode`, this includes additional parameters (planning time and execution time) for the entire
+    plan, rather than just portions of it
+
+    Parameters
+    ----------
+    explain_data : dict
+        The JSON data of the entire explain plan. This is parsed and prepared as part of the ``__init__`` method.
+
+
+    Attributes
+    ----------
+    planning_time : float
+        The time in seconds that the optimizer spent to build the plan
+    execution_time : float
+        The time in seconds the query execution engine needed to calculate the result set of the query. This does not account
+        for network time to transmit the result set.
+    query_plan : PostgresExplainNode
+        The actual plan
+    """
     def __init__(self, explain_data: dict) -> None:
         explain_data = explain_data[0] if isinstance(explain_data, list) else explain_data
         self.planning_time = explain_data.get("Planning Time", math.nan) / 1000
@@ -1342,12 +1665,48 @@ class PostgresExplainPlan:
         self.query_plan = PostgresExplainNode(explain_data["Plan"])
 
     def is_analyze(self) -> bool:
+        """Checks, whether this ``EXPLAIN`` plan is an ``EXPLAIN ANALYZE`` plan or a pure ``EXPLAIN`` plan.
+
+        The analyze variant does not only obtain the plan, but actually executes it. This enables the comparison of the
+        optimizer's estimates to the actual values. If a plan is an ``EXPLAIN ANALYZE`` plan, some attributes of this node
+        receive actual values. These include `execution_time`, `true_cardinality`, `loops` and `parallel_workers`.
+
+
+        Returns
+        -------
+        bool
+            Whether the plan represents an ``EXPLAIN ANALYZE`` plan
+        """
         return self.query_plan.is_analyze()
 
     def as_query_execution_plan(self) -> db.QueryExecutionPlan:
+        """Provides the actual explain plan as a normalized query execution plan instance
+
+        For notes on pecularities of this method, take a look at the *See Also* section
+
+        Returns
+        -------
+        db.QueryExecutionPlan
+            The query execution plan
+
+        See Also
+        --------
+        PostgresExplainNode.as_query_execution_plan
+        """
         return self.query_plan.as_query_execution_plan()
 
     def inspect(self) -> str:
+        """Provides a pretty string representation of the actual plan.
+
+        Returns
+        -------
+        str
+            A string representation of the plan
+
+        See Also
+        --------
+        PostgresExplainNode.inspect
+        """
         return self.query_plan.inspect()
 
     def __repr__(self) -> str:
