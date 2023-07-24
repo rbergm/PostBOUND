@@ -1,9 +1,11 @@
 """Utilities to optimize and execute queries and workloads in a reproducible and transparent manner."""
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Callable, Iterable, Optional
+from collections.abc import Callable, Iterable
+from typing import Optional
 
 import numpy as np
 import pandas as pd
@@ -47,7 +49,8 @@ class ExecutionResult:
     optimization_time: float = np.nan
     """The time in seconds it took to optimized the query by PostBOUND.
 
-    This does not account for optimization by the actual database system.
+    This does not account for optimization by the actual database system and depends heavily on the quality of the
+    implementation of the optimization strategies.
     """
 
     execution_time: float = np.nan
@@ -64,9 +67,22 @@ class QueryPreparationService:
 
     These transformations mostly ensure that all queries in a workload provide the same type of result even in face
     of input queries that are structured slightly differently. For example, the preparation service can transform
-    all the queries to be executed as `EXPLAIN` or `COUNT(*)` queries. Furthermore, the preparation service can
+    all the queries to be executed as ``EXPLAIN`` or ``COUNT(*)`` queries. Furthermore, the preparation service can
     store SQL statements that have to be executed before running the query. For example, a statement that disables
     parallel execution could be supplied here.
+
+    Parameters
+    ----------
+    explain : bool, optional
+        Whether to force all queries to be executed as ``EXPLAIN`` queries, by default ``False``
+    count_star : bool, optional
+        Whether to force all queries to be executed as ``COUNT(*)`` queries, overwriting their default projection. Defaults to
+        ``False``
+    analyze : bool, optional
+        Whether to force all queries to be executed as ``EXPLAIN ANALYZE`` queries. Setting this option implies `explain`,
+        which therefore does not need to set manually. Defaults to ``False``
+    preparatory_statements : Optional[list[str]], optional
+        Statements that are executed as-is on the database connection before running the query, by default ``None``
     """
 
     def __init__(self, *, explain: bool = False, count_star: bool = False, analyze: bool = False,
@@ -76,8 +92,21 @@ class QueryPreparationService:
         self.count_star = count_star
         self.preparatory_stmts = preparatory_statements if preparatory_statements else []
 
-    def prepare_query(self, query: qal.SqlQuery) -> qal.SqlQuery:
-        """Applies the selected transformations to the given input query."""
+    def prepare_query(self, query: qal.SqlQuery, *, on: db.Database) -> qal.SqlQuery:
+        """Applies the selected transformations to the given input query and executes the preparatory statements
+
+        Parameters
+        ----------
+        query : qal.SqlQuery
+            The query to prepare
+        on : db.Database
+            The database to execute the preparatory statements on
+
+        Returns
+        -------
+        qal.SqlQuery
+            The prepared query
+        """
         if self.analyze:
             query = transform.as_explain(query, clauses.Explain.explain_analyze())
         elif self.explain:
@@ -86,15 +115,33 @@ class QueryPreparationService:
         if self.count_star:
             query = transform.as_count_star_query(query)
 
-        return query
+        for stmt in self.preparatory_stmts:
+            on.execute_query(stmt, cache_enabled=False)
 
-    def preparatory_statements(self) -> list[str]:
-        """Provides all preparatory SQL statements that should be executed before running the query."""
-        return self.preparatory_stmts
+        return query
 
 
 def _failed_execution_result(query: qal.SqlQuery, database: db.Database, repetitions: int = 1) -> pd.DataFrame:
-    """Constructs a simple data frame that indicates a failed query execution."""
+    """Constructs a dummy data frame / row for queries that failed the execution.
+
+    This data frame can be included in the overall result data frame as a replacement of the original data frame that would
+    have been inserted if the query were executed successfully. It contains exactly the same number of rows and columns as the
+    "correct" data, just with values that indicate failure.
+
+    Parameters
+    ----------
+    query : qal.SqlQuery
+        The query that failed the execution
+    database : db.Database
+        The database on which the execution failed
+    repetitions : int, optional
+        The number of repetitions that should have been used for the query, by default 1
+
+    Returns
+    -------
+    pd.DataFrame
+        The data frame for the failed query
+    """
     return pd.DataFrame({
         COL_QUERY: [transform.drop_hints(query)] * repetitions,
         COL_QUERY_HINTS: [query.hints] * repetitions,
@@ -107,7 +154,16 @@ def _failed_execution_result(query: qal.SqlQuery, database: db.Database, repetit
 
 def _invoke_post_process(execution_result: ExecutionResult,
                          action: Optional[Callable[[ExecutionResult], None]] = None) -> None:
-    """Executes the given post-process action if one has been supplied."""
+    """Handler to run arbitrary post-process actions after a query was executed.
+
+    Parameters
+    ----------
+    execution_result : ExecutionResult
+        The result of the query execution
+    action : Optional[Callable[[ExecutionResult], None]], optional
+        The post-process handler. It receives the execution result as input and does not produce any output. If this is
+        ``None``, no post-processing is executed
+    """
     if not action:
         return
     action(execution_result)
@@ -116,7 +172,7 @@ def _invoke_post_process(execution_result: ExecutionResult,
 def execute_query(query: qal.SqlQuery, database: db.Database, *,
                   repetitions: int = 1, query_preparation: Optional[QueryPreparationService] = None,
                   post_process: Optional[Callable[[ExecutionResult], None]] = None,
-                  _optimization_time: float = np.nan) -> pd.DataFrame:
+                  _optimization_time: float = math.nan) -> pd.DataFrame:
     """Runs the given query on the provided database.
 
     The query execution will be repeated for a total of `repetitions` times. Before the first repetition, the
@@ -124,7 +180,7 @@ def execute_query(query: qal.SqlQuery, database: db.Database, *,
 
     In addition to the query execution, this function also accepts a `post_process` parameter. This parameter
     is a callable, that will be executed after each query run to perform arbitrary actions (e.g. online training of
-    some models). The callable receives an `ExecutionResult` object as input and its output will not be handled in any
+    learned models). The callable receives an `ExecutionResult` object as input, but its output will not be processed in any
     way.
 
     The resulting data frame will be structured as follows:
@@ -136,12 +192,37 @@ def execute_query(query: qal.SqlQuery, database: db.Database, *,
     - the execution time (end-to-end, i.e. until the last byte of the result set has been transferred back to
       PostBOUND) is provided in the `COL_T_EXEC` column (in seconds)
     - the query result of each repetition is contained in the `COL_RESULT` column
+
+    Parameters
+    ----------
+    query : qal.SqlQuery
+        The query to execute
+    database : db.Database
+        The target database on which to execute the query
+    repetitions : int, optional
+        The number of times the query should be executed, by default 1
+    query_preparation : Optional[QueryPreparationService], optional
+        Preparation steps that should be performed before running the query. The preparation result will be used in place of
+        the original query for all repetitions. Defaults to ``None``, which means "no preparation".
+    post_process : Optional[Callable[[ExecutionResult], None]], optional
+        A post-process action that should be executed after each repetition of the query has been completed. Defaults to
+        ``None``, which means no post-processing.
+    _optimization_time : float, optional
+        The optimization time that has been spent to generate the input query. This should not be set directly by the user, but
+        is initialized by other runner methods instead (see below). Defaults to ``NaN``, which indicates no optimization time.
+
+    Returns
+    -------
+    pd.DataFrame
+        The execution results for the input query
+
+    See Also
+    --------
+    optimize_and_execute_query
     """
     original_query = query
     if query_preparation:
-        query = query_preparation.prepare_query(query)
-        for stmt in query_preparation.preparatory_statements():
-            database.cursor().execute(stmt)
+        query = query_preparation.prepare_query(query, on=database)
 
     query_results = []
     execution_times = []
@@ -167,7 +248,18 @@ def execute_query(query: qal.SqlQuery, database: db.Database, *,
 
 
 def _wrap_workload(queries: Iterable[qal.SqlQuery] | workloads.Workload) -> workloads.Workload:
-    """Transforms the given iterable of queries into a proper workload object, if it is not a workload already."""
+    """Transforms an iterable of queries into a proper workload object to enable execution by the runner methods.
+
+    Parameters
+    ----------
+    queries : Iterable[qal.SqlQuery] | workloads.Workload
+        The queries to run as a workload. Can already be a workload object, which makes any transformation unnecessary.
+
+    Returns
+    -------
+    workloads.Workload
+        A workload of the given queries.
+    """
     return queries if isinstance(queries, workloads.Workload) else workloads.generate_workload(queries)
 
 
@@ -186,7 +278,7 @@ def execute_workload(queries: Iterable[qal.SqlQuery] | workloads.Workload, datab
     another column that contains the query labels as obtained from the workload (integers are used if queries are
     supplied as an iterable rather than a workload object).
 
-    In addition to the columns produced by `execute_query`, the resulting data frame will have the following columns:
+    In addition to the columns produced by `execute_query`, the resulting data frame will have the following extra columns:
 
     - an absolute index indicating which query is being executed (the first query has index 1, the query executed
       after that has index 2 and so on). This index will be increased for each query and workload repetition. I.e.,
@@ -194,6 +286,38 @@ def execute_workload(queries: Iterable[qal.SqlQuery] | workloads.Workload, datab
       repeated 4 times, the indexes will be 1..24. This information is contained in the `COL_EXEC_INDEX` column
     - the `COL_LABEL` column contains the query label if requested
     - the current workload iteration is described in the `COL_WORKLOAD_ITER` column
+
+    Parameters
+    ----------
+    queries : Iterable[qal.SqlQuery] | workloads.Workload
+        The workload to execute
+    database : db.Database
+        The target database on which to execute the query
+    workload_repetitions : int, optional
+        The number of times the entire workload should be repeated, by default ``1``
+    per_query_repetitions : int, optional
+        The number of times each query should be repeated within each workload repetition. The per-query repetitions happen
+        sequentially one after another before transitioning to the next query. Defaults to ``1``.
+    shuffled : bool, optional
+        Whether to randomize the execution order of each query within the workload. Shuffling is applied before each workload
+        repetition. Per query repetitions are *not* influenced by this setting.
+    query_preparation : Optional[QueryPreparationService], optional
+        Preparation steps that should be performed before running the query. The preparation result will be used in place of
+        the original query for all repetitions. Defaults to ``None``, which means "no preparation".
+    include_labels : bool, optional
+        Whether to add the label of each query to the workload results, by default ``False``
+    post_process : Optional[Callable[[ExecutionResult], None]], optional
+        A post-process action that should be executed after each repetition of the query has been completed. Defaults to
+        ``None``, which means no post-processing.
+
+    Returns
+    -------
+    pd.DataFrame
+        The execution results for the input workload
+
+    See Also
+    --------
+    execute_query
     """
     queries = _wrap_workload(queries)
     results = []
@@ -230,7 +354,7 @@ def optimize_and_execute_query(query: qal.SqlQuery, optimization_pipeline: pb.Op
                                repetitions: int = 1,
                                query_preparation: Optional[QueryPreparationService] = None,
                                post_process: Optional[Callable[[ExecutionResult], None]] = None) -> pd.DataFrame:
-    """Optimizes the given query according to the settings of the `optimization_pipeline` and executes it afterwards.
+    """Optimizes the a query according to the settings of an optimization pipeline and executes it afterwards.
 
     This function delegates most of its work to `execute_query`. In addition, the resulting data frame contains the
     following columns:
@@ -240,6 +364,32 @@ def optimize_and_execute_query(query: qal.SqlQuery, optimization_pipeline: pb.Op
     - if the optimization failed, the reason(s) for the failure are contained in the `COL_OPT_FAILURE_REASON` column
     - the original query (i.e. before optimization and query preparation) is provided in the `COL_ORIG_QUERY` column
     - the selected optimization settings of the optimization pipeline is contained in the `COL_OPT_SETTINGS` column
+
+    Parameters
+    ----------
+    query : qal.SqlQuery
+        The query to execute
+    optimization_pipeline : pb.OptimizationPipeline
+        The optimization settings that should be used to optimize the given query. The pipeline is also used to extract the
+        target database which is used to execute the query
+    repetitions : int, optional
+        The number of times the query should be executed, by default ``1``. The query is optimized only once right before the
+        first execution.
+    query_preparation : Optional[QueryPreparationService], optional
+        Preparation steps that should be performed before running the query. The preparation result will be used in place of
+        the original query for all repetitions. Defaults to ``None``, which means "no preparation".
+    post_process : Optional[Callable[[ExecutionResult], None]], optional
+        A post-process action that should be executed after each repetition of the query has been completed. Defaults to
+        ``None``, which means no post-processing.
+
+    Returns
+    -------
+    pd.DataFrame
+        The optimization and execution results for the given query
+
+    See Also
+    --------
+    execute_query
     """
     try:
         start_time = datetime.now()
@@ -274,7 +424,46 @@ def optimize_and_execute_workload(queries: Iterable[qal.SqlQuery] | workloads.Wo
                                   post_process: Optional[Callable[[ExecutionResult], None]] = None) -> pd.DataFrame:
     """This function combines the functionality of `execute_workload` and `optimize_query` in one utility.
 
-    Refer to the documentation of both source functions for more information.
+    Each workload iteration starts "from scratch", i.e. with the raw, un-optimized queries. If the post-process actions mutated
+    some state, these mutations will however still be reflected.
+
+    Refer to the documentation of the methods under *See Also* for documentation of the provided data frame and execution/
+    optimization details.
+
+    Parameters
+    ----------
+    queries : Iterable[qal.SqlQuery] | workloads.Workload
+        The queries that should be optimized and benchmarked
+    optimization_pipeline : pb.OptimizationPipeline
+        The optimization settings that should be used to optimize the given workload. The pipeline is also used to extract the
+        target database which is used to execute the queries
+    workload_repetitions : int, optional
+        The number of times the entire workload should be repeated, by default ``1``. During each repetition, the workload
+        will be optimized anew.
+    per_query_repetitions : int, optional
+        The number of times each query should be repeated within each workload repetition. The per-query repetitions happen
+        sequentially one after another before transitioning to the next query. Defaults to ``1``.
+    shuffled : bool, optional
+        Whether to randomize the execution order of each query within the workload. Shuffling is applied before each workload
+        repetition. Per query repetitions are *not* influenced by this setting.
+    query_preparation : Optional[QueryPreparationService], optional
+        Preparation steps that should be performed before running the query. The preparation result will be used in place of
+        the original query for all repetitions. Defaults to ``None``, which means "no preparation".
+    include_labels : bool, optional
+        Whether to add the label of each query to the workload results, by default ``False``
+    post_process : Optional[Callable[[ExecutionResult], None]], optional
+        A post-process action that should be executed after each repetition of the query has been completed. Defaults to
+        ``None``, which means no post-processing.
+
+    Returns
+    -------
+    pd.DataFrame
+        The optimization and execution results for the given workload
+
+    See Also
+    --------
+    execute_and_optimize_query
+    execute_workload
     """
     queries = _wrap_workload(queries)
     results = []
