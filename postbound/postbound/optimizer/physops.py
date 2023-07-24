@@ -155,6 +155,21 @@ class PhysicalOperatorAssignment:
         self.join_operators: dict[frozenset[base.TableReference], JoinOperatorAssignment] = {}
         self.scan_operators: dict[base.TableReference, ScanOperatorAssignment] = {}
 
+    def get_globally_enabled_operators(self) -> frozenset[PhysicalOperator]:
+        """Provides all operators that are enabled globally.
+
+        Returns
+        -------
+        frozenset[PhysicalOperator]
+            The enabled scan and join operators. If no global setting is available for an operator, it is enabled by
+            default.
+        """
+        enabled_scan_ops = [scan_op for scan_op in ScanOperators
+                            if scan_op not in self.global_settings or self.global_settings[scan_op] is True]
+        enabled_join_ops = [join_op for join_op in JoinOperators
+                            if join_op not in self.global_settings or self.global_settings[join_op] is True]
+        return frozenset(enabled_scan_ops + enabled_join_ops)
+
     def set_operator_enabled_globally(self, operator: ScanOperators | JoinOperators, enabled: bool, *,
                                       overwrite_fine_grained_selection: bool = False) -> None:
         """Enables or disables an operator for all joins/scans in the query.

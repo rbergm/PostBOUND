@@ -1159,7 +1159,9 @@ class QueryExecutionPlan:
     In addition to the unified data storage in the different attributes, a number of introspection methods are also
     defined.
 
-    All information should be considered read-only, even though this is not enforced.
+    All parameters to the `__init__` method are available as attributes on the new object. However, they should be
+    considered read-only, even though this is not enforced.
+
 
     Parameters
     ----------
