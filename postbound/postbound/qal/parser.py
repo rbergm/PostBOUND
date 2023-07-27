@@ -299,9 +299,9 @@ def _parse_column_reference(column: str) -> base.ColumnReference:
     return base.ColumnReference(column, table_ref)
 
 
-def _parse_implicit_from_clause(mosp_data: dict) -> clauses.ImplicitFromClause:
+def _parse_implicit_from_clause(mosp_data: dict) -> Optional[clauses.ImplicitFromClause]:
     if "from" not in mosp_data:
-        return clauses.ImplicitFromClause()
+        return None
     from_clause = mosp_data["from"]
     if isinstance(from_clause, str):
         return clauses.ImplicitFromClause(clauses.DirectTableSource(_parse_table_reference(from_clause)))

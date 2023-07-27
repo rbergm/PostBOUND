@@ -53,7 +53,7 @@ def _collect_subqueries(clause: clauses.BaseClause) -> set[SqlQuery]:
     elif isinstance(clause, clauses.ImplicitFromClause):
         return set()
     elif isinstance(clause, clauses.From):
-        return collection_utils.set_union(_collect_subqueries_in_table_source(src) for src in clause.contents)
+        return collection_utils.set_union(_collect_subqueries_in_table_source(src) for src in clause.items)
     elif isinstance(clause, clauses.Where):
         where_predicate = clause.predicate
         return collection_utils.set_union(_collect_subqueries_in_expression(expression)
@@ -85,7 +85,7 @@ def _collect_bound_tables(from_clause: clauses.From) -> set[base.TableReference]
     if isinstance(from_clause, clauses.ImplicitFromClause):
         return from_clause.tables()
     else:
-        return collection_utils.set_union(_collect_bound_tables_from_source(src) for src in from_clause.contents)
+        return collection_utils.set_union(_collect_bound_tables_from_source(src) for src in from_clause.items)
 
 
 FromClauseType = typing.TypeVar("FromClauseType", bound=clauses.From)
@@ -273,7 +273,7 @@ class SqlQuery(Generic[FromClauseType], abc.ABC):
         ``tables = bound_tables ⊕ unbound_tables``.
         """
         if self.from_clause:
-            virtual_subquery_targets = {subquery_source.target_table for subquery_source in self.from_clause.contents
+            virtual_subquery_targets = {subquery_source.target_table for subquery_source in self.from_clause.items
                                         if isinstance(subquery_source, clauses.SubqueryTableSource)}
         else:
             virtual_subquery_targets = set()

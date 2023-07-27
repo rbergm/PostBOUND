@@ -401,7 +401,7 @@ def _replace_expressions_in_clause(clause: ClauseType, replacement: Callable[[ex
         replaced_joins = [_replace_expression_in_table_source(join, replacement) for join in clause.joined_tables]
         return clauses.ExplicitFromClause(clause.base_table, replaced_joins)
     elif isinstance(clause, clauses.From):
-        replaced_contents = [_replace_expression_in_table_source(target, replacement) for target in clause.contents]
+        replaced_contents = [_replace_expression_in_table_source(target, replacement) for target in clause.items]
         return clauses.From(replaced_contents)
     elif isinstance(clause, clauses.Where):
         return clauses.Where(_replace_expression_in_predicate(clause.predicate, replacement))
@@ -627,7 +627,7 @@ def rename_columns_in_clause(clause: Optional[ClauseType],
         return clauses.ExplicitFromClause(clause.base_table, renamed_joins)
     elif isinstance(clause, clauses.From):
         renamed_sources = [_rename_columns_in_table_source(table_source, available_renamings)
-                           for table_source in clause.contents]
+                           for table_source in clause.items]
         return clauses.From(renamed_sources)
     elif isinstance(clause, clauses.Where):
         return clauses.Where(rename_columns_in_predicate(clause.predicate, available_renamings))

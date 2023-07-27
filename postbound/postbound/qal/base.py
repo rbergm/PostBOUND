@@ -1,4 +1,8 @@
-"""Fundamental types for the query abstraction layer. This includes references to tables as well as columns."""
+"""Fundamental types for the query abstraction layer. This includes references to tables as well as columns.
+
+All reference types  are designed as immutable data objects whose content cannot be changed. Any forced modifications
+will break the entire query abstraction layer and lead to unpredictable behaviour.
+"""
 from __future__ import annotations
 
 from typing import Optional
@@ -15,12 +19,43 @@ class TableReference(jsonize.Jsonizable):
     distinguish between different references to the same table. In case of virtual tables, the full name will be empty
     and only the alias set.
 
-    Table references can be sorted lexicographically.
+    Table references can be sorted lexicographically. All instances should be treated as immutable objects.
+
+    Parameters
+    ----------
+    full_name : str
+        The name of the table, corresponding to the name of a physical database table (or a view)
+    alias : str, optional
+        Alternative name that is in queries to refer to the table, or to refer to the same table multiple times.
+        Defaults to an empty string
+    virtual : bool, optional
+        Whether the table is virtual or not. As a rule of thumb, virtual tables cannot be part of a ``FROM`` clause on
+        their own, but need some sort of context. For example, the alias of a subquery is typically represented as a
+        virtual table in PostBOUND. One cannot directly reference that alias in a ``FROM`` clause, without also
+        specifying the subquery. Defaults to ``False`` since most tables will have direct physical counterparts.
+
+    Raises
+    ------
+    ValueError
+        If neither full name nor an alias are provided
+    ValueError
+        If the full name is given for a virtual table
     """
 
     @staticmethod
     def create_virtual(alias: str) -> TableReference:
-        """Generates a new virtual table reference with the given alias."""
+        """Generates a new virtual table reference with the given alias.
+
+        Parameters
+        ----------
+        alias : str
+            The alias of the virtual table. Cannot be ``None``.
+
+        Returns
+        -------
+        TableReference
+            The virtual table reference
+        """
         return TableReference("", alias, True)
 
     def __init__(self, full_name: str, alias: str = "", virtual: bool = False) -> None:
@@ -35,30 +70,69 @@ class TableReference(jsonize.Jsonizable):
 
     @property
     def full_name(self) -> str:
-        """Get the full name of this table. If empty, alias is guaranteed to be set."""
+        """Get the full name of this table. If empty, alias is guaranteed to be set.
+
+        Returns
+        -------
+        str
+            The name of the table
+        """
         return self._full_name
 
     @property
     def alias(self) -> str:
-        """Get the alias of this table. If empty, the full name is guaranteed to be set."""
+        """Get the alias of this table. If empty, the full name is guaranteed to be set.
+
+        The precise semantics of alias usage differ from database system to system. For example, in Postgres an alias
+        shadows the original table name, i.e. once an alias is specified, it *must* be used to reference to the table
+        and its columns.
+
+        Returns
+        -------
+        str
+            The alias of the table
+        """
         return self._alias
 
     @property
     def virtual(self) -> bool:
-        """Checks whether this table is virtual. In this case, only the alias and not the full name is set."""
+        """Checks whether this table is virtual. In this case, only the alias and not the full name is set.
+
+        Returns
+        -------
+        bool
+            Whether this reference describes a virtual table
+        """
         return self._virtual
 
     def identifier(self) -> str:
         """Provides a shorthand key that columns can use to refer to this table reference.
 
-        For example, a table reference for `movie_companies AS mc` would have `mc` as its identifier (i.e. the alias),
-        whereas a table reference without an alias such as `company_type` would provide the full table name as its
-        identifier, i.e. `company_type`.
+        For example, a table reference for ``movie_companies AS mc`` would have ``mc`` as its identifier (i.e. the
+        alias), whereas a table reference without an alias such as ``company_type`` would provide the full table name
+        as its identifier, i.e. ``company_type``.
+
+        Returns
+        -------
+        str
+            The shorthand
         """
         return self.alias if self.alias else self.full_name
 
     def drop_alias(self) -> TableReference:
-        """Removes the alias from the current table if there is one. Returns the tabel as-is otherwise."""
+        """Removes the alias from the current table if there is one. Returns the tabel as-is otherwise.
+
+        Returns
+        -------
+        TableReference
+            This table, but without an alias. Since table references are immutable, the original reference is not
+            modified
+
+        Raises
+        ------
+        errors.StateError
+            If this table is a virtual table, since virtual tables only have an alias and no full name.
+        """
         if self.virtual:
             raise errors.StateError("An alias cannot be dropped from a virtual table!")
         return TableReference(self.full_name)
@@ -96,52 +170,95 @@ class TableReference(jsonize.Jsonizable):
 class ColumnReference(jsonize.Jsonizable):
     """A column reference represents a specific column of a specific database table.
 
-    This reference always consists of the name of the physical table. In addition, each column can be bound to the
-    table to which it belongs by providing the associated table reference.
+    This reference always consists of the name of the "physical" column (see below for special cases). In addition,
+    each column can be bound to the table to which it belongs by providing the associated table reference.
 
-    Since subqueries can export specific columns, references do not need to be physical tables. Instead, they can
-    refer to columns of virtual tables which export their columns under different names than the original (physical)
-    column. To accommodate for such situations, columns references can redirect to other column references. Use the
-    `resolve` method to retrieve the actual column reference (which will most likely correspond to a physical column
-    of a physical table).
+    Column references can be sorted lexicographically and are designed as immutable data objects.
 
-    Column references can be sorted lexicographically.
+    Parameters
+    ----------
+    name : str
+        The name of the column. Cannot be empty.
+    table : Optional[TableReference], optional
+        The table which provides the column. Can be ``None`` if the table is unknown.
+
+    Raises
+    ------
+    ValueError
+        If the name is empty (or ``None``)
+
+    Notes
+    -----
+    A number of special cases arise when dealing with subqueries and common table expressions. The first one is the
+    fact that columns can be bound to virtual tables, e.g. if they are exported by subqueries, etc. In the same vein,
+    columns also do not always need to refer directly to physical columns. Consider the following example query:
+
+    ::
+
+        WITH cte_table AS (SELECT foo.f_id, foo.a + foo.b AS 'sum' FROM foo)
+        SELECT *
+        FROM bar JOIN cte_table ON bar.b_id = cte_table.f_id
+        WHERE cte_table.sum < 42
+
+    In this case, the CTE exports a column ``sum`` that is constructed based on two "actual" columns. Hence, the sum
+    column itself does not have any physical representation but will be modelled as a column reference nevertheless.
     """
 
-    def __init__(self, name: str, table: Optional[TableReference] = None, *,
-                 redirect: Optional[ColumnReference] = None) -> None:
+    def __init__(self, name: str, table: Optional[TableReference] = None) -> None:
         if not name:
             raise ValueError("Column name is required")
         self._name = name
         self._table = table
-        self._redirect = redirect
         self._hash_val = hash((self._name, self._table))
 
     @property
     def name(self) -> str:
-        """Get the name of this column. This is guaranteed to be set."""
+        """Get the name of this column. This is guaranteed to be set and will never be empty
+
+        Returns
+        -------
+        str
+            The name
+        """
         return self._name
 
     @property
     def table(self) -> Optional[TableReference]:
-        """Get the table to which this column belongs, if specified."""
+        """Get the table to which this column belongs, if specified.
+
+        Returns
+        -------
+        Optional[TableReference]
+            The table or ``None``. The table can be an arbitrary reference, i.e. virtual or physical.
+        """
         return self._table
 
-    @property
-    def redirect(self) -> Optional[ColumnReference]:
-        """Get the column for which this column is an alias."""
-        return self._redirect
-
-    def resolve(self) -> ColumnReference:
-        """Traverse the column redirections until a non-redirecting reference is found."""
-        return self.redirect.resolve() if self.redirect else self
-
     def is_bound(self) -> bool:
-        """Checks, whether this column is bound to a table."""
+        """Checks, whether this column is bound to a table.
+
+        Returns
+        -------
+        bool
+            Whether a valid table reference is set
+        """
         return self.table is not None
 
     def belongs_to(self, table: TableReference) -> bool:
-        """Checks, if the column is part of the given table."""
+        """Checks, whether the column is part of the given table.
+
+        This check does not consult the schema of the actual database or the like, it merely matches the given table
+        reference with the `table` attribute of this column.
+
+        Parameters
+        ----------
+        table : TableReference
+            The table to check
+
+        Returns
+        -------
+        bool
+            Whether the table's column is the same as the given one
+        """
         return table == self.table
 
     def __json__(self) -> object:
@@ -176,7 +293,13 @@ class ColumnReference(jsonize.Jsonizable):
 
 
 class UnboundColumnError(errors.StateError):
-    """Indicates that a column is required to be bound to a table, but the provided column was not."""
+    """Indicates that a column is required to be bound to a table, but the provided column was not.
+
+    Parameters
+    ----------
+    column : ColumnReference
+        The column without the necessary table binding
+    """
 
     def __init__(self, column: ColumnReference) -> None:
         super().__init__("Column is not bound to any table: " + str(column))
@@ -184,7 +307,13 @@ class UnboundColumnError(errors.StateError):
 
 
 class VirtualTableError(errors.StateError):
-    """Indicates that a table is required to correspond to a physical table, but the provided reference was not."""
+    """Indicates that a table is required to correspond to a physical table, but the provided reference was not.
+
+    Parameters
+    ----------
+    table : TableReference
+        The virtual table
+    """
 
     def __init__(self, table: TableReference) -> None:
         super().__init__("Table is virtual: " + str(table))
