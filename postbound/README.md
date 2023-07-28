@@ -80,7 +80,7 @@ print(query_result)
 
 This examples can be *almost* executed as-is, there is only one setup step missing: in Step 1, PostBOUND is asked to connect to
 a Postgres database, but no information is provided on how this connection should be obtained. By default, PostBOUND reads this
-information from a hidden config file. In the case of Postgres, this file is called `.pyscopg_connection` and it has to be
+information from a hidden config file. In the case of Postgres, this file is called `.psycopg_connection` and it has to be
 placed in the same directory from which the code is executed. The Postgres file has to contain a connection string that can
 be used to establish a database connection, such as `dbname=<my db> user=<my user> host=localhost`. Consult the documentation
 on the database systems for more info on what information is required and how it should be stored. As a final note, the
@@ -113,7 +113,7 @@ In addition to the framework implementation, a couple of extra directories are p
 | `docs`     | contains the high-level documentation as well as infrastructure to export the source code documentation |
 | `examples` | contains general examples for typical usage scenarios. These should be run from the root directory, e.g. as `python3 examples/example-01-basic-workflow.py` |
 | `tests`    | contains the unit tests and integration tests for the framework implementatino. These should also be run from the root directory, e.g. as `python3 -m unittest tests` |
-s
+
 
 ## Installation as a Python module
 
