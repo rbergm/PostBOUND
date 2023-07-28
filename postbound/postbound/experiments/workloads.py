@@ -580,7 +580,7 @@ def job(file_encoding: str = "utf-8") -> Workload[str]:
 
     References
     ----------
-    .. Viktor Leis et al.: How Good Are Query Optimizers, Really? (Proc. VLDB Endow. 9, 3 (2015))
+    .. Viktor Leis et al.: "How Good Are Query Optimizers, Really?" (Proc. VLDB Endow. 9, 3 (2015))
     """
     job_dir = f"{workloads_base_dir}/JOB-Queries"
     return Workload.read(job_dir, name="JOB", file_encoding=file_encoding)
@@ -605,7 +605,7 @@ def ssb(file_encoding: str = "utf-8") -> Workload[str]:
 
     References
     ----------
-    .. Patrick E. O'Neil et al.: The Star Schema Benchmark and Augmented Fact Table Indexing. (TPCTC'2009)
+    .. Patrick E. O'Neil et al.: "The Star Schema Benchmark and Augmented Fact Table Indexing." (TPCTC'2009)
     """
     return Workload.read(f"{workloads_base_dir}/SSB-Queries", name="SSB", file_encoding=file_encoding)
 
@@ -639,7 +639,7 @@ def stack(file_encoding: str = "utf-8") -> Workload[str]:
 
     References
     ----------
-    .. Ryan Marcus et al.: Bao: Making Learned Query Optimization Practical. (SIGMOD'2021)
+    .. Ryan Marcus et al.: "Bao: Making Learned Query Optimization Practical." (SIGMOD'2021)
     """
     return read_workload(f"{workloads_base_dir}/Stack-Queries", "Stack", recurse_subdirectories=True,
                          file_encoding=file_encoding)
