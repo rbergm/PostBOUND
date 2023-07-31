@@ -1,4 +1,10 @@
-"""`transform` provides utilities to generate SQL queries from other queries and to modify existing queries."""
+"""This module provides tools to modify the contents of existing `SqlQuery` instances.
+
+Since queries are designed as immutable data objects, these transformations operate by implementing new query instances.
+
+The tools differ in their granularity, ranging from utilities that swap out individual expressions and predicates, to tools
+that change the entire structure of the query.
+"""
 from __future__ import annotations
 
 import typing
@@ -13,18 +19,45 @@ from postbound.util import collections as collection_utils
 # access instead of implementing the same pattern matching and traversal logic all over again
 
 QueryType = typing.TypeVar("QueryType", bound=qal.SqlQuery)
+"""The concrete class of a query.
+
+This generic type is used for transformations that do not change the type of a query and operate on all the different query
+types.
+"""
+
 ClauseType = typing.TypeVar("ClauseType", bound=clauses.BaseClause)
+"""The concrete class of a clause.
+
+This generic type is used for transformations that do not change the type of a clause and operate on all the different clause
+types.
+"""
+
 PredicateType = typing.TypeVar("PredicateType", bound=preds.AbstractPredicate)
+"""The concrete type of a predicate.
+
+This generic type is used for transformations that do not change the type of a predicate and operate on all the different
+predicate types.
+"""
 
 
 def flatten_and_predicate(predicate: preds.AbstractPredicate) -> preds.AbstractPredicate:
-    """Simplifies the predicate structure by moving all nested AND predicates their parent AND predicate.
+    """Simplifies the predicate structure by moving all nested ``AND`` predicates to their parent ``AND`` predicate.
 
-    For example, consider the predicate `(R.a = S.b AND R.a = 42) AND S.b = 24`. This is transformed into a flat
-    conjunction, i.e. `R.a = S.b AND R.a = 42 AND S.b = 24`.
+    For example, consider the predicate ``(R.a = S.b AND R.a = 42) AND S.b = 24``. This is transformed into the flattened
+    equivalent conjunction ``R.a = S.b AND R.a = 42 AND S.b = 24``.
 
-    This procedure continues in a recursive manner, until the first disjunction or negation is encountered. All
-    predicates below that are left as-is.
+    This procedure continues in a recursive manner, until the first disjunction or negation is encountered. All predicates
+    below that point are left as-is for the current branch of the predicate hierarchy.
+
+    Parameters
+    ----------
+    predicate : preds.AbstractPredicate
+        The predicate to simplified
+
+    Returns
+    -------
+    preds.AbstractPredicate
+        An equivalent version of the given `predicate`, with all conjunctions unnested
     """
     if not isinstance(predicate, preds.CompoundPredicate):
         return predicate
@@ -52,9 +85,24 @@ def flatten_and_predicate(predicate: preds.AbstractPredicate) -> preds.AbstractP
 
 
 def explicit_to_implicit(source_query: qal.ExplicitSqlQuery) -> qal.ImplicitSqlQuery:
-    """Transforms a query with an explicit FROM clause to a query with an implicit FROM clause.
+    """Transforms a query with an explicit ``FROM`` clause to a query with an implicit ``FROM`` clause.
 
-    Currently, this process is only supported for explicit queries that do not contain subqueries in their FROM clause.
+    Currently, this process is only supported for explicit queries that do not contain subqueries in their ``FROM`` clause.
+
+    Parameters
+    ----------
+    source_query : qal.ExplicitSqlQuery
+        The query that should be transformed
+
+    Returns
+    -------
+    qal.ImplicitSqlQuery
+        An equivalent version of the given query, using an implicit ``FROM`` clause
+
+    Raises
+    ------
+    ValueError
+        If the `source_query` contains subquery table sources
     """
     original_from_clause: clauses.ExplicitFromClause = source_query.from_clause
     additional_predicates = []
@@ -87,9 +135,36 @@ def explicit_to_implicit(source_query: qal.ExplicitSqlQuery) -> qal.ImplicitSqlQ
 
 def _get_predicate_fragment(predicate: preds.AbstractPredicate,
                             referenced_tables: set[base.TableReference]) -> preds.AbstractPredicate | None:
-    """Filters the predicate hierarchy to include only exactly those base predicates that reference the given tables.
+    """Filters the predicate hierarchy to include only those base predicates that reference the given tables.
 
-    This applies all simplifications as necessary.
+    The referenced tables operate as a superset - parts of the predicate are retained if the tables that they reference are a
+    subset of the target tables.
+
+    In the general case, the resulting predicate is no longer equivalent to the original predicate, since large portions of
+    the predicate hierarchy are pruned (exactly those that do not touch the given tables). Simplifications will be applied to
+    the predicate as necessary. For example, if only a single child predicate of a conjunction references the given tables, the
+    conjunction is removed and the child predicate is inserted instead.
+
+    Notice that no logical simplifications are applied. For example, if the resulting predicate fragment is the conjunction
+    ``R.a < 42 AND R.a < 84``, this is not simplified into ``R.a < 42``.
+
+    Parameters
+    ----------
+    predicate : preds.AbstractPredicate
+        The predicate to filter
+    referenced_tables : set[base.TableReference]
+        The superset of all allowed tables. Those parts of the `predicate` are pruned, whose tables are not a subset of the
+
+    Returns
+    -------
+    preds.AbstractPredicate | None
+        The largest fragment of the original predicate that references only a subset of the `referenced_tables`. If the entire
+        predicate was pruned, ``None`` is returned.
+
+    Examples
+    --------
+    Consider the predicate ``R.a > 100 AND (S.b = 42 OR R.a = 42)``. The predicate fragment for table ``R`` would be
+    ``R.a > 100 AND R.a = 42``.
     """
     if not isinstance(predicate, preds.CompoundPredicate):
         return predicate if predicate.tables().issubset(referenced_tables) else None
@@ -107,15 +182,32 @@ def _get_predicate_fragment(predicate: preds.AbstractPredicate,
 
 def extract_query_fragment(source_query: qal.ImplicitSqlQuery,
                            referenced_tables: Iterable[base.TableReference]) -> Optional[qal.ImplicitSqlQuery]:
-    """Filters the `source_query` to only include the given tables.
+    """Filters a query to only include parts that reference specific tables.
 
-    This constructs a new query from the given query that contains exactly those parts of the original query's clauses
-    that reference only the given tables.
+    This builds a new query from the given query that contains exactly those parts of the original query's clauses that
+    reference only the given tables or a subset of them.
 
-    For example, consider the query `SELECT * FROM R, S, T WHERE R.a = S.b AND S.c = T.d AND R.a = 42 ORDER BY S.b`
-    the query fragment for tables `R` and `S` would look like this:
-    `SELECT * FROM R, S WHERE R.a = S.b AND R.a = 42 ORDER BY S.b`, whereas the query fragment for table `S` would
-    look like `SELECT * FROM S ORDER BY S.b`.
+    For example, consider the query ``SELECT * FROM R, S, T WHERE R.a = S.b AND S.c = T.d AND R.a = 42 ORDER BY S.b``
+    the query fragment for tables ``R`` and ``S`` would look like this:
+    ``SELECT * FROM R, S WHERE R.a = S.b AND R.a = 42 ORDER BY S.b``, whereas the query fragment for table ``S`` would
+    look like ``SELECT * FROM S ORDER BY S.b``.
+
+    Notice that this can break disjunctions: the fragment for table ``R`` of query
+    ``SELECT * FROM R, S, WHERE R.a < 100 AND (R.a = 42 OR S.b = 42)`` is ``SELECT * FROM R WHERE R.a < 100 AND R.a = 42``.
+    This also indicates that the fragment extraction does not perform any logical pruning of superflous predicates.
+
+    Parameters
+    ----------
+    source_query : qal.ImplicitSqlQuery
+        The query that should be transformed
+    referenced_tables : Iterable[base.TableReference]
+        The tables that should be extracted
+
+    Returns
+    -------
+    Optional[qal.ImplicitSqlQuery]
+        A query that only consists of those parts of the `source_query`, that reference (a subset of) the `referenced_tables`.
+        If there is no such subset, ``None`` is returned.
     """
     referenced_tables = set(referenced_tables)
     if not referenced_tables.issubset(source_query.tables()):
@@ -178,20 +270,71 @@ def extract_query_fragment(source_query: qal.ImplicitSqlQuery,
 
 
 def _default_subquery_name(tables: Iterable[base.TableReference]) -> str:
+    """Constructs a valid SQL table name for a subquery consisting of specific tables.
+
+    Parameters
+    ----------
+    tables : Iterable[base.TableReference]
+        The tables that should be represented by a subquery.
+
+    Returns
+    -------
+    str
+        The target name of the subquery
+    """
     return "_".join(table.identifier() for table in tables)
 
 
-def move_into_subquery(query: qal.SqlQuery, tables: Iterable[base.TableReference],
-                       subquery_name: str = "") -> qal.SqlQuery:
+def move_into_subquery(query: qal.SqlQuery, tables: Iterable[base.TableReference], subquery_name: str = "") -> qal.SqlQuery:
+    """Transforms a specific query by moving some of its tables into a subquery.
+
+    This transformation renames all usages of columns that are now produced by the subquery to references to the virtual
+    subquery table instead.
+
+    Notice that this transformation currently only really works for "good natured" queries, i.e. mostly implicit SPJ+ queries.
+    Notably, the transformation is only supported for queries that do not already contain subqueries, since moving tables
+    between subqueries is a quite tricky process. Likewise, the renaming is only applied at a table-level. If the tables export
+    columns of the same name, these are not renamed and the transformation fails as well. If in doubt, you should definitely
+    check the output of this method for your complicated queries to prevent bad surprises!
+
+    Parameters
+    ----------
+    query : qal.SqlQuery
+        The query to transform
+    tables : Iterable[base.TableReference]
+        The tables that should be placed into a subquery
+    subquery_name : str, optional
+        The target name of the virtual subquery table. If empty, a default name (consisting of all the subquery tables) is
+        generated
+
+    Returns
+    -------
+    qal.SqlQuery
+        The transformed query
+
+    Raises
+    ------
+    ValueError
+        If the `query` does not contain a ``FROM`` clause.
+    ValueError
+        If the query contains virtual tables
+    ValueError
+        If `tables` contains less than 2 entries. In this case, using a subquery is completely pointless.
+    ValueError
+        If the tables that should become part of the subquery both provide columns of the same name, and these columns are used
+        in the rest of the query. This level of renaming is currently not accounted for.
+    """
     if not query.from_clause:
         raise ValueError("Cannot create a subquery for a query without a FROM clause")
     if any(table.virtual for table in query.tables()):
         raise ValueError("Cannot move into subquery for queries with virtual tables")
+
     tables = set(tables)
-    if query.cte_clause is not None and tables & query.cte_clause.tables():
-        raise ValueError("Cannot move tables into subquery that are part of a CTE clause")
+
+    # deleted CTE check: this was not necessary because a CTE produces a virtual table. This already fails the previous test
     if len(tables) < 2:
         raise ValueError("At least two tables required")
+
     predicates = query.predicates()
     all_referenced_columns = collection_utils.set_union(clause.columns() for clause in query.clauses()
                                                         if not isinstance(clause, clauses.From))
@@ -244,40 +387,127 @@ def move_into_subquery(query: qal.SqlQuery, tables: Iterable[base.TableReference
 
 
 def as_star_query(source_query: QueryType) -> QueryType:
+    """Transforms a specific query to use a ``SELECT *`` projection instead.
+
+    Notice that this can break certain queries where a renamed column from the ``SELECT`` clause is used in other parts of
+    the query, such as ``ORDER BY`` clauses (e.g. ``SELECT SUM(foo) AS f FROM bar ORDER BY f``). We currently do not undo such
+    a renaming.
+
+    Parameters
+    ----------
+    source_query : QueryType
+        The query to transform
+
+    Returns
+    -------
+    QueryType
+        A variant of the input query that uses a ``SELECT *`` projection.
+    """
     select = clauses.Select.star()
     query_clauses = [clause for clause in source_query.clauses() if not isinstance(clause, clauses.Select)]
     return qal.build_query(query_clauses + [select])
 
 
 def as_count_star_query(source_query: QueryType) -> QueryType:
-    """Replaces the SELECT clause of the given query with a COUNT(*) statement."""
-    # TODO: how to work with column aliases from the SELECT clause that are referenced later on?
-    # E.g. SELECT SUM(foo) AS f FROM bar ORDER BY f
+    """Transforms a specific query to use a ``SELECT COUNT(*)`` projection instead.
+
+    Notice that this can break certain queries where a renamed column from the ``SELECT`` clause is used in other parts of
+    the query, such as ``ORDER BY`` clauses (e.g. ``SELECT SUM(foo) AS f FROM bar ORDER BY f``). We currently do not undo such
+    a renaming.
+
+    Parameters
+    ----------
+    source_query : QueryType
+        The query to transform
+
+    Returns
+    -------
+    QueryType
+        A variant of the input query that uses a ``SELECT COUNT(*)`` projection.
+    """
     select = clauses.Select.count_star()
     query_clauses = [clause for clause in source_query.clauses() if not isinstance(clause, clauses.Select)]
     return qal.build_query(query_clauses + [select])
 
 
 def drop_hints(query: QueryType, preparatory_statements_only: bool = False) -> QueryType:
-    """Removes the hint clause from the given query."""
+    """Removes the hint clause from a specific query.
+
+    Parameters
+    ----------
+    query : QueryType
+        The query to transform
+    preparatory_statements_only : bool, optional
+        Whether only the preparatory statements from the hint block should be removed. This would retain the actual hints.
+        Defaults to ``False``, which removes the entire block, no matter its contents.
+
+    Returns
+    -------
+    QueryType
+        The query without the hint block
+    """
     new_hints = clauses.Hint("", query.hints.query_hints) if preparatory_statements_only and query.hints else None
     query_clauses = [clause for clause in query.clauses() if not isinstance(clause, clauses.Hint)]
     return qal.build_query(query_clauses + [new_hints])
 
 
 def as_explain(query: QueryType, explain: clauses.Explain = clauses.Explain.plan()) -> QueryType:
-    """Transforms the given query into a query that uses the provided EXPLAIN clause."""
+    """Transforms a specific query into an ``EXPLAIN`` query.
+
+    Parameters
+    ----------
+    query : QueryType
+        The query to transform
+    explain : clauses.Explain, optional
+        The ``EXPLAIN`` block to use. Defaults to a standard ``Explain.plan()`` block.
+
+    Returns
+    -------
+    QueryType
+        The transformed query
+    """
     query_clauses = [clause for clause in query.clauses() if not isinstance(clause, clauses.Explain)]
     return qal.build_query(query_clauses + [explain])
 
 
 def as_explain_analyze(query: QueryType) -> QueryType:
-    """Transforms the given query into an EXPLAIN ANALYZE query."""
+    """Transforms a specific query into an ``EXPLAIN ANALYZE`` query.
+
+    Parameters
+    ----------
+    query : QueryType
+        The query to transform
+
+    Returns
+    -------
+    QueryType
+        The transformed query. It uses an ``EXPLAIN ANALYZE`` block with the default output format. If this is not desired,
+        the `as_explain` transformation has to be used and the target ``EXPLAIN`` block has to be given explicitly.
+    """
     return as_explain(query, clauses.Explain.explain_analyze())
 
 
 def remove_predicate(predicate: Optional[preds.AbstractPredicate],
                      predicate_to_remove: preds.AbstractPredicate) -> Optional[preds.AbstractPredicate]:
+    """Drops a specific predicate from the predicate hierarchy.
+
+    If necessary, the hierarchy will be simplified. For example, if the `predicate_to_remove` is one of two childs of a
+    conjunction, the removal would leave a conjunction of just a single predicate. In this case, the conjunction can be dropped
+    altogether, leaving just the other child predicate. The same also applies to disjunctions and negations.
+
+    Parameters
+    ----------
+    predicate : Optional[preds.AbstractPredicate]
+        The predicate hierarchy from which should removed. If this is ``None``, no removal is attempted.
+    predicate_to_remove : preds.AbstractPredicate
+        The predicate that should be removed.
+
+    Returns
+    -------
+    Optional[preds.AbstractPredicate]
+        The resulting (simplified) predicate hierarchy. Will be ``None`` if there are no meaningful predicates left after
+        removal, or if the `predicate` equals the `predicate_to_remove`.
+    """
     if not predicate or predicate == predicate_to_remove:
         return None
     if not isinstance(predicate, preds.CompoundPredicate):
@@ -298,10 +528,23 @@ def remove_predicate(predicate: Optional[preds.AbstractPredicate],
 
 
 def add_clause(query: qal.SqlQuery, clauses_to_add: clauses.BaseClause | Iterable[clauses.BaseClause]) -> qal.SqlQuery:
-    """Creates a new SQL query with the given additional clauses.
+    """Creates a new SQL query, potentailly with additional clauses.
 
-    No validation is performed. Conflicts are resolved according to the rules of `qal.build_query`
-    This can potentially switch an implicit query to an explicit one and vice-versa.
+    No validation is performed. Conflicts are resolved according to the rules of `qal.build_query`. This means that the query
+    can potentially be switched from an implicit query to an explicit one and vice-versa.
+
+    Parameters
+    ----------
+    query : qal.SqlQuery
+        The query to which the clause(s) should be added
+    clauses_to_add : clauses.BaseClause | Iterable[clauses.BaseClause]
+        The new clauses
+
+    Returns
+    -------
+    qal.SqlQuery
+        A new clauses consisting of the old query's clauses and the `clauses_to_add`. Duplicate clauses are overwritten by
+        the `clauses_to_add`.
     """
     clauses_to_add = collection_utils.enlist(clauses_to_add)
     new_clause_types = {type(clause) for clause in clauses_to_add}
@@ -309,18 +552,74 @@ def add_clause(query: qal.SqlQuery, clauses_to_add: clauses.BaseClause | Iterabl
     return qal.build_query(remaining_clauses + list(clauses_to_add))
 
 
-def drop_clause(query: qal.SqlQuery, clauses_to_drop: typing.Type | Iterable[typing.Type]) -> qal.SqlQuery:
-    """Creates a new SQL query without all clauses of the indicated types. No validation is performed."""
+ClauseDescription = typing.Union[typing.Type, clauses.BaseClause, Iterable[typing.Type | clauses.BaseClause]]
+"""Denotes different ways clauses to remove can be denoted.
+
+See Also
+--------
+drop_clause
+"""
+
+
+def drop_clause(query: qal.SqlQuery, clauses_to_drop: ClauseDescription) -> qal.SqlQuery:
+    """Removes specific clauses from a query.
+
+    The clauses can be denoted in two different ways: either as the raw type of the clause, or as an instance of the same
+    clause type as the one that should be removed. Notice that the instance of the clause does not need to be equal to the
+    clause of the query. It just needs to be the same type of clause.
+
+    This method does not perform any validation, other than the rules described in `qal.build_query`.
+
+    Parameters
+    ----------
+    query : qal.SqlQuery
+        The query to remove clauses from
+    clauses_to_drop : ClauseDescription
+        The clause(s) to remove. This can be a single clause type or clause instance, or an iterable of clauses types,
+        intermixed with clause instances. In either way clauses of the desired types are dropped from the query.
+
+    Returns
+    -------
+    qal.SqlQuery
+        A query without the specified clauses
+
+    Examples
+    --------
+
+    The following two calls achieve exactly the same thing: getting rid of the ``LIMIT`` clause.
+
+    .. code-block:: python
+
+        drop_clause(query, clauses.Limit)
+        drop_clause(query, query.limit_clause)
+    """
     clauses_to_drop = set(collection_utils.enlist(clauses_to_drop))
+    clauses_to_drop = {drop if isinstance(drop, typing.Type) else type(drop) for drop in clauses_to_drop}
     remaining_clauses = [clause for clause in query.clauses() if not type(clause) in clauses_to_drop]
     return qal.build_query(remaining_clauses)
 
 
 def replace_clause(query: QueryType, replacements: clauses.BaseClause | Iterable[clauses.BaseClause]) -> QueryType:
-    """Creates a new SQL query with the replacements being used instead of the original clauses of the same type.
+    """Creates a new SQL query with the replacements being used instead of the original clauses.
 
-    This function does not switch a query from implicit to explicit or vice-versa. Use a combination of `drop_clause`
-    and `add_clause` for that. No validation is performed.
+    Clauses are matched on a per-type bassis. Therefore, this function does not switch a query from implicit to explicit or
+    vice-versa. Use a combination of `drop_clause` and `add_clause` for that. If a replacement is not present in the original
+    query, it is simply ignored.
+
+    No validation other than the rules of `qal.build_query` is performed.
+
+    Parameters
+    ----------
+    query : QueryType
+        The query to update
+    replacements : clauses.BaseClause | Iterable[clauses.BaseClause]
+        The new clause instances that should be used instead of the old ones.
+
+    Returns
+    -------
+    QueryType
+        An updated query where the matching `replacements` clauses are used in place of the clause instances that were
+        originally present in the query
     """
     replacements = collection_utils.enlist(replacements)
     clauses_to_replace = {type(clause): clause for clause in replacements}
@@ -329,9 +628,32 @@ def replace_clause(query: QueryType, replacements: clauses.BaseClause | Iterable
     return qal.build_query(replaced_clauses)
 
 
-def _replace_expression_in_predicate(predicate: PredicateType,
+def _replace_expression_in_predicate(predicate: Optional[PredicateType],
                                      replacement: Callable[[expr.SqlExpression], expr.SqlExpression]
                                      ) -> Optional[PredicateType]:
+    """Handler to update all expressions in a specific predicate.
+
+    This method does not perform any sanity checks on the new predicate.
+
+
+    Parameters
+    ----------
+    predicate : PredicateType
+        The predicate to update. Can be ``None``, in which case no replacement is performed.
+    replacement : Callable[[expr.SqlExpression], expr.SqlExpression]
+        A function mapping each expression to a (potentially updated) expression
+
+    Returns
+    -------
+    Optional[PredicateType]
+        The updated predicate. Can be ``None``, if `predicate` already was.
+
+    Raises
+    ------
+    ValueError
+        If the predicate is of no known type. This indicates that this method is missing a handler for a specific predicate
+        type that was added later on.
+    """
     if not predicate:
         return None
 
@@ -360,9 +682,31 @@ def _replace_expression_in_predicate(predicate: PredicateType,
         raise ValueError("Unknown predicate type: " + str(predicate))
 
 
-def _replace_expression_in_table_source(table_source: clauses.TableSource,
+def _replace_expression_in_table_source(table_source: Optional[clauses.TableSource],
                                         replacement: Callable[[expr.SqlExpression], expr.SqlExpression]
                                         ) -> Optional[clauses.TableSource]:
+    """Handler to update all expressions in a table source.
+
+    This method does not perform any sanity checks on the updated sources.
+
+    Parameters
+    ----------
+    table_source : clauses.TableSource
+        The source to update. Can be ``None``, in which case no replacement is performed.
+    replacement : Callable[[expr.SqlExpression], expr.SqlExpression]
+        A function mapping each expression to a (potentially updated) expression
+
+    Returns
+    -------
+    Optional[clauses.TableSource]
+        The updated table source. Can be ``None``, if `table_source` already was.
+
+    Raises
+    ------
+    ValueError
+        If the table source is of no known type. This indicates that this method is missing a handler for a specific source
+        type that was added later on.
+    """
     if table_source is None:
         return None
     if isinstance(table_source, clauses.DirectTableSource):
@@ -380,8 +724,30 @@ def _replace_expression_in_table_source(table_source: clauses.TableSource,
         raise TypeError("Unknown table source type: " + str(table_source))
 
 
-def _replace_expressions_in_clause(clause: ClauseType, replacement: Callable[[expr.SqlExpression], expr.SqlExpression]
-                                   ) -> Optional[ClauseType]:
+def _replace_expressions_in_clause(clause: Optional[ClauseType],
+                                   replacement: Callable[[expr.SqlExpression], expr.SqlExpression]) -> Optional[ClauseType]:
+    """Handler to update all expressions in a clause.
+
+    This method does not perform any sanity checks on the updated clauses.
+
+    Parameters
+    ----------
+    clause : ClauseType
+        The clause to update. Can be ``None``, in which case no replacement is performed.
+    replacement : Callable[[expr.SqlExpression], expr.SqlExpression]
+        A function mapping each expression to a (potentially updated) expression
+
+    Returns
+    -------
+    Optional[ClauseType]
+        The updated clause. Can be ``None``, if `clause` already was.
+
+    Raises
+    ------
+    ValueError
+        If the clause is of no known type. This indicates that this method is missing a handler for a specific clause type that
+        was added later on.
+    """
     if not clause:
         return None
 
@@ -422,6 +788,24 @@ def _replace_expressions_in_clause(clause: ClauseType, replacement: Callable[[ex
 
 def replace_expressions(query: QueryType,
                         replacement: Callable[[expr.SqlExpression], expr.SqlExpression]) -> QueryType:
+    """Updates all expressions in a query.
+
+    The replacement handler can either produce entirely new expressions, or simply return the current expression instance if
+    no update should be performed. Be very careful with this method since no sanity checks are performed, other than the rules
+    of `qal.build_query`.
+
+    Parameters
+    ----------
+    query : QueryType
+        The query to update
+    replacement : Callable[[expr.SqlExpression], expr.SqlExpression]
+        A function mapping each of the current expressions in the `query` to potentially updated expressions.
+
+    Returns
+    -------
+    QueryType
+        The updated query
+    """
     replaced_clauses = [_replace_expressions_in_clause(clause, replacement) for clause in query.clauses()]
     return qal.build_query(replaced_clauses)
 
@@ -429,7 +813,24 @@ def replace_expressions(query: QueryType,
 def _perform_predicate_replacement(current_predicate: preds.AbstractPredicate,
                                    target_predicate: preds.AbstractPredicate,
                                    new_predicate: preds.AbstractPredicate) -> preds.AbstractPredicate:
-    """Performs the designated predicate replacement, moving deeper into the predicate tree as necessary."""
+    """Handler to change specific predicates in a predicate hierarchy to other predicates.
+
+    This does not perform any sanity checks on the updated predicate hierarchy, nor is the hierarchy simplified.
+
+    Parameters
+    ----------
+    current_predicate : preds.AbstractPredicate
+        The predicate hierarchy in which the updates should occur
+    target_predicate : preds.AbstractPredicate
+        The predicate that should be replaced
+    new_predicate : preds.AbstractPredicate
+        The new predicate that should be used instead of the `target_predicate`
+
+    Returns
+    -------
+    preds.AbstractPredicate
+        The updated predicate
+    """
     if current_predicate == target_predicate:
         return new_predicate
 
@@ -447,12 +848,29 @@ def _perform_predicate_replacement(current_predicate: preds.AbstractPredicate,
 
 def replace_predicate(query: qal.ImplicitSqlQuery, predicate_to_replace: preds.AbstractPredicate,
                       new_predicate: preds.AbstractPredicate) -> qal.ImplicitSqlQuery:
-    """Rewrites the given query to use `new_predicate` in all occurrences of the other predicate.
+    """Rewrites a specific query to use a new predicate in place of an old one.
 
-    In the current implementation this does only work for top-level predicates, i.e. subqueries and CTEs are not
-    considered. Furthermore, only the WHERE clause and the HAVING clause are modified.
+    In the current implementation this does only work for top-level predicates, i.e. subqueries and CTEs are not considered.
+    Furthermore, only the ``WHERE`` clause and the ``HAVING`` clause are modified, since these should be the only ones that
+    contain predicates.
 
-    If the predicate to replace is not found, nothing happens.
+    If the predicate to replace is not found, nothing happens. In the same vein, no sanity checks are performed on the updated
+    query.
+
+    Parameters
+    ----------
+    query : qal.ImplicitSqlQuery
+        The query update
+    predicate_to_replace : preds.AbstractPredicate
+        The old predicate that should be dropped
+    new_predicate : preds.AbstractPredicate
+        The predicate that should be used in place of `predicate_to_replace`. This can be an entirely different type of
+        predicate, e.g. a conjunction of join conditions that replace a single join predicate.
+
+    Returns
+    -------
+    qal.ImplicitSqlQuery
+        The updated query
     """
     # TODO: also allow replacement in explicit SQL queries
     # TODO: allow predicate replacement in subqueries / CTEs
@@ -478,9 +896,25 @@ def replace_predicate(query: qal.ImplicitSqlQuery, predicate_to_replace: preds.A
 
 def _rename_columns_in_query(query: QueryType,
                              available_renamings: dict[base.ColumnReference, base.ColumnReference]) -> QueryType:
-    """Renames all columns in the query predicate according to the available renamings.
+    """Handler method to replace specific column references by new references for an entire query.
 
-    A renaming maps the current column to the column that should be used instead.
+    Parameters
+    ----------
+    query : QueryType
+        The query to update
+    available_renamings : dict[base.ColumnReference, base.ColumnReference]
+        A dictionary mapping each of the old column values to the values that should be used instead.
+
+    Returns
+    -------
+    QueryType
+        The updated query
+
+    Raises
+    ------
+    TypeError
+        If the query is of no known type. This indicates that this method is missing a handler for a specific query type that
+        was added later on.
     """
     renamed_cte = rename_columns_in_clause(query.cte_clause, available_renamings)
     renamed_select = rename_columns_in_clause(query.select_clause, available_renamings)
@@ -515,9 +949,25 @@ def _rename_columns_in_query(query: QueryType,
 def _rename_columns_in_expression(expression: Optional[expr.SqlExpression],
                                   available_renamings: dict[base.ColumnReference, base.ColumnReference]
                                   ) -> Optional[expr.SqlExpression]:
-    """Renames all columns in the given expression according to the available renamings.
+    """Handler method to replace specific column references by new references in an expression.
 
-    A renaming maps the current column to the column that should be used instead.
+    Parameters
+    ----------
+    expression : Optional[expr.SqlExpression]
+        The expression to update. If ``None``, no renaming is performed.
+    available_renamings : dict[base.ColumnReference, base.ColumnReference]
+        A dictionary mapping each of the old column values to the values that should be used instead.
+
+    Returns
+    -------
+    Optional[expr.SqlExpression]
+        The updated expression. Can be ``None``, if `expression` already was.
+
+    Raises
+    ------
+    ValueError
+        If the expression is of no known type. This indicates that this method is missing a handler for a specific expressoin
+        type that was added later on.
     """
     if expression is None:
         return None
@@ -547,9 +997,25 @@ def _rename_columns_in_expression(expression: Optional[expr.SqlExpression],
 def rename_columns_in_predicate(predicate: Optional[preds.AbstractPredicate],
                                 available_renamings: dict[base.ColumnReference, base.ColumnReference]
                                 ) -> Optional[preds.AbstractPredicate]:
-    """Renames all columns in the given predicate according to the available renamings.
+    """Replaces all references to specific columns in a predicate by new references.
 
-    A renaming maps the current column to the column that should be used instead.
+    Parameters
+    ----------
+    predicate : Optional[preds.AbstractPredicate]
+        The predicate to update. Can be ``None``, in which case no update is performed.
+    available_renamings : dict[base.ColumnReference, base.ColumnReference]
+        A dictionary mapping each of the old column values to the values that should be used instead.
+
+    Returns
+    -------
+    Optional[preds.AbstractPredicate]
+        The updated predicate. Can be ``None``, if `predicate` already was.
+
+    Raises
+    ------
+    ValueError
+        If the query is of no known type. This indicates that this method is missing a handler for a specific query type that
+        was added later on.
     """
     if not predicate:
         return None
@@ -584,6 +1050,26 @@ def rename_columns_in_predicate(predicate: Optional[preds.AbstractPredicate],
 def _rename_columns_in_table_source(table_source: clauses.TableSource,
                                     available_renamings: dict[base.ColumnReference, base.ColumnReference]
                                     ) -> Optional[clauses.TableSource]:
+    """Handler method to replace all references to specific columns by new columns.
+
+    Parameters
+    ----------
+    table_source : clauses.TableSource
+        The source that should be updated
+    available_renamings : dict[base.ColumnReference, base.ColumnReference]
+        A dictionary mapping each of the old column values to the values that should be used instead.
+
+    Returns
+    -------
+    Optional[clauses.TableSource]
+        The updated source. Can be ``None``, if `table_source` already was.
+
+    Raises
+    ------
+    TypeError
+        If the source is of no known type. This indicates that this method is missing a handler for a specific source type that
+        was added later on.
+    """
     if table_source is None:
         return None
     if isinstance(table_source, clauses.DirectTableSource):
@@ -602,9 +1088,25 @@ def _rename_columns_in_table_source(table_source: clauses.TableSource,
 def rename_columns_in_clause(clause: Optional[ClauseType],
                              available_renamings: dict[base.ColumnReference, base.ColumnReference]
                              ) -> Optional[ClauseType]:
-    """Renames all columns in the given clause according to the available renamings.
+    """Replaces all references to specific columns in a clause by new columns.
 
-    A renaming maps the current column to the column that should be used instead.
+    Parameters
+    ----------
+    clause : Optional[ClauseType]
+        The clause to update. Can be ``None``, in which case no update is performed.
+    available_renamings : dict[base.ColumnReference, base.ColumnReference]
+        A dictionary mapping each of the old column values to the values that should be used instead.
+
+    Returns
+    -------
+    Optional[ClauseType]
+        The updated clause. Can be ``None``, if `clause` already was.
+
+    Raises
+    ------
+    ValueError
+        If the clause is of no known type. This indicates that this method is missing a handler for a specific clause type that
+        was added later on.
     """
     if not clause:
         return None
@@ -649,27 +1151,63 @@ def rename_columns_in_clause(clause: Optional[ClauseType],
 
 def rename_table(source_query: QueryType, from_table: base.TableReference, target_table: base.TableReference, *,
                  prefix_column_names: bool = False) -> QueryType:
-    """Changes all occurrences of the `from_table` in the `source_query` to use the `target_table` instead.
+    """Changes all references to a specific table to refer to another table instead.
 
-    If `prefix_column_names` is set to `True`, all renamed columns will also have their name changed to include the
-    original table name. This is mostly used in outer queries where a subquery had the names of the exported columns
-    changed.
+    Parameters
+    ----------
+    source_query : QueryType
+        The query that should be updated
+    from_table : base.TableReference
+        The table that should be replaced
+    target_table : base.TableReference
+        The table that should be used instead
+    prefix_column_names : bool, optional
+        Whether a prefix should be added to column names. If this is ``True``, column references will be changed in two ways:
+
+        1. if they belonged to the `from_table`, they will now belong to the `target_table` after the renaming
+        2. The column names will be changed to include the identifier of the `from_table` as a prefix.
+
+    Returns
+    -------
+    QueryType
+        The updated query
     """
     necessary_renamings: dict[base.ColumnReference, base.ColumnReference] = {}
     for column in filter(lambda col: col.table == from_table, source_query.columns()):
-        new_column_name = f"{column.table.alias}_{column.name}" if prefix_column_names else column.name
+        new_column_name = f"{column.table.identifier()}_{column.name}" if prefix_column_names else column.name
         necessary_renamings[column] = base.ColumnReference(new_column_name, target_table)
     return _rename_columns_in_query(source_query, necessary_renamings)
 
 
 def bind_columns(query: QueryType, *, with_schema: bool = True,
                  db_schema: Optional[db.DatabaseSchema] = None) -> QueryType:
-    """Adds additional metadata to all column references that appear in the given query.
+    """Determines the tables that each column belongs to and sets the appropriate references.
 
-    This sets the `table` reference of all column objects to the actual tables that provide the column. If
-    `with_schema` is `False`, this process only uses the names and aliases of the tables themselves. Otherwise, the
-    database schema (falling back to the schema provided by the `DatabasePool` if necessary) is used to retrieve the
-    tables for all columns where a simple name-based binding does not work.
+    This binding of columns to their tables happens in two phases: During the first phase, a *syntactic* binding is performed.
+    This operates on column names of the form ``<alias>.<column name>``, where ``<alias>`` is either an actual alias of a table
+    from the ``FROM`` clause, or the full name of such a table. For all such names, the reference is set up directly.
+    During the second phase, a *schema* binding is performed. This is applied to all columns that could not be bound during the
+    first phase and involves querying the schema catalog of a live database. It determines which of the tables from the
+    ``FROM`` clause contain a column with a name similar to the name of the unbound column and sets up the corresponding table
+    reference. If multiple tables contain a specific column, any of them might be chosen. The second phase is entirely
+    optional and can be skipped altogether. In this case, some columns might end up without a valid table reference, however.
+    This in turn might break some applications.
+
+    Parameters
+    ----------
+    query : QueryType
+        The query whose columns should be bound
+    with_schema : bool, optional
+        Whether the second binding phase based on the schema catalog of a live database should be performed. This is enabled by
+        default
+    db_schema : Optional[db.DatabaseSchema], optional
+        The schema to use for the second binding phase. If `with_schema` is enabled, but this parameter is ``None``, the schema
+        is inferred based on the current database of the `DatabasePool`. This defaults to ``None``.
+
+    Returns
+    -------
+    QueryType
+        The updated query. Notice that some columns might still remain unbound if none of the phases was able to find a table.
     """
 
     table_alias_map: dict[str, base.TableReference] = {table.identifier(): table for table in query.tables()
