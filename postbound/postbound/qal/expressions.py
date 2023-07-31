@@ -52,6 +52,10 @@ class LogicalSqlOperators(enum.Enum):
     Between = "BETWEEN"
 
 
+UnarySqlOperators: frozenset[LogicalSqlOperators] = frozenset({LogicalSqlOperators.Exists, LogicalSqlOperators.Missing})
+"""The `LogicalSqlOperators` that can be used as unary operators."""
+
+
 class LogicalSqlCompoundOperators(enum.Enum):
     """The supported compound operators.
 
@@ -122,7 +126,7 @@ class SqlExpression(abc.ABC):
 
     @abc.abstractmethod
     def itercolumns(self) -> Iterable[base.ColumnReference]:
-        """Provides all columns that are referenced by this predicate.
+        """Provides all columns that are referenced by this expression.
 
         If a column is referenced multiple times, it is also returned multiple times.
 
@@ -579,6 +583,9 @@ class SubqueryExpression(SqlExpression):
     subqueries' results are transient for the rest of the query. Therefore, this expression only represents the
     subquery part but no name under which the query result can be accessed. This is added by the different parts of the
     `clauses` module (e.g. `WithQuery` or `SubqueryTableSource`).
+
+    This is a leaf expression, i.e. a subquery expression cannot have any more child expressions. However, the subquery itself
+    likely consists of additional expressions.
 
     Parameters
     ----------

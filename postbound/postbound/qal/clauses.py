@@ -1203,7 +1203,7 @@ class From(BaseClause):
         source_predicates = [src.predicates() for src in self._items]
         if not any(source_predicates):
             return None
-        actual_predicates = [src_pred.root() for src_pred in source_predicates if src_pred]
+        actual_predicates = [src_pred.root for src_pred in source_predicates if src_pred]
         merged_predicate = preds.CompoundPredicate.create_and(actual_predicates)
         return preds.QueryPredicates(merged_predicate)
 
