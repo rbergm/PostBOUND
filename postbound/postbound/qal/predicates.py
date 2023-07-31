@@ -670,7 +670,7 @@ class BetweenPredicate(BasePredicate):
     Furthermore, some systems even allow the ``<col>`` part to be an arbitrary expression. For example, in Postgres this is a
     valid query:
 
-    .. code-block::sql
+    .. code-block:: sql
 
         SELECT *
         FROM R JOIN S ON R.a = S.b
@@ -797,7 +797,7 @@ class InPredicate(BasePredicate):
     -----
     Some systems even allow the `column` part to be an arbitrary expression. For example, in Postgres this is a valid query:
 
-    .. code-block::sql
+    .. code-block:: sql
 
         SELECT *
         FROM R JOIN S ON R.a = S.b
@@ -1861,7 +1861,7 @@ class QueryPredicates:
         --------
         The following calls are exactly equivalent:
 
-        .. code-block:py
+        .. code-block:: python
 
             >>> predicates.joins_tables([table1, table2, table3])
             >>> predicates.joins_tables(table1, table2, table3)

@@ -13,7 +13,11 @@ conditions, specified in the `predicates` module) or clauses (specified in the `
 normally part of clauses (such as a ``WHERE`` clause or a ``HAVING`` clause). Finally, clauses are combined to form the
 actual SQL queries (as specified in the `qal` module).
 
-Notice that some references are inherently cyclic: for example, predicates can contain subqueries and
+A common pattern when working with elements of the qal are the `tables` and `columns` methods (along with some other, more
+rarely used ones). These are defined on pretty much all of the qal types and provide access to the tables, respectively the
+columns that are referenced within the current element.
+
+Notice that some references in the qal are inherently cyclic: for example, predicates can contain subqueries and
 the subqueries in turn contain predicates. This might lead to cyclic import errors in certain corner cases. Such
 issues can usually be solved by varying the import sequence slightly.
 
