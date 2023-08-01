@@ -1,8 +1,10 @@
-"""Presets allow to set up optimization pipelines quickly by providing combinations of different algorithms."""
+"""Presets allow to set up optimization pipelines quickly by providing pre-defined combinations of different algorithms.
+
+The current design of the presets is targeted at the `TwoStageOptimizationPipeline`, since this one requires the most setup.
+"""
 from __future__ import annotations
 
-import abc
-from typing import Optional
+from typing import Literal, Optional, Protocol
 
 from postbound.db import db
 from postbound.qal import parser
@@ -14,16 +16,22 @@ from postbound.optimizer.strategies import ues, native
 def apply_standard_system_options(database: Optional[db.Database] = None) -> None:
     """Configures a number of typically used settings for the query optimization process.
 
-    This method requires that a working database connection has been set up. If it is not supplied directly, then it
-    is retrieved from the `DatabasePool`.
+    This method requires that a working database connection has been set up. If it is not supplied directly, it is retrieved
+    from the `DatabasePool`.
 
-    Currently, these settings include:
+    Currently, the applied settings include:
 
     - disabling cached query execution for the current database
     - enabling cached query execution for all statistics-related queries in the database
     - using emulated statistics instead of the native database statistics for better reproducibility (this is why we
-    need cached query execution for the statistics queries)
+      need cached query execution for the statistics queries)
     - enabling auto-binding of columns when parsing queries since we have a working database connection anyway
+
+    Parameters
+    ----------
+    database : Optional[db.Database], optional
+        The database that should be configured. Defaults to ``None``, in which case the system is loaded from the
+        `DatabasePool`.
     """
     database = database if database else db.DatabasePool.get_instance().current_database()
     database.cache_enabled = False
@@ -32,37 +40,67 @@ def apply_standard_system_options(database: Optional[db.Database] = None) -> Non
     parser.auto_bind_columns = True
 
 
-class OptimizationSettings(abc.ABC):
-    """Captures related settings for the `OptimizationPipeline` to make them more easily accessible.
+class OptimizationSettings(Protocol):
+    """Captures related settings for the optimization pipeline to make them more easily accessible.
 
     All components are optional, depending on the specific optimization scenario/approach.
     """
 
-    @abc.abstractmethod
-    def query_pre_check(self) -> validation.OptimizationPreCheck | None:
-        """The required query pre-check."""
-        raise NotImplementedError
+    def query_pre_check(self) -> Optional[validation.OptimizationPreCheck]:
+        """The required query pre-check.
 
-    @abc.abstractmethod
-    def build_join_order_optimizer(self) -> stages.JoinOrderOptimization | None:
-        """The algorithm that is used to obtain the optimized join order."""
-        raise NotImplementedError
+        Returns
+        -------
+        Optional[validation.OptimizationPreCheck]
+            The pre-check if one is necessary, or ``None`` otherwise.
+        """
+        return None
 
-    @abc.abstractmethod
-    def build_physical_operator_selection(self) -> stages.PhysicalOperatorSelection | None:
-        """The algorithm that is used to determine the physical operators."""
-        raise NotImplementedError
+    def build_join_order_optimizer(self) -> Optional[stages.JoinOrderOptimization]:
+        """The algorithm that is used to obtain the optimized join order.
 
-    @abc.abstractmethod
-    def build_plan_parameterization(self) -> stages.ParameterGeneration | None:
-        """The algorithm that is used to further parameterize the query plan."""
-        raise NotImplementedError
+        Returns
+        -------
+        Optional[stages.JoinOrderOptimization]
+            The optimization strategy for the join order, or ``None`` if the scenario does not include a join order
+            optimization.
+        """
+        return None
+
+    def build_physical_operator_selection(self) -> Optional[stages.PhysicalOperatorSelection]:
+        """The algorithm that is used to determine the physical operators.
+
+        Returns
+        -------
+        Optional[stages.PhysicalOperatorSelection]
+            The optimization strategy for the physical operators, or ``None`` if the scenario does not include an operator
+            optimization.
+        """
+        return None
+
+    def build_plan_parameterization(self) -> Optional[stages.ParameterGeneration]:
+        """The algorithm that is used to further parameterize the query plan.
+
+        Returns
+        -------
+        Optional[stages.ParameterGeneration]
+            The parameter optimization strategy, or ``None`` if the scenario does not include such a stage.
+        """
+        return None
 
 
 class UESOptimizationSettings(OptimizationSettings):
     """Provides the optimization settings that are used for the UES query optimizer.
 
-    See Hertzschuch et al.: "Simplicity Done Right for Join Ordering", CIDR'2021 for details.
+    Parameters
+    ----------
+    database : Optional[db.Database], optional
+        The database for which the optimized queries should be executed. This is necessary to initialize the optimization
+        strategies correctly. Defaults to ``None``, in which case the database will be inferred from the `DatabasePool`.
+
+    References
+    ----------
+    .. Hertzschuch et al.: "Simplicity Done Right for Join Ordering", CIDR'2021
     """
 
     def __init__(self, database: Optional[db.Database] = None):
@@ -86,16 +124,18 @@ class UESOptimizationSettings(OptimizationSettings):
     def build_physical_operator_selection(self) -> stages.PhysicalOperatorSelection | None:
         return ues.UESOperatorSelection(self.database)
 
-    def build_plan_parameterization(self) -> stages.ParameterGeneration | None:
-        return None
-
 
 class NativeOptimizationSettings(OptimizationSettings):
+    """Provides the optimization settings to use plans from the native optimizer of a database system.
+
+    Parameters
+    ----------
+    database : Optional[db.Database], optional
+        The database from which the query plans should be retrieved. Defaults to ``None``, in which case the database will be
+        inferred from the `DatabasePool`.
+    """
     def __init__(self, database: Optional[db.Database] = None) -> None:
         self.database = database
-
-    def query_pre_check(self) -> validation.OptimizationPreCheck | None:
-        return None
 
     def build_join_order_optimizer(self) -> stages.JoinOrderOptimization | None:
         return native.NativeJoinOrderOptimizer(self.database)
@@ -103,18 +143,38 @@ class NativeOptimizationSettings(OptimizationSettings):
     def build_physical_operator_selection(self) -> stages.PhysicalOperatorSelection | None:
         return native.NativePhysicalOperatorSelection(self.database)
 
-    def build_plan_parameterization(self) -> stages.ParameterGeneration | None:
-        pass
 
-
-def fetch(key: str, *, database: Optional[db.Database] = None) -> OptimizationSettings:
-    """Provides the optimization settings registered under the given key. Keys are case-insensitive.
+def fetch(key: Literal["ues", "native"], *, database: Optional[db.Database] = None) -> OptimizationSettings:
+    """Provides the optimization settings registered under a specific key.
 
     Currently supported settings are:
 
-    - `UESOptimizationSettings`, available under key "ues"
+    - `UESOptimizationSettings`, available under key ``"ues"``
+    - `NativeOptimizationSettings`, available under key ``"native"``
+
+    All registration happens statically and cannot be changed at runtime.
+
+    Parameters
+    ----------
+    key : Literal["ues"]
+        The key which was used to register the optimization strategy. The comparison happens case-insensitively. Therefore, the
+        key can be written unsing any casing.
+    database : Optional[db.Database], optional
+        The database that is used to optimize and/or execute the optimized queries. The precise usage of this parameter
+        depends on the specific optimization strategy and should be documented there. There could also be optimization
+        strategies that do not use the this parameter at all. Defaults to ``None``, in which case the behavior once again
+        depends on the selected optimization strategy. Typically, the database is inferred from the `DatabasePool` then.
+
+    Returns
+    -------
+    OptimizationSettings
+        The optimization settings that were registered under the given key
+
+    Raises
+    ------
+    ValueError
+        If the key is none of of the allowed values.
     """
-    database = db.DatabasePool.get_instance().current_database() if database is None else database
     if key.upper() == "UES":
         return UESOptimizationSettings(database)
     elif key == "native":
