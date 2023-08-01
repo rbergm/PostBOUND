@@ -667,18 +667,18 @@ def _generate_leading_hint_content(join_tree_node: jointree.AbstractJoinTreeNode
                                     else (inner_child, outer_child))
     else:
         left, right = join_tree_node.left_child, join_tree_node.right_child
-        has_left_bound = math.isfinite(left.upper_bound)
-        has_right_bound = math.isfinite(right.upper_bound)
+        has_left_bound = math.isfinite(left.cardinality)
+        has_right_bound = math.isfinite(right.cardinality)
 
         if not has_left_bound or not has_right_bound:
             inner_child, outer_child = right, left
         # At this point we know that both child nodes have upper bounds
         elif _is_hash_join(join_tree_node, operator_assignment):
             # Apply the same Hash join direction correction as above
-            inner_child, outer_child = (left, right) if left.upper_bound < right.upper_bound else (right, left)
+            inner_child, outer_child = (left, right) if left.cardinality < right.cardinality else (right, left)
         else:
             # Otherwise have the smaller relation be the outer one
-            inner_child, outer_child = (right, left) if right.upper_bound < left.upper_bound else (left, right)
+            inner_child, outer_child = (right, left) if right.cardinality < left.cardinality else (left, right)
 
     inner_hint = _generate_leading_hint_content(inner_child, operator_assignment)
     outer_hint = _generate_leading_hint_content(outer_child, operator_assignment)
