@@ -312,7 +312,7 @@ class MysqlStatisticsInterface(db.DatabaseStatistics):
 
 MysqlJoinHints = {physops.JoinOperators.HashJoin, physops.JoinOperators.NestedLoopJoin}
 MysqlScanHints = {physops.ScanOperators.IndexScan, physops.ScanOperators.SequentialScan}
-MysqlPlanHints = {planparams.HintType.JoinOrderHint}
+MysqlPlanHints = {planparams.HintType.JoinOrderHint, planparams.HintType.OperatorHint}
 
 
 class _MysqlExplainClause(clauses.Explain):

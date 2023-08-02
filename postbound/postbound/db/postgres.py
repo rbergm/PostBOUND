@@ -960,7 +960,7 @@ PostgresScanHints = {physops.ScanOperators.SequentialScan, physops.ScanOperators
 
 PostgresPlanHints = {planparams.HintType.CardinalityHint, planparams.HintType.ParallelizationHint,
                      planparams.HintType.JoinOrderHint, planparams.HintType.JoinSubqueryHint,
-                     planparams.HintType.JoinDirectionHint}
+                     planparams.HintType.JoinDirectionHint, planparams.HintType.OperatorHint}
 """All non-operator hints supported by Postgres, that can be used to enforce additional optimizer behaviour."""
 
 

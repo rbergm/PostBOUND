@@ -140,7 +140,7 @@ class JoinOperatorAssignment:
     def parallel_workers(self) -> float | int:
         """Get the number of parallel processes that should be used in the join.
 
-        "Processes" does not necessarily mean system processes. The database system can also choose to use threads or other
+        "Processes" does not necessarily mean "system processes". The database system can also choose to use threads or other
         means of parallelization. This is not restricted by the join assignment.
 
         Returns
