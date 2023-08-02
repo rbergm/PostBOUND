@@ -41,7 +41,7 @@ def true_cardinalities(label: str) -> planparams.PlanParameterization:
 workloads.workloads_base_dir = "../workloads/"
 pg_db = postgres.connect(config_file=".psycopg_connection_job")
 pg_db.cache_enabled = False
-db_config = pg_db.inspect()
+db_config = pg_db.describe()
 
 print("Reading true cardinalities")
 card_df = pd.read_csv("results/job/job-intermediate-cardinalities.csv",
