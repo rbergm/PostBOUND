@@ -19,6 +19,7 @@ from postbound.util import jsonize
 class BenchmarkResult:
     label: str
     query: str
+    hints: str
     execution_time: float
     query_plan: str
     db_config: str
@@ -41,11 +42,15 @@ workloads.workloads_base_dir = "../workloads/"
 pg_db = postgres.connect(config_file=".psycopg_connection_job")
 pg_db.cache_enabled = False
 db_config = pg_db.inspect()
+
+print("Reading true cardinalities")
 card_df = pd.read_csv("results/job/job-intermediate-cardinalities.csv",
                       converters={"tables": parse_tables_list})
 
 benchmark_results = []
+print("Starting workload execution")
 for label, query in workloads.job().entries():
+    print("Now executing query", query)
     pg_db.prewarm_tables(query.tables())
     original_query = query
     query = pg_db.hinting().generate_hints(query, None, None, true_cardinalities(label))
@@ -54,7 +59,8 @@ for label, query in workloads.job().entries():
     query_end = datetime.now()
     execution_time = (query_end - query_start).total_seconds()
     query_plan = pg_db.execute_query(transform.as_explain_analyze(query))
-    result_wrapper = BenchmarkResult(label, str(original_query), execution_time, jsonize.to_json(query_plan),
+    result_wrapper = BenchmarkResult(label, str(original_query), query.hints.query_hints,
+                                     execution_time, jsonize.to_json(query_plan),
                                      jsonize.to_json(db_config))
     benchmark_results.append(result_wrapper)
 
