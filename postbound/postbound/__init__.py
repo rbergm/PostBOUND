@@ -9,8 +9,8 @@ specific join should be performed. The final pipeline step is to ensure that the
 enforced when executing the query. Notice that PostBOUND does not interfere with the native optimizer of different database
 systems directly, since that would involve a lot of complicated and error-prone code, if it is possible at all. Instead,
 PostBOUND follows an indirect approach and makes use of the fact that many database systems (and specifically all of the
-supported systems) incorporate proprietary extensions to the SQL standard - mostly in the form of so-called _hint blocks_. These
-are SQL comments that can be placed at specific places in the query and have special content which tells the optimizer to
+supported systems) incorporate proprietary extensions to the SQL standard - mostly in the form of so-called *hint blocks*.
+These are SQL comments that can be placed at specific places in the query and have special content which tells the optimizer to
 modify the query execution plan in a certain way. Alternatively, some systems also interpret certain SQL constructs differently
 and disable certain optimization features for them. E.g. by using the explicit ``JOIN ON`` syntax instead of specifying joins
 implicitly through ``FROM`` and ``WHERE`` clause, join order optimization can be disabled for some systems. These

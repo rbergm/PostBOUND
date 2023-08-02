@@ -1,3 +1,4 @@
 dist/
 results/
-
+docs/build/
+docs/source/generated/
