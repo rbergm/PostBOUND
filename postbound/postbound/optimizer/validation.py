@@ -1,4 +1,10 @@
-"""Pre-checks are used to determine whether an input query can be optimized or if it contains unsupported features."""
+"""Pre-checks make sure that optimization strategies and input can be optimized as indicated.
+
+These checks should prevent the optimization of queries that contain features that the optimization algorithm does not support,
+as well as the usage of optimization algorithms that make decisions that the target database cannot enforce.
+
+The `OptimizationPreCheck` defines the abstract interface that all checks should adhere to.
+"""
 from __future__ import annotations
 
 import abc
@@ -11,30 +17,66 @@ from postbound.db import db
 from postbound.qal import qal, expressions, predicates
 from postbound.util import collections as collection_utils, errors
 
-FAILURE_NO_IMPLICIT_FROM_CLAUSE = "NO_IMPLICIT_FROM_CLAUSE"
-FAILURE_NON_EQUI_JOIN = "NON_EQUI_JOIN"
-FAILURE_NON_CONJUNCTIVE_JOIN = "NON_CONJUNCTIVE_JOIN"
-FAILURE_DEPENDENT_SUBQUERY = "DEPENDENT_SUBQUERY"
-FAILURE_HAS_CROSS_PRODUCT = "CROSS_PRODUCT"
-FAILURE_VIRTUAL_TABLES = "VIRTUAL_TABLES"
-FAILURE_JOIN_PREDICATE = "BAD_JOIN_PREDICATE"
+ImplicitFromClauseFailure = "NO_IMPLICIT_FROM_CLAUSE"
+EquiJoinFailure = "NON_EQUI_JOIN"
+ConjunctiveJoinFailure = "NON_CONJUNCTIVE_JOIN"
+DependentSubqueryFailure = "DEPENDENT_SUBQUERY"
+CrossProductFailure = "CROSS_PRODUCT"
+VirtualTablesFailure = "VIRTUAL_TABLES"
+JoinPredicateFailure = "BAD_JOIN_PREDICATE"
 
 
 @dataclass
 class PreCheckResult:
     """Wrapper for a validation result.
 
-    `passed` indicates whether the query can be optimized by the specific strategy. If the query is not supported,
-    `failure_reason` provides descriptions of what went wrong.
+    The result is used in two different ways: to model the check for supported database systems for optimization strategies and
+    to model the check for supported queries for optimization strategies.
+
+    The `ensure_all_passed` method can be used to quickly assert that no problems occurred.
+
+    Attributes
+    ----------
+    passed : bool
+        Indicates whether problems were detected
+    failure_reason : str | list[str], optional
+        Gives details about the problem(s) that were detected
     """
     passed: bool = True
     failure_reason: str | list[str] = ""
 
     @staticmethod
     def with_all_passed() -> PreCheckResult:
+        """Generates a check result without any problems.
+
+        Returns
+        -------
+        PreCheckResult
+            The check result
+        """
         return PreCheckResult()
 
     def ensure_all_passed(self, context: qal.SqlQuery | db.Database | None = None) -> None:
+        """Raises an error if the check contains any failures.
+
+        Depending on the context, a more specific error can be raised. The context is used to infer whether an optimization
+        strategy does not work on a database system, or whether an input query is not supported by an optimization strategy.
+
+        Parameters
+        ----------
+        context : qal.SqlQuery | db.Database | None, optional
+            An indicator of the kind of check that was performed. This influences the kind of error that will be raised in case
+            of failure. Defaults to ``None`` if no further context is available.
+
+        Raises
+        ------
+        errors.StateError
+            In case of failure if there is no additional context available
+        UnsupportedQueryError
+            In case of failure if the context is an SQL query
+        UnsupportedSystemError
+            In case of failure if the context is a database interface
+        """
         if self.passed:
             return
         if context is None:
@@ -45,6 +87,13 @@ class PreCheckResult:
             raise UnsupportedSystemError(context, self.failure_reason)
 
     def _generate_failure_str(self) -> str:
+        """Creates a nice string of the failure messages from `failure_reason`s.
+
+        Returns
+        -------
+        str
+            The failure message
+        """
         if not self.failure_reason:
             return ""
         elif isinstance(self.failure_reason, str):
@@ -57,25 +106,69 @@ class PreCheckResult:
 
 
 class OptimizationPreCheck(abc.ABC):
-    """Basic interface for a pre-check.
+    """The pre-check interface.
 
-    Most importantly, the `check_supported_query` method validates an input query.
+    This is the type that all concrete pre-checks must implement. It contains two check methods that correpond to the checks
+    on the database system and to the check on the input query. Both methods pass on all input data by default and must be
+    overwritten to execute the necessary checks.
+
+    Parameters
+    ----------
+    name : str
+        The name of the check. It should describe what features the check tests and will be used to represent the checks that
+        are present in an optimization pipeline.
     """
 
     def __init__(self, name: str) -> None:
         self.name = name
 
-    @abc.abstractmethod
     def check_supported_query(self, query: qal.SqlQuery) -> PreCheckResult:
-        """Performs the actual validation to check, whether the query contains unsupported features."""
-        raise NotImplementedError
+        """Validates that a specific query does not contain any features that cannot be handled by an optimization strategy.
+
+        Examples of such features can be non-equi join predicates, dependent subqueries or aggregations.
+
+        Parameters
+        ----------
+        query : qal.SqlQuery
+            The query to check
+
+        Returns
+        -------
+        PreCheckResult
+            A description of whether the check passed and an indication of the failures.
+        """
+        return PreCheckResult.with_all_passed()
 
     def check_supported_database_system(self, database_instance: db.Database) -> PreCheckResult:
+        """Validates that a specific database system provides all features that are required by an optimization strategy.
+
+        Examples of such features can be support for cardinality hints or specific operators.
+
+        Parameters
+        ----------
+        database_instance : db.Database
+            The database to check
+
+        Returns
+        -------
+        PreCheckResult
+            A description of whether the check passed and an indication of the failures.
+        """
         return PreCheckResult.with_all_passed()
 
     @abc.abstractmethod
     def describe(self) -> dict:
-        """Provides the description for this check. This should include the query features that are validated."""
+        """Provides a JSON-serializable representation of the specific check, as well as important parameters.
+
+        Returns
+        -------
+        dict
+            The description
+
+        See Also
+        --------
+        postbound.postbound.OptimizationPipeline.describe
+        """
         raise NotImplementedError
 
     def __contains__(self, item: object) -> bool:
@@ -95,10 +188,18 @@ class OptimizationPreCheck(abc.ABC):
 
 
 class CompoundCheck(OptimizationPreCheck):
-    """A compound check combines an arbitrary number of base checks and asserts that all of them are satisfied."""
+    """A compound check combines an arbitrary number of base checks and asserts that all of them are satisfied.
+
+    If multiple checks fail, the `failure_reason` of the result contains all individual failure reasons.
+
+    Parameters
+    ----------
+    checks : Iterable[OptimizationPreCheck]
+        The checks that must all be passed.
+    """
 
     def __init__(self, checks: Iterable[OptimizationPreCheck]) -> None:
-        super().__init__("Compound check")
+        super().__init__("compound-check")
         checks = collection_utils.flatten([check.checks if isinstance(check, CompoundCheck) else [check]
                                            for check in checks if not isinstance(check, EmptyPreCheck)])
         self.checks = [check for check in checks if not isinstance(check, EmptyPreCheck)]
@@ -128,9 +229,24 @@ class CompoundCheck(OptimizationPreCheck):
 
 
 def merge_checks(checks: OptimizationPreCheck | Iterable[OptimizationPreCheck], *more_checks) -> OptimizationPreCheck:
-    """Combines all of the supplied checks into one compound check. Duplicate checks are eliminated as far as possible.
+    """Combines all of the supplied checks into one compound check.
 
-    If there is only a single (unique) check, this is returned directly.
+    This method is smarter than creating a compound check directly. It eliminates duplicate checks as far as possible and
+    ignores empty checks.
+
+    If there is only a single (unique) check, this is returned directly
+
+    Parameters
+    ----------
+    checks : OptimizationPreCheck | Iterable[OptimizationPreCheck]
+        The checks to combine
+    *more_checks
+        Additional checks that should also be included
+
+    Returns
+    -------
+    OptimizationPreCheck
+        A check that combines all of the given checks.
     """
     if not checks:
         return EmptyPreCheck()
@@ -160,12 +276,14 @@ class EmptyPreCheck(OptimizationPreCheck):
 
 
 class ImplicitQueryPreCheck(OptimizationPreCheck):
+    """Check to assert that an input query is a `ImplicitSqlQuery`."""
+
     def __init__(self) -> None:
         super().__init__("implicit-query")
 
     def check_supported_query(self, query: qal.SqlQuery) -> PreCheckResult:
         passed = isinstance(query, qal.ImplicitSqlQuery)
-        failure_reason = "" if passed else FAILURE_NO_IMPLICIT_FROM_CLAUSE
+        failure_reason = "" if passed else ImplicitFromClauseFailure
         return PreCheckResult(passed, failure_reason)
 
     def describe(self) -> dict:
@@ -173,12 +291,14 @@ class ImplicitQueryPreCheck(OptimizationPreCheck):
 
 
 class CrossProductPreCheck(OptimizationPreCheck):
+    """Check to assert that a query does not contain any cross products."""
+
     def __init__(self) -> None:
         super().__init__("no-cross-products")
 
     def check_supported_query(self, query: qal.SqlQuery) -> PreCheckResult:
         no_cross_products = nx.is_connected(query.predicates().join_graph())
-        failure_reason = "" if no_cross_products else FAILURE_HAS_CROSS_PRODUCT
+        failure_reason = "" if no_cross_products else CrossProductFailure
         return PreCheckResult(no_cross_products, failure_reason)
 
     def describe(self) -> dict:
@@ -186,12 +306,14 @@ class CrossProductPreCheck(OptimizationPreCheck):
 
 
 class VirtualTablesPreCheck(OptimizationPreCheck):
+    """Check to assert that a query does not contain any virtual tables."""
+
     def __init__(self) -> None:
         super().__init__("no-virtual-tables")
 
     def check_supported_query(self, query: qal.SqlQuery) -> PreCheckResult:
         no_virtual_tables = all(not table.virtual for table in query.tables())
-        failure_reason = "" if no_virtual_tables else FAILURE_VIRTUAL_TABLES
+        failure_reason = "" if no_virtual_tables else VirtualTablesFailure
         return PreCheckResult(no_virtual_tables, failure_reason)
 
     def describe(self) -> dict:
@@ -199,6 +321,11 @@ class VirtualTablesPreCheck(OptimizationPreCheck):
 
 
 class EquiJoinPreCheck(OptimizationPreCheck):
+    """Check to assert that a query only contains equi-joins.
+
+    This does not restrict the filters in any way. The determination of joins is based on `QueryPredicates.joins`.
+    """
+
     def __init__(self, *, allow_conjunctions: bool = False, allow_nesting: bool = False) -> None:
         super().__init__("equi-joins-only")
         self._allow_conjunctions = allow_conjunctions
@@ -207,7 +334,7 @@ class EquiJoinPreCheck(OptimizationPreCheck):
     def check_supported_query(self, query: qal.SqlQuery) -> PreCheckResult:
         join_predicates = query.predicates().joins()
         all_passed = all(self._perform_predicate_check(join_pred) for join_pred in join_predicates)
-        failure_reason = "" if all_passed else FAILURE_JOIN_PREDICATE
+        failure_reason = "" if all_passed else JoinPredicateFailure
         return PreCheckResult(all_passed, failure_reason)
 
     def describe(self) -> dict:
@@ -218,6 +345,18 @@ class EquiJoinPreCheck(OptimizationPreCheck):
         }
 
     def _perform_predicate_check(self, predicate: predicates.AbstractPredicate) -> bool:
+        """Handler method to dispatch to the appropriate check utility depending on the predicate type.
+
+        Parameters
+        ----------
+        predicate : predicates.AbstractPredicate
+            The predicate to check
+
+        Returns
+        -------
+        bool
+            Whether the predicate passed the check
+        """
         if isinstance(predicate, predicates.BasePredicate):
             return self._perform_base_predicate_check(predicate)
         elif isinstance(predicate, predicates.CompoundPredicate):
@@ -226,6 +365,18 @@ class EquiJoinPreCheck(OptimizationPreCheck):
             return False
 
     def _perform_base_predicate_check(self, predicate: predicates.BasePredicate) -> bool:
+        """Handler method to check a single base predicate.
+
+        Parameters
+        ----------
+        predicate : predicates.BasePredicate
+            The predicate to check
+
+        Returns
+        -------
+        bool
+            Whether the predicate passed the check
+        """
         if not isinstance(predicate, predicates.BinaryPredicate) or len(predicate.columns()) != 2:
             return False
         if predicate.operation != expressions.LogicalSqlOperators.Equal:
@@ -238,6 +389,18 @@ class EquiJoinPreCheck(OptimizationPreCheck):
         return first_is_col and second_is_col
 
     def _perform_compound_predicate_check(self, predicate: predicates.CompoundPredicate) -> bool:
+        """Handler method to check a compound predicate.
+
+        Parameters
+        ----------
+        predicate : predicates.CompoundPredicate
+            The predicate to check
+
+        Returns
+        -------
+        bool
+            Whether the predicate passed the check
+        """
         if not self._allow_conjunctions:
             return False
         elif predicate.operation != expressions.LogicalSqlCompoundOperators.And:
@@ -254,12 +417,14 @@ class EquiJoinPreCheck(OptimizationPreCheck):
 
 
 class DependentSubqueryPreCheck(OptimizationPreCheck):
+    """Check to assert that a query does not contain any dependent subqueries."""
+
     def __init__(self) -> None:
         super().__init__("no-dependent-subquery")
 
     def check_supported_query(self, query: qal.SqlQuery) -> PreCheckResult:
         passed = not any(subquery.is_dependent() for subquery in query.subqueries())
-        failure_reason = "" if passed else FAILURE_DEPENDENT_SUBQUERY
+        failure_reason = "" if passed else DependentSubqueryFailure
         return PreCheckResult(passed, failure_reason)
 
     def describe(self) -> dict:
@@ -267,9 +432,14 @@ class DependentSubqueryPreCheck(OptimizationPreCheck):
 
 
 class UnsupportedQueryError(RuntimeError):
-    """Error to indicate that the specified query cannot be optimized by the selected algorithms.
+    """Error to indicate that a specific query cannot be optimized by a selected algorithms.
 
-    The violated restrictions are provided in the `features` attribute.
+    Parameters
+    ----------
+    query : qal.SqlQuery
+        The unsupported query
+    features : str | list[str], optional
+        The features of the query that are unsupported. Defaults to an empty string
     """
 
     def __init__(self, query: qal.SqlQuery, features: str | list[str] = "") -> None:
@@ -283,9 +453,14 @@ class UnsupportedQueryError(RuntimeError):
 
 
 class UnsupportedSystemError(RuntimeError):
-    """Error to indicate that the selected query plan cannot be enforced on the target system.
+    """Error to indicate that a selected query plan cannot be enforced on a target system.
 
-    For example, this error can be raised if a join algorithm was chosen that the database system does not support.
+    Parameters
+    ----------
+    db_instance : db.Database
+        The database system without a required feature
+    reason : str, optional
+        The features that are not supported. Defaults to an empty string
     """
 
     def __init__(self, db_instance: db.Database, reason: str = "") -> None:
