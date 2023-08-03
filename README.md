@@ -1,10 +1,5 @@
 # PostBOUND
 
-> _PostBOUND is currently undergoing a major refactoring and extension. Until this process is completed, the `main`
-branch still contains a quite outdated version of PostBOUND with a lot of features missing. Check out the
-`quality/grand-refactor` branch for the latest version._
-
-
 PostBOUND is a framework for studying query optimization algorithms for (relational) database systems. It provides
 tools to easily implement prototypes of new optimization algorithms and to compare them in a transparent and
 reproducible way. This repository provides the actual Python implementation of the PostBOUND framework (located in the
