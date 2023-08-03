@@ -6,20 +6,22 @@
 # -- Project information -----------------------------------------------------
 # https://www.sphinx-doc.org/en/master/usage/configuration.html#project-information
 
+import os
+import sys
+sys.path.insert(0, os.path.abspath('../..'))
+
 project = 'PostBOUND'
 copyright = '2023, Database Group @ TU Dresden'
 author = 'Database Group @ TU Dresden'
-release = '0.0.1-alpha'
+release = '0.0.1-beta'
 
 # -- General configuration ---------------------------------------------------
 # https://www.sphinx-doc.org/en/master/usage/configuration.html#general-configuration
 
-import sys
-sys.path.append("../")
-
 extensions = [
+    'sphinx.ext.autosummary',
     'sphinx.ext.autodoc',
-    'numpydoc'
+    'sphinx.ext.napoleon'
 ]
 
 templates_path = ['_templates']
@@ -28,5 +30,15 @@ exclude_patterns = []
 # -- Options for HTML output -------------------------------------------------
 # https://www.sphinx-doc.org/en/master/usage/configuration.html#options-for-html-output
 
-html_theme = 'alabaster'
+html_theme = 'bizstyle'
 html_static_path = ['_static']
+html_theme_options = {
+    'sidebarwidth': 460
+}
+
+# -- Options for API documentation -------------------------------------------------
+
+autodoc_default_options = {
+    'member_order': 'bysource',
+    'special-members': '__init__'
+}

@@ -83,9 +83,11 @@ what it *is not* about.
   of the database system. Nevertheless, hints can be used to specify entire physical query plans consisting of join orders as
   well as the physical operators.
 
+Documentation overview
+======================
+
 .. toctree::
    :maxdepth: 1
-   :caption: Contents:
 
    setup
    optimization_process
@@ -94,7 +96,7 @@ what it *is not* about.
    databases
    infrastructure
    examples
-   api
+   API documentation <generated/modules>
 
 
 Indices and tables
