@@ -1,6 +1,5 @@
 Query abstraction layer
 =======================
 
-`SqlQuery`, clauses, predicates and expressions
-parser and formatter
-transform
+This part of the documentation is still work in progress. In the future, it will describe the ``qal`` package in more detail.
+For now, please refer to its API documentation.

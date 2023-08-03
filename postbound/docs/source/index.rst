@@ -91,7 +91,6 @@ Documentation overview
 
    setup
    optimization_process
-   optimization_pipeline
    qal
    databases
    infrastructure
