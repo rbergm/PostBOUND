@@ -84,9 +84,9 @@ class OptimizationPipeline(Protocol):
         References
         ----------
 
-        .. [1] PostgreSQL query planning options: https://www.postgresql.org/docs/15/runtime-config-query.html
-        .. [2] MySQL optimizer hints: https://dev.mysql.com/doc/refman/8.0/en/optimizer-hints.html
-        .. [3] SQLite ``CROSS JOIN`` handling: https://www.sqlite.org/optoverview.html#crossjoin
+        .. PostgreSQL query planning options: https://www.postgresql.org/docs/15/runtime-config-query.html
+        .. MySQL optimizer hints: https://dev.mysql.com/doc/refman/8.0/en/optimizer-hints.html
+        .. SQLite ``CROSS JOIN`` handling: https://www.sqlite.org/optoverview.html#crossjoin
         """
         raise NotImplementedError
 

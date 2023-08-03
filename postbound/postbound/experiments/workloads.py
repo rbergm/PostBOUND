@@ -2,21 +2,21 @@
 
 The main abstraction provided by this class is the `Workload`. A number of utility functions to read collections of queries
 from different sources and input formats into workload objects exist as well. The pre-defined workloads include the
-Join Order Benchmark [0], Star Schema Benchmark [1] and Stack Benchmark [2]. In order for the utility functions that read those
-workloads to work, PostBOUND assumes that there is a directory which contains the actual queries available somewhere. The
+Join Order Benchmark [0]_, Star Schema Benchmark [1]_ and Stack Benchmark [2]_. In order for the utility functions that read
+those workloads to work, PostBOUND assumes that there is a directory which contains the actual queries available somewhere. The
 precise location can be customized via the `workloads_base_dir` variable.
 
 The expected directory layout is the following:
 
-```
-/ <workloads_base_dir>
-  +- JOB-Queries/
-    +- <queries>
-  +- SSB-Queries/
-    +- <queries>
-  +- Stack-Queries/
-    +- <queries>
-```
+::
+
+    / <workloads_base_dir>
+    +- JOB-Queries/
+        +- <queries>
+    +- SSB-Queries/
+        +- <queries>
+    +- Stack-Queries/
+        +- <queries>
 
 By default, PostBOUND assumes that the workload directory is contained one directory level higher than the root directory that
 contains the PostBOUND source code. The GitHub repository of PostBOUND should have such a file layout by default.
@@ -24,7 +24,7 @@ contains the PostBOUND source code. The GitHub repository of PostBOUND should ha
 References
 ----------
 .. [0] Viktor Leis et al.: How Good Are Query Optimizers, Really? (Proc. VLDB Endow. 9, 3 (2015))
-.. [1] Patrick E. O'Neil et al.: The Star Schema Benchmark and Augmented Fact Table Indexing. (TPCTC’2009)
+.. [1] Patrick E. O'Neil et al.: The Star Schema Benchmark and Augmented Fact Table Indexing. (TPCTC'2009)
 .. [2] Ryan Marcus et al.: Bao: Making Learned Query Optimization Practical. (SIGMOD'2021)
 """
 from __future__ import annotations

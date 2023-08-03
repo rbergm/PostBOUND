@@ -2,7 +2,7 @@
 
 Other than the parsing itself, the process will also execute a basic column binding process. For example, consider
 a query like ``SELECT * FROM R WHERE R.a = 42``. In this case, the binding only affects the column reference ``R.a``
-and sets the table of that column to ``R`. This binding based on column and table names is always performed.
+and sets the table of that column to ``R``. This binding based on column and table names is always performed.
 
 If the table cannot be inferred based on the column name (e.g. for a query like ``SELECT * FROM R, S WHERE a = 42``), a
 second binding phase can be executed. This binding needs a working database connection and queries the database schema

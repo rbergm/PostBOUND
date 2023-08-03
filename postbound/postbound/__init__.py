@@ -22,7 +22,7 @@ On a high-level, the PostBOUND project is structured as follows:
 
 - the `postbound` module contains the actual optimizaiton pipeline
 - the `optimizer` package provides the different optimization strategies, interfaces and some pre-defined algorithms
-- the `qal` packages provides the query abstraction used throughout PostBOUND, as well as logic to parse and transform
+- the `qal` package provides the query abstraction used throughout PostBOUND, as well as logic to parse and transform
   query instances
 - the `db` package contains all parts of PostBOUND that concern database interaction. That includes retrieving data
   from different database systems, as well as generating optimized queries to execute on the database system
