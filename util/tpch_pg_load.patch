@@ -1,4 +1,0 @@
-4c4
-< \set path '/repos/ssb-kit/dbgen/'
----
-> \set path '../../../tpch_data/'

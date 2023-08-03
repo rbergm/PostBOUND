@@ -5,6 +5,8 @@
 
 *
 
+!setup.sh
+
 !.gitignore
 
 !q10
@@ -18,4 +20,3 @@
 
 !q15/
 !q15/0a1a5fb7566117b53a634966e1255aa8c127fff8.sql
-

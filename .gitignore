@@ -164,10 +164,18 @@ cython_debug/
 # Python venv
 dt-venv/
 postbound-venv/
+pb-venv/
 .psycopg_connection
 .psycopg_connection_job
+.psycopg_connection_imdb
 .psycopg_connection_tpch
+.psycopg_connection_ssb
 .psycopg_connection_stack
+.mysql_connection.config
+
+# PostBOUND-specific files
+.query_cache_*.json
+*.pstat
 
 # R env
 .Rproj.user
@@ -176,17 +184,20 @@ postbound-venv/
 # VS code
 .vscode/
 
-# Project specific files
+# PyCharm
+.idea/
 
+# Project specific files
 LocalTest*
 localtest*
 
 # Build files
-util/bin/ 
+util/bin/
 
 # The imdb folder contains all sources for the IMDB dataset, we don't want this in VC
-# The same applies to the TPCH data
+# The same applies to the TPCH, SSB and Stack data
 imdb/
 imdb_data/
 tpch_data/
-
+ssb_data/
+stack_data/

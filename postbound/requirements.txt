@@ -1,0 +1,13 @@
+graphviz
+levenshtein
+matplotlib
+mo-sql-parsing
+mysql-connector-python
+natsort
+networkx
+numpy
+pandas
+plotly
+psycopg[binary]
+scipy
+seaborn

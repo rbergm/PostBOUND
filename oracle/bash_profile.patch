@@ -1,0 +1,5 @@
+
+export ORACLE_SID=XE
+export ORAENV_ASK=NO
+export ORACLE_HOME=/opt/oracle/product/21c/dbhomeXE
+. /opt/oracle/product/21c/dbhomeXE/bin/oraenv
