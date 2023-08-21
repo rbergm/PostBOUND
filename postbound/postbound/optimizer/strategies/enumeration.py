@@ -1,4 +1,8 @@
-"""Provides exhaustive optimization strategies that enumerate all possible plans."""
+"""Enumerative optimization strategies provide all possible plans in an exhaustive manner.
+
+These strategies do not make use of any statistics, etc. to generate "good" plans. Instead, they focus on the structure of the
+plans to generate new plans.
+"""
 from __future__ import annotations
 
 from collections.abc import Generator
@@ -11,12 +15,55 @@ from postbound.optimizer import jointree
 
 def _merge_nodes(start: jointree.LogicalJoinTree | base.TableReference,
                  end: jointree.LogicalJoinTree | base.TableReference) -> jointree.LogicalJoinTree:
+    """Provides a join tree that combines two specific trees or tables.
+
+    This is a shortcut method to merge arbitrary tables or trees without having to check whether a table-based or tree-based
+    merge has to be performed.
+
+    Parameters
+    ----------
+    start : jointree.LogicalJoinTree | base.TableReference
+        The first tree to merge. If this is a base table, it will be treated as a join tree of just a scan of that table.
+    end : jointree.LogicalJoinTree | base.TableReference
+        The second tree to merge. If this is a base table, it will be treated as a join tree of just a scan of that table.
+
+    Returns
+    -------
+    jointree.LogicalJoinTree
+        A join tree combining the input trees. The `start` node will be the left node of the tree and the `end` node will be
+        the right node.
+    """
     start = jointree.LogicalJoinTree.for_base_table(start) if isinstance(start, base.TableReference) else start
     end = jointree.LogicalJoinTree.for_base_table(end) if isinstance(end, base.TableReference) else end
     return start.join_with_subtree(end)
 
 
 def _enumerate_join_graph(join_graph: nx.Graph) -> Generator[jointree.JoinTree]:
+    """Provides all possible join trees based on a join graph.
+
+    Parameters
+    ----------
+    join_graph : nx.Graph
+        The join graph that should be "optimized". Due to the recursive nature of the method, this graph is not limited to a
+        pure join graph as provided by the *qal* module. Instead, it nodes can already by join trees.
+
+    Yields
+    ------
+    Generator[jointree.JoinTree]
+        A possible join tree of the join graph.
+
+    Warnings
+    --------
+    This algorithm does not work for join graphs that contain cross products (i.e. multiple connected components).
+
+    Notes
+    -----
+    This algorithm works in a recursive manner: At each step, two connected nodes are selected. For these nodes, a join is
+    simulated. This is done by generating a join tree for the nodes and merging them into a single node for the join tree. The
+    recursion stops as soon as the graph only consists of a single node. This node represents the join tree for the entire
+    graph. Depending on the order in which the edges are selected, a different join tree is produced. The exhaustive nature of
+    this algorithm guarantees that all possible orders are selected.
+    """
     if len(join_graph.nodes) == 1:
         node = list(join_graph.nodes)[0]
         yield node
@@ -36,15 +83,37 @@ def _enumerate_join_graph(join_graph: nx.Graph) -> Generator[jointree.JoinTree]:
 
 
 class ExhaustiveJoinOrderGenerator:
-    """Utility service that provides access to a generator that systematically produces all possible join trees.
+    """Utility service to provide all possible join trees for an input query.
 
-    The join trees can be bushy and only include cross products if they are already specified in the input query.
+    The service produces a generator that in turn provides the join orders. This is done in the `all_join_orders_for` method.
+    The provided join orders include linear, as well as bushy join trees.
+
+    Warnings
+    --------
+    For now, the underlying algorithm is limited to queries without cross-products.
     """
 
     def all_join_orders_for(self, query: qal.SqlQuery) -> Generator[jointree.LogicalJoinTree]:
-        """Generator that yields all possible join orders for the input query.
+        """Produces a generator for all possible join trees of a query.
 
-        The join trees can be bushy and only include cross products if they are already specified in the input query.
+        Parameters
+        ----------
+        query : qal.SqlQuery
+            The query to "optimize"
+
+        Yields
+        ------
+        Generator[jointree.LogicalJoinTree]
+            A generator that produces all possible join orders for the input query, including bushy trees.
+
+        Raises
+        ------
+        ValueError
+            If the query contains cross products.
+
+        Warnings
+        --------
+        For now, the underlying algorithm is limited to queries without cross-products.
         """
         join_graph = query.predicates().join_graph()
         if len(join_graph.nodes) == 0:
