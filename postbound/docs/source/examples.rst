@@ -14,6 +14,7 @@ Planned contents:
   - cardinality injection
   - pessimistic optimization
 - machine learning
+- visualization
 
 The ``experiments`` directory also contains some ready to run scripts that can serve as first examples (although they are not
 particularly well documented).

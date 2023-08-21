@@ -1,3 +1,10 @@
+"""Implementation of the TONIC algorithm for learned operator selections [1]_.
+
+References
+----------
+
+.. [1] A. Hertzschuch et al.: "Turbo-Charging SPJ Query Plans with Learned Physical Join Operator Selections.", VLDB'2022
+"""
 from __future__ import annotations
 
 import collections
@@ -10,26 +17,72 @@ from postbound.db import db
 from postbound.optimizer import jointree, physops, stages
 from postbound.util import collections as collection_utils, dicts as dict_utils
 
+# TODO: there should be more documentation of the technical design of the QEP-S structure
+# More specifically, this documentation should describe the strategies to integrate subquery nodes, and the QEP-S traversal
+
 
 def _left_query_plan_child(node: db.QueryExecutionPlan) -> db.QueryExecutionPlan:
+    """Infers the left child node for a query execution plan.
+
+    Since query execution plans do not carry a notion of directional children directly, this method applies the following rule:
+    If the plan node contains an outer child, this is the left child. Otherwise, the first child is returned. If the node does
+    not have at least one children,
+
+    Parameters
+    ----------
+    node : db.QueryExecutionPlan
+        The execution plan node for which the children should be found
+
+    Returns
+    -------
+    db.QueryExecutionPlan
+        The child node
+
+    Raises
+    ------
+    IndexError
+        If the node does not contain any children.
+    """
     return node.outer_child if node.outer_child else node.children[0]
 
 
 def _right_query_plan_child(node: db.QueryExecutionPlan) -> db.QueryExecutionPlan:
+    """Infers the right child node for a query execution plan.
+
+    Since query execution plans do not carry a notion of directional children directly, this method applies the following rule:
+    If the plan node contains an inner child, this is the right child. Otherwise, the second child is returned.
+
+    Parameters
+    ----------
+    node : db.QueryExecutionPlan
+        The execution plan node for which the children should be found
+
+    Returns
+    -------
+    db.QueryExecutionPlan
+        The child node
+
+    Raises
+    ------
+    IndexError
+        If the node contains less than two children.
+    """
     return node.inner_child if node.inner_child else node.children[1]
 
 
-def _iterate_join_tree(current_node: jointree.AbstractJoinTreeNode) -> Sequence[jointree.IntermediateJoinNode]:
-    if isinstance(current_node, jointree.BaseTableNode):
-        return []
-    assert isinstance(current_node, jointree.IntermediateJoinNode)
-    left_child, right_child = current_node.left_child, current_node.right_child
-    left_child, right_child = ((right_child, left_child) if right_child.tree_depth() < left_child.tree_depth()
-                               else (left_child, right_child))
-    return list(_iterate_join_tree(right_child)) + [current_node]
-
-
 def _iterate_query_plan(current_node: db.QueryExecutionPlan) -> Sequence[db.QueryExecutionPlan]:
+    """Provides all joins along the deepest join path in the query plan.
+
+    Parameters
+    ----------
+    current_node : db.QueryExecutionPlan
+        The node from which the iteration should start
+
+    Returns
+    -------
+    Sequence[db.QueryExecutionPlan]
+        The join nodes along the deepest path, starting with the deepest nodes.
+    """
     if current_node.is_scan:
         return []
     if not current_node.is_join:
@@ -41,9 +94,46 @@ def _iterate_query_plan(current_node: db.QueryExecutionPlan) -> Sequence[db.Quer
     return list(_iterate_query_plan(right_child)) + [current_node]
 
 
+def _iterate_join_tree(current_node: jointree.AbstractJoinTreeNode) -> Sequence[jointree.IntermediateJoinNode]:
+    """Provides all joins along the deepest join path in the join tree.
+
+    Parameters
+    ----------
+    current_node : jointree.AbstractJoinTreeNode
+        The node from which the iteration should start
+
+    Returns
+    -------
+    Sequence[jointree.IntermediateJoinNode]
+        The joins along the deepest path, starting with the deepest nodes.
+    """
+    if isinstance(current_node, jointree.BaseTableNode):
+        return []
+    assert isinstance(current_node, jointree.IntermediateJoinNode)
+    left_child, right_child = current_node.left_child, current_node.right_child
+    left_child, right_child = ((right_child, left_child) if right_child.tree_depth() < left_child.tree_depth()
+                               else (left_child, right_child))
+    return list(_iterate_join_tree(right_child)) + [current_node]
+
+
 def _normalize_filter_predicate(tables: base.TableReference | Iterable[base.TableReference],
                                 filter_predicate: Optional[predicates.AbstractPredicate]
                                 ) -> Optional[predicates.AbstractPredicate]:
+    """Removes all alias information from a specific set of tables in a predicate.
+
+    Parameters
+    ----------
+    tables : base.TableReference | Iterable[base.TableReference]
+        The tables whose alias information should be removed
+    filter_predicate : Optional[predicates.AbstractPredicate]
+        The predicate from which the alias information should be removed. Can be ``None``, in which case no removal is
+        performed.
+
+    Returns
+    -------
+    Optional[predicates.AbstractPredicate]
+        The normalized predicate or ``None`` if no predicate was given in the first place.
+    """
     if not filter_predicate:
         return None
     tables: set[base.TableReference] = set(collection_utils.enlist(tables))
@@ -55,6 +145,30 @@ def _normalize_filter_predicate(tables: base.TableReference | Iterable[base.Tabl
 
 
 class QepsIdentifier:
+    """Models the identifiers of QEP-S nodes.
+
+    Each identifier can either describe a base table node, or an intermediate join node. This depends on the supplied `tables`.
+    A single table corresponds to a base table node, whereas multiple tables corresponds to the join of the individual base
+    tables. Furthermore, each identifier can optionally be annotated by a filter predicate that can be used to distinguish two
+    identifiers over the same tables.
+
+    Identifiers provide efficient hashing and equality comparisons.
+
+    Parameters
+    ----------
+    tables : base.TableReference | Iterable[base.TableReference]
+        The tables that constitute the QEP-S node. Subquery nodes consist of multiple tables (the tables in the subquery) and
+        scan nodes consist of a single table
+    filter_predicate : Optional[predicates.AbstractPredicate], optional
+        The filter predicate that is used to restrict the allowed tuples of the base table. This does not have any meaning for
+        subquery nodes.
+
+    Raises
+    ------
+    ValueError
+        If no table is supplied (either as a ``None`` argument, or as an empty iterable).
+    """
+
     def __init__(self, tables: base.TableReference | Iterable[base.TableReference],
                  filter_predicate: Optional[predicates.AbstractPredicate] = None) -> None:
         if not tables:
@@ -65,16 +179,38 @@ class QepsIdentifier:
 
     @property
     def table(self) -> Optional[base.TableReference]:
+        """Get the table that is represented by this base table identifier.
+
+        Returns
+        -------
+        Optional[base.TableReference]
+            The table or ``None`` if this node corresponds to a subquery node.
+        """
         if not len(self._tables) == 1:
             return None
         return collection_utils.get_any(self._tables)
 
     @property
     def tables(self) -> frozenset[base.TableReference]:
+        """Get the tables that represent this identifier.
+
+        Returns
+        -------
+        frozenset[base.TableReference]
+            The tables. This can be a set of just a single table for base table identifiers, but the set will never be empty.
+        """
         return self._tables
 
     @property
     def filter_predicate(self) -> Optional[predicates.AbstractPredicate]:
+        """Get the filter predicate that is used to describe this identifier.
+
+        Returns
+        -------
+        Optional[predicates.AbstractPredicate]
+            The predicate. May be ``None`` if no predicate exists or was specified. For subquery node identifiers, this should
+            always be ``None``.
+        """
         return self._filter_predicate
 
     def __hash__(self) -> int:
@@ -95,6 +231,43 @@ class QepsIdentifier:
 
 
 class QepsNode:
+    """Models the a join path with its learned operator costs.
+
+    QEP-S nodes form a tree structure, with each branch corresponding to a different join path. Each node is identified by
+    a `QepsIdentifier` that corresponds to the table or subquery that is joined at this point. The join at each QEP-S node can
+    be determined by the tables of its predecessor nodes and the table(s) in its identifier.
+
+    Each node maintains the costs of different join operators that it has learned so far.
+
+    Take a look at the fundamental paper on TONIC [1] for more details on the different parameters.
+
+    Parameters
+    ----------
+    filter_aware : bool
+        Whether child nodes should be created for each joined table (not filter aware), or for each pair of joined table,
+        filter predicate on that table (filter aware).
+    gamma : float
+        Controls the balance betwee new cost information and learned costs for the physical operators.
+    identifier : Optional[QepsIdentifier], optional
+        The identifier of this node. Can be ``None`` for the root node of the entire QEP-S or for subquery nodes. All other
+        nodes should have a valid identifier.
+    parent : Optional[QepsNode], optional
+        The predecessor node of this node. Can be ``None`` for the root node of the entire QEP-S or for subquery nodes. All
+        other nodes should have a valid parent.
+
+    Attributes
+    ----------
+    operator_costs : dict[physops.JoinOperators, float]
+        The learned costs of different physical join operators to perform the join of the current path with the identifier
+        relation.
+    child_nodes : dict[QepsIdentifier, QepsNode]
+        The children of the current QEP-S node. Each child corresponds to a different join path and a join of a different
+        (potentially intermediate) relation. Children are created automatically as necessary.
+
+    References
+    ----------
+    .. [1] A. Hertzschuch et al.: "Turbo-Charging SPJ Query Plans with Learned Physical Join Operator Selections.", VLDB'2022
+    """
     def __init__(self, filter_aware: bool, gamma: float, *,
                  identifier: Optional[QepsIdentifier] = None, parent: Optional[QepsNode] = None) -> None:
         self.filter_aware = filter_aware
@@ -107,25 +280,73 @@ class QepsNode:
 
     @property
     def subquery_root(self) -> QepsNode:
+        """The subquery that starts at the current node.
+
+        Accessing this property means that this node is a subquery root. All child nodes are joins that should be executed
+        after the subquery.
+
+        If this node has a subquery root, its identifier should be a subquery identifier.
+
+        Returns
+        -------
+        QepsNode
+            The first table in the subquery.
+        """
         if self._subquery_root is None:
             self._subquery_root = QepsNode(self.filter_aware, self.gamma)
         return self._subquery_root
 
-    def path(self) -> Optional[Sequence[QepsIdentifier]]:
+    def path(self) -> Sequence[QepsIdentifier]:
+        """Provides the join path that leads to the current node.
+
+        This includes all identifiers along the path, including the identifier of the current node.
+
+        Returns
+        -------
+        Optional[Sequence[QepsIdentifier]]
+            All identifiers in sequence starting from the root node. For the root node itself, the path is empty.
+        """
         if not self._identifier:
-            return None
+            return []
         parent_path = self._parent.path() if self._parent else []
         return parent_path + [self._identifier] if parent_path else [self._identifier]
 
     def tables(self) -> frozenset[base.TableReference]:
-        qeps_path = self.path()
-        if not qeps_path:
-            return frozenset()
-        return frozenset(collection_utils.set_union(qeps_id.tables for qeps_id in qeps_path))
+        """Provides all tables along the join path that leads to the current node.
+
+        Returns
+        -------
+        frozenset[base.TableReference]
+            All tables of all identifiers along the path. For the root node, the set is empty. Notice that this does only
+            include directly designated tables, i.e. tables from filter predicates are neglected.
+        """
+        return frozenset(collection_utils.set_union(qeps_id.tables for qeps_id in self.path()))
 
     def recommend_operators(self, query: qal.SqlQuery, join_order: Sequence[jointree.IntermediateJoinNode],
                             current_assignment: physops.PhysicalOperatorAssignment, *,
                             _skip_first_table: bool = False) -> None:
+        """Inserts the operator with the minimum cost into an operator assignment.
+
+        This method consumes the join order step-by-step, navigating the QEP-S tree along its path. The recommendation
+        automatically continues with the next child node.
+
+        In case of an unkown join order, the QEP-S tree is prepared to store costs of that sequence later on.
+
+        Parameters
+        ----------
+        query : qal.SqlQuery
+            The query for which operators should be recommended. This parameter is necessary to infer the applicable filter
+            predicates for base tables.
+        join_order : Sequence[jointree.IntermediateJoinNode]
+            A path to navigate the QEP-S tree. The recommendation logic consumes the next join and supplies all future joins to
+            the applicable child node.
+        current_assignment : physops.PhysicalOperatorAssignment
+            Operators that have already been recommended. This structure is successively inflated with repeated recommendation
+            calls.
+        _skip_first_table : bool, optional
+            Internal parameter that should only be set by the QEP-S implementation. This parameter is required to correctly
+            start the path traversal at the bottom join.
+        """
         if not join_order:
             return
 
@@ -168,6 +389,36 @@ class QepsNode:
 
     def integrate_costs(self, query: qal.SqlQuery, query_plan: Sequence[db.QueryExecutionPlan], *,
                         _skip_first_table: bool = False) -> None:
+        """Updates the internal cost model with the costs of the execution plan nodes.
+
+        Notice that the costs of the plan nodes can be calculated using arbitrary strategies and do not need to originate from
+        a physical database system. This allows the usage of arbitrary cost models.
+
+        Parameters
+        ----------
+        query : qal.SqlQuery
+            The query which is used to determine new costs. This parameter is necessary to infer the applicable filter
+            predicates for base tables.
+        query_plan : Sequence[db.QueryExecutionPlan]
+            A sequence of join nodes that provide the updated cost information. The update logic consumes the costs of the
+            first join and delegates all further updates to the next child node. This requires all plan nodes to contain cost
+            information as well as information about the physical join operators.
+        _skip_first_table : bool, optional
+            Internal parameter that should only be set by the QEP-S implementation. This parameter is required to correctly
+            start the path traversal at the bottom join.
+
+        Raises
+        ------
+        ValueError
+            If plan nodes do not contain information about the join costs, or the join operator.
+
+        Notes
+        -----
+        The implementation of the cost integration uses a "look ahead" approach. This means that each QEP-S node determines the
+        next QEP-S node based on the first join in the plan sequence. This node corresponds to a child node of the current
+        QEP-S node. If no such child exists, it will be created. Once the next QEP-S node is determined, it is updated with the
+        costs of the plan node. Afterwards, the cost integration continues with the next plan node on the next QEP-S node.
+        """
         if not query_plan:
             return
 
@@ -208,15 +459,53 @@ class QepsNode:
         qeps_child_node.integrate_costs(query, remaining_nodes)
 
     def current_recommendation(self) -> Optional[physops.JoinOperators]:
+        """Provides the operator with the minimum cost.
+
+        Returns
+        -------
+        Optional[physops.JoinOperators]
+            The best operator, or ``None`` if not enough information exists to make a good decision.
+        """
         return dict_utils.argmin(self.operator_costs) if len(self.operator_costs) > 1 else None
 
     def update_costs(self, operator: physops.JoinOperators, cost: float) -> None:
-        if not operator or math.isinf(cost):
+        """Updates the cost of a specific operator for this node.
+
+        Parameters
+        ----------
+        operator : physops.JoinOperators
+            The operator whose costs should be updated.
+        cost : float
+            The new cost information.
+
+        Raises
+        ------
+        ValueError
+            If the cost is not a valid number (e.g. NaN or infinity)
+        """
+        if not operator or math.isinf(cost) or math.isnan(cost):
             raise ValueError("Operator and cost required")
         current_cost = self.operator_costs[operator]
         self.operator_costs[operator] = cost + self.gamma * current_cost
 
     def inspect(self, *, _current_indentation: int = 0) -> str:
+        """Provides a nice hierarchical representation of the QEP-S structure.
+
+        The representation typically spans multiple lines and uses indentation to separate parent nodes from their
+        children.
+
+        Parameters
+        ----------
+        _current_indentation : int, optional
+            Internal parameter to the `inspect` function. Should not be modified by the user. Denotes how deeply
+            recursed we are in the QEP-S tree. This enables the correct calculation of the current indentation level.
+            Defaults to 0 for the root node.
+
+        Returns
+        -------
+        str
+            A string representatio of the QEP-S
+        """
         if not _current_indentation:
             return "[ROOT]\n" + self._child_inspect(2)
 
@@ -233,15 +522,60 @@ class QepsNode:
         return "\n".join(entry for entry in inspect_entries if entry)
 
     def _init_qeps(self, identifier: QepsIdentifier) -> QepsNode:
+        """Generates a new QEP-S node with a specific identifier.
+
+        The new node "inherits" configuration settings from the current node. This includes filter awareness and gamma value.
+        Likewise, the node is correctly linked up with the current node.
+
+        Parameters
+        ----------
+        identifier : QepsIdentifier
+            The identifier of the new node
+
+        Returns
+        -------
+        QepsNode
+            The new node
+        """
         return QepsNode(self.filter_aware, self.gamma, parent=self, identifier=identifier)
 
     def _make_identifier(self, query: qal.SqlQuery,
                          table: base.TableReference | Iterable[base.TableReference]) -> QepsIdentifier:
+        """Generates an identifier for a specific table(s).
+
+        The concrete identifier information depends on the configuration of this node, e.g. regarding the filter behavior.
+
+        Parameters
+        ----------
+        query : qal.SqlQuery
+            The query for which the QEP-S identifier should be created. This parameter is necessary to infer filter predicates
+            if necessary.
+        table : base.TableReference | Iterable[base.TableReference]
+            The table that should be stored in the identifier. Subquery identifiers will contain multiple tables, but no filter
+            predicate.
+
+        Returns
+        -------
+        QepsIdentifier
+            The identifier
+        """
         table = collection_utils.simplify(table)
         filter_predicate = query.predicates().filters_for(table) if self.filter_aware else None
         return QepsIdentifier(table, filter_predicate)
 
     def _child_inspect(self, indentation: int) -> str:
+        """Worker method to generate the inspection text for child nodes.
+
+        Parameters
+        ----------
+        indentation : int
+            The current indentation level. This parameter will be increased for deeper levels in the QEP-S hierarchy.
+
+        Returns
+        -------
+        str
+            The inspection text
+        """
         prefix = " " * indentation
         child_content = []
         for identifier, child_node in self.child_nodes.items():
@@ -250,6 +584,13 @@ class QepsNode:
         return f"\n{prefix}-----\n".join(child for child in child_content)
 
     def _cost_str(self) -> str:
+        """Generates a human-readable string for the cost information in this node.
+
+        Returns
+        -------
+        str
+            The cost information
+        """
         cost_content = ", ".join(f"{operator.value}={cost}" for operator, cost in self.operator_costs.items())
         return f"[{cost_content}]" if self.operator_costs else "[no cost]"
 
@@ -267,8 +608,36 @@ class QepsNode:
 
 
 class QueryExecutionPlanSynopsis:
+    """The plan synopsis maintains a hierarchy of QEP-S nodes, starting at a single root node.
+
+    Most of the methods this synopsis provides simply delegate to the root node.
+
+    Parameters
+    ----------
+    root : QepsNode
+        The root node of the QEP-S tree. This node does not have any predecessor, nor an identifier.
+
+    See Also
+    --------
+    QepsNode
+    """
+
     @staticmethod
     def create(filter_aware: bool, gamma: float) -> QueryExecutionPlanSynopsis:
+        """Generates a new synopsis with specific settings.
+
+        Parameters
+        ----------
+        filter_aware : bool
+            Whether filter predicates should be included in the QEP-S identifiers.
+        gamma : float
+            The update factor to balance recency and learning of cost information.
+
+        Returns
+        -------
+        QueryExecutionPlanSynopsis
+            The synopsis
+        """
         root = QepsNode(filter_aware, gamma)
         return QueryExecutionPlanSynopsis(root)
 
@@ -277,22 +646,77 @@ class QueryExecutionPlanSynopsis:
 
     def recommend_operators(self, query: qal.SqlQuery,
                             join_order: jointree.JoinTree) -> physops.PhysicalOperatorAssignment:
+        """Provides the optimal operators according to the current QEP-S for a specific join order.
+
+        Parameters
+        ----------
+        query : qal.SqlQuery
+            The query for which the operators should be optimized
+        join_order : jointree.JoinTree
+            A join order to traverse the QEP-S
+
+        Returns
+        -------
+        physops.PhysicalOperatorAssignment
+            The best operators as learned by the QEP-S
+        """
         current_assignment = (join_order.physical_operators() if isinstance(join_order, jointree.PhysicalQueryPlan)
                               else physops.PhysicalOperatorAssignment())
         self.root.recommend_operators(query, _iterate_join_tree(join_order.root), current_assignment)
         return current_assignment
 
     def integrate_costs(self, query: qal.SqlQuery, query_plan: db.QueryExecutionPlan) -> None:
+        """Updates the cost information of the QEP-S with the costs from the query plan.
+
+        Parameters
+        ----------
+        query : qal.SqlQuery
+            The query correponding to the execution plan
+        query_plan : db.QueryExecutionPlan
+            An execution plan providing the operators and their costs. This information is used for the QEP-S traversal as well
+            as the actual update.
+        """
         self.root.integrate_costs(query, _iterate_query_plan(query_plan.simplify()))
 
     def reset(self) -> None:
+        """Removes all learned information from the QEP-S.
+
+        This does not only include cost information, but also the tree structure itself.
+        """
         self.root = QepsNode(self.root.filter_aware, self.root.gamma)
 
     def inspect(self) -> str:
+        """Provides a nice hierarchical representation of the QEP-S structure.
+
+        The representation typically spans multiple lines and uses indentation to separate parent nodes from their
+        children.
+
+        Returns
+        -------
+        str
+            A string representatio of the QEP-S
+        """
         return self.root.inspect()
 
 
 def make_qeps(path: Iterable[base.TableReference], root: Optional[QepsNode] = None, *, gamma: float = 0.8) -> QepsNode:
+    """Generates a QEP-S for the given join path.
+
+    Parameters
+    ----------
+    path : Iterable[base.TableReference]
+        The join sequence corresponding to the branch in the QEP-S.
+    root : Optional[QepsNode], optional
+        An optional root node. If this is specified, a branch below that node is inserted. This can be used to construct bushy
+        QEP-S via repeated calls to `make_qeps`.
+    gamma : float, optional
+        The update factor to balance recency and learning of cost information. Defaults to 0.8
+
+    Returns
+    -------
+    QepsNode
+        The QEP-S. The synopsis is not filter-aware.
+    """
     current_node = root if root is not None else QepsNode(False, gamma)
     root = current_node
     for table in path:
@@ -301,6 +725,24 @@ def make_qeps(path: Iterable[base.TableReference], root: Optional[QepsNode] = No
 
 
 class TonicOperatorSelection(stages.PhysicalOperatorSelection):
+    """Implementation of the TONIC/QEP-S learned operator recommendation.
+
+    The implementation supports bushy join orders, plain QEP-S and filter-aware QEP-S
+
+    Parameters
+    ----------
+    filter_aware : bool, optional
+        Whether to use the filter-aware QEP-S or the plain QEP-S. Defaults to ``False``, which creates a plain QEP-S.
+    gamma : float, optional
+        Cost update factor to mediate the bias towards more recent cost information.
+    database : Optional[db.Database], optional
+        A database to use for the incorporation of native operator costs. If this parameter is omitted, it will be inferred
+        from the database pool.
+
+    References
+    ----------
+    .. A. Hertzschuch et al.: "Turbo-Charging SPJ Query Plans with Learned Physical Join Operator Selections.", VLDB'2022
+    """
 
     def __init__(self, filter_aware: bool = False, gamma: float = 0.8, *,
                  database: Optional[db.Database] = None) -> None:
@@ -311,21 +753,46 @@ class TonicOperatorSelection(stages.PhysicalOperatorSelection):
         self._db = database if database else db.DatabasePool.get_instance().current_database()
 
     def integrate_cost(self, query: qal.SqlQuery, query_plan: Optional[db.QueryExecutionPlan] = None) -> None:
+        """Uses cost information from a query plan to update the QEP-S costs.
+
+        Notice that the costs stored in the query plan do not need to correspond to native costs. Instead, the costs can be
+        calculated using arbitrary cost models.
+
+        Parameters
+        ----------
+        query : qal.SqlQuery
+            The query for which the query plan was created.
+        query_plan : Optional[db.QueryExecutionPlan], optional
+            The query plan which contains the cost information. If this parameter is omitted, the native optimizer of the
+            `database` will be queried to obtain the costs of the input query. Notice that is enables the integration of costs
+            for arbitrary query plans by setting the hint block of the query.
+        """
         query_plan = self._db.optimizer().query_plan(query) if query_plan is None else query_plan
         self.qeps.integrate_costs(query, query_plan)
 
     def simulate_feedback(self, query: qal.SqlQuery) -> None:
-        analyze_plan = self._db.optimizer().analyze_plan(query)
-        self.incorporate_feedback(query, analyze_plan)
+        """Updates the QEP-S cost information with feedback from a specific query.
 
-    def incorporate_feedback(self, query: qal.SqlQuery, analyze_plan: db.QueryExecutionPlan):
-        if not analyze_plan.is_analyze():
-            raise ValueError("Analyze plan required, but normal plan received")
+        This feedback process operates in two stages: in the first stage, the query is executed in *analyze* mode on the native
+        optimizer of the database. This results in two crucial sets of information: the actual physical query plan, as well as
+        the true cardinalities at each operator. In the second phase, the same input query is enriched with the former plan
+        information, as well as the true cardinalities. For this modified query the native optimizer is once again used to
+        obtain a query plan. However, this time the cost information is based on the former query plan, but with the true
+        cardinalities. Therefore, it resembles the true cost of the query for the database system. Finally, this cost
+        information is used to update the QEP-S.
+
+        Parameters
+        ----------
+        query : qal.SqlQuery
+            The query to obtain the cost for
+        """
+        analyze_plan = self._db.optimizer().analyze_plan(query)
         physical_qep = jointree.PhysicalQueryPlan.load_from_query_plan(analyze_plan, query)
         hinted_query = self._db.hinting().generate_hints(query, physical_qep)
         self.integrate_cost(hinted_query)
 
     def reset(self) -> None:
+        """Generates a brand new QEP-S."""
         self.qeps.reset()
 
     def select_physical_operators(self, query: qal.SqlQuery,
@@ -339,5 +806,17 @@ class TonicOperatorSelection(stages.PhysicalOperatorSelection):
         return {"name": "tonic", "filter_aware": self.filter_aware, "gamma": self.gamma}
 
     def _obtain_native_join_order(self, query: qal.SqlQuery) -> jointree.LogicalJoinTree:
+        """Generates the join order for a specific query based on the native database optimizer.
+
+        Parameters
+        ----------
+        query : qal.SqlQuery
+            The query to obtain the join order for
+
+        Returns
+        -------
+        jointree.LogicalJoinTree
+            The join order the database system would use
+        """
         native_plan = self._db.optimizer().query_plan(query)
         return jointree.LogicalJoinTree.load_from_query_plan(native_plan, query)

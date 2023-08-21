@@ -1,4 +1,14 @@
-"""Provides access to the optimization decisions made by the native database system optimizer"""
+"""Native strategies obtain execution plans from actual database management systems.
+
+Instead of performing optimizations on their own, the native stages delegate all decisions to a specific database system.
+Afterwards, they analyze the query plan and encode the relevant information in a stage-specific format.
+
+Notes
+-----
+By combining native stages with different target database systems, the optimizers of the respective systems can be combined.
+For example, combining a join ordering stage with an Oracle backend and an operator selection stage with a Postgres backend
+would provide a combined query optimizer with Oracle's join ordering algorithm and Postgres' operator selection.
+"""
 from __future__ import annotations
 
 from typing import Optional
@@ -9,6 +19,13 @@ from postbound.optimizer import jointree, physops, planparams, stages
 
 
 class NativeJoinOrderOptimizer(stages.JoinOrderOptimization):
+    """Obtains the join order for an input query by using the optimizer of an actual database system.
+
+    Parameters
+    ----------
+    db_instance : db.Database
+        The target database whose optimization algorithm should be used.
+    """
 
     def __init__(self, db_instance: db.Database) -> None:
         super().__init__()
@@ -23,6 +40,16 @@ class NativeJoinOrderOptimizer(stages.JoinOrderOptimization):
 
 
 class NativePhysicalOperatorSelection(stages.PhysicalOperatorSelection):
+    """Obtains the physical operators for an input query by using the optimizer of an actual database system.
+
+    Since this process normally is the second stage in the optimization pipeline, the operators are selected according to a
+    specific join order. If no such order exists, it is also determined by the database system.
+
+    Parameters
+    ----------
+    db_instance : db.Database
+        The target database whose optimization algorithm should be used.
+    """
 
     def __init__(self, db_instance: db.Database) -> None:
         super().__init__()
@@ -42,6 +69,16 @@ class NativePhysicalOperatorSelection(stages.PhysicalOperatorSelection):
 
 
 class NativePlanParameterization(stages.ParameterGeneration):
+    """Obtains the plan parameters for an inpuit querry by using the optimizer of an actual database system.
+
+    This process determines the parameters according to a join order and physical operators. If no such information exists, it
+    is also determined by the database system.
+
+    Parameters
+    ----------
+    db_instance : db.Database
+        The target database whose optimization algorithm should be used.
+    """
 
     def __init__(self, db_instance: db.Database) -> None:
         super().__init__()
@@ -56,6 +93,27 @@ class NativePlanParameterization(stages.ParameterGeneration):
         query_plan = self.db_instance.optimizer().query_plan(query)
         join_tree = jointree.PhysicalQueryPlan.load_from_query_plan(query_plan)
         return join_tree.plan_parameters()
+
+    def describe(self) -> dict:
+        return {"name": "native", "database_system": self.db_instance.describe()}
+
+
+class NativeOptimizer(stages.CompleteOptimizationAlgorithm):
+    """Obtains a complete query execution plan by using the optimizer of an actual database system.
+
+    Parameters
+    ----------
+    db_instance : db.Database
+        The target database whose optimization algorithm should be used.
+    """
+
+    def __init__(self, db_instance: db.Database) -> None:
+        super().__init__()
+        self.db_instance = db_instance
+
+    def optimize_query(self, query: qal.SqlQuery) -> jointree.PhysicalQueryPlan:
+        query_plan = self.db_instance.optimizer().query_plan(query)
+        return jointree.PhysicalQueryPlan.load_from_query_plan(query_plan)
 
     def describe(self) -> dict:
         return {"name": "native", "database_system": self.db_instance.describe()}
