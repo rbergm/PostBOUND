@@ -1076,6 +1076,11 @@ class BaseTableNode(AbstractJoinTreeNode[JoinMetadataType, BaseTableMetadataType
     def is_zigzag(self) -> bool:
         return True
 
+    def lookup(self, tables: set[base.TableReference]) -> Optional[base.TableReference]:
+        if len(tables) == 1 and self.table in tables:
+            return self.table
+        return None
+
     def tree_depth(self) -> int:
         return 1
 
