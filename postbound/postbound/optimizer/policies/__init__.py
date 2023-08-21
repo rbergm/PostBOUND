@@ -1,5 +1,4 @@
-"""
-The policies module provides interfaces to parameterize different aspects of query optimization algorithms.
+"""The policies module provides interfaces to parameterize different aspects of query optimization algorithms.
 
 Policies differ from the abstract interfaces for each of the optimization stages in that the stages change the used
 optimization algorithms. The policies change smaller details about those algorithms.

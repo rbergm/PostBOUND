@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import abc
-from typing import Optional
 
 from postbound.db import db
 from postbound.qal import base, clauses, predicates, qal
@@ -10,12 +9,17 @@ from postbound.optimizer import joingraph, validation
 
 
 class BaseTableCardinalityEstimator(abc.ABC):
-    """The base table estimator calculates cardinality estimates for filtered base tables
-
-    This can be considered a meta-strategy that is used by the actual join enumerator or operator selector.
+    """The base table estimator calculates cardinality estimates for filtered base tables.
 
     Implementations could for example use direct computation based on advanced statistics, sampling strategies or
     machine learning-based approaches.
+
+    Each strategy provides dict-like access to the estimates: ``estimator[my_table]`` works as expected.
+
+    Parameters
+    ----------
+    name : str
+        The name of the actual estimation strategy.
     """
 
     def __init__(self, name: str) -> None:
@@ -23,48 +27,92 @@ class BaseTableCardinalityEstimator(abc.ABC):
 
     @abc.abstractmethod
     def setup_for_query(self, query: qal.SqlQuery) -> None:
-        """
-        The setup functionality allows the estimator to prepare internal data structures such that the input query can
-        be optimized.
+        """Enables the estimator to prepare internal data structures.
+
+        Parameters
+        ----------
+        query : qal.SqlQuery
+            The query for which cardinalities should be estimated.
         """
         raise NotImplementedError
 
     @abc.abstractmethod
     def estimate_for(self, table: base.TableReference) -> int:
-        """Calculates the estimate for the given (potentially filtered) base table.
+        """Calculates the cardinality for an arbitrary base table of the query.
 
-        The table can be assumed to not be part of any intermediate result so far.
+        If the query is not filtered, this method should fall back to `estimate_total_rows`. Furthermore, the table can be
+        assumed to not be part of any intermediate result, yet.
 
-        At this point, the appropriate filter predicates could have determined during the query-specific estimator
-        setup.
+        Parameters
+        ----------
+        table : base.TableReference
+            The table to estimate.
 
-        This method falls back to `estimate_total_rows` if the given table is not filtered.
+        Returns
+        -------
+        int
+            The estimated number of rows
         """
         raise NotImplementedError
 
     @abc.abstractmethod
     def estimate_total_rows(self, table: base.TableReference) -> int:
-        """Calculates an estimate of the number of rows in the table, ignoring all filter predicates."""
+        """Calculates an estimate of the number of rows in the table, ignoring all filter predicates.
+
+        Parameters
+        ----------
+        table : base.TableReference
+            The table to estimate.
+
+        Returns
+        -------
+        int
+            The estimated number of rows
+        """
         raise NotImplementedError
 
     @abc.abstractmethod
     def describe(self) -> dict:
-        """Provides a representation of the selected cardinality estimation strategy."""
+        """Provides a JSON-serializable representation of the selected cardinality estimation strategy.
+
+        Returns
+        -------
+        dict
+            The representation
+        """
         raise NotImplementedError
 
-    def pre_check(self) -> Optional[validation.OptimizationPreCheck]:
-        """Provides requirements that an input query has to satisfy in order for the estimator to work properly."""
-        return None
+    def pre_check(self) -> validation.OptimizationPreCheck:
+        """Provides requirements that an input query has to satisfy in order for the estimator to work properly.
+
+        Returns
+        -------
+        validation.OptimizationPreCheck
+            The requirements check
+        """
+        return validation.EmptyPreCheck()
 
     def __getitem__(self, item: base.TableReference) -> int:
         return self.estimate_for(item)
 
+    def __repr__(self) -> str:
+        return str(self)
+
+    def __str__(self) -> str:
+        return f"BaseTableCardinalityEstimator[{self.name}]"
+
 
 class NativeCardinalityEstimator(BaseTableCardinalityEstimator):
-    """Delegates the estimation process to the native optimizer of the database system."""
+    """Provides cardinality estimates for base tables using the optimizer of some database system.
+
+    Parameters
+    ----------
+    database : db.Database
+        The database system that should be used to obtain the estimates
+    """
 
     def __init__(self, database: db.Database) -> None:
-        super().__init__("Native optimizer")
+        super().__init__("native_optimizer")
         self.database = database
         self.query: qal.SqlQuery | None = None
 
@@ -89,20 +137,25 @@ class NativeCardinalityEstimator(BaseTableCardinalityEstimator):
         return self.database.statistics().total_rows(table, emulated=True)
 
     def describe(self) -> dict:
-        return {"name": "native"}
+        return {"name": "native", "database": self.database.describe()}
 
 
 class PreciseCardinalityEstimator(BaseTableCardinalityEstimator):
-    """Obtains the true cardinality counts by executing COUNT queries against the database system.
+    """Obtains true cardinality counts by executing COUNT queries against a database system.
 
-    This strategy provides a better reproducibility than the native estimates, but can be more compute-intense if
-    caching is disabled.
+    This strategy provides a better reproducibility than the native estimates, but can be more compute-intense if caching is
+    disabled.
 
     The executed COUNT queries account for all filters on the base table.
+
+    Parameters
+    ----------
+    database : db.Database
+        The database system that should be used to obtain the estimates
     """
 
     def __init__(self, database: db.Database) -> None:
-        super().__init__("Precise estimator")
+        super().__init__("precise_estimates")
         self.database = database
         self.query: qal.SqlQuery | None = None
 
@@ -127,45 +180,77 @@ class PreciseCardinalityEstimator(BaseTableCardinalityEstimator):
         return self.database.statistics().total_rows(table, emulated=False)
 
     def describe(self) -> dict:
-        return {"name": "precise"}
+        return {"name": "precise", "database": self.database.describe()}
 
 
 class JoinBoundCardinalityEstimator(abc.ABC):
     """The join cardinality estimator calculates cardinality estimates for arbitrary n-ary joins.
 
-    This can be considered a meta-strategy that is used by the actual join enumerator or operator selector.
-
     Implementations could for example use direct computation based on advanced statistics, sampling strategies or
     machine learning-based approaches.
+
+    Parameters
+    ----------
+    name : str
+        The name of the actual estimation strategy.
     """
 
     def __init__(self, name: str) -> None:
         self.name = name
 
+    @abc.abstractmethod
     def setup_for_query(self, query: qal.SqlQuery) -> None:
-        """
-        The setup functionality allows the estimator to prepare internal data structures such that the input query can
-        be optimized.
+        """Enables the estimator to prepare internal data structures.
 
-        The statistics container provides access to the underlying statistical data. This should be adjusted such that
-        the cardinality estimator can work with the provided statistics by the optimization algorithm that uses the
-        cardinality estimates.
+        Parameters
+        ----------
+        query : qal.SqlQuery
+            The query for which cardinalities should be estimated.
         """
-        pass
+        raise NotImplementedError
 
     @abc.abstractmethod
     def estimate_for(self, join_edge: predicates.AbstractPredicate, join_graph: joingraph.JoinGraph) -> int:
-        """Calculates the cardinality estimate for the given join predicate, given the current state in the join graph.
+        """Calculates the cardinality estimate for a specific join predicate, given the current state in the join graph.
 
-        How the join predicate should be interpreted is completely up to the estimator implementation.
+        Parameters
+        ----------
+        join_edge : predicates.AbstractPredicate
+            The predicate that should be estimated.
+        join_graph : joingraph.JoinGraph
+            A graph describing the currently joined relations as well as the join types (e.g. primary key/foreign key or n:m
+            joins).
+
+        Returns
+        -------
+        int
+            The estimated join cardinality
         """
         raise NotImplementedError
 
     @abc.abstractmethod
     def describe(self) -> dict:
-        """Provides a representation of the selected cardinality estimation strategy."""
+        """Provides a JSON-serializable representation of the selected cardinality estimation strategy.
+
+        Returns
+        -------
+        dict
+            The representation
+        """
         raise NotImplementedError
 
-    def pre_check(self) -> Optional[validation.OptimizationPreCheck]:
-        """Provides requirements that an input query has to satisfy in order for the estimator to work properly."""
-        return None
+    def pre_check(self) -> validation.OptimizationPreCheck:
+        """Provides requirements that an input query has to satisfy in order for the estimator to work properly.
+
+        Returns
+        -------
+        validation.OptimizationPreCheck
+            The requirements check
+        """
+        return validation.EmptyPreCheck()
+
+    def __repr__(self) -> str:
+        return str(self)
+
+    def __str__(self) -> str:
+        return f"JoinCardinalityEstimator[{self.name}]"
