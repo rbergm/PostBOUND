@@ -111,7 +111,7 @@ In addition to the framework implementation, a couple of extra directories are p
 |------------|----------|
 | `analysis` | contains Jupyter notebooks that contain tests for third-party libraries that are used by PostBOUND. |
 | `docs`     | contains the high-level documentation as well as infrastructure to export the source code documentation |
-| `examples` | contains general examples for typical usage scenarios. These should be run from the root directory, e.g. as `python3 examples/example-01-basic-workflow.py` |
+| `examples` | contains general examples for typical usage scenarios. These should be run from the root directory, e.g. as `python3 -m examples.example-01-basic-workflow` |
 | `tests`    | contains the unit tests and integration tests for the framework implementatino. These should also be run from the root directory, e.g. as `python3 -m unittest tests` |
 
 
