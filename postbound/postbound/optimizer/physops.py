@@ -9,6 +9,7 @@ from dataclasses import dataclass
 from typing import Iterable
 
 from postbound.qal import base
+from postbound.util import dicts as dict_utils
 
 
 class ScanOperators(enum.Enum):
@@ -450,6 +451,17 @@ class PhysicalOperatorAssignment:
             return self.join_operators.get(frozenset(item), None)
         else:
             return None
+
+    def __hash__(self) -> int:
+        return hash((dict_utils.hash_dict(self.global_settings),
+                     dict_utils.hash_dict(self.scan_operators),
+                     dict_utils.hash_dict(self.join_operators)))
+
+    def __eq__(self, other: object) -> bool:
+        return (isinstance(other, type(self))
+                and self.global_settings == other.global_settings
+                and self.scan_operators == other.scan_operators
+                and self.join_operators == other.join_operators)
 
     def __repr__(self) -> str:
         return str(self)
