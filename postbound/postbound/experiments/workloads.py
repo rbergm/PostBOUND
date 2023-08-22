@@ -82,6 +82,12 @@ class Workload(collections.UserDict[LabelType, qal.SqlQuery]):
     root : Optional[pathlib.Path], optional
         The root directory that contains the workload queries. This is mainly used to somehow identify the workload when no
         name is given or the workload contents do not match the expected queries. Defaults to ``None``.
+
+    Notes
+    -----
+    Workloads support many of the Python builtin-methods thanks to inheriting from ``UserDict``. Namely, the *len*, *iter* and
+    *in* methods work as expected on the labels. Furthermore, multiple workload objects can be added, subtracted and
+    intersected using set semantics.
     """
 
     @staticmethod
@@ -365,6 +371,26 @@ class Workload(collections.UserDict[LabelType, qal.SqlQuery]):
     def _update_query_order(self) -> None:
         """Enforces that the order of the queries matches the order of the labels."""
         self._sorted_queries = [self.data[label] for label in self._sorted_labels]
+
+    def __add__(self, other: Workload[LabelType]) -> Workload[LabelType]:
+        if not isinstance(other, Workload):
+            raise TypeError("Can only add workloads together")
+        return Workload(other.data | self.data, name=self._name, root=self._root)  # retain own labels in case of conflict
+
+    def __sub__(self, other: Workload[LabelType]) -> Workload[LabelType]:
+        if not isinstance(other, Workload):
+            raise TypeError("Can only subtract workloads")
+        return Workload(dict_utils.difference(self.data, other.data), name=self._name, root=self._root)
+
+    def __and__(self, other: Workload[LabelType]) -> Workload[LabelType]:
+        if not isinstance(other, Workload):
+            raise TypeError("Can only compute intersection of workloads")
+        return Workload(dict_utils.intersection(self.data, other.data), name=self._name, root=self._root)
+
+    def __or__(self, other: Workload[LabelType]) -> Workload[LabelType]:
+        if not isinstance(other, Workload):
+            raise TypeError("Can only compute union of workloads")
+        return Workload(other.data | self.data, name=self._name, root=self._root)  # retain own labels in case of conflict
 
     def __repr__(self) -> str:
         return str(self)

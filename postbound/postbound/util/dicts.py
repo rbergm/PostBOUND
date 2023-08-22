@@ -36,6 +36,42 @@ def value(dictionary: dict[K, V]) -> V:
     return next(iter(dictionary.values()))
 
 
+def difference(a: dict[K, V], b: dict[K, V]) -> dict[K, V]:
+    """Computes the set difference between two dictionaries based on their keys.
+
+    Parameters
+    ----------
+    a : dict[K, V]
+        The dict to remove entries from
+    b : dict[K, V]
+        The entries to remove
+
+    Returns
+    -------
+    dict[K, V]
+        A dictionary that contains all *key, value* pairs from *a* where the *key* is not in *b*.
+    """
+    return {k: v for k, v in a.items() if k not in b}
+
+
+def intersection(a: dict[K, V], b: dict[K, V]) -> dict[K, V]:
+    """Computes the set intersection between two dictionaries based on their keys.
+
+    Parameters
+    ----------
+    a : dict[K, V]
+        The first dictionary
+    b : dict[K, V]
+        The second dictionary
+
+    Returns
+    -------
+    dict[K, V]
+        A dictionary that contains all *key, value* pairs from *a* where the *key* is also in *b*.
+    """
+    return {k: v for k, v in a.items() if k in b}
+
+
 def merge(a: dict[K, V], b: dict[K, V], *, updater: Optional[Callable[[K, V, V], V]] = None) -> dict[K, V]:
     """Creates a new dict containing all key/values pairs from both argument dictionaries.
 
