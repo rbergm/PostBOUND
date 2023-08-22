@@ -1372,10 +1372,10 @@ class QueryExecutionPlan:
         *C_out* is defined as
 
         .. math ::
-            C_{out}(T) = \begin{cases}
-                |T|, & \text{if T is a single relation} \\
-                |T| + C_{out}(T_1) + C_{out}(T_2), & \text{if } T = T_1 \bowtie T_2
-            \end{cases}
+            C_{out}(T) = \\begin{cases}
+                |T|, & \\text{if T is a single relation} \\\\
+                |T| + C_{out}(T_1) + C_{out}(T_2), & \\text{if } T = T_1 \\bowtie T_2
+            \\end{cases}
 
         Notice that there are variations of the *C_out* value that do not include any cost for single relations and
         only measure the cost of joins.
