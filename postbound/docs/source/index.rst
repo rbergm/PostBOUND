@@ -21,6 +21,16 @@ code itself. The entire framework is open source and you are very much welcome t
 After all, the source is the single point of truth. If you want to investigate the source code, start with the ``__init__``
 file in the main PostBOUND module.
 
+The query optimization process of PostBOUND is summarized in the following figure:
+
+.. figure:: ../figures/postbound-workflow.svg
+
+    Query optimization process in PostBOUND.
+
+The query optimization itself is executed in the optimization pipeline. The target database ensures that the optimized query
+plan is actually used when the query is executed on the database. Typically, this is achieved by generating a set of
+system-specific query hints.
+
 Example
 -------
 

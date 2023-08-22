@@ -643,6 +643,7 @@ def _generate_leading_hint_content(join_tree_node: jointree.AbstractJoinTreeNode
 
     References
     ----------
+
     .. pg_hint_plan Leading hint: https://github.com/ossc-db/pg_hint_plan/blob/master/docs/hint_list.md
     """
     if isinstance(join_tree_node, jointree.BaseTableNode):
@@ -724,6 +725,7 @@ def _generate_pg_join_order_hint(query: qal.SqlQuery,
 
     References
     ----------
+
     .. pg_hint_plan Leading hint: https://github.com/ossc-db/pg_hint_plan/blob/master/docs/hint_list.md
     """
     if len(join_order) < 2:
@@ -761,6 +763,7 @@ the *pg_hint_plan* Postgres extension.
 
 References
 ----------
+
 .. pg_hint_plan hints: https://github.com/ossc-db/pg_hint_plan/blob/master/docs/hint_list.md
 """
 
@@ -1049,6 +1052,7 @@ class PostgresHintService(db.HintService):
 
     References
     ----------
+
     .. pg_hint_plan extension: https://github.com/ossc-db/pg_hint_plan
     .. Postgres query planning configuration: https://www.postgresql.org/docs/current/runtime-config-query.html
     """
@@ -1177,6 +1181,7 @@ def connect(*, name: str = "postgres", connect_string: str | None = None,
 
     References
     ----------
+
     .. Psyopg v3: https://www.psycopg.org/psycopg3/ This is used internally by the Postgres interface to interact with the
        database
     """
@@ -1209,6 +1214,7 @@ def _parallel_query_initializer(connect_string: str, local_data: threading.local
 
     References
     ----------
+
     .. Psyopg v3: https://www.psycopg.org/psycopg3/ This is used internally by the Postgres interface to interact with the
        database
     """
@@ -1283,6 +1289,7 @@ class ParallelQueryExecutor:
 
     References
     ----------
+
     .. Psyopg v3: https://www.psycopg.org/psycopg3/ This is used internally by the Postgres interface to interact with the
        database
     """

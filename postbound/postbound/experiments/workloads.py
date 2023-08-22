@@ -23,6 +23,7 @@ contains the PostBOUND source code. The GitHub repository of PostBOUND should ha
 
 References
 ----------
+
 .. [0] Viktor Leis et al.: How Good Are Query Optimizers, Really? (Proc. VLDB Endow. 9, 3 (2015))
 .. [1] Patrick E. O'Neil et al.: The Star Schema Benchmark and Augmented Fact Table Indexing. (TPCTC'2009)
 .. [2] Ryan Marcus et al.: Bao: Making Learned Query Optimization Practical. (SIGMOD'2021)
@@ -606,6 +607,7 @@ def job(file_encoding: str = "utf-8") -> Workload[str]:
 
     References
     ----------
+
     .. Viktor Leis et al.: "How Good Are Query Optimizers, Really?" (Proc. VLDB Endow. 9, 3 (2015))
     """
     job_dir = f"{workloads_base_dir}/JOB-Queries"
@@ -631,6 +633,7 @@ def ssb(file_encoding: str = "utf-8") -> Workload[str]:
 
     References
     ----------
+
     .. Patrick E. O'Neil et al.: "The Star Schema Benchmark and Augmented Fact Table Indexing." (TPCTC'2009)
     """
     return Workload.read(f"{workloads_base_dir}/SSB-Queries", name="SSB", file_encoding=file_encoding)
@@ -641,7 +644,7 @@ def stack(file_encoding: str = "utf-8") -> Workload[str]:
 
     Queries will be read from the Stack directory relative to `workloads_base_dir`. The expected layout is:
     ``<workloads_base_dir>/Stack-Queries/<sub-directories>/<queries>``. Alternatively, all queries can be contained in
-    the `Stack-Queries` directory directly. Labels are inferred from the file names, i.e. queries are accessible as
+    the ``Stack-Queries`` directory directly. Labels are inferred from the file names, i.e. queries are accessible as
     ``q1/q1-001``, ``q4/q4-100``, etc. Notice that there are also some queries with entirely "random" file names, such as
     ``q16/fc8f97968b9fce81df4011c8175eada15541abe0``.
 
@@ -665,6 +668,7 @@ def stack(file_encoding: str = "utf-8") -> Workload[str]:
 
     References
     ----------
+
     .. Ryan Marcus et al.: "Bao: Making Learned Query Optimization Practical." (SIGMOD'2021)
     """
     return read_workload(f"{workloads_base_dir}/Stack-Queries", "Stack", recurse_subdirectories=True,

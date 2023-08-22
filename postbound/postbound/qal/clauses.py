@@ -234,6 +234,7 @@ class Explain(BaseClause):
 
     References
     ----------
+
     .. PostgreSQL ``EXPLAIN`` command: https://www.postgresql.org/docs/current/sql-explain.html
     """
 

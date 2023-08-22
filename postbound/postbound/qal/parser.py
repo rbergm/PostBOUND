@@ -19,6 +19,7 @@ features.
 
 References
 ----------
+
 .. mo-sql-parsing project: https://github.com/klahnakoski/mo-sql-parsing Thanks a lot for maintaining this fantastic
    tool and the great support!
 """
@@ -464,6 +465,7 @@ To be better safe than sorry we try to handle both cases by using the regular ex
 
 References
 ----------
+
 .. Pattern debugging: https://regex101.com/r/HdKzQg/2
 """
 

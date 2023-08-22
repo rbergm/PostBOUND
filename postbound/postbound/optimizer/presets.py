@@ -100,6 +100,7 @@ class UESOptimizationSettings(OptimizationSettings):
 
     References
     ----------
+
     .. Hertzschuch et al.: "Simplicity Done Right for Join Ordering", CIDR'2021
     """
 

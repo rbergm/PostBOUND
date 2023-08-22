@@ -1,4 +1,11 @@
 #!/usr/bin/env python3
+#
+# This script show the basic steps that are involved in a typical analysis scenario with PostBOUND. Later examples expand on
+# these concepts in more detail. The example is focused on the UES optimization algorithm.
+#
+# Requirements: a running IMDB instance on Postgres with the connect file being set-up correctly. This can be achieved using
+# the utilities in the root postgres directory.
+#
 
 # Step 0: imports
 # this includes the optimization modules, database modules and possibly workload modules

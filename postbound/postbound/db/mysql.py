@@ -55,6 +55,7 @@ class MysqlConnectionArguments:
 
     References
     ----------
+
     .. [1] https://dev.mysql.com/doc/connector-python/en/connector-python-connectargs.html
     """
     user: str

@@ -318,6 +318,7 @@ class Database(abc.ABC):
 
         References
         ----------
+
         .. Python DB API specification 2.0 (PEP 249): https://peps.python.org/pep-0249/
         """
         raise NotImplementedError
@@ -1609,6 +1610,7 @@ class DatabasePool:
 
     References
     ----------
+
     .. Singleton pattern: https://en.wikipedia.org/wiki/Singleton_pattern
     """
 

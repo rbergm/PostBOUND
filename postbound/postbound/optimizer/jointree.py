@@ -2341,6 +2341,7 @@ def linearized_levenshtein_distance(a: JoinTree, b: JoinTree) -> int:
 
     References
     ----------
+
     .. Levenshtein distance: https://en.wikipedia.org/wiki/Levenshtein_distance
     """
     return Levenshtein.distance(a.table_sequence(), b.table_sequence())

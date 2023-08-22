@@ -266,7 +266,8 @@ class QepsNode:
 
     References
     ----------
-    .. [1] A. Hertzschuch et al.: "Turbo-Charging SPJ Query Plans with Learned Physical Join Operator Selections.", VLDB'2022
+
+    .. A. Hertzschuch et al.: "Turbo-Charging SPJ Query Plans with Learned Physical Join Operator Selections.", VLDB'2022
     """
     def __init__(self, filter_aware: bool, gamma: float, *,
                  identifier: Optional[QepsIdentifier] = None, parent: Optional[QepsNode] = None) -> None:
@@ -741,7 +742,8 @@ class TonicOperatorSelection(stages.PhysicalOperatorSelection):
 
     References
     ----------
-    .. A. Hertzschuch et al.: "Turbo-Charging SPJ Query Plans with Learned Physical Join Operator Selections.", VLDB'2022
+
+    .. [1] A. Hertzschuch et al.: "Turbo-Charging SPJ Query Plans with Learned Physical Join Operator Selections.", VLDB'2022
     """
 
     def __init__(self, filter_aware: bool = False, gamma: float = 0.8, *,
