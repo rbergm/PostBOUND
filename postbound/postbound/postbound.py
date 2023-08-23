@@ -10,7 +10,7 @@ import abc
 from typing import Optional, Protocol
 
 from postbound.qal import qal, transform
-from postbound.optimizer import presets, stages, validation
+from postbound.optimizer import jointree, presets, stages, validation
 from postbound.optimizer.strategies import noopt
 from postbound.db import db
 from postbound.util import errors
@@ -33,6 +33,32 @@ class OptimizationPipeline(Protocol):
     """
 
     @abc.abstractmethod
+    def query_execution_plan(self, query: qal.SqlQuery) -> jointree.PhysicalQueryPlan:
+        """Applies the current pipeline configuration to obtain an optimized plan for the input query.
+
+        Parameters
+        ----------
+        query : qal.SqlQuery
+            The query that should be optimized
+
+        Returns
+        -------
+        jointree.PhysicalQueryPlan
+            An optimized query execution plan for the input query.
+
+            If the optimization strategies only provide partial optimization decisions (e.g. physical operators for a subset of
+            the joins), it is up to the pipeline to fill the gaps in order to provide a complete execution plan. A typical
+            approach could be to delegate this task to the optimizer of the target database by providing it the partial
+            optimization information.
+
+        Raises
+        ------
+        validation.UnsupportedQueryError
+            If the selected optimization algorithms cannot be applied to the specific query, e.g. because it contains
+            unsupported features.
+        """
+        raise NotImplementedError
+
     def optimize_query(self, query: qal.SqlQuery) -> qal.SqlQuery:
         """Applies the current pipeline configuration to optimize the input query.
 
@@ -88,7 +114,9 @@ class OptimizationPipeline(Protocol):
         .. MySQL optimizer hints: https://dev.mysql.com/doc/refman/8.0/en/optimizer-hints.html
         .. SQLite ``CROSS JOIN`` handling: https://www.sqlite.org/optoverview.html#crossjoin
         """
-        raise NotImplementedError
+        execution_plan = self.query_execution_plan(query)
+        hinting_service = self.target_database().hinting()
+        return hinting_service.generate_hints(query, execution_plan)
 
     @abc.abstractmethod
     def target_database(self) -> db.Database:
@@ -197,7 +225,7 @@ class IntegratedOptimizationPipeline(OptimizationPipeline):
             pre_check.check_supported_database_system(self._target_db).ensure_all_passed()
         self._optimization_algorithm = algorithm
 
-    def optimize_query(self, query: qal.SqlQuery) -> qal.SqlQuery:
+    def query_execution_plan(self, query: qal.SqlQuery) -> jointree.PhysicalQueryPlan:
         if self.optimization_algorithm is None:
             raise errors.StateError("No algorithm has been selected")
 
@@ -206,8 +234,7 @@ class IntegratedOptimizationPipeline(OptimizationPipeline):
             pre_check.check_supported_query(query).ensure_all_passed()
 
         physical_qep = self.optimization_algorithm.optimize_query(query)
-
-        return self._target_db.hinting().generate_hints(query, physical_qep)
+        return physical_qep
 
     def target_database(self) -> db.Database:
         return self._target_db
@@ -496,6 +523,12 @@ class TwoStageOptimizationPipeline(OptimizationPipeline):
     def target_database(self) -> db.Database:
         return self.target_db
 
+    def query_execution_plan(self, query: qal.SqlQuery) -> jointree.PhysicalQueryPlan:
+        optimized_query = self.optimize_query(query)
+        db_plan = self.target_db.optimizer().query_plan(optimized_query)
+        physical_qep = jointree.PhysicalQueryPlan.load_from_query_plan(db_plan)
+        return physical_qep
+
     def optimize_query(self, query: qal.SqlQuery) -> qal.SqlQuery:
         self._assert_is_build()
         supported_query_check = self._pre_check.check_supported_query(query)
@@ -630,14 +663,13 @@ class IncrementalOptimizationPipeline(OptimizationPipeline):
     def target_database(self) -> db.Database:
         return self.target_db
 
-    def optimize_query(self, query: qal.SqlQuery) -> qal.SqlQuery:
+    def query_execution_plan(self, query: qal.SqlQuery) -> jointree.PhysicalQueryPlan:
         self._ensure_supported_query(query)
         current_plan = (self.initial_plan_generator.optimize_query(query) if self.initial_plan_generator is not None
                         else self.target_db.optimizer().query_plan(query))
         for optimization_step in self._optimization_steps:
             current_plan = optimization_step.optimize_query(query, current_plan)
-
-        return self.target_db.hinting().generate_hints(query, current_plan)
+        return current_plan
 
     def describe(self) -> dict:
         return {
@@ -645,7 +677,8 @@ class IncrementalOptimizationPipeline(OptimizationPipeline):
             "database_system": self._target_db.describe(),
             "initial_plan": (self._initial_plan_generator.describe() if self._initial_plan_generator is not None
                              else "native"),
-            "steps": [step.describe() for step in self._optimization_steps]}
+            "steps": [step.describe() for step in self._optimization_steps]
+        }
 
     def _ensure_pipeline_integrity(self, *, database: Optional[db.Database] = None,
                                    initial_plan_generator: Optional[stages.CompleteOptimizationAlgorithm] = None,
