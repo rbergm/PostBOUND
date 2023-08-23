@@ -9,12 +9,13 @@ from __future__ import annotations
 
 import collections
 import itertools
+import json
 import math
 import random
 from collections.abc import Iterable, Sequence
-from typing import Optional
+from typing import Any, Optional
 
-from postbound.qal import qal, base, predicates, transform
+from postbound.qal import qal, base, predicates, transform, parser as qal_parser
 from postbound.db import db
 from postbound.optimizer import jointree, physops, stages
 from postbound.util import collections as collection_utils, dicts as dict_utils
@@ -230,6 +231,29 @@ class QepsIdentifier:
             always be ``None``.
         """
         return self._filter_predicate
+
+    def is_base_table_id(self) -> bool:
+        """Checks, whether this identifier describes a normal base table scan.
+
+        Returns
+        -------
+        bool
+            True if its a base table identifier, false otherwise
+        """
+        return len(self._tables) == 1
+
+    def is_subquery_id(self) -> bool:
+        """Checks, whether this identifier describes a subquery (a branch in the join order).
+
+        Returns
+        -------
+        bool
+            True if its a subquery identifier, false otherwise
+        """
+        return len(self._tables) > 1
+
+    def __json__(self) -> dict:
+        return {"tables": self._tables, "filter_predicate": self._filter_predicate}
 
     def __hash__(self) -> int:
         return self._hash_val
@@ -683,6 +707,11 @@ class QepsNode:
         cost_content = ", ".join(f"{operator.value}={cost}" for operator, cost in self.operator_costs.items())
         return f"[{cost_content}]" if self.operator_costs else "[no cost]"
 
+    def __json__(self) -> dict:
+        cost_json = {operator.value: cost for operator, cost in self.operator_costs.items()}
+        children_json = [{"identifier": qeps_id, "node": node} for qeps_id, node in self.child_nodes.items()]
+        return {"costs": cost_json, "children": children_json, "subquery": self._subquery_root}
+
     def __bool__(self) -> bool:
         return len(self.child_nodes) > 0 or len(self.operator_costs) > 0
 
@@ -811,6 +840,83 @@ class QueryExecutionPlanSynopsis:
             A string representatio of the QEP-S
         """
         return self.root.inspect()
+
+    def __json__(self) -> dict:
+        return {"root": self.root, "gamma": self.root.gamma, "filter_aware": self.root.filter_aware}
+
+
+def _load_qeps_id_from_json(json_data: dict) -> QepsIdentifier:
+    """Creates a QEP-S identifier from its JSON representation.
+
+    This is undoes the JSON-serialization via the ``__json__`` method on identifier instances. Whether to create an identifier
+    with a filter predicate or a plain identifier is inferred based on the encoded data. The same applies to whether a
+    subquery identifier or a normal base table identifier should be created.
+
+    Parameters
+    ----------
+    json_data : dict
+        The encoded identifier
+
+    Returns
+    -------
+    QepsIdentifier
+        The corresponding identifier object
+
+    Raises
+    ------
+    ValueError
+        If the encoding does not contain any tables
+    """
+    parser = qal_parser.JsonParser()
+    tables = [parser.load_table(json_table) for json_table in json_data.get("tables", [])]
+    filter_pred = parser.load_predicate(json_data.get("filter_predicate"), {})
+    return QepsIdentifier(tables, filter_pred)
+
+
+def _load_qeps_from_json(json_data: dict, qeps_id: Optional[QepsIdentifier], parent: Optional[QepsNode],
+                         filter_aware: bool, gamma: float) -> QepsNode:
+    """Creates a QEP-S node from its JSON representation.
+
+    Parameters
+    ----------
+    json_data : dict
+        The encoded node data
+    qeps_id : Optional[QepsIdentifier]
+        The identifier of the node. Can be ``None`` for root nodes.
+    parent : Optional[QepsNode]
+        The parent of the node. Can be ``None`` for root nodes.
+    filter_aware : bool
+        Whether child identifiers should also consider the filter predicates that are applied to base tables.
+    gamma : float
+        Mediation factor for recent and previous cost information
+
+    Returns
+    -------
+    QepsNode
+        The node instance
+
+    Raises
+    ------
+    KeyError
+        If any of the child node encodings does not contain an identifier
+    KeyError
+        If any of the child node encodings does not contain an actual node encoding
+    """
+    node = QepsNode(filter_aware, gamma, identifier=qeps_id, parent=parent)
+
+    cost_info = {physops.JoinOperators(operator_str): cost for operator_str, cost in json_data.get("costs", {}).items()}
+    subquery = (_load_qeps_from_json(json_data["subquery"], None, None, filter_aware, gamma)
+                if "subquery" in json_data else None)
+    children: dict[QepsIdentifier, QepsNode] = {}
+    for child_json in json_data.get("children", []):
+        child_id = _load_qeps_id_from_json(child_json["identifier"])
+        child_node = _load_qeps_from_json(json_data["node"], child_id, node, filter_aware, gamma)
+        children[child_id] = child_node
+
+    node.operator_costs = cost_info
+    node._subquery_root = subquery
+    node.child_nodes = children
+    return node
 
 
 def make_qeps(path: Iterable[base.TableReference], root: Optional[QepsNode] = None, *, gamma: float = 0.8) -> QepsNode:
@@ -972,6 +1078,41 @@ class TonicOperatorSelection(stages.PhysicalOperatorSelection):
     .. [1] A. Hertzschuch et al.: "Turbo-Charging SPJ Query Plans with Learned Physical Join Operator Selections.", VLDB'2022
     """
 
+    @staticmethod
+    def load_model(filename: str, database: Optional[db.Database] = None, *,
+                   encoding: str = "utf-8") -> TonicOperatorSelection:
+        """Re-generates a pre-trained TONIC QEP-S model from disk.
+
+        The model has to be encoded in a JSON file as generated by the jsonize utility
+
+        Parameters
+        ----------
+        filename : str
+            The file that contains the JSON model
+        database : Optional[db.Database], optional
+            The database that should be used for trainining the model. If omitted, the database is inferred from the
+            `DatabasePool`.
+        encoding : str, optional
+            Enconding of the model file, by default "utf-8"
+
+        Returns
+        -------
+        TonicOperatorSelection
+            The TONIC model
+        """
+        json_data = None
+        with open(filename, "r", encoding=encoding) as json_file:
+            json_data = json.load(json_file)
+
+        filter_aware = json_data.get("filter_aware", False)
+        gamma = json_data.get("gamma", 0.8)
+        qeps_root = _load_qeps_from_json(json_data["root"], None, None, filter_aware, gamma)
+        qeps = QueryExecutionPlanSynopsis(qeps_root)
+
+        tonic_model = TonicOperatorSelection(filter_aware, gamma, database=database)
+        tonic_model.qeps = qeps
+        return tonic_model
+
     def __init__(self, filter_aware: bool = False, gamma: float = 0.8, *,
                  database: Optional[db.Database] = None) -> None:
         super().__init__()
@@ -1085,3 +1226,6 @@ class TonicOperatorSelection(stages.PhysicalOperatorSelection):
         """
         native_plan = self._db.optimizer().query_plan(query)
         return jointree.LogicalJoinTree.load_from_query_plan(native_plan, query)
+
+    def __json__(self) -> Any:
+        return self.qeps

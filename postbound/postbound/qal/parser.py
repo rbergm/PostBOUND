@@ -1087,3 +1087,78 @@ def parse_query(query: str, *, bind_columns: bool | None = None,
     mosp_data = mosp.parse(query)
     parsed_query = _MospQueryParser(mosp_data, query).parse_query()
     return transform.bind_columns(parsed_query, with_schema=bind_columns, db_schema=db_schema)
+
+
+class JsonParser:
+    """Parser to load different components of QAL objects that have been serialized by the jsonize encoder.
+
+    See Also
+    ---------
+    jsonize
+    """
+
+    def load_table(self, json_data: dict) -> Optional[base.TableReference]:
+        """Re-creates a table reference from its JSON encoding.
+
+        Parameters
+        ----------
+        json_data : dict
+            The encoded table
+
+        Returns
+        -------
+        Optional[base.TableReference]
+            The actual table. If the dictionary is empty or otherwise invalid, ``None`` is returned.
+        """
+        if not json_data:
+            return None
+        return base.TableReference(json_data.get("full_name", ""), json_data.get("alias", ""))
+
+    def load_column(self, json_data: dict) -> Optional[base.ColumnReference]:
+        """Re-creates a column reference from its JSON encoding.
+
+        Parameters
+        ----------
+        json_data : dict
+            The encoded column
+
+        Returns
+        -------
+        Optional[base.ColumnReference]
+            The actual column. It the dictionary is empty or otherwise invalid, ``None`` is returned.
+        """
+        if not json_data:
+            return None
+        return base.ColumnReference(json_data.get("column"), self.load_table(json_data.get("table", None)))
+
+    def load_predicate(self, json_data: dict) -> Optional[preds.AbstractPredicate]:
+        """Re-creates an arbitrary predicate from its JSON encoding.
+
+        Parameters
+        ----------
+        json_data : dict
+            The encoded predicate
+
+        Returns
+        -------
+        Optional[preds.AbstractPredicate]
+            The actual predicate. If the dictionary is empty or ``None``, ``None`` is returned. Notice that in case of
+            malformed data, errors are raised.
+
+        Raises
+        ------
+        KeyError
+            If the encoding does not specify the tables that are referenced in the predicate
+        KeyError
+            If the encoding does not contain the actual predicate
+        """
+        if not json_data:
+            return None
+        tables = [self.load_table(table_data) for table_data in json_data.get("tables", [])]
+        if not tables:
+            raise KeyError("Predicate needs at least one table!")
+        from_clause_str = ", ".join(str(tab) for tab in tables)
+        predicate_str = json_data["predicate"]
+        emulated_query = f"SELECT * FROM {from_clause_str} WHERE {predicate_str}"
+        parsed_query = parse_query(emulated_query)
+        return parsed_query.where_clause.predicate
