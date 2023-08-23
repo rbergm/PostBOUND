@@ -1280,7 +1280,7 @@ class ImplicitFromClause(From):
 class ExplicitFromClause(From):
     """Represents a special kind of ``FROM`` clause that requires all tables to be joined using the ``JOIN ON`` syntax.
 
-    The tables themselves can be either `DirectTableSource`s, or `SubqueryTableSource`s.
+    The tables themselves can be either `DirectTableSource`\ s, or `SubqueryTableSource`\ s.
 
     Parameters
     ----------
@@ -1378,7 +1378,7 @@ class Where(BaseClause):
 class GroupBy(BaseClause):
     """The ``GROUP BY`` clause combines rows that match a grouping criterion to enable aggregation on these groups.
 
-    Despite their names, all grouped columns can be arbitrary `SqlExpression`s, rules and restrictions of the SQL
+    Despite their names, all grouped columns can be arbitrary `SqlExpression`\ s, rules and restrictions of the SQL
     standard are not enforced by PostBOUND.
 
     Parameters
@@ -1585,7 +1585,7 @@ class OrderBy(BaseClause):
     """The ``ORDER BY`` clause specifies how result rows should be sorted.
 
     This clause has a similar structure like a `Select` clause and simply consists of an arbitrary number of
-    `OrderByExpression`s.
+    `OrderByExpression`\ s.
 
     Parameters
     ----------

@@ -1,18 +1,18 @@
-"""Provides an implementation of join trees to model join orders that are annotated with arbitrary data.
+"""Provides an implementation of join trees to model join orders that can be annotated with arbitrary data.
 
-The join tree implementation follows a traditional composite structure. It uses `IntermediateJoinNode`s to represent
-inner nodes of the composite. These correspond to joins in the join tree. `BaseTableNode`s  represent leaf nodes in the
+The join tree implementation follows a traditional composite structure. It uses `IntermediateJoinNode`\ s to represent
+inner nodes of the composite. These correspond to joins in the join tree. `BaseTableNode`\ s  represent leaf nodes in the
 composite and correspond to scans of base relations. In addition to this structural information, each node can be
 annotated by metadata objects (`BaseMetadata` for base table nodes and `JoinMetadata` for intermediate nodes). These
 act as storage for additional information about the joins and scans. For example, they provide estimates on the number
 of tuples that is emitted on each node. By creating subclasses of these metadata containers, arbitrary data can be
 included in the join trees.
 
-This strategy is applied for two pre-defined kinds of join trees: `LogicalJoinTree`s are akin to join orders that only
-focus on the sequence in which base tables should be combined. In contrast, `PhysicalQueryPlan`s also include the
+This strategy is applied for two pre-defined kinds of join trees: `LogicalJoinTree`\ s are akin to join orders that only
+focus on the sequence in which base tables should be combined. In contrast, `PhysicalQueryPlan`\ s also include the
 physical operators that should be used to execute individual joins and scans. A physical query plan can capture all
 optimization decisions made by PostBOUND in one single structure. However, this requires the optimization algorithms to
-be capable to make decisions on a per-operator basis and in one integrated process. If that is not the case, the models
+be capable of making decisions on a per-operator basis and in one integrated process. If that is not the case, the models
 for partial decisions can be used (see the `physops` and `planparams` modules).
 
 Join trees are designed as immutable data objects. In order to modify them, new join trees have to be created. This
@@ -428,8 +428,8 @@ class AbstractJoinTreeNode(abc.ABC, Container[base.TableReference], Generic[Join
         Returns
         -------
         Optional[JoinMetadataType | BaseTableMetadataType]
-            The annotation if it exists, ``None`` otherwise. For `BaseTableNode`s this should be an instance of
-            `BaseTableMetadata` and for `IntermediateJoinNode`s this should be an instance of `JoinMetadata`.
+            The annotation if it exists, ``None`` otherwise. For `BaseTableNode`\ s this should be an instance of
+            `BaseTableMetadata` and for `IntermediateJoinNode`\ s this should be an instance of `JoinMetadata`.
         """
         raise NotImplementedError
 
@@ -1145,8 +1145,8 @@ AnnotationMerger = Optional[Callable[[Optional[BaseMetadata], Optional[BaseMetad
 class JoinTree(Container[base.TableReference], Generic[JoinMetadataType, BaseTableMetadataType]):
     """The join tree captures the order in which base tables as well as intermediate results are joined together.
 
-    Each join tree maintains the root of a composite tree structure consisting of `BaseTableNode`s as leaves and
-    `IntermediateJoinNode`s as intermediate nodes. The interface it defines combines both access to the underlying
+    Each join tree maintains the root of a composite tree structure consisting of `BaseTableNode`\ s as leaves and
+    `IntermediateJoinNode`\ s as intermediate nodes. The interface it defines combines both access to the underlying
     tree structure, as well as some additional methods to modify and expand join trees.
 
     Each join tree is designed as an immutable object. Therefore, the modification of a join tree always results in a

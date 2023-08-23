@@ -62,7 +62,7 @@ class Workload(collections.UserDict[LabelType, qal.SqlQuery]):
     In addition to the actual queries, each query is annotated by a label that can be used to retrieve the query more
     nicely. E.g. for queries in the Join Order Benchmark, access by their index is supported - such as ``job["1a"]``. Labels
     can be arbitrary types as long as they are hashable. Since the workload inherits from dict, the label can be used directly
-    to fetch the associated query (and will raise ``KeyError``s for unknown labels).
+    to fetch the associated query (and will raise ``KeyError``\ s for unknown labels).
 
     Each workload can be given a name, which is mainly intended for readability in ``__str__`` methods and does not serve
     a functional purpose. However, it may be good practice to use a normalized name that can be used in different contexts

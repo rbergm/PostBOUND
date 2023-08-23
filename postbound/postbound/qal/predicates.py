@@ -129,7 +129,7 @@ def _collect_subquery_expressions(expression: expr.SqlExpression) -> Iterable[ex
 
 
 def _collect_column_expression_columns(expression: expr.SqlExpression) -> set[base.ColumnReference]:
-    """Provides all columns that are directly contained in `ColumnExpression`s under and including a specific expression.
+    """Provides all columns that are directly contained in `ColumnExpression`\ s under and including a specific expression.
 
     This method is a shorthand to take care of the necessary traversal of the expression tree. Notice that it ignores all
     expressions that are part of subqueries.
@@ -149,7 +149,7 @@ def _collect_column_expression_columns(expression: expr.SqlExpression) -> set[ba
 
 
 def _collect_column_expression_tables(expression: expr.SqlExpression) -> set[base.TableReference]:
-    """Provides all tables that are linked directly in `ColumnExpression`s under and including a specific expression.
+    """Provides all tables that are linked directly in `ColumnExpression`\ s under and including a specific expression.
 
     This method is a shorthand to take care of the necessary traversal of the expression tree. Notice that it ignores all
     expressions that are part of subqueries.
@@ -257,7 +257,7 @@ class AbstractPredicate(abc.ABC):
            ``R.a = (SELECT MAX(S.b) FROM S)`` and ``R.a = (SELECT MAX(S.b) FROM S WHERE R.c = S.d)`` are treated as filters and
            not as joins, even though the second subquery will require some sort of the join in the query plan.
         4. ``BETWEEN`` and ``IN`` predicates are treated according to rule 1 since they can be emulated via base predicates
-          (subqueries in ``IN`` predicates are evaluated according to rule 3.)
+           (subqueries in ``IN`` predicates are evaluated according to rule 3.)
 
         Although these rules might seem a bit arbitrary at first, there is actually no clear consensus of what constitutes a
         join and the query optimizers of different industrial database systems treat different predicates as joins. For
@@ -494,6 +494,9 @@ class AbstractPredicate(abc.ABC):
         """
         if not self.is_filter():
             raise NoFilterPredicateError(self)
+
+    def __json__(self) -> str:
+        return {"node_type": "predicate", "tables": self.tables(), "predicate": str(self)}
 
     def __hash__(self) -> int:
         return self._hash_val
@@ -785,8 +788,8 @@ class InPredicate(BasePredicate):
     column : expr.SqlExpression
         The value that is checked by the predicate
     values : Sequence[expr.SqlExpression]
-        The allowed column values. The individual expressions are not limited to `StaticValueExpression`s, but can also include
-        subqueries, columns or complicated mathematical expressions.
+        The allowed column values. The individual expressions are not limited to `StaticValueExpression`\ s, but can also
+        include subqueries, columns or complicated mathematical expressions.
 
     Raises
     ------

@@ -42,3 +42,4 @@ autodoc_default_options = {
     'member_order': 'bysource',
     'special-members': '__init__'
 }
+autodoc_member_order = 'bysource'
