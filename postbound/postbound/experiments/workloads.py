@@ -14,9 +14,9 @@ The expected directory layout is the following:
     ├╴JOB-Queries/
     │   └╴ <queries>
     ├╴ SSB-Queries/
-    |   └╴ <queries>
+    │   └╴ <queries>
     ├╴ Stack-Queries/
-    |   └╴ <queries>
+    │   └╴ <queries>
 
 By default, PostBOUND assumes that the workload directory is contained one directory level higher than the root directory that
 contains the PostBOUND source code. The GitHub repository of PostBOUND should have such a file layout by default.
