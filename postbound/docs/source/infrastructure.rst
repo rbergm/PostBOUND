@@ -11,7 +11,12 @@ Benchmarks and workloads
 
 The `postbound.experiments` package provides a representation of workloads that consist of a number of labelled queries in the
 `workloads` module. The ``Workloads`` class offers high-level access to these queries, including shuffling, sampling and
-merging different workloads, as well as utilities to load benchmark queries from disk.
+merging different workloads, as well as utilities to load benchmark queries from disk. In addition to the workload abstraction
+PostBOUND also ships a number of pre-defined workloads. The module contains utility functions to directly load these workloads.
+For these functions to work, the location of the workloads must be known. By default, the functions assume that they are
+executed in the *postbound* directory and that the queries themselves are contained in the root-level *workloads* directory.
+If this is not the case, the ``workloads_base_dir`` variable should be set to the correct location. The module documentation
+contains more details on this aspect.
 
 The `runner` module builds on top of workloads and optimization pipeline to provide a reproducible and transparent execution
 of benchmarks with optimized queries. The different methods provide results as Pandas DataFrames [1]_ to enable an easy

@@ -10,13 +10,13 @@ The expected directory layout is the following:
 
 ::
 
-    / <workloads_base_dir>
-    +- JOB-Queries/
-        +- <queries>
-    +- SSB-Queries/
-        +- <queries>
-    +- Stack-Queries/
-        +- <queries>
+    <workloads_base_dir>
+    ├╴JOB-Queries/
+    │   └╴ <queries>
+    ├╴ SSB-Queries/
+    |   └╴ <queries>
+    ├╴ Stack-Queries/
+    |   └╴ <queries>
 
 By default, PostBOUND assumes that the workload directory is contained one directory level higher than the root directory that
 contains the PostBOUND source code. The GitHub repository of PostBOUND should have such a file layout by default.
@@ -32,6 +32,7 @@ from __future__ import annotations
 
 import collections
 import pathlib
+import os
 import random
 import typing
 from collections.abc import Callable, Hashable, Iterable, Sequence
@@ -605,13 +606,24 @@ def job(file_encoding: str = "utf-8") -> Workload[str]:
     Workload[str]
         The workload
 
+    Raises
+    ------
+    ValueError
+        If the workload could not be loaded from the expected location
+
     References
     ----------
 
     .. Viktor Leis et al.: "How Good Are Query Optimizers, Really?" (Proc. VLDB Endow. 9, 3 (2015))
     """
-    job_dir = f"{workloads_base_dir}/JOB-Queries"
-    return Workload.read(job_dir, name="JOB", file_encoding=file_encoding)
+    job_workload = Workload.read(f"{workloads_base_dir}/JOB-Queries", name="JOB", file_encoding=file_encoding)
+    if not job_workload:
+        wdir = os.getcwd()
+        raise ValueError("Could not load JOB workload. This is likely due to a disparity between workload location and "
+                         "current value of the workloads_base_dir setting. Make sure to point that variable to the correct "
+                         f"path. Your current working directory is '{wdir}' and the expected workload directory is "
+                         f"'{workloads_base_dir}/JOB-Queries'")
+    return job_workload
 
 
 def ssb(file_encoding: str = "utf-8") -> Workload[str]:
@@ -631,12 +643,24 @@ def ssb(file_encoding: str = "utf-8") -> Workload[str]:
     Workload[str]
         The workload
 
+    Raises
+    ------
+    ValueError
+        If the workload could not be loaded from the expected location
+
     References
     ----------
 
     .. Patrick E. O'Neil et al.: "The Star Schema Benchmark and Augmented Fact Table Indexing." (TPCTC'2009)
     """
-    return Workload.read(f"{workloads_base_dir}/SSB-Queries", name="SSB", file_encoding=file_encoding)
+    ssb_workload = Workload.read(f"{workloads_base_dir}/SSB-Queries", name="SSB", file_encoding=file_encoding)
+    if not ssb_workload:
+        wdir = os.getcwd()
+        raise ValueError("Could not load SSB workload. This is likely due to a disparity between workload location and "
+                         "current value of the workloads_base_dir setting. Make sure to point that variable to the correct "
+                         f"path. Your current working directory is '{wdir}' and the expected workload directory is "
+                         f"'{workloads_base_dir}/SSB-Queries'")
+    return ssb_workload
 
 
 def stack(file_encoding: str = "utf-8") -> Workload[str]:
@@ -658,6 +682,11 @@ def stack(file_encoding: str = "utf-8") -> Workload[str]:
     Workload[str]
         The workload.
 
+    Raises
+    ------
+    ValueError
+        If the workload could not be loaded from the expected location
+
     Notes
     -----
     Notice that the Stack Benchmark is much much larger than the Join Order Benchmark or the Star Schema Benchmark. Since
@@ -671,5 +700,12 @@ def stack(file_encoding: str = "utf-8") -> Workload[str]:
 
     .. Ryan Marcus et al.: "Bao: Making Learned Query Optimization Practical." (SIGMOD'2021)
     """
-    return read_workload(f"{workloads_base_dir}/Stack-Queries", "Stack", recurse_subdirectories=True,
-                         file_encoding=file_encoding)
+    stack_workload = read_workload(f"{workloads_base_dir}/Stack-Queries", "Stack", recurse_subdirectories=True,
+                                   file_encoding=file_encoding)
+    if not stack_workload:
+        wdir = os.getcwd()
+        raise ValueError("Could not load Stack workload. This is likely due to a disparity between workload location and "
+                         "current value of the workloads_base_dir setting. Make sure to point that variable to the correct "
+                         f"path. Your current working directory is '{wdir}' and the expected workload directory is "
+                         f"'{workloads_base_dir}/Stack-Queries'")
+    return stack_workload
