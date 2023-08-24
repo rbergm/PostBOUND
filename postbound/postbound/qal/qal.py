@@ -30,7 +30,7 @@ def _stringify_clause(clause: clauses.BaseClause) -> str:
     """Handler method to provide a refined string for a specific given clause, to be used by the `SqlQuery` ``__str__`` method.
 
     This method is slightly smarter than calling ``__str__`` directly, because it inserts newlines at sensible places in a
-    query, e.g. after the hint block or after a common table expression.
+    query, e.g. after the hint block.
 
     Parameters
     ----------
@@ -42,7 +42,7 @@ def _stringify_clause(clause: clauses.BaseClause) -> str:
     str
         The string representation of the clause
     """
-    if isinstance(clause, clauses.Hint) or isinstance(clause, clauses.CommonTableExpression):
+    if isinstance(clause, clauses.Hint):
         return str(clause) + "\n"
     return str(clause) + " "
 

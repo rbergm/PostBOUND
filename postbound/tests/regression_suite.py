@@ -44,7 +44,7 @@ def _stringify_result_set(result_set: list[tuple[object]] | object) -> str:
     Since result sets can become quite large, this cuts the result set to only contain the first 5 values if
     necessary.
     """
-    if not "__len__" in dir(result_set):
+    if "__len__" not in dir(result_set):
         return str(result_set)
     if len(result_set) > 5:
         shortened_result_set = result_set[:5]

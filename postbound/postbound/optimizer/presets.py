@@ -108,7 +108,7 @@ class UESOptimizationSettings(OptimizationSettings):
         self.database = database if database else db.DatabasePool.get_instance().current_database()
 
     def query_pre_check(self) -> validation.OptimizationPreCheck | None:
-        return ues.UESOptimizationPreCheck()
+        return ues.UESOptimizationPreCheck
 
     def build_join_order_optimizer(self) -> stages.JoinOrderOptimization | None:
         base_table_estimator = cardinalities.NativeCardinalityEstimator(self.database)

@@ -992,7 +992,7 @@ class PostgresLimitClause(clauses.Limit):
         The actual ``LIMIT`` clause. The new limit clause acts as a decorator around the original clause.
     """
 
-    def __init__(self, *, original_clause: clauses.Limit) -> None:
+    def __init__(self, original_clause: clauses.Limit) -> None:
         super().__init__(limit=original_clause.limit, offset=original_clause.offset)
 
     def __str__(self) -> str:

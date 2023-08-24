@@ -476,10 +476,10 @@ class TwoStageOptimizationPipeline(OptimizationPipeline):
             self.setup_join_order_optimization(join_ordering)
         operator_selection = optimization_settings.build_physical_operator_selection()
         if operator_selection:
-            self.setup_physical_operator_selection(operator_selection, overwrite=True)
+            self.setup_physical_operator_selection(operator_selection)
         plan_parameterization = optimization_settings.build_plan_parameterization()
         if plan_parameterization:
-            self.setup_plan_parameterization(plan_parameterization, overwrite=True)
+            self.setup_plan_parameterization(plan_parameterization)
         self._build = False
         return self
 

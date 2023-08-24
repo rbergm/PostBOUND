@@ -975,7 +975,7 @@ class SubqueryTableSource(TableSource):
         return self._subquery_expression
 
     def tables(self) -> set[base.TableReference]:
-        return self._subquery_expression.tables() | self.target_table()
+        return self._subquery_expression.tables() | {self.target_table}
 
     def columns(self) -> set[base.ColumnReference]:
         return self._subquery_expression.columns()

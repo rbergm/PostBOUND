@@ -148,7 +148,7 @@ class StatisticsContainer(abc.ABC, Generic[StatsType]):
             the join. These columns have to be updated in a different way compared to other columns in the intermediate result.
         """
         partner_columns = join_condition.join_partners_of(joined_table)
-        third_party_columns = set(col for col in join_tree.columns()
+        third_party_columns = set(col for col in join_tree.join_columns()
                                   if col.table != joined_table and col not in partner_columns)
 
         for col1, col2 in join_condition.join_partners():
@@ -328,7 +328,7 @@ class UESJoinBoundEstimator(card_policy.JoinBoundCardinalityEstimator):
     def pre_check(self) -> Optional[validation.OptimizationPreCheck]:
         # TODO: the UES check is slightly too restrictive here.
         # It suffices to check that there are only conjunctive equi joins.
-        return UESOptimizationPreCheck()
+        return UESOptimizationPreCheck
 
     def _estimate_pk_fk_join(self, fk_column: base.ColumnReference, pk_column: base.ColumnReference) -> int:
         """Estimation formula for primary key/foreign key joins.
@@ -545,7 +545,7 @@ class UESJoinOrderOptimizer(stages.JoinOrderOptimization):
                                                 self.join_estimation.pre_check(),
                                                 self.subquery_policy.pre_check()]
                             if check]
-        specified_checks.append(UESOptimizationPreCheck())
+        specified_checks.append(UESOptimizationPreCheck)
         return validation.merge_checks(specified_checks)
 
     def _default_ues_optimizer(self, query: qal.SqlQuery, join_graph: joingraph.JoinGraph) -> jointree.LogicalJoinTree:
