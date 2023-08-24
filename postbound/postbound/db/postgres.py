@@ -1147,7 +1147,8 @@ def connect(*, name: str = "postgres", connect_string: str | None = None,
     This function obtains a connect-string to the database according to the following rules:
 
     1. if the connect-string is supplied directly via the `connect_string` parameter, this is used
-    2. if the connect-string is not supplied, it is read from the file indicated by `config_file`
+    2. if the connect-string is not supplied, it is read from the file indicated by `config_file`. This file has to be located
+       in the current working directory, or the file name has to describe the path to that file.
     3. if the `config_file` does not exist, an error is raised
 
     After a connection to the Postgres instance has been obtained, it is registered automatically on the current
@@ -1163,11 +1164,11 @@ def connect(*, name: str = "postgres", connect_string: str | None = None,
         data
     config_file : str | None, optional
         A file containing a Psycopg-compatible connect string for the database. This is the default and preferred method of
-        connecting to a Postgres database. Defaults to ``".psycopg_connection"``
+        connecting to a Postgres database. Defaults to *.psycopg_connection*
     cache_enabled : bool, optional
-        Controls the default caching behaviour of the Postgres instance, by default ``True``
+        Controls the default caching behaviour of the Postgres instance. Caching is enabled by default.
     private : bool, optional
-        If ```True```, skips registration of the new instance on the `DatabasePool`. Defaults to  ``False``
+        If true, skips registration of the new instance on the `DatabasePool`. Registration is performed by default.
 
     Returns
     -------
@@ -1188,11 +1189,17 @@ def connect(*, name: str = "postgres", connect_string: str | None = None,
     db_pool = db.DatabasePool.get_instance()
     if config_file and not connect_string:
         if not os.path.exists(config_file):
-            raise ValueError("Config file was given, but does not exist: " + config_file)
+            wdir = os.getcwd()
+            raise ValueError(f"Failed to obtain a database connection. Tried to read the config file '{config_file}' from "
+                             f"your current working directory, but the file was not found. Your working directory is {wdir}. "
+                             "Please either supply the connect string directly to the connect() method, or ensure that the "
+                             "config file exists.")
         with open(config_file, "r") as f:
             connect_string = f.readline().strip()
     elif not connect_string:
-        raise ValueError("Connect string or config file are required to connect to Postgres")
+        raise ValueError("Failed to obtain a database connection. Please either supply the connect string directly to the "
+                         "connect() method, or put a configuration file in your working directory. See the documentation of "
+                         "the connect() method for more details.")
 
     postgres_db = PostgresInterface(connect_string, system_name=name, cache_enabled=cache_enabled)
     if not private:
