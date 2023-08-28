@@ -286,7 +286,7 @@ class PhysicalOperatorAssignment:
     Although it is allowed to modify the different dictionaries directly, the more high-level methods should be used instead.
     This ensures that all potential (future) invariants are maintained.
 
-    The assignment enables ``__getitem__`` access tries to determine the requested setting in an intelligent way, i.e.
+    The assignment enables ``__getitem__`` access and tries to determine the requested setting in an intelligent way, i.e.
     supplying a single base table will provide the associated scan operator, supplying an iterable of base tables the join
     operator and supplying an operator will return the global setting. If no item is found, ``None`` will be returned.
 
@@ -440,6 +440,9 @@ class PhysicalOperatorAssignment:
         cloned_assignment.join_operators = dict(self.join_operators)
         cloned_assignment.scan_operators = dict(self.scan_operators)
         return cloned_assignment
+
+    def __bool__(self) -> bool:
+        return self.global_settings or self.join_operators or self.scan_operators
 
     def __getitem__(self, item: base.TableReference | Iterable[base.TableReference] | ScanOperators | JoinOperators
                     ) -> ScanOperatorAssignment | JoinOperatorAssignment | bool | None:

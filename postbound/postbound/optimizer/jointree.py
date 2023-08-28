@@ -1,15 +1,15 @@
 """Provides an implementation of join trees to model join orders that can be annotated with arbitrary data.
 
-The join tree implementation follows a traditional composite structure. It uses `IntermediateJoinNode`\ s to represent
-inner nodes of the composite. These correspond to joins in the join tree. `BaseTableNode`\ s  represent leaf nodes in the
+The join tree implementation follows a traditional composite structure. It uses `IntermediateJoinNode` to represent
+inner nodes of the composite. These correspond to joins in the join tree. `BaseTableNode` represents leaf nodes in the
 composite and correspond to scans of base relations. In addition to this structural information, each node can be
 annotated by metadata objects (`BaseMetadata` for base table nodes and `JoinMetadata` for intermediate nodes). These
 act as storage for additional information about the joins and scans. For example, they provide estimates on the number
 of tuples that is emitted on each node. By creating subclasses of these metadata containers, arbitrary data can be
 included in the join trees.
 
-This strategy is applied for two pre-defined kinds of join trees: `LogicalJoinTree`\ s are akin to join orders that only
-focus on the sequence in which base tables should be combined. In contrast, `PhysicalQueryPlan`\ s also include the
+This strategy is applied for two pre-defined kinds of join trees: `LogicalJoinTree` is akin to join orders that only
+focus on the sequence in which base tables should be combined. In contrast, `PhysicalQueryPlan` also includes the
 physical operators that should be used to execute individual joins and scans. A physical query plan can capture all
 optimization decisions made by PostBOUND in one single structure. However, this requires the optimization algorithms to
 be capable of making decisions on a per-operator basis and in one integrated process. If that is not the case, the models
@@ -428,8 +428,8 @@ class AbstractJoinTreeNode(abc.ABC, Container[base.TableReference], Generic[Join
         Returns
         -------
         Optional[JoinMetadataType | BaseTableMetadataType]
-            The annotation if it exists, ``None`` otherwise. For `BaseTableNode`\ s this should be an instance of
-            `BaseTableMetadata` and for `IntermediateJoinNode`\ s this should be an instance of `JoinMetadata`.
+            The annotation if it exists, ``None`` otherwise. For `BaseTableNode` this should be an instance of
+            `BaseTableMetadata` and for `IntermediateJoinNode` this should be an instance of `JoinMetadata`.
         """
         raise NotImplementedError
 
@@ -1145,8 +1145,8 @@ AnnotationMerger = Optional[Callable[[Optional[BaseMetadata], Optional[BaseMetad
 class JoinTree(Container[base.TableReference], Generic[JoinMetadataType, BaseTableMetadataType]):
     """The join tree captures the order in which base tables as well as intermediate results are joined together.
 
-    Each join tree maintains the root of a composite tree structure consisting of `BaseTableNode`\ s as leaves and
-    `IntermediateJoinNode`\ s as intermediate nodes. The interface it defines combines both access to the underlying
+    Each join tree maintains the root of a composite tree structure consisting of `BaseTableNode` as leaves and
+    `IntermediateJoinNode` as intermediate nodes. The interface it defines combines both access to the underlying
     tree structure, as well as some additional methods to modify and expand join trees.
 
     Each join tree is designed as an immutable object. Therefore, the modification of a join tree always results in a
@@ -2069,6 +2069,63 @@ class PhysicalQueryPlan(JoinTree[PhysicalJoinMetadata, PhysicalBaseTableMetadata
         if len(query_plan.children) != 1:
             raise ValueError(f"Non join/scan nodes must have exactly one child: {query_plan}")
         return PhysicalQueryPlan.load_from_query_plan(query_plan.children[0], query)
+
+    @staticmethod
+    def load_from_logical_order(logical_order: LogicalJoinTree,
+                                operators: Optional[physops.PhysicalOperatorAssignment] = None,
+                                metadata: Optional[planparams.PlanParameterization] = None) -> PhysicalQueryPlan:
+        """Expands a logical join order to a full physical plan.
+
+        Parameters
+        ----------
+        logical_order : LogicalJoinTree
+            The logical join order to use. This defines the basic structure of the physical plan.
+        operators : Optional[physops.PhysicalOperatorAssignment], optional
+            Information about the scan and join operators to use. If there are no associated operators for parts of the join
+            order, no operators will be added for that part.
+        metadata : Optional[planparams.PlanParameterization], optional
+            Information about the cardinalities of different operators. Parallelization information is ignored, since this
+            should already be supplied by the operator hints. If there is no cardinality hint for parts of the join order
+            contained in the metadata, the cardinality from the `logical_order` will be re-used. Otherwise, that cardinality
+            is overwritten.
+
+        Returns
+        -------
+        PhysicalQueryPlan
+            The logical plan expanded by the additional physical information.
+
+        Raises
+        ------
+        TypeError
+            If the logical join tree is malformed. Most likely this indicates that the model of the join tree was changed and
+            this method was not updated properly.
+        """
+        if not logical_order:
+            return PhysicalQueryPlan(global_operator_settings=operators)
+        root_node = logical_order.root
+        if isinstance(root_node, IntermediateJoinNode):
+            left_child, right_child = root_node.left_child, root_node.right_child
+            physical_left_child = PhysicalQueryPlan.load_from_logical_order(left_child.as_join_tree(), operators, metadata)
+            physical_right_child = PhysicalQueryPlan.load_from_logical_order(right_child.as_join_tree(), operators, metadata)
+
+            join_predicate = root_node.annotation.join_predicate if root_node.annotation else None
+            join_cardinality = (metadata.cardinality_hints.get(root_node.tables(), math.nan) if metadata
+                                else (root_node.annotation.cardinality if root_node.annotation else math.nan))
+            join_operator = operators[root_node.tables()] if operators else None
+            join_annotation = PhysicalJoinMetadata(join_predicate, join_cardinality, join_operator)
+
+            physical_join_node = IntermediateJoinNode(physical_left_child, physical_right_child, join_annotation)
+            return PhysicalQueryPlan(physical_join_node)
+        elif isinstance(root_node, BaseTableNode):
+            filter_predicate = root_node.annotation.filter_predicate if root_node.annotation else None
+            scan_cardinality = (metadata.cardinality_hints.get(root_node.tables(), math.nan) if metadata
+                                else (root_node.annotation.cardinality if root_node.annotation else math.nan))
+            scan_operator = operators[root_node.table] if operators else None
+            scan_annotation = PhysicalBaseTableMetadata(filter_predicate, scan_cardinality, scan_operator)
+            physical_scan_node = BaseTableNode(root_node.table, scan_annotation)
+            return PhysicalQueryPlan(physical_scan_node)
+        else:
+            raise TypeError("Unexpected node type (should be either IntermediateJoinNode or BaseTableNode): " + str(root_node))
 
     def __init__(self: PhysicalQueryPlan,
                  root: Optional[AbstractJoinTreeNode[PhysicalJoinMetadata, PhysicalBaseTableMetadata]] = None, *,
