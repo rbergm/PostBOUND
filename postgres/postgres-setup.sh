@@ -108,7 +108,7 @@ pg_ctl -D $PG_TARGET_DIR/data -l pg.log start
 echo "... Creating user database for $USER"
 createdb $USER
 
-if [ "$1" = "--stop" ] ; then
+if [ "$STOP_ATFER" = "true" ] ; then
     pg_ctl -D $PG_TARGET_DIR/postgres-server/data stop
     echo ".. Setup done"
 else
