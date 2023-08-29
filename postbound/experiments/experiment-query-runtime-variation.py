@@ -136,7 +136,7 @@ def generate_random_join_orders(query: qal.SqlQuery, *, config: ExperimentConfig
     join_order_plans = []
     random_plan_hashes = set()
     current_plan_idx = 0
-    random_join_order_generator = random_enumerator.random_join_order_generator(query)
+    random_join_order_generator = random_enumerator.random_join_orders_for(query)
 
     max_tries = 3 * config.exhaustive_join_ordering_limit
     current_try = 0

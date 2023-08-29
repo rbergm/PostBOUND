@@ -431,6 +431,33 @@ class DependentSubqueryPreCheck(OptimizationPreCheck):
         return {"name": "no_dependent_subquery"}
 
 
+class SupportedHintCheck(OptimizationPreCheck):
+    """Check to assert that a number of operators are supported by a database system.
+
+    Parameters
+    ----------
+    hints : object
+        The operators and hints that have to be supported by the database system. Can be either a single hint, or an iterable
+        of hints.
+
+    See Also
+    --------
+    HintService.supports_hint
+    """
+
+    def __init__(self, hints: object) -> None:
+        super().__init__("database-check")
+        self._features = collection_utils.enlist(hints)
+
+    def check_supported_database_system(self, database_instance: db.Database) -> PreCheckResult:
+        failures = [hint for hint in self._features if not database_instance.hinting().supports_hint(hint)]
+        passed = not failures
+        return PreCheckResult(passed, failures)
+
+    def describe(self) -> dict:
+        return {"name": "database_operator_support", "features": self._features}
+
+
 class UnsupportedQueryError(RuntimeError):
     """Error to indicate that a specific query cannot be optimized by a selected algorithms.
 

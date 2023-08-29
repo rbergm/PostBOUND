@@ -108,7 +108,7 @@ class ExhaustiveJoinOrderEnumerator:
     def __init__(self, tree_structure: Literal["bushy", "left-deep", "right-deep"] = "bushy") -> None:
         self._tree_structure = tree_structure
 
-    def all_join_orders_for(self, query: qal.SqlQuery) -> Generator[jointree.LogicalJoinTree]:
+    def all_join_orders_for(self, query: qal.SqlQuery) -> Generator[jointree.LogicalJoinTree, None, None]:
         """Produces a generator for all possible join trees of a query.
 
         Parameters
@@ -119,8 +119,8 @@ class ExhaustiveJoinOrderEnumerator:
         Yields
         ------
         Generator[jointree.LogicalJoinTree]
-            A generator that produces all possible join orders for the input query. The structure of the queries depends on the
-            service configuration. Consult the class-level documentation for details.
+            A generator that produces all possible join orders for the input query. The structure of the join orders depends on
+            the service configuration. Consult the class-level documentation for details.
 
         Raises
         ------
@@ -173,7 +173,7 @@ class ExhaustiveJoinOrderEnumerator:
             A generator that produces all possible join orders for the input query.
         """
         join_graph = query.predicates().join_graph()
-        insert_left = self._tree_structure == "right-deep"
+        insert_left = self._tree_structure == "left-deep"
 
         for join_path in nx_utils.nx_frontier_walks(join_graph):
             join_tree = jointree.LogicalJoinTree()
@@ -336,9 +336,9 @@ class ExhaustiveOperatorEnumerator:
 
 
 class ExhaustivePlanEnumerator:
-    """Utility service to provide all possible exection plans fora query.
+    """Utility service to provide all possible exection plans for a query.
 
-    This service combines the `ExhaustiveJoinOrderGenerator` and `ExhaustiveOperatorEnumerator` into a single high-level
+    This service combines the `ExhaustiveJoinOrderEnumerator` and `ExhaustiveOperatorEnumerator` into a single high-level
     service. Therefore, it underlies the same restrictions as these two services. The produced generator can be accessed via
     the `all_plans_for` method.
 
@@ -346,13 +346,13 @@ class ExhaustivePlanEnumerator:
     Parameters
     ----------
     join_order_args : Optional[dict], optional
-        Configuration for the `ExhaustiveJoinOrderGenerator`. This is forwarded to the service's ``__init__`` method.
+        Configuration for the `ExhaustiveJoinOrderEnumerator`. This is forwarded to the service's ``__init__`` method.
     operator_args : Optional[dict], optional
         Configuration for the `ExhaustiveOperatorEnumerator`. This is forwarded to the service's ``__init__`` method.
 
     See Also
     --------
-    ExhaustiveJoinOrderGenerator
+    ExhaustiveJoinOrderEnumerator
     ExhaustiveOperatorEnumerator
     """
 
@@ -382,4 +382,4 @@ class ExhaustivePlanEnumerator:
         """
         for join_order in self._join_order_generator.all_join_orders_for(query):
             for operator_assignment in self._operator_generator.all_operator_assignments_for(query, join_order):
-                return jointree.PhysicalQueryPlan.load_from_logical_order(join_order, operator_assignment)
+                yield jointree.PhysicalQueryPlan.load_from_logical_order(join_order, operator_assignment)
