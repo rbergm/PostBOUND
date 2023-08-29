@@ -4,15 +4,17 @@ WD=$(pwd)
 USER=$(whoami)
 PG_VER_PRETTY=14
 PG_VERSION=REL_14_STABLE
-PG_PLAN_HINT_VERSION=REL_14_1_4_0
-PG_TARGET_DIR=postgres-server
+PG_HINT_PLAN_VERSION=REL14_1_4_0
+PG_TARGET_DIR="$WD/postgres-server"
 MAKE_CORES=$(($(nproc --all) / 2))
+STOP_AFTER="false"
 
 show_help() {
     echo "Usage: $0 <options>"
     echo "Allowed options:"
     echo "--pg-ver <version> Setup Postgres with the given version (currently allowed values: 12.4, 14 (default), 15)"
-    echo "-d | --dir <director> Install Postgres server to the designated directory (postgres-server by default)."
+    echo "-d | --dir <directory> Install Postgres server to the designated directory (postgres-server by default)."
+    echo "--stop Stop the Postgres server process after installation and setup finished"
     exit 1
 }
 
@@ -50,6 +52,10 @@ while [ $# -gt 0 ] ; do
                 echo "... Normalizing relative target directory to $PG_TARGET_DIR"
             fi
             shift
+            shift
+            ;;
+        --stop)
+            STOP_AFTER="true"
             shift
             ;;
         *)
