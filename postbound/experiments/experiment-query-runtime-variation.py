@@ -114,7 +114,7 @@ def execute_query_handler(query: qal.SqlQuery, database: db.Database,
     duration_sender.send((result_plan, query_duration))
 
 
-def generate_all_join_orders(query: qal.SqlQuery, exhaustive_enumerator: enumeration.ExhaustiveJoinOrderGenerator, *,
+def generate_all_join_orders(query: qal.SqlQuery, exhaustive_enumerator: enumeration.ExhaustiveJoinOrderEnumerator, *,
                              config: ExperimentConfig = ExperimentConfig.default()) -> list[jointree.LogicalJoinTree]:
     exhaustive_join_order_generator = exhaustive_enumerator.all_join_orders_for(query)
     join_order_plans = []
@@ -318,7 +318,7 @@ def prewarm_database(query: qal.SqlQuery, db_instance: postgres.PostgresInterfac
 def evaluate_query(label: str, query: qal.SqlQuery, *, db_instance: postgres.PostgresInterface,
                    config: ExperimentConfig = ExperimentConfig.default()) -> Iterable[EvaluationResult]:
     logging.debug("Building all plans for query %s", label)
-    exhaustive_enumerator = enumeration.ExhaustiveJoinOrderGenerator()
+    exhaustive_enumerator = enumeration.ExhaustiveJoinOrderEnumerator()
     join_order_plans = generate_all_join_orders(query, exhaustive_enumerator, config=config)
 
     should_sample_randomly = False

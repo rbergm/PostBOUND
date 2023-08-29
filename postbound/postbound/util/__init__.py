@@ -1,1 +1,1 @@
-"""Contains utilities that are shared by different parts of the code base."""
+"""Contains utilities that are not specific to PostBOUND's domain of databases and query optimization."""
