@@ -1188,9 +1188,14 @@ class TonicOperatorSelection(stages.PhysicalOperatorSelection):
             subset of `max_combinations` many samples is explored.
         """
         join_order = join_order if join_order is not None else self._obtain_native_join_order(query)
-        allowed_operators = allowed_operators if allowed_operators else frozenset(physops.JoinOperators)
+
+        allowed_operators = set(allowed_operators) if allowed_operators else set(physops.JoinOperators)
+        supported_operators = {join_op for join_op in physops.JoinOperators if self._db.hinting().supports_hint(join_op)}
+        allowed_operators = frozenset(allowed_operators & supported_operators)
+
         unknown_costs = {intermediate.tables(): allowed_operators for intermediate in join_order.join_sequence()}
         total_unknown_combinations = math.prod([len(unknown_ops) for unknown_ops in unknown_costs.values()])
+
         query_plans = (_sample_cost_estimates(query, join_order, unknown_costs, max_combinations, self._db)
                        if total_unknown_combinations > max_combinations
                        else _generate_all_cost_estimates(query, join_order, unknown_costs, self._db))
