@@ -496,12 +496,19 @@ class JoinGraph(Mapping[base.TableReference, TableInfo]):
         """
         return list(self._graph.edges)
 
-    def available_join_paths(self) -> Iterable[JoinPath]:
+    def available_join_paths(self, *, both_directions_on_initial: bool = False) -> Iterable[JoinPath]:
         """Provides all joins that can be executed in the current join graph.
 
-        The precise output of this method depends on the current state of the join graph. If none of the tables in the join
-        where the source table is part of the intermediate result (i.e. it has been joined already) and the target table is
-        still free.
+        The precise output of this method depends on the current state of the join graph: If the graph is still in its initial
+        state (i.e. none of the tables is joined yet), all joins are provided. Otherwise, only those join paths are considered
+        available, where one table is already joined, and the join partner is still free. The free table will be the target
+        table in the join path whereas the joined table will be the start table.
+
+        Parameters
+        ----------
+        both_directions_on_initial : bool, optional
+            Whether to include the join path *R* -> *S* as well as *S* -> *R* for initial join graphs, assuming there is a join
+            between *R* and *S* in the graph.
 
         Returns
         -------
@@ -512,7 +519,10 @@ class JoinGraph(Mapping[base.TableReference, TableInfo]):
         if self.initial():
             for join_edge in self._graph.edges.data("predicate"):
                 source_table, target_table, join_condition = join_edge
-                join_paths.append(JoinPath(source_table, target_table, join_condition))
+                current_join_path = JoinPath(source_table, target_table, join_condition)
+                join_paths.append(current_join_path)
+                if both_directions_on_initial:
+                    join_paths.append(current_join_path.flip_direction())
             return join_paths
 
         for join_edge in self._graph.edges.data("predicate"):
@@ -540,7 +550,7 @@ class JoinGraph(Mapping[base.TableReference, TableInfo]):
         Parameters
         ----------
         both_directions_on_initial : bool, optional
-            Whether to include a join path *R* -> *S* as well as *S* -> *R* for initial join graphs if *R* ⨝ *S* is an n:m
+            Whether to include the join path *R* -> *S* as well as *S* -> *R* for initial join graphs if *R* ⨝ *S* is an n:m
             join.
 
         Returns
@@ -710,18 +720,21 @@ class JoinGraph(Mapping[base.TableReference, TableInfo]):
                 and not self.is_pk_fk_join(second_table, first_table))
 
     def available_pk_fk_joins_for(self, fk_table: base.TableReference) -> Iterable[JoinPath]:
-        """Provides all available primary key/foreign key joins with `fk_table`.
+        """Provides all available primary key/foreign key joins with a specific foreign key table.
 
-        The given table acts as the foreign key table in all returned join paths. However, this method does not
-        restrict, whether the foreign key tables is assigned to the start or target table in the join path (this
-        depends on the behavior of `available_join_paths` for the current join graph).
+        Parameters
+        ----------
+        fk_table : base.TableReference
+            The foreign key table. This will be the start table in all join paths.
+
+        Returns
+        -------
+        Iterable[JoinPath]
+            All matching join paths. The start table of the path will be the foreign key table, whereas the primary key table
+            will be the target table.
         """
-        if self.initial():
-            return [join for join in self.available_join_paths()
-                    if self.is_pk_fk_join(join.start_table, join.target_table)
-                    or self.is_pk_fk_join(join.target_table, join.start_table)]
-
-        return [join for join in self.available_join_paths() if self.is_pk_fk_join(fk_table, join.target_table)]
+        return [join for join in self.available_join_paths(both_directions_on_initial=True)
+                if self.is_pk_fk_join(fk_table, join.target_table)]
 
     def available_deep_pk_join_paths_for(self, fk_table: base.TableReference,
                                          ordering: Callable[[base.TableReference, dict], int] | None = None
