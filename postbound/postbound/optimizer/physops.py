@@ -442,7 +442,7 @@ class PhysicalOperatorAssignment:
         return cloned_assignment
 
     def __bool__(self) -> bool:
-        return self.global_settings or self.join_operators or self.scan_operators
+        return bool(self.global_settings) or bool(self.join_operators) or bool(self.scan_operators)
 
     def __getitem__(self, item: base.TableReference | Iterable[base.TableReference] | ScanOperators | JoinOperators
                     ) -> ScanOperatorAssignment | JoinOperatorAssignment | bool | None:
@@ -473,6 +473,6 @@ class PhysicalOperatorAssignment:
         global_str = ", ".join(f"{op.value}: {enabled}" for op, enabled in self.global_settings.items())
         scans_str = ", ".join(
             f"{scan.table.identifier()}: {scan.operator.value}" for scan in self.scan_operators.values())
-        joins_keys = ((join, "⨝".join(tab.identifier() for tab in join.join)) for join in self.join_operators.values())
+        joins_keys = ((join, " ⨝ ".join(tab.identifier() for tab in join.join)) for join in self.join_operators.values())
         joins_str = ", ".join(f"{key}: {join.operator.value}" for join, key in joins_keys)
         return f"global=[{global_str}] scans=[{scans_str}] joins=[{joins_str}]"
