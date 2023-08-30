@@ -14,7 +14,7 @@ from postbound.db import db
 from postbound.util import collections as collection_utils, networkx as nx_utils
 
 
-@dataclass
+@dataclass(frozen=True)
 class JoinPath:
     """A join path models the join between two tables where one table is part of an intermediate result.
 
@@ -81,7 +81,7 @@ class JoinPath:
         return str(self)
 
     def __str__(self) -> str:
-        return f"{self.start_table} ⋈ {self.target_table} ({self.join_condition})"
+        return f"{self.start_table} ⋈ {self.target_table}"
 
 
 class IndexInfo:
@@ -531,10 +531,17 @@ class JoinGraph(Mapping[base.TableReference, TableInfo]):
 
         return join_paths
 
-    def available_n_m_join_paths(self) -> Iterable[JoinPath]:
+    def available_n_m_join_paths(self, *, both_directions_on_initial: bool = False) -> Iterable[JoinPath]:
         """Provides exactly those join paths from `available_join_paths` that correspond to n:m joins.
 
-        The logic for initial and "dirty" join graphs is inherited from `available_join_paths` as well.
+        The logic for initial and "dirty" join graphs is inherited from `available_join_paths` and can be further customized
+        via the `both_directions_on_initial` parameter.
+
+        Parameters
+        ----------
+        both_directions_on_initial : bool, optional
+            Whether to include a join path *R* -> *S* as well as *S* -> *R* for initial join graphs if *R* ⨝ *S* is an n:m
+            join.
 
         Returns
         -------
@@ -546,6 +553,8 @@ class JoinGraph(Mapping[base.TableReference, TableInfo]):
             start_table, target_table = join_path.start_table, join_path.target_table
             if not self.is_pk_fk_join(start_table, target_table) and not self.is_pk_fk_join(target_table, start_table):
                 n_m_paths.append(join_path)
+                if both_directions_on_initial and self.initial():
+                    n_m_paths.append(join_path.flip_direction())
         return n_m_paths
 
     def available_join_paths_for(self, free_table: base.TableReference) -> Iterable[JoinPath]:

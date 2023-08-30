@@ -569,6 +569,7 @@ class UESJoinOrderOptimizer(stages.JoinOrderOptimization):
             If the iterative construction failed. This indicates a bug in the implementation of the algorithm, not a mistake by
             the user.
         """
+        self._log_information("Using default UES optimizer")
         join_tree = jointree.LogicalJoinTree()
 
         while join_graph.contains_free_n_m_joins():
@@ -576,7 +577,7 @@ class UESJoinOrderOptimizer(stages.JoinOrderOptimization):
             # Update the current upper bounds
             lowest_bound = np.inf
             lowest_bound_table = None
-            for candidate_join in join_graph.available_n_m_join_paths():
+            for candidate_join in join_graph.available_n_m_join_paths(both_directions_on_initial=True):
                 candidate_table = candidate_join.target_table
                 filter_estimate = self.stats_container.base_table_estimates[candidate_table]
                 pk_fk_bounds = [self.join_estimation.estimate_for(join_path.join_condition, join_graph) for join_path
@@ -587,6 +588,7 @@ class UESJoinOrderOptimizer(stages.JoinOrderOptimization):
                 if candidate_min_bound < lowest_bound:
                     lowest_bound = candidate_min_bound
                     lowest_bound_table = candidate_table
+            self._log_information(".. Current bounds: " + dict_utils.stringify(self.stats_container.upper_bounds))
 
             if join_tree.is_empty():
                 filter_pred = query.predicates().filters_for(lowest_bound_table)
@@ -610,11 +612,14 @@ class UESJoinOrderOptimizer(stages.JoinOrderOptimization):
 
             selected_candidate: joingraph.JoinPath | None = None
             lowest_bound = np.inf
+            bounds_log: dict[joingraph.JoinPath, float] = {}
             for candidate_join in join_graph.available_join_paths():
                 candidate_bound = self.join_estimation.estimate_for(candidate_join.join_condition, join_graph)
+                bounds_log[candidate_join] = candidate_bound
                 if candidate_bound < lowest_bound:
                     selected_candidate = candidate_join
                     lowest_bound = candidate_bound
+            self._log_information(f".. n:m join bounds: {bounds_log}")
 
             direct_pk_joins = join_graph.available_pk_fk_joins_for(selected_candidate.target_table)
             create_subquery = any(self.subquery_policy.generate_subquery_for(pk_join.join_condition, join_graph)
@@ -709,6 +714,7 @@ class UESJoinOrderOptimizer(stages.JoinOrderOptimization):
         jointree.LogicalJoinTree
             The resulting join tree
         """
+        self._log_information("Using star query optimizer")
         # initial table / join selection
         lowest_bound = np.inf
         lowest_bound_join = None
@@ -851,13 +857,28 @@ class UESJoinOrderOptimizer(stages.JoinOrderOptimization):
                                      stats_container=copy.copy(self.stats_container),
                                      database=self.database)
 
+    def _log_information(self, info: str) -> None:
+        """Displays arbitrary information.
+
+        The current implementation of this methods writes to *stdout* directly. If logging is disabled, no information is
+        printed.
+
+        Parameters
+        ----------
+        info : str
+            The information to display
+        """
+        if self._logging_enabled:
+            print(info)
+
     def _log_optimization_progress(self, phase: str, candidate_table: base.TableReference,
                                    pk_joins: Iterable[joingraph.JoinPath], *,
                                    join_condition: predicates.AbstractPredicate | None = None,
                                    subquery_join: bool | None = None) -> None:
         """Displays the current optimizer state.
 
-        The current implementation of this method writes to stdout directly.
+        The current implementation of this method writes to *stdout* directly. If logging is disabled, no information is
+        printed.
 
         Parameters
         ----------

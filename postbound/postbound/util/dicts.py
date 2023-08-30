@@ -16,6 +16,26 @@ K = typing.TypeVar("K")
 V = typing.TypeVar("V")
 
 
+def stringify(d: dict[K, V]) -> str:
+    """Generates a string-representation of a dictionary.
+
+    In contrast to calling ``str()`` directly, this method generates proper string representations of both keys and values and
+    does not use ``repr()`` for them. Nested objects are stilled formatted according to ``str()`` however.
+
+    Parameters
+    ----------
+    d : dict[K, V]
+        The dictionary to stringify
+
+    Returns
+    -------
+    str
+        The string representation
+    """
+    items_str = ", ".join(f"{k}: {v}" for k, v in d.items())
+    return "{" + items_str + "}"
+
+
 def key(dictionary: dict[K, V]) -> K:
     """Provides the key of a dictionary with just 1 item.
 
