@@ -428,14 +428,21 @@ class UESSubqueryGenerationPolicy(tree_policy.BranchGenerationPolicy):
         if join_graph.count_consumed_tables() < 2:
             return False
 
-        joined_table: base.TableReference | None = None
-        for table in join.tables():
-            if join_graph.is_free_table(table):
-                joined_table = table
-                break
-
         stats_container = self.stats_container
-        return stats_container.upper_bounds[joined_table] < stats_container.base_table_estimates[joined_table]
+        for first_col, second_col in join.join_partners():
+            first_tab, second_tab = first_col.table, second_col.table
+            if join_graph.is_pk_fk_join(first_tab, second_tab):
+                joined_table = first_tab
+            elif join_graph.is_pk_fk_join(second_tab, first_tab):
+                joined_table = second_tab
+            else:
+                continue
+
+            generate_subquery = stats_container.upper_bounds[joined_table] < stats_container.base_table_estimates[joined_table]
+            if generate_subquery:
+                return True
+
+        return False
 
     def describe(self) -> dict:
         return {"name": "defensive"}
