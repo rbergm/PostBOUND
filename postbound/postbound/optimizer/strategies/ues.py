@@ -264,7 +264,10 @@ class MaxFrequencyStatsContainer(StatisticsContainer[MaxFrequency]):
 
         for column in referenced_columns:
             top1_list = self.database_stats.most_common_values(column, k=1)
-            mcv_value, mcv_frequency = collection_utils.simplify(top1_list)
+            if not top1_list:
+                mcv_frequency = self._uniform_frequency(column)
+            else:
+                _, mcv_frequency = collection_utils.simplify(top1_list)
             self.attribute_frequencies[column] = mcv_frequency
 
     def _update_partner_column_frequency(self, joined_column: base.ColumnReference,
@@ -277,6 +280,25 @@ class MaxFrequencyStatsContainer(StatisticsContainer[MaxFrequency]):
     def _update_third_party_column_frequency(self, joined_column: base.ColumnReference,
                                              third_party_column: base.ColumnReference) -> None:
         self.attribute_frequencies[third_party_column] *= self.attribute_frequencies[joined_column]
+
+    def _uniform_frequency(self, column: base.ColumnReference) -> float:
+        """Calculates the value frequency for a column, assuming that all values are uniformly distributed.
+
+        Parameters
+        ----------
+        column : base.ColumnReference
+            The column to calculate for
+
+        Returns
+        -------
+        float
+            The estimated frequency of all column values
+        """
+        n_tuples = self.database_stats.total_rows(column.table)
+        n_tuples = 1 if n_tuples is None else n_tuples
+        n_distinct = self.database_stats.distinct_values(column)
+        n_distinct = 1 if n_distinct is None else n_distinct
+        return n_tuples / n_distinct
 
 
 class UESJoinBoundEstimator(card_policy.JoinBoundCardinalityEstimator):
