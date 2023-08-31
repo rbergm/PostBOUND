@@ -16,6 +16,7 @@ from postbound.db import db, postgres
 from postbound.qal import parser, transform
 from postbound.experiments import workloads
 from postbound.optimizer import presets, validation
+from postbound.optimizer.strategies import ues
 
 from tests import regression_suite
 
@@ -26,7 +27,7 @@ pg_connect_dir = "."
 class JobWorkloadTests(regression_suite.DatabaseTestCase):
     def setUp(self) -> None:
         self.db = postgres.connect(config_file=f"{pg_connect_dir}/.psycopg_connection_job")
-        self.db.statistics().emulated = True
+        self.db.statistics().emulated = False
         self.db.statistics().cache_enabled = True
         self.job = workloads.job()
 
@@ -55,6 +56,35 @@ class JobWorkloadTests(regression_suite.DatabaseTestCase):
                 optimized_query = optimization_pipeline.optimize_query(query)
                 explain_query = transform.as_explain(optimized_query)
                 self.db.execute_query(explain_query, cache_enabled=False)
+
+    @unittest.skipUnless(os.environ.get("CHECK_JOB_SANITY", None),
+                         "Skipping sanity checks for produced join orders. Set CHECK_JOB_SANITY environment variable to "
+                         "non-empty value to change. Notice that this test does not fail, but rather prints potential "
+                         "problems directly to stdout.")
+    def test_optimized_join_orders(self) -> None:
+        ues_optimizer = ues.UESJoinOrderOptimizer(database=self.db)
+
+        detected_subqueries = 0
+        unique_join_orders = set()
+        previous_family = ""
+        for label, query in self.job.entries():
+            current_family = label[:-1]
+            if current_family != previous_family:
+                if len(unique_join_orders) == 1:
+                    print("All join orders for family", previous_family, "are the same. This could indicate a programming "
+                          "error!")
+                unique_join_orders = set()
+
+            current_join_order = ues_optimizer.optimize_join_order(query)
+            unique_join_orders.add(current_join_order)
+            contains_subquery = current_join_order.is_bushy()
+            if contains_subquery:
+                detected_subqueries += 1
+
+            previous_family = current_family
+
+        if not detected_subqueries:
+            print("No subqueries have been detected. This could indicate a programming error!")
 
 
 class SsbWorkloadTests(regression_suite.DatabaseTestCase):
