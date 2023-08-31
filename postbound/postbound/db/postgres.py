@@ -406,6 +406,19 @@ class PostgresStatisticsInterface(db.DatabaseStatistics):
 
     def update_statistics(self, columns: Optional[base.ColumnReference | Iterable[base.ColumnReference]] = None, *,
                           tables: Optional[base.TableReference | Iterable[base.TableReference]] = None) -> None:
+        """Instructs the Postgres server to update statistics for specific columns.
+
+        Notice that is one of the methods of the database interface that explicitly mutates the state of the database system.
+
+        Parameters
+        ----------
+        columns : Optional[base.ColumnReference  |  Iterable[base.ColumnReference]], optional
+            The columns for which statistics should be updated. If no columns are given, columns are inferred based on the
+            `tables` and all detected columns are used.
+        tables : Optional[base.TableReference  |  Iterable[base.TableReference]], optional
+            The table for which statistics should be updated. If `columns` are given, this parameter is completely ignored. If
+            no columns and no tables are given, all tables in the current database are used.
+        """
         if not columns and not tables:
             tables = self._db.schema().tables()
         if not columns and tables:
@@ -421,20 +434,24 @@ class PostgresStatisticsInterface(db.DatabaseStatistics):
         tables_and_columns = ", ".join(f"{table.full_name}({cols})" for table, cols in columns_str.items())
 
         query_template = f"ANALYZE {tables_and_columns}"
-        print(query_template)
-        return
         self._db.cursor().execute(query_template)
 
     def _retrieve_total_rows_from_stats(self, table: base.TableReference) -> Optional[int]:
         count_query = f"SELECT reltuples FROM pg_class WHERE oid = '{table.full_name}'::regclass"
         self._db.cursor().execute(count_query)
-        count = self._db.cursor().fetchone()[0]
+        result_set = self._db.cursor().fetchone()
+        if not result_set:
+            return None
+        count = result_set[0]
         return count
 
     def _retrieve_distinct_values_from_stats(self, column: base.ColumnReference) -> Optional[int]:
         dist_query = "SELECT n_distinct FROM pg_stats WHERE tablename = %s and attname = %s"
         self._db.cursor().execute(dist_query, (column.table.full_name, column.name))
-        dist_values = self._db.cursor().fetchone()[0]
+        result_set = self._db.cursor().fetchone()
+        if not result_set:
+            return None
+        dist_values = result_set[0]
 
         # interpreting the n_distinct column is difficult, since different value ranges indicate different things
         # (see https://www.postgresql.org/docs/current/view-pg-stats.html)
