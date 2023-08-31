@@ -642,7 +642,7 @@ class UESJoinOrderOptimizer(stages.JoinOrderOptimization):
             selected_candidate: joingraph.JoinPath | None = None
             lowest_bound = np.inf
             bounds_log: dict[joingraph.JoinPath, float] = {}
-            for candidate_join in join_graph.available_join_paths():
+            for candidate_join in join_graph.available_n_m_join_paths():
                 candidate_bound = self.join_estimation.estimate_for(candidate_join.join_condition, join_graph)
                 bounds_log[candidate_join] = candidate_bound
                 if candidate_bound < lowest_bound:
@@ -667,7 +667,7 @@ class UESJoinOrderOptimizer(stages.JoinOrderOptimization):
                 join_graph.mark_joined(candidate_table)
                 subquery_tree = self._insert_pk_joins(query, all_pk_joins, subquery_tree, join_graph)
 
-                join_tree = join_tree.join_with_subquery(subquery_tree, join_annotation)
+                join_tree = join_tree.join_with_subtree(subquery_tree, join_annotation)
                 self.stats_container.upper_bounds[join_tree] = lowest_bound
             else:
 
