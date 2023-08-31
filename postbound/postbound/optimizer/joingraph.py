@@ -16,7 +16,10 @@ from postbound.util import collections as collection_utils, networkx as nx_utils
 
 @dataclass(frozen=True)
 class JoinPath:
-    """A join path models the join between two tables where one table is part of an intermediate result.
+    """A join path models the join between two tables.
+
+    Usually a path represents a join where one table is part of an intermediate result, whereas the other table is already part
+    of an intermediate result. However, this is not required.
 
     Attributes
     ----------
@@ -486,6 +489,16 @@ class JoinGraph(Mapping[base.TableReference, TableInfo]):
         """
         return frozenset(table for table in self if not self.is_free_table(table))
 
+    def free_tables(self) -> frozenset[base.TableReference]:
+        """Provides all tables that have not been joined, yet.
+
+        Returns
+        -------
+        frozenset[base.TableReference]
+            The tables that are not consumed
+        """
+        return frozenset(table for table in self if self.is_free_table(table))
+
     def all_joins(self) -> Iterable[tuple[base.TableReference, base.TableReference]]:
         """Provides all edges in the join graph, no matter whether they are available or not.
 
@@ -567,26 +580,27 @@ class JoinGraph(Mapping[base.TableReference, TableInfo]):
                     n_m_paths.append(join_path.flip_direction())
         return n_m_paths
 
-    def available_join_paths_for(self, free_table: base.TableReference) -> Iterable[JoinPath]:
+    def available_join_paths_for(self, table: base.TableReference) -> Iterable[JoinPath]:
         """Returns all possible joins of a specific table.
 
-        The given table has to be free and all of the join paths have to be consumed. If the join graph is still in its intial
-        state, the behavior of `available_join_paths` is adapted.
+        What constitutes a possible join depends on the state of the join graph: for an initial join graph, the only
+        requirement is a valid join predicate between the tables. In all other cases, exactly one of the tables has to be free
+        and the other table has to be consumed.
 
         Parameters
         ----------
-        free_table : base.TableReference
-            The free table that should be joined
+        table : base.TableReference
+            The table that should be joined
 
         Returns
         -------
         Iterable[JoinPath]
-            All possible join paths for the free table. This includes n:m joins as well as primary key/foreign key joins. In
-            each join path the consumed join partner will be the `start_table` and the free table will be assigned to the
-            `target_table`.
+            All possible join paths for the table. This includes n:m joins as well as primary key/foreign key joins. In
+            each join path the specified table will be the start table and the join partner will be the target table.
         """
-        return [path if free_table == path.start_table else path.flip_direction()
-                for path in self.available_join_paths() if path.spans_table(free_table)]
+        self._assert_contains_table(table)
+        return [JoinPath(table, partner_table, join_edge["predicate"]) for partner_table, join_edge
+                in self._graph.adj[table].items() if self.is_available_join(table, partner_table)]
 
     def nx_graph(self) -> nx.Graph:
         """Provides the underlying graph object for this join graph.
@@ -722,6 +736,8 @@ class JoinGraph(Mapping[base.TableReference, TableInfo]):
     def available_pk_fk_joins_for(self, fk_table: base.TableReference) -> Iterable[JoinPath]:
         """Provides all available primary key/foreign key joins with a specific foreign key table.
 
+        This method does not restrict itself to available joins, but requires that at least one of the join parts is free.
+
         Parameters
         ----------
         fk_table : base.TableReference
@@ -733,8 +749,10 @@ class JoinGraph(Mapping[base.TableReference, TableInfo]):
             All matching join paths. The start table of the path will be the foreign key table, whereas the primary key table
             will be the target table.
         """
-        return [join for join in self.available_join_paths(both_directions_on_initial=True)
-                if self.is_pk_fk_join(fk_table, join.target_table)]
+        self._assert_contains_table(fk_table)
+        return [JoinPath(fk_table, pk_table, join_edge["predicate"]) for pk_table, join_edge
+                in self._graph.adj[fk_table].items()
+                if self.is_pk_fk_join(fk_table, pk_table) and (self.is_free_table(fk_table) or self.is_free_table(pk_table))]
 
     def available_deep_pk_join_paths_for(self, fk_table: base.TableReference,
                                          ordering: Callable[[base.TableReference, dict], int] | None = None
@@ -768,6 +786,7 @@ class JoinGraph(Mapping[base.TableReference, TableInfo]):
         Iterable[JoinPath]
             All deep primary key/foreign key join paths, starting at the `fk_table`
         """
+        self._assert_contains_table(fk_table)
         available_joins = nx_utils.nx_bfs_tree(self._graph, fk_table, self._check_pk_fk_join, node_order=ordering)
         join_paths = []
         for join in available_joins:
@@ -891,6 +910,22 @@ class JoinGraph(Mapping[base.TableReference, TableInfo]):
                 if is_free or table == partner_table:
                     continue
                 self._invalidate_indexes_on(table)
+
+    def _assert_contains_table(self, table: base.TableReference) -> None:
+        """Raises an error if a specific table is not part of the join graph.
+
+        Parameters
+        ----------
+        table : base.TableReference
+            The table to check
+
+        Raises
+        ------
+        ValueError
+            If the table is not a node in the join graph
+        """
+        if table not in self:
+            raise ValueError(f"Join graph does not contain table {table}")
 
     def _check_pk_fk_join(self, pk_table: base.TableReference, edge_data: dict) -> bool:
         """Checks, whether a specific table acts as a primary key in the join as indicated by a join graph edge.
