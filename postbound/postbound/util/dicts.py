@@ -211,8 +211,29 @@ def dict_to_numpy(data: dict[K, V]) -> np.array[V]:
     return np.asarray(list(sorted_dict.values()))
 
 
+class HashableDict(collections.UserDict[K, V]):
+    """A dictionary implementation that can be hashed.
+
+    Warnings
+    --------
+    This type should be used with extreme caution in order to not violate any invariants due to unintended data modification.
+    """
+
+    def __hash__(self) -> int:
+        return hash_dict(self.data)
+
+
 class CustomHashDict(collections.UserDict[K, V]):
-    """A normal Python dictionary that uses a custom hash function instead of the default hash() call."""
+    """Wrapper of a normal Python dictionary that uses a custom hash function instead of the default hash() method.
+
+    All non-hashing related behavior is directly inherited from the default Python dictionary. Only the item access is changed
+    to enforce the usage of the new hashing function.
+
+    Parameters
+    ----------
+    hash_func : Callable[[K], int]
+        The hashing function to use. It receives the key as input and must produce a valid hash value as output.
+    """
 
     def __init__(self, hash_func: Callable[[K], int]) -> None:
         super().__init__()
@@ -226,7 +247,17 @@ class CustomHashDict(collections.UserDict[K, V]):
 
 
 class DynamicDefaultDict(collections.UserDict[K, V]):
-    def __init__(self, factory: Callable[[K], V]):
+    """Wrapper of a normal Python `defaultdict` that permits dynamic default values.
+
+    When using a standard Python `defaultdict`, the default value must be decided up-front. This value is used for all missing
+    keys. In contrast, this dictionary implementation allows for the default value to be calculated based on the requested key.
+
+    Parameters
+    ----------
+    factory : Callable[[K], V]
+        A function that generates the value based on a missing key. It receives the key as input and must return the value.
+    """
+    def __init__(self, factory: Callable[[K], V]) -> None:
         super().__init__()
         self.factory = factory
 
