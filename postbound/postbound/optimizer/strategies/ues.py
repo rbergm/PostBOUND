@@ -13,9 +13,9 @@ form A ⋈ B ⋈ C. Here, A ⋈ B is primary key/foreign key join with A acting 
 primary key partner. At the same time, B ⋈ C is also a primary key/foreign key join, but this time B acts as the foreign key
 partner and C is the primary key partner. The original implementation did not specify how such situations should be handled and
 multiple possible approaches exist (e.g. treating the entire join sequence as one large primary key/foreign key join or
-invalidating the second join once the primary key/foreign key join between A and B has been performed). Our implementation uses
-the first strategy, i.e. the join is treated as one large primary key/foreign key join and the subquery contains all the
-related tables.
+invalidating the second join once the primary key/foreign key join between A and B has been performed). Our implementation can
+use the first strategy (the join is treated as one large primary key/foreign key join and the subquery contains all the
+related tables) but defaults to the second one.
 
 References
 ----------
@@ -490,6 +490,10 @@ class UESJoinOrderOptimizer(stages.JoinOrderOptimization):
     stats_container : Optional[StatisticsContainer], optional
         The statistics used to calcualte the different upper bounds. These have to be compatible with the `join_estimation`.
         Defaults to a `MaxFrequencyStatsContainer`.
+    pull_eager_pk_tables : bool, optional
+        How to deal with chains of primary key/foreign key joins (joins where the primary key table for one join acts as the
+        foreign key in another join). By default, only the first primary key/foreign key join is used as a filter. If eager
+        pulling is enabled, the subsequent primary key filters are also included.
     database : Optional[db.Database], optional
         The database whose statistics should be used. The database has to be configured appropriately already (e.g. regarding
         the usage of emulated statistics). If this parameter is omitted, it is inferred from the `db.DatabasePool`.
@@ -506,6 +510,7 @@ class UESJoinOrderOptimizer(stages.JoinOrderOptimization):
                  join_estimation: Optional[card_policy.JoinBoundCardinalityEstimator] = None,
                  subquery_policy: Optional[tree_policy.BranchGenerationPolicy] = None,
                  stats_container: Optional[StatisticsContainer] = None,
+                 pull_eager_pk_tables: bool = False,
                  database: Optional[db.Database] = None, verbose: bool = False) -> None:
         super().__init__()
         self.database = database if database else db.DatabasePool().get_instance().current_database()
@@ -515,6 +520,7 @@ class UESJoinOrderOptimizer(stages.JoinOrderOptimization):
         self.subquery_policy = subquery_policy if subquery_policy else UESSubqueryGenerationPolicy()
         self.stats_container = (stats_container if stats_container
                                 else MaxFrequencyStatsContainer(self.database.statistics()))
+        self._pull_eager_pk_tables = pull_eager_pk_tables
         self._logging_enabled = verbose
 
     def optimize_join_order(self, query: qal.SqlQuery
@@ -654,7 +660,8 @@ class UESJoinOrderOptimizer(stages.JoinOrderOptimization):
             create_subquery = any(self.subquery_policy.generate_subquery_for(pk_join.join_condition, join_graph)
                                   for pk_join in direct_pk_joins)
             candidate_table = selected_candidate.target_table
-            all_pk_joins = join_graph.available_deep_pk_join_paths_for(candidate_table)
+            all_pk_joins = (join_graph.available_deep_pk_join_paths_for(candidate_table) if self._pull_eager_pk_tables
+                            else join_graph.available_pk_fk_joins_for(candidate_table))
             candidate_filters = query.predicates().filters_for(candidate_table)
             candidate_base_cardinality = self.stats_container.base_table_estimates[candidate_table]
             join_annotation = jointree.LogicalJoinMetadata(selected_candidate.join_condition, lowest_bound)
