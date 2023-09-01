@@ -1671,7 +1671,10 @@ class PostgresExplainPlan:
     """Models an entire ``EXPLAIN`` plan produced by Postgres
 
     In contrast to `PostgresExplainNode`, this includes additional parameters (planning time and execution time) for the entire
-    plan, rather than just portions of it
+    plan, rather than just portions of it.
+
+    This class supports all methods that are specified on the general `db.QueryExecutionPlan` and returns the correct data for
+    its actual plan.
 
     Parameters
     ----------
@@ -1691,9 +1694,10 @@ class PostgresExplainPlan:
     """
     def __init__(self, explain_data: dict) -> None:
         explain_data = explain_data[0] if isinstance(explain_data, list) else explain_data
-        self.planning_time = explain_data.get("Planning Time", math.nan) / 1000
-        self.execution_time = explain_data.get("Execution Time", math.nan) / 1000
+        self.planning_time: float = explain_data.get("Planning Time", math.nan) / 1000
+        self.execution_time: float = explain_data.get("Execution Time", math.nan) / 1000
         self.query_plan = PostgresExplainNode(explain_data["Plan"])
+        self._normalized_plan = self.query_plan.as_query_execution_plan()
 
     def is_analyze(self) -> bool:
         """Checks, whether this ``EXPLAIN`` plan is an ``EXPLAIN ANALYZE`` plan or a pure ``EXPLAIN`` plan.
@@ -1724,7 +1728,7 @@ class PostgresExplainPlan:
         --------
         PostgresExplainNode.as_query_execution_plan
         """
-        return self.query_plan.as_query_execution_plan()
+        return self._normalized_plan
 
     def inspect(self) -> str:
         """Provides a pretty string representation of the actual plan.
@@ -1739,6 +1743,14 @@ class PostgresExplainPlan:
         PostgresExplainNode.inspect
         """
         return self.query_plan.inspect()
+
+    def __getattribute__(self, name: str) -> Any:
+        # All methods that are not defined on the Postgres plan delegate to the default DB plan
+        try:
+            return object.__getattribute__(self, name)
+        except AttributeError:
+            normalized_plan = object.__getattribute__(self, "_normalized_plan")
+            return normalized_plan.__getattribute__(name)
 
     def __repr__(self) -> str:
         return str(self)
