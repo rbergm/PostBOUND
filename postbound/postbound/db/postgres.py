@@ -1271,7 +1271,7 @@ class PostgresOptimizer(db.OptimizerInterface):
 
 def connect(*, name: str = "postgres", connect_string: str | None = None,
             config_file: str | None = ".psycopg_connection", cache_enabled: bool = True,
-            private: bool = False) -> PostgresInterface:
+            refresh: bool = False, private: bool = False) -> PostgresInterface:
     """Convenience function to seamlessly connect to a Postgres instance.
 
     This function obtains a connect-string to the database according to the following rules:
@@ -1297,6 +1297,10 @@ def connect(*, name: str = "postgres", connect_string: str | None = None,
         connecting to a Postgres database. Defaults to *.psycopg_connection*
     cache_enabled : bool, optional
         Controls the default caching behaviour of the Postgres instance. Caching is enabled by default.
+    refresh : bool, optional
+        If true, a new connection to the database will always be established, even if a connection to the same database is
+        already pooled. The registration key will be suffixed to prevent collisions. By default, the current connection is
+        re-used. If that is the case, no further information (e.g. config strings) is read and only the `name` is accessed.
     private : bool, optional
         If true, skips registration of the new instance on the `DatabasePool`. Registration is performed by default.
 
@@ -1317,6 +1321,9 @@ def connect(*, name: str = "postgres", connect_string: str | None = None,
        database
     """
     db_pool = db.DatabasePool.get_instance()
+    if name in db_pool and not refresh:
+        return db_pool.get_instance(name)
+
     if config_file and not connect_string:
         if not os.path.exists(config_file):
             wdir = os.getcwd()
@@ -1333,6 +1340,11 @@ def connect(*, name: str = "postgres", connect_string: str | None = None,
 
     postgres_db = PostgresInterface(connect_string, system_name=name, cache_enabled=cache_enabled)
     if not private:
+        orig_name = name
+        instance_idx = 2
+        while name in db_pool:
+            name = f"{orig_name} - {instance_idx}"
+            instance_idx += 1
         db_pool.register_database(name, postgres_db)
     return postgres_db
 

@@ -1629,7 +1629,7 @@ class DatabasePool:
         return _DB_POOL
 
     def __init__(self):
-        self._pool = {}
+        self._pool: dict[str, Database] = {}
 
     def current_database(self) -> Database:
         """Provides the database that is currently stored in the pool, provided there is just one.
@@ -1679,6 +1679,9 @@ class DatabasePool:
             If no database was registered under the given key.
         """
         return self._pool[key]
+
+    def __contains__(self, key: str) -> bool:
+        return key in self._pool
 
     def __repr__(self) -> str:
         return str(self)
