@@ -64,18 +64,22 @@ else
     unzip $IMDB_DIR/csv.zip -d $IMDB_DIR
 fi
 
-echo ".. Creating IMDB database schema"
+echo ".. Creating IMDB database"
 createdb $DB_NAME
-psql imdb -f $IMDB_DIR/create.sql
+psql $DB_NAME -c "CREATE EXTENSION pg_prewarm;"
+psql $DB_NAME -c "CREATE EXTENSION pg_hint_plan;"
+
+echo ".. Loading IMDB database schema"
+psql $DB_NAME -f $IMDB_DIR/create.sql
 
 echo ".. Inserting IMDB data into database"
 cd $IMDB_DIR
-psql imdb -f import.sql
+psql $DB_NAME -f import.sql
 
 echo ".. Creating IMDB foreign key indices"
-psql imdb -f fkindexes.sql
-psql imdb -c "create index if not exists subject_id_complete_cast on complete_cast(subject_id)"
-psql imdb -c "create index if not exists status_id_complete_cast on complete_cast(status_id)"
+psql $DB_NAME -f fkindexes.sql
+psql $DB_NAME -c "CREATE INDEX IF NOT EXISTS subject_id_complete_cast ON complete_cast(subject_id)"
+psql $DB_NAME -c "CREATE INDEX IF NOT EXISTS status_id_complete_cast ON complete_cast(status_id)"
 
 echo ".. Done"
 cd $PWD
