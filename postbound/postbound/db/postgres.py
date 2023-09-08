@@ -33,6 +33,80 @@ from postbound.util import misc as utils, typing as type_utils
 # Probably inspired by the join order/join direction handling?
 
 HintBlock = collections.namedtuple("HintBlock", ["preparatory_statements", "hints", "query"])
+"""Type alias to capture relevant info in a hint block under construction."""
+
+
+@dataclass
+class _GeQOState:
+    """Captures the current configuration of the GeQO optimizer for a Postgres instance.
+
+    Attributes
+    ----------
+    enabled : bool
+        Whether the GeQO optimizer is enabled. If it is disabled, the values of all other settings can be ignored.
+    threshold : int
+        The minimum number of tables that need to be joined in order for the GeQO optimizer to be activated. All queries with
+        less joined tables are optimized using a traditional dynamic programming-based optimizer.
+    """
+    enabled: bool
+    threshold: int
+
+    def triggers_geqo(self, query: qal.SqlQuery) -> bool:
+        """Checks, whether a specific query would be optimized using GeQO.
+
+        Parameters
+        ----------
+        query : qal.SqlQuery
+            The query to check. Notice that eventual preparatory statements that might modify the GeQO configuration are
+            ignored.
+
+        Returns
+        -------
+        bool
+            Whether GeQO would be used to optimize the query
+
+        Warnings
+        --------
+        This check does not consider eventual side effects of the query that modify the optimizer configuration. For example,
+        consider a query that would be optimized using GeQO given the current configuration. If this query contained a
+        preparatory statement that disabled the GeQO optimizer, that statement would not influence the check result.
+        """
+        return self.enabled and len(query.tables()) >= self.threshold
+
+
+def _query_contains_geqo_sensible_settings(query: qal.SqlQuery) -> bool:
+    """Checks, whether a specific query contains any information that would be overwritten by GeQO.
+
+    Parameters
+    ----------
+    query : qal.SqlQuery
+        The query to check
+
+    Returns
+    -------
+    bool
+        Whether the query is subject to unwanted GeQO modifications
+    """
+    return query.hints is not None and bool(query.hints.query_hints)
+
+
+def _modifies_geqo_config(query: qal.SqlQuery) -> bool:
+    """Heuristic to check whether a specific query changes the current GeQO config of a Postgres system.
+
+    Parameters
+    ----------
+    query : qal.SqlQuery
+        The query to check
+
+    Returns
+    -------
+    bool
+        Whether the query modifies the GeQO config. Notice that this is a heuristic check - there could be false positives as
+        well as false negatives!
+    """
+    if not query.hints or not query.hints.preparatory_statements:
+        return False
+    return "geqo" in query.hints.preparatory_statements.lower()
 
 
 def _simplify_result_set(result_set: list[tuple[Any]]) -> Any:
@@ -88,6 +162,8 @@ class PostgresInterface(db.Database):
         self._db_stats = PostgresStatisticsInterface(self)
         self._db_schema = PostgresSchemaInterface(self)
 
+        self._current_geqo_state = self._obtain_geqo_state()
+
         super().__init__(system_name, cache_enabled=cache_enabled)
 
     def schema(self) -> PostgresSchemaInterface:
@@ -109,6 +185,7 @@ class PostgresInterface(db.Database):
             try:
                 self._cursor.execute(query)
                 query_result = self._cursor.fetchall() if self._cursor.rowcount >= 0 else None
+                self._restore_geqo_state()
             except (psycopg.InternalError, psycopg.OperationalError) as e:
                 msg = "\n".join([f"At {utils.current_timestamp()}", "For query:", str(query), "Message:", str(e)])
                 raise db.DatabaseServerError(msg, e)
@@ -217,6 +294,10 @@ class PostgresInterface(db.Database):
         if not isinstance(query, qal.SqlQuery):
             return query
 
+        requires_geqo_deactivation = _query_contains_geqo_sensible_settings(query) and not _modifies_geqo_config(query)
+        if requires_geqo_deactivation and self._current_geqo_state.triggers_geqo(query):
+            self._cursor.execute("SET enable_geqo = 'off';")
+
         if drop_explain:
             query = transform.drop_clause(query, clauses.Explain)
         if query.hints and query.hints.preparatory_statements:
@@ -242,6 +323,34 @@ class PostgresInterface(db.Database):
             query = "EXPLAIN (FORMAT JSON) " + query
         self._cursor.execute(query)
         return self._cursor.fetchone()[0]
+
+    def _obtain_geqo_state(self) -> _GeQOState:
+        """Fetches the current GeQO configuration from the database.
+
+        Returns
+        -------
+        _GeQOState
+            The relevant GeQO config
+        """
+        self._cursor.execute("SELECT name, setting FROM pg_settings "
+                             "WHERE name = 'geqo' OR name = 'geqo_threshold' ORDER BY name;")
+        geqo_enabled: bool = False
+        geqo_threshold: int = 0
+        for name, value in self._cursor.fetchall():
+            if name == "geqo":
+                geqo_enabled = value
+            elif name == "geqo_threshold":
+                geqo_threshold = value
+            else:
+                raise RuntimeError("Malformed GeQO query. This is a programming error, it's not your fault!")
+        return _GeQOState(geqo_enabled, geqo_threshold)
+
+    @type_utils.module_local
+    def _restore_geqo_state(self) -> None:
+        """Resets the GeQO configuration of the database system to the known `_current_geqo_state`."""
+        geqo_enabled = "on" if self._current_geqo_state.enabled else "off"
+        self._cursor.execute(f"SET geqo = '{geqo_enabled}';")
+        self._cursor.execute(f"SET geqo_threshold = {self._current_geqo_state.threshold};")
 
 
 class PostgresSchemaInterface(db.DatabaseSchema):
@@ -1132,6 +1241,7 @@ class PostgresOptimizer(db.OptimizerInterface):
             query = self._pg_instance._prepare_query_execution(query, drop_explain=True)
         raw_query_plan = self._pg_instance._obtain_query_plan(query)
         query_plan = PostgresExplainPlan(raw_query_plan)
+        self._pg_instance._restore_geqo_state()
         return query_plan.as_query_execution_plan()
 
     def analyze_plan(self, query: qal.SqlQuery) -> db.QueryExecutionPlan:
@@ -1139,6 +1249,7 @@ class PostgresOptimizer(db.OptimizerInterface):
         self._pg_instance.cursor().execute(query)
         raw_query_plan = self._pg_instance.cursor().fetchone()[0]
         query_plan = PostgresExplainPlan(raw_query_plan)
+        self._pg_instance._restore_geqo_state()
         return query_plan.as_query_execution_plan()
 
     def cardinality_estimate(self, query: qal.SqlQuery | str) -> int:
@@ -1146,6 +1257,7 @@ class PostgresOptimizer(db.OptimizerInterface):
             query = self._pg_instance._prepare_query_execution(query, drop_explain=True)
         query_plan = self._pg_instance._obtain_query_plan(query)
         estimate = query_plan[0]["Plan"]["Plan Rows"]
+        self._pg_instance._restore_geqo_state()
         return estimate
 
     def cost_estimate(self, query: qal.SqlQuery | str) -> float:
@@ -1153,6 +1265,7 @@ class PostgresOptimizer(db.OptimizerInterface):
             query = self._pg_instance._prepare_query_execution(query, drop_explain=True)
         query_plan = self._pg_instance._obtain_query_plan(query)
         estimate = query_plan[0]["Plan"]["Total Cost"]
+        self._pg_instance._restore_geqo_state()
         return estimate
 
 
