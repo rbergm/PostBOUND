@@ -12,12 +12,14 @@ import collections
 import concurrent
 import concurrent.futures
 import math
+import multiprocessing as mp
 import os
 import textwrap
 import threading
 import warnings
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
+from multiprocessing import connection as mp_conn
 from typing import Any, Optional
 
 import psycopg
@@ -1506,6 +1508,103 @@ class ParallelQueryExecutor:
 
         return (f"Concurrent query pool of {self._n_threads} workers, {len(self._tasks)} tasks "
                 f"(run={len(running_workers)} fin={len(completed_workers)})")
+
+
+def _timeout_query_worker(query: qal.SqlQuery | str, pg_instance: PostgresInterface,
+                          query_result_sender: mp_conn.Connection) -> None:
+    """Internal function to the `TimeoutQueryExecutor` to run individual queries.
+
+    Query results are sent via the pipe, not as a return value.
+
+    Parameters
+    ----------
+    query : qal.SqlQuery | str
+        Query to execute
+    pg_instance : PostgresInterface
+        Database connection to execute the query on
+    query_result_sender : mp_conn.Connection
+        Pipe connection to send the query result
+    """
+    result = pg_instance.execute_query(query)
+    query_result_sender.send(result)
+
+
+class TimeoutQueryExecutor:
+    """The TimeoutQueryExecutor provides a mechanism to execute queries with a timeout attached.
+
+    If the query takes longer than the designated timeout, its execution is cancelled. The query execution itself is delegated
+    to the `PostgresInterface`, so all its rules still apply. At the same time, using the timeout executor service can
+    invalidate some of the state that is exposed by the database interface (see *Warnings* below). Therefore, the relevant
+    variables should be refreshed once the timeout executor was used.
+
+    In addition to calling the `execute_query` method directly, the executor also implements ``__call__`` for more convenient
+    access. Both methods accept the same parameters.
+
+    Parameters
+    ----------
+    postgres_instance : Optional[PostgresInterface], optional
+        Database to execute the queries. If omitted, this is inferred from the `DatabasePool`.
+
+    Warnings
+    --------
+    When a query gets cancelled due to the timeout being reached, the current cursor as well as database connection might be
+    refreshed. Any direct references to these instances should no longer be used.
+    """
+    def __init__(self, postgres_instance: Optional[PostgresInterface] = None) -> None:
+        self._pg_instance = (postgres_instance if postgres_instance is not None
+                             else db.DatabasePool.get_instance().current_database())
+
+    def execute_query(self, query: qal.SqlQuery | str, timeout: float) -> Any:
+        """Runs a query on the database connection, cancelling if it takes longer than a specific timeout.
+
+        Parameters
+        ----------
+        query : qal.SqlQuery | str
+            Query to execute
+        timeout : float
+            Maximum query execution time in seconds.
+
+        Returns
+        -------
+        Any
+            The query result if it terminated timely. Rules from `PostgresInterface.execute_query` apply.
+
+        Raises
+        ------
+        TimeoutError
+            If the query execution was not finished after `timeout` seconds.
+
+        See Also
+        --------
+        PostgresInterface.execute_query
+        PostgresInterface.reset_connection
+        """
+        query_result_sender, query_result_receiver = mp.Pipe(False)
+        query_execution_worker = mp.Process(target=_timeout_query_worker, args=(query, self._pg_instance, query_result_sender))
+
+        query_execution_worker.start()
+        query_execution_worker.join(timeout)
+        timed_out = query_execution_worker.is_alive()
+
+        if timed_out:
+            query_execution_worker.terminate()
+            query_execution_worker.join()
+            self._pg_instance.reset_connection()
+            query_result = None
+        else:
+            query_result = query_result_receiver.recv()
+
+        query_execution_worker.close()
+        query_result_sender.close()
+        query_result_receiver.close()
+
+        if timed_out:
+            raise TimeoutError(query)
+        else:
+            return query_result
+
+    def __call__(self, query: qal.SqlQuery | str, timeout: float) -> Any:
+        return self.execute_query(query, timeout)
 
 
 PostgresExplainJoinNodes = {"Nested Loop": physops.JoinOperators.NestedLoopJoin,
