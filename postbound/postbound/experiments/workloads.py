@@ -63,7 +63,7 @@ class Workload(collections.UserDict[LabelType, qal.SqlQuery]):
     In addition to the actual queries, each query is annotated by a label that can be used to retrieve the query more
     nicely. E.g. for queries in the Join Order Benchmark, access by their index is supported - such as ``job["1a"]``. Labels
     can be arbitrary types as long as they are hashable. Since the workload inherits from dict, the label can be used directly
-    to fetch the associated query (and will raise ``KeyError``\ s for unknown labels).
+    to fetch the associated query (and will raise ``KeyError`` instances for unknown labels).
 
     Each workload can be given a name, which is mainly intended for readability in ``__str__`` methods and does not serve
     a functional purpose. However, it may be good practice to use a normalized name that can be used in different contexts
@@ -89,7 +89,7 @@ class Workload(collections.UserDict[LabelType, qal.SqlQuery]):
     -----
     Workloads support many of the Python builtin-methods thanks to inheriting from ``UserDict``. Namely, the *len*, *iter* and
     *in* methods work as expected on the labels. Furthermore, multiple workload objects can be added, subtracted and
-    intersected using set semantics.
+    intersected using set semantics. Subtraction and union also work based on individual labels.
     """
 
     @staticmethod
@@ -380,13 +380,21 @@ class Workload(collections.UserDict[LabelType, qal.SqlQuery]):
         return Workload(other.data | self.data, name=self._name, root=self._root)  # retain own labels in case of conflict
 
     def __sub__(self, other: Workload[LabelType]) -> Workload[LabelType]:
-        if not isinstance(other, Workload):
-            raise TypeError("Can only subtract workloads")
+        if not isinstance(other, Workload) and isinstance(other, Iterable):
+            labels_to_remove = set(other)
+            reduced_workload = {label: query for label, query in self.data.items() if label not in labels_to_remove}
+            return Workload(reduced_workload, name=self._name, root=self._root)
+        elif not isinstance(other, Workload):
+            raise TypeError("Expected workload or labels to subtract")
         return Workload(dict_utils.difference(self.data, other.data), name=self._name, root=self._root)
 
     def __and__(self, other: Workload[LabelType]) -> Workload[LabelType]:
-        if not isinstance(other, Workload):
-            raise TypeError("Can only compute intersection of workloads")
+        if not isinstance(other, Workload) and isinstance(other, Iterable):
+            labels_to_include = set(other)
+            reduced_workload = {label: query for label, query in self.data.items() if label in labels_to_include}
+            return Workload(reduced_workload, name=self._name, root=self._root)
+        elif not isinstance(other, Workload):
+            raise TypeError("Expected workload or labels to compute union")
         return Workload(dict_utils.intersection(self.data, other.data), name=self._name, root=self._root)
 
     def __or__(self, other: Workload[LabelType]) -> Workload[LabelType]:
