@@ -516,7 +516,8 @@ class PostgresStatisticsInterface(db.DatabaseStatistics):
                          cache_enabled=cache_enabled)
 
     def update_statistics(self, columns: Optional[base.ColumnReference | Iterable[base.ColumnReference]] = None, *,
-                          tables: Optional[base.TableReference | Iterable[base.TableReference]] = None) -> None:
+                          tables: Optional[base.TableReference | Iterable[base.TableReference]] = None,
+                          perfect_mcv: bool = False) -> None:
         """Instructs the Postgres server to update statistics for specific columns.
 
         Notice that is one of the methods of the database interface that explicitly mutates the state of the database system.
@@ -529,6 +530,12 @@ class PostgresStatisticsInterface(db.DatabaseStatistics):
         tables : Optional[base.TableReference  |  Iterable[base.TableReference]], optional
             The table for which statistics should be updated. If `columns` are given, this parameter is completely ignored. If
             no columns and no tables are given, all tables in the current database are used.
+        perfect_mcv : bool, optional
+            Whether the database system should attempt to create perfect statistics. Perfect statistics means that for each of
+            the columns MCV lists are created such that each distinct value is contained within the list. For large and diverse
+            columns, this might lots of compute time as well as storage space. Notice, that the database system still has the
+            ultimate decision on whether to generate MCV lists in the first place. Postgres also imposes a hard limit on the
+            maximum allowed length of MCV lists and histogram widths.
         """
         if not columns and not tables:
             tables = self._db.schema().tables()
@@ -537,9 +544,21 @@ class PostgresStatisticsInterface(db.DatabaseStatistics):
             columns = collection_utils.set_union(self._db.schema().columns(tab) for tab in tables)
 
         assert columns is not None
-        columns = collection_utils.enlist(columns)
+        columns: Iterable[base.ColumnReference] = collection_utils.enlist(columns)
         columns_map: dict[base.TableReference, list[str]] = dict_utils.generate_multi((col.table, col.name)
                                                                                       for col in columns)
+
+        if perfect_mcv:
+            for column in columns:
+                n_distinct = self.distinct_values(column, emulated=False, cache_enabled=True)
+                stats_target_query = textwrap.dedent(f"""ALTER TABLE {column.table} """
+                                                     f"""ALTER COLUMN {column.name} """
+                                                     f"""SET STATISTICS {n_distinct};""")
+                # This query might issue a warning if the requested stats target is larger than the allowed maximum value
+                # However, Postgres simply uses the maximum value in this case. To permit different maximum values in different
+                # Postgres versions, we accept the warning and do not use a hard-coded maximum value with snapping logic
+                # ourselves.
+                self._db.cursor().execute(stats_target_query)
 
         columns_str = {table: ", ".join(col for col in columns) for table, columns in columns_map.items()}
         tables_and_columns = ", ".join(f"{table.full_name}({cols})" for table, cols in columns_str.items())
