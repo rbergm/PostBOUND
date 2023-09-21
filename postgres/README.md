@@ -18,3 +18,6 @@ management scripts.
 Finally, the `postgres-psycopg-setup` utility generates a config file that can be used by
 PostBOUND's database interaction code to automatically connect to the database. See the
 documentation in `postgres.py` for details.
+
+The `util` directory contains a collection of stored procedures for different introspection methods.
+

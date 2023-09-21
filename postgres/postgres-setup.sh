@@ -92,14 +92,19 @@ cd $PG_TARGET_DIR/contrib/pg_prewarm
 make -j $MAKE_CORES && make install
 cd $PG_TARGET_DIR
 
+echo ".. Installing pg_buffercache extension"
+cd $PG_TARGET_DIR/contrib/pg_buffercache
+make -j $MAKE_CORES && make install
+cd $PG_TARGET_DIR
+
 echo ".. Initializing Postgres Server environment"
 cd $PG_TARGET_DIR
 
 echo "... Creating cluster"
 initdb -D $PG_TARGET_DIR/data
 
-echo "... Adding pg_hint_plan and pg_prewarm to preload libraries"
-sed -i "s/#\{0,1\}shared_preload_libraries.*/shared_preload_libraries = 'pg_hint_plan,pg_prewarm'/" $PG_TARGET_DIR/data/postgresql.conf
+echo "... Adding pg_buffercache, pg_hint_plan and pg_prewarm to preload libraries"
+sed -i "s/#\{0,1\}shared_preload_libraries.*/shared_preload_libraries = 'pg_buffercache,pg_hint_plan,pg_prewarm'/" $PG_TARGET_DIR/data/postgresql.conf
 echo "pg_prewarm.autoprewarm = false" >>  $PG_TARGET_DIR/data/postgresql.conf
 
 echo "... Starting Postgres (log file is pg.log)"

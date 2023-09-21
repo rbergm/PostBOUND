@@ -65,6 +65,9 @@ fi
 
 echo ".. Creating Stack database"
 createdb $DB_NAME
+psql $DB_NAME -c "CREATE EXTENSION pg_buffercache;"
+psql $DB_NAME -c "CREATE EXTENSION pg_prewarm;"
+psql $DB_NAME -c "CREATE EXTENSION pg_hint_plan;"
 
 echo ".. Loading Stack dump"
 pg_restore -O -x --exit-on-error --jobs=$CORES --dbname=$DB_NAME $SSB_DIR/stack_dump

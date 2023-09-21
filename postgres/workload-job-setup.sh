@@ -66,6 +66,7 @@ fi
 
 echo ".. Creating IMDB database"
 createdb $DB_NAME
+psql $DB_NAME -c "CREATE EXTENSION pg_buffercache;"
 psql $DB_NAME -c "CREATE EXTENSION pg_prewarm;"
 psql $DB_NAME -c "CREATE EXTENSION pg_hint_plan;"
 

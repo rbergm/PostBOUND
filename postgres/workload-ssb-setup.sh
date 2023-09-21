@@ -26,6 +26,10 @@ ssb-kit/dbgen/dbgen -vf -s $SF -T a
 
 echo ".. Creating SSB database schema"
 createdb ssb
+psql ssb -c "CREATE EXTENSION pg_buffercache;"
+psql ssb -c "CREATE EXTENSION pg_prewarm;"
+psql ssb -c "CREATE EXTENSION pg_hint_plan;"
+
 wget -nv --output-document ../ssb_data/pg_schema.sql https://raw.githubusercontent.com/gregrahn/ssb-kit/master/scripts/pg_schema.sql
 psql ssb -f ../ssb_data/pg_schema.sql
 
