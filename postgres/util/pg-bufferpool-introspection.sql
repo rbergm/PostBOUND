@@ -1,6 +1,10 @@
+-- provide an overview of the current contents of the shared buffers.
+-- for each relation (relname), the table to which it belongs (owner_relname) will be returned, as well as the number of
+-- pages in the buffer (buffers) and the kind of pages that are buffered ('table' for normal data tables, 'primary' for primary
+-- key index pages or 'secondary' for auxillary index pages)
 CREATE OR REPLACE FUNCTION pg_buffercache_table_summary(nspname NAME DEFAULT 'public')
 RETURNS TABLE (nspname NAME, relname NAME, owner_relname NAME, pagetype TEXT, buffers BIGINT)
-LANGUAGE SQL IMMUTABLE
+LANGUAGE SQL
 AS
 $$
 WITH tab_idxs AS (
