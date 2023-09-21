@@ -244,7 +244,8 @@ class PostgresInterface(db.Database):
         self._connection.close()
 
     def prewarm_tables(self, tables: Optional[base.TableReference | Iterable[base.TableReference]] = None,
-                       *more_tables: base.TableReference) -> None:
+                       *more_tables: base.TableReference, exclude_table_pages: bool = False,
+                       include_primary_index: bool = True, include_secondary_indexes: bool = True) -> None:
         """Prepares the Postgres buffer pool with tuples from the given tables.
 
         Parameters
@@ -254,19 +255,44 @@ class PostgresInterface(db.Database):
         *more_tables : base.TableReference
             More tables that should be placed into the buffer pool, enabling a more convenient usage of this method.
             See examples for details on the usage.
+        exclude_table_pages : bool, optional
+            Whether the table data (i.e. pages containing the actual tuples) should *not* be prewarmed. This is off by default,
+            meaning that prewarming is applied to the data pages. This can be toggled on to only prewarm index pages (see
+            `include_primary_index` and `include_secondary_index`).
+        include_primary_index : bool, optional
+            Whether the pages of the primary key index should also be prewarmed. Enabled by default.
+        include_secondary_indexes : bool, optional
+            Whether the pages for secondary indexes should also be prewarmed. Enabled by default.
+
+        Notes
+        -----
+        If the database should prewarm more table pages than can be contained in the shared buffer, the actual contents of the
+        pool are not specified. Since all prewarming tasks happen sequentially, the first prewarmed relations will typically
+        be evicted and only the last relations (tables or indexes) are retained in the shared buffer. The precise order in
+        which the prewarming tasks are executed is not specified and depends on the actual relations.
 
         Examples
         --------
         >>> pg.prewarm_tables([table1, table2])
         >>> pg.prewarm_tables(table1, table2)
         """
-        tables = list(collection_utils.enlist(tables)) + list(more_tables)
+        tables: Iterable[base.TableReference] = list(collection_utils.enlist(tables)) + list(more_tables)
         if not tables:
             return
         tables = set(tab.full_name for tab in tables)  # eliminate duplicates if tables are selected multiple times
+
+        table_indexes = ([self._fetch_index_relnames(tab) for tab in tables]
+                         if include_primary_index or include_secondary_indexes else [])
+        indexes_to_prewarm = {idx for idx, primary in collection_utils.flatten(table_indexes)
+                              if (primary and include_primary_index) or (not primary and include_secondary_indexes)}
+        tables = indexes_to_prewarm if exclude_table_pages else tables | indexes_to_prewarm
+        if not tables:
+            return
+
         prewarm_invocations = [f"pg_prewarm('{tab}')" for tab in tables]
         prewarm_text = ", ".join(prewarm_invocations)
         prewarm_query = f"SELECT {prewarm_text}"
+
         self._cursor.execute(prewarm_query)
 
     @type_utils.module_local
@@ -353,6 +379,32 @@ class PostgresInterface(db.Database):
         geqo_enabled = "on" if self._current_geqo_state.enabled else "off"
         self._cursor.execute(f"SET geqo = '{geqo_enabled}';")
         self._cursor.execute(f"SET geqo_threshold = {self._current_geqo_state.threshold};")
+
+    def _fetch_index_relnames(self, table: base.TableReference | str) -> Iterable[tuple[str, bool]]:
+        """Loads all physical index relations for a physical table.
+
+        Parameters
+        ----------
+        table : base.TableReference
+            The table for which to load the indexes
+
+        Returns
+        -------
+        Iterable[tuple[str, bool]]
+            All indexes as pairs *(relation name, primary)*. Relation name corresponds to the table-like object that Postgres
+            created internally to store the index (e.g. for a table called *title*, this is typically called *title_pkey* for
+            the primary key index). The *primary* boolean indicates whether this is the primary key index of the table.
+        """
+        query_template = textwrap.dedent("""
+                                         SELECT cls.relname, idx.indisprimary
+                                         FROM pg_index idx
+                                            JOIN pg_class cls ON idx.indexrelid = cls.oid
+                                            JOIN pg_class owner_cls ON idx.indrelid = owner_cls.oid
+                                         WHERE owner_cls.relname = %s;
+                                         """)
+        table = table.full_name if isinstance(table, base.TableReference) else table
+        self._cursor.execute(query_template, (table, ))
+        return list(self._cursor.fetchall())
 
 
 class PostgresSchemaInterface(db.DatabaseSchema):
