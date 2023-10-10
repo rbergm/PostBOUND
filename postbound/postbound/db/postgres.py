@@ -1182,6 +1182,27 @@ class _PostgresCastExpression(expressions.CastExpression):
         return f"{self.casted_expression}::{self.target_type}"
 
 
+class PostgresExplainClause(clauses.Explain):
+    """A specialized ``EXPLAIN`` clause implementation to handle Postgres custom syntax for query plans.
+
+    If ``ANALYZE`` is enabled, this also retrieves information about shared buffer usage (page hits and disk reads).
+
+    Parameters
+    ----------
+    original_clause : clauses.Explain
+        The actual ``EXPLAIN`` clause. The new explain clause acts as a decorator around the original clause.
+    """
+    def __init__(self, original_clause: clauses.Explain) -> None:
+        super().__init__(original_clause.analyze, original_clause.target_format)
+
+    def __str__(self) -> str:
+        explain_args = " ("
+        if self.analyze:
+            explain_args += "ANALYZE, BUFFERS, "
+        explain_args += f"FORMAT {self.target_format}"
+        return f"EXPLAIN {explain_args}"
+
+
 class PostgresLimitClause(clauses.Limit):
     """A specialized ``LIMIT`` clause implementation to handle Postgres custom syntax for limits / offsets
 
@@ -1289,6 +1310,8 @@ class PostgresHintService(db.HintService):
 
     def format_query(self, query: qal.SqlQuery) -> str:
         query = transform.replace_expressions(query, _replace_postgres_cast_expressions)
+        if query.explain:
+            query = transform.replace_clause(query, PostgresExplainClause(query.explain))
         if query.limit_clause:
             query = transform.replace_clause(query, PostgresLimitClause(query.limit_clause))
         return formatter.format_quick(query)
@@ -1752,10 +1775,22 @@ class PostgresExplainNode:
     parent_relationship : str | None, default None
         Describes the role that this node plays in relation to its parent. Common values are ``"inner"`` which denotes that
         this is the inner child of a join and ``"outer"`` which denotes the opposite.
-    parallel_workers : str | None, default NaN
+    parallel_workers : int | float, default NaN
         For parallel operators in ``EXPLAIN ANALYZE`` plans, this is the actual number of worker processes that were started.
         Notice that in total there is one additional worker. This process takes care of spawning the other workers and
         managing them, but can also take part in the input processing.
+    shared_blocks_read : float, default NaN
+        For ``EXPLAIN ANALYZE`` plans with ``BUFFERS`` enabled, this is the number of blocks/pages that where retrieved from
+        disk while executing this node, including the reads of all its child nodes.
+    shared_blocks_buffered : float, default NaN
+        For ``EXPLAIN ANALYZE`` plans with ``BUFFERS`` enabled, this is the number of blocks/pages that where retrieved from
+        the shared buffer while executing this node, including the hits of all its child nodes.
+    temp_blocks_read : float, default NaN
+        For ``EXPLAIN ANALYZE`` blocks with ``BUFFERS`` enabled, this is the number of short-term data structures (e.g. hash
+        tables, sorts) that where read by this node, including reads of all its child nodes.
+    temp_blocks_written : float, default NaN
+        For ``EXPLAIN ANALYZE`` blocks with ``BUFFERS`` enabled, this is the number of short-term data structures (e.g. hash
+        tables, sorts) that where written by this node, including writes of all its child nodes.
     children : list[PostgresExplainNode]
         All child / input nodes for the current node
     """
@@ -1780,6 +1815,11 @@ class PostgresExplainNode:
 
         self.parent_relationship = explain_data.get("Parent Relationship", None)
         self.parallel_workers = explain_data.get("Workers Launched", math.nan)
+
+        self.shared_blocks_read = explain_data.get("Shared Read Blocks", math.nan)
+        self.shared_blocks_cached = explain_data.get("Shared Hit Blocks", math.nan)
+        self.temp_blocks_read = explain_data.get("Temp Read Blocks", math.nan)
+        self.temp_blocks_written = explain_data.get("Temp Written Blocks", math.nan)
 
         self.children = [PostgresExplainNode(child) for child in explain_data.get("Plans", [])]
 
