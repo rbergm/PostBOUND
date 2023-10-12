@@ -1202,6 +1202,14 @@ class QueryExecutionPlan:
         tick-based) or coarse measurement, depending on the context. Defaults to  ``math.nan`` if the query execution
         plan is really only a plan and therefore does not contain any execution knowledge, or if the execution time is
         simply not relevant in the current context.
+    cached_pages : float, optional
+        The number of pages that were processed by this node and could be retrieved from cache (including child nodes).
+        Defaults to ``math.nan`` if this is unknown or not applicable (e.g. for non-analyze plans). Notice that *cache* in this
+        context means a database system-level cache (also called buffer pool, etc.), not the OS cache or a hardware cache.
+    scanned_pages : float, optional
+        The number of pages that were processed by this node and had to be read from disk and could not be retrieved from
+        cache (including child nodes). Default to ``math.nan`` if this unknown or not applicable (e.g. for non-analyze plans).
+        See `cached_pages` for more details.
     physical_operator : Optional[physops.PhysicalOperator], optional
         The physical operator that corresponds to the current node if such an operator exists. Defaults to ``None``
         if no such operator exists or it could not be derived by the producer of the query plan.
@@ -1223,7 +1231,9 @@ class QueryExecutionPlan:
                  children: Optional[Iterable[QueryExecutionPlan]] = None,
                  parallel_workers: float = math.nan, cost: float = math.nan,
                  estimated_cardinality: float = math.nan, true_cardinality: float = math.nan,
-                 execution_time: float = math.nan, physical_operator: Optional[physops.PhysicalOperator] = None,
+                 execution_time: float = math.nan,
+                 cached_pages: float = math.nan, scanned_pages: float = math.nan,
+                 physical_operator: Optional[physops.PhysicalOperator] = None,
                  inner_child: Optional[QueryExecutionPlan] = None) -> None:
         self.node_type = node_type
         self.physical_operator = physical_operator
@@ -1248,6 +1258,33 @@ class QueryExecutionPlan:
         self.estimated_cardinality = estimated_cardinality
         self.true_cardinality = true_cardinality
         self.execution_time = execution_time
+
+        self.cached_pages = cached_pages
+        self.scanned_pages = scanned_pages
+
+    @property
+    def total_accessed_pages(self) -> float:
+        """The total number of pages that where processed in this node, as well as all child nodes.
+
+        This includes pages that were fetched from the DB cache, as well as pages that had to be read from disk.
+
+        Returns
+        -------
+        float
+            The number of pages. Can be ``NaN`` if this number cannot be inferred, e.g. for non-analyze plans.
+        """
+        return self.cached_pages + self.scanned_pages
+
+    @property
+    def cache_hit_ratio(self) -> float:
+        """The share of pages that could be fetched from cache compared to the total number of processed pages.
+
+        Returns
+        -------
+        float
+            The hit ratio. Can be ``NaN`` if the ratio cannot be inferred, e.g. for non-analyze plans.
+        """
+        return self.cached_pages / self.total_accessed_pages
 
     def is_analyze(self) -> bool:
         """Checks, whether the plan contains runtime information.

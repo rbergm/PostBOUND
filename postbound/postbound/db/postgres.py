@@ -1972,6 +1972,7 @@ class PostgresExplainNode:
                                      children=child_nodes, parallel_workers=par_workers,
                                      cost=self.cost, estimated_cardinality=self.cardinality_estimate,
                                      true_cardinality=true_card, execution_time=self.execution_time,
+                                     cached_pages=self.shared_blocks_cached, scanned_pages=self.shared_blocks_read,
                                      physical_operator=operator, inner_child=inner_child)
 
     def inspect(self, *, _indentation: int = 0) -> str:
@@ -2033,10 +2034,10 @@ class PostgresExplainPlan:
         The actual plan
     """
     def __init__(self, explain_data: dict) -> None:
-        explain_data = explain_data[0] if isinstance(explain_data, list) else explain_data
-        self.planning_time: float = explain_data.get("Planning Time", math.nan) / 1000
-        self.execution_time: float = explain_data.get("Execution Time", math.nan) / 1000
-        self.query_plan = PostgresExplainNode(explain_data["Plan"])
+        self.explain_data = explain_data[0] if isinstance(explain_data, list) else explain_data
+        self.planning_time: float = self.explain_data.get("Planning Time", math.nan) / 1000
+        self.execution_time: float = self.explain_data.get("Execution Time", math.nan) / 1000
+        self.query_plan = PostgresExplainNode(self.explain_data["Plan"])
         self._normalized_plan = self.query_plan.as_query_execution_plan()
 
     def is_analyze(self) -> bool:
