@@ -76,6 +76,68 @@ class _GeQOState:
         return self.enabled and len(query.tables()) >= self.threshold
 
 
+def _escape_setting_value(value: object) -> str:
+    """_summary_
+
+    Parameters
+    ----------
+    value : object
+        _description_
+
+    Returns
+    -------
+    str
+        _description_
+    """
+    if isinstance(value, bool):
+        return "'on'" if value else "'off'"
+    elif isinstance(value, (float, int)):
+        return str(value)
+    else:
+        return f"'{value}'"
+
+
+class PostgresSetting(str):
+    def __init__(self, parameter: str, value: object) -> None:
+        self._param = parameter
+        self._val = value
+
+    def __new__(cls, parameter: str, value: object):
+        return super().__new__(cls, f"SET {parameter} = {_escape_setting_value(value)};")
+
+    @property
+    def parameter(self) -> str:
+        return self._param
+
+    @property
+    def value(self) -> object:
+        return self._val
+
+
+class PostgresConfiguration(str):
+    @staticmethod
+    def load(**kwargs) -> PostgresConfiguration:
+        return PostgresConfiguration([PostgresSetting(key, val) for key, val in kwargs.items()])
+
+    def __init__(self, settings: Iterable[PostgresSetting]) -> None:
+        self._settings = {setting.parameter: setting for setting in settings}
+
+    def __new__(cls, settings: Iterable[PostgresSetting]):
+        return super().__new__(cls, "\n".join(settings))
+
+    @property
+    def settings(self) -> Sequence[PostgresSetting]:
+        return list(self._settings.values())
+
+    def parameters(self) -> Sequence[str]:
+        return list(self._settings.keys())
+
+    def __getitem__(self, key: object) -> str:
+        if isinstance(key, str):
+            return self._settings[key]
+        return super().__getitem__(key)
+
+
 def _query_contains_geqo_sensible_settings(query: qal.SqlQuery) -> bool:
     """Checks, whether a specific query contains any information that would be overwritten by GeQO.
 
@@ -2084,6 +2146,9 @@ class PostgresExplainPlan:
         PostgresExplainNode.inspect
         """
         return self.query_plan.inspect()
+
+    def __json__(self) -> Any:
+        return self.explain_data
 
     def __getattribute__(self, name: str) -> Any:
         # All methods that are not defined on the Postgres plan delegate to the default DB plan
