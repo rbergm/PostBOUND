@@ -1196,10 +1196,10 @@ class PostgresExplainClause(clauses.Explain):
         super().__init__(original_clause.analyze, original_clause.target_format)
 
     def __str__(self) -> str:
-        explain_args = " ("
+        explain_args = "("
         if self.analyze:
             explain_args += "ANALYZE, BUFFERS, "
-        explain_args += f"FORMAT {self.target_format}"
+        explain_args += f"FORMAT {self.target_format})"
         return f"EXPLAIN {explain_args}"
 
 
@@ -1282,6 +1282,11 @@ class PostgresHintService(db.HintService):
                        physical_operators: Optional[physops.PhysicalOperatorAssignment] = None,
                        plan_parameters: Optional[planparams.PlanParameterization] = None) -> qal.SqlQuery:
         adapted_query = query
+        if adapted_query.explain and not isinstance(adapted_query.explain, PostgresExplainClause):
+            adapted_query = transform.replace_clause(adapted_query, PostgresExplainClause(adapted_query.explain))
+        if adapted_query.limit_clause and not isinstance(adapted_query.limit_clause, PostgresLimitClause):
+            adapted_query = transform.replace_clause(adapted_query, PostgresLimitClause(adapted_query.limit_clause))
+
         hint_parts = None
 
         if join_order:
@@ -1310,9 +1315,9 @@ class PostgresHintService(db.HintService):
 
     def format_query(self, query: qal.SqlQuery) -> str:
         query = transform.replace_expressions(query, _replace_postgres_cast_expressions)
-        if query.explain:
+        if query.explain and not isinstance(query.explain, PostgresExplainClause):
             query = transform.replace_clause(query, PostgresExplainClause(query.explain))
-        if query.limit_clause:
+        if query.limit_clause and not isinstance(query.limit_clause, PostgresLimitClause):
             query = transform.replace_clause(query, PostgresLimitClause(query.limit_clause))
         return formatter.format_quick(query)
 
