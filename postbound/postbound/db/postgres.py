@@ -2089,8 +2089,12 @@ class PostgresExplainPlan:
         try:
             return object.__getattribute__(self, name)
         except AttributeError:
-            normalized_plan = object.__getattribute__(self, "_normalized_plan")
-            return normalized_plan.__getattribute__(name)
+            root_plan_node = object.__getattribute__(self, "query_plan")
+            try:
+                return root_plan_node.__getattribute__(name)
+            except AttributeError:
+                normalized_plan = object.__getattribute__(self, "_normalized_plan")
+                return normalized_plan.__getattribute__(name)
 
     def __repr__(self) -> str:
         return str(self)
