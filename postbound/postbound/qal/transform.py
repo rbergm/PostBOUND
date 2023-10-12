@@ -602,9 +602,9 @@ def drop_clause(query: qal.SqlQuery, clauses_to_drop: ClauseDescription) -> qal.
 def replace_clause(query: QueryType, replacements: clauses.BaseClause | Iterable[clauses.BaseClause]) -> QueryType:
     """Creates a new SQL query with the replacements being used instead of the original clauses.
 
-    Clauses are matched on a per-type bassis. Therefore, this function does not switch a query from implicit to explicit or
-    vice-versa. Use a combination of `drop_clause` and `add_clause` for that. If a replacement is not present in the original
-    query, it is simply ignored.
+    Clauses are matched on a per-type basis (including subclasses, i.e. a replacement can be a subclass of an existing clause).
+    Therefore, this function does not switch a query from implicit to explicit or vice-versa. Use a combination of
+    `drop_clause` and `add_clause` for that. If a replacement is not present in the original query, it is simply ignored.
 
     No validation other than the rules of `qal.build_query` is performed.
 
@@ -621,10 +621,19 @@ def replace_clause(query: QueryType, replacements: clauses.BaseClause | Iterable
         An updated query where the matching `replacements` clauses are used in place of the clause instances that were
         originally present in the query
     """
-    replacements = collection_utils.enlist(replacements)
-    clauses_to_replace = {type(clause): clause for clause in replacements}
-    replaced_clauses = [clauses_to_replace.get(type(current_clause), current_clause)
-                        for current_clause in query.clauses()]
+    available_replacements: set[clauses.BaseClause] = set(collection_utils.enlist(replacements))
+
+    replaced_clauses: list[clauses.BaseClause] = []
+    for current_clause in query.clauses():
+        final_clause = current_clause
+        for replacement_clause in available_replacements:
+            if isinstance(replacement_clause, type(current_clause)):
+                final_clause = replacement_clause
+                break
+        replaced_clauses.append(final_clause)
+        if final_clause in available_replacements:
+            available_replacements.remove(final_clause)
+
     return qal.build_query(replaced_clauses)
 
 
