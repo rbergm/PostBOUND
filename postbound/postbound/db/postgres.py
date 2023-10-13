@@ -664,7 +664,7 @@ class PostgresStatisticsInterface(db.DatabaseStatistics):
 
         if perfect_mcv:
             for column in columns:
-                n_distinct = round(self.distinct_values(column, emulated=False, cache_enabled=True))
+                n_distinct = round(self.distinct_values(column, emulated=True, cache_enabled=True))
                 stats_target_query = textwrap.dedent(f"""
                                                      ALTER TABLE {column.table.full_name}
                                                      ALTER COLUMN {column.name}
