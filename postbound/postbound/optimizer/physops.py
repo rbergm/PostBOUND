@@ -24,6 +24,11 @@ class ScanOperators(enum.Enum):
     IndexOnlyScan = "Idx-only Scan"
     BitmapScan = "Bitmap Scan"
 
+    def __lt__(self, other: object) -> bool:
+        if not isinstance(other, type(self)):
+            return NotImplemented
+        return self.value < other.value
+
 
 class JoinOperators(enum.Enum):
     """The join operators supported by PostBOUND.
@@ -36,6 +41,11 @@ class JoinOperators(enum.Enum):
     HashJoin = "Hash Join"
     SortMergeJoin = "Sort-Merge Join"
     IndexNestedLoopJoin = "Idx. NLJ"
+
+    def __lt__(self, other: object) -> bool:
+        if not isinstance(other, type(self)):
+            return NotImplemented
+        return self.value < other.value
 
 
 @dataclass(frozen=True)
