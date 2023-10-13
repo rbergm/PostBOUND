@@ -386,7 +386,7 @@ class PostgresInterface(db.Database):
 
         requires_geqo_deactivation = _query_contains_geqo_sensible_settings(query) and not _modifies_geqo_config(query)
         if requires_geqo_deactivation and self._current_geqo_state.triggers_geqo(query):
-            self._cursor.execute("SET enable_geqo = 'off';")
+            self._cursor.execute("SET geqo = 'off';")
 
         if drop_explain:
             query = transform.drop_clause(query, clauses.Explain)
