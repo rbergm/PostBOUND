@@ -666,7 +666,7 @@ class PostgresStatisticsInterface(db.DatabaseStatistics):
             for column in columns:
                 n_distinct = self.distinct_values(column, emulated=False, cache_enabled=True)
                 stats_target_query = textwrap.dedent(f"""
-                                                     ALTER TABLE {column.table}
+                                                     ALTER TABLE {column.table.full_name}
                                                      ALTER COLUMN {column.name}
                                                      SET STATISTICS {n_distinct};
                                                      """)
