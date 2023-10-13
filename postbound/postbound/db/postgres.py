@@ -428,9 +428,9 @@ class PostgresInterface(db.Database):
         geqo_threshold: int = 0
         for name, value in self._cursor.fetchall():
             if name == "geqo":
-                geqo_enabled = value
+                geqo_enabled = (value == "on")
             elif name == "geqo_threshold":
-                geqo_threshold = value
+                geqo_threshold = int(value)
             else:
                 raise RuntimeError("Malformed GeQO query. This is a programming error, it's not your fault!")
         return _GeQOState(geqo_enabled, geqo_threshold)
