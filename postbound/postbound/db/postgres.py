@@ -665,9 +665,11 @@ class PostgresStatisticsInterface(db.DatabaseStatistics):
         if perfect_mcv:
             for column in columns:
                 n_distinct = self.distinct_values(column, emulated=False, cache_enabled=True)
-                stats_target_query = textwrap.dedent(f"""ALTER TABLE {column.table} """
-                                                     f"""ALTER COLUMN {column.name} """
-                                                     f"""SET STATISTICS {n_distinct};""")
+                stats_target_query = textwrap.dedent(f"""
+                                                     ALTER TABLE {column.table}
+                                                     ALTER COLUMN {column.name}
+                                                     SET STATISTICS {n_distinct};
+                                                     """)
                 # This query might issue a warning if the requested stats target is larger than the allowed maximum value
                 # However, Postgres simply uses the maximum value in this case. To permit different maximum values in different
                 # Postgres versions, we accept the warning and do not use a hard-coded maximum value with snapping logic
