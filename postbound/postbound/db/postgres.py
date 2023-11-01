@@ -1892,6 +1892,8 @@ class PostgresExplainNode:
 
         self.children = [PostgresExplainNode(child) for child in explain_data.get("Plans", [])]
 
+        self._hash_val = hash((self.node_type, self.relation_name, self.relation_alias, tuple(self.children)))
+
     def is_scan(self) -> bool:
         """Checks, whether the current node corresponds to a scan node.
 
@@ -2059,6 +2061,14 @@ class PostgresExplainNode:
         child_inspections = [child.inspect(_indentation=_indentation+2) for child in self.inner_outer_children()]
         return "\n".join(own_inspection + child_inspections)
 
+    def __hash__(self) -> int:
+        return self._hash_val
+
+    def __eq__(self, other: object) -> bool:
+        return (isinstance(other, type(self)) and self.node_type == other.node_type
+                and self.relation_name == other.relation_name and self.relation_alias == other.relation_alias
+                and self.children == other.children)
+
     def __repr__(self) -> str:
         return str(self)
 
@@ -2163,6 +2173,12 @@ class PostgresExplainPlan:
             except AttributeError:
                 normalized_plan = object.__getattribute__(self, "_normalized_plan")
                 return normalized_plan.__getattribute__(name)
+
+    def __hash__(self) -> int:
+        return hash(self.query_plan)
+
+    def __eq__(self, other: object) -> bool:
+        return isinstance(other, type(self)) and self.query_plan == other.query_plan
 
     def __repr__(self) -> str:
         return str(self)

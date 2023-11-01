@@ -1522,15 +1522,12 @@ class QueryExecutionPlan:
             return "\n".join(child_inspections)
 
     def __hash__(self) -> int:
-        return hash((self.node_type, self.table, self.true_cardinality, tuple(self.children)))
+        return hash((self.node_type, self.table, tuple(self.children)))
 
     def __eq__(self, other: object) -> bool:
         return (isinstance(other, type(self))
                 and self.node_type == other.node_type and self.table == other.table
-                and self.children == other.children and
-                (self.true_cardinality == other.true_cardinality
-                 or (math.isnan(self.true_cardinality) and math.isnan(other.true_cardinality)))
-                )
+                and self.children == other.children)
 
     def __repr__(self) -> str:
         return str(self)
