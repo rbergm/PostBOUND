@@ -58,7 +58,6 @@ else
     curl -o $IMDB_DIR/csv.zip "https://cloudstore.zih.tu-dresden.de/index.php/s/eqWWK53CgkxMxfA/download?path=%2F&files=csv.zip"
     curl -o $IMDB_DIR/create.sql "https://cloudstore.zih.tu-dresden.de/index.php/s/eqWWK53CgkxMxfA/download?path=%2F&files=create.sql"
     curl -o $IMDB_DIR/import.sql "https://cloudstore.zih.tu-dresden.de/index.php/s/eqWWK53CgkxMxfA/download?path=%2F&files=import.sql"
-    curl -o $IMDB_DIR/fkindexes.sql "https://cloudstore.zih.tu-dresden.de/index.php/s/eqWWK53CgkxMxfA/download?path=%2F&files=fkindexes.sql"
 
     echo ".. Extracting IMDB data"
     unzip $IMDB_DIR/csv.zip -d $IMDB_DIR
@@ -78,9 +77,7 @@ cd $IMDB_DIR
 psql $DB_NAME -f import.sql
 
 echo ".. Creating IMDB foreign key indices"
-psql $DB_NAME -f fkindexes.sql
-psql $DB_NAME -c "CREATE INDEX IF NOT EXISTS subject_id_complete_cast ON complete_cast(subject_id)"
-psql $DB_NAME -c "CREATE INDEX IF NOT EXISTS status_id_complete_cast ON complete_cast(status_id)"
+psql $DB_NAME -f $PWD/workload-job-fk-indexes.sql
 
 echo ".. Done"
 cd $PWD
