@@ -20,7 +20,7 @@ import warnings
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from multiprocessing import connection as mp_conn
-from typing import Any, Optional
+from typing import Any, Literal, Optional
 
 import psycopg
 import psycopg.rows
@@ -29,7 +29,7 @@ from postbound.db import db
 from postbound.qal import qal, base, expressions, clauses, transform, formatter
 from postbound.optimizer import jointree, physops, planparams
 from postbound.util import collections as collection_utils, dicts as dict_utils, logging
-from postbound.util import misc as utils, typing as type_utils
+from postbound.util import errors, misc as utils, typing as type_utils
 
 # TODO: find a nice way to support index nested-loop join hints.
 # Probably inspired by the join order/join direction handling?
@@ -298,8 +298,31 @@ class PostgresInterface(db.Database):
         self._connection = psycopg.connect(self.connect_string)
         self._cursor = self._connection.cursor()
 
-    def cursor(self) -> db.Cursor:
+    def cursor(self) -> psycopg.Cursor:
         return self._cursor
+
+    def connection(self) -> psycopg.Connection:
+        """Provides the current database connection.
+
+        Returns
+        -------
+        psycopg.Connection
+            The connection
+        """
+        return self._connection
+
+    def obtain_new_local_connection(self) -> psycopg.Connection:
+        """Provides a new database connection to be used exclusively be the client.
+
+        The current connection maintained by the ``PostgresInterface`` is not affected by obtaining a new connection in any
+        way.
+
+        Returns
+        -------
+        psycopg.Connection
+            The connection
+        """
+        return psycopg.connect(self.connect_string)
 
     def close(self) -> None:
         self._cursor.close()
@@ -500,6 +523,30 @@ class PostgresSchemaInterface(db.DatabaseSchema):
                 return table
         candidate_tables = [table.full_name for table in candidate_tables]
         raise ValueError(f"Column '{column}' not found in candidate tables {candidate_tables}")
+
+    def primary_key_column(self, table: base.TableReference | str) -> base.ColumnReference:
+        """Determines the primary key column of a specific table.
+
+        Parameters
+        ----------
+        table : base.TableReference | str
+            The table to check
+
+        Returns
+        -------
+        base.ColumnReference
+            The column that acts as the primary key.
+
+        Warnings
+        --------
+        Calling this method on a table with no primary key, or with a composite primary key yields undefined behavior.
+        """
+        table = base.TableReference(table) if isinstance(table, str) else table
+        indexes = self._fetch_indexes(table)
+        col_name = next((col for col, primary in indexes.items() if primary), None)
+        if col_name is None:
+            raise ValueError("No primary key column found on table " + str(table))
+        return base.ColumnReference(col_name, table)
 
     def is_primary_key(self, column: base.ColumnReference) -> bool:
         if not column.table:
@@ -2190,3 +2237,172 @@ class PostgresExplainPlan:
             prefix = "EXPLAIN"
 
         return f"{prefix} root: {self.query_plan}"
+
+
+class WorkloadShifter:
+    """The shifter provides simple means to manipulate the current contents of a database.
+
+    Currently, such means only include the deletion of specific rows, but other tools could be added in the future.
+
+    Parameters
+    ----------
+    pg_instance : PostgresInterface
+        The database to manipulate
+    """
+    def __init__(self, pg_instance: PostgresInterface) -> None:
+        self.pg_instance = pg_instance
+
+    def remove_random(self, table: base.TableReference | str, *,
+                      n_rows: Optional[int] = None, row_pct: Optional[float] = None, vacuum: bool = False) -> None:
+        """Deletes tuples from a specific tables at random.
+
+        Parameters
+        ----------
+        table : base.TableReference | str
+            The table from which to delete
+        n_rows : Optional[int], optional
+            The absolute number of rows to delete. Defaults to ``None`` in which case the `row_pct` is used.
+        row_pct : Optional[float], optional
+            The share of rows to delete. Value should be in range (0, 1). Defaults to ``None`` in which case the `n_rows` is
+            used.
+        vacuum : bool, optional
+            Whether the database should be vacuumed after deletion. This optimizes the page layout by compacting the pages and
+            forces a refresh of all statistics.
+
+        Raises
+        ------
+        ValueError
+            If no correct `n_rows` or `row_pct` values have been given.
+
+        Warnings
+        --------
+        Notice that deletions in the given table can trigger further deletions in other tables through cascades in the schema.
+        """
+        table_name = table.full_name if isinstance(table, base.TableReference) else table
+        n_rows = self._determine_row_cnt(table_name, n_rows, row_pct)
+        pk_column = self.pg_instance.schema().primary_key_column(table_name)
+        removal_template = textwrap.dedent("""
+                                           WITH delete_samples AS (
+                                               SELECT {col} AS sample_id, RANDOM() AS _pb_rand_val
+                                               FROM {table}
+                                               ORDER BY _pb_rand_val
+                                               LIMIT {cnt}
+                                           )
+                                           DELETE FROM {table}
+                                           WHERE EXISTS (SELECT 1 FROM delete_samples WHERE sample_id = {col})
+                                           """)
+        removal_query = removal_template.format(table=table_name, col=pk_column.name, cnt=n_rows)
+        with self.pg_instance.obtain_new_local_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(removal_query)
+        if vacuum:
+            # We really need a full vacuum due to cascading deletes
+            self.pg_instance.cursor().execute("VACUUM FULL ANALYZE;")
+
+    def remove_ordered(self, column: base.ColumnReference | str, *,
+                       n_rows: Optional[int] = None, row_pct: Optional[float] = None,
+                       ascending: bool = True, null_placement: Optional[Literal["first", "last"]] = None,
+                       vacuum: bool = False) -> None:
+        """Deletes the smallest/largest tuples from a specific table.
+
+        Parameters
+        ----------
+        column : base.ColumnReference | str
+            The column to infer the deletion order. Can be either a proper column reference including the containing table, or
+            a fully-qualified column string such as _table.column_ .
+        n_rows : Optional[int], optional
+            The absolute number of rows to delete. Defaults to ``None`` in which case the `row_pct` is used.
+        row_pct : Optional[float], optional
+            The share of rows to delete. Value should be in range (0, 1). Defaults to ``None`` in which case the `n_rows` is
+            used.
+        ascending : bool, optional
+            Whether the first or the last rows should be deleted. ``NULL`` values are according to `null_placement`.
+        null_placement : Optional[Literal["first", "last"]], optional
+            Where to put ``NULL`` values in the order. Using the default value of ``None`` treats ``NULL`` values as being the
+            largest values possible.
+        vacuum : bool, optional
+            Whether the database should be vacuumed after deletion. This optimizes the page layout by compacting the pages and
+            forces a refresh of all statistics.
+
+        Raises
+        ------
+        ValueError
+            If no correct `n_rows` or `row_pct` values have been given.
+
+        Warnings
+        --------
+        Notice that deletions in the given table can trigger further deletions in other tables through cascades in the schema.
+        """
+
+        if isinstance(column, str):
+            table_name, col_name = column.split(".")
+        elif isinstance(column, base.ColumnReference):
+            table_name, col_name = column.table.full_name, column.name
+        else:
+            raise TypeError("Unknown column type: " + str(column))
+        n_rows = self._determine_row_cnt(table_name, n_rows, row_pct)
+        pk_column = self.pg_instance.schema().primary_key_column(table_name)
+        order_direction = "ASC" if ascending else "DESC"
+        null_vals = "" if null_placement is None else f"NULLS {null_placement.upper()}"
+        removal_template = textwrap.dedent("""
+                                           WITH delete_entries AS (
+                                               SELECT {pk_col}
+                                               FROM {table}
+                                               ORDER BY {order_col} {order_dir} {nulls}, {pk_col} ASC
+                                               LIMIT {cnt}
+                                           )
+                                           DELETE FROM {table} t
+                                           WHERE EXISTS (SELECT 1 FROM delete_entries
+                                                         WHERE delete_entries.{pk_col} = t.{pk_col})
+                                           """)
+        removal_query = removal_template.format(table=table_name, pk_col=pk_column.name,
+                                                order_col=col_name, order_dir=order_direction, nulls=null_vals, cnt=n_rows)
+        with self.pg_instance.obtain_new_local_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(removal_query)
+        if vacuum:
+            # We really need a full vacuum due to cascading deletes
+            self.pg_instance.cursor().execute("VACUUM FULL ANALYZE;")
+
+    def _determine_row_cnt(self, table: str, n_rows: Optional[int], row_pct: Optional[float]) -> int:
+        """Calculates the absolute number of rows to delete while also performing sanity checks.
+
+        Parameters
+        ----------
+        table : str
+            The table from which rows should be deleted. This is necessary to determine the current row count.
+        n_rows : Optional[int]
+            The absolute number of rows to delete.
+        row_pct : Optional[float]
+            The fraction in (0, 1) of rows to delete.
+
+        Returns
+        -------
+        int
+            The absolute number rows to delete. This is equal to `n_rows` if that parameter was given. Otherwise, the number is
+            inferred from the `row_pct` and the current number of tuples in the table.
+
+        Raises
+        ------
+        ValueError
+            If either both or neither `n_rows` and `row_pct` was given or any of the parameters is outside of the allowed
+            range.
+        """
+        if n_rows is None and row_pct is None:
+            raise ValueError("Either absolute number of rows or row percentage must be given")
+        if n_rows is not None and row_pct is not None:
+            raise ValueError("Cannot use both absolute number of rows and row percentage")
+
+        if n_rows is not None and not n_rows > 0:
+            raise ValueError("Not a valid row count: " + str(n_rows))
+        elif n_rows is not None and n_rows > 0:
+            return n_rows
+
+        if not 0.0 < row_pct < 1.0:
+            raise ValueError("Not a valid row percentage: " + str(row_pct))
+
+        total_n_rows = self.pg_instance.statistics().total_rows(base.TableReference(table),
+                                                                cache_enabled=False, emulated=True)
+        if total_n_rows is None:
+            raise errors.StateError("Could not determine total number of rows for table " + table)
+        return round(row_pct * total_n_rows)
