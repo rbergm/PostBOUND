@@ -10,6 +10,7 @@ Sadly (or luckily?), the inverse conversion does not work because JSON does not 
 from __future__ import annotations
 
 import abc
+import enum
 from typing import Protocol
 
 import json
@@ -34,6 +35,10 @@ class JsonizeEncoder(json.JSONEncoder):
     def default(self, obj: Any) -> Any:
         if "__json__" in dir(obj):
             return obj.__json__()
+        elif isinstance(obj, (set, frozenset)):
+            return list(obj)
+        elif isinstance(obj, enum.Enum):
+            return obj.value
         return json.JSONEncoder.default(self, obj)
 
 

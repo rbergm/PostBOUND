@@ -8,8 +8,8 @@ from collections.abc import Collection
 from dataclasses import dataclass
 from typing import Iterable
 
-from postbound.qal import base
-from postbound.util import dicts as dict_utils
+from postbound.qal import base, parser
+from postbound.util import dicts as dict_utils, jsonize
 
 
 class ScanOperators(enum.Enum):
@@ -49,7 +49,7 @@ class JoinOperators(enum.Enum):
 
 
 @dataclass(frozen=True)
-class ScanOperatorAssignment:
+class ScanOperatorAssignment(jsonize.Jsonizable):
     """Models the selection of a scan operator to a specific base table.
 
     Attributes
@@ -75,6 +75,9 @@ class ScanOperatorAssignment:
             A string representation of the assignment
         """
         return f"USING {self.operator}" if self.operator else ""
+
+    def __json__(self) -> object:
+        return {"operator": self.operator.value, "table": self.table, "parallel_workers": self.parallel_workers}
 
     def __repr__(self) -> str:
         return str(self)
@@ -183,6 +186,10 @@ class JoinOperatorAssignment:
         """
         return False
 
+    def __json__(self) -> object:
+        return {"directional": self.is_directional(), "operator": self.operator.value, "join": self.join,
+                "parallel_workers": self.parallel_workers}
+
     def __hash__(self) -> int:
         return self._hash_val
 
@@ -264,6 +271,10 @@ class DirectionalJoinOperatorAssignment(JoinOperatorAssignment):
     def is_directional(self) -> bool:
         return True
 
+    def __json__(self) -> object:
+        return {"directional": True, "operator": self.operator, "inner": self.inner, "outer": self.outer,
+                "parallel_workers": self.parallel_workers}
+
     __hash__ = JoinOperatorAssignment.__hash__
 
     def __eq__(self, other: object) -> bool:
@@ -278,6 +289,45 @@ PhysicalOperator = typing.Union[ScanOperators, JoinOperators]
 
 These can differ from the operators that are actually available in the selected target database system.
 """
+
+
+def read_operator_json(json_data: dict) -> ScanOperatorAssignment | JoinOperatorAssignment:
+    """Reads a physical operator assignment from a JSON dictionary.
+
+    Parameters
+    ----------
+    json_data : dict
+        The JSON dictionary to read from
+
+    Returns
+    -------
+    ScanOperatorAssignment | JoinOperatorAssignment
+        The parsed assignment. Whether it is a scan or join assignment is inferred from the JSON dictionary.
+
+    Raises
+    ------
+    ValueError
+        If the JSON dictionary does not contain a valid assignment
+    """
+    json_parser = parser.JsonParser()
+    parallel_workers = json_data.get("parallel_workers", math.nan)
+
+    if "table" in json_data:
+        parsed_table = json_parser.load_table(json_data["table"])
+        scan_operator = json_data["operator"]
+        return ScanOperatorAssignment(scan_operator, parsed_table, parallel_workers)
+    elif "join" not in json_data:
+        raise ValueError("Malformed operator JSON: either 'table' or 'join' must be given")
+
+    directional = json_data["directional"]
+    join_operator = JoinOperators(json_data["operator"])
+    if directional:
+        inner = [json_parser.load_table(tab) for tab in json_data["inner"]]
+        outer = [json_parser.load_table(tab) for tab in json_data["outer"]]
+        return DirectionalJoinOperatorAssignment(join_operator, inner, outer, parallel_workers=parallel_workers)
+
+    joined_tables = [json_parser.load_table(tab) for tab in json_data["join"]]
+    return JoinOperatorAssignment(join_operator, joined_tables, parallel_workers=parallel_workers)
 
 
 class PhysicalOperatorAssignment:

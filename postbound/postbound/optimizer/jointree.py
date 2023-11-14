@@ -31,13 +31,13 @@ from typing import Generic, Literal, Optional, Union
 
 import Levenshtein
 
-from postbound.qal import base, predicates, qal
+from postbound.qal import base, predicates, parser, qal
 from postbound.db import db
 from postbound.optimizer import physops, planparams
-from postbound.util import collections as collection_utils, errors, stats
+from postbound.util import collections as collection_utils, errors, jsonize, stats
 
 
-class BaseMetadata(abc.ABC):
+class BaseMetadata(abc.ABC, jsonize.Jsonizable):
     """Common metadata information that is present on all join and base table nodes.
 
     The interpretation of the data can vary depending on the context in which the join tree is being used. For example,
@@ -68,6 +68,10 @@ class BaseMetadata(abc.ABC):
             The estimate. Can be ``math.nan`` to indicate that no value is available.
         """
         return self._cardinality
+
+    @abc.abstractmethod
+    def __json__(self) -> object:
+        raise NotImplementedError
 
 
 class JoinMetadata(BaseMetadata, abc.ABC):
@@ -111,6 +115,9 @@ class JoinMetadata(BaseMetadata, abc.ABC):
         """
         return f"JOIN ON {self.join_predicate}" if self.join_predicate else "CROSS JOIN"
 
+    def __json__(self) -> object:
+        return {"predicate": self._join_predicate, "cardinality": self._cardinality}
+
 
 class LogicalJoinMetadata(JoinMetadata):
     """Models the join metadata that is specific to logical joins.
@@ -132,6 +139,8 @@ class LogicalJoinMetadata(JoinMetadata):
                  cardinality: float = math.nan) -> None:
         super().__init__(predicate, cardinality)
         self._hash_val = hash((predicate, cardinality))
+
+    __json__ = JoinMetadata.__json__
 
     def __hash__(self) -> int:
         return self._hash_val
@@ -196,6 +205,9 @@ class PhysicalJoinMetadata(JoinMetadata):
         base_inspection = super().inspect()
         return f"{base_inspection} {self.operator}" if self._operator_assignment else base_inspection
 
+    def __json__(self) -> object:
+        return super().__json__() | {"operator": self._operator_assignment}
+
     def __hash__(self) -> int:
         return self._hash_val
 
@@ -252,6 +264,9 @@ class BaseTableMetadata(BaseMetadata, abc.ABC):
         """
         return f"FILTER {self.filter_predicate}" if self._filter_predicate else ""
 
+    def __json__(self) -> object:
+        return {"predicate": self._filter_predicate, "cardinality": self._cardinality}
+
 
 class LogicalBaseTableMetadata(BaseTableMetadata):
     """Models the scan metadata that is specific to logical join orders.
@@ -273,6 +288,8 @@ class LogicalBaseTableMetadata(BaseTableMetadata):
                  cardinality: float = math.nan) -> None:
         super().__init__(filter_predicate, cardinality)
         self._hash_val = hash((filter_predicate, cardinality))
+
+    __json__ = BaseTableMetadata.__json__
 
     def __hash__(self) -> int:
         return self._hash_val
@@ -331,6 +348,9 @@ class PhysicalBaseTableMetadata(BaseTableMetadata):
         """
         base_inspection = super().inspect()
         return f"{base_inspection} {self.operator}" if self._operator_assignment else base_inspection
+
+    def __json__(self) -> object:
+        return super().__json__() | {"operator": self._operator_assignment}
 
     def __hash__(self) -> int:
         return self._hash_val
@@ -406,7 +426,70 @@ def parse_nested_table_sequence(sequence: list[dict | list]) -> NestedTableSeque
         raise TypeError(f"Unknown list element: {sequence}")
 
 
-class AbstractJoinTreeNode(abc.ABC, Container[base.TableReference], Generic[JoinMetadataType, BaseTableMetadataType]):
+def _read_metadata_json(json_data: dict, base_table: bool) -> BaseTableMetadata | JoinMetadata:
+    """Generates the appropriate metadata object from a JSON representation.
+
+    Parameters
+    ----------
+    json_data : dict
+        The JSON data that should be parsed.
+    base_table : bool
+        Whether the metadata represents a scan over a base table or a join between two relations.
+
+    Returns
+    -------
+    BaseTableMetadata | JoinMetadata
+        The parsed metadata object. Whether this is a physical metadata object (i.e. containing information about physical
+        operators), or a logical metadata object is inferred from the JSON data.
+    """
+    json_parser = parser.JsonParser()
+    cardinality = json_data.get("cardinality", math.nan)
+    if base_table:
+        filter_predicate = json_parser.load_predicate(json_data["predicate"]) if "predicate" in json_data else None
+        if "operator" in json_data:
+            scan_assignment = physops.read_operator_json(json_data["operator"])
+            return PhysicalBaseTableMetadata(filter_predicate, cardinality, scan_assignment)
+        return LogicalBaseTableMetadata(filter_predicate, cardinality)
+    else:
+        join_predicate = json_parser.load_predicate(json_data["predicate"]) if "predicate" in json_data else None
+        if "operator" in json_data:
+            join_assignment = physops.read_operator_json(json_data["operator"])
+            return PhysicalJoinMetadata(join_predicate, cardinality, join_assignment)
+        return LogicalJoinMetadata(join_predicate, cardinality)
+
+
+def read_from_json(json_data: dict) -> LogicalJoinTree | PhysicalQueryPlan:
+    """Reads a join tree from its JSON representation.
+
+    This acts as the reverse operation to the *jsonize* protocol.
+
+    Parameters
+    ----------
+    json_data : dict
+        The JSON data that should be parsed.
+
+    Returns
+    -------
+    LogicalJoinTree | PhysicalQueryPlan
+        A join tree that corresponds to the JSON data. Whether this is a logical join tree or a physical query plan is inferred
+        based on the JSON data.
+    """
+    json_parser = parser.JsonParser()
+    if "table" in json_data:
+        base_table = json_parser.load_table(json_data["table"])
+        metadata = _read_metadata_json(json_data["metadata"], base_table=True)
+        return BaseTableNode(base_table, metadata)
+    elif "left" in json_data and "right" in json_data:
+        left_node = read_from_json(json_data["left"])
+        right_node = read_from_json(json_data["right"])
+        metadata = _read_metadata_json(json_data["metadata"], base_table=False)
+        return IntermediateJoinNode(left_node, right_node, metadata)
+    else:
+        raise ValueError("Malformed json data")
+
+
+class AbstractJoinTreeNode(jsonize.Jsonizable, abc.ABC, Container[base.TableReference],
+                           Generic[JoinMetadataType, BaseTableMetadataType]):
     """The fundamental type to construct a join tree. This node contains the actual entries/data.
 
     A join tree distinguishes between two types of nodes: join nodes which act as intermediate nodes that join
@@ -757,6 +840,10 @@ class AbstractJoinTreeNode(abc.ABC, Container[base.TableReference], Generic[Join
         raise NotImplementedError
 
     @abc.abstractmethod
+    def __json__(self) -> object:
+        raise NotImplementedError
+
+    @abc.abstractmethod
     def __contains__(self, item) -> bool:
         raise NotImplementedError
 
@@ -991,6 +1078,9 @@ class IntermediateJoinNode(AbstractJoinTreeNode[JoinMetadataType, BaseTableMetad
         right_inspection = self.right_child.inspect(_indentation=_indentation + 2)
         return "\n".join([own_inspection, left_inspection, right_inspection])
 
+    def __json__(self) -> object:
+        return {"left": self.left_child, "right": self.right_child, "metadata": self.annotation}
+
     def __contains__(self, item) -> bool:
         if item == self:
             return True
@@ -1115,6 +1205,9 @@ class BaseTableNode(AbstractJoinTreeNode[JoinMetadataType, BaseTableMetadataType
         annotation_str = f" {self.annotation.inspect()}" if self.annotation else ""
         return f"{prefix} SCAN :: {self.table}{annotation_str}"
 
+    def __json__(self) -> object:
+        return {"table": self.table, "metadata": self.annotation}
+
     def __contains__(self, item) -> bool:
         if item == self:
             return True
@@ -1142,7 +1235,7 @@ AnnotationMerger = Optional[Callable[[Optional[BaseMetadata], Optional[BaseMetad
 """Type alias for methods that can combine different metadata objects."""
 
 
-class JoinTree(Container[base.TableReference], Generic[JoinMetadataType, BaseTableMetadataType]):
+class JoinTree(jsonize.Jsonizable, Container[base.TableReference], Generic[JoinMetadataType, BaseTableMetadataType]):
     """The join tree captures the order in which base tables as well as intermediate results are joined together.
 
     Each join tree maintains the root of a composite tree structure consisting of `BaseTableNode` as leaves and
@@ -1627,6 +1720,9 @@ class JoinTree(Container[base.TableReference], Generic[JoinMetadataType, BaseTab
         """
         if self.is_empty():
             raise errors.StateError("Empty join tree")
+
+    def __json__(self) -> object:
+        return self._root
 
     def __bool__(self) -> bool:
         return not self.is_empty()
