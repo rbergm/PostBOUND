@@ -24,8 +24,8 @@ import os
 import textwrap
 import typing
 import warnings
-from collections.abc import Iterable, Sequence
-from typing import Any, Optional
+from collections.abc import Callable, Iterable, Sequence
+from typing import Any, Literal, Optional
 
 from postbound.qal import base, qal
 from postbound.optimizer import jointree, physops, planparams
@@ -1458,6 +1458,68 @@ class QueryExecutionPlan:
             The path length
         """
         return 1 + max((child.plan_depth() for child in self.children), default=0)
+
+    def find_first_node(self, predicate: Callable[[QueryExecutionPlan], bool], *,
+                        traversal: Literal["left", "right", "inner", "outer"] = "left") -> Optional[QueryExecutionPlan]:
+        """Recursively searches for the first node that matches a specific predicate.
+
+        Parameters
+        ----------
+        predicate : Callable[[QueryExecutionPlan], bool]
+            The predicate to check. The predicate is called on each node in the tree and should return ``True`` if the node
+            matches the desired search criteria.
+        traversal : Literal["left", "right", "inner", "outer"], optional
+            The traversal strategy to use. It indicates which child node should be checked first if the `predicate` is not
+            satisfied by the current node. Defaults to ``"left"`` which means that the left child is checked first.
+
+        Returns
+        -------
+        Optional[QueryExecutionPlan]
+            The first node that matches the predicate. If no such node exists, ``None`` is returned.
+        """
+        if predicate(self):
+            return self
+        if not self.children:
+            return None
+
+        if len(self.children) == 1:
+            return self.children[0].find_first_node(predicate, traversal=traversal)
+        if len(self.children) != 2:
+            raise ValueError("Cannot traverse plan nodes with more than two children")
+
+        if traversal == "inner" or traversal == "outer":
+            first_child_to_check = self.inner_child if traversal == "inner" else self.outer_child
+            second_child_to_check = self.outer_child if traversal == "inner" else self.inner_child
+        else:
+            first_child_to_check = self.children[0] if traversal == "left" else self.children[1]
+            second_child_to_check = self.children[1] if traversal == "left" else self.children[0]
+
+        first_result = first_child_to_check.find_first_node(predicate, traversal=traversal)
+        if first_result is not None:
+            return first_result
+        return second_child_to_check.find_first_node(predicate, traversal=traversal)
+
+    def find_all_nodes(self, predicate: Callable[[QueryExecutionPlan], bool]) -> Sequence[QueryExecutionPlan]:
+        """Recursively searches for all nodes that match a specific predicate.
+
+        Parameters
+        ----------
+        predicate : Callable[[QueryExecutionPlan], bool]
+            The predicate to check. The predicate is called on each node in the tree and should return ``True`` if the node
+            matches the desired search criteria.
+
+        Returns
+        -------
+        Sequence[QueryExecutionPlan]
+            All nodes that match the predicate. If no such node exists, an empty sequence is returned. Matches are returned in
+            depth-first order, i.e. nodes higher up in the plan are returned before their matching child nodes.
+        """
+        def _handler(node: QueryExecutionPlan, predicate: Callable[[QueryExecutionPlan], bool]) -> list[QueryExecutionPlan]:
+            matches = [node] if predicate(node) else []
+            for child in node.children:
+                matches.extend(_handler(child, predicate))
+            return matches
+        return _handler(self, predicate)
 
     def simplify(self) -> Optional[QueryExecutionPlan]:
         """Provides a query execution plan that is stripped of all non-join and non-scan nodes.
