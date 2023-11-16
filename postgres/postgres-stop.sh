@@ -15,6 +15,6 @@ echo ".. Stopping Postgres Server"
 
 cd $PG_INSTALL_DIR
 pg_ctl -D $PG_INSTALL_DIR/data stop
-export PATH="${PATH//$PG_CTL_PATH:}"
+export PATH="${PATH//$PG_BIN_PATH:}"
 
 cd $WD
