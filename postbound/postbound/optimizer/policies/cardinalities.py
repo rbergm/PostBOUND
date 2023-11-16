@@ -183,7 +183,7 @@ class PreciseCardinalityEstimator(BaseTableCardinalityEstimator):
         return {"name": "precise", "database": self.database.describe()}
 
 
-class JoinBoundCardinalityEstimator(abc.ABC):
+class JoinCardinalityEstimator(abc.ABC):
     """The join cardinality estimator calculates cardinality estimates for arbitrary n-ary joins.
 
     Implementations could for example use direct computation based on advanced statistics, sampling strategies or

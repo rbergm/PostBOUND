@@ -301,7 +301,7 @@ class MaxFrequencyStatsContainer(StatisticsContainer[MaxFrequency]):
         return n_tuples / n_distinct
 
 
-class UESJoinBoundEstimator(card_policy.JoinBoundCardinalityEstimator):
+class UESJoinBoundEstimator(card_policy.JoinCardinalityEstimator):
     """Implementation of the UES formula to calculate upper bounds of join cardinalities.
 
     The formula distinuishes two cases: n:m joins are estimated according to the maximum frequencies of the join columns.
@@ -507,7 +507,7 @@ class UESJoinOrderOptimizer(stages.JoinOrderOptimization):
     """
 
     def __init__(self, *, base_table_estimation: Optional[card_policy.BaseTableCardinalityEstimator] = None,
-                 join_estimation: Optional[card_policy.JoinBoundCardinalityEstimator] = None,
+                 join_estimation: Optional[card_policy.JoinCardinalityEstimator] = None,
                  subquery_policy: Optional[tree_policy.BranchGenerationPolicy] = None,
                  stats_container: Optional[StatisticsContainer] = None,
                  pull_eager_pk_tables: bool = False,
