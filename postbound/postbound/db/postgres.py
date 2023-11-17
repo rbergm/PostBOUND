@@ -292,9 +292,12 @@ class PostgresInterface(db.Database):
         return base_info
 
     def reset_connection(self) -> None:
-        self._connection.cancel()
-        self._cursor.close()
-        self._connection.close()
+        try:
+            self._connection.cancel()
+            self._cursor.close()
+            self._connection.close()
+        except psycopg.Error:
+            pass
         self._connection = psycopg.connect(self.connect_string)
         self._cursor = self._connection.cursor()
 
