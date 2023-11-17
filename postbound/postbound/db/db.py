@@ -1776,6 +1776,10 @@ class DatabasePool:
         """
         return self._pool[key]
 
+    def clear(self) -> None:
+        """Removes all currently registered databases from the pool."""
+        self._pool.clear()
+
     def __contains__(self, key: str) -> bool:
         return key in self._pool
 
