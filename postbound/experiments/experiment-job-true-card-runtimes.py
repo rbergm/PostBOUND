@@ -49,6 +49,15 @@ card_df = pd.read_csv("results/job/job-intermediate-cardinalities.csv",
 
 benchmark_results = []
 print("Starting workload execution")
+
+# Since we use pre-warming we can assume that our data is mostly in the cache already. Therefore, we should lower the cost of
+# random IO (because it only accesses the cache, not the HDD).
+# See https://www.postgresql.org/docs/current/runtime-config-query.html#GUC-RANDOM-PAGE-COST
+pg_db.execute_query("SET random_page_cost = 1.1;")
+
+# We want the best possible query plans. For JOB it is still feasible to use the DP optimizer
+pg_db.execute_query("SET geqo = 'off';")
+
 for label, query in workloads.job().entries():
     print("Now executing query", query)
     pg_db.prewarm_tables(query.tables())

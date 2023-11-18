@@ -33,6 +33,10 @@ def execute_single_iteration(workload: workloads.Workload, *, database: postgres
 
     for label, query in workload.entries():
         if prewarm:
+            # Since we use pre-warming we can assume that our data is mostly in the cache already. Therefore, we should lower
+            # the cost of random IO (because it only accesses the cache, not the HDD).
+            # See https://www.postgresql.org/docs/current/runtime-config-query.html#GUC-RANDOM-PAGE-COST
+            database.execute_query("SET random_page_cost = 1.1;")
             database.prewarm_tables(query.tables())
         query_start = datetime.now()
         database.execute_query(query)
@@ -78,7 +82,8 @@ def make_out_name(args: argparse.Namespace) -> str:
 
 def main():
     parser = argparse.ArgumentParser(description="Obtains execution times for the Join Order Benchmark")
-    parser.add_argument("--repetitions", "-r", action="store", type=int, default=1, help="The number of repetitions per query.")
+    parser.add_argument("--repetitions", "-r", action="store", type=int, default=1,
+                        help="The number of repetitions per query.")
     parser.add_argument("--shuffle", "-s", action="store_true", help="When using query repetitions, shuffle the workload "
                         "after each workload iteration. If shuffling is not used, all repetitions are "
                         "executed in sequence.")
