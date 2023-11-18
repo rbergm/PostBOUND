@@ -76,15 +76,17 @@ def simulate_data_shift(baseline_file: str, outfile: str) -> None:
     results: list[DataShiftResult] = []
     for data_step in range(BaselineFilling + ShiftSpan, BaselineFilling - ShiftSpan - ShiftStep, -ShiftStep):
         for label, query in job.entries():
-            native_query = jointree.read_from_json(query_plans["native_plans"][label])
+            native_plan = jointree.read_from_json(query_plans["native_plans"][label])
+            native_query = pg_instance.hinting().generate_hints(query, native_plan)
             start_time = datetime.now()
-            native_plan = pg_instance.optimizer().analyze_plan(native_query)
+            native_explain = pg_instance.optimizer().analyze_plan(native_query)
             end_time = datetime.now()
             native_runtime = (end_time - start_time).total_seconds()
 
-            ues_query = jointree.read_from_json(query_plans["robust_plans"][label])
+            ues_plan = jointree.read_from_json(query_plans["robust_plans"][label])
+            ues_query = pg_instance.hinting().generate_hints(query, ues_plan)
             start_time = datetime.now()
-            ues_plan = pg_instance.optimizer().analyze_plan(ues_query)
+            ues_explain = pg_instance.optimizer().analyze_plan(ues_query)
             end_time = datetime.now()
             robust_runtime = (end_time - start_time).total_seconds()
 
@@ -92,9 +94,9 @@ def simulate_data_shift(baseline_file: str, outfile: str) -> None:
                 fill_ratio=data_step,
                 label=label,
                 query=query,
-                native_plan=jsonize.to_json(native_plan),
+                native_plan=jsonize.to_json(native_explain),
                 native_runtime=native_runtime,
-                robust_plan=jsonize.to_json(ues_plan),
+                robust_plan=jsonize.to_json(ues_explain),
                 robust_runtime=robust_runtime,
             )
             results.append(result)
