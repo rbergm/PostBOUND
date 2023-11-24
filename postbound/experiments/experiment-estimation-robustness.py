@@ -5,14 +5,16 @@ import json
 import os
 import sys
 from datetime import datetime
+from typing import Literal, Optional
 
 import pandas as pd
 
 from postbound import postbound as pb
-from postbound.qal import base
+from postbound.qal import base, qal
 from postbound.db import postgres
 from postbound.experiments import workloads
 from postbound.optimizer import jointree, presets
+from postbound.optimizer.policies import cardinalities as cards
 from postbound.util import jsonize, proc
 
 OutDir = "robustness-shift"
@@ -38,6 +40,8 @@ ues_optimizer = ues_optimizer.load_settings(presets.fetch("ues")).build()
 
 def obtain_baseline_plans(outfile: str) -> None:
     tuple_drop_pct = 1 - BaselineFilling
+
+    proc.run_cmd(["./workload-job-setup.sh", "--force"], work_dir=os.environ["PG_CTL_DIR"])
     workload_shifter.remove_ordered(order_column, row_pct=tuple_drop_pct, vacuum=True)
 
     native_plans: dict[str, jointree.PhysicalQueryPlan] = {}
@@ -56,52 +60,71 @@ def obtain_baseline_plans(outfile: str) -> None:
         out.write(jsonize.to_json(baseline))
 
 
+ExperimentType = Literal["native", "robust", "native-true-cards", "native-fixed"]
+
+
 @dataclasses.dataclass
 class DataShiftResult:
     fill_ratio: float
+    plan_type: ExperimentType
     label: str
     query: str
-    native_plan: dict
-    native_runtime: float
-    robust_plan: dict
-    robust_runtime: float
+    query_plan: str
+    total_runtime: float
+
+
+def obtain_data_shift_result(fill_ratio: float, label: str, query: qal.SqlQuery, plan_type: ExperimentType, *,
+                             query_plans: Optional[dict] = None,
+                             cardinality_estimator: Optional[cards.CardinalityHintsGenerator] = None) -> DataShiftResult:
+    if plan_type == "native":
+        explain_query = query
+    elif plan_type == "robust":
+        ues_plan = jointree.read_from_json(query_plans["robust_plans"][label])
+        explain_query = pg_instance.hinting().generate_hints(query, ues_plan)
+    elif plan_type == "native-fixed":
+        native_plan = jointree.read_from_json(query_plans["native_plans"][label])
+        explain_query = pg_instance.hinting().generate_hints(query, native_plan)
+    elif plan_type == "native-true-cards":
+        cardinality_hints = cardinality_estimator.estimate_cardinalities(query)
+        explain_query = pg_instance.hinting().generate_hints(query, plan_parameters=cardinality_hints)
+    else:
+        raise ValueError("Unknown experiment type: {}".format(plan_type))
+
+    start_time = datetime.now()
+    explain_plan = pg_instance.optimizer().analyze_plan(explain_query)
+    end_time = datetime.now()
+    total_runtime = (end_time - start_time).total_seconds()
+
+    return DataShiftResult(fill_ratio=fill_ratio, plan_type=plan_type, label=label,
+                           query=str(query), query_plan=jsonize.to_json(explain_plan),
+                           total_runtime=total_runtime)
 
 
 def simulate_data_shift(baseline_file: str, outfile: str) -> None:
     total_tuples = pg_instance.statistics().total_rows(fact_table)
     tuples_to_drop = ShiftStep * total_tuples
+    cardinality_estimator = cards.PreciseCardinalityHintGenerator(pg_instance, enable_cache=True)
     with open(baseline_file, "r") as baselines:
         query_plans: dict = json.load(baselines)
 
     results: list[DataShiftResult] = []
     for data_step in range(BaselineFilling + ShiftSpan, BaselineFilling - ShiftSpan - ShiftStep, -ShiftStep):
         for label, query in job.entries():
-            native_plan = jointree.read_from_json(query_plans["native_plans"][label])
-            native_query = pg_instance.hinting().generate_hints(query, native_plan)
-            start_time = datetime.now()
-            native_explain = pg_instance.optimizer().analyze_plan(native_query)
-            end_time = datetime.now()
-            native_runtime = (end_time - start_time).total_seconds()
+            pg_instance.prewarm_tables(query.tables())
+            results.append(obtain_data_shift_result(data_step, label, query, "native"))
 
-            ues_plan = jointree.read_from_json(query_plans["robust_plans"][label])
-            ues_query = pg_instance.hinting().generate_hints(query, ues_plan)
-            start_time = datetime.now()
-            ues_explain = pg_instance.optimizer().analyze_plan(ues_query)
-            end_time = datetime.now()
-            robust_runtime = (end_time - start_time).total_seconds()
+            pg_instance.prewarm_tables(query.tables())
+            results.append(obtain_data_shift_result(data_step, label, query, "native-fixed", query_plans))
 
-            result = DataShiftResult(
-                fill_ratio=data_step,
-                label=label,
-                query=query,
-                native_plan=jsonize.to_json(native_explain),
-                native_runtime=native_runtime,
-                robust_plan=jsonize.to_json(ues_explain),
-                robust_runtime=robust_runtime,
-            )
-            results.append(result)
+            pg_instance.prewarm_tables(query.tables())
+            results.append(obtain_data_shift_result(data_step, label, query, "native-true-cards",
+                                                    cardinality_estimator=cardinality_estimator))
+
+            pg_instance.prewarm_tables(query.tables())
+            results.append(obtain_data_shift_result(data_step, label, query, "robust", query_plans))
 
         workload_shifter.remove_ordered(order_column, n_rows=tuples_to_drop, vacuum=True)
+        cardinality_estimator.reset_cache()
 
     result_df = pd.DataFrame(results)
     result_df.to_csv(outfile)
