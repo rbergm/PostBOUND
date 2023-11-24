@@ -10,6 +10,7 @@ from __future__ import annotations
 import abc
 from typing import Optional
 
+from postbound.db import db
 from postbound.qal import qal
 from postbound.optimizer import jointree, physops, planparams, validation
 
@@ -338,3 +339,101 @@ class IncrementalOptimizationStep(abc.ABC):
             The check instance. Can be an empty check if no specific requirements exist.
         """
         return validation.EmptyPreCheck()
+
+
+class _CompleteAlgorithmEmulator(CompleteOptimizationAlgorithm):
+    """Utility to use implementations of staged optimization strategies when a complete algorithm is expected.
+
+    The emulation is enabled by supplying ``None`` values at all places where the stage expects input from previous stages.
+    The output of the actual stage is used to obtain a query plan which in turn is used to generate the required optimizer
+    information.
+
+    Parameters
+    ----------
+    database : Optional[db.Database], optional
+        The database for which the queries should be executed. This is required to obtain complete query plans for the input
+        queries. If omitted, the database is inferred from the database pool.
+    join_order_optimizer : Optional[JoinOrderOptimization], optional
+        The join order optimizer if any.
+    operator_selection : Optional[PhysicalOperatorSelection], optional
+        The physical operator selector if any.
+    plan_parameterization : Optional[ParameterGeneration], optional
+        The plan parameterization (e.g. cardinality estimator) if any.
+
+    Raises
+    ------
+    ValueError
+        If all stages are ``None``.
+
+    """
+    def __init__(self, database: Optional[db.Database] = None, *,
+                 join_order_optimizer: Optional[JoinOrderOptimization] = None,
+                 operator_selection: Optional[PhysicalOperatorSelection] = None,
+                 plan_parameterization: Optional[ParameterGeneration] = None) -> None:
+        super().__init__()
+        self.database = database if database is not None else db.DatabasePool.get_instance().current_database()
+        if all(stage is None for stage in (join_order_optimizer, operator_selection, plan_parameterization)):
+            raise ValueError("Exactly one stage has to be given")
+        self._join_order_optimizer = join_order_optimizer
+        self._operator_selection = operator_selection
+        self._plan_parameterization = plan_parameterization
+
+    def stage(self) -> JoinOrderOptimization | PhysicalOperatorSelection | ParameterGeneration:
+        """Provides the actually specified stage.
+
+        Returns
+        -------
+        JoinOrderOptimization | PhysicalOperatorSelection | ParameterGeneration
+            The optimization stage.
+        """
+        return (self._join_order_optimizer if self._join_order_optimizer is not None
+                else (self._operator_selection if self._operator_selection is not None
+                      else self._plan_parameterization))
+
+    def optimize_query(self, query: qal.SqlQuery) -> jointree.PhysicalQueryPlan:
+        join_order = (self._join_order_optimizer.optimize_join_order(query)
+                      if self._join_order_optimizer is not None else None)
+        physical_operators = (self._operator_selection.select_physical_operators(query, None)
+                              if self._operator_selection is not None else None)
+        plan_params = (self._plan_parameterization.generate_plan_parameters(query, None, None)
+                       if self._plan_parameterization is not None else None)
+        hinted_query = self.database.hinting().generate_hints(query, join_order, physical_operators, plan_params)
+        query_plan = self.database.optimizer().query_plan(hinted_query)
+        return jointree.PhysicalQueryPlan(query_plan, query)
+
+    def describe(self) -> dict:
+        return self.stage().describe()
+
+    def pre_check(self) -> validation.OptimizationPreCheck:
+        return self.stage().pre_check()
+
+
+def as_complete_algorithm(stage: JoinOrderOptimization | PhysicalOperatorSelection | ParameterGeneration, *,
+                          database: Optional[db.Database] = None) -> CompleteOptimizationAlgorithm:
+    """Enables using a partial optimization stage in situations where a complete optimizer is expected.
+
+    This emulation is achieved by using the partial stage to obtain a partial query plan. The target database system is then
+    tasked with filling the gaps to construct a complete execution plan.
+
+    Basically this method is syntactic sugar in situations where a `TwoStageOptimizationPipeline` would be filled with only a
+    single stage. Using `as_complete_algorithm`, the construction of an entire pipeline can be omitted. Furthermore it can seem
+    more natural to "convert" the stage into a complete algorithm in this case.
+
+    Parameters
+    ----------
+    stage : JoinOrderOptimization | PhysicalOperatorSelection | ParameterGeneration
+        The stage that should become a complete optimization algorithm
+    database : Optional[db.Database], optional
+        The target database to execute the optimized queries in. This is required to fill the gaps of the partial query plans.
+        If the database is omitted, it will be inferred based on the database pool.
+
+    Returns
+    -------
+    CompleteOptimizationAlgorithm
+        A emulated optimization algorithm for the optimization stage
+    """
+    join_order_optimizer = stage if isinstance(stage, JoinOrderOptimization) else None
+    operator_selection = stage if isinstance(stage, PhysicalOperatorSelection) else None
+    parameter_generation = stage if isinstance(stage, ParameterGeneration) else None
+    return _CompleteAlgorithmEmulator(database, join_order_optimizer=join_order_optimizer,
+                                      operator_selection=operator_selection, plan_parameterization=parameter_generation)
