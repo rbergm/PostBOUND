@@ -133,6 +133,7 @@ def simulate_data_shift(baseline_file: str, outfile: str) -> None:
 def main() -> None:
     mode = sys.argv[1] if len(sys.argv) > 1 else "full"
     if mode == "baseline" or mode == "full":
+        os.makedirs(OutDir)
         obtain_baseline_plans(OutDir + "/baseline.json")
     if mode == "full":
         proc.run_cmd(["./workload-job-setup.sh", "--force"], work_dir=os.environ["PG_CTL_DIR"])
