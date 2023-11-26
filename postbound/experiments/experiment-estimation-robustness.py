@@ -71,6 +71,7 @@ class DataShiftResult:
     query: str
     query_plan: str
     total_runtime: float
+    db_config: str
 
 
 def obtain_data_shift_result(fill_ratio: float, label: str, query: qal.SqlQuery, plan_type: ExperimentType, *,
@@ -97,7 +98,7 @@ def obtain_data_shift_result(fill_ratio: float, label: str, query: qal.SqlQuery,
 
     return DataShiftResult(fill_ratio=fill_ratio, plan_type=plan_type, label=label,
                            query=str(query), query_plan=jsonize.to_json(explain_plan),
-                           total_runtime=total_runtime)
+                           total_runtime=total_runtime, db_config=jsonize.to_json(pg_instance.describe()))
 
 
 def simulate_data_shift(baseline_file: str, outfile: str) -> None:
