@@ -352,6 +352,17 @@ class PostgresInterface(db.Database):
         system_settings = self._cursor.fetchall()
         base_info["system_settings"] = {setting: value for setting, value in system_settings
                                         if setting in _SignificantPostgresSettings}
+
+        schema_info: list = []
+        for table in self.schema().tables():
+            column_info: list = []
+            for column in self.schema().columns(table):
+                column_info.append({"column": str(column), "indexed": self.schema().has_index(column)})
+            schema_info.append({"table": str(table),
+                                "n_rows": self.statistics().total_rows(table, emulated=True),
+                                "columns": column_info})
+        base_info["schema_info"] = schema_info
+
         return base_info
 
     def reset_connection(self) -> None:
