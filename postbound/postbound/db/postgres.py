@@ -203,6 +203,68 @@ def _simplify_result_set(result_set: list[tuple[Any]]) -> Any:
     return result_set
 
 
+_SignificantPostgresSettings = {
+    # Resource consumption settings (see https://www.postgresql.org/docs/current/runtime-config-resource.html)
+    # Memory
+    "shared_buffers", "huge_pages", "huge_page_size", "temp_buffers", "max_prepared_transactions",
+    "work_mem", "hash_mem_multiplier", "maintenance_work_mem", "autovacuum_work_mem", "vacuum_buffer_usage_limit",
+    "logical_decoding_work_mem", "max_stack_depth",
+    "shared_memory_type", "dynamic_shared_memory_type", "min_dynamic_shared_memory",
+    # Disk
+    "temp_file_limit",
+    # Kernel Resource Usage
+    "max_files_per_process",
+    # Cost-based Vacuum Delay
+    "vacuum_cost_delay", "vacuum_cost_page_hit", "vacuum_cost_page_miss", "vacuum_cost_page_dirty", "vacuum_cost_limit",
+    # Background Writer
+    "bgwriter_delay", "bgwriter_lru_maxpages", "bgwriter_lru_multiplier", "bgwriter_flush_after",
+    # Asynchronous Behavior
+    "backend_flush_after", "effective_io_concurrency", "maintenance_io_concurrency",
+    "max_worker_processes", "max_parallel_workers_per_gather", "max_parallel_maintenance_workers", "max_parallel_workers",
+    "parallel_leader_participation", "old_snapshot_threshold",
+
+    # Query Planning Settings (see https://www.postgresql.org/docs/current/runtime-config-query.html)
+    # Planner Method Configuration
+    "enable_async_append", "enable_bitmapscan", "enable_gatermerge", "enable_hashagg", "enable_hashjoin",
+    "enable_incremental_sort", "enable_indexscan", "enable_indexonlyscan", "enable_material", "enable_memoize",
+    "enable_mergejoin", "enable_nestloop", "enable_parallel_append", "enable_parallel_hash", "enable_partition_pruning",
+    "enable_partitionwise_join", "enable_partitionwise_aggregate", "enable_presorted_aggregate", "enable_seqscan",
+    "enable_sort", "enable_tidscan",
+    # Planner Cost Constants
+    "seq_page_cost", "random_page_cost", "cpu_tuple_cost", "cpu_index_tuple_cost", "cpu_operator_cost", "parallel_setup_cost",
+    "parallel_tuple_cost", "min_parallel_table_scan_size", "min_parallel_index_scan_size", "effective_cache_size",
+    "jit_above_cost", "jit_inline_above_cost", "jit_optimize_above_cost",
+    # Genetic Query Optimizer
+    "geqo", "geqo_threshold", "geqo_effort", "geqo_pool_size", "geqo_generations", "geqo_selection_bias", "geqo_seed",
+    # Other Planner Options
+    "default_statistics_target", "constraint_exclusion", "cursor_tuple_fraction", "from_collapse_limit", "jit",
+    "join_collapse_limit", "plan_cache_mode", "recursive_worktable_factor"
+
+    # Automatic Vacuuming (https://www.postgresql.org/docs/current/runtime-config-autovacuum.html)
+    "autovacuum", "autovacuum_max_workers", "autovacuum_naptime", "autovacuum_threshold", "autovacuum_insert_threshold",
+    "autovacuum_analyze_threshold", "autovacuum_scale_factor", "autovacuum_analyze_scale_factor", "autovacuum_freeze_max_age",
+    "autovacuum_multixact_freeze_max_age", "autovacuum_cost_delay", "autovacuum_cost_limit"
+}
+"""Postgres settings that are relevant to many PostBOUND workflows.
+
+These settings can influence performance measurements of different benchmarks. Therefore, we want to make their values
+transparent in order to assess the results.
+
+As a rule of thumb we include settings from three major categories: resource consumption (e.g. size of shared buffers),
+optimizer settings (e.g. enable operators) and auto vacuum. The final category is required because it determines how good the
+statistics are once a new database dump has been loaded or a data shift has been simulated. For all of these categories we
+include all settings, even if they are not important right now to the best of our knowledge. This is done to prevent tedious
+debugging if setting is later found to be indeed important: if the category to which it belongs is present in our "significant
+settings", it is guaranteed to be monitored.
+
+Most notably settings regarding replication, logging and network settings are excluded, as well as settings regarding locking.
+This is done because PostBOUNDs database abstraction assumes read-only workloads with a single query at a time. If data shifts
+are simulated, these are supposed to be happen strictly before or after a read-only workload is executed and benchmarked.
+
+All settings are up-to-date as of Postgres version 16.
+"""
+
+
 class PostgresInterface(db.Database):
     """Database implementation for PostgreSQL backends.
 
@@ -288,7 +350,8 @@ class PostgresInterface(db.Database):
         }
         self._cursor.execute("SELECT name, setting FROM pg_settings")
         system_settings = self._cursor.fetchall()
-        base_info["system_settings"] = dict(system_settings)
+        base_info["system_settings"] = {setting: value for setting, value in system_settings
+                                        if setting in _SignificantPostgresSettings}
         return base_info
 
     def reset_connection(self) -> None:
