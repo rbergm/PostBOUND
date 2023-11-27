@@ -2438,8 +2438,14 @@ class WorkloadShifter:
             cursor = conn.cursor()
             cursor.execute(removal_query)
         if vacuum:
+            # We can't use the with-syntax here because VACUUM cannot be executed inside a transaction
+            conn = self.pg_instance.obtain_new_local_connection()
+            conn.autocommit = True
+            cursor = conn.cursor()
             # We really need a full vacuum due to cascading deletes
-            self.pg_instance.cursor().execute("VACUUM FULL ANALYZE;")
+            cursor.execute("VACUUM FULL ANALYZE;")
+            cursor.close()
+            conn.close()
 
     def _determine_row_cnt(self, table: str, n_rows: Optional[int], row_pct: Optional[float]) -> int:
         """Calculates the absolute number of rows to delete while also performing sanity checks.
