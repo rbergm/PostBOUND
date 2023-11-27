@@ -15,12 +15,18 @@ from postbound.db import postgres
 from postbound.experiments import workloads
 from postbound.optimizer import jointree, presets
 from postbound.optimizer.policies import cardinalities as cards
-from postbound.util import jsonize, proc
+from postbound.util import jsonize, logging, proc
 
 OutDir = "robustness-shift"
 BaselineFilling = 0.6
 ShiftStep = 0.05
 ShiftSpan = 0.4
+pb_logger = logging.make_logger()
+
+
+def log(*content: str) -> None:
+    pb_logger(logging.timestamp(), "::", *content)
+
 
 job = workloads.job()
 
@@ -41,7 +47,6 @@ ues_optimizer = ues_optimizer.load_settings(presets.fetch("ues")).build()
 def obtain_baseline_plans(outfile: str) -> None:
     tuple_drop_pct = 1 - BaselineFilling
 
-    proc.run_cmd(["./workload-job-setup.sh", "--force"], work_dir=os.environ["PG_CTL_DIR"])
     workload_shifter.remove_ordered(order_column, row_pct=tuple_drop_pct, vacuum=True)
 
     native_plans: dict[str, jointree.PhysicalQueryPlan] = {}
@@ -110,6 +115,7 @@ def simulate_data_shift(baseline_file: str, outfile: str) -> None:
 
     results: list[DataShiftResult] = []
     for data_step in range(BaselineFilling + ShiftSpan, BaselineFilling - ShiftSpan - ShiftStep, -ShiftStep):
+        log("Now at data shift pct", data_step)
         for label, query in job.entries():
             pg_instance.prewarm_tables(query.tables())
             results.append(obtain_data_shift_result(data_step, label, query, "native"))
@@ -134,12 +140,18 @@ def simulate_data_shift(baseline_file: str, outfile: str) -> None:
 def main() -> None:
     mode = sys.argv[1] if len(sys.argv) > 1 else "full"
     if mode == "baseline" or mode == "full":
-        os.makedirs(OutDir)
+        os.makedirs(OutDir, exist_ok=True)
+        log("Setting up fresh IMDB instance")
+        proc.run_cmd(["./workload-job-setup.sh", "--force"], work_dir=os.environ["PG_CTL_PATH"])
+        pg_instance.reset_connection()
+        log("Obtaining baseline plans")
         obtain_baseline_plans(OutDir + "/baseline.json")
     if mode == "full":
-        proc.run_cmd(["./workload-job-setup.sh", "--force"], work_dir=os.environ["PG_CTL_DIR"])
+        log("Resetting IMDB instance")
+        proc.run_cmd(["./workload-job-setup.sh", "--force"], work_dir=os.environ["PG_CTL_PATH"])
         pg_instance.reset_connection()
     if mode == "shift" or mode == "full":
+        log("Simulating data shift")
         simulate_data_shift(OutDir + "/baseline.json", OutDir + "/data-shift.csv")
 
 
