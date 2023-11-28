@@ -5,8 +5,9 @@ import atexit
 import pprint
 import functools
 import sys
+from collections.abc import Callable
 from datetime import datetime
-from typing import Callable, IO
+from typing import IO
 
 
 def timestamp() -> str:
@@ -14,26 +15,47 @@ def timestamp() -> str:
     return datetime.now().strftime("%y-%m-%d %H:%M:%S")
 
 
-def make_logger(enabled: bool = True, *, file: IO[str] = sys.stderr, pretty: bool = False) -> Callable:
+def make_logger(enabled: bool = True, *, file: IO[str] = sys.stderr, pretty: bool = False,
+                prefix: str | Callable[[], str] = "") -> Callable:
     """Creates a new logging utility.
 
-    The generated method can be used like a regular `print`, but with better defaults.
+    The generated method can be used like a regular `print`, but with defaults that are better suited for logging purposes.
 
     If `enabled` is `False`, calling the logging function will not actually print anything and simply return. This
     is especially useful to implement logging-hooks in longer functions without permanently re-checking whether logging
     is enabled or not.
 
-    By default, all logging output will be written to stdout, but this can be customized by supplying a different
+    By default, all logging output will be written to stderr, but this can be customized by supplying a different
     `file`.
 
     If `pretty` is enabled, structured objects such as dictionaries will be pretty-printed instead of being written
     on a single line. Note that pprint is used for all of the logging data everytime in that case.
-    """
 
-    def _log(*args, **kwargs):
+    Parameters
+    ----------
+    enabled : bool, optional
+        Whether logging is enabled, by default *True*
+    file : IO[str], optional
+        Destination to write the log entries to, by default ``sys.stderr``
+    pretty : bool, optional
+        Whether complex objects should be pretty-printed using the ``pprint`` module, by default *False*
+    prefix : str | Callable[[], str], optional
+        A common prefix that should be added before each log entry. Can be either a hard-coded string, or a callable that
+        dynamically produces a string for each logging action separately (e.g. timestamp).
+
+    Returns
+    -------
+    Callable
+        _description_
+    """
+    def _log(*args, **kwargs) -> None:
+        if prefix and isinstance(prefix, str):
+            args = [prefix] + list(args)
+        elif prefix:
+            args = [prefix()] + list(args)
         print(*args, file=file, **kwargs)
 
-    def _dummy_log(*args, **kwargs):
+    def _dummy_log(*args, **kwargs) -> None:
         pass
 
     if pretty and enabled:
