@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import dataclasses
 import json
+import pathlib
 import os
 import sys
+import textwrap
 from datetime import datetime
 from typing import Literal, Optional
 
@@ -22,6 +24,7 @@ BaselineFilling = 0.6
 ShiftStep = 0.05
 ShiftSpan = 0.4
 log = logging.make_logger(prefix=lambda: f"{logging.timestamp} ::")
+delete_marker_file = pathlib.Path(OutDir, "delete-markers.csv").absolute()
 
 job = workloads.job()
 
@@ -34,16 +37,28 @@ workload_shifter = postgres.WorkloadShifter(pg_instance)
 pg_config = pg_instance.current_configuration()
 
 fact_table = base.TableReference("title")
-order_column = base.ColumnReference("production_year", fact_table)
+fact_marker_column = base.ColumnReference("id", fact_table)
+marker_table = base.TableReference(f"{fact_table.full_name}_delete_marker")
+marker_column = base.ColumnReference(f"{fact_table.full_name}_{fact_marker_column.name}", marker_table)
 
 ues_optimizer = pb.TwoStageOptimizationPipeline(pg_instance)
 ues_optimizer = ues_optimizer.load_settings(presets.fetch("ues")).build()
 
 
 def obtain_baseline_plans(outfile: str) -> None:
-    tuple_drop_pct = 1 - BaselineFilling
+    workload_shifter.generate_marker_table(fact_table.full_name, 1 - BaselineFilling + ShiftSpan)
+    workload_shifter.export_marker_table(fact_table.full_name, out_file=delete_marker_file)
+    cursor = pg_instance.cursor()
+    cursor.execute(f"CREATE TEMP TABLE delete_marker_buffer LIKE {marker_table.full_name}")
 
-    workload_shifter.remove_ordered(order_column, row_pct=tuple_drop_pct, vacuum=True)
+    total_marked_tuples = pg_instance.statistics().total_rows(marker_table)
+    max_marker_idx = round(BaselineFilling * total_marked_tuples)
+    baseline_marker_query = textwrap.dedent(f"""
+                                            INSERT INTO delete_marker_buffer (marker_idx, {marker_column.name})
+                                            SELECT * FROM {marker_table.full_name}
+                                            WHERE marker_idx <= {max_marker_idx}""")
+    cursor.execute(baseline_marker_query)
+    workload_shifter.remove_marked(fact_table.full_name, marker_table="delete_marker_buffer", vacuum=True)
 
     native_plans: dict[str, jointree.PhysicalQueryPlan] = {}
     ues_plans: dict[str, jointree.PhysicalQueryPlan] = {}
@@ -114,15 +129,20 @@ def obtain_data_shift_result(fill_ratio: float, label: str, query: qal.SqlQuery,
 
 
 def simulate_data_shift(baseline_file: str, outfile: str) -> None:
-    total_tuples = pg_instance.statistics().total_rows(fact_table)
-    tuples_to_drop = ShiftStep * total_tuples
+    total_n_tuples = pg_instance.statistics().total_rows(fact_table)
+    tuples_to_drop: int = round(ShiftStep * total_n_tuples)
+    workload_shifter.import_marker_table(target_table=fact_table.full_name, in_file=delete_marker_file)
+    pg_instance.cursor().execute(f"CREATE TEMP TABLE delete_marker_buffer LIKE {fact_table.full_name}_delete_marker")
+
     cardinality_estimator = cards.PreciseCardinalityHintGenerator(pg_instance, enable_cache=True)
     with open(baseline_file, "r") as baselines:
         query_plans: dict = json.load(baselines)
 
     results: list[DataShiftResult] = []
+    start_marker_idx, end_marker_idx = 0, tuples_to_drop
     for data_step in range(BaselineFilling + ShiftSpan, BaselineFilling - ShiftSpan - ShiftStep, -ShiftStep):
         log("Now at data shift pct", data_step)
+
         pg_instance.statistics().cache_enabled = True
         for label, query in job.entries():
             pg_instance.prewarm_tables(query.tables())
@@ -138,10 +158,19 @@ def simulate_data_shift(baseline_file: str, outfile: str) -> None:
             pg_instance.prewarm_tables(query.tables())
             results.append(obtain_data_shift_result(data_step, label, query, "robust", query_plans))
 
-        workload_shifter.remove_ordered(order_column, n_rows=tuples_to_drop, vacuum=True)
         cardinality_estimator.reset_cache()
         pg_instance.statistics().cache_enabled = False
         pg_instance.reset_cache()
+
+        pg_instance.cursor().execute("DELETE FROM delete_marker_buffer")
+        marker_inflation_query = textwrap.dedent(f"""
+                                                 INSERT INTO delete_marker_buffer (marker_idx, {marker_column.name})
+                                                 SELECT * FROM {marker_table.full_name}
+                                                 WHERE marker_idx BETWEEN {start_marker_idx} AND {end_marker_idx}""")
+        pg_instance.cursor().execute(marker_inflation_query)
+        workload_shifter.remove_marked(fact_table.full_name, marker_table="delete_marker_buffer", vacuum=True)
+        start_marker_idx = end_marker_idx
+        end_marker_idx += tuples_to_drop
 
     result_df = pd.DataFrame(results)
     result_df.to_csv(outfile)
