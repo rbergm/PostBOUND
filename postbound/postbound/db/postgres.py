@@ -14,6 +14,7 @@ import concurrent.futures
 import math
 import multiprocessing as mp
 import os
+import pathlib
 import textwrap
 import threading
 import warnings
@@ -2507,12 +2508,7 @@ class WorkloadShifter:
                                            WHERE EXISTS (SELECT 1 FROM delete_samples WHERE sample_id = {col})
                                            """)
         removal_query = removal_template.format(table=table_name, col=pk_column.name, cnt=n_rows)
-        with self.pg_instance.obtain_new_local_connection() as conn:
-            cursor = conn.cursor()
-            cursor.execute(removal_query)
-        if vacuum:
-            # We really need a full vacuum due to cascading deletes
-            self.pg_instance.cursor().execute("VACUUM FULL ANALYZE;")
+        self._perform_removal(removal_query, vacuum)
 
     def remove_ordered(self, column: base.ColumnReference | str, *,
                        n_rows: Optional[int] = None, row_pct: Optional[float] = None,
@@ -2572,6 +2568,197 @@ class WorkloadShifter:
                                            """)
         removal_query = removal_template.format(table=table_name, pk_col=pk_column.name,
                                                 order_col=col_name, order_dir=order_direction, nulls=null_vals, cnt=n_rows)
+        self._perform_removal(removal_query, vacuum)
+
+    def generate_marker_table(self, target_table: str, marker_pct: float = 0.5, *, target_column: str = "id",
+                              marker_table: Optional[str] = None, marker_column: Optional[str] = None) -> None:
+        """Generates a new table that can be used to store rows that should be deleted at a later point in time.
+
+        The marker table will be created if it does not exist already. It contains exactly two columns: one column for the
+        marker index (an ascending integer value) and another column that stores the primary keys of rows that should be
+        deleted from the target table. If the marker table exists already, all current markings (but not the marked rows
+        themselves) are removed. Afterwards, the new rows to delete are selected at random.
+
+        By default, only the target table is a required parameter. All other parameters have default values or can be inferred
+        from the target table. The marker index column is *marker_idx*.
+
+        Parameters
+        ----------
+        target_table : str
+            The table from which rows should be removed
+        marker_pct : float
+            The percentage of rows that should be included in the marker table. Allowed range is *[0, 1]*.
+        target_column : str, optional
+            The column that contains the values used to identify the rows to be deleted in the target table. Defaults to *id*.
+        marker_table : Optional[str], optional
+            The name of the marker table that should store the row identifiers. Defaults to
+            *<target table name>_delete_markers*.
+        marker_column : Optional[str], optional
+            The name of the column in the marker table that should contain the target column values. Defaults to
+            *<target table name>_<target column name>*.
+
+        See Also
+        --------
+        remove_marked
+        export_marker_table
+        """
+        marker_table = f"{target_table}_delete_marker" if marker_table is None else marker_table
+        marker_column = f"{target_table}_{target_column}" if marker_column is None else marker_column
+        marker_col_ref = base.ColumnReference(target_column, base.TableReference(marker_table))
+        target_column_type = self.pg_instance.schema().datatype(marker_col_ref)
+        marker_create_query = textwrap.dedent(f"""
+                                              CREATE TABLE IF NOT EXISTS {marker_table} (
+                                                  marker_idx BIGSERIAL PRIMARY KEY,
+                                                  {marker_column} {target_column_type}
+                                              );
+                                              """)
+        marker_pct = round(marker_pct * 100)
+        marker_inflate_query = textwrap.dedent(f"""
+                                               INSERT INTO {marker_table}({marker_column})
+                                               SELECT {target_column}
+                                               FROM {target_table} TABLESAMPLE BERNOULLI ({marker_pct});
+                                               """)
+        with self.pg_instance.obtain_new_local_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(marker_create_query)
+            cursor.execute(f"DELETE FROM {marker_table};")
+            cursor.execute(marker_inflate_query)
+
+    def export_marker_table(self, *, target_table: Optional[str] = None, marker_table: Optional[str] = None,
+                            out_file: Optional[str] = None) -> None:
+        """Stores a marker table in a CSV file on disk.
+
+        This allows the marker table to be re-imported later on.
+
+        Parameters
+        ----------
+        target_table : Optional[str], optional
+            The name of the target table for which the marker has been created. This can be used to infer the name of the
+            marker table if the defaults have been used.
+        marker_table : Optional[str], optional
+            The name of the marker table. Can be omitted if the default name has been used and `target_table` is specified.
+        out_file : Optional[str], optional
+            The name and path of the output CSV file to create. If omitted, the name will be `<marker table name>.csv` and the
+            file will be placed in the current working directory. If specified, an absolute path must be used.
+
+        Raises
+        ------
+        ValueError
+            If neither `target_table` nor `marker_table` are given.
+
+        See Also
+        --------
+        import_marker_table
+        remove_marked
+        """
+        if target_table is None and marker_table is None:
+            raise ValueError("Either marker table or target table are required!")
+        marker_table = f"{target_table}_delete_marker" if marker_table is None else marker_table
+        out_file = pathlib.Path(f"{marker_table}.csv").absolute() if out_file is None else out_file
+        self.pg_instance.cursor().execute(f"COPY {marker_table} TO '{out_file}' DELIMITER ',' CSV HEADER;")
+
+    def import_marker_table(self, *, target_table: Optional[str] = None, marker_table: Optional[str] = None,
+                            target_column: str = "id", marker_column: Optional[str] = None,
+                            in_file: Optional[str] = None) -> None:
+        """Loads the contents of a marker table from a CSV file from disk.
+
+        The table will be created if it does not exist already. If the marker table exists already, all current markings (but
+        not the marked rows themselves) are removed. Afterwards, the new markings are imported.
+
+        Parameters
+        ----------
+        target_table : Optional[str], optional
+            The name of the target table for which the marker has been created. This can be used to infer the name of the
+            marker table if the defaults have been used.
+        marker_table : Optional[str], optional
+            The name of the marker table. Can be omitted if the default name has been used and `target_table` is specified.
+        target_column : str, optional
+            The column that contains the values used to identify the rows to be deleted in the target table. Defaults to *id*.
+        marker_table : Optional[str], optional
+            The name of the marker table that should store the row identifiers. Defaults to
+            *<target table name>_delete_markers*.
+        in_file : Optional[str], optional
+            The name and path of the CSV file to read. If omitted, the name will be `<marker table name>.csv` and the
+            file will be loaded in the current working directory. If specified, an absolute path must be used.
+
+        Raises
+        ------
+        ValueError
+            If neither `target_table` nor `marker_table` are given.
+
+        See Also
+        --------
+        export_marker_table
+        remove_marked
+        """
+        if not target_table and not marker_table:
+            raise ValueError("Either marker table or target table are required!")
+        marker_table = f"{target_table}_delete_marker" if marker_table is None else marker_table
+        marker_column = f"{target_table}_{target_column}" if marker_column is None else marker_column
+        in_file = pathlib.Path(f"{marker_table}.csv").absolute() if in_file is None else in_file
+        marker_col_ref = base.ColumnReference(target_column, base.TableReference(marker_table))
+        target_column_type = self.pg_instance.schema().datatype(marker_col_ref)
+        marker_create_query = textwrap.dedent(f"""
+                                              CREATE TABLE IF NOT EXISTS {marker_table} (
+                                                  marker_idx BIGSERIAL PRIMARY KEY,
+                                                  {marker_column} {target_column_type}
+                                              );
+                                              """)
+        marker_import_query = textwrap.dedent(f"""
+                                              COPY {marker_table}(marker_idx, {marker_column})
+                                              FROM '{in_file}'
+                                              DELIMITER ','
+                                              CSV HEADER;
+                                              """)
+        with self.pg_instance.obtain_new_local_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(marker_create_query)
+            cursor.execute(f"DELETE FROM {marker_table}")
+            cursor.execute(marker_import_query)
+
+    def remove_marked(self, target_table: str, *, target_column: str = "id",
+                      marker_table: Optional[str] = None, marker_column: Optional[str] = None, vacuum: bool = False) -> None:
+        """Deletes rows according to their primary keys stored in a marker table.
+
+        Parameters
+        ----------
+        target_table : str
+            The table from which the rows should be removed.
+        target_column : str, optional
+            A column of the target table that is used to identify rows matching the marked rows to remove. Defaults to *id*.
+        marker_table : Optional[str], optional
+            A table containing marks of the rows to delete. Defaults to *<target table>_delete_markers*.
+        marker_column : Optional[str], optional
+            A column of the marker table that contains the values of the columns to remove. Defaults to
+            *<target table>_<target column>*.
+        vacuum : bool, optional
+            Whether the database should be vacuumed after deletion. This optimizes the page layout by compacting the pages and
+            forces a refresh of all statistics.
+
+        See Also
+        --------
+        generate_marker_table
+        """
+        # TODO: align parameter types with TableReference and ColumnReference
+        marker_table = f"{target_table}_delete_marker" if marker_table is None else marker_table
+        marker_column = f"{target_table}_{target_column}" if marker_column is None else marker_column
+        removal_query = textwrap.dedent(f"""
+                                        DELETE FROM {target_table}
+                                        WHERE EXISTS (SELECT 1 FROM {marker_table}
+                                                WHERE {marker_table}.{marker_column} = {target_table}.{target_column})""")
+        self._perform_removal(removal_query, vacuum)
+
+    def _perform_removal(self, removal_query: str, vacuum: bool) -> None:
+        """Executes a specific removal query and optionally cleans up the storage system.
+
+        Parameters
+        ----------
+        removal_query : str
+            The query that describes the desired delete operation.
+        vacuum : bool
+            Whether the database should be vacuumed after deletion. This optimizes the page layout by compacting the pages and
+            forces a refresh of all statistics.
+        """
         with self.pg_instance.obtain_new_local_connection() as conn:
             cursor = conn.cursor()
             cursor.execute(removal_query)
