@@ -29,7 +29,7 @@ from postbound.db import db
 from postbound.qal import qal, base, expressions, clauses, transform, formatter
 from postbound.optimizer import jointree, physops, planparams
 from postbound.util import collections as collection_utils, dicts as dict_utils, logging
-from postbound.util import errors, misc as utils, typing as type_utils
+from postbound.util import errors, misc as utils
 
 # TODO: find a nice way to support index nested-loop join hints.
 # Probably inspired by the join order/join direction handling?
@@ -77,17 +77,19 @@ class _GeQOState:
 
 
 def _escape_setting_value(value: object) -> str:
-    """_summary_
+    """Generates a Postgres-usable string for a setting value.
+
+    Depending on the value type, plain formatting, quotes, etc. are applied.
 
     Parameters
     ----------
     value : object
-        _description_
+        The value to escape.
 
     Returns
     -------
     str
-        _description_
+        The escaped value
     """
     if isinstance(value, bool):
         return "'on'" if value else "'off'"
@@ -97,7 +99,94 @@ def _escape_setting_value(value: object) -> str:
         return f"'{value}'"
 
 
+_SignificantPostgresSettings = {
+    # Resource consumption settings (see https://www.postgresql.org/docs/current/runtime-config-resource.html)
+    # Memory
+    "shared_buffers", "huge_pages", "huge_page_size", "temp_buffers", "max_prepared_transactions",
+    "work_mem", "hash_mem_multiplier", "maintenance_work_mem", "autovacuum_work_mem", "vacuum_buffer_usage_limit",
+    "logical_decoding_work_mem", "max_stack_depth",
+    "shared_memory_type", "dynamic_shared_memory_type", "min_dynamic_shared_memory",
+    # Disk
+    "temp_file_limit",
+    # Kernel Resource Usage
+    "max_files_per_process",
+    # Cost-based Vacuum Delay
+    "vacuum_cost_delay", "vacuum_cost_page_hit", "vacuum_cost_page_miss", "vacuum_cost_page_dirty", "vacuum_cost_limit",
+    # Background Writer
+    "bgwriter_delay", "bgwriter_lru_maxpages", "bgwriter_lru_multiplier", "bgwriter_flush_after",
+    # Asynchronous Behavior
+    "backend_flush_after", "effective_io_concurrency", "maintenance_io_concurrency",
+    "max_worker_processes", "max_parallel_workers_per_gather", "max_parallel_maintenance_workers", "max_parallel_workers",
+    "parallel_leader_participation", "old_snapshot_threshold",
+
+    # Query Planning Settings (see https://www.postgresql.org/docs/current/runtime-config-query.html)
+    # Planner Method Configuration
+    "enable_async_append", "enable_bitmapscan", "enable_gatermerge", "enable_hashagg", "enable_hashjoin",
+    "enable_incremental_sort", "enable_indexscan", "enable_indexonlyscan", "enable_material", "enable_memoize",
+    "enable_mergejoin", "enable_nestloop", "enable_parallel_append", "enable_parallel_hash", "enable_partition_pruning",
+    "enable_partitionwise_join", "enable_partitionwise_aggregate", "enable_presorted_aggregate", "enable_seqscan",
+    "enable_sort", "enable_tidscan",
+    # Planner Cost Constants
+    "seq_page_cost", "random_page_cost", "cpu_tuple_cost", "cpu_index_tuple_cost", "cpu_operator_cost", "parallel_setup_cost",
+    "parallel_tuple_cost", "min_parallel_table_scan_size", "min_parallel_index_scan_size", "effective_cache_size",
+    "jit_above_cost", "jit_inline_above_cost", "jit_optimize_above_cost",
+    # Genetic Query Optimizer
+    "geqo", "geqo_threshold", "geqo_effort", "geqo_pool_size", "geqo_generations", "geqo_selection_bias", "geqo_seed",
+    # Other Planner Options
+    "default_statistics_target", "constraint_exclusion", "cursor_tuple_fraction", "from_collapse_limit", "jit",
+    "join_collapse_limit", "plan_cache_mode", "recursive_worktable_factor"
+
+    # Automatic Vacuuming (https://www.postgresql.org/docs/current/runtime-config-autovacuum.html)
+    "autovacuum", "autovacuum_max_workers", "autovacuum_naptime", "autovacuum_threshold", "autovacuum_insert_threshold",
+    "autovacuum_analyze_threshold", "autovacuum_scale_factor", "autovacuum_analyze_scale_factor", "autovacuum_freeze_max_age",
+    "autovacuum_multixact_freeze_max_age", "autovacuum_cost_delay", "autovacuum_cost_limit"
+}
+"""Postgres settings that are relevant to many PostBOUND workflows.
+
+These settings can influence performance measurements of different benchmarks. Therefore, we want to make their values
+transparent in order to assess the results.
+
+As a rule of thumb we include settings from three major categories: resource consumption (e.g. size of shared buffers),
+optimizer settings (e.g. enable operators) and auto vacuum. The final category is required because it determines how good the
+statistics are once a new database dump has been loaded or a data shift has been simulated. For all of these categories we
+include all settings, even if they are not important right now to the best of our knowledge. This is done to prevent tedious
+debugging if setting is later found to be indeed important: if the category to which it belongs is present in our "significant
+settings", it is guaranteed to be monitored.
+
+Most notably settings regarding replication, logging and network settings are excluded, as well as settings regarding locking.
+This is done because PostBOUNDs database abstraction assumes read-only workloads with a single query at a time. If data shifts
+are simulated, these are supposed to be happen strictly before or after a read-only workload is executed and benchmarked.
+
+All settings are up-to-date as of Postgres version 16.
+"""
+
+_RuntimeChangeablePostgresSettings = ({setting for setting in _SignificantPostgresSettings}
+                                      - {"autovacuum_max_workers", "autovacuum_naptime", "autovacuum_threshold",
+                                         "autovacuum_insert_threshold", "autovacuum_analyze_threshold",
+                                         "autovacuum_scale_factor", "autovacuum_analyze_scale_factor",
+                                         "autovacuum_freeze_max_age", "autovacuum_multixact_freeze_max_age",
+                                         "autovacuum_cost_delay", "autovacuum_cost_limit", "autovacuum_work_mem",
+                                         "bgwriter_delay", "bgwriter_lru_maxpages", "bgwriter_lru_multiplier",
+                                         "bgwriter_flush_after", "dynamic_shared_memory_type", "huge_pages", "huge_page_size",
+                                         "max_files_per_process", "max_prepared_transactions", "max_worker_processes",
+                                         "min_dynamic_shared_memory", "old_snapshot_threshold", "shared_buffers",
+                                         "shared_memory_type"})
+"""These are exactly those settings from `_SignificantPostgresSettings` that can be changed at runtime."""
+
+
 class PostgresSetting(str):
+    """Model for a single Postgres configuration such as *SET enable_nestloop = 'off';*.
+
+    This setting can be used directly as a replacement where a string is expected, or its different components can be accessed
+    via the `parameter` and `value` attribute.
+
+    Parameters
+    ----------
+    parameter : str
+        The name of the setting
+    value : object
+        The setting's current or desired value
+    """
     def __init__(self, parameter: str, value: object) -> None:
         self._param = parameter
         self._val = value
@@ -107,16 +196,59 @@ class PostgresSetting(str):
 
     @property
     def parameter(self) -> str:
+        """Gets the name of the setting.
+
+        Returns
+        -------
+        str
+            The name
+        """
         return self._param
 
     @property
     def value(self) -> object:
+        """Gets the current or desired value of the setting.
+
+        Returns
+        -------
+        object
+            The value
+        """
         return self._val
 
 
 class PostgresConfiguration(str):
+    """Model for a collection of different postgres settings that form a complete server configuration.
+
+    Each configuration is build of indivdual `PostgresSetting` objects. The configuration can be used directly as a replacement
+    when a string is expected, or its different settings can be accessed individually - either through the accessor methods, or
+    by using a dict-like syntax: calling ``config[setting]`` with a string setting value will provide the matching
+    `PostgresSetting`. Since the configuration also subclasses string, the precise behavior of `__getitem__` depends on the
+    argument type: string arguments provide settings whereas integer arguments result in specific characters. All other string
+    methods are implemented such that the normal string behavior is retained. All additional behavior is part of new methods.
+
+    Parameters
+    ----------
+    settings : Iterable[PostgresSetting]
+        The settings that form the configuration.
+    """
     @staticmethod
     def load(**kwargs) -> PostgresConfiguration:
+        """Generates a new configuration based on (setting name, value) pairs.
+
+        All settings must be supplied as keyword arguments. Hence, no setting names that would be illegal parameter identifiers
+        can be used. However, Postgres does not have any setting names with illegal Python syntax anyhow as of version 16.
+
+        Parameters
+        ----------
+        kwargs
+            The individual settings
+
+        Returns
+        -------
+        PostgresConfiguration
+            The configuration
+        """
         return PostgresConfiguration([PostgresSetting(key, val) for key, val in kwargs.items()])
 
     def __init__(self, settings: Iterable[PostgresSetting]) -> None:
@@ -127,10 +259,34 @@ class PostgresConfiguration(str):
 
     @property
     def settings(self) -> Sequence[PostgresSetting]:
+        """Gets the settings that are part of the configuration.
+
+        Returns
+        -------
+        Sequence[PostgresSetting]
+            The settings in the order in which they were originally specified.
+        """
         return list(self._settings.values())
 
     def parameters(self) -> Sequence[str]:
+        """Provides all setting names that are specified in this configuration.
+
+        Returns
+        -------
+        Sequence[str]
+            The setting names in the order in which they were orignally specified.
+        """
         return list(self._settings.keys())
+
+    def as_dict(self) -> dict[str, object]:
+        """Provides all settings as setting name -> setting value mappings.
+
+        Returns
+        -------
+        dict[str, object]
+            The settings
+        """
+        return dict(self._settings)
 
     def __getitem__(self, key: object) -> str:
         if isinstance(key, str):
@@ -201,68 +357,6 @@ def _simplify_result_set(result_set: list[tuple[Any]]) -> Any:
     if len(result_set) == 1:  # if it is just one row, unwrap it
         return result_set[0]
     return result_set
-
-
-_SignificantPostgresSettings = {
-    # Resource consumption settings (see https://www.postgresql.org/docs/current/runtime-config-resource.html)
-    # Memory
-    "shared_buffers", "huge_pages", "huge_page_size", "temp_buffers", "max_prepared_transactions",
-    "work_mem", "hash_mem_multiplier", "maintenance_work_mem", "autovacuum_work_mem", "vacuum_buffer_usage_limit",
-    "logical_decoding_work_mem", "max_stack_depth",
-    "shared_memory_type", "dynamic_shared_memory_type", "min_dynamic_shared_memory",
-    # Disk
-    "temp_file_limit",
-    # Kernel Resource Usage
-    "max_files_per_process",
-    # Cost-based Vacuum Delay
-    "vacuum_cost_delay", "vacuum_cost_page_hit", "vacuum_cost_page_miss", "vacuum_cost_page_dirty", "vacuum_cost_limit",
-    # Background Writer
-    "bgwriter_delay", "bgwriter_lru_maxpages", "bgwriter_lru_multiplier", "bgwriter_flush_after",
-    # Asynchronous Behavior
-    "backend_flush_after", "effective_io_concurrency", "maintenance_io_concurrency",
-    "max_worker_processes", "max_parallel_workers_per_gather", "max_parallel_maintenance_workers", "max_parallel_workers",
-    "parallel_leader_participation", "old_snapshot_threshold",
-
-    # Query Planning Settings (see https://www.postgresql.org/docs/current/runtime-config-query.html)
-    # Planner Method Configuration
-    "enable_async_append", "enable_bitmapscan", "enable_gatermerge", "enable_hashagg", "enable_hashjoin",
-    "enable_incremental_sort", "enable_indexscan", "enable_indexonlyscan", "enable_material", "enable_memoize",
-    "enable_mergejoin", "enable_nestloop", "enable_parallel_append", "enable_parallel_hash", "enable_partition_pruning",
-    "enable_partitionwise_join", "enable_partitionwise_aggregate", "enable_presorted_aggregate", "enable_seqscan",
-    "enable_sort", "enable_tidscan",
-    # Planner Cost Constants
-    "seq_page_cost", "random_page_cost", "cpu_tuple_cost", "cpu_index_tuple_cost", "cpu_operator_cost", "parallel_setup_cost",
-    "parallel_tuple_cost", "min_parallel_table_scan_size", "min_parallel_index_scan_size", "effective_cache_size",
-    "jit_above_cost", "jit_inline_above_cost", "jit_optimize_above_cost",
-    # Genetic Query Optimizer
-    "geqo", "geqo_threshold", "geqo_effort", "geqo_pool_size", "geqo_generations", "geqo_selection_bias", "geqo_seed",
-    # Other Planner Options
-    "default_statistics_target", "constraint_exclusion", "cursor_tuple_fraction", "from_collapse_limit", "jit",
-    "join_collapse_limit", "plan_cache_mode", "recursive_worktable_factor"
-
-    # Automatic Vacuuming (https://www.postgresql.org/docs/current/runtime-config-autovacuum.html)
-    "autovacuum", "autovacuum_max_workers", "autovacuum_naptime", "autovacuum_threshold", "autovacuum_insert_threshold",
-    "autovacuum_analyze_threshold", "autovacuum_scale_factor", "autovacuum_analyze_scale_factor", "autovacuum_freeze_max_age",
-    "autovacuum_multixact_freeze_max_age", "autovacuum_cost_delay", "autovacuum_cost_limit"
-}
-"""Postgres settings that are relevant to many PostBOUND workflows.
-
-These settings can influence performance measurements of different benchmarks. Therefore, we want to make their values
-transparent in order to assess the results.
-
-As a rule of thumb we include settings from three major categories: resource consumption (e.g. size of shared buffers),
-optimizer settings (e.g. enable operators) and auto vacuum. The final category is required because it determines how good the
-statistics are once a new database dump has been loaded or a data shift has been simulated. For all of these categories we
-include all settings, even if they are not important right now to the best of our knowledge. This is done to prevent tedious
-debugging if setting is later found to be indeed important: if the category to which it belongs is present in our "significant
-settings", it is guaranteed to be monitored.
-
-Most notably settings regarding replication, logging and network settings are excluded, as well as settings regarding locking.
-This is done because PostBOUNDs database abstraction assumes read-only workloads with a single query at a time. If data shifts
-are simulated, these are supposed to be happen strictly before or after a read-only workload is executed and benchmarked.
-
-All settings are up-to-date as of Postgres version 16.
-"""
 
 
 class PostgresInterface(db.Database):
@@ -457,7 +551,53 @@ class PostgresInterface(db.Database):
 
         self._cursor.execute(prewarm_query)
 
-    @type_utils.module_local
+    def current_configuration(self, *, runtime_changeable_only: bool = False) -> PostgresConfiguration:
+        """Provides all current configuration settings in the current Postgres connection.
+
+        Parameters
+        ----------
+        runtime_changeable_only : bool, optional
+            Whether only such settings that can be changed at runtime should be provided. Defaults to *False*.
+
+        Returns
+        -------
+        PostgresConfiguration
+            The current configuration.
+        """
+        self._cursor.execute("SELECT name, setting FROM pg_settings")
+        system_settings = self._cursor.fetchall()
+        allowed_settings = _RuntimeChangeablePostgresSettings if runtime_changeable_only else _SignificantPostgresSettings
+        configuration = {setting: value for setting, value in system_settings
+                         if setting in allowed_settings}
+        return PostgresConfiguration.load(**configuration)
+
+    def apply_configuration(self, configuration: PostgresConfiguration | PostgresSetting | str) -> None:
+        """Changes specific configuration parameters of the Postgres server or current connection.
+
+        Parameters
+        ----------
+        configuration : PostgresConfiguration | PostgresSetting | str
+            The desired setting values. If a string is supplied directly, it already has to be a valid setting update such as
+            *SET geqo = FALSE;*.
+        """
+        if isinstance(configuration, PostgresSetting) and configuration.parameter not in _RuntimeChangeablePostgresSettings:
+            warnings.warn(f"Cannot apply configuration setting at '{configuration.parameter}' runtime")
+            return
+        elif isinstance(configuration, PostgresConfiguration):
+            supported_settings: list[PostgresSetting] = []
+            unsupported_settings: list[str] = []
+            for setting in configuration.settings:
+                if setting.parameter in _RuntimeChangeablePostgresSettings:
+                    supported_settings.append(setting)
+                else:
+                    unsupported_settings.append(setting.parameter)
+            if unsupported_settings:
+                warnings.warn(f"Skipping configuration settings {unsupported_settings} "
+                              "because they cannot be changed at runtime")
+            configuration = PostgresConfiguration(supported_settings)
+
+        self._cursor.execute(configuration)
+
     def _prepare_query_execution(self, query: qal.SqlQuery | str, *, drop_explain: bool = False) -> str:
         """Handles necessary setup logic that enable an arbitrary query to be executed by the database system.
 
@@ -495,7 +635,6 @@ class PostgresInterface(db.Database):
             query = transform.drop_hints(query, preparatory_statements_only=True)
         return self.hinting().format_query(query)
 
-    @type_utils.module_local
     def _obtain_query_plan(self, query: str) -> dict:
         """Provides the query plan that would be used for executing a specific query.
 
@@ -535,7 +674,6 @@ class PostgresInterface(db.Database):
                 raise RuntimeError("Malformed GeQO query. This is a programming error, it's not your fault!")
         return _GeQOState(geqo_enabled, geqo_threshold)
 
-    @type_utils.module_local
     def _restore_geqo_state(self) -> None:
         """Resets the GeQO configuration of the database system to the known `_current_geqo_state`."""
         geqo_enabled = "on" if self._current_geqo_state.enabled else "off"
