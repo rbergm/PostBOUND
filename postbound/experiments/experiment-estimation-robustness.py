@@ -21,21 +21,17 @@ OutDir = "robustness-shift"
 BaselineFilling = 0.6
 ShiftStep = 0.05
 ShiftSpan = 0.4
-pb_logger = logging.make_logger()
-
-
-def log(*content: str) -> None:
-    pb_logger(logging.timestamp(), "::", *content)
-
+log = logging.make_logger(prefix=lambda: f"{logging.timestamp} ::")
 
 job = workloads.job()
 
-pg_instance = postgres.connect(config_file=".psycopg_connection_job")
+pg_instance = postgres.connect(config_file=".psycopg_connection_job", cache_enabled=False)
 pg_instance.cache_enabled = False
 pg_stats = pg_instance.statistics()
 pg_stats.cache_enabled = False
 pg_stats.emulated = True
 workload_shifter = postgres.WorkloadShifter(pg_instance)
+pg_config = pg_instance.current_configuration()
 
 fact_table = base.TableReference("title")
 order_column = base.ColumnReference("production_year", fact_table)
@@ -52,20 +48,26 @@ def obtain_baseline_plans(outfile: str) -> None:
     native_plans: dict[str, jointree.PhysicalQueryPlan] = {}
     ues_plans: dict[str, jointree.PhysicalQueryPlan] = {}
     for label, query in job.entries():
+        log("Obtaining native plan for query", label)
         native_plan = pg_instance.optimizer().query_plan(query)
         native_plans[label] = jointree.PhysicalQueryPlan.load_from_query_plan(native_plan, query)
+
+    pg_instance.statistics().cache_enabled = True
     for label, query in job.entries():
         # we obtain native and robust plans in two separate loops to ensure that the native plans are not influenced by any
         # settings that are set for the robust plans
+        log("Obtaining UES plan for query", label)
         ues_plan = ues_optimizer.query_execution_plan(query)
         ues_plans[label] = ues_plan
+    pg_instance.statistics().cache_enabled = False
+    pg_instance.reset_cache()
 
     baseline = {"native_plans": native_plans, "robust_plans": ues_plans}
     with open(outfile, "w") as out:
         out.write(jsonize.to_json(baseline))
 
 
-ExperimentType = Literal["native", "robust", "native-true-cards", "native-fixed"]
+ExperimentType = Literal["native", "robust", "native-true-cards", "native-fixed", "robust-fixed"]
 
 
 @dataclasses.dataclass
@@ -82,9 +84,12 @@ class DataShiftResult:
 def obtain_data_shift_result(fill_ratio: float, label: str, query: qal.SqlQuery, plan_type: ExperimentType, *,
                              query_plans: Optional[dict] = None,
                              cardinality_estimator: Optional[cards.CardinalityHintsGenerator] = None) -> DataShiftResult:
+    log("Executing", plan_type, "query", label, "at fill factor", fill_ratio)
     if plan_type == "native":
         explain_query = query
     elif plan_type == "robust":
+        explain_query = ues_optimizer.optimize_query(query)
+    elif plan_type == "robust-fixed":
         ues_plan = jointree.read_from_json(query_plans["robust_plans"][label])
         explain_query = pg_instance.hinting().generate_hints(query, ues_plan)
     elif plan_type == "native-fixed":
@@ -101,6 +106,8 @@ def obtain_data_shift_result(fill_ratio: float, label: str, query: qal.SqlQuery,
     end_time = datetime.now()
     total_runtime = (end_time - start_time).total_seconds()
 
+    pg_instance.apply_configuration(pg_config)
+
     return DataShiftResult(fill_ratio=fill_ratio, plan_type=plan_type, label=label,
                            query=str(query), query_plan=jsonize.to_json(explain_plan),
                            total_runtime=total_runtime, db_config=jsonize.to_json(pg_instance.describe()))
@@ -116,6 +123,7 @@ def simulate_data_shift(baseline_file: str, outfile: str) -> None:
     results: list[DataShiftResult] = []
     for data_step in range(BaselineFilling + ShiftSpan, BaselineFilling - ShiftSpan - ShiftStep, -ShiftStep):
         log("Now at data shift pct", data_step)
+        pg_instance.statistics().cache_enabled = True
         for label, query in job.entries():
             pg_instance.prewarm_tables(query.tables())
             results.append(obtain_data_shift_result(data_step, label, query, "native"))
@@ -132,6 +140,8 @@ def simulate_data_shift(baseline_file: str, outfile: str) -> None:
 
         workload_shifter.remove_ordered(order_column, n_rows=tuples_to_drop, vacuum=True)
         cardinality_estimator.reset_cache()
+        pg_instance.statistics().cache_enabled = False
+        pg_instance.reset_cache()
 
     result_df = pd.DataFrame(results)
     result_df.to_csv(outfile)
