@@ -2604,8 +2604,8 @@ class WorkloadShifter:
         """
         marker_table = f"{target_table}_delete_marker" if marker_table is None else marker_table
         marker_column = f"{target_table}_{target_column}" if marker_column is None else marker_column
-        marker_col_ref = base.ColumnReference(target_column, base.TableReference(marker_table))
-        target_column_type = self.pg_instance.schema().datatype(marker_col_ref)
+        target_col_ref = base.ColumnReference(target_column, base.TableReference(target_table))
+        target_column_type = self.pg_instance.schema().datatype(target_col_ref)
         marker_create_query = textwrap.dedent(f"""
                                               CREATE TABLE IF NOT EXISTS {marker_table} (
                                                   marker_idx BIGSERIAL PRIMARY KEY,
@@ -2659,7 +2659,7 @@ class WorkloadShifter:
 
     def import_marker_table(self, *, target_table: Optional[str] = None, marker_table: Optional[str] = None,
                             target_column: str = "id", marker_column: Optional[str] = None,
-                            in_file: Optional[str] = None) -> None:
+                            target_column_type: Optional[str] = None, in_file: Optional[str] = None) -> None:
         """Loads the contents of a marker table from a CSV file from disk.
 
         The table will be created if it does not exist already. If the marker table exists already, all current markings (but
@@ -2677,6 +2677,9 @@ class WorkloadShifter:
         marker_table : Optional[str], optional
             The name of the marker table that should store the row identifiers. Defaults to
             *<target table name>_delete_markers*.
+        target_column_type : Optional[str], optional
+            The datatype of the target column. If this parameter is not given, `target_table` has to be specified to infer the
+            proper datatype from the schema metadata.
         in_file : Optional[str], optional
             The name and path of the CSV file to read. If omitted, the name will be `<marker table name>.csv` and the
             file will be loaded in the current working directory. If specified, an absolute path must be used.
@@ -2696,8 +2699,11 @@ class WorkloadShifter:
         marker_table = f"{target_table}_delete_marker" if marker_table is None else marker_table
         marker_column = f"{target_table}_{target_column}" if marker_column is None else marker_column
         in_file = pathlib.Path(f"{marker_table}.csv").absolute() if in_file is None else in_file
-        marker_col_ref = base.ColumnReference(target_column, base.TableReference(marker_table))
-        target_column_type = self.pg_instance.schema().datatype(marker_col_ref)
+
+        if target_column_type is None:
+            target_col_ref = base.ColumnReference(target_column, base.TableReference(target_table))
+            target_column_type = self.pg_instance.schema().datatype(target_col_ref)
+
         marker_create_query = textwrap.dedent(f"""
                                               CREATE TABLE IF NOT EXISTS {marker_table} (
                                                   marker_idx BIGSERIAL PRIMARY KEY,
