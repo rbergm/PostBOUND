@@ -32,10 +32,10 @@ while [ $# -gt 0 ] ; do
             shift
             shift
             ;;
-				--no-fkeys)
-					SKIP_FKEYS="true"
-					shift
-					;;
+        --no-fkeys)
+            SKIP_FKEYS="true"
+            shift
+            ;;
         *)
             show_help
             ;;

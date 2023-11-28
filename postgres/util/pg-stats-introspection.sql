@@ -1,8 +1,8 @@
 CREATE OR REPLACE FUNCTION stats_ndistinct(tabname TEXT,
 										   colname TEXT DEFAULT NULL,
 										   schemname TEXT DEFAULT NULL)
-RETURNS FLOAT AS
-$$
+RETURNS FLOAT
+AS $$
 DECLARE
 	n_distinct FLOAT;
 BEGIN
@@ -30,8 +30,8 @@ $$ LANGUAGE plpgsql;
 CREATE OR REPLACE FUNCTION stats_mcv(tabname TEXT,
 									 colname TEXT DEFAULT NULL,
 									 schemname TEXT DEFAULT NULL)
-RETURNS TABLE (val TEXT, freq REAL) AS
-$$
+RETURNS TABLE (val TEXT, freq REAL)
+AS $$
 DECLARE
 	total_rows FLOAT4;
 BEGIN

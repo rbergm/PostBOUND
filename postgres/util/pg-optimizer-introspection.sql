@@ -1,8 +1,7 @@
 -- provide the cardinality estimate for the result set of a query
 CREATE OR REPLACE FUNCTION explain_cardest(q TEXT)
 RETURNS INTEGER
-AS
-$$
+AS $$
 DECLARE
 	rec RECORD;
 	n_rows INTEGER;
@@ -19,8 +18,7 @@ $$ LANGUAGE plpgsql;
 -- provide the final cost estimate of a query
 CREATE OR REPLACE FUNCTION explain_costest(q TEXT)
 RETURNS NUMERIC
-AS
-$$
+AS $$
 DECLARE
 	rec RECORD;
 	n_rows NUMERIC;
