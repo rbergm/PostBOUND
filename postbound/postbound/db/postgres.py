@@ -793,7 +793,7 @@ class PostgresSchemaInterface(db.DatabaseSchema):
             raise base.VirtualTableError(column.table)
         query_template = textwrap.dedent("""
             SELECT data_type FROM information_schema.columns
-            WHERE table_name = {tab} AND column_name = {col}""".format(tab=column.table.full_name, col=column.name))
+            WHERE table_name = '{tab}' AND column_name = '{col}'""".format(tab=column.table.full_name, col=column.name))
         self._db.cursor().execute(query_template)
         result_set = self._db.cursor().fetchone()
         return result_set[0]
