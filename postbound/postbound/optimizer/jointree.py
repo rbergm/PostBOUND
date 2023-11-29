@@ -478,12 +478,17 @@ def read_from_json(json_data: dict) -> LogicalJoinTree | PhysicalQueryPlan:
     if "table" in json_data:
         base_table = json_parser.load_table(json_data["table"])
         metadata = _read_metadata_json(json_data["metadata"], base_table=True)
-        return BaseTableNode(base_table, metadata)
+        base_table_node = BaseTableNode(base_table, metadata)
+        if isinstance(metadata, PhysicalBaseTableMetadata):
+            return PhysicalQueryPlan(base_table_node)
+        return LogicalJoinTree(base_table_node)
     elif "left" in json_data and "right" in json_data:
-        left_node = read_from_json(json_data["left"])
-        right_node = read_from_json(json_data["right"])
+        left_tree = read_from_json(json_data["left"])
+        right_tree = read_from_json(json_data["right"])
         metadata = _read_metadata_json(json_data["metadata"], base_table=False)
-        return IntermediateJoinNode(left_node, right_node, metadata)
+        if isinstance(metadata, PhysicalJoinMetadata):
+            return PhysicalQueryPlan.joining(left_tree, right_tree, metadata)
+        return LogicalJoinTree.joining(left_tree, right_tree, metadata)
     else:
         raise ValueError("Malformed json data")
 
