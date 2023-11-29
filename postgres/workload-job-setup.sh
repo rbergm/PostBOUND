@@ -12,7 +12,7 @@ show_help() {
     echo "-d | --dir <directory> specifies the directory to store/load the IMDB data files, defaults to '../imdb_data'"
     echo "-f | --force delete existing instance of the database if necessary"
     echo "-t | --target <db name> name of the IMDB database, defaults to 'imdb'"
-		echo "--no-fkeys does not load foreign key indexes to the database (includes both foreign key constraints as well as the actual indexes)"
+    echo "--no-fkeys does not load foreign key indexes to the database (includes both foreign key constraints as well as the actual indexes)"
     exit 1
 }
 
@@ -43,6 +43,8 @@ while [ $# -gt 0 ] ; do
 done
 
 EXISTING_DBS=$(psql -l | grep "$DB_NAME")
+
+echo ".. Working directory is $PWD"
 
 if [ ! -z "$EXISTING_DBS" ] && [ $FORCE_CREATION = "false" ] ; then
     echo ".. IMDB exists, doing nothing"
@@ -84,7 +86,8 @@ psql $DB_NAME -f import.sql
 
 if [ $SKIP_FKEYS == "false" ] ; then
 	echo ".. Creating IMDB foreign key indices"
-	psql $DB_NAME -f $PWD/workload-job-fk-indexes.sql
+    cd $PWD
+	psql $DB_NAME -f "$PWD/workload-job-fk-indexes.sql"
 else
 	echo ".. Skipping IMDB foreign key creation"
 fi
