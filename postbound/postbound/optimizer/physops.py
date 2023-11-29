@@ -316,7 +316,7 @@ def read_operator_json(json_data: dict) -> ScanOperatorAssignment | JoinOperator
         parsed_table = json_parser.load_table(json_data["table"])
         scan_operator = json_data["operator"]
         return ScanOperatorAssignment(scan_operator, parsed_table, parallel_workers)
-    elif "join" not in json_data:
+    elif "join" not in json_data or not ("inner" in json_data and "outer" in json_data):
         raise ValueError(f"Malformed operator JSON: either 'table' or 'join' must be given: '{json_data}'")
 
     directional = json_data["directional"]
