@@ -35,6 +35,13 @@ class ProcResult(str):
     def __new__(cls, out_data: str, err_data: str, exit_code: int):
         return str.__new__(cls, out_data)
 
+    def echo(self) -> None:
+        """Provides the contents of stdout and stderr in a format for debugging by humans."""
+        print("stdout:")
+        print(self.out_data)
+        print("stderr:")
+        print(self.err_data)
+
     def __bool__(self) -> bool:
         return self.exit_code == 0
 
