@@ -1,8 +1,8 @@
 #!/bin/bash
 
 DB_NAME=stack
-PWD=$(pwd)
-SSB_DIR=$PWD/../stack_data
+WD=$(pwd)
+SSB_DIR=$WD/../stack_data
 CORES=$(($(nproc --all) / 2))
 FORCE_CREATION="false"
 
