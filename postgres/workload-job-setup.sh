@@ -1,6 +1,6 @@
 #!/bin/bash
 
-PWD=$(pwd)
+WD=$(pwd)
 DB_NAME="imdb"
 FORCE_CREATION="false"
 IMDB_DIR="../imdb_data"
@@ -44,7 +44,7 @@ done
 
 EXISTING_DBS=$(psql -l | grep "$DB_NAME")
 
-echo ".. Working directory is $PWD"
+echo ".. Working directory is $WD"
 
 if [ ! -z "$EXISTING_DBS" ] && [ $FORCE_CREATION = "false" ] ; then
     echo ".. IMDB exists, doing nothing"
@@ -86,11 +86,10 @@ psql $DB_NAME -f import.sql
 
 if [ $SKIP_FKEYS == "false" ] ; then
 	echo ".. Creating IMDB foreign key indices"
-    cd $PWD
-	psql $DB_NAME -f "$PWD/workload-job-fk-indexes.sql"
+	psql $DB_NAME -f $WD/workload-job-fk-indexes.sql
 else
 	echo ".. Skipping IMDB foreign key creation"
 fi
 
 echo ".. Done"
-cd $PWD
+cd $WD
