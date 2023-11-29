@@ -23,7 +23,7 @@ OutDir = "robustness-shift"
 BaselineFilling = 0.6
 ShiftStep = 0.05
 ShiftSpan = 0.4
-log = logging.make_logger(prefix=lambda: f"{logging.timestamp} ::")
+log = logging.make_logger(prefix=lambda: f"{logging.timestamp()} ::")
 delete_marker_file = pathlib.Path(OutDir, "delete-markers.csv").absolute()
 
 job = workloads.job()
@@ -46,18 +46,26 @@ ues_optimizer = ues_optimizer.load_settings(presets.fetch("ues")).build()
 
 
 def obtain_baseline_plans(outfile: str) -> None:
+    conn = pg_instance.obtain_new_local_connection()
+    conn.autocommit = False
+    cursor = conn.cursor()
+
+    log("Building delete sample")
     workload_shifter.generate_marker_table(fact_table.full_name, 1 - BaselineFilling + ShiftSpan)
-    workload_shifter.export_marker_table(fact_table.full_name, out_file=delete_marker_file)
-    cursor = pg_instance.cursor()
-    cursor.execute(f"CREATE TEMP TABLE delete_marker_buffer LIKE {marker_table.full_name}")
+    workload_shifter.export_marker_table(target_table=fact_table.full_name, out_file=delete_marker_file)
+    cursor.execute(f"CREATE TABLE IF NOT EXISTS delete_marker_buffer (LIKE {marker_table.full_name});")
 
     total_marked_tuples = pg_instance.statistics().total_rows(marker_table)
-    max_marker_idx = round(BaselineFilling * total_marked_tuples)
+    max_marker_idx = round(0.5 * total_marked_tuples)
     baseline_marker_query = textwrap.dedent(f"""
                                             INSERT INTO delete_marker_buffer (marker_idx, {marker_column.name})
                                             SELECT * FROM {marker_table.full_name}
-                                            WHERE marker_idx <= {max_marker_idx}""")
+                                            WHERE marker_idx <= {max_marker_idx};""")
     cursor.execute(baseline_marker_query)
+    conn.commit()
+    pg_instance.reset_connection()
+
+    log("Creating baseline data shift")
     workload_shifter.remove_marked(fact_table.full_name, marker_table="delete_marker_buffer", vacuum=True)
 
     native_plans: dict[str, jointree.PhysicalQueryPlan] = {}
@@ -129,10 +137,16 @@ def obtain_data_shift_result(fill_ratio: float, label: str, query: qal.SqlQuery,
 
 
 def simulate_data_shift(baseline_file: str, outfile: str) -> None:
+    conn = pg_instance.obtain_new_local_connection()
+    conn.autocommit = False
+    cursor = conn.cursor()
+
     total_n_tuples = pg_instance.statistics().total_rows(fact_table)
     tuples_to_drop: int = round(ShiftStep * total_n_tuples)
     workload_shifter.import_marker_table(target_table=fact_table.full_name, in_file=delete_marker_file)
-    pg_instance.cursor().execute(f"CREATE TEMP TABLE delete_marker_buffer LIKE {fact_table.full_name}_delete_marker")
+    cursor.execute(f"CREATE TABLE IF NOT EXISTS delete_marker_buffer (LIKE {fact_table.full_name}_delete_marker);")
+    conn.commit()
+    pg_instance.reset_connection()
 
     cardinality_estimator = cards.PreciseCardinalityHintGenerator(pg_instance, enable_cache=True)
     with open(baseline_file, "r") as baselines:
@@ -162,12 +176,14 @@ def simulate_data_shift(baseline_file: str, outfile: str) -> None:
         pg_instance.statistics().cache_enabled = False
         pg_instance.reset_cache()
 
-        pg_instance.cursor().execute("DELETE FROM delete_marker_buffer")
+        cursor.execute("DELETE FROM delete_marker_buffer;")
         marker_inflation_query = textwrap.dedent(f"""
                                                  INSERT INTO delete_marker_buffer (marker_idx, {marker_column.name})
                                                  SELECT * FROM {marker_table.full_name}
-                                                 WHERE marker_idx BETWEEN {start_marker_idx} AND {end_marker_idx}""")
-        pg_instance.cursor().execute(marker_inflation_query)
+                                                 WHERE marker_idx BETWEEN {start_marker_idx} AND {end_marker_idx};""")
+        cursor.execute(marker_inflation_query)
+        conn.commit()
+        pg_instance.reset_connection()
         workload_shifter.remove_marked(fact_table.full_name, marker_table="delete_marker_buffer", vacuum=True)
         start_marker_idx = end_marker_idx
         end_marker_idx += tuples_to_drop
@@ -181,13 +197,15 @@ def main() -> None:
     if mode == "baseline" or mode == "full":
         os.makedirs(OutDir, exist_ok=True)
         log("Setting up fresh IMDB instance")
-        proc.run_cmd(["./workload-job-setup.sh", "--force"], work_dir=os.environ["PG_CTL_PATH"])
+        db_reset = proc.run_cmd(["./workload-job-setup.sh", "--force"], work_dir=os.environ["PG_CTL_PATH"])
+        db_reset.echo()
         pg_instance.reset_connection()
         log("Obtaining baseline plans")
         obtain_baseline_plans(OutDir + "/baseline.json")
     if mode == "full":
         log("Resetting IMDB instance")
-        proc.run_cmd(["./workload-job-setup.sh", "--force"], work_dir=os.environ["PG_CTL_PATH"])
+        db_reset = proc.run_cmd(["./workload-job-setup.sh", "--force"], work_dir=os.environ["PG_CTL_PATH"])
+        db_reset.echo()
         pg_instance.reset_connection()
     if mode == "shift" or mode == "full":
         log("Simulating data shift")
