@@ -29,7 +29,7 @@ from typing import Any, Literal, Optional
 
 from postbound.qal import base, qal
 from postbound.optimizer import jointree, physops, planparams
-from postbound.util import collections as collection_utils, dicts as dict_utils, misc
+from postbound.util import collections as collection_utils, dicts as dict_utils, jsonize, misc
 
 
 class Cursor(typing.Protocol):
@@ -1144,7 +1144,7 @@ class HintService(abc.ABC):
         raise NotImplementedError
 
 
-class QueryExecutionPlan:
+class QueryExecutionPlan(jsonize.Jsonizable):
     """Heavily simplified system-independent model of physical query execution plans.
 
     A plan is a tree structure of `QueryExecutionPlan` objects. Each plan is a node in the tree and can have additional
@@ -1226,6 +1226,40 @@ class QueryExecutionPlan:
     took to execute the entire operator (which just happened to include parallel processing), **not** an average of the
     worker execution time or some other measure.
     """
+
+    @staticmethod
+    def load_from_json(json_data: dict) -> QueryExecutionPlan:
+        """Reconstructs a query execution plan from its JSON representation.
+
+        If the JSON data is somehow malformed, arbitrary errors can be raised.
+
+        Parameters
+        ----------
+        json_data : dict
+            The parsed JSON data
+
+        Returns
+        -------
+        QueryExecutionPlan
+            The corresponding plan
+        """
+        json_data = dict(json_data)
+
+        json_data["children"] = [QueryExecutionPlan.load_from_json(child_data) for child_data in json_data["children"]]
+        json_data["inner_child"] = (QueryExecutionPlan.load_from_json(json_data["inner_child"])
+                                    if json_data["inner_child"] is not None else None)
+        del json_data["outer_child"]
+
+        table = json_data["table"]
+        if table is not None:
+            json_data["table"] = base.TableReference(table["full_name"], table["alias"])
+
+        operator = json_data["physical_operator"]
+        if operator is not None:
+            json_data["physical_operator"] = (physops.ScanOperators(operator) if json_data["is_scan"]
+                                              else physops.JoinOperators(operator))
+
+        return QueryExecutionPlan(**json_data)
 
     def __init__(self, node_type: str, is_join: bool, is_scan: bool, *, table: Optional[base.TableReference] = None,
                  children: Optional[Iterable[QueryExecutionPlan]] = None,
@@ -1582,6 +1616,9 @@ class QueryExecutionPlan:
             return "\n".join(own_inspection + child_inspections)
         else:
             return "\n".join(child_inspections)
+
+    def __json__(self) -> dict:
+        return vars(self)
 
     def __hash__(self) -> int:
         return hash((self.node_type, self.table, tuple(self.children)))
