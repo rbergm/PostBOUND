@@ -2005,7 +2005,7 @@ class TimeoutQueryExecutor:
         PostgresInterface.execute_query
         PostgresInterface.reset_connection
         """
-        query_result_sender, query_result_receiver = mp.Pipe(False)
+        query_result_receiver, query_result_sender = mp.Pipe(False)
         query_execution_worker = mp.Process(target=_timeout_query_worker, args=(query, self._pg_instance, query_result_sender))
 
         query_execution_worker.start()
