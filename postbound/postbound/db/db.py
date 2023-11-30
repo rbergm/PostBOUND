@@ -27,7 +27,7 @@ import warnings
 from collections.abc import Callable, Iterable, Sequence
 from typing import Any, Literal, Optional
 
-from postbound.qal import base, qal
+from postbound.qal import base, parser, qal
 from postbound.optimizer import jointree, physops, planparams
 from postbound.util import collections as collection_utils, dicts as dict_utils, jsonize, misc
 
@@ -1226,41 +1226,6 @@ class QueryExecutionPlan(jsonize.Jsonizable):
     took to execute the entire operator (which just happened to include parallel processing), **not** an average of the
     worker execution time or some other measure.
     """
-
-    @staticmethod
-    def load_from_json(json_data: dict) -> QueryExecutionPlan:
-        """Reconstructs a query execution plan from its JSON representation.
-
-        If the JSON data is somehow malformed, arbitrary errors can be raised.
-
-        Parameters
-        ----------
-        json_data : dict
-            The parsed JSON data
-
-        Returns
-        -------
-        QueryExecutionPlan
-            The corresponding plan
-        """
-        json_data = dict(json_data)
-
-        json_data["children"] = [QueryExecutionPlan.load_from_json(child_data) for child_data in json_data["children"]]
-        json_data["inner_child"] = (QueryExecutionPlan.load_from_json(json_data["inner_child"])
-                                    if json_data["inner_child"] is not None else None)
-        del json_data["outer_child"]
-
-        table = json_data["table"]
-        if table is not None:
-            json_data["table"] = base.TableReference(table["full_name"], table["alias"])
-
-        operator = json_data["physical_operator"]
-        if operator is not None:
-            json_data["physical_operator"] = (physops.ScanOperators(operator) if json_data["is_scan"]
-                                              else physops.JoinOperators(operator))
-
-        return QueryExecutionPlan(**json_data)
-
     def __init__(self, node_type: str, is_join: bool, is_scan: bool, *, table: Optional[base.TableReference] = None,
                  children: Optional[Iterable[QueryExecutionPlan]] = None,
                  parallel_workers: float = math.nan, cost: float = math.nan,
@@ -1640,6 +1605,39 @@ class QueryExecutionPlan(jsonize.Jsonizable):
         table_str = f" :: {self.table}" if self.table else ""
         plan_str = f" (cost={self.cost} estimated cardinality={self.estimated_cardinality})"
         return "".join((self.node_type, table_str, plan_str, analyze_str))
+
+
+def read_query_plan_json(json_data: dict) -> QueryExecutionPlan:
+    """Reconstructs a query execution plan from its JSON representation.
+
+    If the JSON data is somehow malformed, arbitrary errors can be raised.
+
+    Parameters
+    ----------
+    json_data : dict
+        The JSON data
+
+    Returns
+    -------
+    QueryExecutionPlan
+        The corresponding plan
+    """
+    json_data = dict(json_data)
+
+    json_data["children"] = [read_query_plan_json(child_data) for child_data in json_data["children"]]
+    json_data["inner_child"] = (read_query_plan_json(json_data["inner_child"])
+                                if json_data["inner_child"] is not None else None)
+    del json_data["outer_child"]
+
+    table = json_data["table"]
+    if table is not None:
+        json_data["table"] = parser.JsonParser().load_table(json_data["table"])
+
+    operator: str = json_data["physical_operator"]
+    if operator is not None:
+        json_data["physical_operator"] = physops.read_operator_json(operator)
+
+    return QueryExecutionPlan(**json_data)
 
 
 class OptimizerInterface(abc.ABC):
