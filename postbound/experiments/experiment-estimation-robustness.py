@@ -12,7 +12,7 @@ from typing import Literal, Optional
 import pandas as pd
 
 from postbound import postbound as pb
-from postbound.qal import base, qal
+from postbound.qal import base, qal, transform
 from postbound.db import postgres
 from postbound.experiments import workloads
 from postbound.optimizer import jointree, presets
@@ -23,6 +23,8 @@ OutDir = "robustness-shift"
 BaselineFilling = 0.6
 ShiftStep = 0.05
 ShiftSpan = 0.4
+QueryTimeout = 60 * 15  # 15 minutes max timeout --> n seconds to minutes * n minutes
+
 log = logging.make_logger(prefix=lambda: f"{logging.timestamp()} ::")
 delete_marker_file = pathlib.Path(OutDir, "delete-markers.csv").absolute()
 
@@ -34,7 +36,8 @@ pg_stats = pg_instance.statistics()
 pg_stats.cache_enabled = False
 pg_stats.emulated = True
 workload_shifter = postgres.WorkloadShifter(pg_instance)
-pg_config = pg_instance.current_configuration()
+pg_config = pg_instance.current_configuration(runtime_changeable_only=True)
+timeout_executor = postgres.TimeoutQueryExecutor(pg_instance)
 
 fact_table = base.TableReference("title")
 fact_marker_column = base.ColumnReference("id", fact_table)
@@ -101,6 +104,7 @@ class DataShiftResult:
     query: str
     query_plan: str
     total_runtime: float
+    timeout: bool
     db_config: str
 
 
@@ -111,7 +115,9 @@ def obtain_data_shift_result(fill_ratio: float, label: str, query: qal.SqlQuery,
     if plan_type == "native":
         explain_query = query
     elif plan_type == "robust":
+        pg_instance.statistics().cache_enabled = True
         explain_query = ues_optimizer.optimize_query(query)
+        pg_instance.statistics().cache_enabled = False
     elif plan_type == "robust-fixed":
         ues_plan = jointree.read_from_json(query_plans["robust_plans"][label])
         explain_query = pg_instance.hinting().generate_hints(query, ues_plan)
@@ -124,16 +130,23 @@ def obtain_data_shift_result(fill_ratio: float, label: str, query: qal.SqlQuery,
     else:
         raise ValueError("Unknown experiment type: {}".format(plan_type))
 
-    start_time = datetime.now()
-    explain_plan = pg_instance.optimizer().analyze_plan(explain_query)
-    end_time = datetime.now()
-    total_runtime = (end_time - start_time).total_seconds()
+    explain_query = transform.as_explain_analyze(explain_query)
+    try:
+        start_time = datetime.now()
+        explain_plan = timeout_executor.execute_query(query, QueryTimeout)
+        end_time = datetime.now()
+        total_runtime = (end_time - start_time).total_seconds()
+        timeout = False
+    except TimeoutError:
+        explain_plan = []
+        total_runtime = QueryTimeout
+        timeout = True
 
     pg_instance.apply_configuration(pg_config)
 
     return DataShiftResult(fill_ratio=fill_ratio, plan_type=plan_type, label=label,
                            query=str(query), query_plan=jsonize.to_json(explain_plan),
-                           total_runtime=total_runtime, db_config=jsonize.to_json(pg_instance.describe()))
+                           total_runtime=total_runtime, timeout=timeout, db_config=jsonize.to_json(pg_instance.describe()))
 
 
 def simulate_data_shift(baseline_file: str, outfile: str) -> None:
@@ -141,6 +154,7 @@ def simulate_data_shift(baseline_file: str, outfile: str) -> None:
     conn.autocommit = False
     cursor = conn.cursor()
 
+    log("Importing marker table")
     total_n_tuples = pg_instance.statistics().total_rows(fact_table)
     tuples_to_drop: int = round(ShiftStep * total_n_tuples)
     workload_shifter.import_marker_table(target_table=fact_table.full_name, in_file=delete_marker_file)
@@ -154,28 +168,35 @@ def simulate_data_shift(baseline_file: str, outfile: str) -> None:
 
     results: list[DataShiftResult] = []
     start_marker_idx, end_marker_idx = 0, tuples_to_drop
-    for data_step in range(BaselineFilling + ShiftSpan, BaselineFilling - ShiftSpan - ShiftStep, -ShiftStep):
+    data_step = BaselineFilling + ShiftSpan
+    while data_step >= BaselineFilling - ShiftSpan:
         log("Now at data shift pct", data_step)
 
         pg_instance.statistics().cache_enabled = True
+        pg_instance.reset_cache()
         for label, query in job.entries():
+            log("Evaluating query", label, "at data shift pct", data_step)
             pg_instance.prewarm_tables(query.tables())
             results.append(obtain_data_shift_result(data_step, label, query, "native"))
 
             pg_instance.prewarm_tables(query.tables())
-            results.append(obtain_data_shift_result(data_step, label, query, "native-fixed", query_plans))
+            results.append(obtain_data_shift_result(data_step, label, query, "native-fixed", query_plans=query_plans))
 
             pg_instance.prewarm_tables(query.tables())
             results.append(obtain_data_shift_result(data_step, label, query, "native-true-cards",
                                                     cardinality_estimator=cardinality_estimator))
 
             pg_instance.prewarm_tables(query.tables())
-            results.append(obtain_data_shift_result(data_step, label, query, "robust", query_plans))
+            results.append(obtain_data_shift_result(data_step, label, query, "robust"))
+
+            pg_instance.prewarm_tables(query.tables())
+            results.append(obtain_data_shift_result(data_step, label, query, "robust-fixed", query_plans=query_plans))
 
         cardinality_estimator.reset_cache()
         pg_instance.statistics().cache_enabled = False
         pg_instance.reset_cache()
 
+        log("Performing data shift at", data_step, "pct for indexes between", start_marker_idx, "and", end_marker_idx)
         cursor.execute("DELETE FROM delete_marker_buffer;")
         marker_inflation_query = textwrap.dedent(f"""
                                                  INSERT INTO delete_marker_buffer (marker_idx, {marker_column.name})
@@ -187,6 +208,7 @@ def simulate_data_shift(baseline_file: str, outfile: str) -> None:
         workload_shifter.remove_marked(fact_table.full_name, marker_table="delete_marker_buffer", vacuum=True)
         start_marker_idx = end_marker_idx
         end_marker_idx += tuples_to_drop
+        data_step -= ShiftStep
 
     result_df = pd.DataFrame(results)
     result_df.to_csv(outfile)
@@ -197,6 +219,7 @@ def main() -> None:
     if mode == "baseline" or mode == "full":
         os.makedirs(OutDir, exist_ok=True)
         log("Setting up fresh IMDB instance")
+        pg_instance.close()
         db_reset = proc.run_cmd(["./workload-job-setup.sh", "--force"], work_dir=os.environ["PG_CTL_PATH"])
         db_reset.echo()
         pg_instance.reset_connection()
@@ -204,6 +227,7 @@ def main() -> None:
         obtain_baseline_plans(OutDir + "/baseline.json")
     if mode == "full":
         log("Resetting IMDB instance")
+        pg_instance.close()
         db_reset = proc.run_cmd(["./workload-job-setup.sh", "--force"], work_dir=os.environ["PG_CTL_PATH"])
         db_reset.echo()
         pg_instance.reset_connection()
