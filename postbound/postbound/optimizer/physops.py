@@ -291,17 +291,54 @@ These can differ from the operators that are actually available in the selected 
 """
 
 
+@typing.overload
+def read_operator_json(json_data: str) -> ScanOperators | JoinOperators:
+    """Reconstructs a physical operator from its JSON representation.
+
+    Parameters
+    ----------
+    json_data : str
+        The JSON data
+
+    Returns
+    -------
+    ScanOperators | JoinOperators
+        The corresponding operator
+    """
+    pass
+
+
+@typing.overload
 def read_operator_json(json_data: dict) -> ScanOperatorAssignment | JoinOperatorAssignment:
-    """Reads a physical operator assignment from a JSON dictionary.
+    """Reconstructs a physical operator assignment from its JSON representation.
 
     Parameters
     ----------
     json_data : dict
-        The JSON dictionary to read from
+        The JSON data
 
     Returns
     -------
     ScanOperatorAssignment | JoinOperatorAssignment
+        The parsed assignment. Whether it is a scan or join assignment is inferred from the JSON dictionary.
+    """
+    pass
+
+
+def read_operator_json(json_data: dict | str) -> PhysicalOperator | ScanOperatorAssignment | JoinOperatorAssignment:
+    """Reads a physical operator assignment from a JSON dictionary.
+
+    The precise type of return value is determined based on the supplied argument: a string parameter will provide a plain
+    operator whereas each dictionary is assumed to describe an operator assignment.
+
+    Parameters
+    ----------
+    json_data : dict | str
+        The JSON dictionary to read from
+
+    Returns
+    -------
+    ScanOperators | JoinOperators | ScanOperatorAssignment | JoinOperatorAssignment
         The parsed assignment. Whether it is a scan or join assignment is inferred from the JSON dictionary.
 
     Raises
@@ -309,6 +346,14 @@ def read_operator_json(json_data: dict) -> ScanOperatorAssignment | JoinOperator
     ValueError
         If the JSON dictionary does not contain a valid assignment
     """
+    if isinstance(json_data, str):
+        if json_data in {op.value for op in ScanOperators}:
+            return ScanOperators(json_data)
+        elif json_data in {op.value for op in JoinOperators}:
+            return JoinOperators(json_data)
+        else:
+            raise ValueError(f"Unknown physical operator: '{json_data}'")
+
     json_parser = parser.JsonParser()
     parallel_workers = json_data.get("parallel_workers", math.nan)
 
