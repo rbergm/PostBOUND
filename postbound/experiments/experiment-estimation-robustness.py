@@ -24,6 +24,8 @@ BaselineFilling = 0.6
 ShiftStep = 0.05
 ShiftSpan = 0.4
 QueryTimeout = 60 * 15  # 15 minutes max timeout --> n seconds to minutes * n minutes
+ExperimentType = Literal["native", "robust", "native-true-cards", "native-fixed", "robust-fixed"]
+EnabledExperiments = ["native", "native-fixed", "robust", "robust-fixed"]
 
 log = logging.make_logger(prefix=lambda: f"{logging.timestamp()} ::")
 delete_marker_file = pathlib.Path(OutDir, "delete-markers.csv").absolute()
@@ -93,9 +95,6 @@ def obtain_baseline_plans(outfile: str) -> None:
         out.write(jsonize.to_json(baseline))
 
 
-ExperimentType = Literal["native", "robust", "native-true-cards", "native-fixed", "robust-fixed"]
-
-
 @dataclasses.dataclass
 class DataShiftResult:
     fill_ratio: float
@@ -133,7 +132,7 @@ def obtain_data_shift_result(fill_ratio: float, label: str, query: qal.SqlQuery,
     explain_query = transform.as_explain_analyze(explain_query)
     try:
         start_time = datetime.now()
-        explain_plan = timeout_executor.execute_query(query, QueryTimeout)
+        explain_plan = timeout_executor.execute_query(explain_query, QueryTimeout)
         end_time = datetime.now()
         total_runtime = (end_time - start_time).total_seconds()
         timeout = False
@@ -176,21 +175,12 @@ def simulate_data_shift(baseline_file: str, outfile: str) -> None:
         pg_instance.reset_cache()
         for label, query in job.entries():
             log("Evaluating query", label, "at data shift pct", data_step)
-            pg_instance.prewarm_tables(query.tables())
-            results.append(obtain_data_shift_result(data_step, label, query, "native"))
-
-            pg_instance.prewarm_tables(query.tables())
-            results.append(obtain_data_shift_result(data_step, label, query, "native-fixed", query_plans=query_plans))
-
-            pg_instance.prewarm_tables(query.tables())
-            results.append(obtain_data_shift_result(data_step, label, query, "native-true-cards",
-                                                    cardinality_estimator=cardinality_estimator))
-
-            pg_instance.prewarm_tables(query.tables())
-            results.append(obtain_data_shift_result(data_step, label, query, "robust"))
-
-            pg_instance.prewarm_tables(query.tables())
-            results.append(obtain_data_shift_result(data_step, label, query, "robust-fixed", query_plans=query_plans))
+            for experiment_type in EnabledExperiments:
+                pg_instance.prewarm_tables(query.tables())
+                experiment_result = obtain_data_shift_result(data_step, label, query, experiment_type,
+                                                             query_plans=query_plans,
+                                                             cardinality_estimator=cardinality_estimator)
+                results.append(experiment_result)
 
         cardinality_estimator.reset_cache()
         pg_instance.statistics().cache_enabled = False
