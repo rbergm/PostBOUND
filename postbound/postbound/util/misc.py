@@ -33,14 +33,17 @@ class Version(jsonize.Jsonizable):
     """
 
     def __init__(self, ver: str | int | list[str] | list[int]) -> None:
-        if isinstance(ver, int):
-            self._version = [ver]
-        elif isinstance(ver, str):
-            self._version = [int(v) for v in ver.split(".")]
-        elif isinstance(ver, list) and ver:
-            self._version = [int(v) for v in ver]
-        else:
-            raise ValueError(f"Unknown version string: '{ver}'")
+        try:
+            if isinstance(ver, int):
+                self._version = [ver]
+            elif isinstance(ver, str):
+                self._version = [int(v) for v in ver.split(".")]
+            elif isinstance(ver, list) and ver:
+                self._version = [int(v) for v in ver]
+            else:
+                raise ValueError(f"Unknown version string: '{ver}'")
+        except ValueError:
+            raise ValueError("Unknown version string: '{ver}'")
 
     def formatted(self, *, prefix: str = "", suffix: str = "", separator: str = "."):
         return prefix + separator.join(str(v) for v in self._version) + suffix
