@@ -15,6 +15,7 @@ import math
 import multiprocessing as mp
 import os
 import pathlib
+import re
 import textwrap
 import threading
 import warnings
@@ -295,6 +296,16 @@ class PostgresConfiguration(str):
         return super().__getitem__(key)
 
 
+_PGVersionPattern = re.compile(r"^PostgreSQL (?P<pg_ver>[\d]+(\.[\d]+)?).*$")
+"""Regular expression to extract the Postgres server version from the ``VERSION()`` function.
+
+References
+----------
+
+.. Pattern debugging: https://regex101.com/r/UTQkfa/1
+"""
+
+
 def _query_contains_geqo_sensible_settings(query: qal.SqlQuery) -> bool:
     """Checks, whether a specific query contains any information that would be overwritten by GeQO.
 
@@ -429,9 +440,12 @@ class PostgresInterface(db.Database):
 
     def database_system_version(self) -> utils.Version:
         self._cursor.execute("SELECT VERSION();")
-        pg_ver = self._cursor.fetchone()[0]
-        # version looks like "PostgreSQL 14.6 on x86_64-pc-linux-gnu, compiled by gcc (...)
-        return utils.Version(pg_ver.split(" ")[1])
+        version_string = self._cursor.fetchone()[0]
+        version_match = _PGVersionPattern.match(version_string)
+        if not version_match:
+            raise RuntimeError(f"Could not extract Postgres version from string '{version_string}'")
+        pg_ver = version_match.group("pg_ver")
+        return utils.Version(pg_ver)
 
     def describe(self) -> dict:
         base_info = {
