@@ -43,7 +43,7 @@ class Version(jsonize.Jsonizable):
             else:
                 raise ValueError(f"Unknown version string: '{ver}'")
         except ValueError:
-            raise ValueError("Unknown version string: '{ver}'")
+            raise ValueError(f"Unknown version string: '{ver}'")
 
     def formatted(self, *, prefix: str = "", suffix: str = "", separator: str = "."):
         return prefix + separator.join(str(v) for v in self._version) + suffix
