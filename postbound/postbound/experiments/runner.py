@@ -81,15 +81,18 @@ class QueryPreparationService:
     analyze : bool, optional
         Whether to force all queries to be executed as ``EXPLAIN ANALYZE`` queries. Setting this option implies `explain`,
         which therefore does not need to set manually. Defaults to ``False``
+    prewarm : bool, optional
+        For database systems that support prewarming, this inflates the buffer pool with pages from the prepared query.
     preparatory_statements : Optional[list[str]], optional
         Statements that are executed as-is on the database connection before running the query, by default ``None``
     """
 
-    def __init__(self, *, explain: bool = False, count_star: bool = False, analyze: bool = False,
+    def __init__(self, *, explain: bool = False, count_star: bool = False, analyze: bool = False, prewarm: bool = False,
                  preparatory_statements: Optional[list[str]] = None):
         self.explain = explain
         self.analyze = analyze
         self.count_star = count_star
+        self.prewarm = prewarm
         self.preparatory_stmts = preparatory_statements if preparatory_statements else []
 
     def prepare_query(self, query: qal.SqlQuery, *, on: db.Database) -> qal.SqlQuery:
@@ -114,6 +117,9 @@ class QueryPreparationService:
 
         if self.count_star:
             query = transform.as_count_star_query(query)
+
+        if self.prewarm:
+            on.prewarm_tables(query.tables())
 
         for stmt in self.preparatory_stmts:
             on.execute_query(stmt, cache_enabled=False)
