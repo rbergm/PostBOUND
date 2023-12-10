@@ -1266,6 +1266,8 @@ class JoinTree(jsonize.Jsonizable, Container[base.TableReference], Generic[JoinM
     - join trees can be used for `in` checks with table references, i.e. ``table_ref in join_tree``. This check
       succeeds if the join tree contains the given table reference as a base table node
     - join trees support `len()` calls, which provide the number of base table scans in the tree
+
+    Hashing is based on the join order only, i.e. specific annotations of individual nodes are not considered.
     """
 
     @staticmethod
@@ -2348,6 +2350,24 @@ class PhysicalQueryPlan(JoinTree[PhysicalJoinMetadata, PhysicalBaseTableMetadata
         if self.is_empty():
             return LogicalJoinTree()
         return LogicalJoinTree(_physical_to_logical(self.root))
+
+    @functools.cache
+    def plan_hash(self) -> int:
+        """Calculates a hash value that considers the join order as well as the assigned physical operators.
+
+        Further information such as cardinality estimates or parallel workers are still ignored.
+
+        Returns
+        -------
+        int
+            The hash value.
+        """
+        original_hash = hash(self)
+        join_annotation_collector = tuple(join.annotation for join in self.join_sequence() if join.annotation)
+        base_annotation_collector = tuple(table.annotation for table in self.table_sequence() if table.annotation)
+        join_hashes = tuple(hash(join.operator) for join in join_annotation_collector)
+        base_hashes = tuple(hash(scan.operator) for scan in base_annotation_collector)
+        return hash((original_hash, join_hashes, base_hashes))
 
 
 def physical_join_tree_annotation_merger(first_annotation: Optional[PhysicalPlanMetadata],
