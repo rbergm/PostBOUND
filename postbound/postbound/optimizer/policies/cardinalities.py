@@ -257,13 +257,14 @@ class CardinalityDistortion(CardinalityHintsGenerator):
                 "distortion_factor": self.distortion_factor, "distortion_strategy": self.distortion_strategy}
 
     def calculate_estimate(self, query: qal.SqlQuery, tables: frozenset[base.TableReference]) -> int:
-        card_est = self.estimator.calculate_estimate(tables)
+        card_est = self.estimator.calculate_estimate(query, tables)
         if self.distortion_strategy == "fixed":
-            card_est *= self.distortion_factor
+            distortion_factor = self.distortion_factor
         elif self.distortion_strategy == "random":
             distortion_factor = random.uniform(min(self.distortion_factor, 1.0), max(self.distortion_factor, 1.0))
-            card_est *= distortion_factor
-        return card_est
+        else:
+            raise ValueError(f"Unknown distortion strategy: '{self.distortion_strategy}'")
+        return card_est * distortion_factor
 
 
 class BaseTableCardinalityEstimator(abc.ABC):
