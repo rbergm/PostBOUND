@@ -15,6 +15,7 @@ from postbound.db import db
 from postbound.qal import qal, transform, clauses
 from postbound.optimizer import validation
 from postbound.experiments import workloads
+from postbound.util import logging
 
 COL_LABEL = "label"
 COL_QUERY = "query"
@@ -81,15 +82,18 @@ class QueryPreparationService:
     analyze : bool, optional
         Whether to force all queries to be executed as ``EXPLAIN ANALYZE`` queries. Setting this option implies `explain`,
         which therefore does not need to set manually. Defaults to ``False``
+    prewarm : bool, optional
+        For database systems that support prewarming, this inflates the buffer pool with pages from the prepared query.
     preparatory_statements : Optional[list[str]], optional
         Statements that are executed as-is on the database connection before running the query, by default ``None``
     """
 
-    def __init__(self, *, explain: bool = False, count_star: bool = False, analyze: bool = False,
+    def __init__(self, *, explain: bool = False, count_star: bool = False, analyze: bool = False, prewarm: bool = False,
                  preparatory_statements: Optional[list[str]] = None):
         self.explain = explain
         self.analyze = analyze
         self.count_star = count_star
+        self.prewarm = prewarm
         self.preparatory_stmts = preparatory_statements if preparatory_statements else []
 
     def prepare_query(self, query: qal.SqlQuery, *, on: db.Database) -> qal.SqlQuery:
@@ -114,6 +118,9 @@ class QueryPreparationService:
 
         if self.count_star:
             query = transform.as_count_star_query(query)
+
+        if self.prewarm:
+            on.prewarm_tables(query.tables())
 
         for stmt in self.preparatory_stmts:
             on.execute_query(stmt, cache_enabled=False)
@@ -266,7 +273,8 @@ def _wrap_workload(queries: Iterable[qal.SqlQuery] | workloads.Workload) -> work
 def execute_workload(queries: Iterable[qal.SqlQuery] | workloads.Workload, database: db.Database, *,
                      workload_repetitions: int = 1, per_query_repetitions: int = 1, shuffled: bool = False,
                      query_preparation: Optional[QueryPreparationService] = None, include_labels: bool = False,
-                     post_process: Optional[Callable[[ExecutionResult], None]] = None) -> pd.DataFrame:
+                     post_process: Optional[Callable[[ExecutionResult], None]] = None,
+                     logger: Optional[Callable[[str], None]] = None) -> pd.DataFrame:
     """Executes all the given queries on the provided database.
 
     Most of this process delegates to the `execute_query` method, so refer to its documentation for more details.
@@ -309,6 +317,8 @@ def execute_workload(queries: Iterable[qal.SqlQuery] | workloads.Workload, datab
     post_process : Optional[Callable[[ExecutionResult], None]], optional
         A post-process action that should be executed after each repetition of the query has been completed. Defaults to
         ``None``, which means no post-processing.
+    logger : post_process : Optional[Callable[[str], None]], optional
+        A logging function that is invoked before every query execution. If omitted, no logging is performed (the default)
 
     Returns
     -------
@@ -320,6 +330,7 @@ def execute_workload(queries: Iterable[qal.SqlQuery] | workloads.Workload, datab
     execute_query
     """
     queries = _wrap_workload(queries)
+    logger = logging.make_logger(False) if logger is None else logger
     results = []
     current_execution_index = 1
     for i in range(workload_repetitions):
@@ -328,6 +339,7 @@ def execute_workload(queries: Iterable[qal.SqlQuery] | workloads.Workload, datab
             queries = queries.shuffle()
 
         for label, query in queries.entries():
+            logger(f"Now benchmarking query {label} (repetition {i+1}/{workload_repetitions})")
             execution_result = execute_query(query, database, repetitions=per_query_repetitions,
                                              query_preparation=query_preparation, post_process=post_process)
             execution_result[COL_EXEC_IDX] = list(range(current_execution_index,
@@ -421,7 +433,8 @@ def optimize_and_execute_workload(queries: Iterable[qal.SqlQuery] | workloads.Wo
                                   shuffled: bool = False,
                                   query_preparation: Optional[QueryPreparationService] = None,
                                   include_labels: bool = False,
-                                  post_process: Optional[Callable[[ExecutionResult], None]] = None) -> pd.DataFrame:
+                                  post_process: Optional[Callable[[ExecutionResult], None]] = None,
+                                  logger: Optional[Callable[[str], None]] = None) -> pd.DataFrame:
     """This function combines the functionality of `execute_workload` and `optimize_query` in one utility.
 
     Each workload iteration starts "from scratch", i.e. with the raw, un-optimized queries. If the post-process actions mutated
@@ -454,6 +467,8 @@ def optimize_and_execute_workload(queries: Iterable[qal.SqlQuery] | workloads.Wo
     post_process : Optional[Callable[[ExecutionResult], None]], optional
         A post-process action that should be executed after each repetition of the query has been completed. Defaults to
         ``None``, which means no post-processing.
+    logger : post_process : Optional[Callable[[str], None]], optional
+        A logging function that is invoked before every query execution. If omitted, no logging is performed (the default)
 
     Returns
     -------
@@ -466,6 +481,7 @@ def optimize_and_execute_workload(queries: Iterable[qal.SqlQuery] | workloads.Wo
     execute_workload
     """
     queries = _wrap_workload(queries)
+    logger = logging.make_logger(False) if logger is None else logger
     results = []
     current_execution_index = 1
     for i in range(workload_repetitions):
@@ -474,6 +490,7 @@ def optimize_and_execute_workload(queries: Iterable[qal.SqlQuery] | workloads.Wo
             queries = queries.shuffle()
 
         for label, query in queries.entries():
+            logger(f"Now benchmarking query {label} (repetition {i+1}/{workload_repetitions})")
             execution_result = optimize_and_execute_query(query, optimization_pipeline,
                                                           repetitions=per_query_repetitions,
                                                           query_preparation=query_preparation,
