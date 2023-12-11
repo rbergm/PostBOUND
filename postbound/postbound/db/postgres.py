@@ -388,8 +388,7 @@ class PostgresInterface(db.Database):
         self.connect_string = connect_string
         self._connection = psycopg.connect(connect_string, application_name="PostBOUND",
                                            row_factory=psycopg.rows.tuple_row)
-        self._connection.autocommit = True
-        self._cursor = self._connection.cursor()
+        self._init_connection()
 
         self._db_stats = PostgresStatisticsInterface(self)
         self._db_schema = PostgresSchemaInterface(self)
@@ -482,7 +481,7 @@ class PostgresInterface(db.Database):
         except psycopg.Error:
             pass
         self._connection = psycopg.connect(self.connect_string)
-        self._cursor = self._connection.cursor()
+        self._init_connection()
 
     def cursor(self) -> psycopg.Cursor:
         return self._cursor
@@ -612,6 +611,12 @@ class PostgresInterface(db.Database):
             configuration = PostgresConfiguration(supported_settings)
 
         self._cursor.execute(configuration)
+
+    def _init_connection(self) -> None:
+        """Sets all default connection parameters and creates the actual database cursor."""
+        self._connection.autocommit = True
+        self._connection.prepare_threshold = None
+        self._cursor = self._connection.cursor()
 
     def _prepare_query_execution(self, query: qal.SqlQuery | str, *, drop_explain: bool = False) -> str:
         """Handles necessary setup logic that enable an arbitrary query to be executed by the database system.
