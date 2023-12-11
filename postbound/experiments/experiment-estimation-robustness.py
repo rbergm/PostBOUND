@@ -201,7 +201,30 @@ def simulate_data_shift(baseline_file: str, outfile: str) -> None:
         data_step -= ShiftStep
 
     result_df = pd.DataFrame(results)
-    result_df.to_csv(outfile)
+    result_df.to_csv(outfile, index=False)
+
+
+def benchmark_current_db(baseline_file: str, fill_factor: float, outfile: str) -> None:
+    log("Evaluating for current database only")
+    cardinality_estimator = cards.PreciseCardinalityHintGenerator(pg_instance, enable_cache=True)
+    with open(baseline_file, "r") as baselines:
+        query_plans: dict = json.load(baselines)
+
+    pg_instance.statistics().cache_enabled = True
+    pg_instance.reset_cache()
+
+    results: list[DataShiftResult] = []
+    for label, query in job.entries():
+        log("Evaluating query", label, "at data shift pct", fill_factor)
+        for experiment_type in EnabledExperiments:
+            pg_instance.prewarm_tables(query.tables())
+            experiment_result = obtain_data_shift_result(fill_factor, label, query, experiment_type,
+                                                         query_plans=query_plans, cardinality_estimator=cardinality_estimator)
+            results.append(experiment_result)
+
+    pg_instance.reset_cache()
+    result_df = pd.DataFrame(results)
+    result_df.to_csv(outfile, index=False)
 
 
 def main() -> None:
@@ -224,6 +247,9 @@ def main() -> None:
     if mode == "shift" or mode == "full":
         log("Simulating data shift")
         simulate_data_shift(OutDir + "/baseline.json", OutDir + "/data-shift.csv")
+    if mode == "single":
+        fill_factor = float(sys.argv[2])
+        benchmark_current_db(OutDir + "/baseline.json", fill_factor, OutDir + f"/data-shift-{fill_factor}.csv")
 
 
 if __name__ == "__main__":
