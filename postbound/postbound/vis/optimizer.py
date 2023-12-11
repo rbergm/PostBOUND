@@ -15,9 +15,17 @@ from postbound.vis import trees as tree_viz
 
 def _join_tree_labels(node: jointree.AbstractJoinTreeNode) -> tuple[str, dict]:
     if node.is_join_node():
-        return "⋈", {"style": "bold"}
-    assert isinstance(node, jointree.BaseTableNode)
-    return node.table.full_name, {"color": "grey"}
+        base_text = "⋈"
+        base_style = {"style": "bold"}
+    else:
+        assert isinstance(node, jointree.BaseTableNode)
+        base_text = str(node.table)
+        base_style = {"color": "grey"}
+
+    if "operator" in dir(node.annotation):
+        base_text += "\n" + node.annotation.operator.operator.value
+
+    return base_text, base_style
 
 
 def _join_tree_traversal(node: jointree.AbstractJoinTreeNode) -> Sequence[jointree.AbstractJoinTreeNode]:
