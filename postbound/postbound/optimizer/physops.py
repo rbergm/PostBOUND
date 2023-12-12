@@ -5,7 +5,6 @@ import enum
 import math
 import typing
 from collections.abc import Collection
-from dataclasses import dataclass
 from typing import Iterable
 
 from postbound.qal import base, parser
@@ -48,7 +47,6 @@ class JoinOperators(enum.Enum):
         return self.value < other.value
 
 
-@dataclass(frozen=True)
 class ScanOperatorAssignment(jsonize.Jsonizable):
     """Models the selection of a scan operator to a specific base table.
 
@@ -62,9 +60,47 @@ class ScanOperatorAssignment(jsonize.Jsonizable):
         The number of parallel processes that should be used to execute the scan. Can be set to 1 to indicate sequential
         operation. Defaults to NaN to indicate that no choice has been made.
     """
-    operator: ScanOperators
-    table: base.TableReference
-    parallel_workers: float | int = math.nan
+    def __init__(self, operator: ScanOperators, table: base.TableReference, parallel_workers: float | int = math.nan) -> None:
+        self._operator = operator
+        self._table = table
+        self._parallel_workers = parallel_workers
+        self._hash_val = hash((self._operator, self._table, self._parallel_workers))
+
+    @property
+    def operator(self) -> ScanOperators:
+        """Get the assigned operator.
+
+        Returns
+        -------
+        ScanOperators
+            The operator
+        """
+        return self._operator
+
+    @property
+    def table(self) -> base.TableReference:
+        """Get the table being scanned.
+
+        Returns
+        -------
+        base.TableReference
+            The table
+        """
+        return self._table
+
+    @property
+    def parallel_workers(self) -> int | float:
+        """Get the number of parallel workers used for the scan.
+
+        This number designates the total number of parallel processes. It can be 1 to indicate sequential operation, or even
+        *NaN* if it is unknown.
+
+        Returns
+        -------
+        int | float
+            The number of workers
+        """
+        return self._parallel_workers
 
     def inspect(self) -> str:
         """Provides the scan as a natural string.
@@ -79,6 +115,15 @@ class ScanOperatorAssignment(jsonize.Jsonizable):
     def __json__(self) -> object:
         return {"operator": self.operator.value, "table": self.table, "parallel_workers": self.parallel_workers}
 
+    def __hash__(self) -> int:
+        return self._hash_val
+
+    def __eq__(self, other: object) -> bool:
+        return (isinstance(other, type(self))
+                and self.operator == other.operator
+                and self.table == other.table
+                and self.parallel_workers == other.parallel_workers)
+
     def __repr__(self) -> str:
         return str(self)
 
@@ -86,7 +131,7 @@ class ScanOperatorAssignment(jsonize.Jsonizable):
         return f"{self.operator.value}({self.table})"
 
 
-class JoinOperatorAssignment:
+class JoinOperatorAssignment(jsonize.Jsonizable):
     """Models the selection of a join operator for a specific join of tables.
 
     Each join is identified by all base tables that are involved in the join. The assignment to intermediate results does not
