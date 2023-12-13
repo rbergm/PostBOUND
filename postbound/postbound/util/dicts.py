@@ -229,6 +229,10 @@ class CustomHashDict(collections.UserDict[K, V]):
     All non-hashing related behavior is directly inherited from the default Python dictionary. Only the item access is changed
     to enforce the usage of the new hashing function.
 
+    Notice that since the custom hash function always provides an integer value, collision detection is weaker than originally.
+    This is because the actual dictionary never sees the original keys to run an equality comparison. Instead, the comparison
+    is based on the integer values.
+
     Parameters
     ----------
     hash_func : Callable[[K], int]
@@ -244,6 +248,12 @@ class CustomHashDict(collections.UserDict[K, V]):
 
     def __setitem__(self, k: K, item: V) -> None:
         super().__setitem__(self.hash_function(k), item)
+
+    def __delitem__(self, key: K) -> None:
+        return super().__delitem__(self.hash_function(key))
+
+    def __contains__(self, key: K) -> bool:
+        return super().__contains__(self.hash_function(key))
 
 
 class DynamicDefaultDict(collections.UserDict[K, V]):
