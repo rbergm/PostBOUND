@@ -16,6 +16,7 @@ import multiprocessing as mp
 import os
 import pathlib
 import re
+import sys
 import textwrap
 import threading
 import warnings
@@ -386,6 +387,7 @@ class PostgresInterface(db.Database):
 
     def __init__(self, connect_string: str, system_name: str = "Postgres", *, cache_enabled: bool = True) -> None:
         self.connect_string = connect_string
+        self.debug = False
         self._connection = psycopg.connect(connect_string, application_name="PostBOUND",
                                            row_factory=psycopg.rows.tuple_row)
         self._init_connection()
@@ -646,6 +648,7 @@ class PostgresInterface(db.Database):
 
         requires_geqo_deactivation = _query_contains_geqo_sensible_settings(query) and not _modifies_geqo_config(query)
         if requires_geqo_deactivation and self._current_geqo_state.triggers_geqo(query):
+            logging.print_if(self.debug, "Disabling GeQO", file=sys.stderr)
             self._cursor.execute("SET geqo = 'off';")
 
         if drop_explain:
