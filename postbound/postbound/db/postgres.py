@@ -1772,7 +1772,7 @@ def connect(*, name: str = "postgres", connect_string: str | None = None,
     """
     db_pool = db.DatabasePool.get_instance()
     if name in db_pool and not refresh:
-        return db_pool.get_instance(name)
+        return db_pool.retrieve_database(name)
 
     if config_file and not connect_string:
         if not os.path.exists(config_file):
@@ -2268,7 +2268,7 @@ class PostgresExplainNode:
         """
         if not self.relation_name:
             return None
-        alias = self.relation_alias if self.relation_alias is not None else ""
+        alias = self.relation_alias if self.relation_alias is not None and self.relation_alias != self.relation_name else ""
         return base.TableReference(self.relation_name, alias)
 
     def as_query_execution_plan(self) -> db.QueryExecutionPlan:
