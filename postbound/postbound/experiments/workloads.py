@@ -41,6 +41,7 @@ from typing import Optional
 import natsort
 import pandas as pd
 
+from postbound.db import db
 from postbound.qal import qal, parser
 from postbound.util import dicts as dict_utils
 
@@ -89,12 +90,12 @@ class Workload(collections.UserDict[LabelType, qal.SqlQuery]):
     -----
     Workloads support many of the Python builtin-methods thanks to inheriting from ``UserDict``. Namely, the *len*, *iter* and
     *in* methods work as expected on the labels. Furthermore, multiple workload objects can be added, subtracted and
-    intersected using set semantics. Subtraction and union also work based on individual labels.
+    intersected using set semantics. Subtraction and intersection also work based on individual labels.
     """
 
     @staticmethod
     def read(root_dir: str, *, query_file_pattern: str = "*.sql", name: str = "",
-             label_prefix: str = "", file_encoding: str = "utf-8") -> Workload[str]:
+             label_prefix: str = "", file_encoding: str = "utf-8", bind_columns: bool = True) -> Workload[str]:
         """Reads all SQL queries from a specific directory into a workload object.
 
         This method assumes that the queries are stored in individual files, one query per file. The query labels will be
@@ -133,7 +134,7 @@ class Workload(collections.UserDict[LabelType, qal.SqlQuery]):
             with open(query_file_path, "r", encoding=file_encoding) as query_file:
                 raw_contents = query_file.readlines()
             query_contents = "\n".join([line for line in raw_contents])
-            parsed_query = parser.parse_query(query_contents)
+            parsed_query = parser.parse_query(query_contents, bind_columns=bind_columns)
             query_label = query_file_path.stem
             queries[label_prefix + query_label] = parsed_query
 
@@ -416,7 +417,7 @@ class Workload(collections.UserDict[LabelType, qal.SqlQuery]):
 
 def read_workload(path: str, name: str = "", *, query_file_pattern: str = "*.sql",
                   recurse_subdirectories: bool = False, query_label_prefix: str = "",
-                  file_encoding: str = "utf-8") -> Workload[str]:
+                  file_encoding: str = "utf-8", bind_columns: bool = True) -> Workload[str]:
     """Loads a workload consisting of multiple different files, potentially scattered in multiple directories
 
     The main advantage of this method over using `Workload.read` directly is the support for recursive directory layouts: it
@@ -448,7 +449,7 @@ def read_workload(path: str, name: str = "", *, query_file_pattern: str = "*.sql
         The workload
     """
     base_dir_workload = Workload.read(path, name=name, query_file_pattern=query_file_pattern,
-                                      label_prefix=query_label_prefix, file_encoding=file_encoding)
+                                      label_prefix=query_label_prefix, file_encoding=file_encoding, bind_columns=bind_columns)
     if not recurse_subdirectories:
         return base_dir_workload
 
@@ -634,7 +635,7 @@ def job(file_encoding: str = "utf-8") -> Workload[str]:
     return job_workload
 
 
-def ssb(file_encoding: str = "utf-8") -> Workload[str]:
+def ssb(file_encoding: str = "utf-8", *, bind_columns: Optional[bool] = None) -> Workload[str]:
     """Reads the Star Schema Benchmark, as shipped with the PostBOUND repository.
 
     Queries will be read from the SSB directory relative to `workloads_base_dir`. The expected layout is:
@@ -661,7 +662,9 @@ def ssb(file_encoding: str = "utf-8") -> Workload[str]:
 
     .. Patrick E. O'Neil et al.: "The Star Schema Benchmark and Augmented Fact Table Indexing." (TPCTC'2009)
     """
-    ssb_workload = Workload.read(f"{workloads_base_dir}/SSB-Queries", name="SSB", file_encoding=file_encoding)
+    bind_columns = bind_columns if bind_columns is not None else not db.DatabasePool.get_instance().empty()
+    ssb_workload = Workload.read(f"{workloads_base_dir}/SSB-Queries", name="SSB", file_encoding=file_encoding,
+                                 bind_columns=bind_columns)
     if not ssb_workload:
         wdir = os.getcwd()
         raise ValueError("Could not load SSB workload. This is likely due to a disparity between workload location and "
@@ -671,7 +674,7 @@ def ssb(file_encoding: str = "utf-8") -> Workload[str]:
     return ssb_workload
 
 
-def stack(file_encoding: str = "utf-8") -> Workload[str]:
+def stack(file_encoding: str = "utf-8", *, bind_columns: Optional[bool] = None) -> Workload[str]:
     """Reads the Stack Benchmark, as shipped with the PostBOUND repository.
 
     Queries will be read from the Stack directory relative to `workloads_base_dir`. The expected layout is:
@@ -708,8 +711,9 @@ def stack(file_encoding: str = "utf-8") -> Workload[str]:
 
     .. Ryan Marcus et al.: "Bao: Making Learned Query Optimization Practical." (SIGMOD'2021)
     """
+    bind_columns = bind_columns if bind_columns is not None else not db.DatabasePool.get_instance().empty()
     stack_workload = read_workload(f"{workloads_base_dir}/Stack-Queries", "Stack", recurse_subdirectories=True,
-                                   file_encoding=file_encoding)
+                                   file_encoding=file_encoding, bind_columns=bind_columns)
     if not stack_workload:
         wdir = os.getcwd()
         raise ValueError("Could not load Stack workload. This is likely due to a disparity between workload location and "
