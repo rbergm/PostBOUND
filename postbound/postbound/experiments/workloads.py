@@ -625,7 +625,8 @@ def job(file_encoding: str = "utf-8") -> Workload[str]:
 
     .. Viktor Leis et al.: "How Good Are Query Optimizers, Really?" (Proc. VLDB Endow. 9, 3 (2015))
     """
-    job_workload = Workload.read(f"{workloads_base_dir}/JOB-Queries", name="JOB", file_encoding=file_encoding)
+    job_workload = Workload.read(f"{workloads_base_dir}/JOB-Queries", name="JOB", file_encoding=file_encoding,
+                                 bind_columns=False)
     if not job_workload:
         wdir = os.getcwd()
         raise ValueError("Could not load JOB workload. This is likely due to a disparity between workload location and "
