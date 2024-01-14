@@ -129,7 +129,7 @@ def _collect_subquery_expressions(expression: expr.SqlExpression) -> Iterable[ex
 
 
 def _collect_column_expression_columns(expression: expr.SqlExpression) -> set[base.ColumnReference]:
-    """Provides all columns that are directly contained in `ColumnExpression`\ s under and including a specific expression.
+    """Provides all columns that are directly contained in `ColumnExpression` instances with a specific expression.
 
     This method is a shorthand to take care of the necessary traversal of the expression tree. Notice that it ignores all
     expressions that are part of subqueries.
@@ -149,7 +149,7 @@ def _collect_column_expression_columns(expression: expr.SqlExpression) -> set[ba
 
 
 def _collect_column_expression_tables(expression: expr.SqlExpression) -> set[base.TableReference]:
-    """Provides all tables that are linked directly in `ColumnExpression`\ s under and including a specific expression.
+    """Provides all tables that are linked directly in `ColumnExpression` instances with a specific expression.
 
     This method is a shorthand to take care of the necessary traversal of the expression tree. Notice that it ignores all
     expressions that are part of subqueries.
@@ -788,8 +788,8 @@ class InPredicate(BasePredicate):
     column : expr.SqlExpression
         The value that is checked by the predicate
     values : Sequence[expr.SqlExpression]
-        The allowed column values. The individual expressions are not limited to `StaticValueExpression`\ s, but can also
-        include subqueries, columns or complicated mathematical expressions.
+        The allowed column values. The individual expressions are not limited to `StaticValueExpression` instances, but can
+        also include subqueries, columns or complicated mathematical expressions.
 
     Raises
     ------
@@ -1191,6 +1191,74 @@ def as_predicate(column: base.ColumnReference, operation: expr.LogicalSqlOperato
 
     argument = arguments[0]
     return BinaryPredicate(operation, column, expr.as_expression(argument))
+
+
+def determine_join_equivalence_classes(predicates: Iterable[BinaryPredicate]) -> set[frozenset[base.ColumnReference]]:
+    """Calculates all equivalence classes of equijoin predicates.
+
+    Columns are in an equivalence class if they can all be compared with matching equality predicates. For example, consider
+    two predicates *a = b* and *a = c*. From these predicates it follows that *b = c* and hence the set of columns *{a, b, c}*
+    is an equivalence class. Likewise, the predicates *a = b* and *c = d* form two equivalence classes, namely *{a, b}* and
+    *{c, d}*.
+
+    Parameters
+    ----------
+    predicates : Iterable[BinaryPredicate]
+        The predicates to check. Non-equijoin predicates are discarded automatically.
+
+    Returns
+    -------
+    set[frozenset[base.ColumnReference]]
+        The equivalence classes. Each element of the set describes a complete equivalence class.
+    """
+    join_predicates = {pred for pred in predicates
+                       if isinstance(pred, BinaryPredicate) and pred.is_join()
+                       and pred.operation == expr.LogicalSqlOperators.Equal}
+
+    equivalence_graph = nx.Graph()
+    for predicate in join_predicates:
+        columns = predicate.columns()
+        if not len(columns) == 2:
+            continue
+        col_a, col_b = columns
+        equivalence_graph.add_edge(col_a, col_b)
+
+    equivalence_classes: set[set[base.ColumnReference]] = set()
+    for equivalence_class in nx.connected_components(equivalence_graph):
+        equivalence_classes.add(frozenset(equivalence_class))
+    return equivalence_classes
+
+
+def generate_predicates_for_equivalence_classes(equivalence_classes: set[frozenset[base.ColumnReference]]
+                                                ) -> set[BinaryPredicate]:
+    """Provides all possible equijoin predicates for a set of equivalence classes.
+
+    This function can be used in combination with `determine_join_equivalence_classes` to expand join predicates to also
+    include additional joins that can be derived from the predicates.
+
+    For example, consider two joins *a = b* and *b = c*. These joins form one equivalence class *{a, b, c}*. Based on the
+    equivalence class, the predicates *a = b*, *b = c* and *a = c* can be generated.
+
+    Parameters
+    ----------
+    equivalence_classes : set[frozenset[base.ColumnReference]]
+        The equivalence classes. Each class is described by the columns it contains.
+
+    Returns
+    -------
+    set[BinaryPredicate]
+        The predicates
+
+    See Also
+    --------
+    determine_join_equivalence_classes
+    CompoundPredicate.create_and
+    """
+    equivalence_predicates: set[BinaryPredicate] = set()
+    for equivalence_class in equivalence_classes:
+        for first_col, second_col in collection_utils.pairs(equivalence_class):
+            equivalence_predicates.add(as_predicate(first_col, expr.LogicalSqlOperators.Equal, second_col))
+    return equivalence_predicates
 
 
 def _unwrap_expression(expression: expr.ColumnExpression | expr.StaticValueExpression) -> base.ColumnReference | object:
