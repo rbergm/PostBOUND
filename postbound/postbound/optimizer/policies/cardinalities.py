@@ -11,12 +11,16 @@ The policies can be divided into two different categories:
 from __future__ import annotations
 
 import abc
+import json
 import random
 from collections.abc import Generator
 from typing import Literal, Optional
 
+import pandas as pd
+
 from postbound.db import db
-from postbound.qal import base, clauses, predicates, qal, transform
+from postbound.experiments import workloads
+from postbound.qal import base, clauses, parser, predicates, qal, transform
 from postbound.optimizer import joingraph, jointree, physops, validation, planparams, stages
 from postbound.util import collections as collection_utils
 
@@ -220,6 +224,80 @@ class PreciseCardinalityHintGenerator(CardinalityHintsGenerator):
 
     def reset_cache(self) -> None:
         self._cardinality_cache.clear()
+
+
+def _parse_tables(tabs: str) -> set[base.TableReference]:
+    """Utility to load tables from their JSON representation.
+
+    Parameters
+    ----------
+    tabs : str
+        The raw JSON data
+
+    Returns
+    -------
+    set[base.TableReference]
+        The corresponding tables
+    """
+    json_parser = parser.JsonParser()
+    return {json_parser.load_table(t) for t in json.loads(tabs)}
+
+
+class PreComputedCardinalities(CardinalityHintsGenerator):
+    """Re-uses existing cardinalities from an external data source.
+
+    The cardinalities have to be stored in a CSV file which follows a certain structure. Some details can be customized (e.g.
+    column names). Most importantly, queries have to be identified via their labels. See parameters for details.
+
+    Parameters
+    ----------
+    workload : workloads.Workload
+        The workload which was used to calculate the cardinalities. This is required to determine the query label based on an
+        input query. Each hint generator can only support a specific workload.
+    lookup_table_path : str
+        The file path to the CSV file containing the cardinalities.
+    include_cross_products : bool, optional
+        Whether cardinality estimates for arbitrary cross products are contained in the CSV file and hence can be used during
+        estimation. By default this is disabled.
+    default_cardinality : Optional[int], optional
+        In case no cardinality estimate exists for a specific intermediate, a default cardinality can be used instead. In case
+        no default value has been specified, an error would be raised. Notice that a ``None`` value unsets the default. If the
+        client should handle this situation instead, another value (e.g. ``math.nan`` has to be used).
+    label_col : str, optional
+        The column in the CSV file that contains the query labels. Defaults to *label*.
+    tables_col : str, optional
+        The column in the CSV file that contains the (JSON serialized) tables that form the current intermediate result of the
+        current query. Defaults to *tables*.
+    cardinality_col : str, optional
+        The column in the CSV file that contains the actual cardinalities. Defaults to *cardinality*.
+    """
+    def __init__(self, workload: workloads.Workload, lookup_table_path: str, *,
+                 include_cross_products: bool = False, default_cardinality: Optional[int] = None,
+                 label_col: str = "label", tables_col: str = "tables", cardinality_col: str = "cardinality") -> None:
+        super().__init__(include_cross_products)
+        self._workload = workload
+        self._label_col = label_col
+        self._tables_col = tables_col
+        self._card_col = cardinality_col
+        self._default_card = default_cardinality
+        self._lookup_df_path = lookup_table_path
+        self._true_card_df = pd.read_csv(lookup_table_path, converters={tables_col: _parse_tables})
+
+    def calculate_estimate(self, query: qal.SqlQuery, tables: frozenset[base.TableReference]) -> int:
+        label = self._workload.label_of(query)
+        relevant_samples = self._true_card_df[self._true_card_df[self._label_col] == label]
+        cardinality_sample = relevant_samples[relevant_samples[self._tables_col] == tables]
+        if len(cardinality_sample) == 0 and self._default_card is None:
+            raise ValueError("No matching sample found")
+        elif len(cardinality_sample) == 0:
+            return self._default_card
+        elif len(cardinality_sample) > 1:
+            raise ValueError("More than one matching sample found")
+        cardinality = cardinality_sample.iloc[0][self._card_col]
+        return int(cardinality)
+
+    def describe(self) -> dict:
+        return {"name": "pre-computed-cards", "location": self._lookup_df_path, "workload": self._workload.name}
 
 
 class CardinalityDistortion(CardinalityHintsGenerator):
