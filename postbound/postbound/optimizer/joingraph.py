@@ -372,9 +372,20 @@ class JoinGraph(Mapping[base.TableReference, TableInfo]):
     db_schema : Optional[db.DatabaseSchema], optional
         The schema of the database on which the query should be executed. If this is ``None``, the database schema is inferred
         based on the `DatabasePool`.
+    include_predicate_equivalence_classes : bool, optional
+        Whether predicates from the same equivalence class should be added to the join graph as well, even if they do not exist
+        in the original query. Consider two join conditions *a = b* and *b = c*. From these conditions, it follows that *a = c*
+        by the transitive property. If `include_predicate_equivalence_classes` is true, that last predicate will also be added
+        to the join graph.
+
+    Warnings
+    --------
+    If predicate equivalence classes are used, the optimization algorithm can potentially generate queries that contain
+    additional predicates that were not present in the original query.
     """
 
-    def __init__(self, query: qal.ImplicitSqlQuery, db_schema: Optional[db.DatabaseSchema] = None) -> None:
+    def __init__(self, query: qal.ImplicitSqlQuery, db_schema: Optional[db.DatabaseSchema] = None, *,
+                 include_predicate_equivalence_classes: bool = False) -> None:
         db_schema = db_schema if db_schema else db.DatabasePool.get_instance().current_database().schema()
         self.query = query
         self._db_schema = db_schema
@@ -384,7 +395,14 @@ class JoinGraph(Mapping[base.TableReference, TableInfo]):
         graph.add_nodes_from(query.tables(), free=True)
         edges = []
         predicate_map: _PredicateMap = collections.defaultdict(list)
-        for join_predicate in query.predicates().joins():
+        join_predicates = query.predicates().joins()
+        if include_predicate_equivalence_classes:
+            join_equivalence_classes = predicates.determine_join_equivalence_classes(join_predicates)
+            equivalence_class_predicates = predicates.generate_predicates_for_equivalence_classes(join_equivalence_classes)
+            join_predicates = set(join_predicates) | equivalence_class_predicates
+        for join_predicate in join_predicates:
+            if len(join_predicate.columns()) != 2:
+                continue
             first_col, second_col = join_predicate.columns()
             predicate_map[frozenset([first_col.table, second_col.table])].append(join_predicate)
 
@@ -910,6 +928,19 @@ class JoinGraph(Mapping[base.TableReference, TableInfo]):
                 if is_free or table == partner_table:
                     continue
                 self._invalidate_indexes_on(table)
+
+    def clone(self) -> JoinGraph:
+        """Provides a deep copy of the current join graph.
+
+        Returns
+        -------
+        JoinGraph
+            The copy. It can be safely modified without affecting the original join graph.
+        """
+        cloned = JoinGraph(self.query, self._db_schema)
+        cloned._graph = self.nx_graph()
+        cloned._index_structures = copy.deepcopy(self._index_structures)
+        return cloned
 
     def _assert_contains_table(self, table: base.TableReference) -> None:
         """Raises an error if a specific table is not part of the join graph.
