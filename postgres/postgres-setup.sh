@@ -12,7 +12,7 @@ STOP_AFTER="false"
 show_help() {
     echo "Usage: $0 <options>"
     echo "Allowed options:"
-    echo "--pg-ver <version> Setup Postgres with the given version (currently allowed values: 12.4, 14 (default), 15)"
+    echo "--pg-ver <version> Setup Postgres with the given version (currently allowed values: 12.4, 14 (default), 15, 16)"
     echo "-d | --dir <directory> Install Postgres server to the designated directory (postgres-server by default)."
     echo "--stop Stop the Postgres server process after installation and setup finished"
     exit 1
@@ -36,6 +36,11 @@ while [ $# -gt 0 ] ; do
                     PG_VER_PRETTY="15"
                     PG_VERSION=REL_15_STABLE
                     PG_HINT_PLAN_VERSION=REL15_1_5_0
+                    ;;
+                16)
+                    PG_VER_PRETTY="16"
+                    PG_VERSION=REL_16_STABLE
+                    PG_HINT_PLAN_VERSION=REL16_1_6_0
                     ;;
                 *)
                     show_help
