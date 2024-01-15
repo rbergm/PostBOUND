@@ -6,6 +6,8 @@ PG_VER_PRETTY=14
 PG_VERSION=REL_14_STABLE
 PG_HINT_PLAN_VERSION=REL14_1_4_0
 PG_TARGET_DIR="$WD/postgres-server"
+PG_DEFAULT_PORT=5432
+PG_PORT=5432
 MAKE_CORES=$(($(nproc --all) / 2))
 STOP_AFTER="false"
 
@@ -14,6 +16,7 @@ show_help() {
     echo "Allowed options:"
     echo "--pg-ver <version> Setup Postgres with the given version (currently allowed values: 12.4, 14 (default), 15, 16)"
     echo "-d | --dir <directory> Install Postgres server to the designated directory (postgres-server by default)."
+    echo "-p | --port <port number> Configure the Postgres server to listen on the given port (5432 by default)."
     echo "--stop Stop the Postgres server process after installation and setup finished"
     exit 1
 }
@@ -56,6 +59,11 @@ while [ $# -gt 0 ] ; do
                 PG_TARGET_DIR=$WD/$2
                 echo "... Normalizing relative target directory to $PG_TARGET_DIR"
             fi
+            shift
+            shift
+            ;;
+        -p|--port)
+            PG_PORT=$2
             shift
             shift
             ;;
@@ -108,6 +116,11 @@ cd $PG_TARGET_DIR
 echo "... Creating cluster"
 initdb -D $PG_TARGET_DIR/data
 
+if [ "$PG_PORT" != "$PG_DEFAULT_PORT" ] ; then
+    echo "... Updating Postgres port to $PG_PORT"
+    sed -i "s/#\{0,1\}port = 5432/port = $PG_PORT/" $PG_TARGET_DIR/data/postgresql.conf
+fi
+
 echo "... Adding pg_buffercache, pg_hint_plan and pg_prewarm to preload libraries"
 sed -i "s/#\{0,1\}shared_preload_libraries.*/shared_preload_libraries = 'pg_buffercache,pg_hint_plan,pg_prewarm'/" $PG_TARGET_DIR/data/postgresql.conf
 echo "pg_prewarm.autoprewarm = false" >>  $PG_TARGET_DIR/data/postgresql.conf
@@ -116,7 +129,7 @@ echo "... Starting Postgres (log file is pg.log)"
 pg_ctl -D $PG_TARGET_DIR/data -l pg.log start
 
 echo "... Creating user database for $USER"
-createdb $USER
+createdb -p $PG_PORT $USER
 
 if [ "$STOP_ATFER" = "true" ] ; then
     pg_ctl -D $PG_TARGET_DIR/postgres-server/data stop

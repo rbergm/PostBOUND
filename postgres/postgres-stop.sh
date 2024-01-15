@@ -17,4 +17,8 @@ cd $PG_INSTALL_DIR
 pg_ctl -D $PG_INSTALL_DIR/data stop
 export PATH="${PATH//$PG_BIN_PATH:}"
 
+if [ -z "$PGPORT" ] ; then
+	unset PGPORT
+fi
+
 cd $WD

@@ -14,9 +14,11 @@ cd $PG_INSTALL_DIR
 
 PG_BIN_PATH="$PG_INSTALL_DIR/build/bin"
 INIT=$(echo "$PATH" | grep "$PG_BIN_PATH")
+PGPORT=$(grep "port =" data/postgresql.conf | awk '{print $3}')
 
 if [ -z "$INIT" ] ; then
 	export PG_BIN_PATH
+	export PGPORT
 	export PG_CTL_PATH="$WD"
 	export PATH="$PG_BIN_PATH:$PATH"
 	export LD_LIBRARY_PATH="$PG_INSTALL_DIR/build/lib:$LD_LIBRARY_PATH"
