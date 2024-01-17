@@ -369,6 +369,28 @@ class PhysicalBaseTableMetadata(BaseTableMetadata):
         return f"predicate={self.filter_predicate}, upper bound={self.cardinality}, operator={self.operator}"
 
 
+class JoinTreeVisitor(abc.ABC):
+    """Basic visitor to operator on arbitrary join trees.
+
+    See Also
+    --------
+    JoinTree
+
+    References
+    ----------
+
+    .. Visitor pattern: https://en.wikipedia.org/wiki/Visitor_pattern
+    """
+
+    @abc.abstractmethod
+    def visit_intermediate_node(self, node: IntermediateJoinNode) -> None:
+        raise NotImplementedError
+
+    @abc.abstractmethod
+    def visit_base_table_node(self, node: BaseTableNode) -> None:
+        raise NotImplementedError
+
+
 JoinMetadataType = typing.TypeVar("JoinMetadataType", bound=JoinMetadata)
 """Generic type that is bound to the actual metadata type that is used for the joins in a join tree."""
 
@@ -846,6 +868,17 @@ class AbstractJoinTreeNode(jsonize.Jsonizable, abc.ABC, Container[base.TableRefe
         raise NotImplementedError
 
     @abc.abstractmethod
+    def accept_visitor(self, visitor: JoinTreeVisitor) -> None:
+        """Enables processing of the current node by a join tree visitor.
+
+        Parameters
+        ----------
+        visitor : JoinTreeVisitor
+            The visitor
+        """
+        raise NotImplementedError
+
+    @abc.abstractmethod
     def __json__(self) -> object:
         raise NotImplementedError
 
@@ -1084,6 +1117,9 @@ class IntermediateJoinNode(AbstractJoinTreeNode[JoinMetadataType, BaseTableMetad
         right_inspection = self.right_child.inspect(_indentation=_indentation + 2)
         return "\n".join([own_inspection, left_inspection, right_inspection])
 
+    def accept_visitor(self, visitor: JoinTreeVisitor) -> None:
+        visitor.visit_intermediate_node(self)
+
     def __json__(self) -> object:
         return {"left": self.left_child, "right": self.right_child, "metadata": self.annotation}
 
@@ -1210,6 +1246,9 @@ class BaseTableNode(AbstractJoinTreeNode[JoinMetadataType, BaseTableMetadataType
         prefix = f"{padding}<- " if padding else ""
         annotation_str = f" {self.annotation.inspect()}" if self.annotation else ""
         return f"{prefix} SCAN :: {self.table}{annotation_str}"
+
+    def accept_visitor(self, visitor: JoinTreeVisitor) -> None:
+        visitor.visit_base_table_node(self)
 
     def __json__(self) -> object:
         return {"table": self.table, "metadata": self.annotation}
@@ -1717,6 +1756,17 @@ class JoinTree(jsonize.Jsonizable, Container[base.TableReference], Generic[JoinM
         left, right = (subtree.root, self.root) if insert_left else (self.root, subtree.root)
         join_node = IntermediateJoinNode(left, right, annotation)
         return JoinTree(join_node)
+
+    def accept_visitor(self, visitor: JoinTreeVisitor) -> None:
+        """Enables an arbitrary algorithm to be executed on the join tree.
+
+        Parameters
+        ----------
+        visitor : JoinTreeVisitor
+            The visitor algorithm to use
+        """
+        self._assert_not_empty()
+        self._root.accept_visitor(visitor)
 
     def _assert_not_empty(self) -> None:
         """Raises an error if this tree is empty.
