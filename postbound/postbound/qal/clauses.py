@@ -714,6 +714,16 @@ class Select(BaseClause):
         """
         return self._projection_type
 
+    def is_star(self) -> bool:
+        """Checks, whether the clause is simply ``SELECT *``.
+
+        Returns
+        -------
+        bool
+            Whether this clause is a ``SELECT *`` clause.
+        """
+        return len(self._targets) == 1 and self._targets[0] == BaseProjection.star()
+
     def columns(self) -> set[base.ColumnReference]:
         return collection_utils.set_union(target.columns() for target in self.targets)
 
@@ -1280,7 +1290,7 @@ class ImplicitFromClause(From):
 class ExplicitFromClause(From):
     """Represents a special kind of ``FROM`` clause that requires all tables to be joined using the ``JOIN ON`` syntax.
 
-    The tables themselves can be either `DirectTableSource`\ s, or `SubqueryTableSource`\ s.
+    The tables themselves can be either instances of `DirectTableSource`, or `SubqueryTableSource`.
 
     Parameters
     ----------
@@ -1378,7 +1388,7 @@ class Where(BaseClause):
 class GroupBy(BaseClause):
     """The ``GROUP BY`` clause combines rows that match a grouping criterion to enable aggregation on these groups.
 
-    Despite their names, all grouped columns can be arbitrary `SqlExpression`\ s, rules and restrictions of the SQL
+    Despite their names, all grouped columns can be arbitrary `SqlExpression` instances, rules and restrictions of the SQL
     standard are not enforced by PostBOUND.
 
     Parameters
@@ -1585,7 +1595,7 @@ class OrderBy(BaseClause):
     """The ``ORDER BY`` clause specifies how result rows should be sorted.
 
     This clause has a similar structure like a `Select` clause and simply consists of an arbitrary number of
-    `OrderByExpression`\ s.
+    `OrderByExpression` objects.
 
     Parameters
     ----------
