@@ -475,6 +475,17 @@ class AbstractPredicate(abc.ABC):
                                                    for child_expr in self.iterexpressions())
         return column_tables | subquery_tables
 
+    @abc.abstractmethod
+    def accept_visitor(self, visitor: PredicateVisitor) -> None:
+        """Enables processing of the current predicate by a predicate visitor.
+
+        Parameters
+        ----------
+        visitor : PredicateVisitor
+            The visitor
+        """
+        raise NotImplementedError
+
     def _assert_join_predicate(self) -> None:
         """Raises a `NoJoinPredicateError` if this predicate is not a join.
 
@@ -633,6 +644,9 @@ class BinaryPredicate(BasePredicate):
         partners |= _generate_join_pairs(first_columns, second_columns)
         return partners
 
+    def accept_visitor(self, visitor: PredicateVisitor) -> None:
+        visitor.visit_binary_predicate(self)
+
     __hash__ = AbstractPredicate.__hash__
 
     def __eq__(self, other: object) -> bool:
@@ -764,6 +778,9 @@ class BetweenPredicate(BasePredicate):
         partners |= _generate_join_pairs(predicate_columns, end_columns)
         return set(partners)
 
+    def accept_visitor(self, visitor: PredicateVisitor) -> None:
+        visitor.visit_between_predicate(self)
+
     __hash__ = AbstractPredicate.__hash__
 
     def __eq__(self, other: object) -> bool:
@@ -871,6 +888,9 @@ class InPredicate(BasePredicate):
             partners |= _generate_join_pairs(predicate_columns, value_columns)
         return partners
 
+    def accept_visitor(self, visitor: PredicateVisitor) -> None:
+        visitor.visit_in_predicate(self)
+
     __hash__ = AbstractPredicate.__hash__
 
     def __eq__(self, other: object) -> bool:
@@ -942,6 +962,9 @@ class UnaryPredicate(BasePredicate):
     def join_partners(self) -> set[tuple[base.ColumnReference, base.ColumnReference]]:
         columns = _collect_column_expression_columns(self.column)
         return _generate_join_pairs(columns, columns)
+
+    def accept_visitor(self, visitor: PredicateVisitor) -> None:
+        visitor.visit_unary_predicate(self)
 
     __hash__ = AbstractPredicate.__hash__
 
@@ -1122,6 +1145,17 @@ class CompoundPredicate(AbstractPredicate):
     def base_predicates(self) -> Iterable[AbstractPredicate]:
         return collection_utils.set_union(set(child.base_predicates()) for child in self._children)
 
+    def accept_visitor(self, visitor: PredicateVisitor) -> None:
+        match self.operation:
+            case expr.LogicalSqlCompoundOperators.Not:
+                visitor.visit_not_predicate(self.children)
+            case expr.LogicalSqlCompoundOperators.And:
+                visitor.visit_and_predicate(self.children)
+            case expr.LogicalSqlCompoundOperators.Or:
+                visitor.visit_or_predicate(self.children)
+            case _:
+                raise ValueError(f"Unknown operation: '{self.operation}'")
+
     __hash__ = AbstractPredicate.__hash__
 
     def __eq__(self, other: object) -> bool:
@@ -1139,6 +1173,52 @@ class CompoundPredicate(AbstractPredicate):
             return " AND ".join(str(child) for child in self.children)
         else:
             raise ValueError(f"Unknown operation: '{self.operation}'")
+
+
+class PredicateVisitor(abc.ABC):
+    """Basic visitor to operator on arbitrary predicate trees.
+
+    As a modification to a strict vanilla interpretation of the design pattern, we provide dedicated matching methods for the
+    different composite operators (i.e. for *AND*, *OR* and *NOT* predicates), rather than just matching on
+    `CompoundPredicate`.
+
+    See Also
+    --------
+    AbstractPredicate
+
+    References
+    ----------
+
+    .. Visitor pattern: https://en.wikipedia.org/wiki/Visitor_pattern
+    """
+
+    @abc.abstractmethod
+    def visit_binary_predicate(self, predicate: BinaryPredicate) -> None:
+        raise NotImplementedError
+
+    @abc.abstractmethod
+    def visit_between_predicate(self, predicate: BetweenPredicate) -> None:
+        raise NotImplementedError
+
+    @abc.abstractmethod
+    def visit_in_predicate(self, predicate: InPredicate) -> None:
+        raise NotImplementedError
+
+    @abc.abstractmethod
+    def visit_unary_predicate(self, predicate: UnaryPredicate) -> None:
+        raise NotImplementedError
+
+    @abc.abstractmethod
+    def visit_not_predicate(self, child_predicate: AbstractPredicate) -> None:
+        raise NotImplementedError
+
+    @abc.abstractmethod
+    def visit_or_predicate(self, components: Sequence[AbstractPredicate]) -> None:
+        raise NotImplementedError
+
+    @abc.abstractmethod
+    def visit_and_predicate(self, components: Sequence[AbstractPredicate]) -> None:
+        raise NotImplementedError
 
 
 def as_predicate(column: base.ColumnReference, operation: expr.LogicalSqlOperators,

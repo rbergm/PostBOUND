@@ -660,6 +660,17 @@ class SqlQuery(Generic[FromClauseType], abc.ABC):
         delim = ";" if trailing_delimiter else ""
         return "".join(_stringify_clause(clause) for clause in self.clauses()).rstrip() + delim
 
+    def accept_visitor(self, clause_visitor: clauses.ClauseVisitor) -> None:
+        """Applies a visitor over all clauses in the current query.
+
+        Parameters
+        ----------
+        clause_visitor : clauses.ClauseVisitor
+            The visitor algorithm to use.
+        """
+        for clause in self.clauses():
+            clause.accept_visitor(clause_visitor)
+
     def __hash__(self) -> int:
         return self._hash_val
 

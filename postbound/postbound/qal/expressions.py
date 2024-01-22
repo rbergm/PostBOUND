@@ -152,6 +152,17 @@ class SqlExpression(abc.ABC):
         """
         raise NotImplementedError
 
+    @abc.abstractmethod
+    def accept_visitor(self, visitor: SqlExpressionVisitor) -> None:
+        """Enables processing of the current expression by an expression visitor.
+
+        Parameters
+        ----------
+        visitor : SqlExpressionVisitor
+            The visitor
+        """
+        raise NotImplementedError
+
     def __hash__(self) -> int:
         return self._hash_val
 
@@ -207,6 +218,9 @@ class StaticValueExpression(SqlExpression, typing.Generic[T]):
 
     def iterchildren(self) -> Iterable[SqlExpression]:
         return []
+
+    def accept_visitor(self, visitor: SqlExpressionVisitor) -> None:
+        return visitor.visit_static_value_expr(self)
 
     __hash__ = SqlExpression.__hash__
 
@@ -275,6 +289,9 @@ class CastExpression(SqlExpression):
 
     def iterchildren(self) -> Iterable[SqlExpression]:
         return [self.casted_expression]
+
+    def accept_visitor(self, visitor: SqlExpressionVisitor) -> None:
+        visitor.visit_cast_expr(self)
 
     __hash__ = SqlExpression.__hash__
 
@@ -386,6 +403,9 @@ class MathematicalExpression(SqlExpression):
     def iterchildren(self) -> Iterable[SqlExpression]:
         return [self.first_arg, self.second_arg]
 
+    def accept_visitor(self, visitor: SqlExpressionVisitor) -> None:
+        visitor.visit_mathematical_expr(self)
+
     __hash__ = SqlExpression.__hash__
 
     def __eq__(self, other) -> bool:
@@ -441,6 +461,9 @@ class ColumnExpression(SqlExpression):
 
     def iterchildren(self) -> Iterable[SqlExpression]:
         return []
+
+    def accept_visitor(self, visitor: SqlExpressionVisitor) -> None:
+        visitor.visit_column_expr(self)
 
     __hash__ = SqlExpression.__hash__
 
@@ -561,6 +584,9 @@ class FunctionExpression(SqlExpression):
     def iterchildren(self) -> Iterable[SqlExpression]:
         return list(self.arguments)
 
+    def accept_visitor(self, visitor: SqlExpressionVisitor) -> None:
+        visitor.visit_function_expr(self)
+
     __hash__ = SqlExpression.__hash__
 
     def __eq__(self, other) -> bool:
@@ -621,6 +647,9 @@ class SubqueryExpression(SqlExpression):
     def tables(self) -> set[base.TableReference]:
         return self._query.tables()
 
+    def accept_visitor(self, visitor: SqlExpressionVisitor) -> None:
+        visitor.visit_subquery_expr(self)
+
     __hash__ = SqlExpression.__hash__
 
     def __eq__(self, other) -> bool:
@@ -646,6 +675,9 @@ class StarExpression(SqlExpression):
     def iterchildren(self) -> Iterable[SqlExpression]:
         return []
 
+    def accept_visitor(self, visitor: SqlExpressionVisitor) -> None:
+        visitor.visit_star_expr(self)
+
     __hash__ = SqlExpression.__hash__
 
     def __eq__(self, other) -> bool:
@@ -653,6 +685,48 @@ class StarExpression(SqlExpression):
 
     def __str__(self) -> str:
         return "*"
+
+
+class SqlExpressionVisitor(abc.ABC):
+    """Basic visitor to operator on arbitrary expression trees.
+
+    See Also
+    --------
+    SqlExpression
+
+    References
+    ----------
+
+    .. Visitor pattern: https://en.wikipedia.org/wiki/Visitor_pattern
+    """
+
+    @abc.abstractmethod
+    def visit_static_value_expr(self, expr: StaticValueExpression) -> None:
+        raise NotImplementedError
+
+    @abc.abstractmethod
+    def visit_cast_expr(self, expr: CastExpression) -> None:
+        raise NotImplementedError
+
+    @abc.abstractmethod
+    def visit_mathematical_expr(self, expr: MathematicalExpression) -> None:
+        raise NotImplementedError
+
+    @abc.abstractmethod
+    def visit_column_expr(self, expr: ColumnExpression) -> None:
+        raise NotImplementedError
+
+    @abc.abstractmethod
+    def visit_function_expr(self, expr: FunctionExpression) -> None:
+        raise NotImplementedError
+
+    @abc.abstractmethod
+    def visit_subquery_expr(self, expr: SubqueryExpression) -> None:
+        raise NotImplementedError
+
+    @abc.abstractmethod
+    def visit_star_expr(self, expr: StarExpression) -> None:
+        raise NotImplementedError
 
 
 def as_expression(value: object) -> SqlExpression:

@@ -92,6 +92,17 @@ class BaseClause(abc.ABC):
         """
         raise NotImplementedError
 
+    @abc.abstractmethod
+    def accept_visitor(self, visitor: ClauseVisitor) -> None:
+        """Enables processing of the current clause by a visitor.
+
+        Parameters
+        ----------
+        visitor : ClauseVisitor
+            The visitor
+        """
+        raise NotImplementedError
+
     def __hash__(self) -> int:
         return self._hash_val
 
@@ -188,6 +199,9 @@ class Hint(BaseClause):
 
     def itercolumns(self) -> Iterable[base.ColumnReference]:
         return []
+
+    def accept_visitor(self, visitor: ClauseVisitor) -> None:
+        visitor.visit_hint_clause(self)
 
     __hash__ = BaseClause.__hash__
 
@@ -310,6 +324,9 @@ class Explain(BaseClause):
 
     def itercolumns(self) -> Iterable[base.ColumnReference]:
         return []
+
+    def accept_visitor(self, visitor: ClauseVisitor) -> None:
+        visitor.visit_explain_clause(self)
 
     __hash__ = BaseClause.__hash__
 
@@ -477,6 +494,9 @@ class CommonTableExpression(BaseClause):
 
     def itercolumns(self) -> Iterable[base.ColumnReference]:
         return collection_utils.flatten(with_query.itercolumns() for with_query in self._with_queries)
+
+    def accept_visitor(self, visitor: ClauseVisitor) -> None:
+        visitor.visit_cte_clause(self)
 
     __hash__ = BaseClause.__hash__
 
@@ -760,6 +780,9 @@ class Select(BaseClause):
                 continue
             output[projection.target_name] = collection_utils.simplify(source_columns)
         return output
+
+    def accept_visitor(self, visitor: ClauseVisitor) -> None:
+        visitor.visit_select_clause(self)
 
     __hash__ = BaseClause.__hash__
 
@@ -1218,6 +1241,9 @@ class From(BaseClause):
         merged_predicate = preds.CompoundPredicate.create_and(actual_predicates)
         return preds.QueryPredicates(merged_predicate)
 
+    def accept_visitor(self, visitor: ClauseVisitor) -> None:
+        visitor.visit_from_clause(visitor)
+
     __hash__ = BaseClause.__hash__
 
     def __eq__(self, other) -> bool:
@@ -1376,6 +1402,9 @@ class Where(BaseClause):
     def itercolumns(self) -> Iterable[base.ColumnReference]:
         return self.predicate.itercolumns()
 
+    def accept_visitor(self, visitor: ClauseVisitor) -> None:
+        visitor.visit_where_clause(self)
+
     __hash__ = BaseClause.__hash__
 
     def __eq__(self, other) -> bool:
@@ -1444,6 +1473,9 @@ class GroupBy(BaseClause):
     def itercolumns(self) -> Iterable[base.ColumnReference]:
         return collection_utils.flatten(column.itercolumns() for column in self.group_columns)
 
+    def accept_visitor(self, visitor: ClauseVisitor) -> None:
+        visitor.visit_groupby_clause(self)
+
     __hash__ = BaseClause.__hash__
 
     def __eq__(self, other) -> bool:
@@ -1497,6 +1529,9 @@ class Having(BaseClause):
 
     def itercolumns(self) -> Iterable[base.ColumnReference]:
         return self.condition.itercolumns()
+
+    def accept_visitor(self, visitor: ClauseVisitor) -> None:
+        visitor.visit_having_clause(self)
 
     __hash__ = BaseClause.__hash__
 
@@ -1635,6 +1670,9 @@ class OrderBy(BaseClause):
     def itercolumns(self) -> Iterable[base.ColumnReference]:
         return collection_utils.flatten(expression.itercolumns() for expression in self.iterexpressions())
 
+    def accept_visitor(self, visitor: ClauseVisitor) -> None:
+        visitor.visit_orderby_clause(self)
+
     __hash__ = BaseClause.__hash__
 
     def __eq__(self, other) -> bool:
@@ -1707,6 +1745,9 @@ class Limit(BaseClause):
     def itercolumns(self) -> Iterable[base.ColumnReference]:
         return []
 
+    def accept_visitor(self, visitor: ClauseVisitor) -> None:
+        visitor.visit_limit_clause(self)
+
     __hash__ = BaseClause.__hash__
 
     def __eq__(self, other) -> bool:
@@ -1722,3 +1763,57 @@ class Limit(BaseClause):
         elif limit_str:
             return limit_str
         return ""
+
+
+class ClauseVisitor(abc.ABC):
+    """Basic visitor to operate on arbitrary clause lists.
+
+    See Also
+    --------
+    BaseClause
+
+    References
+    ----------
+
+    .. Visitor pattern: https://en.wikipedia.org/wiki/Visitor_pattern
+    """
+
+    @abc.abstractmethod
+    def visit_hint_clause(self, clause: Hint) -> None:
+        raise NotImplementedError
+
+    @abc.abstractmethod
+    def visit_explain_clause(self, clause: Explain) -> None:
+        raise NotImplementedError
+
+    @abc.abstractmethod
+    def visit_cte_clause(self, clause: WithQuery) -> None:
+        raise NotImplementedError
+
+    @abc.abstractmethod
+    def visit_select_clause(self, clause: Select) -> None:
+        raise NotImplementedError
+
+    @abc.abstractmethod
+    def visit_from_clause(self, clause: From) -> None:
+        raise NotImplementedError
+
+    @abc.abstractmethod
+    def visit_where_clause(self, clause: Where) -> None:
+        raise NotImplementedError
+
+    @abc.abstractmethod
+    def visit_groupby_clause(self, clause: GroupBy) -> None:
+        raise NotImplementedError
+
+    @abc.abstractmethod
+    def visit_having_clause(self, clause: Having) -> None:
+        raise NotImplementedError
+
+    @abc.abstractmethod
+    def visit_orderby_clause(self, clause: OrderBy) -> None:
+        raise NotImplementedError
+
+    @abc.abstractmethod
+    def visit_limit_clause(self, clause: Limit) -> None:
+        raise NotImplementedError
