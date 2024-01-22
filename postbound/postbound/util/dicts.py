@@ -275,3 +275,38 @@ class DynamicDefaultDict(collections.UserDict[K, V]):
         if k not in self.data:
             self.data[k] = self.factory(k)
         return self.data[k]
+
+
+class frozendict(collections.UserDict[K, V]):
+    """Read-only variant of a normal Python dictionary.
+
+    Once the dictionary has been created, its key/value pairs can no longer be modified. At the same time, this allows the
+    dictionary to be hashable by default.
+
+    Parameters
+    ----------
+    items : any, optional
+        Supports the same argument types as the normal dictionary. If no items are supplied, an empty frozen dictionary is
+        returned.
+    """
+    def __init__(self, items=None) -> None:
+        self._frozen = False
+        super().__init__(items)
+        self.clear = None
+        self.pop = None
+        self.popitem = None
+        self.update
+        self._frozen = True
+
+    def __setitem__(self, key: K, item: V) -> None:
+        if self._frozen:
+            raise TypeError("Cannot set frozendict entries after creation")
+        return super().__setitem__(key, item)
+
+    def __delitem__(self, key: K) -> None:
+        if self._frozen:
+            raise TypeError("Cannot remove frozendict entries after creation")
+        return super().__delitem__(key)
+
+    def __hash__(self) -> int:
+        return hash_dict(self)
