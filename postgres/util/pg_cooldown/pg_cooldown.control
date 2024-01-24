@@ -1,5 +1,0 @@
-# pg_cooldown extension
-comment = 'clear shared buffers'
-default_version = '0.1'
-module_pathname = '$libdir/pg_cooldown'
-relocatable = true
