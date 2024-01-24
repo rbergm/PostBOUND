@@ -32,7 +32,7 @@ from postbound.db import db
 from postbound.qal import qal, base, expressions, clauses, transform, formatter
 from postbound.optimizer import jointree, physops, planparams
 from postbound.util import collections as collection_utils, dicts as dict_utils, logging
-from postbound.util import errors, misc as utils
+from postbound.util import errors, misc as utils, system as sys_util
 
 # TODO: find a nice way to support index nested-loop join hints.
 # Probably inspired by the join order/join direction handling?
@@ -388,8 +388,8 @@ class PostgresInterface(db.Database):
     def __init__(self, connect_string: str, system_name: str = "Postgres", *, cache_enabled: bool = True) -> None:
         self.connect_string = connect_string
         self.debug = False
-        self._connection = psycopg.connect(connect_string, application_name="PostBOUND",
-                                           row_factory=psycopg.rows.tuple_row)
+        self._connection: psycopg.Connection = psycopg.connect(connect_string, application_name="PostBOUND",
+                                                               row_factory=psycopg.rows.tuple_row)
         self._init_connection()
 
         self._db_stats = PostgresStatisticsInterface(self)
@@ -518,7 +518,7 @@ class PostgresInterface(db.Database):
     def prewarm_tables(self, tables: Optional[base.TableReference | Iterable[base.TableReference]] = None,
                        *more_tables: base.TableReference, exclude_table_pages: bool = False,
                        include_primary_index: bool = True, include_secondary_indexes: bool = True) -> None:
-        """Prepares the Postgres buffer pool with tuples from the given tables.
+        """Prepares the Postgres buffer pool with tuples from specific tables.
 
         Parameters
         ----------
@@ -548,6 +548,7 @@ class PostgresInterface(db.Database):
         >>> pg.prewarm_tables([table1, table2])
         >>> pg.prewarm_tables(table1, table2)
         """
+        self._assert_active_extension("pg_prewarm")
         tables: Iterable[base.TableReference] = list(collection_utils.enlist(tables)) + list(more_tables)
         if not tables:
             return
@@ -566,6 +567,54 @@ class PostgresInterface(db.Database):
         prewarm_query = f"SELECT {prewarm_text}"
 
         self._cursor.execute(prewarm_query)
+
+    def cooldown_tables(self, tables: Optional[base.TableReference | Iterable[base.TableReference]] = None,
+                        *more_tables: base.TableReference, exclude_table_pages: bool = False,
+                        include_primary_index: bool = True, include_secondary_indexes: bool = True) -> None:
+        """Removes tuples from specific tables from  the Postgres buffer pool.
+
+        This method can be used to simulate a cold start for the next incoming query.
+
+        Parameters
+        ----------
+        tables : Optional[base.TableReference  |  Iterable[base.TableReference]], optional
+            The tables that should be removed from the buffer pool
+        *more_tables : base.TableReference
+            More tables that should be removed into the buffer pool, enabling a more convenient usage of this method.
+            See examples for details on the usage.
+        exclude_table_pages : bool, optional
+            Whether the table data (i.e. pages containing the actual tuples) should *not* be removed. This is off by default,
+            meaning that the cooldown is applied to the data pages. This can be toggled on to only cooldown index pages (see
+            `include_primary_index` and `include_secondary_index`).
+        include_primary_index : bool, optional
+            Whether the pages of the primary key index should also be cooled down. Enabled by default.
+        include_secondary_indexes : bool, optional
+            Whether the pages for secondary indexes should also be cooled down. Enabled by default.
+
+        Examples
+        --------
+        >>> pg.cooldown_tables([table1, table2])
+        >>> pg.cooldown_tables(table1, table2)
+        """
+        self._assert_active_extension("pg_cooldown")
+        tables: Iterable[base.TableReference] = list(collection_utils.enlist(tables)) + list(more_tables)
+        if not tables:
+            return
+        tables = set(tab.full_name for tab in tables)  # eliminate duplicates if tables are selected multiple times
+
+        table_indexes = ([self._fetch_index_relnames(tab) for tab in tables]
+                         if include_primary_index or include_secondary_indexes else [])
+        indexes_to_cooldown = {idx for idx, primary in collection_utils.flatten(table_indexes)
+                               if (primary and include_primary_index) or (not primary and include_secondary_indexes)}
+        tables = indexes_to_cooldown if exclude_table_pages else tables | indexes_to_cooldown
+        if not tables:
+            return
+
+        cooldown_invocations = [f"pg_cooldown('{tab}')" for tab in tables]
+        cooldown_text = ", ".join(cooldown_invocations)
+        cooldown_query = f"SELECT {cooldown_text}"
+
+        self._cursor.execute(cooldown_query)
 
     def current_configuration(self, *, runtime_changeable_only: bool = False) -> PostgresConfiguration:
         """Provides all current configuration settings in the current Postgres connection.
@@ -618,7 +667,7 @@ class PostgresInterface(db.Database):
         """Sets all default connection parameters and creates the actual database cursor."""
         self._connection.autocommit = True
         self._connection.prepare_threshold = None
-        self._cursor = self._connection.cursor()
+        self._cursor: psycopg.Cursor = self._connection.cursor()
 
     def _prepare_query_execution(self, query: qal.SqlQuery | str, *, drop_explain: bool = False) -> str:
         """Handles necessary setup logic that enable an arbitrary query to be executed by the database system.
@@ -645,6 +694,9 @@ class PostgresInterface(db.Database):
         """
         if not isinstance(query, qal.SqlQuery):
             return query
+
+        if query.hints is not None and query.hints.query_hints:
+            self._assert_active_extension("pg_hint_plan")
 
         requires_geqo_deactivation = _query_contains_geqo_sensible_settings(query) and not _modifies_geqo_config(query)
         if requires_geqo_deactivation and self._current_geqo_state.triggers_geqo(query):
@@ -728,6 +780,39 @@ class PostgresInterface(db.Database):
         table = table.full_name if isinstance(table, base.TableReference) else table
         self._cursor.execute(query_template, (table, ))
         return list(self._cursor.fetchall())
+
+    def _assert_active_extension(self, extension_name: str, *, is_shared_object: bool = False) -> None:
+        """Raises an error if the current postgres database does not have the desired extension.
+
+        Extensions can be created using the *CREATE EXTENSION* command, or by loading the shared object via *LOAD*. In either
+        case, this method can check whether they are indeed active.
+
+        Parameters
+        ----------
+        extension_name : str
+            The name of the extension to be checked.
+        is_shared_object : bool, optional
+            Whether the extension is activated using *LOAD*. If this it the case, the shared objects owned by the database
+            process rather than the internal extension catalogs will be checked. The extension name will be automatically
+            suffixed with *.so* if necessary. As a special case, for checking the *pg_hint_plan* extension this parameter does
+            not need to be true. This is due to the central importance of that extension for the entire Postgres hinting
+            system and saves some typing in that case.
+
+        Raises
+        ------
+        errors.StateError
+            If the given extension is not active
+        """
+        if is_shared_object or extension_name == "pg_hint_plan":
+            shared_object_name = f"{extension_name}.so" if not extension_name.endswith(".so") else extension_name
+            loaded_shared_objects = sys_util.open_files(self._connection.info.backend_pid)
+            extension_is_active = any(so.endswith(shared_object_name) for so in loaded_shared_objects)
+        else:
+            self._cursor.execute("SELECT extname FROM pg_extension;")
+            extension_is_active = any(ext[0] == extension_name for ext in self._cursor.fetchall())
+
+        if not extension_is_active:
+            raise errors.StateError(f"Extension '{extension_name}' is not active in database '{self.database_name()}'")
 
 
 class PostgresSchemaInterface(db.DatabaseSchema):
