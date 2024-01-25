@@ -1148,11 +1148,11 @@ class CompoundPredicate(AbstractPredicate):
     def accept_visitor(self, visitor: PredicateVisitor) -> None:
         match self.operation:
             case expr.LogicalSqlCompoundOperators.Not:
-                visitor.visit_not_predicate(self.children)
+                visitor.visit_not_predicate(self, self.children)
             case expr.LogicalSqlCompoundOperators.And:
-                visitor.visit_and_predicate(self.children)
+                visitor.visit_and_predicate(self, self.children)
             case expr.LogicalSqlCompoundOperators.Or:
-                visitor.visit_or_predicate(self.children)
+                visitor.visit_or_predicate(self, self.children)
             case _:
                 raise ValueError(f"Unknown operation: '{self.operation}'")
 
@@ -1209,15 +1209,15 @@ class PredicateVisitor(abc.ABC):
         raise NotImplementedError
 
     @abc.abstractmethod
-    def visit_not_predicate(self, child_predicate: AbstractPredicate) -> None:
+    def visit_not_predicate(self, predicate: CompoundPredicate, child_predicate: AbstractPredicate) -> None:
         raise NotImplementedError
 
     @abc.abstractmethod
-    def visit_or_predicate(self, components: Sequence[AbstractPredicate]) -> None:
+    def visit_or_predicate(self, predicate: CompoundPredicate, components: Sequence[AbstractPredicate]) -> None:
         raise NotImplementedError
 
     @abc.abstractmethod
-    def visit_and_predicate(self, components: Sequence[AbstractPredicate]) -> None:
+    def visit_and_predicate(self, predicate: CompoundPredicate, components: Sequence[AbstractPredicate]) -> None:
         raise NotImplementedError
 
 
