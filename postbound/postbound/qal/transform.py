@@ -285,6 +285,25 @@ def _default_subquery_name(tables: Iterable[base.TableReference]) -> str:
     return "_".join(table.identifier() for table in tables)
 
 
+def expand_to_query(predicate: preds.AbstractPredicate) -> qal.ImplicitSqlQuery:
+    """Provides a ``SELECT *`` query that computes the result set of a specific predicate.
+
+    Parameters
+    ----------
+    predicate : preds.AbstractPredicate
+        The predicate to expand
+
+    Returns
+    -------
+    qal.ImplicitSqlQuery
+        An SQL query of the form ``SELECT * FROM <predicate tables> WHERE <predicate>``.
+    """
+    select_clause = clauses.Select.star()
+    from_clause = clauses.ImplicitFromClause(predicate.tables())
+    where_clause = clauses.Where(predicate)
+    return qal.build_query([select_clause, from_clause, where_clause])
+
+
 def move_into_subquery(query: qal.SqlQuery, tables: Iterable[base.TableReference], subquery_name: str = "") -> qal.SqlQuery:
     """Transforms a specific query by moving some of its tables into a subquery.
 

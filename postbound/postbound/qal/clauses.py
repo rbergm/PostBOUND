@@ -1233,10 +1233,10 @@ class From(BaseClause):
     def itercolumns(self) -> Iterable[base.ColumnReference]:
         return collection_utils.flatten(src.itercolumns() for src in self._items)
 
-    def predicates(self) -> preds.QueryPredicates | None:
+    def predicates(self) -> preds.QueryPredicates:
         source_predicates = [src.predicates() for src in self._items]
         if not any(source_predicates):
-            return None
+            return preds.QueryPredicates.empty_predicate()
         actual_predicates = [src_pred.root for src_pred in source_predicates if src_pred]
         merged_predicate = preds.CompoundPredicate.create_and(actual_predicates)
         return preds.QueryPredicates(merged_predicate)

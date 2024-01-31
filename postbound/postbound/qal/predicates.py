@@ -1133,6 +1133,19 @@ class CompoundPredicate(AbstractPredicate):
     def columns(self) -> set[base.ColumnReference]:
         return collection_utils.set_union(child.columns() for child in self._children)
 
+    def iterchildren(self) -> Sequence[AbstractPredicate]:
+        """Provides all children contained in this predicate.
+
+        In contrast to the `children` property, this method always returns an iterable, even for *NOT* predicates. In the
+        latter case the iterable contains just a single item.
+
+        Returns
+        -------
+        Sequence[AbstractPredicate]
+            The children
+        """
+        return self._children
+
     def itercolumns(self) -> Iterable[base.ColumnReference]:
         return collection_utils.flatten(child.itercolumns() for child in self._children)
 
