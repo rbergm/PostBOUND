@@ -1218,9 +1218,34 @@ def bind_columns(query: QueryType, *, with_schema: bool = True,
     QueryType
         The updated query. Notice that some columns might still remain unbound if none of the phases was able to find a table.
     """
+    if not query.from_clause:
+        return query
 
-    table_alias_map: dict[str, base.TableReference] = {table.identifier(): table for table in query.tables()
-                                                       if table.full_name or table.virtual}
+    table_alias_map: dict[str, base.TableReference] = {}
+    unbound_tables: set[base.TableReference] = set()
+    pure_virtual_tables: set[base.TableReference] = set()
+    if query.cte_clause:
+        for cte in query.cte_clause.queries:
+            pure_virtual_tables.add(cte.target_table)
+    for table_source in query.from_clause.items:
+        if isinstance(table_source, clauses.SubqueryTableSource):
+            pure_virtual_tables.add(table_source.target_table)
+
+    for table in query.tables():
+        if table in pure_virtual_tables:
+            table_alias_map[table.alias] = table
+
+        if table.full_name and table.alias:
+            table_alias_map[table.full_name] = table
+            table_alias_map[table.alias] = table
+        elif table.full_name:
+            table_alias_map[table.full_name] = table
+        else:
+            unbound_tables.add(table)
+    for table in unbound_tables:
+        if table.alias not in table_alias_map:
+            table_alias_map[table.alias] = table
+
     unbound_columns: list[base.ColumnReference] = []
     necessary_renamings: dict[base.ColumnReference, base.ColumnReference] = {}
     for column in query.columns():

@@ -340,6 +340,26 @@ class TransformationTests(unittest.TestCase):
             parsed = parser.parse_query(query)
             self.assertSetEqual(parsed.columns(), all_cols)
 
+    def test_end_to_end_binding(self) -> None:
+        query = """
+            WITH cte_a AS (SELECT R.r_a FROM R WHERE R.r_a < 42),
+                cte_b AS (SELECT SUM(S.s_b) FROM S GROUP BY S.s_a)
+            SELECT AVG(A.a_y * B.b_y)
+            FROM A, B, cte_a, (SELECT M.m_a + N.n_a AS total FROM M, N WHERE M.m_b = N.n_b) AS sq_m_n
+            WHERE A.a_x <> 100
+                AND A.a_b = B.b_b
+                AND B.b_a = cte_a.r_a
+                AND A.a_t = sq_m_n.total
+            GROUP BY A.a_z
+            """
+        parsed = parser.parse_query(query)
+        expected_tables = {base.TableReference("R"), base.TableReference("S"),  # WITH clauses
+                           base.TableReference("A"), base.TableReference("B"),  # FROM clauses
+                           base.TableReference("M"), base.TableReference("N"),  # subquery tables
+                           base.TableReference.create_virtual("cte_a"), base.TableReference.create_virtual("cte_b"),
+                           base.TableReference.create_virtual("sq_m_n")}
+        self.assertEqual(parsed.tables(), expected_tables)
+
 
 class ParserTests(regression_suite.QueryTestCase):
 
