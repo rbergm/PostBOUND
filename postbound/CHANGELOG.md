@@ -42,6 +42,7 @@ Be carefull when updating and check the changelog!
 - Retrieval of existing Postgres instances from the database pool now works as expected
 - Postgres query plans for queries without table aliases will no longer duplicate the table name as an alias
 - Virtual tables (subquery aliases or `WITH`` clauses) are now bound correctly in their column references
+- Retrieval of tables from subqueries now works as expected when calling `SqlQuery.tables()`
 
 ---
 

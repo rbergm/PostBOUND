@@ -50,7 +50,7 @@ class BaseClause(abc.ABC):
         set[base.TableReference]
             All tables. This includes virtual tables if such tables are present in the clause
         """
-        return {column.table for column in self.columns() if column.is_bound()}
+        return collection_utils.set_union(expression.tables() for expression in self.iterexpressions())
 
     @abc.abstractmethod
     def columns(self) -> set[base.ColumnReference]:

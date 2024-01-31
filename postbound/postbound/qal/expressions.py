@@ -15,6 +15,7 @@ from collections.abc import Iterable, Sequence
 from typing import Union, Optional
 
 from postbound.qal import base, qal
+from postbound.qal.base import TableReference
 from postbound.util import collections as collection_utils
 
 T = typing.TypeVar("T")
@@ -103,6 +104,7 @@ class SqlExpression(abc.ABC):
     def __init__(self, hash_val: int):
         self._hash_val = hash_val
 
+    @abc.abstractmethod
     def tables(self) -> set[base.TableReference]:
         """Provides all tables that are accessed by this expression.
 
@@ -111,7 +113,7 @@ class SqlExpression(abc.ABC):
         set[base.TableReference]
             All tables. This includes virtual tables if such tables are present in the expression.
         """
-        return {column.table for column in self.columns() if column.is_bound()}
+        raise NotImplementedError
 
     @abc.abstractmethod
     def columns(self) -> set[base.ColumnReference]:
@@ -210,6 +212,9 @@ class StaticValueExpression(SqlExpression, typing.Generic[T]):
         """
         return self._value
 
+    def tables(self) -> set[TableReference]:
+        return set()
+
     def columns(self) -> set[base.ColumnReference]:
         return set()
 
@@ -280,6 +285,9 @@ class CastExpression(SqlExpression):
             The desired type. This is never empty.
         """
         return self._target_type
+
+    def tables(self) -> set[TableReference]:
+        return self._casted_expression.tables()
 
     def columns(self) -> set[base.ColumnReference]:
         return self.casted_expression.columns()
@@ -383,6 +391,14 @@ class MathematicalExpression(SqlExpression):
         """
         return self._second_arg
 
+    def tables(self) -> set[TableReference]:
+        all_tables = set(self.first_arg.tables())
+        if isinstance(self.second_arg, list):
+            all_tables |= collection_utils.set_union(expr.tables() for expr in self.second_arg)
+        elif isinstance(self.second_arg, SqlExpression):
+            all_tables |= self.second_arg.tables()
+        return all_tables
+
     def columns(self) -> set[base.ColumnReference]:
         all_columns = set(self.first_arg.columns())
         if isinstance(self.second_arg, list):
@@ -452,6 +468,11 @@ class ColumnExpression(SqlExpression):
             The column
         """
         return self._column
+
+    def tables(self) -> set[TableReference]:
+        if not self.column.is_bound():
+            return set()
+        return {self.column.table}
 
     def columns(self) -> set[base.ColumnReference]:
         return {self.column}
@@ -569,6 +590,9 @@ class FunctionExpression(SqlExpression):
         """
         return self._function.upper() in AggregateFunctions
 
+    def tables(self) -> set[TableReference]:
+        return collection_utils.set_union(arg.tables() for arg in self.arguments)
+
     def columns(self) -> set[base.ColumnReference]:
         all_columns = set()
         for arg in self.arguments:
@@ -635,6 +659,9 @@ class SubqueryExpression(SqlExpression):
         """
         return self._query
 
+    def tables(self) -> set[base.TableReference]:
+        return self._query.tables()
+
     def columns(self) -> set[base.ColumnReference]:
         return self._query.columns()
 
@@ -643,9 +670,6 @@ class SubqueryExpression(SqlExpression):
 
     def iterchildren(self) -> Iterable[SqlExpression]:
         return []
-
-    def tables(self) -> set[base.TableReference]:
-        return self._query.tables()
 
     def accept_visitor(self, visitor: SqlExpressionVisitor) -> None:
         visitor.visit_subquery_expr(self)
@@ -665,6 +689,9 @@ class StarExpression(SqlExpression):
 
     def __init__(self) -> None:
         super().__init__(hash("*"))
+
+    def tables(self) -> set[TableReference]:
+        return set()
 
     def columns(self) -> set[base.ColumnReference]:
         return set()
