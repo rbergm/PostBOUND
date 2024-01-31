@@ -12,7 +12,7 @@ from __future__ import annotations
 import dataclasses
 import random
 import typing
-from collections.abc import Sequence
+from collections.abc import Collection, Sequence
 from typing import Callable, Generator, Iterator, Optional
 
 import networkx as nx
@@ -21,6 +21,42 @@ from postbound.util import collections as collection_utils
 
 NodeType = typing.TypeVar("NodeType")
 """Generic type to model the specific nodes contained in a NetworkX graph."""
+
+
+def nx_sinks(graph: nx.DiGraph) -> Collection[NodeType]:
+    """Determines all sink nodes in a directed graph.
+
+    A sink is a node with no outgoing edges.
+
+    Parameters
+    ----------
+    graph : nx.DiGraph
+        The graph to check
+
+    Returns
+    -------
+    Collection[NodeType]
+        All sink nodes. Can be an empty collection.
+    """
+    return [n for n in graph.nodes if graph.out_degree(n) == 0]
+
+
+def nx_sources(graph: nx.DiGraph) -> Collection[NodeType]:
+    """Determines all source nodes in a directed graph.
+
+    A source is a node with no incoming edges.
+
+    Parameters
+    ----------
+    graph : nx.DiGraph
+        The graph to check
+
+    Returns
+    -------
+    Collection[NodeType]
+        All source nodes. Can be an empty collection.
+    """
+    return [n for n in graph.nodes if graph.in_degree(n) == 0]
 
 
 def nx_random_walk(graph: nx.Graph) -> Generator[NodeType, None, None]:

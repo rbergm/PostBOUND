@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import itertools
 import typing
-from collections.abc import Collection, Container, Generator, Iterator, Iterable, Sequence, Sized
+from collections.abc import Callable, Collection, Container, Generator, Iterator, Iterable, Sequence, Sized
 from typing import Any, Optional
 
 from postbound.util import dicts as dict_utils
@@ -113,6 +113,20 @@ def simplify(obj: Collection[T] | T) -> T | Collection[T]:
     if len(obj) == 1:
         return list(obj)[0]
     return obj
+
+
+def foreach(lst: Iterable[T], action: Callable[[T], None]) -> None:
+    """Shortcut to apply a specific action to each element in an iterable.
+
+    Parameters
+    ----------
+    lst : Iterable[T]
+        The elements.
+    action : Callable[[T], None]
+        The side-effect that should be applied to all elements.
+    """
+    for elem in lst:
+        action(elem)
 
 
 def powerset(lst: Collection[T]) -> Iterable[tuple[T, ...]]:

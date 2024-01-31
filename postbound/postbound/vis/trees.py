@@ -77,6 +77,7 @@ def plot_tree(node: T, label_generator: Callable[[T], tuple[str, dict]], child_s
     initial = _graph is None
     _graph = gv.Graph() if initial else _graph
     label, params = label_generator(node)
+    label = gv.escape(label)
     node_key = _gv_escape(node)
     _graph.node(node_key, label=label, **params)
 
