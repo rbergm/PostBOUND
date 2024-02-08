@@ -9,9 +9,10 @@ import graphviz as gv
 import networkx as nx
 
 from postbound.db import db
-from postbound.qal import qal, base, transform
+from postbound.qal import qal, base, transform, relalg
 from postbound.optimizer import joingraph, jointree
 from postbound.vis import trees as tree_viz
+from postbound.util import collections as collection_utils
 
 
 def _join_tree_labels(node: jointree.AbstractJoinTreeNode) -> tuple[str, dict]:
@@ -166,3 +167,74 @@ def setup_annotations(*annotations: Literal["estimated-cards", "filter-cards", "
     if not annotators:
         raise ValueError("No annotator given")
     return merged_annotation(*annotators) if len(annotators) > 1 else annotators[0]
+
+
+def _escape_label(text: str) -> str:
+    return text.replace("<", "&lt;").replace(">", "&gt;")
+
+
+def _make_sub(text: str) -> str:
+    return f"<sub><font point-size='10.0'>{_escape_label(text)}</font></sub>"
+
+
+def _make_label(text: str) -> str:
+    return f"<b>{text}</b>"
+
+
+def _relalg_node_labels(node: relalg.RelNode) -> tuple[str, dict]:
+    match node:
+        case relalg.Projection():
+            projection_targets = ", ".join(str(t) for t in node.columns)
+            node_str = f"{_make_label('π')} {_make_sub(projection_targets)}"
+        case relalg.Selection():
+            predicate = str(node.predicate)
+            node_str = f"{_make_label('σ')} {_make_sub(predicate)}"
+        case relalg.ThetaJoin():
+            predicate = str(node.predicate)
+            node_str = f"{_make_label('⋈')} {_make_sub(predicate)}"
+        case relalg.GroupBy():
+            columns_str = ", ".join(str(c) for c in node.group_columns)
+            aggregates: list[str] = []
+            for group_columns, agg_func in node.aggregates.items():
+                if len(group_columns) == 1:
+                    group_str = str(collection_utils.simplify(group_columns))
+                else:
+                    group_str = "(" + ", ".join(str(c) for c in group_columns) + ")"
+
+                if len(agg_func) == 1:
+                    func_str = str(collection_utils.simplify(agg_func))
+                else:
+                    func_str = "(" + ", ".join(str(agg) for agg in agg_func) + ")"
+                aggregates.append(f"{group_str}: {func_str}")
+            agg_str = ", ".join(agg for agg in aggregates)
+            prefix = f"{_make_sub(columns_str)}  " if columns_str else ""
+            suffix = f" {_make_sub(agg_str)}" if agg_str else ""
+            node_str = "".join([prefix, _make_label("γ"), suffix])
+        case relalg.Map():
+            pretty_mapping: dict[str, str] = {}
+            for target_col, expression in node.mapping.items():
+                if len(target_col) == 1:
+                    target_col = collection_utils.simplify(target_col)
+                    target_str = str(target_col)
+                else:
+                    target_str = "(" + ", ".join(str(t) for t in target_col) + ")"
+                if len(expression) == 1:
+                    expression = collection_utils.simplify(expression)
+                    expr_str = str(expression)
+                else:
+                    expr_str = "(" + ", ".join(str(e) for e in expression) + ")"
+                pretty_mapping[target_str] = expr_str
+            mapping_str = ", ".join(f"{target_col}: {expr}" for target_col, expr in pretty_mapping.items())
+            node_str = f"{_make_label('χ')} {_make_sub(mapping_str)}"
+        case _:
+            node_str = _escape_label(str(node))
+    return f"<{node_str}>", {}
+
+
+def _relalg_child_traversal(node: relalg.RelNode) -> Sequence[relalg.RelNode]:
+    return node.children()
+
+
+def plot_relalg(relnode: relalg.RelNode, **kwargs) -> gv.Graph:
+    return tree_viz.plot_tree(relnode, _relalg_node_labels, _relalg_child_traversal,
+                              escape_labels=False, strict=True, **kwargs)
