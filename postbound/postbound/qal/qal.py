@@ -22,6 +22,8 @@ import typing
 from collections.abc import Collection, Iterable, Sequence
 from typing import Optional
 
+import networkx as nx
+
 from postbound.qal import base, clauses, expressions as expr, predicates as preds
 from postbound.util import collections as collection_utils
 
@@ -630,7 +632,22 @@ class SqlQuery:
         if not len(self.select_clause.targets) == 1 or self.select_clause.projection_type != clauses.SelectType.Select:
             return False
         target: expr.SqlExpression = collection_utils.simplify(self.select_clause.targets).expression
-        return isinstance(target, expr.FunctionExpression) and target.is_aggregate()
+        return isinstance(target, expr.FunctionExpression) and target.is_aggregate() and not self._groupby_clause
+
+    def contains_cross_product(self) -> bool:
+        """Checks, whether this query has at least one cross product.
+
+        Returns
+        -------
+        bool
+            Whether this query has cross products.
+        """
+        if not self._from_clause:
+            return False
+        if self.predicates().empty_predicate():
+            return True
+        join_graph = self.predicates().join_graph()
+        return len(nx.connected_components(join_graph)) > 1
 
     def iterexpressions(self) -> Iterable[expr.SqlExpression]:
         """Provides access to all expressions that are directly contained in this query.

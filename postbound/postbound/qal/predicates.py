@@ -589,6 +589,11 @@ class BinaryPredicate(BasePredicate):
         The second comparison value
     """
 
+    @staticmethod
+    def equal(first_argument: expr.SqlExpression, second_argument: expr.SqlExpression) -> BinaryPredicate:
+        """Generates an equality predicate between two arguments."""
+        return BinaryPredicate(expr.LogicalSqlOperators.Equal, first_argument, second_argument)
+
     def __init__(self, operation: expr.SqlOperator, first_argument: expr.SqlExpression,
                  second_argument: expr.SqlExpression) -> None:
         if not first_argument or not second_argument:
@@ -1015,6 +1020,47 @@ class CompoundPredicate(AbstractPredicate):
     ValueError
         If `operation` is a conjunction or a disjunction and less than 2 children are passed
     """
+
+    @staticmethod
+    def create(operation: expr.LogicalSqlCompoundOperators, parts: Collection[AbstractPredicate]) -> AbstractPredicate:
+        """Creates an arbitrary compound predicate for a number of child predicates.
+
+        If just a single child predicate is provided, but the operation requires multiple children, that child is returned
+        directly instead of the compound predicate.
+
+        Parameters
+        ----------
+        operation : expr.LogicalSqlCompoundOperators
+            The logical operator to combine the child predicates.
+        parts : Collection[AbstractPredicate]
+            The child predicates
+
+        Returns
+        -------
+        AbstractPredicate
+            A composite predicate of the given `parts`, if parts contains the appropriate number of items. Otherwise the
+            supplied child predicate.
+
+        Raises
+        ------
+        ValueError
+            If a negation predicate should be created but a number child predicates unequal to one are supplied. Likewise, if
+            a conjunction or disjunction is requested, but no child predicates are supplied.
+        """
+        if operation == expr.LogicalSqlCompoundOperators.Not and len(parts) != 1:
+            raise ValueError(f"Can only create negations for exactly one predicate but received: '{parts}'")
+        elif operation != expr.LogicalSqlCompoundOperators.Not and not parts:
+            raise ValueError("Conjunctions/disjunctions require at least one predicate")
+
+        match operation:
+            case expr.LogicalSqlCompoundOperators.Not:
+                return CompoundPredicate.create_not(parts[0])
+            case expr.LogicalSqlCompoundOperators.And | expr.LogicalSqlCompoundOperators.Or:
+                if len(parts) == 1:
+                    return parts[0]
+                return CompoundPredicate(operation, parts)
+            case _:
+                raise ValueError(f"Unknown operator: '{operation}'")
 
     @staticmethod
     def create_and(parts: Collection[AbstractPredicate]) -> AbstractPredicate:
