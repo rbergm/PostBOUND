@@ -19,6 +19,7 @@ Be carefull when updating and check the changelog!
 ### Fixes
 
 - Fixed parsing of `SELECT *` queries for newer versions of _mo\_sql\_parsing_
+- Fixed missing visitor implementation for simplified filter views
 
 
 ## Version 0.2.0

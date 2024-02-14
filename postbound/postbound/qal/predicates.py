@@ -1669,6 +1669,9 @@ class SimplifiedFilterView(AbstractPredicate):
     def base_predicates(self) -> Iterable[AbstractPredicate]:
         return [self]
 
+    def accept_visitor(self, visitor: PredicateVisitor[VisitorResult]) -> VisitorResult:
+        return self._predicate.accept_visitor(visitor)
+
     __hash__ = AbstractPredicate.__hash__
 
     def __eq__(self, other: object) -> bool:
