@@ -14,6 +14,13 @@ Be carefull when updating and check the changelog!
 
 ---
 
+## Version 0.2.1
+
+### Fixes
+
+- Fixed parsing of `SELECT *` queries for newer versions of _mo\_sql\_parsing_
+
+
 ## Version 0.2.0
 
 This is pretty much a new major version, but we are not ready for 1.0 yet and do not want to convey too much stability.

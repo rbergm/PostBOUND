@@ -400,11 +400,13 @@ def _parse_select_statement(mosp_data: dict | str) -> clauses.BaseProjection:
     clauses.BaseProjection
         The parsed projection.
     """
-    if isinstance(mosp_data, dict):
+    if isinstance(mosp_data, dict) and "value" in mosp_data:
         # TODO: Why do we need to copy here? Leaving this in in case of legacy reasons or weird interactions.
         select_target = copy.copy(mosp_data["value"])
         target_name = mosp_data.get("name", None)
         return clauses.BaseProjection(_parse_mosp_expression(select_target), target_name)
+    elif isinstance(mosp_data, dict) and "all_columns" in mosp_data:
+        return clauses.BaseProjection.star()
     if mosp_data == "*":
         return clauses.BaseProjection.star()
     target_column = _parse_column_reference(mosp_data)
