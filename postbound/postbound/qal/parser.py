@@ -632,35 +632,42 @@ def _parse_explicit_from_clause(mosp_data: dict, *,
         raise ValueError("Unknown FROM clause format: " + str(from_clause))
     first_table, *joined_tables = from_clause
     initial_table = _parse_table_reference(first_table, cte_tables=cte_tables)
-    parsed_joins = []
-    for joined_table in joined_tables:
-        join_condition = _parse_mosp_predicate(joined_table["on"]) if "on" in joined_table else None
-        join_type = next(jt for jt in _MospJoinTypes.keys() if jt in joined_table)
-        parsed_join_type = _MospJoinTypes[join_type]
-        join_source = joined_table[join_type]
-
-        # TODO: enable USING support in addition to ON
-
-        if (isinstance(join_source, dict)
-                and ("select" in join_source["value"] or "select_distinct" in join_source["value"])):
-            # we found a subquery
-            joined_subquery = _MospQueryParser(join_source["value"], mosp.format(join_source)).parse_query()
-            join_alias = joined_table.get("name", None)
-            parsed_joins.append(clauses.JoinTableSource(clauses.SubqueryTableSource(joined_subquery, join_alias),
-                                                        join_condition, join_type=parsed_join_type))
-        elif isinstance(join_source, dict):
-            # we found a normal table join with an alias
-            table = _parse_table_reference(join_source, cte_tables=cte_tables)
-            parsed_joins.append(clauses.JoinTableSource(clauses.DirectTableSource(table), join_condition,
-                                                        join_type=parsed_join_type))
-        elif isinstance(join_source, str):
-            # we found a normal table join without an alias
-            table = _parse_table_reference(join_source, cte_tables=cte_tables)
-            parsed_joins.append(clauses.JoinTableSource(clauses.DirectTableSource(table), join_condition,
-                                                        join_type=parsed_join_type))
-        else:
-            raise ValueError("Unknown JOIN format: " + str(joined_table))
+    parsed_joins = [_parse_explicit_join(joined_table, cte_tables=cte_tables) for joined_table in joined_tables]
     return clauses.ExplicitFromClause(clauses.DirectTableSource(initial_table), parsed_joins)
+
+
+def _parse_explicit_join(joined_table: dict, *,
+                         cte_tables: Optional[dict[str, base.TableReference]] = None) -> clauses.JoinTableSource:
+    join_condition = _parse_mosp_predicate(joined_table["on"]) if "on" in joined_table else None
+    join_type = next(jt for jt in _MospJoinTypes.keys() if jt in joined_table)
+    parsed_join_type = _MospJoinTypes[join_type]
+    join_source = joined_table[join_type]
+
+    # TODO: enable USING support in addition to ON
+
+    if (isinstance(join_source, dict)
+            and ("select" in join_source["value"] or "select_distinct" in join_source["value"])):
+        # we found a subquery
+        joined_subquery = _MospQueryParser(join_source["value"], mosp.format(join_source)).parse_query()
+        join_alias = joined_table.get("name", None)
+        return clauses.JoinTableSource(clauses.SubqueryTableSource(joined_subquery, join_alias), join_condition,
+                                       join_type=parsed_join_type)
+    elif isinstance(join_source, dict):
+        # we found a normal table join with an alias
+        parsed_table = _parse_table_reference(join_source, cte_tables=cte_tables)
+        return clauses.JoinTableSource(clauses.DirectTableSource(parsed_table), join_condition, join_type=parsed_join_type)
+    elif isinstance(join_source, str):
+        # we found a normal table join without an alias
+        parsed_table = _parse_table_reference(join_source, cte_tables=cte_tables)
+        return clauses.JoinTableSource(clauses.DirectTableSource(parsed_table), join_condition, join_type=parsed_join_type)
+    elif isinstance(join_source, list):
+        # we found an join with a nested JOIN statement
+        base_table, *nested_joins = join_source
+        parsed_table = clauses.DirectTableSource(_parse_table_reference(base_table, cte_tables=cte_tables))
+        nested_tables = [_parse_explicit_join(nested_join, cte_tables=cte_tables) for nested_join in nested_joins]
+        return clauses.JoinTableSource(parsed_table, join_condition, joined_tables=nested_tables, join_type=parsed_join_type)
+    else:
+        raise ValueError("Unknown JOIN format: " + str(joined_table))
 
 
 def _parse_base_table_source(mosp_data: dict | str, *,

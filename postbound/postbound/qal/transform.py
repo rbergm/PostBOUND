@@ -746,8 +746,11 @@ def _replace_expression_in_table_source(table_source: Optional[clauses.TableSour
         return clauses.SubqueryTableSource(replaced_subquery, table_source.target_name)
     elif isinstance(table_source, clauses.JoinTableSource):
         replaced_source = _replace_expression_in_table_source(table_source.source, replacement)
+        replaced_nested_sources = [_replace_expression_in_table_source(nested_join, replacement)
+                                   for nested_join in table_source.joined_tables]
         replaced_condition = _replace_expression_in_predicate(table_source.join_condition, replacement)
-        return clauses.JoinTableSource(replaced_source, replaced_condition, join_type=table_source.join_type)
+        return clauses.JoinTableSource(replaced_source, replaced_condition,
+                                       joined_tables=replaced_nested_sources, join_type=table_source.join_type)
     else:
         raise TypeError("Unknown table source type: " + str(table_source))
 
@@ -1107,8 +1110,11 @@ def _rename_columns_in_table_source(table_source: clauses.TableSource,
         return clauses.SubqueryTableSource(renamed_subquery, table_source.target_name)
     elif isinstance(table_source, clauses.JoinTableSource):
         renamed_source = _rename_columns_in_table_source(table_source.source, available_renamings)
+        renamed_nested_joins = [_rename_columns_in_table_source(nested_join, available_renamings)
+                                for nested_join in table_source.joined_tables]
         renamed_condition = rename_columns_in_predicate(table_source.join_condition, available_renamings)
-        return clauses.JoinTableSource(renamed_source, renamed_condition, join_type=table_source.join_type)
+        return clauses.JoinTableSource(renamed_source, renamed_condition,
+                                       joined_tables=renamed_nested_joins, join_type=table_source.join_type)
     else:
         raise TypeError("Unknown table source type: " + str(table_source))
 
