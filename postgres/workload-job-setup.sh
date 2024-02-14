@@ -5,14 +5,16 @@ DB_NAME="imdb"
 FORCE_CREATION="false"
 IMDB_DIR="../imdb_data"
 SKIP_FKEYS="false"
+SKIP_EXTENSIONS="false"
 
 show_help() {
     echo "Usage: $0 <options>"
     echo "Allowed options:"
-    echo "-d | --dir <directory> specifies the directory to store/load the IMDB data files, defaults to '../imdb_data'"
-    echo "-f | --force delete existing instance of the database if necessary"
-    echo "-t | --target <db name> name of the IMDB database, defaults to 'imdb'"
-    echo "--no-fkeys does not load foreign key indexes to the database (includes both foreign key constraints as well as the actual indexes)"
+    echo -e "-d | --dir\t<directory> specifies the directory to store/load the IMDB data files, defaults to '../imdb_data'"
+    echo -e "-f | --force\tdelete existing instance of the database if necessary"
+    echo -e "-t | --target\t<db name> name of the IMDB database, defaults to 'imdb'"
+    echo -e "--no-fkeys\tdoes not load foreign key indexes to the database (includes both foreign key constraints as well as the actual indexes)"
+    echo -e "--no-ext\tdoes not install any extensions"
     exit 1
 }
 
@@ -34,6 +36,10 @@ while [ $# -gt 0 ] ; do
             ;;
         --no-fkeys)
             SKIP_FKEYS="true"
+            shift
+            ;;
+        --no-ext)
+            SKIP_EXTENSIONS="true"
             shift
             ;;
         *)
@@ -73,9 +79,15 @@ fi
 
 echo ".. Creating IMDB database"
 createdb $DB_NAME
-psql $DB_NAME -c "CREATE EXTENSION pg_buffercache;"
-psql $DB_NAME -c "CREATE EXTENSION pg_prewarm;"
-psql $DB_NAME -c "CREATE EXTENSION pg_hint_plan;"
+
+if [ $SKIP_EXTENSIONS == "false" ] ; then
+    psql $DB_NAME -c "CREATE EXTENSION pg_buffercache;"
+    psql $DB_NAME -c "CREATE EXTENSION pg_prewarm;"
+    psql $DB_NAME -c "CREATE EXTENSION pg_cooldown;"
+    psql $DB_NAME -c "CREATE EXTENSION pg_hint_plan;"
+else
+    echo ".. Skipping extension generation"
+fi
 
 echo ".. Loading IMDB database schema"
 psql $DB_NAME -f $IMDB_DIR/create.sql
