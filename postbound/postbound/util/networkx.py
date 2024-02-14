@@ -12,8 +12,8 @@ from __future__ import annotations
 import dataclasses
 import random
 import typing
-from collections.abc import Collection, Sequence
-from typing import Callable, Generator, Iterator, Optional
+from collections.abc import Callable, Collection, Generator, Iterable, Iterator, Sequence
+from typing import Optional
 
 import networkx as nx
 
@@ -57,6 +57,14 @@ def nx_sources(graph: nx.DiGraph) -> Collection[NodeType]:
         All source nodes. Can be an empty collection.
     """
     return [n for n in graph.nodes if graph.in_degree(n) == 0]
+
+
+def nx_filter_nodes(graph: nx.Graph, predicate: Callable[[NodeType, dict], bool]) -> Collection[tuple[NodeType, dict]]:
+    return [(n, d) for n, d in graph.nodes.data() if predicate(n, d)]
+
+
+def nx_merge_nodes(graph: nx.Graph, nodes: Iterable[NodeType], *, target_node: NodeType) -> nx.Graph:
+    pass
 
 
 def nx_random_walk(graph: nx.Graph) -> Generator[NodeType, None, None]:

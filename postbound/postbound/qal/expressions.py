@@ -160,7 +160,7 @@ class SqlExpression(abc.ABC):
 
         Parameters
         ----------
-        visitor : SqlExpressionVisitor
+        visitor : SqlExpressionVisitor[VisitorResult]
             The visitor
         """
         raise NotImplementedError

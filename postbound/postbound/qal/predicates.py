@@ -488,7 +488,7 @@ class AbstractPredicate(abc.ABC):
 
         Parameters
         ----------
-        visitor : PredicateVisitor
+        visitor : PredicateVisitor[VisitorResult]
             The visitor
         """
         raise NotImplementedError

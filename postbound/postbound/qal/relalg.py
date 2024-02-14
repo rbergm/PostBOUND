@@ -1,4 +1,34 @@
 
+"""relalg provides fundamental building blocks of relational algebra and a converter from SQL to algebra.
+
+The central component of our algebra implementation is the `RelNode` class. All relational operators inherit from this abstract
+class. Following the design of the expression and predicate models, all algebraic trees are immutable data structures. Once a
+tree has been generated, it can no longer be modified.
+
+One important aspect of our relational algebra design is how to model arbitrary expressions and projections, mappings, etc. on
+these expressions. Some systems introduce temporary variables for mapping targets, e.g. ``arg0 <- R.a + 42`` and then base all
+further accesses on these temporary variables. In this school of thought, an algebra tree for the query
+``SELECT R.a + 42 FROM R`` would like this:
+
+.. math:: \\pi_{arg_0}(\\chi_{arg_0 \\leftarrow R.a + 42}(R))
+
+This representation is especially usefull for a code-generation or physical optimization scenario because it enables a
+straightforward creation of additional (temporary) columns. At the same time, it makes the translation of SQL queries to
+relational algebra more challenging, since re-writes have to be applied during parsing. Since we are not concerned with
+code-generation in our algebra representation and focus more on structural properties, we take a different approach: all
+expressions (as defined in the `expressions` module) are contained as-is in the operators. However, we make sure that necessary
+pre-processing actions are included as required. For example, if a complex expression is included in a predicate or a
+projection, we generate the appropriate mapping operation beforehand and use it as an input for the consuming operator.
+
+In addition to the conventional operators of relational algebra, we introduce a couple of additional operators that either
+mimic features from SQL, or that make working with the algebra much easier from a technical point-of-view. The first category
+includes operators such as `Sort` or `DuplicateElimination` and `Limit`, whereas the second category includes the
+`SubqueryScan`.
+
+Notice that while most algebraic expressions correspond to tree structures, there might be cases where a directed, acyclic
+graph is generated. This is especially the case when a base relation is used as part of subqueries. Nevertheless, there will
+always be only one root (sink) node.
+"""
 from __future__ import annotations
 
 import abc
@@ -16,25 +46,76 @@ from postbound.qal.base import TableReference
 from postbound.qal.expressions import SqlExpression
 from postbound.util import collections as collection_utils, dicts as dict_utils
 
+# FIXME: the legacy parent_node in RelNode instances breaks the immutability assumption!
+
 
 class RelNode(abc.ABC):
+    """Models a fundamental operator in relation algebra. All specific operators like selection or theta join inherit from it.
+
+    Parameters
+    ----------
+    parent_node : Optional[RelNode]
+        The parent node of the operator, if one exists. The parent is the operator that receives the output relation of the
+        current operator. If the current operator is the root and (currently) does not have a parent, *None* can be used.
+
+    See Also
+    --------
+    parse_relalg
+    """
     def __init__(self, parent_node: Optional[RelNode]) -> None:
         self._parent = parent_node
         self._node_type = type(self).__name__
 
     @property
     def node_type(self) -> str:
+        """Get the current operator as a string.
+
+        Returns
+        -------
+        str
+            The operator name
+        """
         return self._node_type
 
     @property
     def parent_node(self) -> Optional[RelNode]:
+        """Get the parent node of the current operator, if it exists.
+
+        Returns
+        -------
+        Optional[RelNode]
+            The parent is the operator that receives the output relation of the current operator. If the current operator is
+            the root and (currently) does not have a parent, *None* is returned.
+        """
         return self._parent
 
     @abc.abstractmethod
     def children(self) -> Sequence[RelNode]:
+        """Provides all input nodes of the current operator.
+
+        Returns
+        -------
+        Sequence[RelNode]
+            The input nodes. For leave nodes such as table scans, the sequence will be usually empty (except for subquery
+            aliases), otherwise the children are provided from left to right.
+        """
         raise NotImplementedError
 
     def tables(self, *, ignore_subqueries: bool = False) -> frozenset[base.TableReference]:
+        """Provides all relations that are contained in the current node.
+
+        Consider the following algebraic expression: *π(⋈(σ(R), S))*. This expression contains two relations: *R* and *S*.
+
+        Parameters
+        ----------
+        ignore_subqueries : bool, optional
+            Whether relations that are only referenced in subquery subtrees should be excluded. Off by default.
+
+        Returns
+        -------
+        frozenset[base.TableReference]
+            The tables
+        """
         return frozenset(collection_utils.set_union(child.tables(ignore_subqueries=ignore_subqueries)
                                                     for child in self.children()))
 
@@ -47,33 +128,48 @@ class RelNode(abc.ABC):
         Returns
         -------
         frozenset[expressions.SqlExpression]
-            _description_
+            The expressions
         """
         return collection_utils.set_union(child.provided_expressions() for child in self.children())
 
-    def required_expressions(self) -> frozenset[expr.SqlExpression]:
-        """Collects all expressions that are not computed by the current node and therefore must be provided by its children.
+    @abc.abstractmethod
+    def accept_visitor(self, visitor: RelNodeVisitor[VisitorResult]) -> VisitorResult:
+        """Enables processing of the current algebraic expression by an expression visitor.
+
+        Parameters
+        ----------
+        visitor : RelNodeVisitor[VisitorResult]
+            The visitor
+        """
+        raise NotImplementedError
+
+    def inspect(self, *, _indentation: int = 0) -> str:
+        """Provides a nice hierarchical string representation of the algebraic expression.
+
+        The representation typically spans multiple lines and uses indentation to separate parent nodes from their
+        children.
+
+        Parameters
+        ----------
+        indentation : int, optional
+            Internal parameter to the `inspect` function. Should not be modified by the user. Denotes how deeply
+            recursed we are in the plan tree. This enables the correct calculation of the current indentation level.
+            Defaults to 0 for the root node.
 
         Returns
         -------
-        frozenset[expressions.SqlExpression]
-            _description_
+        str
+            A string representation of the algebraic expression
         """
-        return frozenset()
-
-    @abc.abstractmethod
-    def accept_visitor(self, visitor: RelNodeVisitor[VisitorResult]) -> VisitorResult:
-        raise NotImplementedError
-
-    def inspect(self, indentation: int = 0) -> str:
-        padding = " " * indentation
+        padding = " " * _indentation
         prefix = f"{padding}<- " if padding else ""
         inspections = [prefix + str(self)]
         for child in self.children():
-            inspections.append(child.inspect(indentation + 2))
+            inspections.append(child.inspect(_indentation=_indentation + 2))
         return "\n".join(inspections)
 
     def _maintain_child_links(self) -> None:
+        """Ensures that all child nodes of the current node *A* have *A* set as their parent."""
         for child in self.children():
             child._parent = self
 
@@ -94,6 +190,24 @@ class RelNode(abc.ABC):
 
 
 class Selection(RelNode):
+    """A selection filters the input relation based on an arbitrary predicate.
+
+    Parameters
+    ----------
+    input_node : RelNode
+        The tuples to filter
+    predicate : preds.AbstractPredicate
+        The predicate that must be satisfied by all output tuples
+    parent_node : Optional[RelNode], optional
+        The parent node of the operator, if one exists. The parent is the operator that receives the output relation of the
+        current operator. If the current operator is the root and (currently) does not have a parent, *None* can be used.
+
+    Notes
+    -----
+    A selection is defined as
+
+    .. math:: \\sigma_\\theta(R) := \\{ r \\in R | \\theta(r) \\}
+    """
     def __init__(self, input_node: RelNode, predicate: preds.AbstractPredicate, *,
                  parent_node: Optional[RelNode] = None) -> None:
         super().__init__(parent_node)
@@ -104,17 +218,28 @@ class Selection(RelNode):
 
     @property
     def input_node(self) -> RelNode:
+        """Get the input relation that should be filtered.
+
+        Returns
+        -------
+        RelNode
+            A relation
+        """
         return self._input_node
 
     @property
     def predicate(self) -> preds.AbstractPredicate:
+        """Get the predicate that must be satisfied by the output tuples.
+
+        Returns
+        -------
+        preds.AbstractPredicate
+            The filter condition
+        """
         return self._predicate
 
     def children(self) -> Sequence[RelNode]:
         return [self._input_node]
-
-    def required_expressions(self) -> frozenset[expr.SqlExpression]:
-        return _collect_all_expressions(self._predicate.iterexpressions())
 
     def accept_visitor(self, visitor: RelNodeVisitor[VisitorResult]) -> VisitorResult:
         return visitor.visit_selection(self)
@@ -130,6 +255,24 @@ class Selection(RelNode):
 
 
 class CrossProduct(RelNode):
+    """A cross product calculates the cartesian product between tuples from two relations.
+
+    Parameters
+    ----------
+    left_input : RelNode
+        Relation containing the first set of tuples
+    right_input : RelNode
+        Relation containing the second set of tuples
+    parent_node : Optional[RelNode], optional
+        The parent node of the operator, if one exists. The parent is the operator that receives the output relation of the
+        current operator. If the current operator is the root and (currently) does not have a parent, *None* can be used.
+
+    Notes
+    -----
+    A cross product is defined as
+
+    .. math:: R \\times S := \\{ r \\circ s | r \\in R, s \\in S \\}
+    """
     def __init__(self, left_input: RelNode, right_input: RelNode, *, parent_node: Optional[RelNode] = None) -> None:
         super().__init__(parent_node)
         self._left_input = left_input
@@ -139,10 +282,24 @@ class CrossProduct(RelNode):
 
     @property
     def left_input(self) -> RelNode:
+        """Get the operator providing the first set of tuples.
+
+        Returns
+        -------
+        RelNode
+            A relation
+        """
         return self._left_input
 
     @property
     def right_input(self) -> RelNode:
+        """Get the operator providing the second set of tuples.
+
+        Returns
+        -------
+        RelNode
+            A relation
+        """
         return self._right_input
 
     def children(self) -> Sequence[RelNode]:
@@ -164,6 +321,26 @@ class CrossProduct(RelNode):
 
 
 class Union(RelNode):
+    """A union combines the tuple sets of two relations into a single output relation.
+
+    In order for a union to work, both relations must have the same structure.
+
+    Parameters
+    ----------
+    left_input : RelNode
+        The first relation
+    right_input : RelNode
+        The second relation
+    parent_node : Optional[RelNode], optional
+        The parent node of the operator, if one exists. The parent is the operator that receives the output relation of the
+        current operator. If the current operator is the root and (currently) does not have a parent, *None* can be used.
+
+    Notes
+    -----
+    The union is defined as
+
+    .. math:: R \\cup S := \\{ t | t \\in R \\lor t \\in S \\}
+    """
     def __init__(self, left_input: RelNode, right_input: RelNode, *, parent_node: Optional[RelNode] = None) -> None:
         super().__init__(parent_node)
         self._left_input = left_input
@@ -173,10 +350,24 @@ class Union(RelNode):
 
     @property
     def left_input(self) -> RelNode:
+        """Get the operator providing the first relation's tuples.
+
+        Returns
+        -------
+        RelNode
+            A relation
+        """
         return self._left_input
 
     @property
     def right_input(self) -> RelNode:
+        """Get the operator providing the second relation's tuples.
+
+        Returns
+        -------
+        RelNode
+            A relation
+        """
         return self._right_input
 
     def children(self) -> Sequence[RelNode]:
@@ -198,6 +389,26 @@ class Union(RelNode):
 
 
 class Intersection(RelNode):
+    """An intersection provides all tuples that are contained in both of its input operators.
+
+    In order for an intersection to work, both relations must have the same structure.
+
+    Parameters
+    ----------
+    left_input : RelNode
+        The first relation.
+    right_input : RelNode
+        The second relation.
+    parent_node : Optional[RelNode], optional
+        The parent node of the operator, if one exists. The parent is the operator that receives the output relation of the
+        current operator. If the current operator is the root and (currently) does not have a parent, *None* can be used.
+
+    Notes
+    -----
+    The difference is defined as
+
+    .. math:: R \\cap S := \\{ t | t \\in R \\land t \\in S \\}
+    """
     def __init__(self, left_input: RelNode, right_input: RelNode, *, parent_node: Optional[RelNode] = None) -> None:
         super().__init__(parent_node)
         self._left_input = left_input
@@ -207,10 +418,24 @@ class Intersection(RelNode):
 
     @property
     def left_input(self) -> RelNode:
+        """Get the operator providing the first relation's tuples.
+
+        Returns
+        -------
+        RelNode
+            A relation
+        """
         return self._left_input
 
     @property
     def right_input(self) -> RelNode:
+        """Get the operator providing the second relation's tuples.
+
+        Returns
+        -------
+        RelNode
+            A relation
+        """
         return self._right_input
 
     def children(self) -> Sequence[RelNode]:
@@ -232,6 +457,26 @@ class Intersection(RelNode):
 
 
 class Difference(RelNode):
+    """An intersection returns all tuples from one relation, that are not present in another relation.
+
+    In order for the difference to work, both input relations must share the same structure.
+
+    Parameters
+    ----------
+    left_input : RelNode
+        The first relation. This is the relation to remove tuples from.
+    right_input : RelNode
+        The second relation. This is the relation containing the tuples that should be removed from the `left_input`.
+    parent_node : Optional[RelNode], optional
+        The parent node of the operator, if one exists. The parent is the operator that receives the output relation of the
+        current operator. If the current operator is the root and (currently) does not have a parent, *None* can be used.
+
+    Notes
+    -----
+    The difference is defined as
+
+    .. math:: R \\setminus S := \\{ r \\in R | r \\notin S \\}
+    """
     def __init__(self, left_input: RelNode, right_input: RelNode, *, parent_node: Optional[RelNode] = None) -> None:
         super().__init__(parent_node)
         self._left_input = left_input
@@ -241,10 +486,24 @@ class Difference(RelNode):
 
     @property
     def left_input(self) -> RelNode:
+        """Get the operator providing the relation to remove tuples from.
+
+        Returns
+        -------
+        RelNode
+            A relation
+        """
         return self._left_input
 
     @property
     def right_input(self) -> RelNode:
+        """Get the operator providing the tuples to remove.
+
+        Returns
+        -------
+        RelNode
+            A relation
+        """
         return self._right_input
 
     def children(self) -> Sequence[RelNode]:
@@ -265,7 +524,25 @@ class Difference(RelNode):
         return "\\"
 
 
-class Table(RelNode):
+class Relation(RelNode):
+    """A relation provides the tuples ("rows") contained in a table.
+
+    Each relation can correspond to a physical table contained in some relational schema, or it can represent the result of a
+    subquery operation.
+
+    Parameters
+    ----------
+    table : base.TableReference
+        The table that is represented by this relation.
+    provided_columns : Iterable[base.ColumnReference  |  expr.ColumnExpression]
+        The columns that are contained in the table.
+    subquery_input : Optional[RelNode], optional
+        For subquery relations, this is the algebraic expression that computes the results of the subquery. Relations that
+        correspond to base tables do not have this attribute set.
+    parent_node : Optional[RelNode], optional
+        The parent node of the operator, if one exists. The parent is the operator that receives the output relation of the
+        current operator. If the current operator is the root and (currently) does not have a parent, *None* can be used.
+    """
     def __init__(self, table: base.TableReference, provided_columns: Iterable[base.ColumnReference | expr.ColumnExpression], *,
                  subquery_input: Optional[RelNode] = None, parent_node: Optional[RelNode] = None) -> None:
         super().__init__(parent_node)
@@ -278,10 +555,25 @@ class Table(RelNode):
 
     @property
     def table(self) -> base.TableReference:
+        """Get the table that is represented by this relation.
+
+        Returns
+        -------
+        base.TableReference
+            A table. Usually this will correpond to an actual physical database table, but for subqueries this might also be a
+            virtual table.
+        """
         return self._table
 
     @property
     def subquery_input(self) -> Optional[RelNode]:
+        """Get the root node of the subquery that produces the input tuples for this relation.
+
+        Returns
+        -------
+        Optional[RelNode]
+            The root node if it exists, or *None* for actual base table relations.
+        """
         return self._subquery_input
 
     def children(self) -> Sequence[RelNode]:
@@ -296,7 +588,7 @@ class Table(RelNode):
         return super().provided_expressions() | self._provided_cols
 
     def accept_visitor(self, visitor: RelNodeVisitor[VisitorResult]) -> VisitorResult:
-        return visitor.visit_base_table(self)
+        return visitor.visit_base_relation(self)
 
     def __hash__(self) -> int:
         return self._hash_val
@@ -309,6 +601,26 @@ class Table(RelNode):
 
 
 class ThetaJoin(RelNode):
+    """A theta joins combines individual tuples from two input relations if they match a specific predicate.
+
+    Parameters
+    ----------
+    left_input : RelNode
+        Relation containing the first set of tuples.
+    right_input : RelNode
+        Relation containing the second set of tuples.
+    predicate : preds.AbstractPredicate
+        A predicate that must be satisfied by all joined tuples.
+    parent_node : Optional[RelNode], optional
+        The parent node of the operator, if one exists. The parent is the operator that receives the output relation of the
+        current operator. If the current operator is the root and (currently) does not have a parent, *None* can be used.
+
+    Notes
+    -----
+    A theta join is defined as
+
+    .. math:: \\bowtie_\\theta(R, S) := \\{ r \\circ s | r \\in R \\land s \\in S \\land \\theta(r, s) \\}
+    """
     def __init__(self, left_input: RelNode, right_input: RelNode, predicate: preds.AbstractPredicate, *,
                  parent_node: Optional[RelNode] = None) -> None:
         super().__init__(parent_node)
@@ -320,21 +632,39 @@ class ThetaJoin(RelNode):
 
     @property
     def left_input(self) -> RelNode:
+        """Get the operator providing the first set of tuples.
+
+        Returns
+        -------
+        RelNode
+            A relation
+        """
         return self._left_input
 
     @property
     def right_input(self) -> RelNode:
+        """Get the operator providing the second set of tuples.
+
+        Returns
+        -------
+        RelNode
+            A relation
+        """
         return self._right_input
 
     @property
     def predicate(self) -> preds.AbstractPredicate:
+        """Get the condition that must be satisfied by the input tuples.
+
+        Returns
+        -------
+        preds.AbstractPredicate
+            A predicate
+        """
         return self._predicate
 
     def children(self) -> Sequence[RelNode]:
         return [self._left_input, self._right_input]
-
-    def required_expressions(self) -> frozenset[expr.SqlExpression]:
-        return _collect_all_expressions(self._predicate.iterexpressions())
 
     def accept_visitor(self, visitor: RelNodeVisitor[VisitorResult]) -> VisitorResult:
         return visitor.visit_theta_join(self)
@@ -352,6 +682,21 @@ class ThetaJoin(RelNode):
 
 
 class Projection(RelNode):
+    """A projection selects individual attributes from the tuples of an input relation.
+
+    The output relation will contain exactly the same tuples as the input, but each tuple will potentially contain less
+    attributes.
+
+    Parameters
+    ----------
+    input_node : RelNode
+        The tuples to process
+    targets : Sequence[expr.SqlExpression]
+        The attributes that should still be contained in the output relation
+    parent_node : Optional[RelNode], optional
+        The parent node of the operator, if one exists. The parent is the operator that receives the output relation of the
+        current operator. If the current operator is the root and (currently) does not have a parent, *None* can be used.
+    """
     def __init__(self, input_node: RelNode, targets: Sequence[expr.SqlExpression], *,
                  parent_node: Optional[RelNode] = None) -> None:
         super().__init__(parent_node)
@@ -362,17 +707,28 @@ class Projection(RelNode):
 
     @property
     def input_node(self) -> RelNode:
+        """Get the operator providing the tuples to project.
+
+        Returns
+        -------
+        RelNode
+            A relation
+        """
         return self._input_node
 
     @property
     def columns(self) -> Sequence[expr.SqlExpression]:
+        """Provides the attributes that should be included in the output relation's tuples.
+
+        Returns
+        -------
+        Sequence[expr.SqlExpression]
+            The projected attributes.
+        """
         return self._targets
 
     def children(self) -> Sequence[RelNode]:
         return [self._input_node]
-
-    def required_expressions(self) -> frozenset[expr.SqlExpression]:
-        return _collect_all_expressions(self._targets)
 
     def accept_visitor(self, visitor: RelNodeVisitor[VisitorResult]) -> VisitorResult:
         return visitor.visit_projection(self)
@@ -389,36 +745,76 @@ class Projection(RelNode):
 
 
 class GroupBy(RelNode):
+    """Grouping partitions input tuples according to specific attributes and calculates aggregated values.
+
+    Parameters
+    ----------
+    input_node : RelNode
+        The tuples to process
+    group_columns : Sequence[expr.SqlExpression]
+        The expressions that should be used to partition the input tuples. Can be empty if only aggregations over all input
+        tuples should be computed.
+    aggregates : Optional[dict[frozenset[expr.SqlExpression], frozenset[expr.FunctionExpression]]], optional
+        The aggregates that should be computed. This is a mapping from the input expressions to the desired aggregate. Can be
+        empty if only a grouping should be performed. In this case, the grouping operates as a duplicate-elimination mechanism.
+    parent_node : Optional[RelNode], optional
+        The parent node of the operator, if one exists. The parent is the operator that receives the output relation of the
+        current operator. If the current operator is the root and (currently) does not have a parent, *None* can be used.
+    """
     def __init__(self, input_node: RelNode, group_columns: Sequence[expr.SqlExpression], *,
                  aggregates: Optional[dict[frozenset[expr.SqlExpression], frozenset[expr.FunctionExpression]]] = None,
                  parent_node: Optional[RelNode] = None) -> None:
         super().__init__(parent_node)
+        if not group_columns and not aggregates:
+            raise ValueError("Either group columns or aggregation functions must be specified!")
         self._input_node = input_node
         self._group_columns = tuple(group_columns)
-        self._aggregates = dict_utils.frozendict(aggregates)
+        self._aggregates: dict_utils.frozendict[frozenset[expr.SqlExpression], frozenset[expr.FunctionExpression]] = (
+            dict_utils.frozendict(aggregates))
         self._hash_val = hash((self._input_node, self._group_columns, self._aggregates))
         self._maintain_child_links()
 
     @property
     def input_node(self) -> RelNode:
+        """Get the operator that provides the tuples to group.
+
+        Returns
+        -------
+        RelNode
+            A relation
+        """
         return self._input_node
 
     @property
     def group_columns(self) -> Sequence[expr.SqlExpression]:
+        """Get the expressions that should be used to partition the input tuples.
+
+        Returns
+        -------
+        Sequence[expr.SqlExpression]
+            The group columns. Can be empty if only aggregations over all input tuples should be computed.
+        """
         return self._group_columns
 
     @property
     def aggregates(self) -> dict_utils.frozendict[expr.SqlExpression, expr.FunctionExpression]:
+        """Get the aggregates that should be computed.
+
+        Aggregates map from the input expressions to the desired aggregation function.
+
+        Returns
+        -------
+        dict_utils.frozendict[expr.SqlExpression, expr.FunctionExpression]
+            The aggregations. Can be empty if only a grouping should be performed.
+        """
         return self._aggregates
 
     def children(self) -> Sequence[RelNode]:
         return [self._input_node]
 
-    def required_expressions(self) -> frozenset[expr.SqlExpression]:
-        return frozenset(self._aggregates.keys())
-
     def provided_expressions(self) -> frozenset[expr.SqlExpression]:
-        return super().provided_expressions() | collection_utils.set_union(self._aggregates.values())
+        aggregate_expressions = collection_utils.set_union(self._aggregates.values())
+        return frozenset(set(self._group_columns) | aggregate_expressions)
 
     def accept_visitor(self, visitor: RelNodeVisitor[VisitorResult]) -> VisitorResult:
         return visitor.visit_groupby(self)
@@ -453,6 +849,22 @@ class GroupBy(RelNode):
 
 
 class Rename(RelNode):
+    """Rename remaps column names to different names.
+
+    Parameters
+    ----------
+    input_node : RelNode
+        The tuples to modify
+    mapping : dict[base.ColumnReference, base.ColumnReference]
+        A map from current column name to new column name.
+    parent_node : Optional[RelNode]
+        The parent node of the operator, if one exists. The parent is the operator that receives the output relation of the
+        current operator. If the current operator is the root and (currently) does not have a parent, *None* can be used.
+
+    Warnings
+    --------
+    This node is currently not used since we do not support natural joins.
+    """
     def __init__(self, input_node: RelNode, mapping: dict[base.ColumnReference, base.ColumnReference], *,
                  parent_node: Optional[RelNode]) -> None:
         # TODO: check types + add provided / required expressions method
@@ -464,10 +876,24 @@ class Rename(RelNode):
 
     @property
     def input_node(self) -> RelNode:
+        """Get the operator that provides the tuples to modify
+
+        Returns
+        -------
+        RelNode
+            A relation
+        """
         return self._input_node
 
     @property
     def mapping(self) -> dict_utils.frozendict[base.ColumnReference, base.ColumnReference]:
+        """Get the performed renamings.
+
+        Returns
+        -------
+        dict_utils.frozendict[base.ColumnReference, base.ColumnReference]
+            A map from current column name to new column name.
+        """
         return self._mapping
 
     def children(self) -> Sequence[RelNode]:
@@ -488,9 +914,32 @@ class Rename(RelNode):
 
 
 SortDirection = typing.Literal["asc", "desc"]
+"""Describes whether tuples should be sorted in ascending or descending order."""
 
 
 class Sort(RelNode):
+    """Sort modifies the order in which tuples are provided.
+
+    Parameters
+    ----------
+    input_node : RelNode
+        The tuples to order
+    sorting : Sequence[tuple[expr.SqlExpression, SortDirection]  |  expr.SqlExpression]
+        The expressions that should be used to determine the sorting. For expressions that do not specify any particular
+        direction, ascending order is assumed. Later expressions are used to solve ties among tuples with the same expression
+        values in the first couple of expressions.
+    parent_node : Optional[RelNode], optional
+        _description_, by default None
+
+    Notes
+    -----
+    Strictly speaking, this operator is not part of traditional relational algebra. This is because the algebra uses
+    set-semantics which do not supply any ordering. However, due to SQL's *ORDER BY* clause, most relational algebra dialects
+    support ordering nevertheless.
+
+    However, we do not support special placement of *NULL* column values, i.e. no *ORDER BY R.a NULLS LAST*, etc.
+    """
+    # TODO: support NULLS FIRST/NULLS LAST
     def __init__(self, input_node: RelNode,
                  sorting: Sequence[tuple[expr.SqlExpression, SortDirection] | expr.SqlExpression], *,
                  parent_node: Optional[RelNode] = None) -> None:
@@ -502,17 +951,31 @@ class Sort(RelNode):
 
     @property
     def input_node(self) -> RelNode:
+        """Get the operator providing the tuples to sort.
+
+        Returns
+        -------
+        RelNode
+            A relation
+        """
         return self._input_node
 
     @property
     def sorting(self) -> Sequence[tuple[expr.SqlExpression, SortDirection]]:
+        """Get the desired ordering.
+
+        Later expressions are used to solve ties among tuples with the same expression values in the first couple of
+        expressions.
+
+        Returns
+        -------
+        Sequence[tuple[expr.SqlExpression, SortDirection]]
+            The expressions to order, most signifcant orders coming first.
+        """
         return self._sorting
 
     def children(self) -> Sequence[RelNode]:
         return [self._input_node]
-
-    def required_expressions(self) -> frozenset[expr.SqlExpression]:
-        return frozenset(sorting[0] for sorting in self._sorting)
 
     def accept_visitor(self, visitor: RelNodeVisitor[VisitorResult]) -> VisitorResult:
         return visitor.visit_sort(self)
@@ -529,6 +992,22 @@ class Sort(RelNode):
 
 
 class Map(RelNode):
+    """Mapping computes new expressions from the currently existing ones.
+
+    For example, the expression *R.a + 42* can be computed during a mapping operation based on the input from a relation
+    node *R*.
+
+    Parameters
+    ----------
+    input_node : RelNode
+        The tuples to process
+    mapping : dict[frozenset[expr.SqlExpression  |  base.ColumnReference], frozenset[expr.SqlExpression]]
+        The expressions to compute. Maps from the arguments to the target expressions. The arguments themselves can be computed
+        during the very same mapping operation. Alternatively, they can be supplied by the `input_node`.
+    parent_node : Optional[RelNode], optional
+        The parent node of the operator, if one exists. The parent is the operator that receives the output relation of the
+        current operator. If the current operator is the root and (currently) does not have a parent, *None* can be used.
+    """
     def __init__(self, input_node: RelNode,
                  mapping: dict[frozenset[expr.SqlExpression | base.ColumnReference], frozenset[expr.SqlExpression]], *,
                  parent_node: Optional[RelNode] = None) -> None:
@@ -542,17 +1021,31 @@ class Map(RelNode):
 
     @property
     def input_node(self) -> RelNode:
+        """Get the operator that provides the tuples to map.
+
+        Returns
+        -------
+        RelNode
+            A relation
+        """
         return self._input_node
 
     @property
     def mapping(self) -> dict_utils.frozendict[frozenset[expr.SqlExpression], frozenset[expr.SqlExpression]]:
+        """Get the expressions to compute. Maps from the arguments to the target expressions.
+
+        The arguments themselves can be computed during the very same mapping operation. Alternatively, they can be supplied by
+        the input node.
+
+        Returns
+        -------
+        dict_utils.frozendict[frozenset[expr.SqlExpression], frozenset[expr.SqlExpression]]
+            The expressions
+        """
         return self._mapping
 
     def children(self) -> Sequence[RelNode]:
         return [self._input_node]
-
-    def required_expressions(self) -> frozenset[expr.SqlExpression]:
-        return collection_utils.set_union(map_source for map_source in self._mapping.keys())
 
     def provided_expressions(self) -> frozenset[expr.SqlExpression]:
         return super().provided_expressions() | collection_utils.set_union(map_target for map_target in self._mapping.values())
@@ -586,6 +1079,22 @@ class Map(RelNode):
 
 
 class DuplicateElimination(RelNode):
+    """Duplicate elimination ensures that all attribute combinations of all tuples are unique.
+
+    Parameters
+    ----------
+    input_node : RelNode
+        The tuples that should be unique
+    parent_node : Optional[RelNode], optional
+        The parent node of the operator, if one exists. The parent is the operator that receives the output relation of the
+        current operator. If the current operator is the root and (currently) does not have a parent, *None* can be used.
+
+    Notes
+    -----
+    Strictly speaking, this operator is not part of traditional relational algebra. This is because the algebra uses
+    set-semantics which do not supply any ordering. However, due to SQL's usage of multi-sets which allow duplicates, most
+    relational algebra dialects support ordering nevertheless.
+    """
     def __init__(self, input_node: RelNode, *, parent_node: Optional[RelNode] = None) -> None:
         super().__init__(parent_node)
         self._input_node = input_node
@@ -613,8 +1122,29 @@ class DuplicateElimination(RelNode):
 
 
 class SemiJoin(RelNode):
-    def __init__(self, input_node: RelNode, subquery_node: RelNode, predicate: Optional[preds.AbstractPredicate] = None, *,
-                 parent_node: Optional[RelNode] = None) -> None:
+    """A semi join provides all tuples from one relation with a matching partner tuple from another relation.
+
+    Parameters
+    ----------
+    input_node : RelNode
+        The tuples to "filter"
+    subquery_node : SubqueryScan
+        The relation that provides all tuples that have to match tuples in the `input_node`.
+    predicate : Optional[preds.AbstractPredicate], optional
+        An optional predicate that is used to determine a match.
+    parent_node : Optional[RelNode], optional
+        The parent node of the operator, if one exists. The parent is the operator that receives the output relation of the
+        current operator. If the current operator is the root and (currently) does not have a parent, *None* can be used.
+
+    Notes
+    -----
+    A semi join is defined as
+
+    .. math:: ⋉_\\theta(R, S) := \\{ r | r \\in R \\land s \\in S \\land \\theta(r, s) \\}
+    """
+
+    def __init__(self, input_node: RelNode, subquery_node: SubqueryScan,
+                 predicate: Optional[preds.AbstractPredicate] = None, *, parent_node: Optional[RelNode] = None) -> None:
         # TODO: dependent iff predicate is None
         super().__init__(parent_node)
         self._input_node = input_node
@@ -625,21 +1155,56 @@ class SemiJoin(RelNode):
 
     @property
     def input_node(self) -> RelNode:
+        """Get the operator providing the tuples to filter.
+
+        Returns
+        -------
+        RelNode
+            A relation
+        """
         return self._input_node
 
     @property
-    def subquery_node(self) -> RelNode:
+    def subquery_node(self) -> SubqueryScan:
+        """Get the operator providing the filtering tuples.
+
+        Returns
+        -------
+        SubqueryScan
+            A relation
+        """
         return self._subquery_node
 
     @property
     def predicate(self) -> Optional[preds.AbstractPredicate]:
+        """Get the match condition to determine the join partners.
+
+        If there is no dedicated predicate, tuples from the `input_node` match, if any tuple is emitted by the
+        `subquery_node`.
+
+        Returns
+        -------
+        Optional[preds.AbstractPredicate]
+            The condition
+        """
         return self._predicate
+
+    def is_dependent(self) -> bool:
+        """Checks, whether the subquery relation is depdent (sometimes also called correlated) with the input relation.
+
+        Returns
+        -------
+        bool
+            Whether the subquery is correlated with the input query
+
+        See Also
+        --------
+        qal.SqlQuery.is_depedent
+        """
+        return self._predicate is None
 
     def children(self) -> Sequence[RelNode]:
         return [self._input_node, self._subquery_node]
-
-    def required_expressions(self) -> frozenset[expr.SqlExpression]:
-        return _collect_all_expressions(self._predicate.iterexpressions())
 
     def accept_visitor(self, visitor: RelNodeVisitor[VisitorResult]) -> VisitorResult:
         return visitor.visit_semijoin(self)
@@ -657,8 +1222,29 @@ class SemiJoin(RelNode):
 
 
 class AntiJoin(RelNode):
-    def __init__(self, input_node: RelNode, subquery_node: RelNode, predicate: Optional[preds.AbstractPredicate] = None, *,
-                 parent_node: Optional[RelNode] = None) -> None:
+    """An anti join provides all tuples from one relation with no matching partner tuple from another relation.
+
+    Parameters
+    ----------
+    input_node : RelNode
+        The tuples to "filter"
+    subquery_node : SubqueryScan
+        The relation that provides all tuples that have to match tuples in the `input_node`.
+    predicate : Optional[preds.AbstractPredicate], optional
+        An optional predicate that is used to determine a match.
+    parent_node : Optional[RelNode], optional
+        The parent node of the operator, if one exists. The parent is the operator that receives the output relation of the
+        current operator. If the current operator is the root and (currently) does not have a parent, *None* can be used.
+
+    Notes
+    -----
+    An anti join is defined as
+
+    .. math:: ▷_\\theta(R, S) := \\{ r | r \\in R \\land s \\in S \\land \\theta(r, s) \\}
+
+    """
+    def __init__(self, input_node: RelNode, subquery_node: SubqueryScan,
+                 predicate: Optional[preds.AbstractPredicate] = None, *, parent_node: Optional[RelNode] = None) -> None:
         # TODO: dependent iff predicate is None
         super().__init__(parent_node)
         self._input_node = input_node
@@ -669,21 +1255,56 @@ class AntiJoin(RelNode):
 
     @property
     def input_node(self) -> RelNode:
+        """Get the operator providing the tuples to filter.
+
+        Returns
+        -------
+        RelNode
+            A relation
+        """
         return self._input_node
 
     @property
-    def subquery_node(self) -> RelNode:
+    def subquery_node(self) -> SubqueryScan:
+        """Get the operator providing the filtering tuples.
+
+        Returns
+        -------
+        SubqueryScan
+            A relation
+        """
         return self._subquery_node
 
     @property
     def predicate(self) -> Optional[preds.AbstractPredicate]:
+        """Get the match condition to determine the join partners.
+
+        If there is no dedicated predicate, tuples from the `input_node` match, if any tuple is emitted by the
+        `subquery_node`.
+
+        Returns
+        -------
+        Optional[preds.AbstractPredicate]
+            The condition
+        """
         return self._predicate
+
+    def is_dependent(self) -> bool:
+        """Checks, whether the subquery relation is depdent (sometimes also called correlated) with the input relation.
+
+        Returns
+        -------
+        bool
+            Whether the subquery is correlated with the input query
+
+        See Also
+        --------
+        qal.SqlQuery.is_depedent
+        """
+        return self._predicate is None
 
     def children(self) -> Sequence[RelNode]:
         return [self._input_node, self._subquery_node]
-
-    def required_expressions(self) -> frozenset[expr.SqlExpression]:
-        return _collect_all_expressions(self._predicate.iterexpressions())
 
     def accept_visitor(self, visitor: RelNodeVisitor[VisitorResult]) -> VisitorResult:
         return visitor.visit_antijoin(self)
@@ -701,6 +1322,24 @@ class AntiJoin(RelNode):
 
 
 class SubqueryScan(RelNode):
+    """A meta node to designate a subtree that originated from a subquery.
+
+    Parameters
+    ----------
+    input_node : RelNode
+        The relation that identifies the subquery result
+    subquery : qal.SqlQuery
+        The query that actually calculates the subquery
+    parent_node : Optional[RelNode], optional
+        The parent node of the operator, if one exists. The parent is the operator that receives the output relation of the
+        current operator. If the current operator is the root and (currently) does not have a parent, *None* can be used.
+
+    Notes
+    -----
+    This node is not part of traditional relational algebra, nor do many other systems make use of it. For our purposes it
+    serves as a marker node to quickly designate subqueries and to operate on the original queries or their algebraic
+    representation in a convenient manner.
+    """
     def __init__(self, input_node: RelNode, subquery: qal.SqlQuery, *, parent_node: Optional[RelNode] = None) -> None:
         super().__init__(parent_node)
         self._input_node = input_node
@@ -710,10 +1349,24 @@ class SubqueryScan(RelNode):
 
     @property
     def input_node(self) -> RelNode:
+        """Get the result node of the subquery
+
+        Returns
+        -------
+        RelNode
+            A relation
+        """
         return self._input_node
 
     @property
     def subquery(self) -> qal.SqlQuery:
+        """Get the actual subquery.
+
+        Returns
+        -------
+        qal.SqlQuery
+            A query
+        """
         return self._subquery
 
     def tables(self, *, ignore_subqueries: bool = False) -> frozenset[TableReference]:
@@ -739,9 +1392,21 @@ class SubqueryScan(RelNode):
 
 
 VisitorResult = typing.TypeVar("VisitorResult")
+"""Result type of visitor processes."""
 
 
 class RelNodeVisitor(abc.ABC, typing.Generic[VisitorResult]):
+    """Basic visitor to operator on arbitrary relational algebra trees.
+
+    See Also
+    --------
+    RelNode
+
+    References
+    ----------
+
+    .. Visitor pattern: https://en.wikipedia.org/wiki/Visitor_pattern
+    """
 
     @abc.abstractmethod
     def visit_selection(self, selection: Selection) -> VisitorResult:
@@ -764,7 +1429,7 @@ class RelNodeVisitor(abc.ABC, typing.Generic[VisitorResult]):
         raise NotImplementedError
 
     @abc.abstractmethod
-    def visit_base_table(self, base_table: Table) -> VisitorResult:
+    def visit_base_relation(self, base_table: Relation) -> VisitorResult:
         raise NotImplementedError
 
     @abc.abstractmethod
@@ -809,39 +1474,127 @@ class RelNodeVisitor(abc.ABC, typing.Generic[VisitorResult]):
 
 
 def _is_aggregation(expression: expr.SqlExpression) -> bool:
+    """Utility to check whether an arbitrary SQL expression is an aggregation function.
+
+    Parameters
+    ----------
+    expression : expr.SqlExpression
+        The expression to check
+
+    Returns
+    -------
+    bool
+        *True* if the expression is an aggregation or *False* otherwise
+    """
     return isinstance(expression, expr.FunctionExpression) and expression.is_aggregate()
 
 
 def _requires_aggregation(expression: expr.SqlExpression) -> bool:
+    """Checks, whether the current expression or any of its nested children aggregate input tuples.
+
+    Parameters
+    ----------
+    expression : expr.SqlExpression
+        The expression to check
+
+    Returns
+    -------
+    bool
+        *True* if an aggregation was detected or *False* otherwise.
+    """
     return any(_is_aggregation(child_expr) or _requires_aggregation(child_expr) for child_expr in expression.iterchildren())
+
+
+def _needs_mapping(expression: expr.SqlExpression) -> bool:
+    """Checks, whether an expression has to be calculated via a mapping or can be supplied directly by the execution engine.
+
+    The latter case basically only applies to static values. Direct column expressions are still considered as requiring a
+    mapping.
+
+    Parameters
+    ----------
+    expression : expr.SqlExpression
+        The expression to check
+
+    Returns
+    -------
+    bool
+        *True* if the expression has to be mapped, *False* otherwise.
+    """
+    return not isinstance(expression, (expr.StaticValueExpression, expr.StarExpression))
 
 
 def _generate_expression_mapping_dict(expressions: list[expr.SqlExpression]
                                       ) -> dict[frozenset[expr.SqlExpression], frozenset[expr.SqlExpression]]:
+    """Determines all required expressions and maps them to their dervied expressions.
+
+    Consider an expression *CAST(R.a + 42 AS int)*. In order to evaluate the *CAST* statement, *R.a + 42* has to be calculated
+    first. This knowledge is encoded in the mapping dictionary, which would look like ``{R.a + 42: CAST(...)}`` in this case.
+
+    Notice that this process is not recursive, i.e. nested expressions in the child expressions are not considered. The
+    reasoning behind this is that these expressions should have been computed already via earlier mappings. Continuing the
+    above example, there is no entry ``R.a: R.a + 42`` in the mapping, if the term *R.a + 42* itself is not part of the
+    arguments.
+
+    Parameters
+    ----------
+    expressions : list[expr.SqlExpression]
+        The expressions to resolve
+
+    Returns
+    -------
+    dict[frozenset[expr.SqlExpression], frozenset[expr.SqlExpression]]
+        A map from arguments to target expressions. If the same set of arguments is used to derive multiple expressions, all
+        these target expressions are contained in the dictionary value.
+    """
     mapping: dict[frozenset[expr.SqlExpression], set[expr.SqlExpression]] = collections.defaultdict(set)
     for expression in expressions:
-        child_expressions = frozenset(expression.iterchildren())
+        child_expressions = frozenset(child_expr for child_expr in expression.iterchildren() if _needs_mapping(child_expr))
         mapping[child_expressions].add(expression)
     return {child_expressions: frozenset(derived_expressions) for child_expressions, derived_expressions in mapping.items()}
 
 
 class EvaluationPhase(enum.IntEnum):
+    """Indicates when a specific expression or predicate can be evaluated at the earliest."""
+
     BaseTable = enum.auto()
+    """Evaluation is possible using only the tuples from the base table, e.g. base table filters."""
+
     Join = enum.auto()
+    """Evaluation is possible while joining the required base tables, e.g. join predicates."""
+
     PostJoin = enum.auto()
+    """Evaluation is possible once all base tables have been joined, e.g. mappings over joined columns."""
+
     PostAggregation = enum.auto()
+    """Evaluation is possible once all aggregations have been performed, e.g. filters over aggregated columns."""
 
 
 @dataclasses.dataclass(frozen=True)
 class _SubquerySet:
+    """More expressive wrapper to collect subqueries from SQL queries.
+
+    Two subquery sets can be merged using the addition operator. Boolean tests on the subquery set succeed, if the set contains
+    at least one subquery.
+
+    Attributes
+    ----------
+    subqueries : frozenset[qal.SqlQuery]
+        The subqueries that are currently in the set. Can be empty if there are no subqueries.
+    """
     subqueries: frozenset[qal.SqlQuery]
 
     @staticmethod
     def empty() -> _SubquerySet:
+        """Generates a new subquery set without any entries."""
         return _SubquerySet(frozenset())
 
     @staticmethod
     def of(subqueries: Iterable[qal.SqlQuery]) -> _SubquerySet:
+        """Generates a new subquery set containing specific subqueries.
+
+        This factory handles the generation of an appropriate frozenset.
+        """
         return _SubquerySet(frozenset([subqueries]))
 
     def __add__(self, other: _SubquerySet) -> _SubquerySet:
@@ -854,6 +1607,7 @@ class _SubquerySet:
 
 
 class _SubqueryDetector(expr.SqlExpressionVisitor[_SubquerySet], preds.PredicateVisitor[_SubquerySet]):
+    """Collects all subqueries from SQL expressions or predicates."""
     def visit_and_predicate(self, predicate: preds.CompoundPredicate,
                             components: Sequence[preds.AbstractPredicate]) -> _SubquerySet:
         return self._traverse_predicate_expressions(predicate)
@@ -900,14 +1654,31 @@ class _SubqueryDetector(expr.SqlExpressionVisitor[_SubquerySet], preds.Predicate
         return _SubquerySet.of(expression.query)
 
     def _traverse_predicate_expressions(self, predicate: preds.AbstractPredicate) -> _SubquerySet:
+        """Handler to collect subqueries from predicates."""
         return functools.reduce(operator.add, [expression.accept_visitor(self) for expression in predicate.iterexpressions()])
 
     def _traverse_nested_expressions(self, expression: expr.SqlExpression) -> _SubquerySet:
+        """Handler to collect subqueries from SQL expressions."""
         return functools.reduce(operator.add,
                                 [nested_expression.accept_visitor(self) for nested_expression in expression.iterchildren()])
 
 
 class _BaseTableLookup(expr.SqlExpressionVisitor[Optional[base.TableReference]], preds.PredicateVisitor[base.TableReference]):
+    """Handler to determine the base table in an arbitrarily deep predicate or expression hierarchy.
+
+    This service is designed to traverse filter predicates or expressions operating on a single base table and provides exactly
+    this table. As a special case, it also traverses dependent subqueries. In this case, the base table is the outer table.
+
+    The lookup may be started directly by calling the instantiated service with a predicate or an expression as argument.
+
+    Notes
+    -----
+    In cases where multiple applicable base tables are detected, a ``ValueError`` is raised. Therefore, using the lookup on a
+    predicate is always guaranteed to provide a table (or raise an error) since all predicates operate on tables. On the other
+    hand, checking an arbitrary SQL expression may or may not contain a base table (e.g. *CAST(42 AS float)*). Hence, an
+    optional is returned for expressions.
+    """
+
     def visit_and_predicate(self, predicate: preds.CompoundPredicate,
                             components: Sequence[preds.AbstractPredicate]) -> base.TableReference:
         base_tables = {child_pred.accept_visitor(self) for child_pred in components}
@@ -968,6 +1739,28 @@ class _BaseTableLookup(expr.SqlExpressionVisitor[Optional[base.TableReference]],
 
     def _fetch_valid_base_tables(self, base_tables: set[base.TableReference | None], *,
                                  accept_empty: bool = False) -> Optional[base.TableReference]:
+        """Handler to extract the actual base table from a set of candidate tables.
+
+        Parameters
+        ----------
+        base_tables : set[base.TableReference  |  None]
+            The candidate tables. Usually, this should be a set containing exactly one base table and potentially an
+            additional *None* value. In all other situations an error is raised (see below)
+        accept_empty : bool, optional
+            Whether an empty set of actual candidate tables (i.e. excluding *None* values) is an acceptable argument. If that
+            is the case, *None* is returned in such a situation. Empty candidate sets raise an error by default.
+
+        Returns
+        -------
+        Optional[base.TableReference]
+            The base table
+
+        Raises
+        ------
+        ValueError
+            If the candidate tables either contain more than one actual table instance, or if empty candidate sets are not
+            accepted and the set does not contain any *non-None* enties.
+        """
         if None in base_tables:
             base_tables.remove(None)
         if len(base_tables) != 1 or (accept_empty and not base_tables):
@@ -987,6 +1780,18 @@ class _BaseTableLookup(expr.SqlExpressionVisitor[Optional[base.TableReference]],
 
 
 class ExpressionCollector(expr.SqlExpressionVisitor[set[expr.SqlExpression]]):
+    """Utility to traverse an arbitrarily deep expression hierarchy and to collect specific expressions.
+
+    Parameters
+    ----------
+    matcher : Callable[[expr.SqlExpression], bool]
+        Function to determine whether a specific expression matches the collection predicate. Should return *True* for matches
+        and *False* otherwise.
+    continue_after_match : bool, optional
+        Whether the traversal of the current expression element should be continued if the current element matches the
+        collection predicate. By default, traversal is stopped for the current element (but other branches in the expression
+        tree could still produce more matches).
+    """
     def __init__(self, matcher: Callable[[expr.SqlExpression], bool], *, continue_after_match: bool = False) -> None:
         self.matcher = matcher
         self.continue_after_match = continue_after_match
@@ -1013,6 +1818,18 @@ class ExpressionCollector(expr.SqlExpressionVisitor[set[expr.SqlExpression]]):
         return self._check_match(expression)
 
     def _check_match(self, expression: expr.SqlExpression) -> set[expr.SqlExpression]:
+        """Handler to perform the actual traversal.
+
+        Parameters
+        ----------
+        expression : expr.SqlExpression
+            The current expression
+
+        Returns
+        -------
+        set[expr.SqlExpression]
+            All matching expressions
+        """
         own_match = {expression} if self.matcher(expression) else set()
         if own_match and not self.continue_after_match:
             return own_match
@@ -1020,14 +1837,26 @@ class ExpressionCollector(expr.SqlExpressionVisitor[set[expr.SqlExpression]]):
 
 
 def _collect_all_expressions(expression: expr.SqlExpression) -> frozenset[expr.SqlExpression]:
+    """Provides all expressions in a specific expression tree, including the root expression.
+
+    Parameters
+    ----------
+    expression : expr.SqlExpression
+        The root expression
+
+    Returns
+    -------
+    frozenset[expr.SqlExpression]
+        The expression as well as all child expressions, including deeply nested children.
+    """
     child_expressions = collection_utils.set_union(_collect_all_expressions(child_expr)
                                                    for child_expr in expression.iterchildren())
     all_expressions = frozenset({expression} | child_expressions)
-    return frozenset({e for e in all_expressions
-                      if not isinstance(e, expr.StaticValueExpression) and not isinstance(e, expr.StarExpression)})
+    return frozenset({expression for expression in all_expressions if _needs_mapping(expression)})
 
 
 def _determine_expression_phase(expression: expr.SqlExpression) -> EvaluationPhase:
+    """Calculates the evaluation phase during which an expression can be evaluated at the earliest."""
     match expression:
         case expr.ColumnExpression():
             return EvaluationPhase.BaseTable
@@ -1040,12 +1869,19 @@ def _determine_expression_phase(expression: expr.SqlExpression) -> EvaluationPha
         case expr.SubqueryExpression():
             return EvaluationPhase.BaseTable if len(expression.query.unbound_tables()) < 2 else EvaluationPhase.PostJoin
         case expr.StarExpression() | expr.StaticValueExpression():
-            raise ValueError(f"No evaluation phase for static expression '{expression}'")
+            # TODO: should we rather raise an error in this case?
+            return EvaluationPhase.BaseTable
         case _:
             raise ValueError(f"Unknown expression type: '{expression}'")
 
 
 def _determine_predicate_phase(predicate: preds.AbstractPredicate) -> EvaluationPhase:
+    """Calculates the evaluation phase during which a predicate can be evaluated at the earliest.
+
+    See Also
+    --------
+    _determine_expression_phase
+    """
     nested_subqueries = predicate.accept_visitor(_SubqueryDetector())
     subquery_tables = len(collection_utils.set_union(subquery.bound_tables() for subquery in nested_subqueries.subqueries))
     n_tables = len(predicate.tables()) - subquery_tables
@@ -1053,8 +1889,6 @@ def _determine_predicate_phase(predicate: preds.AbstractPredicate) -> Evaluation
         # It could actually be that the number of tables is negative. E.g. HAVING count(*) < (SELECT min(r_a) FROM R)
         # Therefore, we only check for exactly 1 table
         return EvaluationPhase.BaseTable
-
-    # FIXME
 
     expression_phase = max(_determine_expression_phase(expression) for expression in predicate.iterexpressions()
                            if type(expression) not in {expr.StarExpression, expr.StaticValueExpression})
@@ -1066,8 +1900,33 @@ def _determine_predicate_phase(predicate: preds.AbstractPredicate) -> Evaluation
 
 def _filter_eval_phase(predicate: preds.AbstractPredicate,
                        expected_eval_phase: EvaluationPhase) -> Optional[preds.AbstractPredicate]:
+    """Provides all parts of predicate that can be evaluated during a specific logical query execution phase.
+
+    The following rules are used to determine matching (sub-)predicates:
+
+    - For base predicates, either the entire matches the expected evaluation phase, or none at all.
+    - For conjunctive predicates, the matching parts are combined into a smaller conjunction. If no part matches, *None* is
+      returned.
+    - For disjunctive predicates or negations, the same rules as for base predicates are used: either the entire predicate
+      matches, or nothing does.
+
+    Parameters
+    ----------
+    predicate : preds.AbstractPredicate
+        The predicate to check
+    expected_eval_phase : EvaluationPhase
+        The desired evaluation phase
+
+    Returns
+    -------
+    Optional[preds.AbstractPredicate]
+        A predicate composed of the matching (sub-) predicates, or *None* if there is no match whatsoever.
+
+    See Also
+    --------
+    _determine_predicate_phase
+    """
     eval_phase = _determine_predicate_phase(predicate)
-    print(".. Determined predicate", predicate, "to be of eval phase", eval_phase)
     if eval_phase < expected_eval_phase:
         return None
 
@@ -1080,6 +1939,51 @@ def _filter_eval_phase(predicate: preds.AbstractPredicate,
 
 
 class _ImplicitRelalgParser:
+    """Parser to generate a `RelNode` tree from `SqlQuery` instances.
+
+    Parameters
+    ----------
+    query : qal.ImplicitSqlQuery
+        The query to parse
+    provided_base_tables : Optional[dict[base.TableReference, RelNode]], optional
+        When parsing subqueries, these are the tables that are provided by the outer query and their corresponding relational
+        algebra fragments.
+
+    Notes
+    -----
+    Our parser operates in four strictly sequential stages. These stages approximately correspond to the logical evaluation
+    stages of an SQL query. For reference, see [eder-sql-eval-order]_. At the same time, the entire process is loosely oriented
+    on the query execution strategy applied by PostgreSQL.
+
+    During the initial stage, all base tables are processed. This includes all filters that may be executed directly on the
+    base table, as well as mappings that enable the filters, e.g. for predicates such as *CAST(R.a AS int) = 42*. As a special
+    case, we also handle *EXISTS* and *MISSING* predicates during this stage. The end result of the initial stage is a
+    dictionary that maps each base table to a relational algebra fragment corresponds to the scan of the base table as well as
+    all filters, etc..
+
+    Secondly, all joins are processed. This process builds on the initial dictionary of base tables and iteratively combines
+    pairs of fragments according to their join predicate. In the end, usually just a single fragment remains. This fragment has
+    exactly one root node that corresponds to the final joined relation. If there are multiple fragments (and hence root nodes)
+    remaining, we need to use cross products to ensure that we just have a single relation in the end. A post-processing step
+    applies all filter predicates that were not recognized as joins but that require columns from multiple base tables, e.g.
+    *R.a + S.b < 42*.
+
+    The third stage is concerned with grouping and aggregation. If the query contains aggregates or a *GROUP BY* clause, these
+    operations are now inserted. Since we produced just a single root node during the second stage, our grouping uses this
+    node as input. Once again, during a post-processing step all filter predicates from the *HAVING* clause are inserted as
+    selections.
+
+    The fourth and final phase executes all "cleanup" actions such as sorting, duplicate removal and projection.
+
+    Notice that during each stage, additional mapping steps can be required if some expression requires input that has not
+    yet been calculated.
+
+    References
+    ----------
+
+    .. [eder-sql-eval-oder]_ https://blog.jooq.org/a-beginners-guide-to-the-true-order-of-sql-operations/
+
+    """
     def __init__(self, query: qal.ImplicitSqlQuery, *,
                  provided_base_tables: Optional[dict[base.TableReference, RelNode]] = None) -> None:
         self._query = query
@@ -1090,6 +1994,13 @@ class _ImplicitRelalgParser:
         collection_utils.foreach(self._query.columns(), lambda col: self._required_columns[col.table].add(col))
 
     def generate_relnode(self) -> RelNode:
+        """Produces a relational algebra tree for the current query.
+
+        Returns
+        -------
+        RelNode
+            Root node of the algebraic expression
+        """
         # TODO: robustness: query without FROM clause
 
         if self._query.cte_clause:
@@ -1124,17 +2035,39 @@ class _ImplicitRelalgParser:
         return final_fragment
 
     def _resolve(self, table: base.TableReference) -> RelNode:
+        """Provides the algebra fragment for a specific base table, resorting to outer query tables if necessary."""
         if table in self._base_table_fragments:
             return self._base_table_fragments[table]
         return self._provided_base_tables[table]
 
     def _add_table(self, table: base.TableReference, *, input_node: Optional[RelNode] = None) -> RelNode:
+        """Generates and stores a new base table relation node for a specific table.
+
+        The relation will be stored in `self._base_table_fragments`.
+
+        Parameters
+        ----------
+        table : base.TableReference
+            The base table
+        input_node : Optional[RelNode], optional
+            If the base table corresponds to a subquery or CTE target, this is the root node of the fragment that computes the
+            actual subquery.
+
+        Returns
+        -------
+        RelNode
+            A relational algebra fragment
+        """
         required_cols = self._required_columns[table]
-        table_node = Table(table, required_cols, subquery_input=input_node)
+        table_node = Relation(table, required_cols, subquery_input=input_node)
         self._base_table_fragments[table] = table_node
         return table_node
 
     def _add_table_source(self, table_source: clauses.TableSource) -> RelNode:
+        """Generates the appropriate algebra fragment for a specific table source.
+
+        The fragment will be stored in `self._base_table_fragments`.
+        """
         match table_source:
             case clauses.DirectTableSource():
                 if table_source.table.virtual:
@@ -1152,6 +2085,15 @@ class _ImplicitRelalgParser:
                 raise ValueError(f"Unknown table source: '{table_source}'")
 
     def _generate_initial_join_order(self) -> RelNode:
+        """Combines all base table fragments to generate a single root relation corresponding to the join of all fragments.
+
+        If necessary, fragments are combined via cross products.
+
+        Returns
+        -------
+        RelNode
+            The root operator corresponding to the relation that joins all base table fragments.
+        """
         # TODO: figure out the interaction between implicit and explicit joins, especially regarding their timing
 
         joined_tables: set[base.TableReference] = set()
@@ -1172,6 +2114,20 @@ class _ImplicitRelalgParser:
         return current_head
 
     def _add_aggregation(self, input_node: RelNode) -> RelNode:
+        """Generates all necesssary aggregation operations for the SQL query.
+
+        If there are no necessary aggregations, the current algebra tree is returned unmodified.
+
+        Parameters
+        ----------
+        input_node : RelNode
+            The root of the current algebra tree
+
+        Returns
+        -------
+        RelNode
+            The algebra tree, potentially expanded by grouping, mapping and selection nodes.
+        """
         aggregation_collector = ExpressionCollector(lambda e: isinstance(e, expr.FunctionExpression) and e.is_aggregate())
         aggregation_functions: set[expr.FunctionExpression] = (
             collection_utils.set_union(select_expr.accept_visitor(aggregation_collector)
@@ -1199,6 +2155,20 @@ class _ImplicitRelalgParser:
         return groupby_node
 
     def _add_final_projection(self, input_node: RelNode) -> RelNode:
+        """Generates all necessary output preparation nodes.
+
+        Such nodes include the final projection, sorting, duplicate elimination or limit.
+
+        Parameters
+        ----------
+        input_node : RelNode
+            The root of the current algebra tree
+
+        Returns
+        -------
+        RelNode
+            The algebra tree, potentially expanded by some final nodes.
+        """
         # TODO: Sorting, Duplicate elimination, limit
         if self._query.select_clause.is_star():
             return input_node
@@ -1211,11 +2181,33 @@ class _ImplicitRelalgParser:
 
     def _add_predicate(self, predicate: preds.AbstractPredicate, *, input_node: Optional[RelNode] = None,
                        eval_phase: EvaluationPhase = EvaluationPhase.BaseTable) -> RelNode:
+        """Inserts a selection into the corresponding relational algebra fragment.
+
+        Parameters
+        ----------
+        predicate : preds.AbstractPredicate
+            The entire selection. Notice that only those parts of the predicate will be included in the selection, that match
+            the expected `eval_phase`.
+        input_node : Optional[RelNode], optional
+            The current fragment. For the base table evaluation phase this can be *None*. The actual base table will be
+            inferred from the predicate. For all other evaluation phases this parameter is required.
+        eval_phase : EvaluationPhase, optional
+            The current evaluation phase, by default `EvaluationPhase.BaseTable`
+
+        Returns
+        -------
+        RelNode
+            The complete fragment. The return value is mostly only interesting for evaluation phases later than the base table
+            evaluation. For the base table evaluation, the result will also be stored in `self._base_table_fragments`.
+
+        See Also
+        --------
+        _filter_eval_phase
+        """
         predicate = _filter_eval_phase(predicate, eval_phase)
         if predicate is None:
             return input_node
 
-        print("Now processing predicate", predicate, "at phase", eval_phase)
         match eval_phase:
             case EvaluationPhase.BaseTable:
                 for base_table, base_pred in self._split_filter_predicate(predicate).items():
@@ -1236,6 +2228,30 @@ class _ImplicitRelalgParser:
                 raise ValueError(f"Unknown evaluation phase '{eval_phase}' for predicate '{predicate}'")
 
     def _convert_predicate(self, predicate: preds.AbstractPredicate, *, input_node: RelNode) -> RelNode:
+        """Generates the appropriate selection nodes for a specific predicate.
+
+        Depending on the specific predicate, operations other than a plain old selection might be required. For example,
+        for disjunctions involving subqueries, a union is necessary. Therefore, the conversion might actually force a deviation
+        from pure algebra trees and require an directed, acyclic graph instead.
+
+        Likewise, applying a predicate can make a preparatory mapping operation necessary, if the expressions required by the
+        predicate are not yet produced by the input node.
+
+        Parameters
+        ----------
+        predicate : preds.AbstractPredicate
+            The predicate that should be converted
+        input_node : RelNode
+            The operator after which the predicate is required. It is assumed that the input node is actually capable of
+            producing the required attributes in order to apply the predicate. For example, if the predicate consumes
+            attributes from multiple base relations, it is assumed that the input node provides tuples that already contain
+            these nodes.
+
+        Returns
+        -------
+        RelNode
+            The algebra fragment
+        """
         contains_subqueries = _SubqueryDetector()
         final_fragment = input_node
 
@@ -1336,6 +2352,15 @@ class _ImplicitRelalgParser:
                 raise ValueError(f"Unknown operation for composite predicate '{predicate}'")
 
     def _convert_join_predicate(self, predicate: preds.AbstractPredicate) -> RelNode:
+        """Generates the appropriate join nodes for a specific predicate.
+
+        Most of the implementation is structurally similar to `_convert_predicate`, so take a look at its documentation for
+        details.
+
+        See Also
+        --------
+        _ImplicitRelalgParser._convert_predicate
+        """
         contains_subqueries = _SubqueryDetector()
         nested_subqueries = predicate.accept_visitor(contains_subqueries)
         subquery_tables = collection_utils.set_union(subquery.bound_tables() for subquery in nested_subqueries.subqueries)
@@ -1416,6 +2441,37 @@ class _ImplicitRelalgParser:
     def _add_expression(self, expression: expr.SqlExpression, *, input_node: RelNode,
                         subquery_target: typing.Literal["semijoin", "antijoin", "scalar", "in"] = "scalar",
                         in_column: Optional[expr.SqlExpression] = None) -> RelNode:
+        """Generates the appropriate algebra fragment to execute a specific expression.
+
+        Depending on the specific expression, simple mappings or even join nodes might be included in the fragment. If the
+        expression is already provided by the input fragment, the fragment will be returned unmodified.
+
+        Parameters
+        ----------
+        expression : expr.SqlExpression
+            The expression to include
+        input_node : RelNode
+            The operator that provides the input tuples for the expression
+        subquery_target : typing.Literal["semijoin", "antijoin", "scalar", "in"], optional
+            How the subquery results should be handled. This parameter is only used if the expression actually contains
+            subqueries and depends on the context in which the expression is used, such as the owning predicate. *semijoin*
+            and *antijoin* correspond to *MISSING* and *EXISTS* predicates. *in* corresponds to *IN* predicates that could
+            either contain scalar subqueries that produce just a single value, or subqueries that produce an entire column of
+            values. The appropriate handling is determined by this method automatically. Lastly, *scalar* indicates that the
+            subquery is scalar and should produce just a single value, for usage e.g. in binary predicates or *SELECT* clauses.
+        in_column : Optional[expr.SqlExpression], optional
+            For *IN* predicates that contain a subquery producing multiple rows, e.g. *R.a IN (SELECT S.b FROM S)*, this is the
+            column that is compared to the subquery tuples (*R.a* in the example). For all other cases, this parameter is
+            ignored.
+
+        Returns
+        -------
+        RelNode
+            The expanded algebra fragment
+        """
+        if expression in input_node.provided_expressions():
+            return input_node
+
         match expression:
             case expr.ColumnExpression() | expr.StaticValueExpression():
                 return input_node
@@ -1441,27 +2497,40 @@ class _ImplicitRelalgParser:
             case _:
                 raise ValueError(f"Did not expect expression '{expression}'")
 
-    def _add_subquery(self, subquery: qal.SqlQuery) -> RelNode:
+    def _add_subquery(self, subquery: qal.SqlQuery) -> SubqueryScan:
+        """Generates the appropriate algebra fragment to include a subquery in the current algebra tree."""
         subquery_parser = _ImplicitRelalgParser(subquery, provided_base_tables=self._base_table_fragments)
         subquery_root = subquery_parser.generate_relnode()
         self._required_columns = dict_utils.merge(subquery_parser._required_columns, self._required_columns)
+        # We do not include the subquery base tables in our _base_table_fragments since the subquery base tables are already
+        # processed completely and this would contradict the interpretation of the _base_table_fragments in
+        # _generate_initial_join_order()
         return SubqueryScan(subquery_root, subquery)
 
-    def _infer_base_table(self, elem: preds.AbstractPredicate | expr.SqlExpression,
-                          relnode: RelNode | None) -> base.TableReference:
-        if relnode is not None:
-            return relnode
-        return _BaseTableLookup()(elem)
+    def _split_filter_predicate(self, pred: preds.AbstractPredicate) -> dict[base.TableReference, preds.AbstractPredicate]:
+        """Extracts applicable filter predicates for varios base tables.
 
-    def _split_filter_predicate(self, predicate: preds.AbstractPredicate
-                                ) -> dict[base.TableReference, preds.AbstractPredicate]:
-        if not isinstance(predicate, preds.CompoundPredicate):
-            return {self._infer_base_table(predicate, None): predicate}
-        if predicate.operation != expr.LogicalSqlCompoundOperators.And:
-            return {self._infer_base_table(predicate, None): predicate}
+        This method splits conjunctive filters consisting of individual predicates for multiple base tables into an explicit
+        mapping from base table to its filters.
+
+        For example, consider a predicate *R.a = 42 AND S.b < 101 AND S.c LIKE 'foo%'*. The split would provide a dictionary
+        ``{R: R.a < 42, S: S.b < 101 AND S.c LIKE 'foo%'}``
+
+        Warnings
+        --------
+        The behavior of this method is undefined if the supplied predicate is not a filter predicate that can be evaluated
+        during the base table evaluation phase.
+        """
+        if not pred.is_filter():
+            raise ValueError(f"Not a filter predicate: '{pred}'")
+
+        if not isinstance(pred, preds.CompoundPredicate):
+            return {_BaseTableLookup()(pred): pred}
+        if pred.operation != expr.LogicalSqlCompoundOperators.And:
+            return {_BaseTableLookup()(pred): pred}
 
         raw_predicate_components: dict[base.TableReference, set[preds.AbstractPredicate]] = collections.defaultdict(set)
-        for child_pred in predicate.children:
+        for child_pred in pred.children:
             child_split = self._split_filter_predicate(child_pred)
             for tab, pred in child_split.items():
                 raw_predicate_components[tab].add(pred)
@@ -1469,14 +2538,38 @@ class _ImplicitRelalgParser:
                 for base_table, predicates in raw_predicate_components.items()}
 
     def _split_join_predicate(self, predicate: preds.AbstractPredicate) -> set[preds.AbstractPredicate]:
+        """Provides all individual join predicates that have to be evaluated.
+
+        For conjunctive predicates, these are the actual components of the conjunction, all other predicates are returned
+        as-is.
+        """
+        if not predicate.is_join():
+            raise ValueError(f"Not a join predicate: '{predicate}'")
         if isinstance(predicate, preds.CompoundPredicate) and predicate.operation == expr.LogicalSqlCompoundOperators.And:
             return set(predicate.children)
         return {predicate}
 
     def _ensure_predicate_applicability(self, predicate: preds.AbstractPredicate, input_node: RelNode) -> RelNode:
+        """Computes all required mappings that have to be execute before a predicate can be evaluated.
+
+        If such mappings exist, the input relation is expanded with a new mapping operation, otherwise the relation is provided
+        as-is.
+
+        Parameters
+        ----------
+        predicate : preds.AbstractPredicate
+            The predicate to evaluate
+        input_node : RelNode
+            An operator providing the expressions that are already available.
+
+        Returns
+        -------
+        RelNode
+            An algebra fragment
+        """
         provided_expressions = input_node.provided_expressions()
-        required_expressions = collection_utils.set_union(_collect_all_expressions(child)
-                                                          for child in predicate.iterexpressions())
+        required_expressions = collection_utils.set_union(_collect_all_expressions(expression)
+                                                          for expression in predicate.iterexpressions())
         missing_expressions = required_expressions - provided_expressions
         if missing_expressions:
             return Map(input_node, _generate_expression_mapping_dict(missing_expressions))
@@ -1484,4 +2577,17 @@ class _ImplicitRelalgParser:
 
 
 def parse_relalg(query: qal.ImplicitSqlQuery) -> RelNode:
+    """Converts an SQL query to a representation in relational algebra.
+
+    Parameters
+    ----------
+    query : qal.ImplicitSqlQuery
+        The query to convert
+
+    Returns
+    -------
+    RelNode
+        The root node of the relational algebra tree. Notice that in some cases the algebraic expression might not be a tree
+        but a directed, acyclic graph instead. However, in this case there still is a single root node.
+    """
     return _ImplicitRelalgParser(query).generate_relnode()

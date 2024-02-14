@@ -3,7 +3,7 @@
 Updates to PostBOUND are typically made according to the following rules:
 
 1. Version numbers are composed of three numbers, following the typical _major.minor.patch_ scheme. However, until version 1.0
-   the boundary between minor versions and patches is somewhat arbitrary
+   the boundary between minor versions and patches as well as between major and minor versions is somewhat arbitrary.
 2. Minor updates normally should be backwards-compatible and only consist of new functions or parameters with default values.
    The same applies to patches.
 3. The version suffixes indicate stability of the current PostBOUND version. No suffix means well-tested and stable, beta means
@@ -14,10 +14,13 @@ Be carefull when updating and check the changelog!
 
 ---
 
-## Version 0.1.1
+## Version 0.2.0
+
+This is pretty much a new major version, but we are not ready for 1.0 yet and do not want to convey too much stability.
 
 ### New features
 
+- Added a prototypical representation of SQL queries in relational algebra (see `postbound.qal.relalg` module)
 - Introduced a Debug mode for the Postgres interface. Enabling it will occasionally print additional internal information.
   Currently, this only includes GeQO settings but it will be expanded in the future.
 - When loading workloads column binding can now be enabled explicitly

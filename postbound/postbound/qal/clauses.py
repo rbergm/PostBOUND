@@ -99,7 +99,7 @@ class BaseClause(abc.ABC):
 
         Parameters
         ----------
-        visitor : ClauseVisitor
+        visitor : ClauseVisitor[VisitorResult]
             The visitor
         """
         raise NotImplementedError
