@@ -3,7 +3,8 @@
 The most important features of the qal are:
 1. parsing query strings into qal objects
 2. providing access to underlying query features such as referenced tables, aliases or predicates
-3. formatting qal objects back to strings
+3. converting queries to representations in relational algebra
+4. formatting qal objects back to strings
 
 Generally, the qal is structured around 3 fundamental concepts: At the core of the qal are SQL expressions (as
 specified in the `expressions` module). Such expressions form the elements that are re-used by more high-level
@@ -12,6 +13,9 @@ calls and expressions for modelling math. These expressions are then used to con
 conditions, specified in the `predicates` module) or clauses (specified in the `clauses` module). Predicates are
 normally part of clauses (such as a ``WHERE`` clause or a ``HAVING`` clause). Finally, clauses are combined to form the
 actual SQL queries (as specified in the `qal` module).
+
+Using these basic building blocks, the `relalg` module provides a simple model of relational algebra, as well as means to
+translate a parsed SQL query to an algebraic expression.
 
 A common pattern when working with elements of the qal are the `tables` and `columns` methods (along with some other, more
 rarely used ones). These are defined on pretty much all of the qal types and provide access to the tables, respectively the

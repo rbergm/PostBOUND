@@ -36,8 +36,8 @@ def _gv_escape(node: T) -> str:
 
 
 def plot_tree(node: T, label_generator: Callable[[T], tuple[str, dict]], child_supplier: Callable[[T], Sequence[T]], *,
-              out_path: str = "", out_format: str = "svg",
-              _graph: Optional[gv.Graph] = None) -> gv.Graph:
+              escape_labels: bool = True, out_path: str = "", out_format: str = "svg",
+              _graph: Optional[gv.Graph] = None, **kwargs) -> gv.Graph:
     """Transforms an arbitrary tree into a Graphviz graph. The tree traversal is achieved via callback functions.
 
     Start the traversal at the root node.
@@ -75,15 +75,17 @@ def plot_tree(node: T, label_generator: Callable[[T], tuple[str, dict]], child_s
     .. Graphviz project: https://graphviz.org/
     """
     initial = _graph is None
-    _graph = gv.Graph() if initial else _graph
+    _graph = gv.Graph(**kwargs) if initial else _graph
     label, params = label_generator(node)
+    if escape_labels:
+        label = gv.escape(label)
     node_key = _gv_escape(node)
     _graph.node(node_key, label=label, **params)
 
     for child in child_supplier(node):
         child_key = _gv_escape(child)
         _graph.edge(node_key, child_key)
-        _graph = plot_tree(child, label_generator, child_supplier, _graph=_graph)
+        _graph = plot_tree(child, label_generator, child_supplier, escape_labels=escape_labels, _graph=_graph)
 
     if initial and out_path:
         _graph.render(out_path, format=out_format, cleanup=True)

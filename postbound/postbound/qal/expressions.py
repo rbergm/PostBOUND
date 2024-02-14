@@ -15,6 +15,7 @@ from collections.abc import Iterable, Sequence
 from typing import Union, Optional
 
 from postbound.qal import base, qal
+from postbound.qal.base import TableReference
 from postbound.util import collections as collection_utils
 
 T = typing.TypeVar("T")
@@ -103,6 +104,7 @@ class SqlExpression(abc.ABC):
     def __init__(self, hash_val: int):
         self._hash_val = hash_val
 
+    @abc.abstractmethod
     def tables(self) -> set[base.TableReference]:
         """Provides all tables that are accessed by this expression.
 
@@ -111,7 +113,7 @@ class SqlExpression(abc.ABC):
         set[base.TableReference]
             All tables. This includes virtual tables if such tables are present in the expression.
         """
-        return {column.table for column in self.columns() if column.is_bound()}
+        raise NotImplementedError
 
     @abc.abstractmethod
     def columns(self) -> set[base.ColumnReference]:
@@ -149,6 +151,17 @@ class SqlExpression(abc.ABC):
         -------
         Iterable[SqlExpression]
             The expressions
+        """
+        raise NotImplementedError
+
+    @abc.abstractmethod
+    def accept_visitor(self, visitor: SqlExpressionVisitor[VisitorResult]) -> VisitorResult:
+        """Enables processing of the current expression by an expression visitor.
+
+        Parameters
+        ----------
+        visitor : SqlExpressionVisitor[VisitorResult]
+            The visitor
         """
         raise NotImplementedError
 
@@ -199,6 +212,9 @@ class StaticValueExpression(SqlExpression, typing.Generic[T]):
         """
         return self._value
 
+    def tables(self) -> set[TableReference]:
+        return set()
+
     def columns(self) -> set[base.ColumnReference]:
         return set()
 
@@ -207,6 +223,9 @@ class StaticValueExpression(SqlExpression, typing.Generic[T]):
 
     def iterchildren(self) -> Iterable[SqlExpression]:
         return []
+
+    def accept_visitor(self, visitor: SqlExpressionVisitor[VisitorResult]) -> VisitorResult:
+        return visitor.visit_static_value_expr(self)
 
     __hash__ = SqlExpression.__hash__
 
@@ -267,6 +286,9 @@ class CastExpression(SqlExpression):
         """
         return self._target_type
 
+    def tables(self) -> set[TableReference]:
+        return self._casted_expression.tables()
+
     def columns(self) -> set[base.ColumnReference]:
         return self.casted_expression.columns()
 
@@ -275,6 +297,9 @@ class CastExpression(SqlExpression):
 
     def iterchildren(self) -> Iterable[SqlExpression]:
         return [self.casted_expression]
+
+    def accept_visitor(self, visitor: SqlExpressionVisitor[VisitorResult]) -> VisitorResult:
+        return visitor.visit_cast_expr(self)
 
     __hash__ = SqlExpression.__hash__
 
@@ -366,6 +391,14 @@ class MathematicalExpression(SqlExpression):
         """
         return self._second_arg
 
+    def tables(self) -> set[TableReference]:
+        all_tables = set(self.first_arg.tables())
+        if isinstance(self.second_arg, list):
+            all_tables |= collection_utils.set_union(expr.tables() for expr in self.second_arg)
+        elif isinstance(self.second_arg, SqlExpression):
+            all_tables |= self.second_arg.tables()
+        return all_tables
+
     def columns(self) -> set[base.ColumnReference]:
         all_columns = set(self.first_arg.columns())
         if isinstance(self.second_arg, list):
@@ -385,6 +418,9 @@ class MathematicalExpression(SqlExpression):
 
     def iterchildren(self) -> Iterable[SqlExpression]:
         return [self.first_arg, self.second_arg]
+
+    def accept_visitor(self, visitor: SqlExpressionVisitor[VisitorResult]) -> VisitorResult:
+        return visitor.visit_mathematical_expr(self)
 
     __hash__ = SqlExpression.__hash__
 
@@ -433,6 +469,11 @@ class ColumnExpression(SqlExpression):
         """
         return self._column
 
+    def tables(self) -> set[TableReference]:
+        if not self.column.is_bound():
+            return set()
+        return {self.column.table}
+
     def columns(self) -> set[base.ColumnReference]:
         return {self.column}
 
@@ -441,6 +482,9 @@ class ColumnExpression(SqlExpression):
 
     def iterchildren(self) -> Iterable[SqlExpression]:
         return []
+
+    def accept_visitor(self, visitor: SqlExpressionVisitor[VisitorResult]) -> VisitorResult:
+        return visitor.visit_column_expr(self)
 
     __hash__ = SqlExpression.__hash__
 
@@ -546,6 +590,9 @@ class FunctionExpression(SqlExpression):
         """
         return self._function.upper() in AggregateFunctions
 
+    def tables(self) -> set[TableReference]:
+        return collection_utils.set_union(arg.tables() for arg in self.arguments)
+
     def columns(self) -> set[base.ColumnReference]:
         all_columns = set()
         for arg in self.arguments:
@@ -560,6 +607,9 @@ class FunctionExpression(SqlExpression):
 
     def iterchildren(self) -> Iterable[SqlExpression]:
         return list(self.arguments)
+
+    def accept_visitor(self, visitor: SqlExpressionVisitor[VisitorResult]) -> VisitorResult:
+        return visitor.visit_function_expr(self)
 
     __hash__ = SqlExpression.__hash__
 
@@ -609,6 +659,9 @@ class SubqueryExpression(SqlExpression):
         """
         return self._query
 
+    def tables(self) -> set[base.TableReference]:
+        return self._query.tables()
+
     def columns(self) -> set[base.ColumnReference]:
         return self._query.columns()
 
@@ -618,8 +671,8 @@ class SubqueryExpression(SqlExpression):
     def iterchildren(self) -> Iterable[SqlExpression]:
         return []
 
-    def tables(self) -> set[base.TableReference]:
-        return self._query.tables()
+    def accept_visitor(self, visitor: SqlExpressionVisitor[VisitorResult]) -> VisitorResult:
+        return visitor.visit_subquery_expr(self)
 
     __hash__ = SqlExpression.__hash__
 
@@ -637,6 +690,9 @@ class StarExpression(SqlExpression):
     def __init__(self) -> None:
         super().__init__(hash("*"))
 
+    def tables(self) -> set[TableReference]:
+        return set()
+
     def columns(self) -> set[base.ColumnReference]:
         return set()
 
@@ -646,6 +702,9 @@ class StarExpression(SqlExpression):
     def iterchildren(self) -> Iterable[SqlExpression]:
         return []
 
+    def accept_visitor(self, visitor: SqlExpressionVisitor[VisitorResult]) -> VisitorResult:
+        return visitor.visit_star_expr(self)
+
     __hash__ = SqlExpression.__hash__
 
     def __eq__(self, other) -> bool:
@@ -653,6 +712,52 @@ class StarExpression(SqlExpression):
 
     def __str__(self) -> str:
         return "*"
+
+
+VisitorResult = typing.TypeVar("VisitorResult")
+"""Result type of visitor processes."""
+
+
+class SqlExpressionVisitor(abc.ABC, typing.Generic[VisitorResult]):
+    """Basic visitor to operator on arbitrary expression trees.
+
+    See Also
+    --------
+    SqlExpression
+
+    References
+    ----------
+
+    .. Visitor pattern: https://en.wikipedia.org/wiki/Visitor_pattern
+    """
+
+    @abc.abstractmethod
+    def visit_static_value_expr(self, expr: StaticValueExpression) -> VisitorResult:
+        raise NotImplementedError
+
+    @abc.abstractmethod
+    def visit_cast_expr(self, expr: CastExpression) -> VisitorResult:
+        raise NotImplementedError
+
+    @abc.abstractmethod
+    def visit_mathematical_expr(self, expr: MathematicalExpression) -> VisitorResult:
+        raise NotImplementedError
+
+    @abc.abstractmethod
+    def visit_column_expr(self, expr: ColumnExpression) -> VisitorResult:
+        raise NotImplementedError
+
+    @abc.abstractmethod
+    def visit_function_expr(self, expr: FunctionExpression) -> VisitorResult:
+        raise NotImplementedError
+
+    @abc.abstractmethod
+    def visit_subquery_expr(self, expr: SubqueryExpression) -> VisitorResult:
+        raise NotImplementedError
+
+    @abc.abstractmethod
+    def visit_star_expr(self, expr: StarExpression) -> VisitorResult:
+        raise NotImplementedError
 
 
 def as_expression(value: object) -> SqlExpression:

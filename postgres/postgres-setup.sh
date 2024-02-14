@@ -91,9 +91,8 @@ export PATH="$PG_TARGET_DIR/build/bin:$PATH"
 export LD_LIBRARY_PATH="$PG_TARGET_DIR/build/lib:$LD_LIBRARY_PATH"
 export C_INCLUDE_PATH="$PG_TARGET_DIR/build/include/server:$C_INCLUDE_PATH"
 
-echo ".. Installing pg_hint_plan extension $(pwd)"
+echo ".. Installing pg_hint_plan extension"
 cd $PG_TARGET_DIR/contrib
-echo "... [DEBUG] $PG_TARGET_DIR/contrib"
 tar xzvf pg_hint_plan.tar.gz
 mv pg_hint_plan-$PG_HINT_PLAN_VERSION pg_hint_plan
 cd pg_hint_plan
@@ -102,6 +101,13 @@ cd $PG_TARGET_DIR
 
 echo ".. Installing pg_prewarm extension"
 cd $PG_TARGET_DIR/contrib/pg_prewarm
+make -j $MAKE_CORES && make install
+cd $PG_TARGET_DIR
+
+echo ".. Installing pg_cooldown extension"
+cd $PG_TARGET_DIR/contrib
+git clone https://github.com/rbergm/pg_cooldown.git pg_cooldown
+cd pg_cooldown
 make -j $MAKE_CORES && make install
 cd $PG_TARGET_DIR
 

@@ -470,7 +470,8 @@ References
 """
 
 
-def _parse_table_reference(table: str | dict) -> base.TableReference:
+def _parse_table_reference(table: str | dict, *,
+                           cte_tables: Optional[dict[str, base.TableReference]] = None) -> base.TableReference:
     """Parsing logic to generate table references
 
     Parameters
@@ -497,6 +498,8 @@ def _parse_table_reference(table: str | dict) -> base.TableReference:
     if isinstance(table, dict):
         table_name = table["value"]
         table_alias = table.get("name", None)
+        if cte_tables and table_name in cte_tables:
+            return cte_tables[table_name]
         return base.TableReference(table_name, table_alias)
 
     # string-based table format
@@ -505,7 +508,10 @@ def _parse_table_reference(table: str | dict) -> base.TableReference:
         raise ValueError(f"Could not parse table reference for '{table}'")
     full_name, alias = pattern_match.group("full_name", "alias")
     alias = "" if not alias else alias
-    return base.TableReference(full_name, alias)
+    table = base.TableReference(full_name, alias)
+    if cte_tables and full_name in cte_tables:
+        return cte_tables[full_name]
+    return table
 
 
 def _parse_column_reference(column: str) -> base.ColumnReference:
@@ -543,13 +549,17 @@ def _parse_column_reference(column: str) -> base.ColumnReference:
     return base.ColumnReference(column, table_ref)
 
 
-def _parse_implicit_from_clause(mosp_data: dict) -> Optional[clauses.ImplicitFromClause]:
+def _parse_implicit_from_clause(mosp_data: dict, *, cte_tables: Optional[dict[str, base.TableReference]] = None
+                                ) -> Optional[clauses.ImplicitFromClause]:
     """Parsing logic for ``FROM`` clauses that only reference plain tables and do not contain subqueries.
 
     Parameters
     ----------
     mosp_data : dict
         The entire ``FROM`` clause, i.e. starting at and including the ``"from"`` key.
+    cte_tables : Optional[dict[str, base.TableReference]], optional
+        Tables that have been exported by a *WITH* statement. These can also appear in the *FROM* clause and should be treated
+        as virtual tables. The default assumption is that there are no such tables.
 
     Returns
     -------
@@ -569,17 +579,18 @@ def _parse_implicit_from_clause(mosp_data: dict) -> Optional[clauses.ImplicitFro
     if "from" not in mosp_data:
         return None
     from_clause = mosp_data["from"]
-    if isinstance(from_clause, str):
-        return clauses.ImplicitFromClause(clauses.DirectTableSource(_parse_table_reference(from_clause)))
-    elif isinstance(from_clause, dict):
-        return clauses.ImplicitFromClause(clauses.DirectTableSource(_parse_table_reference(from_clause)))
+    if isinstance(from_clause, (str, dict)):
+        table = _parse_table_reference(from_clause, cte_tables=cte_tables)
+        return clauses.ImplicitFromClause(clauses.DirectTableSource(table))
     elif not isinstance(from_clause, list):
         raise ValueError("Unknown FROM clause structure: " + str(from_clause))
-    parsed_sources = [clauses.DirectTableSource(_parse_table_reference(table)) for table in from_clause]
+    parsed_sources = [clauses.DirectTableSource(_parse_table_reference(table, cte_tables=cte_tables))
+                      for table in from_clause]
     return clauses.ImplicitFromClause(parsed_sources)
 
 
-def _parse_explicit_from_clause(mosp_data: dict) -> clauses.ExplicitFromClause:
+def _parse_explicit_from_clause(mosp_data: dict, *,
+                                cte_tables: Optional[dict[str, base.TableReference]] = None) -> clauses.ExplicitFromClause:
     """Parsing logic for ``FROM`` clauses that exclusively make use of the ``JOIN ON`` syntax.
 
     In contrast to implicit ``FROM`` clauses, their explicit counterparts can join both plain tables as well as
@@ -589,6 +600,9 @@ def _parse_explicit_from_clause(mosp_data: dict) -> clauses.ExplicitFromClause:
     ----------
     mosp_data : dict
         The entire ``FROM`` clause, i.e. starting at and including the ``"from"`` key.
+    cte_tables : Optional[dict[str, base.TableReference]], optional
+        Tables that have been exported by a *WITH* statement. These can also appear in the *FROM* clause and should be treated
+        as virtual tables. The default assumption is that there are no such tables.
 
     Returns
     -------
@@ -615,7 +629,7 @@ def _parse_explicit_from_clause(mosp_data: dict) -> clauses.ExplicitFromClause:
     if not isinstance(from_clause, list):
         raise ValueError("Unknown FROM clause format: " + str(from_clause))
     first_table, *joined_tables = from_clause
-    initial_table = _parse_table_reference(first_table)
+    initial_table = _parse_table_reference(first_table, cte_tables=cte_tables)
     parsed_joins = []
     for joined_table in joined_tables:
         join_condition = _parse_mosp_predicate(joined_table["on"]) if "on" in joined_table else None
@@ -634,15 +648,12 @@ def _parse_explicit_from_clause(mosp_data: dict) -> clauses.ExplicitFromClause:
                                                         join_condition, join_type=parsed_join_type))
         elif isinstance(join_source, dict):
             # we found a normal table join with an alias
-            table_name = join_source["value"]
-            table_alias = join_source.get("name", None)
-            table = base.TableReference(table_name, table_alias)
+            table = _parse_table_reference(join_source, cte_tables=cte_tables)
             parsed_joins.append(clauses.JoinTableSource(clauses.DirectTableSource(table), join_condition,
                                                         join_type=parsed_join_type))
         elif isinstance(join_source, str):
             # we found a normal table join without an alias
-            table_name = join_source
-            table = base.TableReference(table_name)
+            table = _parse_table_reference(join_source, cte_tables=cte_tables)
             parsed_joins.append(clauses.JoinTableSource(clauses.DirectTableSource(table), join_condition,
                                                         join_type=parsed_join_type))
         else:
@@ -650,7 +661,9 @@ def _parse_explicit_from_clause(mosp_data: dict) -> clauses.ExplicitFromClause:
     return clauses.ExplicitFromClause(clauses.DirectTableSource(initial_table), parsed_joins)
 
 
-def _parse_base_table_source(mosp_data: dict | str) -> clauses.DirectTableSource | clauses.SubqueryTableSource:
+def _parse_base_table_source(mosp_data: dict | str, *,
+                             cte_tables: Optional[dict[str, base.TableReference]] = None
+                             ) -> clauses.DirectTableSource | clauses.SubqueryTableSource:
     """Parsing logic for table sources that do not use the ``JOIN ON`` syntax.
 
     This method will determine the appropriate type of source (pure table or subquery) and potentially delegate its
@@ -661,6 +674,9 @@ def _parse_base_table_source(mosp_data: dict | str) -> clauses.DirectTableSource
     mosp_data : dict | str
         The table encoding. Strings are direct sources, whereas dicts can encode both direct table sources as well as
         subqueries.
+    cte_tables : Optional[dict[str, base.TableReference]], optional
+        Tables that have been exported by a *WITH* statement. These can also appear in the *FROM* clause and should be treated
+        as virtual tables. The default assumption is that there are no such tables.
 
     Returns
     -------
@@ -679,13 +695,13 @@ def _parse_base_table_source(mosp_data: dict | str) -> clauses.DirectTableSource
         during testing. If it can be emitted for a valid query, we need to extend our parsing logic.
     """
     if isinstance(mosp_data, str):
-        return clauses.DirectTableSource(_parse_table_reference(mosp_data))
+        return clauses.DirectTableSource(_parse_table_reference(mosp_data, cte_tables=cte_tables))
     if not isinstance(mosp_data, dict) or "value" not in mosp_data or "name" not in mosp_data:
         raise TypeError("Unknown FROM clause target: " + str(mosp_data))
 
     value_target = mosp_data["value"]
     if isinstance(value_target, str):
-        return clauses.DirectTableSource(_parse_table_reference(mosp_data))
+        return clauses.DirectTableSource(_parse_table_reference(mosp_data, cte_tables=cte_tables))
     is_subquery_table = (isinstance(value_target, dict)
                          and any(select_type in value_target for select_type in _MospSelectTypes))
     if not is_subquery_table:
@@ -695,7 +711,8 @@ def _parse_base_table_source(mosp_data: dict | str) -> clauses.DirectTableSource
     return clauses.SubqueryTableSource(parsed_subquery, subquery_target)
 
 
-def _parse_join_table_source(mosp_data: dict) -> clauses.JoinTableSource:
+def _parse_join_table_source(mosp_data: dict, *,
+                             cte_tables: Optional[dict[str, base.TableReference]] = None) -> clauses.JoinTableSource:
     """Parsing logic for a single ``JOIN ON``statement in the ``FROM`` clause.
 
     This method will determine the precise kind of join being used (which are encoded as part of the key in mo-sql) and
@@ -706,6 +723,9 @@ def _parse_join_table_source(mosp_data: dict) -> clauses.JoinTableSource:
     ----------
     mosp_data : dict
         The join encoding. This dictionary has to contain the key describing the precise join type at the root level.
+    cte_tables : Optional[dict[str, base.TableReference]], optional
+        Tables that have been exported by a *WITH* statement. These can also appear in the *FROM* clause and should be treated
+        as virtual tables. The default assumption is that there are no such tables.
 
     Returns
     -------
@@ -724,7 +744,7 @@ def _parse_join_table_source(mosp_data: dict) -> clauses.JoinTableSource:
     return clauses.JoinTableSource(parsed_target, join_condition, join_type=parsed_join_type)
 
 
-def _parsed_mixed_from_clause(mosp_data: dict) -> clauses.From:
+def _parsed_mixed_from_clause(mosp_data: dict, *, cte_tables: Optional[dict[str, base.TableReference]] = None) -> clauses.From:
     """Parsing logic for ``FROM`` clauses that consist of pure table sources, explicit ``JOIN``s and subqueries.
 
     The method will figure out the most appropriate representation for each source and delegate its construction to a
@@ -734,6 +754,9 @@ def _parsed_mixed_from_clause(mosp_data: dict) -> clauses.From:
     ----------
     mosp_data : dict
         The entire ``FROM`` clause, i.e. starting at and including the ``"from"`` key.
+    cte_tables : Optional[dict[str, base.TableReference]], optional
+        Tables that have been exported by a *WITH* statement. These can also appear in the *FROM* clause and should be treated
+        as virtual tables. The default assumption is that there are no such tables.
 
     Returns
     -------
@@ -752,16 +775,17 @@ def _parsed_mixed_from_clause(mosp_data: dict) -> clauses.From:
     from_clause = mosp_data["from"]
 
     if isinstance(from_clause, str):
-        return clauses.From(clauses.DirectTableSource(_parse_table_reference(from_clause)))
+        return clauses.From(clauses.DirectTableSource(_parse_table_reference(from_clause, cte_tables=cte_tables)))
     elif isinstance(from_clause, dict):
-        return clauses.From(_parse_base_table_source(from_clause))
+        return clauses.From(_parse_base_table_source(from_clause, cte_tables=cte_tables))
     elif not isinstance(from_clause, list):
         raise ValueError("Unknown FROM clause type: " + str(from_clause))
 
     parsed_from_clause_entries = []
     for entry in from_clause:
         join_entry = isinstance(entry, dict) and any(join_type in entry for join_type in _MospJoinTypes)
-        parsed_entry = _parse_join_table_source(entry) if join_entry else _parse_base_table_source(entry)
+        parsed_entry = (_parse_join_table_source(entry, cte_tables=cte_tables) if join_entry
+                        else _parse_base_table_source(entry, cte_tables=cte_tables))
         parsed_from_clause_entries.append(parsed_entry)
     return clauses.From(parsed_from_clause_entries)
 
@@ -976,25 +1000,26 @@ class _MospQueryParser:
         qal.SqlQuery
             The parsed query
         """
+        if "with" in self._mosp_data:
+            cte_clause = _parse_cte_clause(self._mosp_data["with"])
+            cte_exported_tables = {cte.target_name: cte.target_table for cte in cte_clause.queries}
+        else:
+            cte_clause = None
+            cte_exported_tables = {}
+
         if _is_implicit_query(self._mosp_data):
             implicit, explicit = True, False
-            from_clause = _parse_implicit_from_clause(self._mosp_data)
+            from_clause = _parse_implicit_from_clause(self._mosp_data, cte_tables=cte_exported_tables)
         elif _is_explicit_query(self._mosp_data):
             implicit, explicit = False, True
-            from_clause = _parse_explicit_from_clause(self._mosp_data)
+            from_clause = _parse_explicit_from_clause(self._mosp_data, cte_tables=cte_exported_tables)
         else:
             implicit, explicit = False, False
-            from_clause = _parsed_mixed_from_clause(self._mosp_data)
+            from_clause = _parsed_mixed_from_clause(self._mosp_data, cte_tables=cte_exported_tables)
         select_clause = _parse_select_clause(self._mosp_data)
         where_clause = _parse_where_clause(self._mosp_data["where"]) if "where" in self._mosp_data else None
 
         # TODO: support for EXPLAIN queries
-        # TODO: support for CTEs
-
-        if "with" in self._mosp_data:
-            cte_clause = _parse_cte_clause(self._mosp_data["with"])
-        else:
-            cte_clause = None
 
         if "groupby" in self._mosp_data:
             groupby_clause = _parse_groupby_clause(self._mosp_data["groupby"])
@@ -1051,7 +1076,7 @@ class _MospQueryParser:
 
 
 def parse_query(query: str, *, bind_columns: bool | None = None,
-                db_schema: Optional[db.DatabaseSchema] = None) -> qal.SqlQuery:
+                db_schema: Optional[db.DatabaseSchema] = None, _skip_all_binding: bool = False) -> qal.SqlQuery:
     """Parses a query string into a proper `SqlQuery` object.
 
     During parsing, the appropriate type of SQL query (i.e. with implicit, explicit or mixed ``FROM`` clause) will be
@@ -1086,6 +1111,8 @@ def parse_query(query: str, *, bind_columns: bool | None = None,
                  else db.DatabasePool.get_instance().current_database().schema())
     mosp_data = mosp.parse(query)
     parsed_query = _MospQueryParser(mosp_data, query).parse_query()
+    if _skip_all_binding:
+        return parsed_query
     return transform.bind_columns(parsed_query, with_schema=bind_columns, db_schema=db_schema)
 
 

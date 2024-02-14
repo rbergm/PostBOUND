@@ -58,12 +58,13 @@ class FormattingSubqueryExpression(expr.SubqueryExpression):
         self._indentation = indentation
 
     def __str__(self) -> str:
-        formatted = format_quick(self.query, inline_hint_block=self._inline_hint_block)
-        prefix = " " * self._indentation
+        formatted = "(" + format_quick(self.query, inline_hint_block=self._inline_hint_block) + ")"
+        prefix = " " * (self._indentation + 2)
         if "\n" not in formatted:
             return prefix + formatted
 
-        indented_lines = [""] + [prefix + line for line in formatted.split("\n")] + [""]
+        lines = formatted.split("\n")
+        indented_lines = [f"\n{prefix}{lines[0]}"] + [prefix + line for line in lines[1:]]
         return "\n".join(indented_lines)
 
 

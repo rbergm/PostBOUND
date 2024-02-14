@@ -18,3 +18,20 @@ class of potential bugs by design.
 Other than the representation and transformation tools, the qal also provides a parser to create query instances from plain
 text. See the `postbound.qal.parser` module for details. Finally, the `formatter` module adds some functionality to
 pretty-print queries based on a couple of heuristics.
+
+
+Representation in Relational Algebra
+------------------------------------
+
+In addition to a SQL representation, the query abstraction also provides means to convert the queries to a model in
+relational algebra. This functinality is provided by the `relalg` module. Combining all the different tools together, an
+input query can be converted like so:
+
+.. code-block:: python
+
+    from postbound.qal import parser, relalg, transform
+    from postbound.vis import optimizer as opt_vis
+
+    parsed_query = parser.parse_query("SELECT * FROM R, S WHERE R.r_a < 42 AND R.r_id = S.s_id")
+    relnode = relalg.parse_relalg(parsed_query)
+    opt_vis.plot_relalg(relnode)
