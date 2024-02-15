@@ -1021,6 +1021,14 @@ def _rename_columns_in_expression(expression: Optional[expr.SqlExpression],
         return expr.FunctionExpression(expression.function, renamed_arguments, distinct=expression.distinct)
     elif isinstance(expression, expr.SubqueryExpression):
         return expr.SubqueryExpression(_rename_columns_in_query(expression.query, available_renamings))
+    elif isinstance(expression, expr.WindowExpression):
+        renamed_function = _rename_columns_in_expression(expression.window_function, available_renamings)
+        renamed_partition = [_rename_columns_in_expression(part, available_renamings) for part in expression.partitioning]
+        renamed_orderby = rename_columns_in_clause(expression.ordering, available_renamings) if expression.ordering else None
+        renamed_filter = (rename_columns_in_predicate(expression.filter_condition, available_renamings)
+                          if expression.filter_condition else None)
+        return expr.WindowExpression(renamed_function, partitioning=renamed_partition, ordering=renamed_orderby,
+                                     filter_condition=renamed_filter)
     else:
         raise ValueError("Unknown expression type: " + str(expression))
 

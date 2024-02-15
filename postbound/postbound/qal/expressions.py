@@ -14,7 +14,7 @@ import typing
 from collections.abc import Iterable, Sequence
 from typing import Union, Optional
 
-from postbound.qal import base, qal
+from postbound.qal import base, qal, predicates, clauses
 from postbound.qal.base import TableReference
 from postbound.util import collections as collection_utils
 
@@ -233,6 +233,8 @@ class StaticValueExpression(SqlExpression, typing.Generic[T]):
         return isinstance(other, type(self)) and self.value == other.value
 
     def __str__(self) -> str:
+        if self.value is None:
+            return "NULL"
         return f"{self.value}" if isinstance(self.value, numbers.Number) else f"'{self.value}'"
 
 
@@ -714,6 +716,118 @@ class StarExpression(SqlExpression):
         return "*"
 
 
+class WindowExpression(SqlExpression):
+    """Represents a window expression in SQL.
+
+    Parameters
+    ----------
+    window_function : FunctionExpression
+        The window function to be applied.
+    partitioning : Optional[Sequence[SqlExpression]], optional
+        The expressions used for partitioning the window. Defaults to None.
+    ordering : Optional[clauses.OrderBy], optional
+        The ordering of the window. Defaults to None.
+    filter_condition : Optional[predicates.AbstractPredicate], optional
+        The filter condition for the window. Defaults to None.
+    """
+
+    def __init__(self, window_function: FunctionExpression, *,
+                 partitioning: Optional[Sequence[SqlExpression]] = None,
+                 ordering: Optional[clauses.OrderBy] = None,
+                 filter_condition: Optional[predicates.AbstractPredicate] = None) -> None:
+        self._window_function = window_function
+        self._partitioning = tuple(partitioning) if partitioning else tuple()
+        self._ordering = ordering
+        self._filter_condition = filter_condition
+
+        hash_val = hash((self._window_function, self._partitioning, self._ordering, self._filter_condition))
+        super().__init__(hash_val)
+
+    @property
+    def window_function(self) -> FunctionExpression:
+        """Get the window function of the window expression.
+
+        Returns
+        -------
+        FunctionExpression
+            The window function.
+        """
+        return self._window_function
+
+    @property
+    def partitioning(self) -> Sequence[SqlExpression]:
+        """Get the expressions used for partitioning the window.
+
+        Returns
+        -------
+        Sequence[SqlExpression]
+            The expressions used for partitioning the window. Can be empty if no partitioning is used.
+        """
+        return self._partitioning
+
+    @property
+    def ordering(self) -> Optional[clauses.OrderBy]:
+        """Get the ordering of tuples in the current window.
+
+        Returns
+        -------
+        Optional[clauses.OrderBy]
+            The ordering of the tuples, or *None* if no ordering is specified.
+        """
+        return self._ordering
+
+    @property
+    def filter_condition(self) -> Optional[predicates.AbstractPredicate]:
+        """Get the filter condition for tuples in the current window.
+
+        Returns:
+            Optional[predicates.AbstractPredicate]:
+            The filter condition for the expression, or *None* if all tuples are aggegrated.
+        """
+        return self._filter_condition
+
+    def tables(self) -> set[TableReference]:
+        return collection_utils.set_union(child.tables() for child in self.iterchildren())
+
+    def columns(self) -> set[base.ColumnReference]:
+        return collection_utils.set_union(child.columns() for child in self.iterchildren())
+
+    def itercolumns(self) -> Iterable[base.ColumnReference]:
+        return collection_utils.flatten(expr.itercolumns() for expr in self.iterchildren())
+
+    def iterchildren(self) -> Iterable[SqlExpression]:
+        function_children = list(self.window_function.iterchildren())
+        partitioning_children = collection_utils.flatten(expr.iterchildren() for expr in self.partitioning)
+        ordering_children = self.ordering.iterexpressions() if self.ordering else []
+        filter_children = self.filter_condition.iterexpressions() if self.filter_condition else []
+        return function_children + partitioning_children + ordering_children + filter_children
+
+    def accept_visitor(self, visitor: SqlExpressionVisitor[VisitorResult]) -> VisitorResult:
+        return visitor.visit_window_expr(self)
+
+    __hash__ = SqlExpression.__hash__
+
+    def __eq__(self, other: object) -> bool:
+        return (isinstance(other, type(self))
+                and self.window_function == other.window_function
+                and self.partitioning == other.partitioning
+                and self.ordering == other.ordering
+                and self.filter_condition == other.filter_condition)
+
+    def __str__(self) -> str:
+        filter_str = f" FILTER (WHERE {self.filter_condition})" if self.filter_condition else ""
+        function_str = f"{self.window_function}{filter_str} OVER"
+        window_grouping: list[str] = []
+        if self.partitioning:
+            partitioning_str = ", ".join(str(partition) for partition in self.partitioning)
+            window_grouping.append(f"PARTITION BY {partitioning_str}")
+        if self.ordering:
+            window_grouping.append(str(self.ordering))
+        window_str = " ".join(window_grouping)
+        window_str = f"({window_str})" if window_str else "()"
+        return f"{function_str} {window_str}"
+
+
 VisitorResult = typing.TypeVar("VisitorResult")
 """Result type of visitor processes."""
 
@@ -757,6 +871,10 @@ class SqlExpressionVisitor(abc.ABC, typing.Generic[VisitorResult]):
 
     @abc.abstractmethod
     def visit_star_expr(self, expr: StarExpression) -> VisitorResult:
+        raise NotImplementedError
+
+    @abc.abstractmethod
+    def visit_window_expr(self, expr: WindowExpression) -> VisitorResult:
         raise NotImplementedError
 
 

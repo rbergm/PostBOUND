@@ -296,6 +296,9 @@ def _parse_mosp_expression(mosp_data: Any) -> expr.SqlExpression:
 
     if not isinstance(mosp_data, dict):
         return expr.StaticValueExpression(mosp_data)
+    if "null" in mosp_data:
+        # NULL values are encoded as {'null': {}} in mosql
+        return expr.StaticValueExpression(None)
 
     # parse string literals
     if "literal" in mosp_data:
@@ -305,6 +308,9 @@ def _parse_mosp_expression(mosp_data: Any) -> expr.SqlExpression:
     if "select" in mosp_data or "select_distinct" in mosp_data:
         subquery = _MospQueryParser(mosp_data, mosp.format(mosp_data)).parse_query()
         return expr.SubqueryExpression(subquery)
+
+    if "over" in mosp_data:
+        return _parse_window_function(mosp_data)
 
     # parse value CASTs and mathematical operations (+ / - etc), including logical operations
 
@@ -384,6 +390,36 @@ def _parse_cte_clause(mosp_data: dict | list) -> clauses.CommonTableExpression:
     return clauses.CommonTableExpression(with_queries)
 
 
+def _parse_window_function(mosp_data: dict) -> expr.WindowFunctionExpression:
+    """Parsing logic for window functions.
+
+    Parameters
+    ----------
+    mosp_data : dict
+        The mo-sql contents of the window function. This is a dictionary mapping a single key (the window function's
+        operator) to the contents.
+
+    Returns
+    -------
+    expr.WindowFunctionExpression
+        The parsed window function
+    """
+    function = _parse_mosp_expression(mosp_data["value"])
+    mosp_window = mosp_data["over"]
+    if "partitionby" in mosp_window:
+        mosp_partition = mosp_window["partitionby"]
+        partition_targets = ([_parse_mosp_expression(partition) for partition in mosp_partition]
+                             if isinstance(mosp_partition, list) else [_parse_mosp_expression(mosp_partition)])
+    else:
+        partition_targets = []
+    if "orderby" in mosp_window:
+        orderby = _parse_orderby_clause(mosp_window["orderby"])
+    else:
+        orderby = None
+    # Window function filters (e.g. SUM(salary) FILTER (WHERE salary > 100) OVER()) are currently not supported by mosp
+    return expr.WindowExpression(function, partitioning=partition_targets, ordering=orderby, filter_condition=None)
+
+
 def _parse_select_statement(mosp_data: dict | str) -> clauses.BaseProjection:
     """Parsing logic for a single projection of the ``SELECT`` clause.
 
@@ -404,7 +440,8 @@ def _parse_select_statement(mosp_data: dict | str) -> clauses.BaseProjection:
         # TODO: Why do we need to copy here? Leaving this in in case of legacy reasons or weird interactions.
         select_target = copy.copy(mosp_data["value"])
         target_name = mosp_data.get("name", None)
-        return clauses.BaseProjection(_parse_mosp_expression(select_target), target_name)
+        parsed_target = _parse_mosp_expression(mosp_data) if "over" in mosp_data else _parse_mosp_expression(select_target)
+        return clauses.BaseProjection(parsed_target, target_name)
     elif isinstance(mosp_data, dict) and "all_columns" in mosp_data:
         return clauses.BaseProjection.star()
     if mosp_data == "*":
