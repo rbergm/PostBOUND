@@ -1001,7 +1001,7 @@ class PostgresStatisticsInterface(db.DatabaseStatistics):
 
     def update_statistics(self, columns: Optional[base.ColumnReference | Iterable[base.ColumnReference]] = None, *,
                           tables: Optional[base.TableReference | Iterable[base.TableReference]] = None,
-                          perfect_mcv: bool = False) -> None:
+                          perfect_mcv: bool = False, perfect_n_distinct: bool = False, verbose: bool = False) -> None:
         """Instructs the Postgres server to update statistics for specific columns.
 
         Notice that is one of the methods of the database interface that explicitly mutates the state of the database system.
@@ -1020,9 +1020,13 @@ class PostgresStatisticsInterface(db.DatabaseStatistics):
             columns, this might lots of compute time as well as storage space. Notice, that the database system still has the
             ultimate decision on whether to generate MCV lists in the first place. Postgres also imposes a hard limit on the
             maximum allowed length of MCV lists and histogram widths.
+        perfect_n_distinct : bool, optional
+            Whether to set the number of distinct values to its true value.
+        verbose : bool, optional
+            Whether to print some progress information to standard error.
         """
         if not columns and not tables:
-            tables = self._db.schema().tables()
+            tables = [tab for tab in self._db.schema().tables() if not self._db.schema().is_view(tab)]
         if not columns and tables:
             tables = collection_utils.enlist(tables)
             columns = collection_utils.set_union(self._db.schema().columns(tab) for tab in tables)
@@ -1031,10 +1035,17 @@ class PostgresStatisticsInterface(db.DatabaseStatistics):
         columns: Iterable[base.ColumnReference] = collection_utils.enlist(columns)
         columns_map: dict[base.TableReference, list[str]] = dict_utils.generate_multi((col.table, col.name)
                                                                                       for col in columns)
+        distinct_values: dict[base.ColumnReference, int] = {}
 
-        if perfect_mcv:
+        if perfect_mcv or perfect_n_distinct:
             for column in columns:
+                logging.print_if(verbose, logging.timestamp(), ":: Now preparing column", column, use_stderr=True)
                 n_distinct = round(self.distinct_values(column, emulated=True, cache_enabled=True))
+                if perfect_n_distinct:
+                    distinct_values[column] = n_distinct
+                if not perfect_mcv:
+                    continue
+
                 stats_target_query = textwrap.dedent(f"""
                                                      ALTER TABLE {column.table.full_name}
                                                      ALTER COLUMN {column.name}
@@ -1049,8 +1060,17 @@ class PostgresStatisticsInterface(db.DatabaseStatistics):
         columns_str = {table: ", ".join(col for col in columns) for table, columns in columns_map.items()}
         tables_and_columns = ", ".join(f"{table.full_name}({cols})" for table, cols in columns_str.items())
 
+        logging.print_if(verbose, logging.timestamp(), ":: Now analyzing columns", tables_and_columns, use_stderr=True)
         query_template = f"ANALYZE {tables_and_columns}"
         self._db.cursor().execute(query_template)
+
+        for column, n_distinct in distinct_values.items():
+            distinct_update_query = textwrap.dedent(f"""
+                                                    ALTER TABLE {column.table.full_name}
+                                                    ALTER COLUMN {column.name}
+                                                    SET (n_distinct = {n_distinct});
+                                                    """)
+            self._db.cursor().execute(distinct_update_query)
 
     def _retrieve_total_rows_from_stats(self, table: base.TableReference) -> Optional[int]:
         count_query = f"SELECT reltuples FROM pg_class WHERE oid = '{table.full_name}'::regclass"
