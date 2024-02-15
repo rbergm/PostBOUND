@@ -296,6 +296,9 @@ def _parse_mosp_expression(mosp_data: Any) -> expr.SqlExpression:
 
     if not isinstance(mosp_data, dict):
         return expr.StaticValueExpression(mosp_data)
+    if "null" in mosp_data:
+        # NULL values are encoded as {'null': {}} in mosql
+        return expr.StaticValueExpression(None)
 
     # parse string literals
     if "literal" in mosp_data:
@@ -305,6 +308,11 @@ def _parse_mosp_expression(mosp_data: Any) -> expr.SqlExpression:
     if "select" in mosp_data or "select_distinct" in mosp_data:
         subquery = _MospQueryParser(mosp_data, mosp.format(mosp_data)).parse_query()
         return expr.SubqueryExpression(subquery)
+
+    if "over" in mosp_data:
+        return _parse_window_function(mosp_data)
+    if "case" in mosp_data:
+        return _parse_case_expression(mosp_data["case"])
 
     # parse value CASTs and mathematical operations (+ / - etc), including logical operations
 
@@ -325,6 +333,8 @@ def _parse_mosp_expression(mosp_data: Any) -> expr.SqlExpression:
         parsed_arguments = [_parse_mosp_expression(arg) for arg in mosp_data[operation]]
         first_arg, *remaining_args = parsed_arguments
         return expr.MathematicalExpression(_MospOperationSql[operation], first_arg, remaining_args)
+    elif operation in _MospBinaryOperations:
+        return expr.BooleanExpression(_parse_mosp_predicate(mosp_data))
 
     # parse aggregate (COUNT / AVG / MIN / ...) or function call (CURRENT_DATE() etc)
     arguments = mosp_data[operation] if mosp_data[operation] else []
@@ -384,6 +394,67 @@ def _parse_cte_clause(mosp_data: dict | list) -> clauses.CommonTableExpression:
     return clauses.CommonTableExpression(with_queries)
 
 
+def _parse_window_function(mosp_data: dict) -> expr.WindowFunctionExpression:
+    """Parsing logic for window functions.
+
+    Parameters
+    ----------
+    mosp_data : dict
+        The mo-sql contents of the window function. This is a dictionary mapping a single key (the window function's
+        operator) to the contents.
+
+    Returns
+    -------
+    expr.WindowFunctionExpression
+        The parsed window function
+    """
+    function = _parse_mosp_expression(mosp_data["value"])
+    mosp_window = mosp_data["over"]
+    if "partitionby" in mosp_window:
+        mosp_partition = mosp_window["partitionby"]
+        partition_targets = ([_parse_mosp_expression(partition) for partition in mosp_partition]
+                             if isinstance(mosp_partition, list) else [_parse_mosp_expression(mosp_partition)])
+    else:
+        partition_targets = []
+    if "orderby" in mosp_window:
+        orderby = _parse_orderby_clause(mosp_window["orderby"])
+    else:
+        orderby = None
+    # Window function filters (e.g. SUM(salary) FILTER (WHERE salary > 100) OVER()) are currently not supported by mosp
+    return expr.WindowExpression(function, partitioning=partition_targets, ordering=orderby, filter_condition=None)
+
+
+def _parse_case_expression(mosp_data: dict | list) -> expr.CaseExpression:
+    """Parsing logic for ``CASE`` expressions.
+
+    Parameters
+    ----------
+    mosp_data : dict | list
+        The mosql encoding of the case expression. This is the value of the ``"case"`` key.
+
+    Returns
+    -------
+    expr.CaseExpression
+        The parsed case expression
+    """
+    if isinstance(mosp_data, dict):
+        case_condition = _parse_mosp_predicate(mosp_data["when"])
+        case_result = _parse_mosp_expression(mosp_data["then"])
+        cases = [(case_condition, case_result)]
+        return expr.CaseExpression(cases)
+
+    cases: list[tuple[preds.AbstractPredicate, expr.SqlExpression]] = []
+    else_result: expr.SqlExpression | None = None
+    for mosp_case in mosp_data:
+        if not isinstance(mosp_case, dict) or "when" not in mosp_case:
+            else_result = _parse_mosp_expression(mosp_case)
+            break
+        case_condition = _parse_mosp_predicate(mosp_case["when"])
+        case_result = _parse_mosp_expression(mosp_case["then"])
+        cases.append((case_condition, case_result))
+    return expr.CaseExpression(cases, else_expr=else_result)
+
+
 def _parse_select_statement(mosp_data: dict | str) -> clauses.BaseProjection:
     """Parsing logic for a single projection of the ``SELECT`` clause.
 
@@ -404,7 +475,8 @@ def _parse_select_statement(mosp_data: dict | str) -> clauses.BaseProjection:
         # TODO: Why do we need to copy here? Leaving this in in case of legacy reasons or weird interactions.
         select_target = copy.copy(mosp_data["value"])
         target_name = mosp_data.get("name", None)
-        return clauses.BaseProjection(_parse_mosp_expression(select_target), target_name)
+        parsed_target = _parse_mosp_expression(mosp_data) if "over" in mosp_data else _parse_mosp_expression(select_target)
+        return clauses.BaseProjection(parsed_target, target_name)
     elif isinstance(mosp_data, dict) and "all_columns" in mosp_data:
         return clauses.BaseProjection.star()
     if mosp_data == "*":
@@ -632,35 +704,42 @@ def _parse_explicit_from_clause(mosp_data: dict, *,
         raise ValueError("Unknown FROM clause format: " + str(from_clause))
     first_table, *joined_tables = from_clause
     initial_table = _parse_table_reference(first_table, cte_tables=cte_tables)
-    parsed_joins = []
-    for joined_table in joined_tables:
-        join_condition = _parse_mosp_predicate(joined_table["on"]) if "on" in joined_table else None
-        join_type = next(jt for jt in _MospJoinTypes.keys() if jt in joined_table)
-        parsed_join_type = _MospJoinTypes[join_type]
-        join_source = joined_table[join_type]
-
-        # TODO: enable USING support in addition to ON
-
-        if (isinstance(join_source, dict)
-                and ("select" in join_source["value"] or "select_distinct" in join_source["value"])):
-            # we found a subquery
-            joined_subquery = _MospQueryParser(join_source["value"], mosp.format(join_source)).parse_query()
-            join_alias = joined_table.get("name", None)
-            parsed_joins.append(clauses.JoinTableSource(clauses.SubqueryTableSource(joined_subquery, join_alias),
-                                                        join_condition, join_type=parsed_join_type))
-        elif isinstance(join_source, dict):
-            # we found a normal table join with an alias
-            table = _parse_table_reference(join_source, cte_tables=cte_tables)
-            parsed_joins.append(clauses.JoinTableSource(clauses.DirectTableSource(table), join_condition,
-                                                        join_type=parsed_join_type))
-        elif isinstance(join_source, str):
-            # we found a normal table join without an alias
-            table = _parse_table_reference(join_source, cte_tables=cte_tables)
-            parsed_joins.append(clauses.JoinTableSource(clauses.DirectTableSource(table), join_condition,
-                                                        join_type=parsed_join_type))
-        else:
-            raise ValueError("Unknown JOIN format: " + str(joined_table))
+    parsed_joins = [_parse_explicit_join(joined_table, cte_tables=cte_tables) for joined_table in joined_tables]
     return clauses.ExplicitFromClause(clauses.DirectTableSource(initial_table), parsed_joins)
+
+
+def _parse_explicit_join(joined_table: dict, *,
+                         cte_tables: Optional[dict[str, base.TableReference]] = None) -> clauses.JoinTableSource:
+    join_condition = _parse_mosp_predicate(joined_table["on"]) if "on" in joined_table else None
+    join_type = next(jt for jt in _MospJoinTypes.keys() if jt in joined_table)
+    parsed_join_type = _MospJoinTypes[join_type]
+    join_source = joined_table[join_type]
+
+    # TODO: enable USING support in addition to ON
+
+    if (isinstance(join_source, dict)
+            and ("select" in join_source["value"] or "select_distinct" in join_source["value"])):
+        # we found a subquery
+        joined_subquery = _MospQueryParser(join_source["value"], mosp.format(join_source)).parse_query()
+        join_alias = joined_table.get("name", None)
+        return clauses.JoinTableSource(clauses.SubqueryTableSource(joined_subquery, join_alias), join_condition,
+                                       join_type=parsed_join_type)
+    elif isinstance(join_source, dict):
+        # we found a normal table join with an alias
+        parsed_table = _parse_table_reference(join_source, cte_tables=cte_tables)
+        return clauses.JoinTableSource(clauses.DirectTableSource(parsed_table), join_condition, join_type=parsed_join_type)
+    elif isinstance(join_source, str):
+        # we found a normal table join without an alias
+        parsed_table = _parse_table_reference(join_source, cte_tables=cte_tables)
+        return clauses.JoinTableSource(clauses.DirectTableSource(parsed_table), join_condition, join_type=parsed_join_type)
+    elif isinstance(join_source, list):
+        # we found an join with a nested JOIN statement
+        base_table, *nested_joins = join_source
+        parsed_table = clauses.DirectTableSource(_parse_table_reference(base_table, cte_tables=cte_tables))
+        nested_tables = [_parse_explicit_join(nested_join, cte_tables=cte_tables) for nested_join in nested_joins]
+        return clauses.JoinTableSource(parsed_table, join_condition, joined_tables=nested_tables, join_type=parsed_join_type)
+    else:
+        raise ValueError("Unknown JOIN format: " + str(joined_table))
 
 
 def _parse_base_table_source(mosp_data: dict | str, *,

@@ -96,10 +96,12 @@ def _collect_subqueries_in_table_source(table_source: clauses.TableSource) -> se
         return {table_source.query}
     elif isinstance(table_source, clauses.JoinTableSource):
         source_subqueries = _collect_subqueries_in_table_source(table_source.source)
+        nested_subqueries = collection_utils.set_union(_collect_subqueries_in_table_source(nested_join)
+                                                       for nested_join in table_source.joined_tables)
         condition_subqueries = (collection_utils.set_union(collect_subqueries_in_expression(cond_expr) for cond_expr
                                                            in table_source.join_condition.iterexpressions())
                                 if table_source.join_condition else set())
-        return source_subqueries | condition_subqueries
+        return source_subqueries | nested_subqueries | condition_subqueries
     else:
         return set()
 
@@ -185,7 +187,10 @@ def _collect_bound_tables_from_source(table_source: clauses.TableSource) -> set[
     elif isinstance(table_source, clauses.SubqueryTableSource):
         return _collect_bound_tables(table_source.query.from_clause)
     elif isinstance(table_source, clauses.JoinTableSource):
-        return _collect_bound_tables_from_source(table_source.source)
+        direct_tables = _collect_bound_tables_from_source(table_source.source)
+        nested_tables = collection_utils.set_union(_collect_bound_tables_from_source(nested_join)
+                                                   for nested_join in table_source.joined_tables)
+        return direct_tables | nested_tables
 
 
 def _collect_bound_tables(from_clause: clauses.From) -> set[base.TableReference]:

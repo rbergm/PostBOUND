@@ -14,7 +14,7 @@ import typing
 from collections.abc import Iterable, Sequence
 from typing import Union, Optional
 
-from postbound.qal import base, qal
+from postbound.qal import base, qal, predicates, clauses
 from postbound.qal.base import TableReference
 from postbound.util import collections as collection_utils
 
@@ -233,6 +233,8 @@ class StaticValueExpression(SqlExpression, typing.Generic[T]):
         return isinstance(other, type(self)) and self.value == other.value
 
     def __str__(self) -> str:
+        if self.value is None:
+            return "NULL"
         return f"{self.value}" if isinstance(self.value, numbers.Number) else f"'{self.value}'"
 
 
@@ -714,6 +716,247 @@ class StarExpression(SqlExpression):
         return "*"
 
 
+class WindowExpression(SqlExpression):
+    """Represents a window expression in SQL.
+
+    Parameters
+    ----------
+    window_function : FunctionExpression
+        The window function to be applied.
+    partitioning : Optional[Sequence[SqlExpression]], optional
+        The expressions used for partitioning the window. Defaults to None.
+    ordering : Optional[clauses.OrderBy], optional
+        The ordering of the window. Defaults to None.
+    filter_condition : Optional[predicates.AbstractPredicate], optional
+        The filter condition for the window. Defaults to None.
+    """
+
+    def __init__(self, window_function: FunctionExpression, *,
+                 partitioning: Optional[Sequence[SqlExpression]] = None,
+                 ordering: Optional[clauses.OrderBy] = None,
+                 filter_condition: Optional[predicates.AbstractPredicate] = None) -> None:
+        self._window_function = window_function
+        self._partitioning = tuple(partitioning) if partitioning else tuple()
+        self._ordering = ordering
+        self._filter_condition = filter_condition
+
+        hash_val = hash((self._window_function, self._partitioning, self._ordering, self._filter_condition))
+        super().__init__(hash_val)
+
+    @property
+    def window_function(self) -> FunctionExpression:
+        """Get the window function of the window expression.
+
+        Returns
+        -------
+        FunctionExpression
+            The window function.
+        """
+        return self._window_function
+
+    @property
+    def partitioning(self) -> Sequence[SqlExpression]:
+        """Get the expressions used for partitioning the window.
+
+        Returns
+        -------
+        Sequence[SqlExpression]
+            The expressions used for partitioning the window. Can be empty if no partitioning is used.
+        """
+        return self._partitioning
+
+    @property
+    def ordering(self) -> Optional[clauses.OrderBy]:
+        """Get the ordering of tuples in the current window.
+
+        Returns
+        -------
+        Optional[clauses.OrderBy]
+            The ordering of the tuples, or *None* if no ordering is specified.
+        """
+        return self._ordering
+
+    @property
+    def filter_condition(self) -> Optional[predicates.AbstractPredicate]:
+        """Get the filter condition for tuples in the current window.
+
+        Returns:
+            Optional[predicates.AbstractPredicate]:
+            The filter condition for the expression, or *None* if all tuples are aggegrated.
+        """
+        return self._filter_condition
+
+    def tables(self) -> set[TableReference]:
+        return collection_utils.set_union(child.tables() for child in self.iterchildren())
+
+    def columns(self) -> set[base.ColumnReference]:
+        return collection_utils.set_union(child.columns() for child in self.iterchildren())
+
+    def itercolumns(self) -> Iterable[base.ColumnReference]:
+        return collection_utils.flatten(expr.itercolumns() for expr in self.iterchildren())
+
+    def iterchildren(self) -> Iterable[SqlExpression]:
+        function_children = list(self.window_function.iterchildren())
+        partitioning_children = collection_utils.flatten(expr.iterchildren() for expr in self.partitioning)
+        ordering_children = self.ordering.iterexpressions() if self.ordering else []
+        filter_children = self.filter_condition.iterexpressions() if self.filter_condition else []
+        return function_children + partitioning_children + ordering_children + filter_children
+
+    def accept_visitor(self, visitor: SqlExpressionVisitor[VisitorResult]) -> VisitorResult:
+        return visitor.visit_window_expr(self)
+
+    __hash__ = SqlExpression.__hash__
+
+    def __eq__(self, other: object) -> bool:
+        return (isinstance(other, type(self))
+                and self.window_function == other.window_function
+                and self.partitioning == other.partitioning
+                and self.ordering == other.ordering
+                and self.filter_condition == other.filter_condition)
+
+    def __str__(self) -> str:
+        filter_str = f" FILTER (WHERE {self.filter_condition})" if self.filter_condition else ""
+        function_str = f"{self.window_function}{filter_str} OVER"
+        window_grouping: list[str] = []
+        if self.partitioning:
+            partitioning_str = ", ".join(str(partition) for partition in self.partitioning)
+            window_grouping.append(f"PARTITION BY {partitioning_str}")
+        if self.ordering:
+            window_grouping.append(str(self.ordering))
+        window_str = " ".join(window_grouping)
+        window_str = f"({window_str})" if window_str else "()"
+        return f"{function_str} {window_str}"
+
+
+class CaseExpression(SqlExpression):
+    """Represents a case expression in SQL.
+
+    Parameters:
+    -----------
+    cases : Sequence[tuple[predicates.AbstractPredicate, SqlExpression]]
+        A sequence of tuples representing the cases in the case expression. The cases are passed as a sequence rather than a
+        dictionary, because the evaluation order of the cases is important. The first case that evaluates to true determines
+        the result of the entire case statement.
+    else_expr : Optional[SqlExpression], optional
+        The expression to be evaluated if none of the cases match. If no case matches and no else expression is provided, the
+        entire case expression should evaluate to NULL.
+    """
+    def __init__(self, cases: Sequence[tuple[predicates.AbstractPredicate, SqlExpression]], *,
+                 else_expr: Optional[SqlExpression] = None) -> None:
+        if not cases:
+            raise ValueError("At least one case is required")
+        self._cases = tuple(cases)
+        self._else_expr = else_expr
+
+        hash_val = hash((self._cases, self._else_expr))
+        super().__init__(hash_val)
+
+    @property
+    def cases(self) -> Sequence[tuple[predicates.AbstractPredicate, SqlExpression]]:
+        """Get the different cases.
+
+        Returns
+        -------
+        Sequence[tuple[predicates.AbstractPredicate, SqlExpression]]
+            The cases. At least one case will be present.
+        """
+        return self._cases
+
+    @property
+    def else_expression(self) -> Optional[SqlExpression]:
+        """Get the expression to use if none of the cases match.
+
+        Returns
+        -------
+        Optional[SqlExpression]
+            The expression. Can be ``None``, in which case the case expression evaluates to *NULL*.
+        """
+        return self._else_expr
+
+    def tables(self) -> set[TableReference]:
+        return collection_utils.set_union(child.tables() for child in self.iterchildren())
+
+    def columns(self) -> set[base.ColumnReference]:
+        return collection_utils.set_union(child.columns() for child in self.iterchildren())
+
+    def itercolumns(self) -> Iterable[base.ColumnReference]:
+        return collection_utils.flatten(expr.itercolumns() for expr in self.iterchildren())
+
+    def iterchildren(self) -> Iterable[SqlExpression]:
+        case_children = collection_utils.flatten(list(pred.iterexpressions()) + list(expr.iterchildren())
+                                                 for pred, expr in self.cases)
+        else_children = self.else_expression.iterchildren() if self.else_expression else []
+        return case_children + else_children
+
+    def accept_visitor(self, visitor: SqlExpressionVisitor[VisitorResult]) -> VisitorResult:
+        return visitor.visit_case_expr(self)
+
+    __hash__ = SqlExpression.__hash__
+
+    def __eq__(self, other: object) -> bool:
+        return (isinstance(other, type(self))
+                and self.cases == other.cases
+                and self.else_expression == other.else_expression)
+
+    def __str__(self) -> str:
+        cases_str = " ".join(f"WHEN {pred} THEN {expr}" for pred, expr in self.cases)
+        else_str = f" ELSE {self.else_expression}" if self.else_expression else ""
+        return f"CASE {cases_str}{else_str} END"
+
+
+class BooleanExpression(SqlExpression):
+    """Represents a boolean expression in SQL.
+
+    Notice that this expression does not function as a replacement or alternative to the `predicates` module. Instead, boolean
+    expressions appear in situations where other (non-predicate) clauses require a boolean expression. For example, when using
+    a user-defined function in the ``SELECT`` clause, such as in ``SELECT my_udf(R.a > 42) FROM R``.
+
+    Parameters
+    ----------
+    predicate : predicates.AbstractPredicate
+        The predicate to wrap.
+    """
+
+    def __init__(self, predicate: predicates.AbstractPredicate) -> None:
+        self._predicate = predicate
+        hash_val = hash(predicate)
+        super().__init__(hash_val)
+
+    @property
+    def predicate(self) -> predicates.AbstractPredicate:
+        """Get the predicate that is wrapped by this expression.
+
+        Returns
+        -------
+        predicates.AbstractPredicate
+            The predicate
+        """
+        return self._predicate
+
+    def tables(self) -> set[base.TableReference]:
+        return self._predicate.tables()
+
+    def columns(self) -> set[base.ColumnReference]:
+        return self._predicate.columns()
+
+    def itercolumns(self) -> Iterable[base.ColumnReference]:
+        return self._predicate.itercolumns()
+
+    def iterchildren(self) -> Iterable[SqlExpression]:
+        return self._predicate.iterexpressions()
+
+    def accept_visitor(self, visitor: SqlExpressionVisitor[VisitorResult]) -> VisitorResult:
+        return visitor.visit_boolean_expr(self)
+
+    __hash__ = SqlExpression.__hash__
+
+    def __eq__(self, other: object) -> bool:
+        return isinstance(other, type(self)) and self.predicate == other.predicate
+
+    def __str__(self) -> str:
+        return str(self.predicate)
+
+
 VisitorResult = typing.TypeVar("VisitorResult")
 """Result type of visitor processes."""
 
@@ -758,6 +1001,18 @@ class SqlExpressionVisitor(abc.ABC, typing.Generic[VisitorResult]):
     @abc.abstractmethod
     def visit_star_expr(self, expr: StarExpression) -> VisitorResult:
         raise NotImplementedError
+
+    @abc.abstractmethod
+    def visit_window_expr(self, expr: WindowExpression) -> VisitorResult:
+        raise NotImplementedError
+
+    @abc.abstractmethod
+    def visit_case_expr(self, expr: CaseExpression) -> VisitorResult:
+        raise NotImplementedError
+
+    @abc.abstractmethod
+    def visit_boolean_expr(self, expr: BooleanExpression) -> VisitorResult:
+        return expr.predicate.accept_visitor(self)
 
 
 def as_expression(value: object) -> SqlExpression:
