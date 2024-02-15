@@ -480,6 +480,41 @@ class DatabaseSchema(abc.ABC):
         assert result_set is not None
         return set(base.ColumnReference(row[0], table) for row in result_set)
 
+    def is_view(self, table: base.TableReference | str) -> bool:
+        """Checks, whether a specific table is actually is a view.
+
+        Parameters
+        ----------
+        table : base.TableReference | str
+            The table to check. May not be a virtual table.
+
+        Returns
+        -------
+        bool
+            Whether the table is a view
+
+        Raises
+        ------
+        ValueError
+            If the table was not found in the current database
+        """
+        if isinstance(table, base.TableReference) and table.virtual:
+            raise base.VirtualTableError(table)
+        table = table if isinstance(table, str) else table.full_name
+        db_name = self._db.database_name()
+        query_template = textwrap.dedent("""
+                                         SELECT table_type
+                                         FROM information_schema.tables
+                                         WHERE table_catalog = %s AND table_name = %s
+                                         """)
+        self._db.cursor().execute(query_template, (db_name, table))
+        result_set = self._db.cursor().fetchall()
+        assert result_set is not None
+        if not result_set:
+            raise ValueError(f"Table '{table}' not found in database '{db_name}'")
+        table_type = result_set[0][0]
+        return table_type == "VIEW"
+
     @abc.abstractmethod
     def lookup_column(self, column: base.ColumnReference | str,
                       candidate_tables: Iterable[base.TableReference]) -> base.TableReference:
