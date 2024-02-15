@@ -334,8 +334,7 @@ def _parse_mosp_expression(mosp_data: Any) -> expr.SqlExpression:
         first_arg, *remaining_args = parsed_arguments
         return expr.MathematicalExpression(_MospOperationSql[operation], first_arg, remaining_args)
     elif operation in _MospBinaryOperations:
-        # TODO: parse nested binary expressions
-        pass
+        return expr.BooleanExpression(_parse_mosp_predicate(mosp_data))
 
     # parse aggregate (COUNT / AVG / MIN / ...) or function call (CURRENT_DATE() etc)
     arguments = mosp_data[operation] if mosp_data[operation] else []

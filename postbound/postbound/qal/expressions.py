@@ -904,6 +904,59 @@ class CaseExpression(SqlExpression):
         return f"CASE {cases_str}{else_str} END"
 
 
+class BooleanExpression(SqlExpression):
+    """Represents a boolean expression in SQL.
+
+    Notice that this expression does not function as a replacement or alternative to the `predicates` module. Instead, boolean
+    expressions appear in situations where other (non-predicate) clauses require a boolean expression. For example, when using
+    a user-defined function in the ``SELECT`` clause, such as in ``SELECT my_udf(R.a > 42) FROM R``.
+
+    Parameters
+    ----------
+    predicate : predicates.AbstractPredicate
+        The predicate to wrap.
+    """
+
+    def __init__(self, predicate: predicates.AbstractPredicate) -> None:
+        self._predicate = predicate
+        hash_val = hash(predicate)
+        super().__init__(hash_val)
+
+    @property
+    def predicate(self) -> predicates.AbstractPredicate:
+        """Get the predicate that is wrapped by this expression.
+
+        Returns
+        -------
+        predicates.AbstractPredicate
+            The predicate
+        """
+        return self._predicate
+
+    def tables(self) -> set[base.TableReference]:
+        return self._predicate.tables()
+
+    def columns(self) -> set[base.ColumnReference]:
+        return self._predicate.columns()
+
+    def itercolumns(self) -> Iterable[base.ColumnReference]:
+        return self._predicate.itercolumns()
+
+    def iterchildren(self) -> Iterable[SqlExpression]:
+        return self._predicate.iterexpressions()
+
+    def accept_visitor(self, visitor: SqlExpressionVisitor[VisitorResult]) -> VisitorResult:
+        return visitor.visit_boolean_expr(self)
+
+    __hash__ = SqlExpression.__hash__
+
+    def __eq__(self, other: object) -> bool:
+        return isinstance(other, type(self)) and self.predicate == other.predicate
+
+    def __str__(self) -> str:
+        return str(self.predicate)
+
+
 VisitorResult = typing.TypeVar("VisitorResult")
 """Result type of visitor processes."""
 
@@ -956,6 +1009,10 @@ class SqlExpressionVisitor(abc.ABC, typing.Generic[VisitorResult]):
     @abc.abstractmethod
     def visit_case_expr(self, expr: CaseExpression) -> VisitorResult:
         raise NotImplementedError
+
+    @abc.abstractmethod
+    def visit_boolean_expr(self, expr: BooleanExpression) -> VisitorResult:
+        return expr.predicate.accept_visitor(self)
 
 
 def as_expression(value: object) -> SqlExpression:

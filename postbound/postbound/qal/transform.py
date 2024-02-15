@@ -1036,6 +1036,8 @@ def _rename_columns_in_expression(expression: Optional[expr.SqlExpression],
         renamed_else = (_rename_columns_in_expression(expression.else_expression, available_renamings)
                         if expression.else_expression else None)
         return expr.CaseExpression(renamed_cases, else_expr=renamed_else)
+    elif isinstance(expression, expr.BooleanExpression):
+        return expr.BooleanExpression(rename_columns_in_predicate(expression.predicate, available_renamings))
     else:
         raise ValueError("Unknown expression type: " + str(expression))
 
