@@ -828,6 +828,82 @@ class WindowExpression(SqlExpression):
         return f"{function_str} {window_str}"
 
 
+class CaseExpression(SqlExpression):
+    """Represents a case expression in SQL.
+
+    Parameters:
+    -----------
+    cases : Sequence[tuple[predicates.AbstractPredicate, SqlExpression]]
+        A sequence of tuples representing the cases in the case expression. The cases are passed as a sequence rather than a
+        dictionary, because the evaluation order of the cases is important. The first case that evaluates to true determines
+        the result of the entire case statement.
+    else_expr : Optional[SqlExpression], optional
+        The expression to be evaluated if none of the cases match. If no case matches and no else expression is provided, the
+        entire case expression should evaluate to NULL.
+    """
+    def __init__(self, cases: Sequence[tuple[predicates.AbstractPredicate, SqlExpression]], *,
+                 else_expr: Optional[SqlExpression] = None) -> None:
+        if not cases:
+            raise ValueError("At least one case is required")
+        self._cases = tuple(cases)
+        self._else_expr = else_expr
+
+        hash_val = hash((self._cases, self._else_expr))
+        super().__init__(hash_val)
+
+    @property
+    def cases(self) -> Sequence[tuple[predicates.AbstractPredicate, SqlExpression]]:
+        """Get the different cases.
+
+        Returns
+        -------
+        Sequence[tuple[predicates.AbstractPredicate, SqlExpression]]
+            The cases. At least one case will be present.
+        """
+        return self._cases
+
+    @property
+    def else_expression(self) -> Optional[SqlExpression]:
+        """Get the expression to use if none of the cases match.
+
+        Returns
+        -------
+        Optional[SqlExpression]
+            The expression. Can be ``None``, in which case the case expression evaluates to *NULL*.
+        """
+        return self._else_expr
+
+    def tables(self) -> set[TableReference]:
+        return collection_utils.set_union(child.tables() for child in self.iterchildren())
+
+    def columns(self) -> set[base.ColumnReference]:
+        return collection_utils.set_union(child.columns() for child in self.iterchildren())
+
+    def itercolumns(self) -> Iterable[base.ColumnReference]:
+        return collection_utils.flatten(expr.itercolumns() for expr in self.iterchildren())
+
+    def iterchildren(self) -> Iterable[SqlExpression]:
+        case_children = collection_utils.flatten(list(pred.iterexpressions()) + list(expr.iterchildren())
+                                                 for pred, expr in self.cases)
+        else_children = self.else_expression.iterchildren() if self.else_expression else []
+        return case_children + else_children
+
+    def accept_visitor(self, visitor: SqlExpressionVisitor[VisitorResult]) -> VisitorResult:
+        return visitor.visit_case_expr(self)
+
+    __hash__ = SqlExpression.__hash__
+
+    def __eq__(self, other: object) -> bool:
+        return (isinstance(other, type(self))
+                and self.cases == other.cases
+                and self.else_expression == other.else_expression)
+
+    def __str__(self) -> str:
+        cases_str = " ".join(f"WHEN {pred} THEN {expr}" for pred, expr in self.cases)
+        else_str = f" ELSE {self.else_expression}" if self.else_expression else ""
+        return f"CASE {cases_str}{else_str} END"
+
+
 VisitorResult = typing.TypeVar("VisitorResult")
 """Result type of visitor processes."""
 
@@ -875,6 +951,10 @@ class SqlExpressionVisitor(abc.ABC, typing.Generic[VisitorResult]):
 
     @abc.abstractmethod
     def visit_window_expr(self, expr: WindowExpression) -> VisitorResult:
+        raise NotImplementedError
+
+    @abc.abstractmethod
+    def visit_case_expr(self, expr: CaseExpression) -> VisitorResult:
         raise NotImplementedError
 
 

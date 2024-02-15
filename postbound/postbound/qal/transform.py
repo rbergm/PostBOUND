@@ -1029,6 +1029,13 @@ def _rename_columns_in_expression(expression: Optional[expr.SqlExpression],
                           if expression.filter_condition else None)
         return expr.WindowExpression(renamed_function, partitioning=renamed_partition, ordering=renamed_orderby,
                                      filter_condition=renamed_filter)
+    elif isinstance(expression, expr.CaseExpression):
+        renamed_cases = [(rename_columns_in_predicate(condition, available_renamings),
+                          _rename_columns_in_expression(result, available_renamings))
+                         for condition, result in expression.cases]
+        renamed_else = (_rename_columns_in_expression(expression.else_expression, available_renamings)
+                        if expression.else_expression else None)
+        return expr.CaseExpression(renamed_cases, else_expr=renamed_else)
     else:
         raise ValueError("Unknown expression type: " + str(expression))
 

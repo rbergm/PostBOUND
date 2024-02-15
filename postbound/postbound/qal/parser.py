@@ -311,6 +311,8 @@ def _parse_mosp_expression(mosp_data: Any) -> expr.SqlExpression:
 
     if "over" in mosp_data:
         return _parse_window_function(mosp_data)
+    if "case" in mosp_data:
+        return _parse_case_expression(mosp_data["case"])
 
     # parse value CASTs and mathematical operations (+ / - etc), including logical operations
 
@@ -331,6 +333,9 @@ def _parse_mosp_expression(mosp_data: Any) -> expr.SqlExpression:
         parsed_arguments = [_parse_mosp_expression(arg) for arg in mosp_data[operation]]
         first_arg, *remaining_args = parsed_arguments
         return expr.MathematicalExpression(_MospOperationSql[operation], first_arg, remaining_args)
+    elif operation in _MospBinaryOperations:
+        # TODO: parse nested binary expressions
+        pass
 
     # parse aggregate (COUNT / AVG / MIN / ...) or function call (CURRENT_DATE() etc)
     arguments = mosp_data[operation] if mosp_data[operation] else []
@@ -418,6 +423,37 @@ def _parse_window_function(mosp_data: dict) -> expr.WindowFunctionExpression:
         orderby = None
     # Window function filters (e.g. SUM(salary) FILTER (WHERE salary > 100) OVER()) are currently not supported by mosp
     return expr.WindowExpression(function, partitioning=partition_targets, ordering=orderby, filter_condition=None)
+
+
+def _parse_case_expression(mosp_data: dict | list) -> expr.CaseExpression:
+    """Parsing logic for ``CASE`` expressions.
+
+    Parameters
+    ----------
+    mosp_data : dict | list
+        The mosql encoding of the case expression. This is the value of the ``"case"`` key.
+
+    Returns
+    -------
+    expr.CaseExpression
+        The parsed case expression
+    """
+    if isinstance(mosp_data, dict):
+        case_condition = _parse_mosp_predicate(mosp_data["when"])
+        case_result = _parse_mosp_expression(mosp_data["then"])
+        cases = [(case_condition, case_result)]
+        return expr.CaseExpression(cases)
+
+    cases: list[tuple[preds.AbstractPredicate, expr.SqlExpression]] = []
+    else_result: expr.SqlExpression | None = None
+    for mosp_case in mosp_data:
+        if not isinstance(mosp_case, dict) or "when" not in mosp_case:
+            else_result = _parse_mosp_expression(mosp_case)
+            break
+        case_condition = _parse_mosp_predicate(mosp_case["when"])
+        case_result = _parse_mosp_expression(mosp_case["then"])
+        cases.append((case_condition, case_result))
+    return expr.CaseExpression(cases, else_expr=else_result)
 
 
 def _parse_select_statement(mosp_data: dict | str) -> clauses.BaseProjection:
