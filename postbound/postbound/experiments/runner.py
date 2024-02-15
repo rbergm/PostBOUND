@@ -274,6 +274,7 @@ def execute_workload(queries: Iterable[qal.SqlQuery] | workloads.Workload, datab
                      workload_repetitions: int = 1, per_query_repetitions: int = 1, shuffled: bool = False,
                      query_preparation: Optional[QueryPreparationService] = None, include_labels: bool = False,
                      post_process: Optional[Callable[[ExecutionResult], None]] = None,
+                     post_repetition_callback: Optional[Callable[[int], None]] = None,
                      logger: Optional[Callable[[str], None]] = None) -> pd.DataFrame:
     """Executes all the given queries on the provided database.
 
@@ -317,6 +318,9 @@ def execute_workload(queries: Iterable[qal.SqlQuery] | workloads.Workload, datab
     post_process : Optional[Callable[[ExecutionResult], None]], optional
         A post-process action that should be executed after each repetition of the query has been completed. Defaults to
         ``None``, which means no post-processing.
+    post_repetition_callback : Optional[Callable[[int], None]], optional
+        An optional post-process action that is executed after each workload repetition. The current repetition number is
+        provided as the only argument. Repetitions start at 0.
     logger : post_process : Optional[Callable[[str], None]], optional
         A logging function that is invoked before every query execution. If omitted, no logging is performed (the default)
 
@@ -353,6 +357,9 @@ def execute_workload(queries: Iterable[qal.SqlQuery] | workloads.Workload, datab
         current_df = pd.concat(current_repetition_results)
         current_df[COL_WORKLOAD_ITER] = i + 1
         results.append(current_df)
+
+        if post_repetition_callback:
+            post_repetition_callback(i)
 
     result_df = pd.concat(results)
     target_labels = [COL_LABEL] if include_labels else []
@@ -434,6 +441,7 @@ def optimize_and_execute_workload(queries: Iterable[qal.SqlQuery] | workloads.Wo
                                   query_preparation: Optional[QueryPreparationService] = None,
                                   include_labels: bool = False,
                                   post_process: Optional[Callable[[ExecutionResult], None]] = None,
+                                  post_repetition_callback: Optional[Callable[[int], None]] = None,
                                   logger: Optional[Callable[[str], None]] = None) -> pd.DataFrame:
     """This function combines the functionality of `execute_workload` and `optimize_query` in one utility.
 
@@ -467,6 +475,9 @@ def optimize_and_execute_workload(queries: Iterable[qal.SqlQuery] | workloads.Wo
     post_process : Optional[Callable[[ExecutionResult], None]], optional
         A post-process action that should be executed after each repetition of the query has been completed. Defaults to
         ``None``, which means no post-processing.
+    post_repetition_callback : Optional[Callable[[int], None]], optional
+        An optional post-process action that is executed after each workload repetition. The current repetition number is
+        provided as the only argument. Repetitions start at 0.
     logger : post_process : Optional[Callable[[str], None]], optional
         A logging function that is invoked before every query execution. If omitted, no logging is performed (the default)
 
@@ -506,6 +517,9 @@ def optimize_and_execute_workload(queries: Iterable[qal.SqlQuery] | workloads.Wo
         current_df = pd.concat(current_repetition_results)
         current_df[COL_WORKLOAD_ITER] = i + 1
         results.append(current_df)
+
+        if post_repetition_callback:
+            post_repetition_callback(i)
 
     result_df = pd.concat(results)
     target_labels = [COL_LABEL] if include_labels else []

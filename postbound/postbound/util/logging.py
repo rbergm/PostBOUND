@@ -70,10 +70,11 @@ def print_stderr(*args, **kwargs) -> None:
     print(*args, file=sys.stderr, **kwargs)
 
 
-def print_if(should_print: bool, *args, **kwargs) -> None:
-    """A normal `print` that only prints something if `should_print` evaluates true-ish."""
+def print_if(should_print: bool, *args, use_stderr: bool = False, **kwargs) -> None:
+    """A normal `print` that only prints something if `should_print` evaluates true-ish. Can optionally print to stderr."""
     if should_print:
-        print(*args, **kwargs)
+        out_device = kwargs.get("file", sys.stderr if use_stderr else sys.stdout)
+        print(*args, file=out_device, **kwargs)
 
 
 class _TeeLogger:
