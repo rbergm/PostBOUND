@@ -20,7 +20,9 @@ import abc
 import functools
 import typing
 from collections.abc import Collection, Iterable, Sequence
-from typing import Generic, Optional
+from typing import Optional
+
+import networkx as nx
 
 from postbound.qal import base, clauses, expressions as expr, predicates as preds
 from postbound.util import collections as collection_utils
@@ -47,7 +49,7 @@ def _stringify_clause(clause: clauses.BaseClause) -> str:
     return str(clause) + " "
 
 
-def _collect_subqueries_in_expression(expression: expr.SqlExpression) -> set[SqlQuery]:
+def collect_subqueries_in_expression(expression: expr.SqlExpression) -> set[SqlQuery]:
     """Handler method to provide all the subqueries that are contained in a specific expression.
 
     Parameters
@@ -66,7 +68,7 @@ def _collect_subqueries_in_expression(expression: expr.SqlExpression) -> set[Sql
     """
     if isinstance(expression, expr.SubqueryExpression):
         return {expression.query}
-    return collection_utils.set_union(_collect_subqueries_in_expression(child_expr)
+    return collection_utils.set_union(collect_subqueries_in_expression(child_expr)
                                       for child_expr in expression.iterchildren())
 
 
@@ -94,7 +96,7 @@ def _collect_subqueries_in_table_source(table_source: clauses.TableSource) -> se
         return {table_source.query}
     elif isinstance(table_source, clauses.JoinTableSource):
         source_subqueries = _collect_subqueries_in_table_source(table_source.source)
-        condition_subqueries = (collection_utils.set_union(_collect_subqueries_in_expression(cond_expr) for cond_expr
+        condition_subqueries = (collection_utils.set_union(collect_subqueries_in_expression(cond_expr) for cond_expr
                                                            in table_source.join_condition.iterexpressions())
                                 if table_source.join_condition else set())
         return source_subqueries | condition_subqueries
@@ -134,7 +136,7 @@ def _collect_subqueries(clause: clauses.BaseClause) -> set[SqlQuery]:
     if isinstance(clause, clauses.CommonTableExpression):
         return set()
     elif isinstance(clause, clauses.Select):
-        return collection_utils.set_union(_collect_subqueries_in_expression(target.expression)
+        return collection_utils.set_union(collect_subqueries_in_expression(target.expression)
                                           for target in clause.targets)
     elif isinstance(clause, clauses.ImplicitFromClause):
         return set()
@@ -142,16 +144,16 @@ def _collect_subqueries(clause: clauses.BaseClause) -> set[SqlQuery]:
         return collection_utils.set_union(_collect_subqueries_in_table_source(src) for src in clause.items)
     elif isinstance(clause, clauses.Where):
         where_predicate = clause.predicate
-        return collection_utils.set_union(_collect_subqueries_in_expression(expression)
+        return collection_utils.set_union(collect_subqueries_in_expression(expression)
                                           for expression in where_predicate.iterexpressions())
     elif isinstance(clause, clauses.GroupBy):
-        return collection_utils.set_union(_collect_subqueries_in_expression(column) for column in clause.group_columns)
+        return collection_utils.set_union(collect_subqueries_in_expression(column) for column in clause.group_columns)
     elif isinstance(clause, clauses.Having):
         having_predicate = clause.condition
-        return collection_utils.set_union(_collect_subqueries_in_expression(expression)
+        return collection_utils.set_union(collect_subqueries_in_expression(expression)
                                           for expression in having_predicate.iterexpressions())
     elif isinstance(clause, clauses.OrderBy):
-        return collection_utils.set_union(_collect_subqueries_in_expression(expression.column)
+        return collection_utils.set_union(collect_subqueries_in_expression(expression.column)
                                           for expression in clause.expressions)
     else:
         raise ValueError(f"Unknown clause type: {clause}")
@@ -216,7 +218,7 @@ def _collect_bound_tables(from_clause: clauses.From) -> set[base.TableReference]
 FromClauseType = typing.TypeVar("FromClauseType", bound=clauses.From)
 
 
-class SqlQuery(Generic[FromClauseType], abc.ABC):
+class SqlQuery:
     """Represents an arbitrary SQL query, providing direct access to the different clauses in the query.
 
     At a basic level, PostBOUND differentiates between two types of queries:
@@ -245,7 +247,7 @@ class SqlQuery(Generic[FromClauseType], abc.ABC):
     select_clause : clauses.Select
         The ``SELECT`` part of the query. This is the only required part of a query. Notice however, that some database systems
         do not allow queries without a ``FROM`` clause.
-    from_clause : Optional[FromClauseType], optional
+    from_clause : Optional[clauses.From], optional
         The ``FROM`` part of the query, by default ``None``
     where_clause : Optional[clauses.Where], optional
         The ``WHERE`` part of the query, by default ``None``
@@ -270,7 +272,7 @@ class SqlQuery(Generic[FromClauseType], abc.ABC):
     """
 
     def __init__(self, *, select_clause: clauses.Select,
-                 from_clause: Optional[FromClauseType] = None, where_clause: Optional[clauses.Where] = None,
+                 from_clause: Optional[clauses.From] = None, where_clause: Optional[clauses.Where] = None,
                  groupby_clause: Optional[clauses.GroupBy] = None, having_clause: Optional[clauses.Having] = None,
                  orderby_clause: Optional[clauses.OrderBy] = None, limit_clause: Optional[clauses.Limit] = None,
                  cte_clause: Optional[clauses.CommonTableExpression] = None,
@@ -315,12 +317,12 @@ class SqlQuery(Generic[FromClauseType], abc.ABC):
         return self._select_clause
 
     @property
-    def from_clause(self) -> Optional[FromClauseType]:
+    def from_clause(self) -> Optional[clauses.From]:
         """Get the ``FROM`` clause of the query.
 
         Returns
         -------
-        Optional[FromClauseType]
+        Optional[clauses.From]
             The ``FROM`` clause if it was specified, or ``None`` otherwise.
         """
         return self._from_clause
@@ -614,6 +616,39 @@ class SqlQuery(Generic[FromClauseType], abc.ABC):
         """
         return not (self.tables() <= self.bound_tables())
 
+    def is_scalar(self) -> bool:
+        """Checks, whether the query is guaranteed to provide a single scalar value as a result.
+
+        Scalar results can only be calculated by queries with a single projection in the *SELECT* clause and if that projection
+        is an aggregate function, e.g. *SELECT min(R.a) FROM R*. However, there are other queries which could also be scalar
+        "by chance", e.g. *SELECT R.b FROM R WHERE R.a = 1*  if *R.a* is the primary key of *R*. Notice that such cases are not
+        recognized by this method.
+
+        Returns
+        -------
+        bool
+            Whether the query will always return a single scalar value
+        """
+        if not len(self.select_clause.targets) == 1 or self.select_clause.projection_type != clauses.SelectType.Select:
+            return False
+        target: expr.SqlExpression = collection_utils.simplify(self.select_clause.targets).expression
+        return isinstance(target, expr.FunctionExpression) and target.is_aggregate() and not self._groupby_clause
+
+    def contains_cross_product(self) -> bool:
+        """Checks, whether this query has at least one cross product.
+
+        Returns
+        -------
+        bool
+            Whether this query has cross products.
+        """
+        if not self._from_clause:
+            return False
+        if self.predicates().empty_predicate():
+            return True
+        join_graph = self.predicates().join_graph()
+        return len(nx.connected_components(join_graph)) > 1
+
     def iterexpressions(self) -> Iterable[expr.SqlExpression]:
         """Provides access to all expressions that are directly contained in this query.
 
@@ -660,6 +695,17 @@ class SqlQuery(Generic[FromClauseType], abc.ABC):
         delim = ";" if trailing_delimiter else ""
         return "".join(_stringify_clause(clause) for clause in self.clauses()).rstrip() + delim
 
+    def accept_visitor(self, clause_visitor: clauses.ClauseVisitor) -> None:
+        """Applies a visitor over all clauses in the current query.
+
+        Parameters
+        ----------
+        clause_visitor : clauses.ClauseVisitor
+            The visitor algorithm to use.
+        """
+        for clause in self.clauses():
+            clause.accept_visitor(clause_visitor)
+
     def __hash__(self) -> int:
         return self._hash_val
 
@@ -673,7 +719,7 @@ class SqlQuery(Generic[FromClauseType], abc.ABC):
         return self.stringify(trailing_delimiter=True)
 
 
-class ImplicitSqlQuery(SqlQuery[clauses.ImplicitFromClause]):
+class ImplicitSqlQuery(SqlQuery):
     """An implicit query restricts the constructs that may appear in the ``FROM`` clause.
 
     For implicit queries, the ``FROM`` clause may only consist of simple table sources. All join conditions have to be put in
@@ -725,6 +771,10 @@ class ImplicitSqlQuery(SqlQuery[clauses.ImplicitFromClause]):
                          cte_clause=cte_clause,
                          explain=explain_clause, hints=hints)
 
+    @property
+    def from_clause(self) -> Optional[clauses.ImplicitFromClause]:
+        return self._from_clause
+
     def is_implicit(self) -> bool:
         return True
 
@@ -732,7 +782,7 @@ class ImplicitSqlQuery(SqlQuery[clauses.ImplicitFromClause]):
         return False
 
 
-class ExplicitSqlQuery(SqlQuery[clauses.ExplicitFromClause]):
+class ExplicitSqlQuery(SqlQuery):
     """An explicit query restricts the constructs that may appear in the ``FROM`` clause.
 
     For explicit queries, the ``FROM`` clause must utilize the ``JOIN ON`` syntax for all tables. The join conditions should
@@ -787,6 +837,10 @@ class ExplicitSqlQuery(SqlQuery[clauses.ExplicitFromClause]):
                          cte_clause=cte_clause,
                          explain=explain_clause, hints=hints)
 
+    @property
+    def from_clause(self) -> Optional[clauses.ExplicitFromClause]:
+        return self._from_clause
+
     def is_implicit(self) -> bool:
         return False
 
@@ -794,7 +848,7 @@ class ExplicitSqlQuery(SqlQuery[clauses.ExplicitFromClause]):
         return True
 
 
-class MixedSqlQuery(SqlQuery[clauses.From]):
+class MixedSqlQuery(SqlQuery):
     """A mixed query allows for both the explicit as well as the implicit syntax to be used within the same ``FROM`` clause.
 
     The mixed query complements `ImplicitSqlQuery` and `ExplicitSqlQuery` by removing the "purity" restriction: the tables that

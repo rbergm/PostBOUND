@@ -6,14 +6,17 @@ PG_VER_PRETTY=14
 PG_VERSION=REL_14_STABLE
 PG_HINT_PLAN_VERSION=REL14_1_4_0
 PG_TARGET_DIR="$WD/postgres-server"
+PG_DEFAULT_PORT=5432
+PG_PORT=5432
 MAKE_CORES=$(($(nproc --all) / 2))
 STOP_AFTER="false"
 
 show_help() {
     echo "Usage: $0 <options>"
     echo "Allowed options:"
-    echo "--pg-ver <version> Setup Postgres with the given version (currently allowed values: 12.4, 14 (default), 15)"
+    echo "--pg-ver <version> Setup Postgres with the given version (currently allowed values: 12.4, 14 (default), 15, 16)"
     echo "-d | --dir <directory> Install Postgres server to the designated directory (postgres-server by default)."
+    echo "-p | --port <port number> Configure the Postgres server to listen on the given port (5432 by default)."
     echo "--stop Stop the Postgres server process after installation and setup finished"
     exit 1
 }
@@ -37,6 +40,11 @@ while [ $# -gt 0 ] ; do
                     PG_VERSION=REL_15_STABLE
                     PG_HINT_PLAN_VERSION=REL15_1_5_0
                     ;;
+                16)
+                    PG_VER_PRETTY="16"
+                    PG_VERSION=REL_16_STABLE
+                    PG_HINT_PLAN_VERSION=REL16_1_6_0
+                    ;;
                 *)
                     show_help
                     ;;
@@ -51,6 +59,11 @@ while [ $# -gt 0 ] ; do
                 PG_TARGET_DIR=$WD/$2
                 echo "... Normalizing relative target directory to $PG_TARGET_DIR"
             fi
+            shift
+            shift
+            ;;
+        -p|--port)
+            PG_PORT=$2
             shift
             shift
             ;;
@@ -78,9 +91,8 @@ export PATH="$PG_TARGET_DIR/build/bin:$PATH"
 export LD_LIBRARY_PATH="$PG_TARGET_DIR/build/lib:$LD_LIBRARY_PATH"
 export C_INCLUDE_PATH="$PG_TARGET_DIR/build/include/server:$C_INCLUDE_PATH"
 
-echo ".. Installing pg_hint_plan extension $(pwd)"
+echo ".. Installing pg_hint_plan extension"
 cd $PG_TARGET_DIR/contrib
-echo "... [DEBUG] $PG_TARGET_DIR/contrib"
 tar xzvf pg_hint_plan.tar.gz
 mv pg_hint_plan-$PG_HINT_PLAN_VERSION pg_hint_plan
 cd pg_hint_plan
@@ -89,6 +101,13 @@ cd $PG_TARGET_DIR
 
 echo ".. Installing pg_prewarm extension"
 cd $PG_TARGET_DIR/contrib/pg_prewarm
+make -j $MAKE_CORES && make install
+cd $PG_TARGET_DIR
+
+echo ".. Installing pg_cooldown extension"
+cd $PG_TARGET_DIR/contrib
+git clone https://github.com/rbergm/pg_cooldown.git pg_cooldown
+cd pg_cooldown
 make -j $MAKE_CORES && make install
 cd $PG_TARGET_DIR
 
@@ -103,6 +122,11 @@ cd $PG_TARGET_DIR
 echo "... Creating cluster"
 initdb -D $PG_TARGET_DIR/data
 
+if [ "$PG_PORT" != "$PG_DEFAULT_PORT" ] ; then
+    echo "... Updating Postgres port to $PG_PORT"
+    sed -i "s/#\{0,1\}port = 5432/port = $PG_PORT/" $PG_TARGET_DIR/data/postgresql.conf
+fi
+
 echo "... Adding pg_buffercache, pg_hint_plan and pg_prewarm to preload libraries"
 sed -i "s/#\{0,1\}shared_preload_libraries.*/shared_preload_libraries = 'pg_buffercache,pg_hint_plan,pg_prewarm'/" $PG_TARGET_DIR/data/postgresql.conf
 echo "pg_prewarm.autoprewarm = false" >>  $PG_TARGET_DIR/data/postgresql.conf
@@ -111,9 +135,9 @@ echo "... Starting Postgres (log file is pg.log)"
 pg_ctl -D $PG_TARGET_DIR/data -l pg.log start
 
 echo "... Creating user database for $USER"
-createdb $USER
+createdb -p $PG_PORT $USER
 
-if [ "$STOP_ATFER" = "true" ] ; then
+if [ "$STOP_AFTER" == "true" ] ; then
     pg_ctl -D $PG_TARGET_DIR/postgres-server/data stop
     echo ".. Setup done"
 else

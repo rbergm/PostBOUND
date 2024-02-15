@@ -526,7 +526,7 @@ class TwoStageOptimizationPipeline(OptimizationPipeline):
     def query_execution_plan(self, query: qal.SqlQuery) -> jointree.PhysicalQueryPlan:
         optimized_query = self.optimize_query(query)
         db_plan = self.target_db.optimizer().query_plan(optimized_query)
-        physical_qep = jointree.PhysicalQueryPlan.load_from_query_plan(db_plan)
+        physical_qep = jointree.PhysicalQueryPlan.load_from_query_plan(db_plan, query=query)
         return physical_qep
 
     def optimize_query(self, query: qal.SqlQuery) -> qal.SqlQuery:

@@ -229,6 +229,10 @@ class CustomHashDict(collections.UserDict[K, V]):
     All non-hashing related behavior is directly inherited from the default Python dictionary. Only the item access is changed
     to enforce the usage of the new hashing function.
 
+    Notice that since the custom hash function always provides an integer value, collision detection is weaker than originally.
+    This is because the actual dictionary never sees the original keys to run an equality comparison. Instead, the comparison
+    is based on the integer values.
+
     Parameters
     ----------
     hash_func : Callable[[K], int]
@@ -244,6 +248,12 @@ class CustomHashDict(collections.UserDict[K, V]):
 
     def __setitem__(self, k: K, item: V) -> None:
         super().__setitem__(self.hash_function(k), item)
+
+    def __delitem__(self, key: K) -> None:
+        return super().__delitem__(self.hash_function(key))
+
+    def __contains__(self, key: K) -> bool:
+        return super().__contains__(self.hash_function(key))
 
 
 class DynamicDefaultDict(collections.UserDict[K, V]):
@@ -265,3 +275,38 @@ class DynamicDefaultDict(collections.UserDict[K, V]):
         if k not in self.data:
             self.data[k] = self.factory(k)
         return self.data[k]
+
+
+class frozendict(collections.UserDict[K, V]):
+    """Read-only variant of a normal Python dictionary.
+
+    Once the dictionary has been created, its key/value pairs can no longer be modified. At the same time, this allows the
+    dictionary to be hashable by default.
+
+    Parameters
+    ----------
+    items : any, optional
+        Supports the same argument types as the normal dictionary. If no items are supplied, an empty frozen dictionary is
+        returned.
+    """
+    def __init__(self, items=None) -> None:
+        self._frozen = False
+        super().__init__(items)
+        self.clear = None
+        self.pop = None
+        self.popitem = None
+        self.update
+        self._frozen = True
+
+    def __setitem__(self, key: K, item: V) -> None:
+        if self._frozen:
+            raise TypeError("Cannot set frozendict entries after creation")
+        return super().__setitem__(key, item)
+
+    def __delitem__(self, key: K) -> None:
+        if self._frozen:
+            raise TypeError("Cannot remove frozendict entries after creation")
+        return super().__delitem__(key)
+
+    def __hash__(self) -> int:
+        return hash_dict(self)

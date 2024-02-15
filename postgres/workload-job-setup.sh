@@ -5,14 +5,16 @@ DB_NAME="imdb"
 FORCE_CREATION="false"
 IMDB_DIR="../imdb_data"
 SKIP_FKEYS="false"
+SKIP_EXTENSIONS="false"
 
 show_help() {
     echo "Usage: $0 <options>"
     echo "Allowed options:"
-    echo "-d | --dir <directory> specifies the directory to store/load the IMDB data files, defaults to '../imdb_data'"
-    echo "-f | --force delete existing instance of the database if necessary"
-    echo "-t | --target <db name> name of the IMDB database, defaults to 'imdb'"
-    echo "--no-fkeys does not load foreign key indexes to the database (includes both foreign key constraints as well as the actual indexes)"
+    echo -e "-d | --dir\t<directory> specifies the directory to store/load the IMDB data files, defaults to '../imdb_data'"
+    echo -e "-f | --force\tdelete existing instance of the database if necessary"
+    echo -e "-t | --target\t<db name> name of the IMDB database, defaults to 'imdb'"
+    echo -e "--no-fkeys\tdoes not load foreign key indexes to the database (includes both foreign key constraints as well as the actual indexes)"
+    echo -e "--no-ext\tdoes not install any extensions"
     exit 1
 }
 
@@ -34,6 +36,10 @@ while [ $# -gt 0 ] ; do
             ;;
         --no-fkeys)
             SKIP_FKEYS="true"
+            shift
+            ;;
+        --no-ext)
+            SKIP_EXTENSIONS="true"
             shift
             ;;
         *)
@@ -63,9 +69,9 @@ else
     echo ".. IMDB source directory does not exist, re-creating"
     echo ".. Fetching IMDB data"
     mkdir $IMDB_DIR
-    curl -o $IMDB_DIR/csv.zip "https://cloudstore.zih.tu-dresden.de/index.php/s/eqWWK53CgkxMxfA/download?path=%2F&files=csv.zip"
-    curl -o $IMDB_DIR/create.sql "https://cloudstore.zih.tu-dresden.de/index.php/s/eqWWK53CgkxMxfA/download?path=%2F&files=create.sql"
-    curl -o $IMDB_DIR/import.sql "https://cloudstore.zih.tu-dresden.de/index.php/s/eqWWK53CgkxMxfA/download?path=%2F&files=import.sql"
+    curl -o $IMDB_DIR/csv.zip "https://db4701.inf.tu-dresden.de:8443/index.php/s/qN7oW4txNq6W8id/download/csv.zip"
+    curl -o $IMDB_DIR/create.sql "https://db4701.inf.tu-dresden.de:8443/index.php/s/Cddow88EgMRGW7x/download/create.sql"
+    curl -o $IMDB_DIR/import.sql "https://db4701.inf.tu-dresden.de:8443/index.php/s/sXEtp3cxHDqteEQ/download/import.sql"
 
     echo ".. Extracting IMDB data"
     unzip $IMDB_DIR/csv.zip -d $IMDB_DIR
@@ -73,9 +79,15 @@ fi
 
 echo ".. Creating IMDB database"
 createdb $DB_NAME
-psql $DB_NAME -c "CREATE EXTENSION pg_buffercache;"
-psql $DB_NAME -c "CREATE EXTENSION pg_prewarm;"
-psql $DB_NAME -c "CREATE EXTENSION pg_hint_plan;"
+
+if [ $SKIP_EXTENSIONS == "false" ] ; then
+    psql $DB_NAME -c "CREATE EXTENSION pg_buffercache;"
+    psql $DB_NAME -c "CREATE EXTENSION pg_prewarm;"
+    psql $DB_NAME -c "CREATE EXTENSION pg_cooldown;"
+    psql $DB_NAME -c "CREATE EXTENSION pg_hint_plan;"
+else
+    echo ".. Skipping extension generation"
+fi
 
 echo ".. Loading IMDB database schema"
 psql $DB_NAME -f $IMDB_DIR/create.sql

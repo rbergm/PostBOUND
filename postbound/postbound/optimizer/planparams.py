@@ -140,6 +140,13 @@ class PlanParameterization:
                                                   | other_parameters.system_specific_settings)
         return merged_params
 
+    def __repr__(self) -> str:
+        return str(self)
+
+    def __str__(self) -> str:
+        return (f"PlanParams(cards={self.cardinality_hints}, "
+                f"system specific={self.system_specific_settings}, par workers={self.parallel_worker_hints})")
+
 
 class HintType(enum.Enum):
     """Contains all hint types that are supported by PostBOUND.

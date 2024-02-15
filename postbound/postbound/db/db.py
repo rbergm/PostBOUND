@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import abc
 import atexit
+import collections
 import json
 import math
 import os
@@ -400,6 +401,12 @@ class Database(abc.ABC):
                                self.database_system_version().formatted(prefix="v", separator="_"),
                                self.database_name()])
         return f".query_cache_{identifier}.json"
+
+    def __hash__(self) -> int:
+        return hash(self._query_cache_name())
+
+    def __eq__(self, other: object) -> bool:
+        return isinstance(other, type(self)) and self._query_cache_name() == other._query_cache_name()
 
     def __repr__(self) -> str:
         return str(self)
@@ -1421,6 +1428,31 @@ class QueryExecutionPlan(jsonize.Jsonizable):
             return math.nan
         return self.true_cardinality + sum(child.total_processed_rows() for child in self.children)
 
+    def qerror(self) -> float:
+        """Calculates the q-error of the current node.
+
+        Returns
+        -------
+        float
+            The q-error
+
+        Notes
+        -----
+        The q-error can only be calculate for analyze nodes. We use the following formula:
+
+        .. math ::
+            qerror(e, a) = \\frac{max(e, a) + 1}{min(e, a) + 1}
+
+        where *e* is the estimated cardinality of the node and *a* is the actual cardinality. Notice that we add 1 to both the
+        numerator as well as the denominator to prevent infinite errors for nodes that do not process any rows (e.g. due to
+        pruning).
+        """
+        if math.isnan(self.true_cardinality):
+            return math.nan
+        # we add 1 to our q-error to prevent probelms with 0 cardinalities
+        return (max(self.estimated_cardinality, self.true_cardinality) + 1
+                / min(self.estimated_cardinality, self.true_cardinality) + 1)
+
     def scan_nodes(self) -> frozenset[QueryExecutionPlan]:
         """Provides all scan nodes under and including this node.
 
@@ -1444,6 +1476,21 @@ class QueryExecutionPlan(jsonize.Jsonizable):
         own_node = [self] if self.is_join else []
         child_joins = collection_utils.flatten(child.join_nodes() for child in self.children)
         return frozenset(own_node + child_joins)
+
+    def iternodes(self) -> Iterable[QueryExecutionPlan]:
+        """Provides all nodes in the plan, in breadth-first order.
+
+        The current node is also included in the output.
+
+        Returns
+        -------
+        Iterable[QueryExecutionPlan]
+            The nodes.
+        """
+        nodes = [self]
+        for child_node in self.children:
+            nodes.extend(child_node.iternodes())
+        return nodes
 
     def plan_depth(self) -> int:
         """Calculates the maximum path length from this node to a leaf node.
@@ -1581,6 +1628,28 @@ class QueryExecutionPlan(jsonize.Jsonizable):
             return "\n".join(own_inspection + child_inspections)
         else:
             return "\n".join(child_inspections)
+
+    def plan_summary(self) -> dict[str, object]:
+        """Generates a short summary about some node statistics.
+
+        Currently, the following information is reported:
+
+        - The *C_out* value of the subtree
+        - The maximum and average q-error of all nodes in the subtree (including the current node)
+        - A usage count of all physical operators used in the subtree (including the current node)
+
+        Returns
+        -------
+        dict[str, object]
+            The node summary
+        """
+        all_nodes = list(self.iternodes())
+        summary: dict[str, object] = {}
+        summary["c_out"] = self.total_processed_rows()
+        summary["max_qerror"] = round(max(node.qerror() for node in all_nodes), 3)
+        summary["avg_qerror"] = round(sum(node.qerror() for node in all_nodes) / len(all_nodes), 3)
+        summary["phys_ops"] = collections.Counter(child.node_type for child in all_nodes)
+        return summary
 
     def __json__(self) -> dict:
         return vars(self)
@@ -1810,6 +1879,16 @@ class DatabasePool:
             If no database was registered under the given key.
         """
         return self._pool[key]
+
+    def empty(self) -> bool:
+        """Checks, whether the database pool is currently emtpy (i.e. no database are registered).
+
+        Returns
+        -------
+        bool
+            *True* if the pool is empty.
+        """
+        return len(self._pool) == 0
 
     def clear(self) -> None:
         """Removes all currently registered databases from the pool."""

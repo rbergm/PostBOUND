@@ -23,10 +23,11 @@ from __future__ import annotations
 
 import abc
 import collections
+import dataclasses
 import functools
 import math
 import typing
-from collections.abc import Callable, Container, Iterable, Sequence
+from collections.abc import Callable, Collection, Container, Iterable, Sequence
 from typing import Generic, Literal, Optional, Union
 
 import Levenshtein
@@ -366,6 +367,28 @@ class PhysicalBaseTableMetadata(BaseTableMetadata):
 
     def __str__(self) -> str:
         return f"predicate={self.filter_predicate}, upper bound={self.cardinality}, operator={self.operator}"
+
+
+class JoinTreeVisitor(abc.ABC):
+    """Basic visitor to operator on arbitrary join trees.
+
+    See Also
+    --------
+    JoinTree
+
+    References
+    ----------
+
+    .. Visitor pattern: https://en.wikipedia.org/wiki/Visitor_pattern
+    """
+
+    @abc.abstractmethod
+    def visit_intermediate_node(self, node: IntermediateJoinNode) -> None:
+        raise NotImplementedError
+
+    @abc.abstractmethod
+    def visit_base_table_node(self, node: BaseTableNode) -> None:
+        raise NotImplementedError
 
 
 JoinMetadataType = typing.TypeVar("JoinMetadataType", bound=JoinMetadata)
@@ -845,6 +868,17 @@ class AbstractJoinTreeNode(jsonize.Jsonizable, abc.ABC, Container[base.TableRefe
         raise NotImplementedError
 
     @abc.abstractmethod
+    def accept_visitor(self, visitor: JoinTreeVisitor) -> None:
+        """Enables processing of the current node by a join tree visitor.
+
+        Parameters
+        ----------
+        visitor : JoinTreeVisitor
+            The visitor
+        """
+        raise NotImplementedError
+
+    @abc.abstractmethod
     def __json__(self) -> object:
         raise NotImplementedError
 
@@ -1083,6 +1117,9 @@ class IntermediateJoinNode(AbstractJoinTreeNode[JoinMetadataType, BaseTableMetad
         right_inspection = self.right_child.inspect(_indentation=_indentation + 2)
         return "\n".join([own_inspection, left_inspection, right_inspection])
 
+    def accept_visitor(self, visitor: JoinTreeVisitor) -> None:
+        visitor.visit_intermediate_node(self)
+
     def __json__(self) -> object:
         return {"left": self.left_child, "right": self.right_child, "metadata": self.annotation}
 
@@ -1209,6 +1246,9 @@ class BaseTableNode(AbstractJoinTreeNode[JoinMetadataType, BaseTableMetadataType
         prefix = f"{padding}<- " if padding else ""
         annotation_str = f" {self.annotation.inspect()}" if self.annotation else ""
         return f"{prefix} SCAN :: {self.table}{annotation_str}"
+
+    def accept_visitor(self, visitor: JoinTreeVisitor) -> None:
+        visitor.visit_base_table_node(self)
 
     def __json__(self) -> object:
         return {"table": self.table, "metadata": self.annotation}
@@ -1716,6 +1756,17 @@ class JoinTree(jsonize.Jsonizable, Container[base.TableReference], Generic[JoinM
         left, right = (subtree.root, self.root) if insert_left else (self.root, subtree.root)
         join_node = IntermediateJoinNode(left, right, annotation)
         return JoinTree(join_node)
+
+    def accept_visitor(self, visitor: JoinTreeVisitor) -> None:
+        """Enables an arbitrary algorithm to be executed on the join tree.
+
+        Parameters
+        ----------
+        visitor : JoinTreeVisitor
+            The visitor algorithm to use
+        """
+        self._assert_not_empty()
+        self._root.accept_visitor(visitor)
 
     def _assert_not_empty(self) -> None:
         """Raises an error if this tree is empty.
@@ -2606,3 +2657,183 @@ def join_depth(join_tree: JoinTree) -> dict[base.TableReference, int]:
     if join_tree.is_empty():
         return {}
     return _traverse_join_tree_depth(join_tree.root, _DepthState(0, {})).depths
+
+
+@dataclasses.dataclass
+class JointreeChangeEntry:
+    """Models a single diff between two join trees.
+
+    The compared join trees are referred two as the left tree and the right tree, respectively.
+
+    Attributes
+    ----------
+    change_type : Literal["tree-structure", "join-direction", "physical-op", "card-est"]
+        Describes the precise difference between the trees. *tree-structure* indicates that the two trees are fundamentally
+        different. This occurs when the join orders are not the same. *join-direction* means that albeit the join orders are
+        the same, the roles in a specific join are reversed: the inner relation of one tree acts as the outer relation in the
+        other one and vice-versa. *physical-op* means that two structurally identical nodes (i.e. same join or base table)
+        differ in the assigned physical operator. *card-est* indicates that two structurally identifcal nodes (i.e. same join
+        or base table) differ in the estimated cardinality.
+    left_state : frozenset[base.TableReference] | physops.PhysicalOperator | float
+        Depending on the `change_type` this attribute describes the left tree. For example, for different tree structures,
+        these are the tables in the left subtree, for different physical operators, this is the operator assigned to the node
+        in the left tree and so on. For different join directions, this is the entire join node
+    right_state : frozenset[base.TableReference] | physops.PhysicalOperator | float
+        Equivalent attribute to `left_state`, just for the right tree.
+    context : Optional[frozenset[base.TableReference]], optional
+        For different physical operators or cardinality estimates, this describes the intermediate that is different. This
+        attribute is unset by default.
+    """
+
+    change_type: Literal["tree-structure", "join-direction", "physical-op", "card-est"]
+    left_state: frozenset[base.TableReference] | physops.PhysicalOperator | float
+    right_state: frozenset[base.TableReference] | physops.PhysicalOperator | float
+    context: Optional[frozenset[base.TableReference]] = None
+
+    def inspect(self) -> str:
+        """Provides a human-readable string of the diff.
+
+        Returns
+        -------
+        str
+            The diff
+        """
+        match self.change_type:
+            case "tree-structure":
+                left_str = [tab.identifier() for tab in self.left_state]
+                right_str = [tab.identifier() for tab in self.right_state]
+                return f"Different subtrees: left={left_str} right={right_str}"
+            case "join-direction":
+                left_str = [tab.identifier() for tab in self.left_state]
+                right_str = [tab.identifier() for tab in self.right_state]
+                return f"Swapped join direction: left={left_str} right={right_str}"
+            case "physical-op":
+                return f"Different physical operators on node {self.context}: left={self.left_state} right={self.right_state}"
+            case "card-est":
+                return (f"Different cardinality estimates on node {self.context}: "
+                        f"left={self.left_state} right={self.right_state}")
+            case _:
+                raise errors.StateError(f"Unknown change type '{self.change_type}'")
+
+
+@dataclasses.dataclass
+class JointreeChangeset:
+    """Captures an arbitrary amount of join tree diffs.
+
+    Attributes
+    ----------
+    changes : Collection[JointreeChangeEntry]
+        The diffs
+    """
+
+    changes: Collection[JointreeChangeEntry]
+
+    def inspect(self) -> str:
+        """Provides a human-readable string of the entire diff.
+
+        The diff will typically contain newlines to separate individual entries.
+
+        Returns
+        -------
+        str
+            The diff
+        """
+        return "\n".join(entry.inspect() for entry in self.changes)
+
+
+def _extract_card_from_annotation(node: AbstractJoinTreeNode | None) -> float:
+    """Provides the cardinality estimate from a join tree node if there is any.
+
+    Parameters
+    ----------
+    node : AbstractJoinTreeNode | None
+        The node to extract from
+
+    Returns
+    -------
+    float
+        The node's cardinality. Can be *NaN* if either the node is undefined or does not contain an annotated cardinality.
+    """
+    if node is None:
+        return math.nan
+
+    if isinstance(node, BaseTableMetadata):
+        return node.cardinality
+    elif isinstance(node, JoinMetadata):
+        return node.cardinality
+
+    return math.nan
+
+
+def _extract_operator_from_annotation(node: AbstractJoinTreeNode | None) -> Optional[physops.PhysicalOperator]:
+    """Provides the physical operator of a join tree node if there is one.
+
+    Parameters
+    ----------
+    node : AbstractJoinTreeNode | None
+        The node to extract from
+
+    Returns
+    -------
+    float
+        The node's operator. Can be *None* if either the node is undefined or does not contain an annotated cardinality.
+    """
+    if node is None:
+        return None
+
+    if isinstance(node, PhysicalBaseTableMetadata):
+        return node.operator
+    elif isinstance(node, PhysicalJoinMetadata):
+        return node.operator
+
+    return None
+
+
+def compare_jointrees(left: JoinTree | AbstractJoinTreeNode,
+                      right: JoinTree | AbstractJoinTreeNode) -> JointreeChangeset:
+    """Computes differences between two join tree instances.
+
+    Parameters
+    ----------
+    left : JoinTree | AbstractJoinTreeNode
+        The first join tree to compare
+    right : JoinTree | AbstractJoinTreeNode
+        The second join tree to compare
+
+    Returns
+    -------
+    JointreeChangeset
+        A diff between the two join trees
+    """
+    if left.tables() != right.tables():
+        changeset = [JointreeChangeEntry("tree-structure", left_state=left.tables(), right_state=right.tables())]
+        return JointreeChangeset(changeset)
+
+    left: AbstractJoinTreeNode = left.root if isinstance(left, JoinTree) else left
+    right: AbstractJoinTreeNode = right.root if isinstance(right, JoinTree) else right
+    changes: list[JointreeChangeEntry] = []
+
+    left_card, right_card = _extract_card_from_annotation(left), _extract_card_from_annotation(right)
+    if left_card != right_card and not (math.isnan(left_card) and math.isnan(right_card)):
+        changes.append(JointreeChangeEntry("card-est", left_state=left_card, right_state=right_card, context=left.tables()))
+
+    left_op, right_op = _extract_operator_from_annotation(left), _extract_operator_from_annotation(right)
+    if left_op != right_op:
+        changes.append(JointreeChangeEntry("physical-op", left_state=left_op, right_state=right_op, context=left.tables()))
+
+    if isinstance(left, IntermediateJoinNode):
+        left_intermediate: IntermediateJoinNode = left
+        # we can also assume that right is an intermediate node since we know both nodes have the same tables and the left tree
+        # is an intermediate node
+        right_intermediate: IntermediateJoinNode = right
+
+        join_direction_swap = left_intermediate.left_child.tables() == right_intermediate.right_child.tables()
+        if join_direction_swap:
+            changes.append(JointreeChangeEntry("join-direction", left_state=left_intermediate, right_state=right_intermediate))
+            changes.extend(compare_jointrees(left_intermediate.left_child, right_intermediate.right_child).changes)
+            changes.extend(compare_jointrees(left_intermediate.right_child, right_intermediate.left_child).changes)
+        else:
+            changes.extend(compare_jointrees(left_intermediate.left_child, right_intermediate.left_child).changes)
+            changes.extend(compare_jointrees(left_intermediate.right_child, right_intermediate.right_child).changes)
+
+    return JointreeChangeset(changes)

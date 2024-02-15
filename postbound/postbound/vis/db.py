@@ -51,11 +51,12 @@ def annotate_estimates(node: db.QueryExecutionPlan) -> str:
 
 def plot_query_plan(plan: db.QueryExecutionPlan,
                     annotation_generator: Optional[Callable[[db.QueryExecutionPlan], str]] = None, *,
-                    skip_intermediates: bool = False) -> gv.Graph:
+                    skip_intermediates: bool = False, **kwargs) -> gv.Graph:
     if not plan:
         return gv.Graph()
     return tree_viz.plot_tree(plan, functools.partial(_query_plan_labels, annotation_generator=annotation_generator),
-                              functools.partial(_query_plan_traversal, skip_intermediates=skip_intermediates))
+                              functools.partial(_query_plan_traversal, skip_intermediates=skip_intermediates),
+                              **kwargs)
 
 
 def _explain_analyze_annotations(node: db.QueryExecutionPlan) -> str:
@@ -65,9 +66,10 @@ def _explain_analyze_annotations(node: db.QueryExecutionPlan) -> str:
     return card_row + "\n" + runtime_row
 
 
-def plot_analyze_plan(plan: db.QueryExecutionPlan, *, skip_intermediates: bool = False) -> gv.Graph:
+def plot_analyze_plan(plan: db.QueryExecutionPlan, *, skip_intermediates: bool = False, **kwargs) -> gv.Graph:
     if not plan:
         return gv.Graph()
     return tree_viz.plot_tree(plan,
                               functools.partial(_query_plan_labels, annotation_generator=_explain_analyze_annotations),
-                              functools.partial(_query_plan_traversal, skip_intermediates=skip_intermediates))
+                              functools.partial(_query_plan_traversal, skip_intermediates=skip_intermediates),
+                              **kwargs)
