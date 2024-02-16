@@ -11,11 +11,10 @@ import abc
 import enum
 import numbers
 import typing
-from collections.abc import Iterable, Sequence
+from collections.abc import Callable, Iterable, Sequence
 from typing import Union, Optional
 
 from postbound.qal import base, qal, predicates, clauses
-from postbound.qal.base import TableReference
 from postbound.util import collections as collection_utils
 
 T = typing.TypeVar("T")
@@ -212,7 +211,7 @@ class StaticValueExpression(SqlExpression, typing.Generic[T]):
         """
         return self._value
 
-    def tables(self) -> set[TableReference]:
+    def tables(self) -> set[base.TableReference]:
         return set()
 
     def columns(self) -> set[base.ColumnReference]:
@@ -288,7 +287,7 @@ class CastExpression(SqlExpression):
         """
         return self._target_type
 
-    def tables(self) -> set[TableReference]:
+    def tables(self) -> set[base.TableReference]:
         return self._casted_expression.tables()
 
     def columns(self) -> set[base.ColumnReference]:
@@ -393,7 +392,7 @@ class MathematicalExpression(SqlExpression):
         """
         return self._second_arg
 
-    def tables(self) -> set[TableReference]:
+    def tables(self) -> set[base.TableReference]:
         all_tables = set(self.first_arg.tables())
         if isinstance(self.second_arg, list):
             all_tables |= collection_utils.set_union(expr.tables() for expr in self.second_arg)
@@ -471,7 +470,7 @@ class ColumnExpression(SqlExpression):
         """
         return self._column
 
-    def tables(self) -> set[TableReference]:
+    def tables(self) -> set[base.TableReference]:
         if not self.column.is_bound():
             return set()
         return {self.column.table}
@@ -592,7 +591,7 @@ class FunctionExpression(SqlExpression):
         """
         return self._function.upper() in AggregateFunctions
 
-    def tables(self) -> set[TableReference]:
+    def tables(self) -> set[base.TableReference]:
         return collection_utils.set_union(arg.tables() for arg in self.arguments)
 
     def columns(self) -> set[base.ColumnReference]:
@@ -692,7 +691,7 @@ class StarExpression(SqlExpression):
     def __init__(self) -> None:
         super().__init__(hash("*"))
 
-    def tables(self) -> set[TableReference]:
+    def tables(self) -> set[base.TableReference]:
         return set()
 
     def columns(self) -> set[base.ColumnReference]:
@@ -786,7 +785,7 @@ class WindowExpression(SqlExpression):
         """
         return self._filter_condition
 
-    def tables(self) -> set[TableReference]:
+    def tables(self) -> set[base.TableReference]:
         return collection_utils.set_union(child.tables() for child in self.iterchildren())
 
     def columns(self) -> set[base.ColumnReference]:
@@ -873,7 +872,7 @@ class CaseExpression(SqlExpression):
         """
         return self._else_expr
 
-    def tables(self) -> set[TableReference]:
+    def tables(self) -> set[base.TableReference]:
         return collection_utils.set_union(child.tables() for child in self.iterchildren())
 
     def columns(self) -> set[base.ColumnReference]:
@@ -1013,6 +1012,72 @@ class SqlExpressionVisitor(abc.ABC, typing.Generic[VisitorResult]):
     @abc.abstractmethod
     def visit_boolean_expr(self, expr: BooleanExpression) -> VisitorResult:
         return expr.predicate.accept_visitor(self)
+
+
+class ExpressionCollector(SqlExpressionVisitor[set[SqlExpression]]):
+    """Utility to traverse an arbitrarily deep expression hierarchy in order to collect specific expressions.
+
+    Parameters
+    ----------
+    matcher : Callable[[expr.SqlExpression], bool]
+        Function to determine whether a specific expression matches the collection predicate. Should return *True* for matches
+        and *False* otherwise.
+    continue_after_match : bool, optional
+        Whether the traversal of the current expression element should be continued if the current element matches the
+        collection predicate. By default, traversal is stopped for the current element (but other branches in the expression
+        tree could still produce more matches).
+    """
+    def __init__(self, matcher: Callable[[SqlExpression], bool], *, continue_after_match: bool = False) -> None:
+        self.matcher = matcher
+        self.continue_after_match = continue_after_match
+
+    def visit_column_expr(self, expression: ColumnExpression) -> set[SqlExpression]:
+        return self._check_match(expression)
+
+    def visit_cast_expr(self, expression: CastExpression) -> set[SqlExpression]:
+        return self._check_match(expression)
+
+    def visit_function_expr(self, expression: FunctionExpression) -> set[SqlExpression]:
+        return self._check_match(expression)
+
+    def visit_mathematical_expr(self, expression: MathematicalExpression) -> set[SqlExpression]:
+        return self._check_match(expression)
+
+    def visit_star_expr(self, expression: StarExpression) -> set[SqlExpression]:
+        return self._check_match(expression)
+
+    def visit_static_value_expr(self, expression: StaticValueExpression) -> set[SqlExpression]:
+        return self._check_match(expression)
+
+    def visit_subquery_expr(self, expression: SubqueryExpression) -> set[SqlExpression]:
+        return self._check_match(expression)
+
+    def visit_window_expr(self, expression: WindowExpression) -> set[SqlExpression]:
+        return self._check_match(expression)
+
+    def visit_case_expr(self, expression: CaseExpression) -> set[SqlExpression]:
+        return self._check_match(expression)
+
+    def visit_boolean_expr(self, expression: BooleanExpression) -> set[SqlExpression]:
+        return self._check_match(expression)
+
+    def _check_match(self, expression: SqlExpression) -> set[SqlExpression]:
+        """Handler to perform the actual traversal.
+
+        Parameters
+        ----------
+        expression : expr.SqlExpression
+            The current expression
+
+        Returns
+        -------
+        set[expr.SqlExpression]
+            All matching expressions
+        """
+        own_match = {expression} if self.matcher(expression) else set()
+        if own_match and not self.continue_after_match:
+            return own_match
+        return own_match | collection_utils.set_union(child.accept_visitor(self) for child in expression.iterchildren())
 
 
 def as_expression(value: object) -> SqlExpression:
