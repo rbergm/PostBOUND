@@ -2268,7 +2268,7 @@ class PhysicalQueryPlan(JoinTree[PhysicalJoinMetadata, PhysicalBaseTableMetadata
             join_operator = operators[root_node.tables()] if operators else None
             join_annotation = PhysicalJoinMetadata(join_predicate, join_cardinality, join_operator)
 
-            physical_join_node = IntermediateJoinNode(physical_left_child, physical_right_child, join_annotation)
+            physical_join_node = IntermediateJoinNode(physical_left_child.root, physical_right_child.root, join_annotation)
             return PhysicalQueryPlan(physical_join_node)
         elif isinstance(root_node, BaseTableNode):
             filter_predicate = root_node.annotation.filter_predicate if root_node.annotation else None
