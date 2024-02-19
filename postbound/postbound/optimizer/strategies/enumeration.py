@@ -270,7 +270,7 @@ class ExhaustiveOperatorEnumerator:
         join_ops = [list(self.allowed_join_ops)] * len(joins)
 
         for scan_selection in itertools.product(*scan_ops):
-            current_scan_pairs = zip(scan_ops, scan_selection)
+            current_scan_pairs = zip(tables, scan_selection)
             current_scan_assignment = physops.PhysicalOperatorAssignment()
             for table, operator in current_scan_pairs:
                 current_scan_assignment.set_scan_operator(physops.ScanOperatorAssignment(operator, table))
