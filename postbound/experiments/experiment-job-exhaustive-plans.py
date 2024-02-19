@@ -95,5 +95,5 @@ def main() -> None:
     evaluate_workload(outfile=args.outfile, max_n_plans=args.max_plans, timeout=args.timeout, verbose=args.verbose)
 
 
-if __name__ == "main":
+if __name__ == "__main__":
     main()
