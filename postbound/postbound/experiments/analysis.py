@@ -50,6 +50,8 @@ def prepare_export(results_df: pd.DataFrame) -> pd.DataFrame:
 
     if runner.COL_OPT_SETTINGS in prepared_df:
         prepared_df[runner.COL_OPT_SETTINGS] = prepared_df[runner.COL_OPT_SETTINGS].apply(jsonize.to_json)
+    if runner.COL_DB_CONFIG in prepared_df:
+        prepared_df[runner.COL_DB_CONFIG] = prepared_df[runner.COL_DB_CONFIG].apply(jsonize.to_json)
 
     return prepared_df
 

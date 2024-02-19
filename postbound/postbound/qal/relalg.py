@@ -38,11 +38,10 @@ import enum
 import functools
 import operator
 import typing
-from collections.abc import Callable, Iterable, Sequence
+from collections.abc import Iterable, Sequence
 from typing import Optional
 
 from postbound.qal import base, clauses, expressions as expr, predicates as preds, qal
-from postbound.qal.base import TableReference
 from postbound.qal.expressions import SqlExpression
 from postbound.util import collections as collection_utils, dicts as dict_utils
 
@@ -1369,7 +1368,7 @@ class SubqueryScan(RelNode):
         """
         return self._subquery
 
-    def tables(self, *, ignore_subqueries: bool = False) -> frozenset[TableReference]:
+    def tables(self, *, ignore_subqueries: bool = False) -> frozenset[base.TableReference]:
         return frozenset() if ignore_subqueries else super().tables(ignore_subqueries=ignore_subqueries)
 
     def children(self) -> Sequence[RelNode]:
@@ -1653,6 +1652,15 @@ class _SubqueryDetector(expr.SqlExpressionVisitor[_SubquerySet], preds.Predicate
     def visit_subquery_expr(self, expression: expr.SubqueryExpression) -> _SubquerySet:
         return _SubquerySet.of(expression.query)
 
+    def visit_window_expr(self, expression: expr.WindowExpression) -> _SubquerySet:
+        return self._traverse_nested_expressions(expression)
+
+    def visit_case_expr(self, expression: expr.CaseExpression) -> _SubquerySet:
+        return self._traverse_nested_expressions(expression)
+
+    def visit_boolean_expr(self, expression: expr.BooleanExpression) -> _SubquerySet:
+        return self._traverse_nested_expressions(expression)
+
     def _traverse_predicate_expressions(self, predicate: preds.AbstractPredicate) -> _SubquerySet:
         """Handler to collect subqueries from predicates."""
         return functools.reduce(operator.add, [expression.accept_visitor(self) for expression in predicate.iterexpressions()])
@@ -1737,6 +1745,18 @@ class _BaseTableLookup(expr.SqlExpressionVisitor[Optional[base.TableReference]],
         dependent_tables = subquery.unbound_tables()
         return self._fetch_valid_base_tables(dependent_tables, accept_empty=True)
 
+    def visit_window_expr(self, expression: expr.WindowExpression) -> Optional[base.TableReference]:
+        # base tables can only appear in predicates and window functions are limited to SELECT statements
+        return None
+
+    def visit_case_expr(self, expression: expr.CaseExpression) -> Optional[base.TableReference]:
+        # base tables can only appear in predicates and we only support case expressions in SELECT statements
+        return None
+
+    def visit_boolean_expr(self, expression: expr.BooleanExpression) -> Optional[base.TableReference]:
+        # base tables can only appear in predicates and boolean expressions are only part of SELECT statements
+        return None
+
     def _fetch_valid_base_tables(self, base_tables: set[base.TableReference | None], *,
                                  accept_empty: bool = False) -> Optional[base.TableReference]:
         """Handler to extract the actual base table from a set of candidate tables.
@@ -1779,63 +1799,6 @@ class _BaseTableLookup(expr.SqlExpressionVisitor[Optional[base.TableReference]],
         return base_table
 
 
-class ExpressionCollector(expr.SqlExpressionVisitor[set[expr.SqlExpression]]):
-    """Utility to traverse an arbitrarily deep expression hierarchy and to collect specific expressions.
-
-    Parameters
-    ----------
-    matcher : Callable[[expr.SqlExpression], bool]
-        Function to determine whether a specific expression matches the collection predicate. Should return *True* for matches
-        and *False* otherwise.
-    continue_after_match : bool, optional
-        Whether the traversal of the current expression element should be continued if the current element matches the
-        collection predicate. By default, traversal is stopped for the current element (but other branches in the expression
-        tree could still produce more matches).
-    """
-    def __init__(self, matcher: Callable[[expr.SqlExpression], bool], *, continue_after_match: bool = False) -> None:
-        self.matcher = matcher
-        self.continue_after_match = continue_after_match
-
-    def visit_column_expr(self, expression: expr.ColumnExpression) -> set[expr.SqlExpression]:
-        return self._check_match(expression)
-
-    def visit_cast_expr(self, expression: expr.CastExpression) -> set[expr.SqlExpression]:
-        return self._check_match(expression)
-
-    def visit_function_expr(self, expression: expr.FunctionExpression) -> set[expr.SqlExpression]:
-        return self._check_match(expression)
-
-    def visit_mathematical_expr(self, expression: expr.MathematicalExpression) -> set[expr.SqlExpression]:
-        return self._check_match(expression)
-
-    def visit_star_expr(self, expression: expr.StarExpression) -> set[expr.SqlExpression]:
-        return self._check_match(expression)
-
-    def visit_static_value_expr(self, expression: expr.StaticValueExpression) -> set[expr.SqlExpression]:
-        return self._check_match(expression)
-
-    def visit_subquery_expr(self, expression: expr.SubqueryExpression) -> set[expr.SqlExpression]:
-        return self._check_match(expression)
-
-    def _check_match(self, expression: expr.SqlExpression) -> set[expr.SqlExpression]:
-        """Handler to perform the actual traversal.
-
-        Parameters
-        ----------
-        expression : expr.SqlExpression
-            The current expression
-
-        Returns
-        -------
-        set[expr.SqlExpression]
-            All matching expressions
-        """
-        own_match = {expression} if self.matcher(expression) else set()
-        if own_match and not self.continue_after_match:
-            return own_match
-        return own_match | collection_utils.set_union(child.accept_visitor(self) for child in expression.iterchildren())
-
-
 def _collect_all_expressions(expression: expr.SqlExpression) -> frozenset[expr.SqlExpression]:
     """Provides all expressions in a specific expression tree, including the root expression.
 
@@ -1871,6 +1834,9 @@ def _determine_expression_phase(expression: expr.SqlExpression) -> EvaluationPha
         case expr.StarExpression() | expr.StaticValueExpression():
             # TODO: should we rather raise an error in this case?
             return EvaluationPhase.BaseTable
+        case expr.WindowExpression() | expr.CaseExpression() | expr.StaticValueExpression():
+            # these expressions can currently only appear within SELECT clauses
+            return EvaluationPhase.PostAggregation
         case _:
             raise ValueError(f"Unknown expression type: '{expression}'")
 
@@ -2128,7 +2094,7 @@ class _ImplicitRelalgParser:
         RelNode
             The algebra tree, potentially expanded by grouping, mapping and selection nodes.
         """
-        aggregation_collector = ExpressionCollector(lambda e: isinstance(e, expr.FunctionExpression) and e.is_aggregate())
+        aggregation_collector = expr.ExpressionCollector(lambda e: isinstance(e, expr.FunctionExpression) and e.is_aggregate())
         aggregation_functions: set[expr.FunctionExpression] = (
             collection_utils.set_union(select_expr.accept_visitor(aggregation_collector)
                                        for select_expr in self._query.select_clause.iterexpressions()))
@@ -2491,9 +2457,9 @@ class _ImplicitRelalgParser:
                         in_predicate = preds.BinaryPredicate.equal(in_column, subquery_root.columns[0])
                         return SemiJoin(input_node, subquery_root, in_predicate)
             case expr.CastExpression() | expr.FunctionExpression() | expr.MathematicalExpression():
-                required_expressions = _collect_all_expressions(expression)
-                missing_expressions = required_expressions - input_node.provided_expressions()
-                return Map(input_node, _generate_expression_mapping_dict(missing_expressions))
+                return self._ensure_expression_applicability(expression, input_node)
+            case expr.WindowExpression() | expr.CaseExpression() | expr.BooleanExpression():
+                return self._ensure_expression_applicability(expression, input_node)
             case _:
                 raise ValueError(f"Did not expect expression '{expression}'")
 
@@ -2570,6 +2536,31 @@ class _ImplicitRelalgParser:
         provided_expressions = input_node.provided_expressions()
         required_expressions = collection_utils.set_union(_collect_all_expressions(expression)
                                                           for expression in predicate.iterexpressions())
+        missing_expressions = required_expressions - provided_expressions
+        if missing_expressions:
+            return Map(input_node, _generate_expression_mapping_dict(missing_expressions))
+        return input_node
+
+    def _ensure_expression_applicability(self, expression: expr.SqlExpression, input_node: RelNode) -> RelNode:
+        """Computes all required mappings that have to be execute before an expression can be evaluated.
+
+        This is pretty much the equivalent to `_ensure_predicate_applicability` but for expressions.
+
+        Parameters
+        ----------
+        expression : expr.SqlExpression
+            The expression to evaluate
+        input_node : RelNode
+            An operator providing the expressions that are already available.
+
+        Returns
+        -------
+        RelNode
+            An algebra fragment
+        """
+        provided_expressions = input_node.provided_expressions()
+        required_expressions = collection_utils.set_union(_collect_all_expressions(child_expr)
+                                                          for child_expr in expression.iterchildren())
         missing_expressions = required_expressions - provided_expressions
         if missing_expressions:
             return Map(input_node, _generate_expression_mapping_dict(missing_expressions))

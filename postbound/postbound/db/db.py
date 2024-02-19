@@ -1485,8 +1485,8 @@ class QueryExecutionPlan(jsonize.Jsonizable):
         if math.isnan(self.true_cardinality):
             return math.nan
         # we add 1 to our q-error to prevent probelms with 0 cardinalities
-        return (max(self.estimated_cardinality, self.true_cardinality) + 1
-                / min(self.estimated_cardinality, self.true_cardinality) + 1)
+        return ((max(self.estimated_cardinality, self.true_cardinality) + 1)
+                / (min(self.estimated_cardinality, self.true_cardinality) + 1))
 
     def scan_nodes(self) -> frozenset[QueryExecutionPlan]:
         """Provides all scan nodes under and including this node.

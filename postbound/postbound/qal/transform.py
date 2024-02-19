@@ -746,8 +746,11 @@ def _replace_expression_in_table_source(table_source: Optional[clauses.TableSour
         return clauses.SubqueryTableSource(replaced_subquery, table_source.target_name)
     elif isinstance(table_source, clauses.JoinTableSource):
         replaced_source = _replace_expression_in_table_source(table_source.source, replacement)
+        replaced_nested_sources = [_replace_expression_in_table_source(nested_join, replacement)
+                                   for nested_join in table_source.joined_tables]
         replaced_condition = _replace_expression_in_predicate(table_source.join_condition, replacement)
-        return clauses.JoinTableSource(replaced_source, replaced_condition, join_type=table_source.join_type)
+        return clauses.JoinTableSource(replaced_source, replaced_condition,
+                                       joined_tables=replaced_nested_sources, join_type=table_source.join_type)
     else:
         raise TypeError("Unknown table source type: " + str(table_source))
 
@@ -1018,6 +1021,23 @@ def _rename_columns_in_expression(expression: Optional[expr.SqlExpression],
         return expr.FunctionExpression(expression.function, renamed_arguments, distinct=expression.distinct)
     elif isinstance(expression, expr.SubqueryExpression):
         return expr.SubqueryExpression(_rename_columns_in_query(expression.query, available_renamings))
+    elif isinstance(expression, expr.WindowExpression):
+        renamed_function = _rename_columns_in_expression(expression.window_function, available_renamings)
+        renamed_partition = [_rename_columns_in_expression(part, available_renamings) for part in expression.partitioning]
+        renamed_orderby = rename_columns_in_clause(expression.ordering, available_renamings) if expression.ordering else None
+        renamed_filter = (rename_columns_in_predicate(expression.filter_condition, available_renamings)
+                          if expression.filter_condition else None)
+        return expr.WindowExpression(renamed_function, partitioning=renamed_partition, ordering=renamed_orderby,
+                                     filter_condition=renamed_filter)
+    elif isinstance(expression, expr.CaseExpression):
+        renamed_cases = [(rename_columns_in_predicate(condition, available_renamings),
+                          _rename_columns_in_expression(result, available_renamings))
+                         for condition, result in expression.cases]
+        renamed_else = (_rename_columns_in_expression(expression.else_expression, available_renamings)
+                        if expression.else_expression else None)
+        return expr.CaseExpression(renamed_cases, else_expr=renamed_else)
+    elif isinstance(expression, expr.BooleanExpression):
+        return expr.BooleanExpression(rename_columns_in_predicate(expression.predicate, available_renamings))
     else:
         raise ValueError("Unknown expression type: " + str(expression))
 
@@ -1107,8 +1127,11 @@ def _rename_columns_in_table_source(table_source: clauses.TableSource,
         return clauses.SubqueryTableSource(renamed_subquery, table_source.target_name)
     elif isinstance(table_source, clauses.JoinTableSource):
         renamed_source = _rename_columns_in_table_source(table_source.source, available_renamings)
+        renamed_nested_joins = [_rename_columns_in_table_source(nested_join, available_renamings)
+                                for nested_join in table_source.joined_tables]
         renamed_condition = rename_columns_in_predicate(table_source.join_condition, available_renamings)
-        return clauses.JoinTableSource(renamed_source, renamed_condition, join_type=table_source.join_type)
+        return clauses.JoinTableSource(renamed_source, renamed_condition,
+                                       joined_tables=renamed_nested_joins, join_type=table_source.join_type)
     else:
         raise TypeError("Unknown table source type: " + str(table_source))
 

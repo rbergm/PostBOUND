@@ -9,15 +9,20 @@ PG_TARGET_DIR="$WD/postgres-server"
 PG_DEFAULT_PORT=5432
 PG_PORT=5432
 MAKE_CORES=$(($(nproc --all) / 2))
+ENABLE_REMOTE_ACCESS="false"
+USER_PASSWORD=""
 STOP_AFTER="false"
 
 show_help() {
-    echo "Usage: $0 <options>"
-    echo "Allowed options:"
-    echo "--pg-ver <version> Setup Postgres with the given version (currently allowed values: 12.4, 14 (default), 15, 16)"
-    echo "-d | --dir <directory> Install Postgres server to the designated directory (postgres-server by default)."
-    echo "-p | --port <port number> Configure the Postgres server to listen on the given port (5432 by default)."
-    echo "--stop Stop the Postgres server process after installation and setup finished"
+    NEWLINE="\n\t\t\t\t"
+    echo -e "Usage: $0 <options>"
+    echo -e "Setup a local Postgres server with the given options. The default user is the current UNIX username.\n"
+    echo -e "Allowed options:"
+    echo -e "--pg-ver <version>\t\tSetup Postgres with the given version.${NEWLINE}Currently allowed values: 12.4, 14 (default), 15, 16)"
+    echo -e "-d | --dir <directory>\t\tInstall Postgres server to the designated directory (postgres-server by default)."
+    echo -e "-p | --port <port number>\tConfigure the Postgres server to listen on the given port (5432 by default)."
+    echo -e "--remote-password <password>\tEnable remote access for the current user, based on the given password.${NEWLINE}Remote access is disabled if no password is provided."
+    echo -e "--stop\t\t\t\tStop the Postgres server process after installation and setup finished"
     exit 1
 }
 
@@ -64,6 +69,12 @@ while [ $# -gt 0 ] ; do
             ;;
         -p|--port)
             PG_PORT=$2
+            shift
+            shift
+            ;;
+        --remote-password)
+            ENABLE_REMOTE_ACCESS="true"
+            USER_PASSWORD=$2
             shift
             shift
             ;;
@@ -136,6 +147,13 @@ pg_ctl -D $PG_TARGET_DIR/data -l pg.log start
 
 echo "... Creating user database for $USER"
 createdb -p $PG_PORT $USER
+
+if [ "$ENABLE_REMOTE_ACCESS" == "true" ] ; then
+    echo "... Enabling remote access for $USER"
+    echo -e "#customization\nhost all $USER 0.0.0.0/0 md5" >> $PG_TARGET_DIR/data/pg_hba.conf
+    sed -i "s/#\{0,1\}listen_addresses = 'localhost'/listen_addresses = '*'/" $PG_TARGET_DIR/data/postgresql.conf
+    psql -c "ALTER USER $USER WITH PASSWORD '$USER_PASSWORD';"
+fi
 
 if [ "$STOP_AFTER" == "true" ] ; then
     pg_ctl -D $PG_TARGET_DIR/postgres-server/data stop

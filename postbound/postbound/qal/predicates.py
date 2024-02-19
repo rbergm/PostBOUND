@@ -86,7 +86,7 @@ class NoFilterPredicateError(errors.StateError):
         self.predicate = predicate
 
 
-BaseExpression = Union[expr.ColumnExpression, expr.StaticValueExpression, expr.SubqueryExpression]
+BaseExpression = Union["expr.ColumnExpression", "expr.StaticValueExpression", "expr.SubqueryExpression"]
 """Supertype that captures all expression types that can be considered base expressions for predicates."""
 
 
@@ -1434,7 +1434,7 @@ def _unwrap_expression(expression: expr.ColumnExpression | expr.StaticValueExpre
         raise ValueError("Cannot unwrap expression " + str(expression))
 
 
-UnwrappedFilter = tuple[base.ColumnReference, expr.LogicalSqlOperators, object]
+UnwrappedFilter = tuple[base.ColumnReference, "expr.LogicalSqlOperators", object]
 """Type that captures the main components of a filter predicate."""
 
 

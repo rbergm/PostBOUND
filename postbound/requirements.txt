@@ -1,3 +1,4 @@
+build
 graphviz
 levenshtein
 matplotlib
@@ -11,3 +12,5 @@ plotly
 psycopg[binary]
 scipy
 seaborn
+setuptools
+wheel

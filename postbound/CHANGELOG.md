@@ -14,6 +14,22 @@ Be carefull when updating and check the changelog!
 
 ---
 
+## Version 0.3.0
+
+### New features
+
+- Added support for Window functions, boolean expressions in SELECT statements and `CASE` expressions
+- Added support for nested `JOIN` statements
+- Can now check if a table is a database view using the schema
+
+### Updates
+
+- Improved Postgres statistics updates: can now set the actual `n_distinct` value
+- Added a `post_repetition_callback` to the workload runner
+- During Postgres setup, remote access can now optionally be enabled
+
+---
+
 ## Version 0.2.1
 
 ### Fixes

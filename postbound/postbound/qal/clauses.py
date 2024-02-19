@@ -1063,7 +1063,7 @@ class JoinType(enum.Enum):
 
 
 class JoinTableSource(TableSource):
-    """Models a table that is referenced in a ``FROM`` clause using the explicit ``JOIN`` syntax.
+    """Models a table that is referenced in a *FROM* clause using the explicit *JOIN* syntax.
 
     Such a table source consists of two parts: the actual table source that represents the relation being accessed, as
     well as the condition that is used to join the table source with the other tables.
@@ -1073,10 +1073,12 @@ class JoinTableSource(TableSource):
     source : TableSource
         The actual table being sourced
     join_condition : Optional[preds.AbstractPredicate], optional
-        The predicate that is used to join the specified table with the other tables of the ``FROM`` clause. For most
-        joins this is a required argument in order to create a valid SQL query (e.g. ``LEFT JOIN`` or ``INNER JOIN``),
-        but there are some joins without a condition (e.g. ``CROSS JOIN`` and ``NATURAL JOIN``). It is up to the user
+        The predicate that is used to join the specified table with the other tables of the *FROM* clause. For most
+        joins this is a required argument in order to create a valid SQL query (e.g. *LEFT JOIN* or *INNER JOIN*),
+        but there are some joins without a condition (e.g. *CROSS JOIN* and *NATURAL JOIN*). It is up to the user
         to determine whether a join condition is required for the join in question or not.
+    joined_tables : Optional[Iterable[JoinTableSource]], optional
+        An optional list of nested join statements, as in *R JOIN (S JOIN T ON a = b) ON c = d*.
     join_type : JoinType, optional
         The specific join that should be performed. Defaults to `JoinType.InnerJoin`.
 
@@ -1087,13 +1089,14 @@ class JoinTableSource(TableSource):
     """
 
     def __init__(self, source: TableSource, join_condition: Optional[preds.AbstractPredicate] = None, *,
-                 join_type: JoinType = JoinType.InnerJoin) -> None:
+                 joined_tables: Optional[Iterable[JoinTableSource]] = None, join_type: JoinType = JoinType.InnerJoin) -> None:
         if isinstance(source, JoinTableSource):
             raise ValueError("JOIN statements cannot have another JOIN statement as source")
         self._source = source
+        self._joined_tables = tuple(joined_tables) if joined_tables else tuple()
         self._join_condition = join_condition
         self._join_type = join_type if join_condition else JoinType.CrossJoin
-        self._hash_val = hash((self._source, self._join_condition, self._join_type))
+        self._hash_val = hash((self._source, self._joined_tables, self._join_condition, self._join_type))
 
     @property
     def source(self) -> TableSource:
@@ -1105,6 +1108,20 @@ class JoinTableSource(TableSource):
             The table
         """
         return self._source
+
+    @property
+    def joined_tables(self) -> Sequence[JoinTableSource]:
+        """Get the nested join statements contained in this join.
+
+        A nested join is a *JOIN* statement within a *JOIN* statement, as in
+        ``SELECT * FROM R JOIN (S JOIN T ON a = b) ON a = c``.
+
+        Returns
+        -------
+        Sequence[JoinTableSource]
+            The nested joins, can be empty if there are no such joins.
+        """
+        return self._joined_tables
 
     @property
     def join_condition(self) -> Optional[preds.AbstractPredicate]:
@@ -1132,21 +1149,24 @@ class JoinTableSource(TableSource):
         return self._join_type
 
     def tables(self) -> set[base.TableReference]:
-        return self._source.tables()
+        return self._source.tables() | collection_utils.set_union(nested_join.tables() for nested_join in self.joined_tables)
 
     def columns(self) -> set[base.ColumnReference]:
         condition_columns = self._join_condition.columns() if self._join_condition else set()
-        return self._source.columns() | condition_columns
+        nested_columns = collection_utils.set_union(nested_join.columns() for nested_join in self.joined_tables)
+        return self._source.columns() | nested_columns | condition_columns
 
     def iterexpressions(self) -> Iterable[expr.SqlExpression]:
         source_expressions = list(self._source.iterexpressions())
+        nested_expressions = collection_utils.flatten(nested_join.iterexpressions() for nested_join in self.joined_tables)
         condition_expressions = list(self._join_condition.iterexpressions()) if self._join_condition else []
-        return source_expressions + condition_expressions
+        return source_expressions + nested_expressions + condition_expressions
 
     def itercolumns(self) -> Iterable[base.ColumnReference]:
         source_columns = list(self._source.itercolumns())
+        nested_columns = collection_utils.flatten(nested_join.itercolumns() for nested_join in self.joined_tables)
         condition_columns = list(self._join_condition.itercolumns()) if self._join_condition else []
-        return source_columns + condition_columns
+        return source_columns + nested_columns + condition_columns
 
     def predicates(self) -> preds.QueryPredicates | None:
         source_predicates = self._source.predicates()
@@ -1166,6 +1186,7 @@ class JoinTableSource(TableSource):
 
     def __eq__(self, other: object) -> bool:
         return (isinstance(other, type(self)) and self._source == other._source
+                and self._joined_tables == other._joined_tables
                 and self._join_condition == other._join_condition
                 and self._join_type == other._join_type)
 
@@ -1174,7 +1195,12 @@ class JoinTableSource(TableSource):
 
     def __str__(self) -> str:
         join_str = str(self.join_type)
-        join_prefix = f"{join_str} {self.source}"
+        if self.joined_tables:
+            nested_join_str = " ".join(str(nested_join) for nested_join in self.joined_tables)
+            source_str = f"({self.source} {nested_join_str})"
+        else:
+            source_str = str(self.source)
+        join_prefix = f"{join_str} {source_str}"
         if self.join_condition:
             condition_str = (f"({self.join_condition})" if self.join_condition.is_compound()
                              else str(self.join_condition))

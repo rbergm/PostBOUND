@@ -10,13 +10,20 @@ from datetime import datetime
 from typing import IO
 
 
+Logger = Callable[..., None]
+"""Type alias for our loggers.
+
+Each logger accepts an arbitrary amount of arguments and is inteded to function as a replacement for the `print` function.
+"""
+
+
 def timestamp() -> str:
     """Provides the current time as a nice and normalized string."""
     return datetime.now().strftime("%y-%m-%d %H:%M:%S")
 
 
 def make_logger(enabled: bool = True, *, file: IO[str] = sys.stderr, pretty: bool = False,
-                prefix: str | Callable[[], str] = "") -> Callable:
+                prefix: str | Callable[[], str] = "") -> Logger:
     """Creates a new logging utility.
 
     The generated method can be used like a regular `print`, but with defaults that are better suited for logging purposes.

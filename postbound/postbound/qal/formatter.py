@@ -68,6 +68,22 @@ class FormattingSubqueryExpression(expr.SubqueryExpression):
         return "\n".join(indented_lines)
 
 
+class FormattingCaseExpression(expr.CaseExpression):
+    def __init__(self, original_expression: expr.CaseExpression, indentation: int) -> None:
+        super().__init__(original_expression.cases, else_expr=original_expression.else_expression)
+        self._indentation = indentation
+
+    def __str__(self) -> str:
+        case_indentation = " " * (self._indentation + 2)
+        case_block_entries: list[str] = ["CASE"]
+        for case, value in self.cases:
+            case_block_entries.append(f"{case_indentation}WHEN {case} THEN {value}")
+        if self.else_expression is not None:
+            case_block_entries.append(f"{case_indentation}ELSE {self.else_expression}")
+        case_block_entries.append("END")
+        return "\n".join(case_block_entries)
+
+
 class FormattingLimitClause(clauses.Limit):
     """Wraps the `Limit` clause to enable pretty printing of its different parts (limit and offset).
 
@@ -300,6 +316,27 @@ def _subquery_replacement(expression: expr.SqlExpression, *, inline_hints: bool,
     return FormattingSubqueryExpression(expression, inline_hints, indentation)
 
 
+def _case_expression_replacement(expression: expr.SqlExpression, *, indentation: int) -> expr.SqlExpression:
+    """Handler method for `transform.replace_expressions` to apply our custom `FormattingCaseExpression`.
+
+    Parameters
+    ----------
+    expression : expr.SqlExpression
+        The expression to replace.
+    indentation : int
+        The amount of indentation to use for the case expression
+
+    Returns
+    -------
+    expr.SqlExpression
+        The original SQL expression if the `expression` is not a `CaseExpression`. Otherwise, the expression is
+        wrapped in a `FormattingCaseExpression`.
+    """
+    if not isinstance(expression, expr.CaseExpression):
+        return expression
+    return FormattingCaseExpression(expression, indentation)
+
+
 def format_quick(query: qal.SqlQuery, *, inline_hint_block: bool = False,
                  custom_formatter: Optional[Callable[[qal.SqlQuery], qal.SqlQuery]] = None) -> str:
     """Applies a quick formatting heuristic to structure the given query.
@@ -337,7 +374,9 @@ def format_quick(query: qal.SqlQuery, *, inline_hint_block: bool = False,
     inlined_hint_block = None
     subquery_update = functools.partial(_subquery_replacement, inline_hints=inline_hint_block,
                                         indentation=FormatIndentDepth)
+    case_expression_update = functools.partial(_case_expression_replacement, indentation=FormatIndentDepth)
     query = transform.replace_expressions(query, subquery_update)
+    query = transform.replace_expressions(query, case_expression_update)
     if query.limit_clause is not None:
         query = transform.replace_clause(query, FormattingLimitClause(query.limit_clause))
 
