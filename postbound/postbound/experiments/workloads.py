@@ -235,6 +235,23 @@ class Workload(collections.UserDict[LabelType, qal.SqlQuery]):
         """
         return self._label_mapping[query]
 
+    def with_labels(self, labels: Iterable[LabelType]) -> Workload[LabelType]:
+        """Provides a new workload that contains only the queries with the specified labels.
+
+        Parameters
+        ----------
+        labels : Iterable[LabelType]
+            The labels to include in the new workload
+
+        Returns
+        -------
+        Workload[LabelType]
+            A workload that contains only the queries with the specified labels
+        """
+        labels = set(labels)
+        selected_queries = {label: query for label, query in self.data.items() if label in labels}
+        return Workload(selected_queries, name=self._name, root=self._root)
+
     def first(self, n: int) -> Workload[LabelType]:
         """Provides the first `n` queries of the workload, according to the natural order of the query labels.
 
