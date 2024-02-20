@@ -1799,19 +1799,24 @@ class _BaseTableLookup(expr.SqlExpressionVisitor[Optional[base.TableReference]],
         return base_table
 
 
-def _collect_all_expressions(expression: expr.SqlExpression) -> frozenset[expr.SqlExpression]:
+def _collect_all_expressions(expression: expr.SqlExpression, *,
+                             traverse_aggregations: bool = False) -> frozenset[expr.SqlExpression]:
     """Provides all expressions in a specific expression tree, including the root expression.
 
     Parameters
     ----------
     expression : expr.SqlExpression
         The root expression
+    traverse_aggregations : bool, optional
+        Whether expressions nested in aggregation functions should be included. Disabled by default.
 
     Returns
     -------
     frozenset[expr.SqlExpression]
         The expression as well as all child expressions, including deeply nested children.
     """
+    if not traverse_aggregations and isinstance(expression, expr.FunctionExpression) and expression.is_aggregate():
+        return frozenset({expression})
     child_expressions = collection_utils.set_union(_collect_all_expressions(child_expr)
                                                    for child_expr in expression.iterchildren())
     all_expressions = frozenset({expression} | child_expressions)
@@ -1855,6 +1860,11 @@ def _determine_predicate_phase(predicate: preds.AbstractPredicate) -> Evaluation
         # It could actually be that the number of tables is negative. E.g. HAVING count(*) < (SELECT min(r_a) FROM R)
         # Therefore, we only check for exactly 1 table
         return EvaluationPhase.BaseTable
+    if subquery_tables:
+        # If there are subqueries and multiple base tables present, we encoutered a predicate like
+        # R.a = (SELECT min(S.b) FROM S WHERE S.b = T.c) with a dependent subquery on T. By default, such predicates should be
+        # executed after the join phase.
+        return EvaluationPhase.PostJoin
 
     expression_phase = max(_determine_expression_phase(expression) for expression in predicate.iterexpressions()
                            if type(expression) not in {expr.StarExpression, expr.StaticValueExpression})
@@ -2107,7 +2117,8 @@ class _ImplicitRelalgParser:
 
         aggregation_arguments: set[expr.SqlExpression] = set()
         for agg_func in aggregation_functions:
-            aggregation_arguments |= collection_utils.set_union(_collect_all_expressions(arg) for arg in agg_func.arguments)
+            aggregation_arguments |= collection_utils.set_union(_collect_all_expressions(arg, traverse_aggregations=True)
+                                                                for arg in agg_func.arguments)
         missing_expressions = aggregation_arguments - input_node.provided_expressions()
         if missing_expressions:
             input_node = Map(input_node, _generate_expression_mapping_dict(missing_expressions))
@@ -2184,11 +2195,25 @@ class _ImplicitRelalgParser:
             case EvaluationPhase.Join:
                 for join_predicate in self._split_join_predicate(predicate):
                     join_node = self._convert_join_predicate(join_predicate)
-                    for table in join_node.tables():
-                        self._base_table_fragments[table] = join_node
+                    for outer_table in join_node.tables():
+                        self._base_table_fragments[outer_table] = join_node
                 return join_node
             case EvaluationPhase.PostJoin | EvaluationPhase.PostAggregation:
                 assert input_node is not None
+                # Generally speaking, when consuming a post-join predicate, all required tables should be available by now.
+                # However, there is one caveat: a complex predicate that can currently only be executed after the join phase
+                # (e.g. disjunctions of join predicates) could contain a correlated scalar subquery. In this case, some of the
+                # required tables might not be available yet (more precisely, the native tables from the depedent subquery
+                # are not available). We solve this situation by introducing cross products between the dependent subquery
+                # and the outer table _within the subquery_. This is because the subquery needs to reference the outer table
+                # in its join predicate.
+                if not predicate.tables().issubset(input_node.tables()):
+                    missing_tables = predicate.tables() - input_node.tables()
+                    for outer_table in missing_tables:
+                        if outer_table not in self._provided_base_tables:
+                            # the table will be supplied by a subquery
+                            continue
+                        input_node = CrossProduct(input_node, self._provided_base_tables[outer_table])
                 return self._convert_predicate(predicate, input_node=input_node)
             case _:
                 raise ValueError(f"Unknown evaluation phase '{eval_phase}' for predicate '{predicate}'")
@@ -2333,8 +2358,9 @@ class _ImplicitRelalgParser:
         table_fragments = {self._resolve(join_partner) for join_partner in predicate.tables() - subquery_tables}
         if len(table_fragments) == 1:
             input_node = collection_utils.simplify(table_fragments)
+            provided_expressions = self._collect_provided_expressions(input_node)
             required_expressions = collection_utils.set_union(_collect_all_expressions(e) for e in predicate.iterexpressions())
-            missing_expressions = required_expressions - input_node.provided_expressions()
+            missing_expressions = required_expressions - provided_expressions
             if missing_expressions:
                 final_fragment = Map(input_node, _generate_expression_mapping_dict(missing_expressions))
             else:
@@ -2360,7 +2386,7 @@ class _ImplicitRelalgParser:
             left_input = self._add_expression(first_arg, input_node=left_input)
             right_input = self._add_expression(second_arg, input_node=right_input)
 
-            provided_expressions = left_input.provided_expressions() | right_input.provided_expressions()
+            provided_expressions = self._collect_provided_expressions(left_input, right_input)
             missing_expressions = required_expressions - provided_expressions
             left_mappings: list[expr.SqlExpression] = []
             right_mappings: list[expr.SqlExpression] = []
@@ -2533,7 +2559,7 @@ class _ImplicitRelalgParser:
         RelNode
             An algebra fragment
         """
-        provided_expressions = input_node.provided_expressions()
+        provided_expressions = self._collect_provided_expressions(input_node)
         required_expressions = collection_utils.set_union(_collect_all_expressions(expression)
                                                           for expression in predicate.iterexpressions())
         missing_expressions = required_expressions - provided_expressions
@@ -2558,13 +2584,19 @@ class _ImplicitRelalgParser:
         RelNode
             An algebra fragment
         """
-        provided_expressions = input_node.provided_expressions()
+        provided_expressions = self._collect_provided_expressions(input_node)
         required_expressions = collection_utils.set_union(_collect_all_expressions(child_expr)
                                                           for child_expr in expression.iterchildren())
         missing_expressions = required_expressions - provided_expressions
         if missing_expressions:
             return Map(input_node, _generate_expression_mapping_dict(missing_expressions))
         return input_node
+
+    def _collect_provided_expressions(self, *nodes: RelNode) -> set[expr.SqlExpression]:
+        """Collects all expressions that are provided by a set of algebra nodes."""
+        outer_table_expressions = collection_utils.set_union(base_table.provided_expressions()
+                                                             for base_table in self._provided_base_tables.values())
+        return collection_utils.set_union(node.provided_expressions() for node in nodes) | outer_table_expressions
 
 
 def parse_relalg(query: qal.ImplicitSqlQuery) -> RelNode:
