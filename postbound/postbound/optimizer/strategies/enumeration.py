@@ -17,7 +17,7 @@ from postbound.optimizer import jointree, physops
 from postbound.util import networkx as nx_utils
 
 
-def _merge_nodes(start: jointree.LogicalJoinTree | base.TableReference,
+def _merge_nodes(query: qal.SqlQuery, start: jointree.LogicalJoinTree | base.TableReference,
                  end: jointree.LogicalJoinTree | base.TableReference) -> jointree.LogicalJoinTree:
     """Provides a join tree that combines two specific trees or tables.
 
@@ -37,12 +37,17 @@ def _merge_nodes(start: jointree.LogicalJoinTree | base.TableReference,
         A join tree combining the input trees. The `start` node will be the left node of the tree and the `end` node will be
         the right node.
     """
-    start = jointree.LogicalJoinTree.for_base_table(start) if isinstance(start, base.TableReference) else start
-    end = jointree.LogicalJoinTree.for_base_table(end) if isinstance(end, base.TableReference) else end
-    return start.join_with_subtree(end)
+    if isinstance(start, base.TableReference):
+        start_annotation = jointree.LogicalBaseTableMetadata(query.predicates().filters_for(start))
+        start = jointree.LogicalJoinTree.for_base_table(start, start_annotation)
+    if isinstance(end, base.TableReference):
+        end_annotation = jointree.LogicalBaseTableMetadata(query.predicates().filters_for(end))
+        end = jointree.LogicalJoinTree.for_base_table(end, end_annotation)
+    join_annotation = jointree.LogicalJoinMetadata(query.predicates().joins_between(start.tables(), end.tables()))
+    return start.join_with_subtree(end, join_annotation)
 
 
-def _enumerate_join_graph(join_graph: nx.Graph) -> Generator[jointree.JoinTree]:
+def _enumerate_join_graph(query: qal.SqlQuery, join_graph: nx.Graph) -> Generator[jointree.JoinTree]:
     """Provides all possible join trees based on a join graph.
 
     Parameters
@@ -77,13 +82,13 @@ def _enumerate_join_graph(join_graph: nx.Graph) -> Generator[jointree.JoinTree]:
         start_node, target_node = edge
         merged_graph = nx.contracted_nodes(join_graph, start_node, target_node, self_loops=False, copy=True)
 
-        start_end_tree = _merge_nodes(start_node, target_node)
+        start_end_tree = _merge_nodes(query, start_node, target_node)
         start_end_graph = nx.relabel_nodes(merged_graph, {start_node: start_end_tree}, copy=True)
-        yield from _enumerate_join_graph(start_end_graph)
+        yield from _enumerate_join_graph(query, start_end_graph)
 
-        end_start_tree = _merge_nodes(target_node, start_node)
+        end_start_tree = _merge_nodes(query, target_node, start_node)
         end_start_graph = nx.relabel_nodes(merged_graph, {start_node: end_start_tree}, copy=True)
-        yield from _enumerate_join_graph(end_start_graph)
+        yield from _enumerate_join_graph(query, end_start_graph)
 
 
 class ExhaustiveJoinOrderEnumerator:
@@ -148,7 +153,7 @@ class ExhaustiveJoinOrderEnumerator:
             raise ValueError("Cross products are not yet supported for random join order generation!")
 
         join_order_hashes = set()
-        join_order_generator = _enumerate_join_graph(join_graph)
+        join_order_generator = _enumerate_join_graph(query, join_graph)
         for join_order in join_order_generator:
             current_hash = hash(join_order)
             if current_hash in join_order_hashes:
