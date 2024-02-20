@@ -1234,7 +1234,8 @@ class CompoundPredicate(AbstractPredicate):
         if self.operation == expr.LogicalSqlCompoundOperators.Not:
             return f"NOT {self.children}"
         elif self.operation == expr.LogicalSqlCompoundOperators.Or:
-            return "(" + " OR ".join(str(child) for child in self.children) + ")"
+            return "(" + " OR ".join(f"({child})" if child.is_compound() else str(child)
+                                     for child in self.iterchildren()) + ")"
         elif self.operation == expr.LogicalSqlCompoundOperators.And:
             return " AND ".join(str(child) for child in self.children)
         else:
