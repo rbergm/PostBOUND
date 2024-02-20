@@ -14,6 +14,22 @@ Be carefull when updating and check the changelog!
 
 ---
 
+## Version 0.3.1
+
+### New features
+
+- Add `Workload.with_labels` method to retrieve sub-workload based on specific labels
+
+### Fixes
+
+- Fixed `PhysicalQueryPlan.load_from_logical_order` creating intermediates of plans instead of tree nodes
+- Fixed `PhysicalQueryPlan.plan_hash` calculation for plans with the same logical join structure
+- Fixed `ExhaustivePlanEnumerator` scan operator creation
+- Fixed `ExhaustiveJoinOrder` not adding join predicates and filters to generated join orders
+- Fixed `relalg.parse_relalg` crashing for some predicates involving subqueries
+
+---
+
 ## Version 0.3.0
 
 ### New features
@@ -28,7 +44,6 @@ Be carefull when updating and check the changelog!
 - Added a `post_repetition_callback` to the workload runner
 - During Postgres setup, remote access can now optionally be enabled
 
----
 
 ## Version 0.2.1
 
