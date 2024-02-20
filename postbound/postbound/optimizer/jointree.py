@@ -204,7 +204,7 @@ class PhysicalJoinMetadata(JoinMetadata):
             Information about the current join node
         """
         base_inspection = super().inspect()
-        return f"{base_inspection} {self.operator}" if self._operator_assignment else base_inspection
+        return f"{base_inspection} USING {self.operator.operator.value}" if self._operator_assignment else base_inspection
 
     def __json__(self) -> object:
         return super().__json__() | {"operator": self._operator_assignment}
@@ -222,7 +222,7 @@ class PhysicalJoinMetadata(JoinMetadata):
         return str(self)
 
     def __str__(self) -> str:
-        return f"predicate={self.join_predicate}, cardinality={self.cardinality}, operator={self.operator}"
+        return f"predicate={self.join_predicate}, cardinality={self.cardinality}, operator={self.operator.operator}"
 
 
 class BaseTableMetadata(BaseMetadata, abc.ABC):
@@ -348,7 +348,7 @@ class PhysicalBaseTableMetadata(BaseTableMetadata):
             Information about the current scan node
         """
         base_inspection = super().inspect()
-        return f"{base_inspection} {self.operator}" if self._operator_assignment else base_inspection
+        return f"{base_inspection} USING {self.operator.operator.value}" if self._operator_assignment else base_inspection
 
     def __json__(self) -> object:
         return super().__json__() | {"operator": self._operator_assignment}
@@ -366,7 +366,7 @@ class PhysicalBaseTableMetadata(BaseTableMetadata):
         return str(self)
 
     def __str__(self) -> str:
-        return f"predicate={self.filter_predicate}, upper bound={self.cardinality}, operator={self.operator}"
+        return f"predicate={self.filter_predicate}, upper bound={self.cardinality}, operator={self.operator.operator}"
 
 
 class JoinTreeVisitor(abc.ABC):
@@ -2402,7 +2402,6 @@ class PhysicalQueryPlan(JoinTree[PhysicalJoinMetadata, PhysicalBaseTableMetadata
             return LogicalJoinTree()
         return LogicalJoinTree(_physical_to_logical(self.root))
 
-    @functools.cache
     def plan_hash(self) -> int:
         """Calculates a hash value that considers the join order as well as the assigned physical operators.
 
