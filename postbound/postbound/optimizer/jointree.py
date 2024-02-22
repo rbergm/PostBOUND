@@ -2158,8 +2158,8 @@ class PhysicalQueryPlan(JoinTree[PhysicalJoinMetadata, PhysicalBaseTableMetadata
         return PhysicalQueryPlan(join_node)
 
     @staticmethod
-    def load_from_query_plan(query_plan: db.QueryExecutionPlan,
-                             query: Optional[qal.SqlQuery] = None) -> PhysicalQueryPlan:
+    def load_from_query_plan(query_plan: db.QueryExecutionPlan, query: Optional[qal.SqlQuery] = None, *,
+                             operators_only: bool = False) -> PhysicalQueryPlan:
         """Creates a join tree from a query plan.
 
         The join order used in the query plan will become the join order of the join tree. Furthermore, physical
@@ -2174,6 +2174,9 @@ class PhysicalQueryPlan(JoinTree[PhysicalJoinMetadata, PhysicalBaseTableMetadata
         query : Optional[qal.SqlQuery], optional
             The query that was planned. If this is specified, the query will be used to inflate some of the annotations
             of the nodes in the join tree.
+        operators_only : bool, optional
+            Whether only the physical operators should extracted from the query plan. If enabled, no cardinalities or parallel
+            workers are loaded. Disabled by default.
 
         Returns
         -------
@@ -2193,11 +2196,17 @@ class PhysicalQueryPlan(JoinTree[PhysicalJoinMetadata, PhysicalBaseTableMetadata
             table = query_plan.table
             if not table:
                 raise ValueError(f"Scan nodes must have an associated table: {query_plan}")
+
             filter_predicate = query.predicates().filters_for(table) if query else None
-            cardinality = query_plan.true_cardinality if query_plan.is_analyze() else query_plan.estimated_cardinality
-            scan_info = (physops.ScanOperatorAssignment(query_plan.physical_operator, table,
-                                                        query_plan.parallel_workers)
-                         if query_plan.physical_operator else None)
+            if operators_only:
+                scan_info = physops.ScanOperatorAssignment(query_plan.physical_operator, table)
+                cardinality = math.nan
+            else:
+                cardinality = query_plan.true_cardinality if query_plan.is_analyze() else query_plan.estimated_cardinality
+                scan_info = (physops.ScanOperatorAssignment(query_plan.physical_operator, table,
+                                                            query_plan.parallel_workers)
+                             if query_plan.physical_operator else None)
+
             table_annotation = PhysicalBaseTableMetadata(filter_predicate, cardinality, scan_info)
             return PhysicalQueryPlan.for_base_table(table, table_annotation)
         elif query_plan.is_join:
@@ -2207,22 +2216,29 @@ class PhysicalQueryPlan(JoinTree[PhysicalJoinMetadata, PhysicalBaseTableMetadata
                 outer_child, inner_child = query_plan.outer_child, query_plan.inner_child
             else:
                 outer_child, inner_child = query_plan.children
-            outer_tree = PhysicalQueryPlan.load_from_query_plan(outer_child, query)
-            inner_tree = PhysicalQueryPlan.load_from_query_plan(inner_child, query)
+            outer_tree = PhysicalQueryPlan.load_from_query_plan(outer_child, query, operators_only=operators_only)
+            inner_tree = PhysicalQueryPlan.load_from_query_plan(inner_child, query, operators_only=operators_only)
+
             join_predicate = (query.predicates().joins_between(outer_tree.tables(), inner_tree.tables())
                               if query else None)
-            cardinality = query_plan.true_cardinality if query_plan.is_analyze() else query_plan.estimated_cardinality
-            join_info = (physops.DirectionalJoinOperatorAssignment(query_plan.physical_operator,
-                                                                   outer=outer_child.tables(),
-                                                                   inner=inner_child.tables(),
-                                                                   parallel_workers=query_plan.parallel_workers)
-                         if query_plan.physical_operator else None)
+            if operators_only:
+                join_info = physops.DirectionalJoinOperatorAssignment(query_plan.physical_operator,
+                                                                      outer=outer_child.tables(), inner=inner_child.tables())
+                cardinality = math.nan
+            else:
+                join_info = (physops.DirectionalJoinOperatorAssignment(query_plan.physical_operator,
+                                                                       outer=outer_child.tables(),
+                                                                       inner=inner_child.tables(),
+                                                                       parallel_workers=query_plan.parallel_workers)
+                             if query_plan.physical_operator else None)
+                cardinality = query_plan.true_cardinality if query_plan.is_analyze() else query_plan.estimated_cardinality
+
             join_annotation = PhysicalJoinMetadata(join_predicate, cardinality, join_info)
             return outer_tree.join_with_subtree(inner_tree, join_annotation)
 
         if len(query_plan.children) != 1:
             raise ValueError(f"Non join/scan nodes must have exactly one child: {query_plan}")
-        return PhysicalQueryPlan.load_from_query_plan(query_plan.children[0], query)
+        return PhysicalQueryPlan.load_from_query_plan(query_plan.children[0], query, operators_only=operators_only)
 
     @staticmethod
     def load_from_logical_order(logical_order: LogicalJoinTree,
@@ -2405,7 +2421,9 @@ class PhysicalQueryPlan(JoinTree[PhysicalJoinMetadata, PhysicalBaseTableMetadata
     def plan_hash(self) -> int:
         """Calculates a hash value that considers the join order as well as the assigned physical operators.
 
-        Further information such as cardinality estimates or parallel workers are still ignored.
+        This method differs from the default hash method because join trees do only consider the structure of the tree, but
+        no additional information. In order to ensure correct substitution properties, we retain the default hashing
+        behavior in physical plans as well and use this method to obtain the full hash of a physical query plan.
 
         Returns
         -------
