@@ -6,6 +6,7 @@ FORCE_CREATION="false"
 IMDB_DIR="../imdb_data"
 SKIP_FKEYS="false"
 SKIP_EXTENSIONS="false"
+SKIP_VACUUM="false"
 
 show_help() {
     echo "Usage: $0 <options>"
@@ -15,6 +16,7 @@ show_help() {
     echo -e "-t | --target\t<db name> name of the IMDB database, defaults to 'imdb'"
     echo -e "--no-fkeys\tdoes not load foreign key indexes to the database (includes both foreign key constraints as well as the actual indexes)"
     echo -e "--no-ext\tdoes not install any extensions"
+    echo -e "--no-vacuum\tdoes not run VACUUM ANALYZE after the import"
     exit 1
 }
 
@@ -40,6 +42,10 @@ while [ $# -gt 0 ] ; do
             ;;
         --no-ext)
             SKIP_EXTENSIONS="true"
+            shift
+            ;;
+        --no-vacuum)
+            SKIP_VACUUM="true"
             shift
             ;;
         *)
@@ -101,6 +107,13 @@ if [ $SKIP_FKEYS == "false" ] ; then
 	psql $DB_NAME -f $WD/workload-job-fk-indexes.sql
 else
 	echo ".. Skipping IMDB foreign key creation"
+fi
+
+if [ $SKIP_VACUUM == "false" ] ; then
+    echo ".. Vacuuming database"
+    psql $DB_NAME -c "VACUUM VERBOSE ANALYZE;"
+else
+    echo ".. Skipping vacuuming"
 fi
 
 echo ".. Done"
