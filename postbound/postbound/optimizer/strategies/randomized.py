@@ -460,7 +460,7 @@ class RandomPlanGenerator:
 
             query_plan = jointree.PhysicalQueryPlan.load_from_logical_order(join_order, physical_operators)
             if self._eliminate_duplicates:
-                current_plan_hash = hash(query_plan)
+                current_plan_hash = query_plan.plan_hash()
                 if current_plan_hash in plan_hashes:
                     continue
                 else:
