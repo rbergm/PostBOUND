@@ -154,7 +154,7 @@ class RandomJoinOrderGenerator:
                                 else self._linear_join_orders(query, join_graph))
 
         join_order_hashes = set()
-        for current_join_order in join_order_generator():
+        for current_join_order in join_order_generator:
             if self._eliminate_duplicates:
                 current_hash = hash(current_join_order)
                 if current_hash in join_order_hashes:
