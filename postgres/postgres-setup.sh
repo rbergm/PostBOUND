@@ -156,7 +156,7 @@ if [ "$ENABLE_REMOTE_ACCESS" == "true" ] ; then
 fi
 
 if [ "$STOP_AFTER" == "true" ] ; then
-    pg_ctl -D $PG_TARGET_DIR/postgres-server/data stop
+    pg_ctl -D $PG_TARGET_DIR/data stop
     echo ".. Setup done"
 else
     echo ".. Setup done, ready to connect"
