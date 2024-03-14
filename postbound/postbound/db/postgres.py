@@ -124,7 +124,7 @@ _SignificantPostgresSettings = {
 
     # Query Planning Settings (see https://www.postgresql.org/docs/current/runtime-config-query.html)
     # Planner Method Configuration
-    "enable_async_append", "enable_bitmapscan", "enable_gatermerge", "enable_hashagg", "enable_hashjoin",
+    "enable_async_append", "enable_bitmapscan", "enable_gathermerge", "enable_hashagg", "enable_hashjoin",
     "enable_incremental_sort", "enable_indexscan", "enable_indexonlyscan", "enable_material", "enable_memoize",
     "enable_mergejoin", "enable_nestloop", "enable_parallel_append", "enable_parallel_hash", "enable_partition_pruning",
     "enable_partitionwise_join", "enable_partitionwise_aggregate", "enable_presorted_aggregate", "enable_seqscan",
@@ -646,7 +646,7 @@ class PostgresInterface(db.Database):
             *SET geqo = FALSE;*.
         """
         if isinstance(configuration, PostgresSetting) and configuration.parameter not in _RuntimeChangeablePostgresSettings:
-            warnings.warn(f"Cannot apply configuration setting at '{configuration.parameter}' runtime")
+            warnings.warn(f"Cannot apply configuration setting '{configuration.parameter}' at runtime")
             return
         elif isinstance(configuration, PostgresConfiguration):
             supported_settings: list[PostgresSetting] = []

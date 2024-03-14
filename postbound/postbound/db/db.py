@@ -1205,6 +1205,9 @@ class QueryExecutionPlan(jsonize.Jsonizable):
     All parameters to the `__init__` method are available as attributes on the new object. However, they should be
     considered read-only, even though this is not enforced.
 
+    Comparisons between two query plans and hashing of a plan is based on the node type, the children and the table of each
+    node. Other attributes are not considered for these operations such as cost estimates.
+
 
     Parameters
     ----------
