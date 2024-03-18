@@ -16,7 +16,12 @@ echo ".. Stopping Postgres Server"
 cd $PG_INSTALL_DIR
 pg_ctl -D $PG_INSTALL_DIR/data stop
 export PATH="${PATH//$PG_BIN_PATH:}"
+export LD_LIBRARY_PATH="${LD_LIBRARY_PATH//$PG_INSTALL_DIR/build/lib:}"
+export C_INCLUDE_PATH="${C_INCLUDE_PATH//$PG_INSTALL_DIR/build/include/server:}"
 
+if [ -z "$PG_BIN_PATH" ] ; then
+	unset PG_BIN_PATH
+fi
 if [ -z "$PGPORT" ] ; then
 	unset PGPORT
 fi

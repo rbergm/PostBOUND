@@ -22,6 +22,7 @@ if [ -z "$INIT" ] ; then
 	export PG_CTL_PATH="$WD"
 	export PATH="$PG_BIN_PATH:$PATH"
 	export LD_LIBRARY_PATH="$PG_INSTALL_DIR/build/lib:$LD_LIBRARY_PATH"
+	export C_INCLUDE_PATH="$PG_INSTALL_DIR/build/include/server:$C_INCLUDE_PATH"
 fi
 
 cd $WD
