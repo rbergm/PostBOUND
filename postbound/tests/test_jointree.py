@@ -6,17 +6,50 @@ import textwrap
 
 import unittest
 
-from postbound.db import postgres
+import psycopg
+
+from postbound.db import db, postgres
 from postbound.qal import base, parser
-from postbound.optimizer import jointree
+from postbound.optimizer import jointree, physops
 
 
 pg_connect_dir = "."
+imdb_config_file = f"{pg_connect_dir}/.psycopg_connection_job"
+
+
+def _is_live_server(config_file: str) -> bool:
+    try:
+        pg_instance = postgres.connect(config_file=config_file, private=True)
+        pg_instance.close()
+        return True
+    except psycopg.OperationalError:
+        return False
 
 
 class JoinTreeLoadingTests(unittest.TestCase):
-    def test_load_explain(self) -> None:  # TODO better name
-        pg_db = postgres.connect(config_file=f"{pg_connect_dir}/.psycopg_connection_job")
+    def test_load_from_query_plan(self) -> None:
+        title = base.TableReference("title")
+        movie_info = base.TableReference("movie_info")
+        t_explain_plan = db.QueryExecutionPlan(node_type="Seq Scan", is_join=False, is_scan=True, children=[],
+                                               table=title, physical_operator=physops.ScanOperators.SequentialScan)
+        mi_explain_plan = db.QueryExecutionPlan(node_type="Seq Scan", is_join=False, is_scan=True, children=[],
+                                                table=movie_info, physical_operator=physops.ScanOperators.IndexScan)
+        explain_plan = db.QueryExecutionPlan(node_type="Nested Loop", is_join=True, is_scan=False,
+                                             physical_operator=physops.JoinOperators.NestedLoopJoin,
+                                             children=[t_explain_plan, mi_explain_plan], inner_child=mi_explain_plan)
+
+        phys_plan = jointree.PhysicalQueryPlan.load_from_query_plan(explain_plan)
+
+        self.assertIsInstance(phys_plan.root, jointree.IntermediateJoinNode)
+        left_child, right_child = phys_plan.root.left_child, phys_plan.root.right_child
+        self.assertIsInstance(left_child, jointree.BaseTableNode)
+        self.assertIsInstance(right_child, jointree.BaseTableNode)
+        self.assertEqual(left_child.table, title)
+        self.assertEqual(right_child.table, movie_info)
+
+    @unittest.skipIf(not _is_live_server(imdb_config_file), "Cannot connect to database")
+    def test_load_from_explain(self) -> None:
+        pg_db = postgres.connect(config_file=imdb_config_file)
 
         query = parser.parse_query(textwrap.dedent("""SELECT *
                                                    FROM title t
