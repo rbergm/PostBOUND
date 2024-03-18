@@ -1953,6 +1953,8 @@ class LogicalJoinTree(JoinTree[LogicalJoinMetadata, LogicalBaseTableMetadata]):
         The join order used in the query plan will become the join order of the join tree. However, no physical
         operators are loaded. This is what the `PhysicalQueryPlan` is for.
 
+        Inner children of the query plan nodes are inserted as right children in the corresponding intermediate join node.
+
         Parameters
         ----------
         query_plan : db.QueryExecutionPlan
@@ -1999,7 +2001,7 @@ class LogicalJoinTree(JoinTree[LogicalJoinMetadata, LogicalBaseTableMetadata]):
                               if query else None)
             cardinality = query_plan.true_cardinality if query_plan.is_analyze() else query_plan.estimated_cardinality
             join_annotation = LogicalJoinMetadata(join_predicate, cardinality)
-            return outer_tree.join_with_subtree(inner_tree, join_annotation)
+            return outer_tree.join_with_subtree(inner_tree, join_annotation, insert_left=False)
 
         if len(query_plan.children) != 1:
             raise ValueError(f"Non join/scan nodes must have exactly one child: {query_plan}")
@@ -2163,7 +2165,9 @@ class PhysicalQueryPlan(JoinTree[PhysicalJoinMetadata, PhysicalBaseTableMetadata
         """Creates a join tree from a query plan.
 
         The join order used in the query plan will become the join order of the join tree. Furthermore, physical
-        operators are derived from the plan.
+        operators and additional parameters (e.g. cardinality estimates) are derived from the plan.
+
+        Inner children of the query plan will become the right children of the corresponding intermediate join nodes.
 
         Parameters
         ----------
@@ -2234,7 +2238,7 @@ class PhysicalQueryPlan(JoinTree[PhysicalJoinMetadata, PhysicalBaseTableMetadata
                 cardinality = query_plan.true_cardinality if query_plan.is_analyze() else query_plan.estimated_cardinality
 
             join_annotation = PhysicalJoinMetadata(join_predicate, cardinality, join_info)
-            return outer_tree.join_with_subtree(inner_tree, join_annotation)
+            return outer_tree.join_with_subtree(inner_tree, join_annotation, insert_left=False)
 
         if len(query_plan.children) != 1:
             raise ValueError(f"Non join/scan nodes must have exactly one child: {query_plan}")
