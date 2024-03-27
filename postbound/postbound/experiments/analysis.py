@@ -118,3 +118,32 @@ def possible_plans_bound(query: qal.SqlQuery, *,
     scans = n_tables * len(scan_operators)
 
     return join_orders * joins * scans
+
+
+def text_diff(left: str, right: str, *, sep: str = " | ") -> str:
+    """Merges two text snippets to allow for a comparison on a per-line basis.
+
+    The two snippets are split into their individual lines and then merged back together.
+
+    Parameters
+    ----------
+    left : str
+        The text snippet to display on the left-hand side.
+    right : str
+        The text snippet to display on the right-hand side.
+    sep : str, optional
+        The separator to use between the left and right text snippets, by default `` | ``.
+
+    Returns
+    -------
+    str
+        The combined text snippet
+    """
+    left_lines = left.splitlines()
+    right_lines = right.splitlines()
+
+    max_left_len = max(len(line) for line in left_lines)
+    left_lines_padded = [line.ljust(max_left_len) for line in left_lines]
+
+    merged_lines = [f"{left_line}{sep}{right_line}" for left_line, right_line in zip(left_lines_padded, right_lines)]
+    return "\n".join(merged_lines)
