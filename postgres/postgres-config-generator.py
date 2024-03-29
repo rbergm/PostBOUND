@@ -31,12 +31,16 @@ def determine_memory_size_mb() -> int:
 def determine_disk(directory: str) -> str:
     """Determine the disk that the given directory is located on, such as sda or sdb."""
 
+    # based on https://unix.stackexchange.com/questions/11311/how-do-i-find-on-which-physical-device-a-folder-is-located)
+
     # df output format:
     # Filesystem     1K-blocks      Used Available Use% Mounted on
     # /dev/sda1       12345678    123456  12345678   1% /mnt
-    full_path = subprocess.check_output(["df", directory], text=True).split()[7]
+    current_disk = subprocess.check_output(f"df {directory} | grep '^/' | cut -d' ' -f1", shell=True, text=True).strip()
 
-    return full_path.split("/")[-1]
+    # Resolve logical volumes
+    full_path = subprocess.check_output(["realpath", current_disk], text=True).strip().split("/")[-1]
+    return full_path
 
 
 def determine_disk_type(disk_file: Optional[str] = None) -> DiskType:
