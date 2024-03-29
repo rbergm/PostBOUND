@@ -1,5 +1,7 @@
 #!/bin/bash
 
+set -e  # exit on error
+
 DB_NAME=stack
 WD=$(pwd)
 SSB_DIR=$WD/../stack_data

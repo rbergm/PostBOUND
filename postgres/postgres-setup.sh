@@ -1,5 +1,7 @@
 #!/bin/bash
 
+set -e  # exit on error
+
 WD=$(pwd)
 USER=$(whoami)
 PG_VER_PRETTY=14

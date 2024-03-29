@@ -1,5 +1,7 @@
 #!/bin/bash
 
+set -e  # exit on error
+
 # use custom TPCH scale factor if supplied
 if [ -z "$1" ] ; then
     SF=10

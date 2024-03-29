@@ -1,5 +1,7 @@
 #!/bin/bash
 
+set -e  # exit on error
+
 WD=$(pwd)
 DB_NAME="imdb"
 FORCE_CREATION="false"
