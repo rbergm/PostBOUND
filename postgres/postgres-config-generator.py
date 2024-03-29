@@ -88,7 +88,7 @@ def generate_pg_config(system_info: SystemInfo) -> dict[str, str]:
     max_connections = 40
     pg_config["max_connections"] = max_connections
 
-    pg_config["huge_pages"] = "on" if system_info.memory_gb >= 32 else "off"
+    pg_config["huge_pages"] = "try" if system_info.memory_gb >= 32 else "off"
 
     shared_buffers_mb = round(0.25 * system_info.memory_mb)
     pg_config["shared_buffers"] = f"{shared_buffers_mb}MB"
@@ -144,7 +144,7 @@ def make_config_head(db_directory: str) -> str:
 
 def export_pg_config(pg_config: dict[str, str], *, db_directory: str, out_path: str) -> None:
     alter_statements = [f"ALTER SYSTEM SET {conf_key} = '{conf_value}';" for conf_key, conf_value in pg_config.items()]
-    config_body = "\n".join(alter_statements)
+    config_body = "\n".join(alter_statements) + "\n"
     header = make_config_head(db_directory)
 
     with open(out_path, "w") as out_file:
