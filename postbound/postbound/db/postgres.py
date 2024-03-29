@@ -410,15 +410,17 @@ class PostgresInterface(db.Database):
 
     def execute_query(self, query: qal.SqlQuery | str, *, cache_enabled: Optional[bool] = None) -> Any:
         cache_enabled = cache_enabled or (cache_enabled is None and self._cache_enabled)
-        query = self._prepare_query_execution(query)
 
         if cache_enabled and query in self._query_cache:
             query_result = self._query_cache[query]
         else:
             try:
-                self._cursor.execute(query)
+                prepared_query = self._prepare_query_execution(query)
+                self._current_geqo_state = self._obtain_geqo_state()
+                self._cursor.execute(prepared_query)
                 query_result = self._cursor.fetchall() if self._cursor.rowcount >= 0 else None
-                self._restore_geqo_state()
+                if not _modifies_geqo_config(query):
+                    self._restore_geqo_state()
             except (psycopg.InternalError, psycopg.OperationalError) as e:
                 msg = "\n".join([f"At {utils.current_timestamp()}", "For query:", str(query), "Message:", str(e)])
                 raise db.DatabaseServerError(msg, e)
