@@ -14,6 +14,29 @@ Be carefull when updating and check the changelog!
 
 ---
 
+## Version 0.4.0
+
+### New features
+
+- Add `mutate` method to all relalg operators to modify their internal state
+- Add config script to Postgres management that generates optimized settings for `postgresql.conf` - based on [PGTune by le0pard](https://pgtune.leopard.in.ua/)
+
+### Updates
+
+- `PhysicalQueryPlan` objects can be loaded from query execution plans only based on join order and operators
+- After importing the IMDB database into Postgres, the statistics catalog will be updated automatically (including a vacuum)
+- When loading a Postgres environment, include paths to the header files will be updated as well
+- Complex shell scripts will not exit on first error
+
+### Fixes
+
+- Bugfix for GeQO management in Postgres interface
+- Fix Postgres server not stopping correctly after setup (if requested)
+- Fix join tree loading from query plans reversing the join directions
+- Bugfix for generation of random query plans without duplicates
+
+---
+
 ## Version 0.3.1
 
 ### New features

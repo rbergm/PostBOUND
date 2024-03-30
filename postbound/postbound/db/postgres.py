@@ -337,6 +337,9 @@ def _modifies_geqo_config(query: qal.SqlQuery) -> bool:
         Whether the query modifies the GeQO config. Notice that this is a heuristic check - there could be false positives as
         well as false negatives!
     """
+    if not isinstance(query, qal.SqlQuery):
+        return False
+
     if not query.hints or not query.hints.preparatory_statements:
         return False
     return "geqo" in query.hints.preparatory_statements.lower()
