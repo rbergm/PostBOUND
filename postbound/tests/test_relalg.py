@@ -82,3 +82,22 @@ class RelalgParserTests(unittest.TestCase):
         assert isinstance(new_root, relalg.Union)
         self.assertEqual(new_root.right_input, additional_projection)
         self.assertEqual(union_node.right_input, selection_b)
+
+    def test_operator_replacement(self):
+        tab_r = base.TableReference("R")
+        tab_s = base.TableReference("S")
+        col_r_a = base.ColumnReference("a", tab_r)
+        col_s_a = base.ColumnReference("a", tab_s)
+        join_pred = predicates.as_predicate(col_r_a, expressions.LogicalSqlOperators.Equal, col_s_a)
+
+        scan_r = relalg.Relation(tab_r, [col_r_a])
+        scan_s = relalg.Relation(tab_s, [col_s_a])
+        cross_product = relalg.CrossProduct(scan_r, scan_s)
+        selection = relalg.Selection(cross_product, join_pred)
+        old_root = relalg.Projection(selection, [col_r_a])
+
+        join_node = relalg.ThetaJoin(cross_product.left_input.mutate(), cross_product.right_input.mutate(), join_pred)
+        new_root: relalg.RelNode = selection.parent_node.mutate(input_node=join_node)
+
+        self.assertIsInstance(new_root, type(old_root))
+        self.assertEqual(new_root.tables(), old_root.tables())
