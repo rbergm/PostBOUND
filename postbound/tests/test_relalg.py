@@ -90,14 +90,47 @@ class RelalgParserTests(unittest.TestCase):
         col_s_a = base.ColumnReference("a", tab_s)
         join_pred = predicates.as_predicate(col_r_a, expressions.LogicalSqlOperators.Equal, col_s_a)
 
+        # Our old relalg tree: Projection(Select(CrossProduct(R, S)))
         scan_r = relalg.Relation(tab_r, [col_r_a])
         scan_s = relalg.Relation(tab_s, [col_s_a])
         cross_product = relalg.CrossProduct(scan_r, scan_s)
         selection = relalg.Selection(cross_product, join_pred)
         old_root = relalg.Projection(selection, [col_r_a])
 
+        # Our new relalg tree: Projection(Join(R, S))
+        # The root node receives the new join node as input. The join node receives the previous input of the cross product as
+        # its input and the selection's predicate becomes the join predicate
         join_node = relalg.ThetaJoin(cross_product.left_input.mutate(), cross_product.right_input.mutate(), join_pred)
         new_root: relalg.RelNode = selection.parent_node.mutate(input_node=join_node)
 
         self.assertIsInstance(new_root, type(old_root))
         self.assertEqual(new_root.tables(), old_root.tables())
+
+    def test_operator_reordering(self):
+        tab_r = base.TableReference("R")
+        tab_s = base.TableReference("S")
+        col_r_a = base.ColumnReference("a", tab_r)
+        col_s_a = base.ColumnReference("a", tab_s)
+        filter_pred = predicates.as_predicate(col_r_a, expressions.LogicalSqlOperators.Less, 42)
+
+        # Our old relalg tree: Select(CrossProduct(R, S))
+        scan_r = relalg.Relation(tab_r, [col_r_a])
+        scan_s = relalg.Relation(tab_s, [col_s_a])
+        cross_product = relalg.CrossProduct(scan_r, scan_s)
+        selection = relalg.Selection(cross_product, filter_pred)
+        old_root: relalg.RelNode = selection
+
+        # in an actual application, the precise types of the nodes would need to be checked and appropriate reordering actions
+        # need to be taken based on the types.
+        if not isinstance(old_root, relalg.Selection) or not isinstance(old_root.input_node, relalg.CrossProduct):
+            self.fail()
+
+        # the selection now receives the previous input of the cross product node as input, this effectively pushes the
+        # selection down the tree.
+        # Likewise, the new root becomes the previous cross product with the mutated selection as input. Effectively, this
+        # pulls the cross product up in the tree.
+        new_second_node = old_root.mutate(input_node=old_root.input_node.left_input.mutate())
+        new_root = old_root.input_node.mutate(left_child=new_second_node)
+
+        self.assertIsInstance(new_root, relalg.CrossProduct)
+        self.assertEqual(old_root.tables(), new_root.tables())
