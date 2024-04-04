@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "PostBOUND_test"
-version = "0.4.0"
+version = "0.4.1"
 authors = [{ name = "Rico Bergmann", email = "rico.bergmann1@tu-dresden.de" }]
 description = "PostBOUND is an adaptable framework to implement and evaluate database query optimizers"
 readme = "README.md"
@@ -16,17 +16,20 @@ classifiers = [
     "Operating System :: OS Independent",
 ]
 dependencies = [
-    "graphviz",
     "levenshtein",
     "mo-sql-parsing",
-    "mysql-connector-python",
     "natsort",
     "networkx",
     "numpy",
     "pandas",
-    "psycopg[binary]",
     "scipy"
 ]
+
+[project.optional-dependencies]
+vis = ["bokeh", "graphviz", "matplotlib", "seaborn"]
+mysql = ["mysql-connector-python"]
+postgres = ["psycopg[binary]"]
+
 
 [project.urls]
 "Homepage" = "https://github.com/rbergm/PostBOUND"

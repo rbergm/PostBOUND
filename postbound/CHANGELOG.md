@@ -14,22 +14,33 @@ Be carefull when updating and check the changelog!
 
 ---
 
+## Version 0.4.1
+
+### Updates
+- Plan hashes of physical query plans can now be calculated without cardinalities or predicates
+- `CustomHashDict` cab now pass additional key-value parameters to the hash function
+- Mutations of query plans no longer require mutated child node parameters
+- Cleaned up package dependencies
+
+
+### Fixes
+- Fixed bash scripts cancelling prematurely when exit codes in subshells caused `set -e` to abort execution
+
+---
+
 ## Version 0.4.0
 
 ### New features
-
 - Add `mutate` method to all relalg operators to modify their internal state
 - Add config script to Postgres management that generates optimized settings for `postgresql.conf` - based on [PGTune by le0pard](https://pgtune.leopard.in.ua/)
 
 ### Updates
-
 - `PhysicalQueryPlan` objects can be loaded from query execution plans only based on join order and operators
 - After importing the IMDB database into Postgres, the statistics catalog will be updated automatically (including a vacuum)
 - When loading a Postgres environment, include paths to the header files will be updated as well
 - Complex shell scripts will not exit on first error
 
 ### Fixes
-
 - Bugfix for GeQO management in Postgres interface
 - Fix Postgres server not stopping correctly after setup (if requested)
 - Fix join tree loading from query plans reversing the join directions
@@ -40,11 +51,9 @@ Be carefull when updating and check the changelog!
 ## Version 0.3.1
 
 ### New features
-
 - Add `Workload.with_labels` method to retrieve sub-workload based on specific labels
 
 ### Fixes
-
 - Fixed `PhysicalQueryPlan.load_from_logical_order` creating intermediates of plans instead of tree nodes
 - Fixed `PhysicalQueryPlan.plan_hash` calculation for plans with the same logical join structure
 - Fixed `ExhaustivePlanEnumerator` scan operator creation
@@ -56,13 +65,11 @@ Be carefull when updating and check the changelog!
 ## Version 0.3.0
 
 ### New features
-
 - Added support for Window functions, boolean expressions in SELECT statements and `CASE` expressions
 - Added support for nested `JOIN` statements
 - Can now check if a table is a database view using the schema
 
 ### Updates
-
 - Improved Postgres statistics updates: can now set the actual `n_distinct` value
 - Added a `post_repetition_callback` to the workload runner
 - During Postgres setup, remote access can now optionally be enabled
@@ -71,7 +78,6 @@ Be carefull when updating and check the changelog!
 ## Version 0.2.1
 
 ### Fixes
-
 - Fixed parsing of `SELECT *` queries for newer versions of _mo\_sql\_parsing_
 - Fixed missing visitor implementation for simplified filter views
 
@@ -81,7 +87,6 @@ Be carefull when updating and check the changelog!
 This is pretty much a new major version, but we are not ready for 1.0 yet and do not want to convey too much stability.
 
 ### New features
-
 - Added a prototypical representation of SQL queries in relational algebra (see `postbound.qal.relalg` module)
 - Introduced a Debug mode for the Postgres interface. Enabling it will occasionally print additional internal information.
   Currently, this only includes GeQO settings but it will be expanded in the future.
@@ -95,7 +100,6 @@ This is pretty much a new major version, but we are not ready for 1.0 yet and do
 - Join trees, SQL expressions and predicates now support the [Visitor pattern](https://en.wikipedia.org/wiki/Visitor_pattern)
 
 ### Updates
-
 - The query plans returned by the two-stage optimization pipeline now contain the correct filter and join predicates
 - Added `str()` support to plan parameterizations
 - `Database` interfaces are now hashable and support equality comparisons
@@ -103,7 +107,6 @@ This is pretty much a new major version, but we are not ready for 1.0 yet and do
 - Various visualization improvements
 
 ### Fixes
-
 - Retrieval of existing Postgres instances from the database pool now works as expected
 - Postgres query plans for queries without table aliases will no longer duplicate the table name as an alias
 - Virtual tables (subquery aliases or `WITH`` clauses) are now bound correctly in their column references
@@ -114,7 +117,6 @@ This is pretty much a new major version, but we are not ready for 1.0 yet and do
 ## Version 0.1.0
 
 ### New features
-
 - A utility to generate actual foreign keys for the IMDB has been added to the Postgres tooling. The generation of foreign keys
   can be controlled from the database setup utility.
 - A `TimeoutQueryExecutor` has been added for Postgres. It executes a query normally, but raises an error if the query exceeds
@@ -124,7 +126,6 @@ This is pretty much a new major version, but we are not ready for 1.0 yet and do
   and the generation of the required metadata.
 
 ### Updates
-
 - `pg_buffercache` extension has been added to default Postgres installations and a number of introspection methods for
   internal Postgres state have been added as part of the core utilities for Postgres.
 - Query plans can now also contain information about the buffer pool usage
@@ -139,7 +140,6 @@ This is pretty much a new major version, but we are not ready for 1.0 yet and do
   labels
 
 ### Fixes
-
 - `transform.replace_clause` now correctly respects subclasses. This also fixes Postgres `LIMIT` clauses not being applied
   correctly while formatting queries for that system.
 
