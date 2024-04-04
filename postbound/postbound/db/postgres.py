@@ -1548,7 +1548,7 @@ def _generate_pg_parameter_hints(plan_parameters: planparams.PlanParameterizatio
     for join, cardinality_hint in plan_parameters.cardinality_hints.items():
         if len(join) < 2:
             # pg_hint_plan can only generate cardinality hints for joins
-            warnings.warn(f"Ignoring cardinality hint for base table {join}")
+            warnings.warn(f"Ignoring cardinality hint for base table {join}", category=db.HintWarning)
             continue
         join_key = _generate_join_key(join)
         hints.append(f"Rows({join_key} #{cardinality_hint})")
@@ -1556,7 +1556,7 @@ def _generate_pg_parameter_hints(plan_parameters: planparams.PlanParameterizatio
     for join, num_workers in plan_parameters.parallel_worker_hints.items():
         if len(join) != 1:
             # pg_hint_plan can only generate parallelization hints for single tables
-            warnings.warn(f"Ignoring parallel workers hint for join {join}")
+            warnings.warn(f"Ignoring parallel workers hint for join {join}", category=db.HintWarning)
             continue
         table: base.TableReference = collection_utils.simplify(join)
         hints.append(f"Parallel({table.identifier()} {num_workers} hard)")

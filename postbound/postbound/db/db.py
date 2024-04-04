@@ -85,6 +85,12 @@ class Connection(typing.Protocol):
         raise NotImplementedError
 
 
+class QueryCacheWarning(UserWarning):
+    """Warning to indicate that the query result cache was not found."""
+    def __init__(self, msg: str) -> None:
+        super().__init__(msg)
+
+
 class Database(abc.ABC):
     """A `Database` is PostBOUND's logical abstraction of physical database management systems.
 
@@ -371,10 +377,10 @@ class Database(abc.ABC):
                 try:
                     self._query_cache = json.load(cache_file)
                 except json.JSONDecodeError as e:
-                    warnings.warn("Could not read query cache: " + str(e))
+                    warnings.warn("Could not read query cache: " + str(e), category=QueryCacheWarning)
                     self._query_cache = {}
         else:
-            warnings.warn(f"Could not read query cache: File {query_cache_name} does not exist")
+            warnings.warn(f"Could not read query cache: File {query_cache_name} does not exist", category=QueryCacheWarning)
             self._query_cache = {}
         atexit.register(self._store_query_cache, query_cache_name)
 
@@ -1075,6 +1081,12 @@ class DatabaseStatistics(abc.ABC):
 
     def __str__(self) -> str:
         return f"Database statistics of {self._db}"
+
+
+class HintWarning(UserWarning):
+    """Custom warning category for hinting-related problems."""
+    def __init__(self, msg: str) -> None:
+        super().__init__(msg)
 
 
 class HintService(abc.ABC):
