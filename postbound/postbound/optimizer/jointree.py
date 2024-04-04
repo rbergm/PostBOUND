@@ -2422,7 +2422,7 @@ class PhysicalQueryPlan(JoinTree[PhysicalJoinMetadata, PhysicalBaseTableMetadata
             return LogicalJoinTree()
         return LogicalJoinTree(_physical_to_logical(self.root))
 
-    def plan_hash(self, *, operators_only: bool = False) -> int:
+    def plan_hash(self, *, exclude_predicates: bool = False, exclude_cardinalities: bool = True) -> int:
         """Calculates a hash value that considers the join order as well as the assigned physical operators.
 
         This method differs from the default hash method because join trees do only consider the structure of the tree, but
@@ -2431,9 +2431,10 @@ class PhysicalQueryPlan(JoinTree[PhysicalJoinMetadata, PhysicalBaseTableMetadata
 
         Parameters
         ----------
-        operators_only : bool, optional
-            Whether only the physical operators themselves should be considered in the hash, instead of the entire operator
-            assignment. The assignment also contains information about predicates and cardinalities. This is off by default.
+        exclude_predicates : bool, optional
+            Whether the hash should ignore the join and filter predicates. This is off by default.
+        exclude_cardinalities : bool, optional
+            Whether the hash should ignore the cardinality estimates. This is on by default.
 
         Returns
         -------
@@ -2441,13 +2442,35 @@ class PhysicalQueryPlan(JoinTree[PhysicalJoinMetadata, PhysicalBaseTableMetadata
             The hash value.
         """
         original_hash = hash(self)
-        join_annotations = tuple(join.annotation for join in self.join_sequence() if join.annotation)
-        base_annotations = tuple(table.annotation for table in self.table_sequence() if table.annotation)
-        join_hashes = tuple(hash(join.operator.operator) if operators_only else hash(join.operator)
-                            for join in join_annotations)
-        base_hashes = tuple(hash(scan.operator.operator) if operators_only else hash(scan.operator)
-                            for scan in base_annotations)
-        return hash((original_hash, join_hashes, base_hashes))
+        join_hash_components = []
+        for join in self.join_sequence():
+            annotation = join.annotation
+            if not annotation:
+                join_hash_components.append((None,))
+                continue
+            current_annotation = [annotation.operator]
+            if not exclude_predicates:
+                current_annotation.append(annotation.join_predicate)
+            if not exclude_cardinalities:
+                current_annotation.append(annotation.cardinality)
+            join_hash_components.append(tuple(current_annotation))
+
+        scan_hash_components = []
+        for scan in self.table_sequence():
+            annotation = scan.annotation
+            if not annotation:
+                scan_hash_components.append((None,))
+                continue
+            current_annotation = [annotation.operator]
+            if not exclude_predicates:
+                current_annotation.append(annotation.filter_predicate)
+            if not exclude_cardinalities:
+                current_annotation.append(annotation.cardinality)
+            scan_hash_components.append(tuple(current_annotation))
+
+        join_hash_values = hash(tuple(join_hash_components))
+        scan_hash_values = hash(tuple(scan_hash_components))
+        return hash((original_hash, join_hash_values, scan_hash_values))
 
 
 def physical_join_tree_annotation_merger(first_annotation: Optional[PhysicalPlanMetadata],
