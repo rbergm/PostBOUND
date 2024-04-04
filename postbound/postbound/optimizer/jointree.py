@@ -2422,12 +2422,18 @@ class PhysicalQueryPlan(JoinTree[PhysicalJoinMetadata, PhysicalBaseTableMetadata
             return LogicalJoinTree()
         return LogicalJoinTree(_physical_to_logical(self.root))
 
-    def plan_hash(self) -> int:
+    def plan_hash(self, *, operators_only: bool = False) -> int:
         """Calculates a hash value that considers the join order as well as the assigned physical operators.
 
         This method differs from the default hash method because join trees do only consider the structure of the tree, but
         no additional information. In order to ensure correct substitution properties, we retain the default hashing
         behavior in physical plans as well and use this method to obtain the full hash of a physical query plan.
+
+        Parameters
+        ----------
+        operators_only : bool, optional
+            Whether only the physical operators themselves should be considered in the hash, instead of the entire operator
+            assignment. The assignment also contains information about predicates and cardinalities. This is off by default.
 
         Returns
         -------
@@ -2435,10 +2441,12 @@ class PhysicalQueryPlan(JoinTree[PhysicalJoinMetadata, PhysicalBaseTableMetadata
             The hash value.
         """
         original_hash = hash(self)
-        join_annotation_collector = tuple(join.annotation for join in self.join_sequence() if join.annotation)
-        base_annotation_collector = tuple(table.annotation for table in self.table_sequence() if table.annotation)
-        join_hashes = tuple(hash(join.operator) for join in join_annotation_collector)
-        base_hashes = tuple(hash(scan.operator) for scan in base_annotation_collector)
+        join_annotations = tuple(join.annotation for join in self.join_sequence() if join.annotation)
+        base_annotations = tuple(table.annotation for table in self.table_sequence() if table.annotation)
+        join_hashes = tuple(hash(join.operator.operator) if operators_only else hash(join.operator)
+                            for join in join_annotations)
+        base_hashes = tuple(hash(scan.operator.operator) if operators_only else hash(scan.operator)
+                            for scan in base_annotations)
         return hash((original_hash, join_hashes, base_hashes))
 
 
