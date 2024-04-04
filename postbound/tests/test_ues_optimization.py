@@ -24,6 +24,7 @@ workloads.workloads_base_dir = "../workloads"
 pg_connect_dir = "."
 
 
+@regression_suite.skip_if_no_db(f"{pg_connect_dir}/.psycopg_connection_job")
 class JobWorkloadTests(regression_suite.DatabaseTestCase):
     def setUp(self) -> None:
         self.db = postgres.connect(config_file=f"{pg_connect_dir}/.psycopg_connection_job")
@@ -87,6 +88,7 @@ class JobWorkloadTests(regression_suite.DatabaseTestCase):
             print("No subqueries have been detected. This could indicate a programming error!")
 
 
+@regression_suite.skip_if_no_db(f"{pg_connect_dir}/.psycopg_connection_ssb")
 class SsbWorkloadTests(regression_suite.DatabaseTestCase):
     def setUp(self) -> None:
         self.db = postgres.connect(config_file=f"{pg_connect_dir}/.psycopg_connection_ssb")
@@ -122,6 +124,7 @@ class SsbWorkloadTests(regression_suite.DatabaseTestCase):
                 self.db.execute_query(explain_query, cache_enabled=False)
 
 
+@regression_suite.skip_if_no_db(f"{pg_connect_dir}/.psycopg_connection_stack")
 class StackWorkloadTests(regression_suite.DatabaseTestCase):
     def setUp(self) -> None:
         self.db = postgres.connect(config_file=f"{pg_connect_dir}/.psycopg_connection_stack")

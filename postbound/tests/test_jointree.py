@@ -6,24 +6,15 @@ import textwrap
 
 import unittest
 
-import psycopg
-
 from postbound.db import db, postgres
 from postbound.qal import base, parser
 from postbound.optimizer import jointree, physops
 
+from tests import regression_suite
+
 
 pg_connect_dir = "."
 imdb_config_file = f"{pg_connect_dir}/.psycopg_connection_job"
-
-
-def _is_live_server(config_file: str) -> bool:
-    try:
-        pg_instance = postgres.connect(config_file=config_file, private=True)
-        pg_instance.close()
-        return True
-    except psycopg.OperationalError:
-        return False
 
 
 class JoinTreeLoadingTests(unittest.TestCase):
@@ -47,7 +38,7 @@ class JoinTreeLoadingTests(unittest.TestCase):
         self.assertEqual(left_child.table, title)
         self.assertEqual(right_child.table, movie_info)
 
-    @unittest.skipIf(not _is_live_server(imdb_config_file), "Cannot connect to database")
+    @regression_suite.skip_if_no_db(imdb_config_file)
     def test_load_from_explain(self) -> None:
         pg_db = postgres.connect(config_file=imdb_config_file)
 
@@ -69,3 +60,7 @@ class JoinTreeLoadingTests(unittest.TestCase):
         reconstructed_join_order = jointree.LogicalJoinTree.load_from_query_plan(explain_plan)
 
         self.assertEqual(join_order, reconstructed_join_order)
+
+
+if __name__ == "__main__":
+    unittest.main()

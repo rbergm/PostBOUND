@@ -3,6 +3,10 @@ from __future__ import annotations
 import abc
 import unittest
 
+import psycopg
+
+from postbound.db import postgres
+
 
 def _rebuild_result_set(result_set: object) -> list[tuple[object]]:
     """Transforms a possibly simplified result set as returned by the Database interface back to a normalized one."""
@@ -80,7 +84,7 @@ class DatabaseTestCase(unittest.TestCase, abc.ABC):
 
         Ordering can be accounted for by the `ordered` argument. By default, result sets are assumed to be unordered.
         """
-        if type(first_set) != type(second_set):
+        if type(first_set) is type(second_set):
             error_msg = "Result sets have different types: "
             first_set_str = _stringify_result_set(first_set)
             second_set_str = _stringify_result_set(second_set)
@@ -118,3 +122,19 @@ class QueryTestCase(unittest.TestCase, abc.ABC):
         first_query = str(first_query).strip().removesuffix(";").lower()
         second_query = str(second_query).strip().removesuffix(";").lower()
         return self.assertEqual(first_query, second_query, message)
+
+
+def skip_if_no_db(config_file):
+    """Decorator to conditionally skip a test if a database connection cannot be established.
+
+    Parameters
+    ----------
+    config_file : _type_
+        The config file that describes the connection to the database. Must be compatible with the postgres.connect()
+    """
+    try:
+        pg_instance = postgres.connect(config_file=config_file, private=True)
+        pg_instance.close()
+        return lambda f: f
+    except psycopg.OperationalError:
+        return unittest.skip(f"Cannot connect to database with config file '{config_file}'")

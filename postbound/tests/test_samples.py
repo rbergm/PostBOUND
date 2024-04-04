@@ -2,10 +2,14 @@
 
 import unittest
 
+from tests import regression_suite
+
 pg_connect_dir = "."
 
 
 class ReadmeExampleTests(unittest.TestCase):
+
+    @regression_suite.skip_if_no_db(f"{pg_connect_dir}/.psycopg_connection_job")
     def test_example(self) -> None:
         from postbound import postbound as pb
         from postbound.optimizer import presets
@@ -24,3 +28,7 @@ class ReadmeExampleTests(unittest.TestCase):
         optimized_query = optimization_pipeline.optimize_query(job_workload["1a"])
 
         postgres_instance.execute_query(optimized_query)
+
+
+if __name__ == "__main__":
+    unittest.main()

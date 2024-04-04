@@ -9,11 +9,14 @@ from postbound.qal import transform
 from postbound import postbound as pb
 from postbound.optimizer.strategies import tonic
 
+from tests import regression_suite
+
 
 workloads.workloads_base_dir = "../workloads"
 pg_connect_dir = "."
 
 
+@regression_suite.skip_if_no_db(f"{pg_connect_dir}/.psycopg_connection_job")
 class DefaultTonicTests(unittest.TestCase):
     def setUp(self) -> None:
         self.db = postgres.connect(config_file=f"{pg_connect_dir}/.psycopg_connection_job")
@@ -35,3 +38,7 @@ class DefaultTonicTests(unittest.TestCase):
                 optimized_query = optimization_pipeline.optimize_query(query)
                 explain_query = transform.as_explain(optimized_query)
                 self.db.execute_query(explain_query, cache_enabled=False)
+
+
+if __name__ == "__main__":
+    unittest.main()
