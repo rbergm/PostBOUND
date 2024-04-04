@@ -237,23 +237,29 @@ class CustomHashDict(collections.UserDict[K, V]):
     ----------
     hash_func : Callable[[K], int]
         The hashing function to use. It receives the key as input and must produce a valid hash value as output.
+    **kwargs : dict, optional
+        Additional keyword arguments that should be passed to the hashing function upon each invocation.
     """
 
-    def __init__(self, hash_func: Callable[[K], int]) -> None:
+    def __init__(self, hash_func: Callable[[K], int], **kwargs) -> None:
         super().__init__()
         self.hash_function = hash_func
+        self._hash_args = kwargs
+
+    def _apply_hash(self, key: K) -> int:
+        return self.hash_function(key, **self._hash_args)
 
     def __getitem__(self, k: K) -> V:
-        return super().__getitem__(self.hash_function(k))
+        return super().__getitem__(self._apply_hash(k))
 
     def __setitem__(self, k: K, item: V) -> None:
-        super().__setitem__(self.hash_function(k), item)
+        super().__setitem__(self._apply_hash(k), item)
 
     def __delitem__(self, key: K) -> None:
-        return super().__delitem__(self.hash_function(key))
+        return super().__delitem__(self._apply_hash(key))
 
     def __contains__(self, key: K) -> bool:
-        return super().__contains__(self.hash_function(key))
+        return super().__contains__(self._apply_hash(key))
 
 
 class DynamicDefaultDict(collections.UserDict[K, V]):
