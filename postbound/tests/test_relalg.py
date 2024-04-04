@@ -53,7 +53,7 @@ class RelalgParserTests(unittest.TestCase):
         join_node = relalg.ThetaJoin(select_s, scan_r,
                                      predicates.as_predicate(col_s_b, expressions.LogicalSqlOperators.Equal, col_r_a))
 
-        additional_selection = relalg.Selection(select_s.mutate(),
+        additional_selection = relalg.Selection(select_s,
                                                 predicates.as_predicate(col_s_b, expressions.LogicalSqlOperators.Equal, 24))
         new_root = join_node.mutate(left_child=additional_selection)
 
@@ -63,6 +63,7 @@ class RelalgParserTests(unittest.TestCase):
         assert isinstance(new_root, relalg.ThetaJoin)
         self.assertEqual(new_root.left_input, additional_selection)
         self.assertEqual(join_node.left_input, select_s)
+        self._assert_sound_tree_linkage(new_root)
 
     def test_cyclic_tree_modification(self):
         tab_r = base.TableReference("R")
@@ -73,7 +74,7 @@ class RelalgParserTests(unittest.TestCase):
         selection_b = relalg.Selection(scan_r, predicates.as_predicate(col_r_a, expressions.LogicalSqlOperators.Greater, 24))
 
         union_node = relalg.Union(selection_a, selection_b)
-        additional_projection = relalg.Projection(selection_b.mutate(), [col_r_a])
+        additional_projection = relalg.Projection(selection_b, [col_r_a])
         new_root = union_node.mutate(right_child=additional_projection)
 
         self.assertNotEqual(union_node, new_root)
@@ -82,6 +83,7 @@ class RelalgParserTests(unittest.TestCase):
         assert isinstance(new_root, relalg.Union)
         self.assertEqual(new_root.right_input, additional_projection)
         self.assertEqual(union_node.right_input, selection_b)
+        self._assert_sound_tree_linkage(new_root)
 
     def test_operator_replacement(self):
         tab_r = base.TableReference("R")
@@ -100,11 +102,12 @@ class RelalgParserTests(unittest.TestCase):
         # Our new relalg tree: Projection(Join(R, S))
         # The root node receives the new join node as input. The join node receives the previous input of the cross product as
         # its input and the selection's predicate becomes the join predicate
-        join_node = relalg.ThetaJoin(cross_product.left_input.mutate(), cross_product.right_input.mutate(), join_pred)
+        join_node = relalg.ThetaJoin(cross_product.left_input, cross_product.right_input, join_pred)
         new_root: relalg.RelNode = selection.parent_node.mutate(input_node=join_node)
 
         self.assertIsInstance(new_root, type(old_root))
         self.assertEqual(new_root.tables(), old_root.tables())
+        self._assert_sound_tree_linkage(new_root)
 
     def test_operator_reordering(self):
         tab_r = base.TableReference("R")
@@ -129,8 +132,18 @@ class RelalgParserTests(unittest.TestCase):
         # selection down the tree.
         # Likewise, the new root becomes the previous cross product with the mutated selection as input. Effectively, this
         # pulls the cross product up in the tree.
-        new_second_node = old_root.mutate(input_node=old_root.input_node.left_input.mutate())
+        new_second_node = old_root.mutate(input_node=old_root.input_node.left_input)
         new_root = old_root.input_node.mutate(left_child=new_second_node)
 
         self.assertIsInstance(new_root, relalg.CrossProduct)
         self.assertEqual(old_root.tables(), new_root.tables())
+        self._assert_sound_tree_linkage(new_root)
+
+    def _assert_sound_tree_linkage(self, root: relalg.RelNode):
+        for child in root.children():
+            self.assertEqual(child.parent_node, root, f"Child {child!r}: parent {child.parent_node!r} != {root!r}")
+            self._assert_sound_tree_linkage(child)
+
+
+if __name__ == "__main__":
+    unittest.main()

@@ -169,11 +169,18 @@ class RelNode(abc.ABC):
         raise NotImplementedError
 
     @abc.abstractmethod
-    def mutate(self) -> RelNode:
+    def mutate(self, *, as_root: bool = False) -> RelNode:
         """Creates a new instance of the current operator with modified attributes.
 
         The specific parameters depend on the concrete operator type. However, each node is guaranteed to provide a
         parameter-less `mutate` implementation that simply copies the current node.
+
+        Parameters
+        ----------
+        as_root : bool, optional
+            Whether the current node should become the new root node of the tree. This parameter should be true whenever
+            an internal node of a relalg tree is modified, as it ensures that the correct parent nodes are linked together.
+            Defaults to *False*.
 
         Returns
         -------
@@ -233,7 +240,8 @@ class RelNode(abc.ABC):
         raise NotImplementedError
 
     def __repr__(self) -> str:
-        return str(self)
+        child_reprs = ", ".join(repr(child) for child in self.children())
+        return f"{self.node_type}({child_reprs})"
 
     @abc.abstractmethod
     def __str__(self) -> str:
@@ -322,7 +330,7 @@ class Selection(RelNode):
         --------
         RelNode.mutate : for safety considerations and calling conventions
         """
-        input_node = input_node if input_node is not None else self._input_node
+        input_node = input_node.mutate(as_root=True) if input_node is not None else self._input_node.mutate(as_root=True)
         if as_root:
             parent = None
         else:
@@ -423,8 +431,8 @@ class CrossProduct(RelNode):
         --------
         RelNode.mutate : for safety considerations and calling conventions
         """
-        left_child = left_child if left_child is not None else self._left_input
-        right_child = right_child if right_child is not None else self._right_input
+        left_child = left_child.mutate(as_root=True) if left_child is not None else self._left_input.mutate(as_root=True)
+        right_child = right_child.mutate(as_root=True) if right_child is not None else self._right_input.mutate(as_root=True)
         if as_root:
             parent = None
         else:
@@ -525,8 +533,8 @@ class Union(RelNode):
         --------
         RelNode.mutate : for safety considerations and calling conventions
         """
-        left_child = left_child if left_child is not None else self._left_input
-        right_child = right_child if right_child is not None else self._right_input
+        left_child = left_child.mutate(as_root=True) if left_child is not None else self._left_input.mutate(as_root=True)
+        right_child = right_child.mutate(as_root=True) if right_child is not None else self._right_input.mutate(as_root=True)
         if as_root:
             parent = None
         else:
@@ -628,8 +636,8 @@ class Intersection(RelNode):
         --------
         RelNode.mutate : for safety considerations and calling conventions
         """
-        left_child = left_child if left_child is not None else self._left_input
-        right_child = right_child if right_child is not None else self._right_input
+        left_child = left_child.mutate(as_root=True) if left_child is not None else self._left_input.mutate(as_root=True)
+        right_child = right_child.mutate(as_root=True) if right_child is not None else self._right_input.mutate(as_root=True)
         if as_root:
             parent = None
         else:
@@ -731,8 +739,8 @@ class Difference(RelNode):
         --------
         RelNode.mutate : for safety considerations and calling conventions
         """
-        left_child = left_child if left_child is not None else self._left_input
-        right_child = right_child if right_child is not None else self._right_input
+        left_child = left_child.mutate(as_root=True) if left_child is not None else self._left_input.mutate(as_root=True)
+        right_child = right_child.mutate(as_root=True) if right_child is not None else self._right_input.mutate(as_root=True)
         if as_root:
             parent = None
         else:
@@ -778,7 +786,7 @@ class Relation(RelNode):
         self._provided_cols = frozenset(col if isinstance(col, expr.ColumnExpression) else expr.ColumnExpression(col)
                                         for col in provided_columns)
 
-        self._subquery_input = subquery_input.mutate() if subquery_input is not None else None
+        self._subquery_input = subquery_input if subquery_input is not None else None
         if self._subquery_input is not None:
             # We need to set the parent node explicitly here in order to prevent infinite recursion
             self._subquery_input._parent = self
@@ -858,8 +866,8 @@ class Relation(RelNode):
             # mutation of the parent is handled during the __init__ method of the current mutated node
             parent = parent if parent is not None else self._parent
 
-        # mutation of the subquery input node is handled during the __init__ method of the current mutated node
-        subquery_input = subquery_input if subquery_input is not None else self._subquery_input
+        subquery_input = (subquery_input.mutate(as_root=True) if subquery_input is not None
+                          else self._subquery_input.mutate(as_root=True) if self._subquery_input is not None else None)
         return Relation(table if table is not None else self._table,
                         provided_columns if provided_columns is not None else self._provided_cols,
                         subquery_input=subquery_input, parent_node=parent)
@@ -869,6 +877,9 @@ class Relation(RelNode):
 
     def __eq__(self, other: object) -> bool:
         return isinstance(other, type(self)) and self._table == other._table
+
+    def __repr__(self) -> str:
+        return self._table.identifier()
 
     def __str__(self) -> str:
         return self._table.identifier()
@@ -972,8 +983,8 @@ class ThetaJoin(RelNode):
         --------
         RelNode.mutate : for safety considerations and calling conventions
         """
-        left_child = left_child if left_child is not None else self._left_input
-        right_child = right_child if right_child is not None else self._right_input
+        left_child = left_child.mutate(as_root=True) if left_child is not None else self._left_input.mutate(as_root=True)
+        right_child = right_child.mutate(as_root=True) if right_child is not None else self._right_input.mutate(as_root=True)
         if as_root:
             parent = None
         else:
@@ -1073,7 +1084,7 @@ class Projection(RelNode):
         --------
         RelNode.mutate : for safety considerations and calling conventions
         """
-        input_node = input_node if input_node is not None else self._input_node
+        input_node = input_node.mutate(as_root=True) if input_node is not None else self._input_node.mutate(as_root=True)
         if as_root:
             parent = None
         else:
@@ -1197,7 +1208,7 @@ class GroupBy(RelNode):
         --------
         RelNode.mutate : for safety considerations and calling conventions
         """
-        input_node = input_node if input_node is not None else self._input_node
+        input_node = input_node.mutate(as_root=True) if input_node is not None else self._input_node.mutate(as_root=True)
         group_columns = group_columns if group_columns is not None else self._group_columns
         aggregates = aggregates if aggregates is not None else self._aggregates
         if as_root:
@@ -1317,7 +1328,7 @@ class Rename(RelNode):
         --------
         RelNode.mutate : for safety considerations and calling conventions
         """
-        input_node = input_node if input_node is not None else self._input_node
+        input_node = input_node.mutate(as_root=True) if input_node is not None else self._input_node.mutate(as_root=True)
         mapping = mapping if mapping is not None else self._mapping
         if as_root:
             parent = None
@@ -1430,7 +1441,7 @@ class Sort(RelNode):
         --------
         RelNode.mutate : for safety considerations and calling conventions
         """
-        input_node = input_node if input_node is not None else self._input_node
+        input_node = input_node.mutate(as_root=True) if input_node is not None else self._input_node
         sorting = sorting if sorting is not None else self._sorting
         if as_root:
             parent = None
@@ -1539,7 +1550,7 @@ class Map(RelNode):
         --------
         RelNode.mutate : for safety considerations and calling conventions
         """
-        input_node = input_node if input_node is not None else self._input_node
+        input_node = input_node.mutate(as_root=True) if input_node is not None else self._input_node.mutate(as_root=True)
         mapping = mapping if mapping is not None else self._mapping
         if as_root:
             parent = None
@@ -1630,7 +1641,7 @@ class DuplicateElimination(RelNode):
         --------
         RelNode.mutate : for safety considerations and calling conventions
         """
-        input_node = input_node if input_node is not None else self._input_node
+        input_node = input_node.mutate(as_root=True) if input_node is not None else self._input_node.mutate(as_root=True)
         if as_root:
             parent = None
         else:
@@ -1767,8 +1778,9 @@ class SemiJoin(RelNode):
         --------
         RelNode.mutate : for safety considerations and calling conventions
         """
-        input_node = input_node if input_node is not None else self._input_node
-        subquery_node = subquery_node if subquery_node is not None else self._subquery_node
+        input_node = input_node.mutate(as_root=True) if input_node is not None else self._input_node.mutate(as_root=True)
+        subquery_node = (subquery_node.mutate(as_root=True) if subquery_node is not None
+                         else self._subquery_node.mutate(as_root=True))
         predicate = predicate if predicate is not None else self._predicate
         if as_root:
             parent = None
@@ -1908,8 +1920,9 @@ class AntiJoin(RelNode):
         --------
         RelNode.mutate : for safety considerations and calling conventions
         """
-        input_node = input_node if input_node is not None else self._input_node
-        subquery_node = subquery_node if subquery_node is not None else self._subquery_node
+        input_node = input_node.mutate(as_root=True) if input_node is not None else self._input_node.mutate(as_root=True)
+        subquery_node = (subquery_node.mutate(as_root=True) if subquery_node is not None
+                         else self._subquery_node.mutate(as_root=True))
         predicate = predicate if predicate is not None else self._predicate
         if as_root:
             parent = None
@@ -2016,8 +2029,7 @@ class SubqueryScan(RelNode):
         --------
         RelNode.mutate : for safety considerations and calling conventions
         """
-        input_node = input_node if input_node is not None else self._input_node
-        subquery = subquery if subquery is not None else self._subquery
+        input_node = input_node.mutate(as_root=True) if input_node is not None else self._input_node.mutate(as_root=True)
         if as_root:
             parent = None
         else:
