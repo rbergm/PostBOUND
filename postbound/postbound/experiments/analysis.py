@@ -3,13 +3,16 @@
 from __future__ import annotations
 
 import json
+from typing import Optional
 
 import natsort
 import numpy as np
 import pandas as pd
 
+from postbound.db import db
 from postbound.qal import qal
 from postbound.experiments import runner
+from postbound.optimizer import jointree
 from postbound.util import jsonize, stats as num
 
 
@@ -118,6 +121,30 @@ def possible_plans_bound(query: qal.SqlQuery, *,
     scans = n_tables * len(scan_operators)
 
     return join_orders * joins * scans
+
+
+def actual_plan_cost(query: qal.SqlQuery, analyze_plan: db.QueryExecutionPlan, *,
+                     database: Optional[db.Database] = None) -> float:
+    """Utility to compute the true cost of a query plan based on the actual cardinalities.
+
+    Parameters
+    ----------
+    query : qal.SqlQuery
+        The query to analyze
+    analyze_plan : db.QueryExecutionPlan
+        The executed query which also contains the true cardinalities
+    database : Optional[db.Database], optional
+        The database providing the cost model. If omitted, the database is inferred from the database pool.
+
+    Returns
+    -------
+    float
+        _description_
+    """
+    database = database if database is not None else db.DatabasePool().get_instance()
+    physical_plan = jointree.PhysicalQueryPlan.load_from_query_plan(analyze_plan, query)
+    hinted_query = database.hinting().generate_hints(query, physical_plan)
+    return database.optimizer().cost_estimate(hinted_query)
 
 
 def text_diff(left: str, right: str, *, sep: str = " | ") -> str:
