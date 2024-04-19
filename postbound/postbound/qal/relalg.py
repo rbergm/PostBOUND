@@ -33,12 +33,13 @@ from __future__ import annotations
 
 import abc
 import collections
+import copy
 import dataclasses
 import enum
 import functools
 import operator
 import typing
-from collections.abc import Iterable, Sequence
+from collections.abc import Generator, Iterable, Sequence
 from typing import Optional
 
 from postbound.qal import base, clauses, expressions as expr, predicates as preds, qal
@@ -67,6 +68,8 @@ class RelNode(abc.ABC):
         self._parent = parent_node
         self._sideways_pass: set[RelNode] = set()
         self._node_type = type(self).__name__
+        self._hash_val = hash((self._node_type, self._recalc_hash_val()))
+        self._maintain_child_links()
 
     @property
     def node_type(self) -> str:
@@ -168,19 +171,36 @@ class RelNode(abc.ABC):
         """
         raise NotImplementedError
 
-    @abc.abstractmethod
-    def mutate(self, *, as_root: bool = False) -> RelNode:
+    def dfs_walk(self) -> Generator[RelNode, None, None]:
+        """Performs a depth-first search on the algebraic expression.
+
+        This produces the subtree induced by the current node. The current node is also included in the output.
+
+        Yields
+        ------
+        Generator[RelNode, None, None]
+            All nodes of the subtree induced by the current node.
+        """
+        yield self
+        for child in self.children():
+            yield from child.dfs_walk()
+
+    def mutate(self, *, as_root: bool = False, **kwargs) -> RelNode:
         """Creates a new instance of the current operator with modified attributes.
 
-        The specific parameters depend on the concrete operator type. However, each node is guaranteed to provide a
-        parameter-less `mutate` implementation that simply copies the current node.
+        The specific parameters depend on the concrete operator type. Calling `mutate()` on *any* node generates a copy of the
+        *entire* tree, so make sure to use this operation sparingly.
+
+        See *Notes* for additional important remarks regarding tree modifications and the mutate implementation for additional
+        node types.
 
         Parameters
         ----------
         as_root : bool, optional
-            Whether the current node should become the new root node of the tree. This parameter should be true whenever
-            an internal node of a relalg tree is modified, as it ensures that the correct parent nodes are linked together.
-            Defaults to *False*.
+            Whether the current node should become the new root node of the tree. Defaults to *False*, which leaves the node
+            at its current position in the tree.
+        **kwargs
+            The attributes to modify. The specific attributes depend on the concrete operator type.
 
         Returns
         -------
@@ -189,14 +209,68 @@ class RelNode(abc.ABC):
 
         Notes
         -----
-        In order to prevent infinite recursion during the mutation process, the following conventions are applied:
+        In order to perform updates on the structure of the algebraic tree, it is important to obtain copies of some of the
+        nodes that should be re-used. This ensures that the linkage between parent and child nodes of the original tree remains
+        sound.
 
-        - mutation only traverses "upwards", i.e. when mutating a child node, it is this nodes responsibility to propagate the
-          mutation to its parent properly
-        - it is the callee's responsibility to provide mutated versions of the child nodes of the current node. This makes it
-          safe to update the parent links of these children
+        Specifically, we distinguish between four different kinds of tree modifications:
+
+        1. In-place modifications are the easiest. They occur, if an attribute of the current node should be modified, e.g.
+           the predicate of a selection node. In this case, simply calling `mutate` on the selection is sufficient.
+        2. Node deletions are a bit more complicated. They usually work by updating the child of the parent node to the child
+           of the node to delete. This is done by calling `mutate` on the parent node and supplying a clone of the child node
+           as parameter. The clone is required to avoid modifying the original tree.
+        3. Node insertions depend on the kind of node to be inserted. If a new leaf node should be inserted, this can be done
+           in one step by calling `mutate` on the parent node and supplying the new node as a child parameter.
+           However, if an existing node should be inserted at a new location, this node has to be cloned first.
+        4. Node re-orderings are the most challenging, but follow the same rules as deletions and insertions: the top-most
+           node is the one that receives the `mutate` call. All nodes that should be re-ordered have to be mutated first and
+           receive their new child nodes as input. These mutations should also set `as_root` to true to skip unnecessary work.
+           All child nodes of the nodes to be re-ordered have to be cloned to keep the linkage sound.
+
+        The default implementation of `mutate` requires that all attributes that can potentially be modified are passed
+        as optional parameters and are named according to their properties. These properties need to be baked by "private"
+        attributes that are named with a leading underscore. E.g., if a node contains an attribute *data*, the `mutate` method
+        of this node should accept a parameter *data* that is used to update the internal attribute *_data*.
+        Each concrete implementation of RelNode should simply delegate this task to the RelNode superclass by passing all
+        relevant parameters. Implementations are free to provide their own `mutate` logic, but need to ensure that copy
+        behaviour, linkage and hashing work as expected.
+
+        See Also
+        --------
+        RelNode.clone() : for obtaining 1:1 copies of single nodes
         """
-        raise NotImplementedError
+        relalg_copy = _RelNodeUpdateManager(self.root(), initiator=self).make_relalg_copy()
+        updated_self: RelNode = relalg_copy.updated_initiator
+
+        if as_root:
+            updated_self._clear_parent_links()
+
+        fields: set[str] = set(vars(self).keys())
+        for attr, value in kwargs.items():
+            if value is None:
+                continue
+            actual_attr_name = f"_{attr}"
+            if actual_attr_name not in fields:
+                continue
+            setattr(updated_self, actual_attr_name, value)
+
+        updated_root = updated_self.root()
+        updated_root._rebuild_linkage()
+        updated_root._rehash()
+        return updated_self
+
+    def clone(self) -> RelNode:
+        """Obtains a 1:1 copy of the current node.
+
+        Returns
+        -------
+        RelNode
+            The cloned node
+        """
+        copied = copy.copy(self)
+        copied._sideways_pass = set(copied.sideways_pass)
+        return copied
 
     def inspect(self, *, _indentation: int = 0) -> str:
         """Provides a nice hierarchical string representation of the algebraic expression.
@@ -223,17 +297,118 @@ class RelNode(abc.ABC):
             inspections.append(child.inspect(_indentation=_indentation + 2))
         return "\n".join(inspections)
 
-    def _maintain_child_links(self) -> None:
-        """Ensures that all child nodes of the current node *A* have *A* set as their parent."""
+    def _maintain_child_links(self, *, recursive: bool = False) -> None:
+        """Ensures that all child nodes of the current node *A* have *A* set as their parent.
+
+        Parameters
+        ----------
+        recursive : bool, optional
+            Whether the child links should be maintained recursively. Defaults to *False*.
+        """
         for child in self.children():
             if child._parent is None:
                 child._parent = self
                 continue
             child._sideways_pass.add(self)
 
+        if not recursive:
+            return
+        for child in self.children():
+            child._maintain_child_links(recursive=True)
+
+    def _update_child_nodes(self, children: Sequence[RelNode]) -> None:
+        """Updates the child nodes of the current operator.
+
+        This method uses two heuristics: children of nodes with a single input should be called `input_node` (with its internal
+        attribute `_input_node`), whereas nodes with two inputs should be called `left_input` and `right_input` (with internal
+        attributes `_left_input` and `_right_input`, respectively).
+
+        If none of these fields are found, a `NotImplementedError` is raised.
+
+        Parameters
+        ----------
+        children : Sequence[RelNode]
+            The new children
+
+        Raises
+        ------
+        ValueError
+            If the number of supplied children does not match the expected number of child nodes.
+        NotImplementedError
+            If the current node does not have the required attributes to update its child nodes.
+        """
+        self._assert_correct_update_child_count(children)
+        attrs = vars(self)
+        if "_input_node" in attrs and len(children) == 1:
+            attrs["_input_node"] = children[0]
+        elif "_left_input" in attrs and "_right_input" in attrs and len(children) == 2:
+            attrs["_left_input"] = children[0]
+            attrs["_right_input"] = children[1]
+        else:
+            raise NotImplementedError(f"Cannot use the default implementation of _update_child_nodes for node '{self}'.")
+
+    def _clear_parent_links(self, *, recursive: bool = False) -> None:
+        """Removes all references to parent nodes from the current operator.
+
+        Parameters
+        ----------
+        recursive : bool, optional
+            Whether the parent links should be cleared recursively. Defaults to *False*.
+        """
+        self._parent = None
+        self._sideways_pass.clear()
+
+        if not recursive:
+            return
+        for child in self.children():
+            child._clear_parent_links(recursive=True)
+
+    def _rebuild_linkage(self) -> None:
+        """Ensures that the subtree induced by the current node is correctly linked."""
+        self._clear_parent_links(recursive=True)
+        self._maintain_child_links(recursive=True)
+
+    def _rehash(self) -> None:
+        """Re-calculates the hash value of the current node and all its children."""
+        self._hash_val = hash((self._node_type, self._recalc_hash_val()))
+        for child in self.children():
+            child._rehash()
+
+    def _assert_correct_update_child_count(self, children: Sequence[RelNode]) -> None:
+        """Ensures that the correct number of child nodes is supplied for updating the current node.
+
+        Parameters
+        ----------
+        children : Sequence[RelNode]
+            The new children
+
+        Raises
+        ------
+        ValueError
+            If the number of supplied children does not match the expected number of child nodes.
+        """
+        n_current_children = len(self.children())
+        n_new_children = len(children)
+        if n_current_children != n_new_children:
+            raise ValueError(f"Cannot update a node containing {n_current_children} child nodes "
+                             f"with {n_new_children} children.")
+
     @abc.abstractmethod
-    def __hash__(self) -> int:
+    def _recalc_hash_val(self) -> int:
+        """Calculates the hash value of the current node.
+
+        This method only needs to consider attributes that are unique to the node. The final hash value will incorporate
+        additional information that is shared between nodes, such as the node type.
+
+        Returns
+        -------
+        int
+            The current hash value
+        """
         raise NotImplementedError
+
+    def __hash__(self) -> int:
+        return self._hash_val
 
     @abc.abstractmethod
     def __eq__(self, other: object) -> bool:
@@ -269,11 +444,9 @@ class Selection(RelNode):
     """
     def __init__(self, input_node: RelNode, predicate: preds.AbstractPredicate, *,
                  parent_node: Optional[RelNode] = None) -> None:
-        super().__init__(parent_node.mutate() if parent_node is not None else None)
         self._input_node = input_node
         self._predicate = predicate
-        self._hash_val = hash((self._input_node, self._predicate))
-        self._maintain_child_links()
+        super().__init__(parent_node)
 
     @property
     def input_node(self) -> RelNode:
@@ -303,9 +476,8 @@ class Selection(RelNode):
     def accept_visitor(self, visitor: RelNodeVisitor[VisitorResult]) -> VisitorResult:
         return visitor.visit_selection(self)
 
-    def mutate(self, *, input_node: Optional[RelNode] = None,
-               predicate: Optional[preds.AbstractPredicate] = None,
-               parent: Optional[RelNode] = None, as_root: bool = False) -> Selection:
+    def mutate(self, *, input_node: Optional[RelNode] = None, predicate: Optional[preds.AbstractPredicate] = None,
+               as_root: bool = False) -> Selection:
         """Creates a new selection with modified attributes.
 
         Parameters
@@ -314,9 +486,6 @@ class Selection(RelNode):
             The new input node to use. If *None*, the current input node is re-used.
         predicate : Optional[preds.AbstractPredicate], optional
             The new predicate to use. If *None*, the current predicate is re-used.
-        parent : Optional[RelNode], optional
-            The new parent node to use. If *None*, the current parent is re-used. In order to remove a parent node, use the
-            `as_root` parameter.
         as_root : bool, optional
             Whether the selection should become the new root node of the tree. This overwrites any value passed to
             `parent`.
@@ -330,18 +499,13 @@ class Selection(RelNode):
         --------
         RelNode.mutate : for safety considerations and calling conventions
         """
-        input_node = input_node.mutate(as_root=True) if input_node is not None else self._input_node.mutate(as_root=True)
-        if as_root:
-            parent = None
-        else:
-            # mutation of the parent is handled during the __init__ method of the current mutated node
-            parent = parent if parent is not None else self._parent
-        return Selection(input_node,
-                         predicate if predicate is not None else self._predicate,
-                         parent_node=parent)
+        params = {param: val for param, val in locals().items() if param != "self" and not param.startswith("__")}
+        return super().mutate(**params)
 
-    def __hash__(self) -> int:
-        return self._hash_val
+    def _recalc_hash_val(self) -> int:
+        return hash((self._input_node, self._predicate))
+
+    __hash__ = RelNode.__hash__
 
     def __eq__(self, other: object) -> bool:
         return isinstance(other, type(self)) and self._input_node == other._input_node and self._predicate == other._predicate
@@ -370,11 +534,9 @@ class CrossProduct(RelNode):
     .. math:: R \\times S := \\{ r \\circ s | r \\in R, s \\in S \\}
     """
     def __init__(self, left_input: RelNode, right_input: RelNode, *, parent_node: Optional[RelNode] = None) -> None:
-        super().__init__(parent_node.mutate() if parent_node is not None else None)
         self._left_input = left_input
         self._right_input = right_input
-        self._hash_val = hash((self._left_input, self._right_input))
-        self._maintain_child_links()
+        super().__init__(parent_node)
 
     @property
     def left_input(self) -> RelNode:
@@ -404,20 +566,16 @@ class CrossProduct(RelNode):
     def accept_visitor(self, visitor: RelNodeVisitor[VisitorResult]) -> VisitorResult:
         return visitor.visit_cross_product(self)
 
-    def mutate(self, *, left_child: Optional[RelNode] = None,
-               right_child: Optional[RelNode] = None,
-               parent: Optional[RelNode] = None, as_root: bool = False) -> CrossProduct:
+    def mutate(self, *, left_input: Optional[RelNode] = None, right_input: Optional[RelNode] = None,
+               as_root: bool = False) -> CrossProduct:
         """Creates a new cross product with modified attributes.
 
         Parameters
         ----------
-        left_child : Optional[RelNode], optional
-            The new left input node to use. If *None*, the current left input node is re-used.
-        right_child : Optional[RelNode], optional
-            The new right input node to use. If *None*, the current right input node is re-used.
-        parent : Optional[RelNode], optional
-            The new parent node to use. If *None*, the current parent is re-used. In order to remove a parent node, use the
-            `as_root` parameter.
+        left_input : Optional[RelNode], optional
+            The new left child node to use. If *None*, the current left input node is re-used.
+        right_input : Optional[RelNode], optional
+            The new right child node to use. If *None*, the current right input node is re-used.
         as_root : bool, optional
             Whether the cross product should become the new root node of the tree. This overwrites any value passed to
             `parent`.
@@ -431,17 +589,13 @@ class CrossProduct(RelNode):
         --------
         RelNode.mutate : for safety considerations and calling conventions
         """
-        left_child = left_child.mutate(as_root=True) if left_child is not None else self._left_input.mutate(as_root=True)
-        right_child = right_child.mutate(as_root=True) if right_child is not None else self._right_input.mutate(as_root=True)
-        if as_root:
-            parent = None
-        else:
-            # mutation of the parent is handled during the __init__ method of the current mutated node
-            parent = parent if parent is not None else self._parent
-        return CrossProduct(left_child, right_child, parent_node=parent)
+        params = {param: val for param, val in locals().items() if param != "self" and not param.startswith("__")}
+        return super().mutate(**params)
 
-    def __hash__(self) -> int:
-        return self._hash_val
+    def _recalc_hash_val(self) -> int:
+        return hash((self._left_input, self._right_input))
+
+    __hash__ = RelNode.__hash__
 
     def __eq__(self, other: object) -> bool:
         return (isinstance(other, type(self))
@@ -474,11 +628,9 @@ class Union(RelNode):
     .. math:: R \\cup S := \\{ t | t \\in R \\lor t \\in S \\}
     """
     def __init__(self, left_input: RelNode, right_input: RelNode, *, parent_node: Optional[RelNode] = None) -> None:
-        super().__init__(parent_node.mutate() if parent_node is not None else None)
         self._left_input = left_input
         self._right_input = right_input
-        self._hash_val = hash((self._left_input, self._right_input))
-        self._maintain_child_links()
+        super().__init__(parent_node)
 
     @property
     def left_input(self) -> RelNode:
@@ -508,19 +660,16 @@ class Union(RelNode):
     def accept_visitor(self, visitor: RelNodeVisitor[VisitorResult]) -> VisitorResult:
         return visitor.visit_union(visitor)
 
-    def mutate(self, *, left_child: Optional[RelNode] = None, right_child: Optional[RelNode] = None,
-               parent: Optional[RelNode] = None, as_root: bool = False) -> Union:
+    def mutate(self, *, left_input: Optional[RelNode] = None, right_input: Optional[RelNode] = None,
+               as_root: bool = False) -> Union:
         """Creates a new union with modified attributes.
 
         Parameters
         ----------
-        left_child : Optional[RelNode], optional
-            The new left input node to use. If *None*, the current left input node is re-used.
-        right_child : Optional[RelNode], optional
-            The new right input node to use. If *None*, the current right input node is re-used.
-        parent : Optional[RelNode], optional
-            The new parent node to use. If *None*, the current parent is re-used. In order to remove a parent node, use the
-            `as_root` parameter.
+        left_input : Optional[RelNode], optional
+            The new left child node to use. If *None*, the current left input node is re-used.
+        right_input : Optional[RelNode], optional
+            The new right child node to use. If *None*, the current right input node is re-used.
         as_root : bool, optional
             Whether the union should become the new root node of the tree. This overwrites any value passed to `parent`.
 
@@ -533,17 +682,13 @@ class Union(RelNode):
         --------
         RelNode.mutate : for safety considerations and calling conventions
         """
-        left_child = left_child.mutate(as_root=True) if left_child is not None else self._left_input.mutate(as_root=True)
-        right_child = right_child.mutate(as_root=True) if right_child is not None else self._right_input.mutate(as_root=True)
-        if as_root:
-            parent = None
-        else:
-            # mutation of the parent is handled during the __init__ method of the current mutated node
-            parent = parent if parent is not None else self._parent
-        return Union(left_child, right_child, parent_node=parent)
+        params = {param: val for param, val in locals().items() if param != "self" and not param.startswith("__")}
+        return super().mutate(**params)
 
-    def __hash__(self) -> int:
-        return self._hash_val
+    def _recalc_hash_val(self) -> int:
+        return hash((self._left_input, self._right_input))
+
+    __hash__ = RelNode.__hash__
 
     def __eq__(self, other: object) -> bool:
         return (isinstance(other, type(self))
@@ -576,11 +721,9 @@ class Intersection(RelNode):
     .. math:: R \\cap S := \\{ t | t \\in R \\land t \\in S \\}
     """
     def __init__(self, left_input: RelNode, right_input: RelNode, *, parent_node: Optional[RelNode] = None) -> None:
-        super().__init__(parent_node.mutate() if parent_node is not None else None)
         self._left_input = left_input
         self._right_input = right_input
-        self._hash_val = hash((self._left_input, self._right_input))
-        self._maintain_child_links()
+        super().__init__(parent_node)
 
     @property
     def left_input(self) -> RelNode:
@@ -610,19 +753,16 @@ class Intersection(RelNode):
     def accept_visitor(self, visitor: RelNodeVisitor[VisitorResult]) -> VisitorResult:
         return visitor.visit_intersection(visitor)
 
-    def mutate(self, *, left_child: Optional[RelNode] = None, right_child: Optional[RelNode] = None,
-               parent: Optional[RelNode] = None, as_root: bool = False) -> Intersection:
+    def mutate(self, *, left_input: Optional[RelNode] = None, right_input: Optional[RelNode] = None,
+               as_root: bool = False) -> Intersection:
         """Creates a new intersection with modified attributes.
 
         Parameters
         ----------
-        left_child : Optional[RelNode], optional
-            The new left input node to use. If *None*, the current left input node is re-used.
-        right_child : Optional[RelNode], optional
-            The new right input node to use. If *None*, the current right input node is re-used.
-        parent : Optional[RelNode], optional
-            The new parent node to use. If *None*, the current parent is re-used. In order to remove a parent node, use the
-            `as_root` parameter.
+        left_input : Optional[RelNode], optional
+            The new left child node to use. If *None*, the current left input node is re-used.
+        right_input : Optional[RelNode], optional
+            The new right child node to use. If *None*, the current right input node is re-used.
         as_root : bool, optional
             Whether the intersection should become the new root node of the tree. This overwrites any value passed to
             `parent`.
@@ -636,17 +776,13 @@ class Intersection(RelNode):
         --------
         RelNode.mutate : for safety considerations and calling conventions
         """
-        left_child = left_child.mutate(as_root=True) if left_child is not None else self._left_input.mutate(as_root=True)
-        right_child = right_child.mutate(as_root=True) if right_child is not None else self._right_input.mutate(as_root=True)
-        if as_root:
-            parent = None
-        else:
-            # mutation of the parent is handled during the __init__ method of the current mutated node
-            parent = parent if parent is not None else self._parent
-        return Intersection(left_child, right_child, parent_node=parent)
+        params = {param: val for param, val in locals().items() if param != "self" and not param.startswith("__")}
+        return super().mutate(**params)
 
-    def __hash__(self) -> int:
-        return self._hash_val
+    def _recalc_hash_val(self) -> int:
+        return hash((self._left_input, self._right_input))
+
+    __hash__ = RelNode.__hash__
 
     def __eq__(self, other: object) -> bool:
         return (isinstance(other, type(self))
@@ -679,11 +815,9 @@ class Difference(RelNode):
     .. math:: R \\setminus S := \\{ r \\in R | r \\notin S \\}
     """
     def __init__(self, left_input: RelNode, right_input: RelNode, *, parent_node: Optional[RelNode] = None) -> None:
-        super().__init__(parent_node.mutate() if parent_node is not None else None)
         self._left_input = left_input
         self._right_input = right_input
-        self._hash_val = hash((self._left_input, self._right_input))
-        self._maintain_child_links()
+        super().__init__(parent_node)
 
     @property
     def left_input(self) -> RelNode:
@@ -713,19 +847,16 @@ class Difference(RelNode):
     def accept_visitor(self, visitor: RelNodeVisitor[VisitorResult]) -> VisitorResult:
         return visitor.visit_difference(visitor)
 
-    def mutate(self, *, left_child: Optional[RelNode] = None, right_child: Optional[RelNode] = None,
-               parent: Optional[RelNode] = None, as_root: bool = False) -> Difference:
+    def mutate(self, *, left_input: Optional[RelNode] = None, right_input: Optional[RelNode] = None,
+               as_root: bool = False) -> Difference:
         """Creates a new difference with modified attributes.
 
         Parameters
         ----------
-        left_child : Optional[RelNode], optional
-            The new left input node to use. If *None*, the current left input node is re-used.
-        right_child : Optional[RelNode], optional
-            The new right input node to use. If *None*, the current right input node is re-used.
-        parent : Optional[RelNode], optional
-            The new parent node to use. If *None*, the current parent is re-used. In order to remove a parent node, use the
-            `as_root` parameter.
+        left_input : Optional[RelNode], optional
+            The new left child node to use. If *None*, the current left input node is re-used.
+        right_input : Optional[RelNode], optional
+            The new right child node to use. If *None*, the current right input node is re-used.
         as_root : bool, optional
             Whether the difference should become the new root node of the tree. This overwrites any value passed to
             `parent`.
@@ -739,17 +870,13 @@ class Difference(RelNode):
         --------
         RelNode.mutate : for safety considerations and calling conventions
         """
-        left_child = left_child.mutate(as_root=True) if left_child is not None else self._left_input.mutate(as_root=True)
-        right_child = right_child.mutate(as_root=True) if right_child is not None else self._right_input.mutate(as_root=True)
-        if as_root:
-            parent = None
-        else:
-            # mutation of the parent is handled during the __init__ method of the current mutated node
-            parent = parent if parent is not None else self._parent
-        return Difference(left_child, right_child, parent_node=parent)
+        params = {param: val for param, val in locals().items() if param != "self" and not param.startswith("__")}
+        return super().mutate(**params)
 
-    def __hash__(self) -> int:
-        return self._hash_val
+    def _recalc_hash_val(self) -> int:
+        return hash((self._left_input, self._right_input))
+
+    __hash__ = RelNode.__hash__
 
     def __eq__(self, other: object) -> bool:
         return (isinstance(other, type(self))
@@ -781,7 +908,6 @@ class Relation(RelNode):
     """
     def __init__(self, table: base.TableReference, provided_columns: Iterable[base.ColumnReference | expr.ColumnExpression], *,
                  subquery_input: Optional[RelNode] = None, parent_node: Optional[RelNode] = None) -> None:
-        super().__init__(parent_node.mutate() if parent_node is not None else None)
         self._table = table
         self._provided_cols = frozenset(col if isinstance(col, expr.ColumnExpression) else expr.ColumnExpression(col)
                                         for col in provided_columns)
@@ -791,8 +917,7 @@ class Relation(RelNode):
             # We need to set the parent node explicitly here in order to prevent infinite recursion
             self._subquery_input._parent = self
 
-        self._hash_val = hash((self._table, self._subquery_input))
-        self._maintain_child_links()
+        super().__init__(parent_node)
 
     @property
     def table(self) -> base.TableReference:
@@ -833,8 +958,7 @@ class Relation(RelNode):
 
     def mutate(self, *, table: Optional[base.TableReference] = None,
                provided_columns: Optional[Iterable[base.ColumnReference | expr.ColumnExpression]] = None,
-               subquery_input: Optional[RelNode] = None,
-               parent: Optional[RelNode] = None, as_root: bool = False) -> Relation:
+               subquery_input: Optional[RelNode] = None, as_root: bool = False) -> Relation:
         """Creates a new relation with modified attributes.
 
         Parameters
@@ -845,9 +969,6 @@ class Relation(RelNode):
             The new columns to use. If *None*, the current columns are re-used.
         subquery_input : Optional[RelNode], optional
             The new subquery input to use. If *None*, the current subquery input is re-used.
-        parent : Optional[RelNode], optional
-            The new parent node to use. If *None*, the current parent is re-used. In order to remove a parent node, use the
-            `as_root` parameter.
         as_root : bool, optional
             Whether the relation should become the new root node of the tree. This overwrites any value passed to `parent`.
 
@@ -860,20 +981,18 @@ class Relation(RelNode):
         --------
         RelNode.mutate : for safety considerations and calling conventions
         """
-        if as_root:
-            parent = None
-        else:
-            # mutation of the parent is handled during the __init__ method of the current mutated node
-            parent = parent if parent is not None else self._parent
+        params = {param: val for param, val in locals().items() if param != "self" and not param.startswith("__")}
+        return super().mutate(**params)
 
-        subquery_input = (subquery_input.mutate(as_root=True) if subquery_input is not None
-                          else self._subquery_input.mutate(as_root=True) if self._subquery_input is not None else None)
-        return Relation(table if table is not None else self._table,
-                        provided_columns if provided_columns is not None else self._provided_cols,
-                        subquery_input=subquery_input, parent_node=parent)
+    def _update_child_nodes(self, children: Sequence[RelNode]) -> None:
+        self._assert_correct_update_child_count(children)
+        if self._subquery_input:
+            self._subquery_input = children[0]
 
-    def __hash__(self) -> int:
-        return self._hash_val
+    def _recalc_hash_val(self) -> int:
+        return hash((self._table, self._subquery_input))
+
+    __hash__ = RelNode.__hash__
 
     def __eq__(self, other: object) -> bool:
         return isinstance(other, type(self)) and self._table == other._table
@@ -908,12 +1027,10 @@ class ThetaJoin(RelNode):
     """
     def __init__(self, left_input: RelNode, right_input: RelNode, predicate: preds.AbstractPredicate, *,
                  parent_node: Optional[RelNode] = None) -> None:
-        super().__init__(parent_node.mutate() if parent_node is not None else None)
         self._left_input = left_input
         self._right_input = right_input
         self._predicate = predicate
-        self._hash_val = hash((self._left_input, self._right_input, self._predicate))
-        self._maintain_child_links()
+        super().__init__(parent_node)
 
     @property
     def left_input(self) -> RelNode:
@@ -954,22 +1071,18 @@ class ThetaJoin(RelNode):
     def accept_visitor(self, visitor: RelNodeVisitor[VisitorResult]) -> VisitorResult:
         return visitor.visit_theta_join(self)
 
-    def mutate(self, *, left_child: Optional[RelNode] = None, right_child: Optional[RelNode] = None,
-               predicate: Optional[preds.AbstractPredicate] = None,
-               parent: Optional[RelNode] = None, as_root: bool = False) -> ThetaJoin:
+    def mutate(self, *, left_input: Optional[RelNode] = None, right_input: Optional[RelNode] = None,
+               predicate: Optional[preds.AbstractPredicate] = None, as_root: bool = False) -> ThetaJoin:
         """Creates a new theta join with modified attributes.
 
         Parameters
         ----------
-        left_child : Optional[RelNode], optional
-            The new left input node to use. If *None*, the current left input node is re-used.
-        right_child : Optional[RelNode], optional
-            The new right input node to use. If *None*, the current right input node is re-used.
+        left_input : Optional[RelNode], optional
+            The new left child node to use. If *None*, the current left input node is re-used.
+        right_input : Optional[RelNode], optional
+            The new right child node to use. If *None*, the current right input node is re-used.
         predicate : Optional[preds.AbstractPredicate], optional
             The new predicate to use. If *None*, the current predicate is re-used.
-        parent : Optional[RelNode], optional
-            The new parent node to use. If *None*, the current parent is re-used. In order to remove a parent node, use the
-            `as_root` parameter.
         as_root : bool, optional
             Whether the theta join should become the new root node of the tree. This overwrites any value passed to
             `parent`.
@@ -983,19 +1096,13 @@ class ThetaJoin(RelNode):
         --------
         RelNode.mutate : for safety considerations and calling conventions
         """
-        left_child = left_child.mutate(as_root=True) if left_child is not None else self._left_input.mutate(as_root=True)
-        right_child = right_child.mutate(as_root=True) if right_child is not None else self._right_input.mutate(as_root=True)
-        if as_root:
-            parent = None
-        else:
-            # mutation of the parent is handled during the __init__ method of the current mutated node
-            parent = parent if parent is not None else self._parent
-        return ThetaJoin(left_child, right_child,
-                         predicate if predicate is not None else self._predicate,
-                         parent_node=parent)
+        params = {param: val for param, val in locals().items() if param != "self" and not param.startswith("__")}
+        return super().mutate(**params)
 
-    def __hash__(self) -> int:
-        return self._hash_val
+    def _recalc_hash_val(self) -> int:
+        return hash((self._left_input, self._right_input, self._predicate))
+
+    __hash__ = RelNode.__hash__
 
     def __eq__(self, other: object) -> bool:
         return (isinstance(other, type(self))
@@ -1024,11 +1131,9 @@ class Projection(RelNode):
     """
     def __init__(self, input_node: RelNode, targets: Sequence[expr.SqlExpression], *,
                  parent_node: Optional[RelNode] = None) -> None:
-        super().__init__(parent_node.mutate() if parent_node is not None else None)
         self._input_node = input_node
         self._targets = tuple(targets)
-        self._hash_val = hash((self._input_node, self._targets))
-        self._maintain_child_links()
+        super().__init__(parent_node)
 
     @property
     def input_node(self) -> RelNode:
@@ -1059,7 +1164,7 @@ class Projection(RelNode):
         return visitor.visit_projection(self)
 
     def mutate(self, *, input_node: Optional[RelNode] = None, targets: Optional[Sequence[expr.SqlExpression]] = None,
-               parent: Optional[RelNode] = None, as_root: bool = False) -> Projection:
+               as_root: bool = False) -> Projection:
         """Creates a new projection with modified attributes.
 
         Parameters
@@ -1068,9 +1173,6 @@ class Projection(RelNode):
             The new input node to use. If *None*, the current input node is re-used.
         targets : Optional[Sequence[expr.SqlExpression]], optional
             The new targets to use. If *None*, the current targets are re-used.
-        parent : Optional[RelNode], optional
-            The new parent node to use. If *None*, the current parent is re-used. In order to remove a parent node, use the
-            `as_root` parameter.
         as_root : bool, optional
             Whether the projection should become the new root node of the tree. This overwrites any value passed to
             `parent`.
@@ -1084,18 +1186,13 @@ class Projection(RelNode):
         --------
         RelNode.mutate : for safety considerations and calling conventions
         """
-        input_node = input_node.mutate(as_root=True) if input_node is not None else self._input_node.mutate(as_root=True)
-        if as_root:
-            parent = None
-        else:
-            # mutation of the parent is handled during the __init__ method of the current mutated node
-            parent = parent if parent is not None else self._parent
-        return Projection(input_node,
-                          targets if targets is not None else self._targets,
-                          parent_node=parent)
+        params = {param: val for param, val in locals().items() if param != "self" and not param.startswith("__")}
+        return super().mutate(**params)
 
-    def __hash__(self) -> int:
-        return self._hash_val
+    def _recalc_hash_val(self) -> int:
+        return hash((self._input_node, self._targets))
+
+    __hash__ = RelNode.__hash__
 
     def __eq__(self, other: object) -> bool:
         return isinstance(other, type(self)) and self._input_node == other._input_node and self._targets == other._targets
@@ -1125,15 +1222,13 @@ class GroupBy(RelNode):
     def __init__(self, input_node: RelNode, group_columns: Sequence[expr.SqlExpression], *,
                  aggregates: Optional[dict[frozenset[expr.SqlExpression], frozenset[expr.FunctionExpression]]] = None,
                  parent_node: Optional[RelNode] = None) -> None:
-        super().__init__(parent_node.mutate() if parent_node is not None else None)
         if not group_columns and not aggregates:
             raise ValueError("Either group columns or aggregation functions must be specified!")
         self._input_node = input_node
         self._group_columns = tuple(group_columns)
         self._aggregates: dict_utils.frozendict[frozenset[expr.SqlExpression], frozenset[expr.FunctionExpression]] = (
             dict_utils.frozendict(aggregates))
-        self._hash_val = hash((self._input_node, self._group_columns, self._aggregates))
-        self._maintain_child_links()
+        super().__init__(parent_node)
 
     @property
     def input_node(self) -> RelNode:
@@ -1193,9 +1288,6 @@ class GroupBy(RelNode):
             The new group columns to use. If *None*, the current group columns are re-used.
         aggregates : Optional[dict[frozenset[expr.SqlExpression], frozenset[expr.FunctionExpression]]], optional
             The new aggregates to use. If *None*, the current aggregates are re-used.
-        parent : Optional[RelNode], optional
-            The new parent node to use. If *None*, the current parent is re-used. In order to remove a parent node, use the
-            `as_root` parameter.
         as_root : bool, optional
             Whether the group by should become the new root node of the tree. This overwrites any value passed to `parent`.
 
@@ -1208,19 +1300,13 @@ class GroupBy(RelNode):
         --------
         RelNode.mutate : for safety considerations and calling conventions
         """
-        input_node = input_node.mutate(as_root=True) if input_node is not None else self._input_node.mutate(as_root=True)
-        group_columns = group_columns if group_columns is not None else self._group_columns
-        aggregates = aggregates if aggregates is not None else self._aggregates
-        if as_root:
-            parent = None
-        else:
-            # mutation of the parent is handled during the __init__ method of the current mutated node
-            parent = parent if parent is not None else self._parent
-        return GroupBy(input_node, group_columns, aggregates=aggregates,
-                       parent_node=parent)
+        params = {param: val for param, val in locals().items() if param != "self" and not param.startswith("__")}
+        return super().mutate(**params)
 
-    def __hash__(self) -> int:
-        return self._hash_val
+    def _recalc_hash_val(self) -> int:
+        return hash((self._input_node, self._group_columns, self._aggregates))
+
+    __hash__ = RelNode.__hash__
 
     def __eq__(self, other: object) -> bool:
         return (isinstance(other, type(self))
@@ -1268,11 +1354,9 @@ class Rename(RelNode):
     def __init__(self, input_node: RelNode, mapping: dict[base.ColumnReference, base.ColumnReference], *,
                  parent_node: Optional[RelNode]) -> None:
         # TODO: check types + add provided / required expressions method
-        super().__init__(parent_node.mutate() if parent_node is not None else None)
         self._input_node = input_node
         self._mapping = dict_utils.frozendict(mapping)
-        self._hash_val = hash((self._input_node, self._mapping))
-        self._maintain_child_links()
+        super().__init__(parent_node)
 
     @property
     def input_node(self) -> RelNode:
@@ -1303,8 +1387,7 @@ class Rename(RelNode):
         return visitor.visit_rename(self)
 
     def mutate(self, *, input_node: Optional[RelNode] = None,
-               mapping: Optional[dict[base.ColumnReference, base.ColumnReference]] = None,
-               parent: Optional[RelNode] = None, as_root: bool = False) -> Rename:
+               mapping: Optional[dict[base.ColumnReference, base.ColumnReference]] = None, as_root: bool = False) -> Rename:
         """Creates a new rename with modified attributes.
 
         Parameters
@@ -1313,9 +1396,6 @@ class Rename(RelNode):
             The new input node to use. If *None*, the current input node is re-used.
         mapping : Optional[dict[base.ColumnReference, base.ColumnReference]], optional
             The new mapping to use. If *None*, the current mapping is re-used.
-        parent : Optional[RelNode], optional
-            The new parent node to use. If *None*, the current parent is re-used. In order to remove a parent node, use the
-            `as_root` parameter.
         as_root : bool, optional
             Whether the rename should become the new root node of the tree. This overwrites any value passed to `parent`.
 
@@ -1328,17 +1408,13 @@ class Rename(RelNode):
         --------
         RelNode.mutate : for safety considerations and calling conventions
         """
-        input_node = input_node.mutate(as_root=True) if input_node is not None else self._input_node.mutate(as_root=True)
-        mapping = mapping if mapping is not None else self._mapping
-        if as_root:
-            parent = None
-        else:
-            # mutation of the parent is handled during the __init__ method of the current mutated node
-            parent = parent if parent is not None else self._parent
-        return Rename(input_node, mapping, parent_node=parent)
+        params = {param: val for param, val in locals().items() if param != "self" and not param.startswith("__")}
+        return super().mutate(**params)
 
-    def __hash__(self) -> int:
-        return self._hash_val
+    def _recalc_hash_val(self) -> int:
+        return hash((self._input_node, self._mapping))
+
+    __hash__ = RelNode.__hash__
 
     def __eq__(self, other: object) -> bool:
         return isinstance(other, type(self)) and self._input_node == other._input_node and self._mapping == other._mapping
@@ -1378,11 +1454,9 @@ class Sort(RelNode):
     def __init__(self, input_node: RelNode,
                  sorting: Sequence[tuple[expr.SqlExpression, SortDirection] | expr.SqlExpression], *,
                  parent_node: Optional[RelNode] = None) -> None:
-        super().__init__(parent_node.mutate() if parent_node is not None else None)
         self._input_node = input_node
         self._sorting = tuple([sort_item if isinstance(sort_item, tuple) else (sort_item, "asc") for sort_item in sorting])
-        self._hash_val = hash((self._input_node, self._sorting))
-        self._maintain_child_links()
+        super().__init__(parent_node)
 
     @property
     def input_node(self) -> RelNode:
@@ -1417,7 +1491,7 @@ class Sort(RelNode):
 
     def mutate(self, *, input_node: Optional[RelNode] = None,
                sorting: Optional[Sequence[tuple[expr.SqlExpression, SortDirection] | expr.SqlExpression]] = None,
-               parent: Optional[RelNode] = None, as_root: bool = False) -> Sort:
+               as_root: bool = False) -> Sort:
         """Creates a new sort with modified attributes.
 
         Parameters
@@ -1426,9 +1500,6 @@ class Sort(RelNode):
             The new input node to use. If *None*, the current input node is re-used.
         sorting : Optional[Sequence[tuple[expr.SqlExpression, SortDirection] | expr.SqlExpression]], optional
             The new sorting to use. If *None*, the current sorting is re-used.
-        parent : Optional[RelNode], optional
-            The new parent node to use. If *None*, the current parent is re-used. In order to remove a parent node, use the
-            `as_root` parameter.
         as_root : bool, optional
             Whether the sort should become the new root node of the tree. This overwrites any value passed to `parent`.
 
@@ -1441,17 +1512,13 @@ class Sort(RelNode):
         --------
         RelNode.mutate : for safety considerations and calling conventions
         """
-        input_node = input_node.mutate(as_root=True) if input_node is not None else self._input_node
-        sorting = sorting if sorting is not None else self._sorting
-        if as_root:
-            parent = None
-        else:
-            # mutation of the parent is handled during the __init__ method of the current mutated node
-            parent = parent if parent is not None else self._parent
-        return Sort(input_node, sorting, parent_node=parent)
+        params = {param: val for param, val in locals().items() if param != "self" and not param.startswith("__")}
+        return super().mutate(**params)
 
-    def __hash__(self) -> int:
-        return self._hash_val
+    def _recalc_hash_val(self) -> int:
+        return hash((self._input_node, self._sorting))
+
+    __hash__ = RelNode.__hash__
 
     def __eq__(self, other: object) -> bool:
         return isinstance(other, type(self)) and self._input_node == other._input_node and self._sorting == other._sorting
@@ -1481,13 +1548,11 @@ class Map(RelNode):
     def __init__(self, input_node: RelNode,
                  mapping: dict[frozenset[expr.SqlExpression | base.ColumnReference], frozenset[expr.SqlExpression]], *,
                  parent_node: Optional[RelNode] = None) -> None:
-        super().__init__(parent_node.mutate() if parent_node is not None else None)
         self._input_node = input_node
         self._mapping = dict_utils.frozendict(
             {expr.ColumnExpression(expression) if isinstance(expression, base.ColumnReference) else expression: target
              for expression, target in mapping.items()})
-        self._hash_val = hash((self._input_node, self._mapping))
-        self._maintain_child_links()
+        super().__init__(parent_node)
 
     @property
     def input_node(self) -> RelNode:
@@ -1526,7 +1591,7 @@ class Map(RelNode):
     def mutate(self, *, input_node: Optional[RelNode] = None,
                mapping: Optional[dict[frozenset[expr.SqlExpression | base.ColumnReference],
                                       frozenset[expr.SqlExpression]]] = None,
-               parent: Optional[RelNode] = None, as_root: bool = False) -> Map:
+               as_root: bool = False) -> Map:
         """Creates a new map with modified attributes.
 
         Parameters
@@ -1535,9 +1600,6 @@ class Map(RelNode):
             The new input node to use. If *None*, the current input node is re-used.
         mapping : Optional[dict[frozenset[expr.SqlExpression | base.ColumnReference], frozenset[expr.SqlExpression]]], optional
             The new mapping to use. If *None*, the current mapping is re-used.
-        parent : Optional[RelNode], optional
-            The new parent node to use. If *None*, the current parent is re-used. In order to remove a parent node, use the
-            `as_root` parameter.
         as_root : bool, optional
             Whether the map should become the new root node of the tree. This overwrites any value passed to `parent`.
 
@@ -1550,17 +1612,13 @@ class Map(RelNode):
         --------
         RelNode.mutate : for safety considerations and calling conventions
         """
-        input_node = input_node.mutate(as_root=True) if input_node is not None else self._input_node.mutate(as_root=True)
-        mapping = mapping if mapping is not None else self._mapping
-        if as_root:
-            parent = None
-        else:
-            # mutation of the parent is handled during the __init__ method of the current mutated node
-            parent = parent if parent is not None else self._parent
-        return Map(input_node, mapping, parent_node=parent)
+        params = {param: val for param, val in locals().items() if param != "self" and not param.startswith("__")}
+        return super().mutate(**params)
 
-    def __hash__(self) -> int:
-        return self._hash_val
+    def _recalc_hash_val(self) -> int:
+        return hash((self._input_node, self._mapping))
+
+    __hash__ = RelNode.__hash__
 
     def __eq__(self, other: object) -> bool:
         return isinstance(other, type(self)) and self._input_node == other._input_node and self._mapping == other._mapping
@@ -1602,10 +1660,8 @@ class DuplicateElimination(RelNode):
     relational algebra dialects support ordering nevertheless.
     """
     def __init__(self, input_node: RelNode, *, parent_node: Optional[RelNode] = None) -> None:
-        super().__init__(parent_node.mutate() if parent_node is not None else None)
         self._input_node = input_node
-        self._hash_val = hash((self._input_node))
-        self._maintain_child_links()
+        super().__init__(parent_node)
 
     @property
     def input_node(self) -> RelNode:
@@ -1617,17 +1673,13 @@ class DuplicateElimination(RelNode):
     def accept_visitor(self, visitor: RelNodeVisitor[VisitorResult]) -> VisitorResult:
         return visitor.visit_duplicate_elim(self)
 
-    def mutate(self, *, input_node: Optional[RelNode] = None, parent: Optional[RelNode] = None,
-               as_root: bool = False) -> DuplicateElimination:
+    def mutate(self, *, input_node: Optional[RelNode] = None, as_root: bool = False) -> DuplicateElimination:
         """Creates a new duplicate elimination with modified attributes.
 
         Parameters
         ----------
         input_node : Optional[RelNode], optional
             The new input node to use. If *None*, the current input node is re-used.
-        parent : Optional[RelNode], optional
-            The new parent node to use. If *None*, the current parent is re-used. In order to remove a parent node, use the
-            `as_root` parameter.
         as_root : bool, optional
             Whether the duplicate elimination should become the new root node of the tree. This overwrites any value passed to
             `parent`.
@@ -1641,16 +1693,13 @@ class DuplicateElimination(RelNode):
         --------
         RelNode.mutate : for safety considerations and calling conventions
         """
-        input_node = input_node.mutate(as_root=True) if input_node is not None else self._input_node.mutate(as_root=True)
-        if as_root:
-            parent = None
-        else:
-            # mutation of the parent is handled during the __init__ method of the current mutated node
-            parent = parent if parent is not None else self._parent
-        return DuplicateElimination(input_node, parent_node=parent)
+        params = {param: val for param, val in locals().items() if param != "self" and not param.startswith("__")}
+        return super().mutate(**params)
 
-    def __hash__(self) -> int:
-        return self._hash_val
+    def _recalc_hash_val(self) -> int:
+        return hash(self._input_node)
+
+    __hash__ = RelNode.__hash__
 
     def __eq__(self, other: object) -> bool:
         return isinstance(other, type(self)) and self._input_node == other._input_node
@@ -1684,15 +1733,14 @@ class SemiJoin(RelNode):
     def __init__(self, input_node: RelNode, subquery_node: SubqueryScan,
                  predicate: Optional[preds.AbstractPredicate] = None, *, parent_node: Optional[RelNode] = None) -> None:
         # TODO: dependent iff predicate is None
-        super().__init__(parent_node.mutate() if parent_node is not None else None)
         self._input_node = input_node
 
         self._subquery_node = subquery_node.mutate()
         self._subquery_node._parent = self  # we need to set the parent manually to prevent infinite recursion
 
         self._predicate = predicate
-        self._hash_val = hash((self._input_node, self._subquery_node, self._predicate))
-        self._maintain_child_links()
+
+        super().__init__(parent_node)
 
     @property
     def input_node(self) -> RelNode:
@@ -1751,8 +1799,7 @@ class SemiJoin(RelNode):
         return visitor.visit_semijoin(self)
 
     def mutate(self, *, input_node: Optional[RelNode] = None, subquery_node: Optional[SubqueryScan] = None,
-               predicate: Optional[preds.AbstractPredicate] = None,
-               parent: Optional[RelNode] = None, as_root: bool = False) -> SemiJoin:
+               predicate: Optional[preds.AbstractPredicate] = None, as_root: bool = False) -> SemiJoin:
         """Creates a new semi join with modified attributes.
 
         Parameters
@@ -1763,9 +1810,6 @@ class SemiJoin(RelNode):
             The new subquery node to use. If *None*, the current subquery node is re-used.
         predicate : Optional[preds.AbstractPredicate], optional
             The new predicate to use. If *None*, the current predicate is re-used.
-        parent : Optional[RelNode], optional
-            The new parent node to use. If *None*, the current parent is re-used. In order to remove a parent node, use the
-            `as_root` parameter.
         as_root : bool, optional
             Whether the semi join should become the new root node of the tree. This overwrites any value passed to `parent`.
 
@@ -1778,19 +1822,18 @@ class SemiJoin(RelNode):
         --------
         RelNode.mutate : for safety considerations and calling conventions
         """
-        input_node = input_node.mutate(as_root=True) if input_node is not None else self._input_node.mutate(as_root=True)
-        subquery_node = (subquery_node.mutate(as_root=True) if subquery_node is not None
-                         else self._subquery_node.mutate(as_root=True))
-        predicate = predicate if predicate is not None else self._predicate
-        if as_root:
-            parent = None
-        else:
-            # mutation of the parent is handled during the __init__ method of the current mutated node
-            parent = parent if parent is not None else self._parent
-        return SemiJoin(input_node, subquery_node, predicate=predicate, parent_node=parent)
+        params = {param: val for param, val in locals().items() if param != "self" and not param.startswith("__")}
+        return super().mutate(**params)
 
-    def __hash__(self) -> int:
-        return self._hash_val
+    def _update_child_nodes(self, children: Sequence[RelNode]) -> None:
+        self._assert_correct_update_child_count(children)
+        self._input_node = children[0]
+        self._subquery_node = children[1]
+
+    def _recalc_hash_val(self) -> int:
+        return hash((self._input_node, self._subquery_node, self._predicate))
+
+    __hash__ = RelNode.__hash__
 
     def __eq__(self, other: object) -> bool:
         return (isinstance(other, type(self))
@@ -1826,15 +1869,14 @@ class AntiJoin(RelNode):
     def __init__(self, input_node: RelNode, subquery_node: SubqueryScan,
                  predicate: Optional[preds.AbstractPredicate] = None, *, parent_node: Optional[RelNode] = None) -> None:
         # TODO: dependent iff predicate is None
-        super().__init__(parent_node.mutate() if parent_node is not None else None)
         self._input_node = input_node
 
         self._subquery_node = subquery_node.mutate()
         self._subquery_node._parent = self  # we need to set the parent manually to prevent infinite recursion
 
         self._predicate = predicate
-        self._hash_val = hash((self._input_node, self._subquery_node, self._predicate))
-        self._maintain_child_links()
+
+        super().__init__(parent_node)
 
     @property
     def input_node(self) -> RelNode:
@@ -1893,8 +1935,7 @@ class AntiJoin(RelNode):
         return visitor.visit_antijoin(self)
 
     def mutate(self, *, input_node: Optional[RelNode] = None, subquery_node: Optional[SubqueryScan] = None,
-               predicate: Optional[preds.AbstractPredicate] = None,
-               parent: Optional[RelNode] = None, as_root: bool = False) -> AntiJoin:
+               predicate: Optional[preds.AbstractPredicate] = None, as_root: bool = False) -> AntiJoin:
         """Creates a new anti join with modified attributes.
 
         Parameters
@@ -1905,9 +1946,6 @@ class AntiJoin(RelNode):
             The new subquery node to use. If *None*, the current subquery node is re-used.
         predicate : Optional[preds.AbstractPredicate], optional
             The new predicate to use. If *None*, the current predicate is re-used.
-        parent : Optional[RelNode], optional
-            The new parent node to use. If *None*, the current parent is re-used. In order to remove a parent node, use the
-            `as_root` parameter.
         as_root : bool, optional
             Whether the anti join should become the new root node of the tree. This overwrites any value passed to `parent`.
 
@@ -1920,19 +1958,18 @@ class AntiJoin(RelNode):
         --------
         RelNode.mutate : for safety considerations and calling conventions
         """
-        input_node = input_node.mutate(as_root=True) if input_node is not None else self._input_node.mutate(as_root=True)
-        subquery_node = (subquery_node.mutate(as_root=True) if subquery_node is not None
-                         else self._subquery_node.mutate(as_root=True))
-        predicate = predicate if predicate is not None else self._predicate
-        if as_root:
-            parent = None
-        else:
-            # mutation of the parent is handled during the __init__ method of the current mutated node
-            parent = parent if parent is not None else self._parent
-        return AntiJoin(input_node, subquery_node, predicate=predicate, parent_node=parent)
+        params = {param: val for param, val in locals().items() if param != "self" and not param.startswith("__")}
+        return super().mutate(**params)
 
-    def __hash__(self) -> int:
-        return self._hash_val
+    def _update_child_nodes(self, children: Sequence[RelNode]) -> None:
+        self._assert_correct_update_child_count(children)
+        self._input_node = children[0]
+        self._subquery_node = children[1]
+
+    def _recalc_hash_val(self) -> int:
+        return hash((self._input_node, self._subquery_node, self._predicate))
+
+    __hash__ = RelNode.__hash__
 
     def __eq__(self, other: object) -> bool:
         return (isinstance(other, type(self))
@@ -1963,11 +2000,9 @@ class SubqueryScan(RelNode):
     representation in a convenient manner.
     """
     def __init__(self, input_node: RelNode, subquery: qal.SqlQuery, *, parent_node: Optional[RelNode] = None) -> None:
-        super().__init__(parent_node if parent_node is not None else None)
         self._input_node = input_node
         self._subquery = subquery
-        self._hash_val = hash((self._input_node, self._subquery))
-        self._maintain_child_links()
+        super().__init__(parent_node)
 
     @property
     def input_node(self) -> RelNode:
@@ -2004,7 +2039,7 @@ class SubqueryScan(RelNode):
         return visitor.visit_subquery(self)
 
     def mutate(self, *, input_node: Optional[RelNode] = None, subquery: Optional[qal.SqlQuery] = None,
-               parent: Optional[RelNode] = None, as_root: bool = False) -> SubqueryScan:
+               as_root: bool = False) -> SubqueryScan:
         """Creates a new subquery scan with modified attributes.
 
         Parameters
@@ -2013,9 +2048,6 @@ class SubqueryScan(RelNode):
             The new input node to use. If *None*, the current input node is re-used.
         subquery : Optional[qal.SqlQuery], optional
             The new subquery to use. If *None*, the current subquery is re-used.
-        parent : Optional[RelNode], optional
-            The new parent node to use. If *None*, the current parent is re-used. In order to remove a parent node, use the
-            `as_root` parameter.
         as_root : bool, optional
             Whether the subquery scan should become the new root node of the tree. This overwrites any value passed to
             `parent`.
@@ -2029,16 +2061,13 @@ class SubqueryScan(RelNode):
         --------
         RelNode.mutate : for safety considerations and calling conventions
         """
-        input_node = input_node.mutate(as_root=True) if input_node is not None else self._input_node.mutate(as_root=True)
-        if as_root:
-            parent = None
-        else:
-            # mutation of the parent is handled during the __init__ method of the current mutated node
-            parent = parent if parent is not None else self._parent
-        return SubqueryScan(input_node, subquery, parent_node=parent)
+        params = {param: val for param, val in locals().items() if param != "self" and not param.startswith("__")}
+        return super().mutate(**params)
 
-    def __hash__(self) -> int:
-        return self._hash_val
+    def _recalc_hash_val(self) -> int:
+        return hash((self._input_node, self._subquery))
+
+    __hash__ = RelNode.__hash__
 
     def __eq__(self, other: object) -> bool:
         return isinstance(other, type(self)) and self._input_node == other._input_node and self._subquery == other._subquery
@@ -2127,6 +2156,81 @@ class RelNodeVisitor(abc.ABC, typing.Generic[VisitorResult]):
     @abc.abstractmethod
     def visit_subquery(self, subquery: SubqueryScan) -> VisitorResult:
         raise NotImplementedError
+
+
+def _collect_leaf_nodes(root: RelNode) -> set[Relation]:
+    """Provides all leaf nodes of a relational algebra tree.
+
+    For relation nodes with subquery input, only the leaf nodes of the subquery are returned.
+
+    Parameters
+    ----------
+    root : RelNode
+        The root node of the tree
+
+    Returns
+    -------
+    set[Relation]
+        The leaf nodes
+    """
+    if isinstance(root, Relation) and not root.subquery_input:
+        nodes = {root}
+    else:
+        nodes = collection_utils.set_union(_collect_leaf_nodes(child) for child in root.children())
+    return nodes
+
+
+_RelTreeUpdateSet = collections.namedtuple("_RelTreeUpdateSet", ["updated_root", "updated_initiator"])
+"""Holds the root node of the updated tree and the node that asked for the tree update in the first place."""
+
+
+class _RelNodeUpdateManager:
+    """Handles the process of obtaining a copy of an entire relational algebra tree.
+
+    Parameters
+    ----------
+    root : RelNode
+        The current root node of the tree
+    initiator : RelNode
+        The node that asked for the tree update in the first place
+    """
+    def __init__(self, root: RelNode, *, initiator: RelNode) -> None:
+        self._root = root
+        self._initiator = initiator
+        self._updated_nodes: dict[int, RelNode] = {}
+        self._node_working_set: list[RelNode] = list(_collect_leaf_nodes(root))
+
+    def make_relalg_copy(self) -> _RelTreeUpdateSet:
+        """Produces the actual copy of the relational algebra tree."""
+
+        updated_root: RelNode = None
+        updated_initiator: RelNode = None
+
+        while self._node_working_set:
+            current_node = self._node_working_set.pop(0)
+            already_updated = id(current_node) in self._updated_nodes
+            pending_child_update = any(id(child) not in self._updated_nodes for child in current_node.children())
+            if already_updated or pending_child_update:
+                continue
+
+            updated_node = current_node.clone()
+            updated_node._update_child_nodes([self._updated_nodes[id(child)] for child in current_node.children()])
+            updated_node._clear_parent_links()
+
+            self._updated_nodes[id(current_node)] = updated_node
+            if current_node.parent_node:
+                self._node_working_set.append(current_node.parent_node)
+            self._node_working_set.extend(current_node.sideways_pass)
+
+            if current_node == self._root:
+                updated_root = updated_node
+            if current_node == self._initiator:
+                updated_initiator = updated_node
+
+        assert updated_root is not None
+        assert updated_initiator is not None
+        updated_root._maintain_child_links(recursive=True)
+        return _RelTreeUpdateSet(updated_root, updated_initiator)
 
 
 def _is_aggregation(expression: expr.SqlExpression) -> bool:
