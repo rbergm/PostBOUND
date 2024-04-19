@@ -14,6 +14,19 @@ Be carefull when updating and check the changelog!
 
 ---
 
+
+## Version 0.4.2
+
+### New features
+- The `analysis` module now provides a utility to compute the actual plan cost based on the true cardinalities
+- The inspection of query plan now accepts a custom lists of fields to be displayed
+
+### Updates
+- Warnings from the `db` package now provide categories to enable them to be silenced
+- Mutations on relalg trees now also update parent nodes
+
+---
+
 ## Version 0.4.1
 
 ### Updates
