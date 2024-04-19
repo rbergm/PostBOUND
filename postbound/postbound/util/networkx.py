@@ -67,7 +67,7 @@ def nx_merge_nodes(graph: nx.Graph, nodes: Iterable[NodeType], *, target_node: N
     pass
 
 
-def nx_random_walk(graph: nx.Graph) -> Generator[NodeType, None, None]:
+def nx_random_walk(graph: nx.Graph, *, starting_node: Optional[NodeType] = None) -> Generator[NodeType, None, None]:
     """A modified random walk implementation for NetworkX graphs.
 
     A random walk starts at any of the nodes of the graph. At each iteration, a neighboring node is selected and moved to.
@@ -84,6 +84,8 @@ def nx_random_walk(graph: nx.Graph) -> Generator[NodeType, None, None]:
     ----------
     graph : nx.Graph
         The graph to walk over
+    starting_node : Optional[NodeType], optional
+        The node where the walk starts. If unspecified, a random node is selected.
 
     Yields
     ------
@@ -96,7 +98,7 @@ def nx_random_walk(graph: nx.Graph) -> Generator[NodeType, None, None]:
 
     total_n_nodes = len(graph.nodes)
 
-    current_node = random.choice(list(graph.nodes))
+    current_node = random.choice(list(graph.nodes)) if starting_node is None else starting_node
     visited_nodes.add(current_node)
     yield current_node
 
