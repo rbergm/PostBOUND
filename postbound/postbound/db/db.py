@@ -21,6 +21,7 @@ import atexit
 import collections
 import json
 import math
+import numbers
 import os
 import textwrap
 import typing
@@ -1647,7 +1648,8 @@ class QueryExecutionPlan(jsonize.Jsonizable):
                                   physical_operator=self.physical_operator,
                                   inner_child=simplified_inner)
 
-    def inspect(self, *, skip_intermediates: bool = False, _current_indentation: int = 0) -> str:
+    def inspect(self, *, fields: Optional[Iterable[str]] = None, skip_intermediates: bool = False,
+                _current_indentation: int = 0) -> str:
         """Provides a nice hierarchical string representation of the plan structure.
 
         The representation typically spans multiple lines and uses indentation to separate parent nodes from their
@@ -1655,6 +1657,10 @@ class QueryExecutionPlan(jsonize.Jsonizable):
 
         Parameters
         ----------
+        fields : Optional[Iterable[str]], optional
+            The attributes of the nodes that should be included in the output. Can be set to any number of the available
+            attributes. If no fields are given, a default configuration inspired by Postgres' **EXPLAIN ANALYZE** output is
+            used.
         skip_intermediates : bool, optional
             Whether non-scan and non-join nodes should be excluded from the representation. Defaults to ``False``.
         _current_indentation : int, optional
@@ -1669,9 +1675,18 @@ class QueryExecutionPlan(jsonize.Jsonizable):
         """
         padding = " " * _current_indentation
         prefix = f"{padding}<- " if padding else ""
-        own_inspection = [prefix + str(self)]
+
+        if not fields:
+            own_inspection = [prefix + str(self)]
+        else:
+            attr_values = {attr: getattr(self, attr) for attr in fields}
+            pretty_attrs = {attr: round(val, 3) if isinstance(val, numbers.Number) else val
+                            for attr, val in attr_values.items()}
+            attr_str = " ".join(f"{attr}={val}" for attr, val in pretty_attrs.items())
+            own_inspection = [prefix + f"{self.node_type} ({attr_str})"]
+
         child_inspections = [
-            child.inspect(skip_intermediates=skip_intermediates, _current_indentation=_current_indentation + 2)
+            child.inspect(fields=fields, skip_intermediates=skip_intermediates, _current_indentation=_current_indentation + 2)
             for child in self.children]
 
         if not skip_intermediates or self.is_join or self.is_scan or not _current_indentation:
@@ -1695,6 +1710,9 @@ class QueryExecutionPlan(jsonize.Jsonizable):
         """
         all_nodes = list(self.iternodes())
         summary: dict[str, object] = {}
+        summary["estimated_card"] = round(self.estimated_cardinality, 3)
+        summary["actual_card"] = round(self.true_cardinality, 3)
+        summary["estimated_cost"] = round(self.cost, 3)
         summary["c_out"] = self.total_processed_rows()
         summary["max_qerror"] = round(max(node.qerror() for node in all_nodes), 3)
         summary["avg_qerror"] = round(sum(node.qerror() for node in all_nodes) / len(all_nodes), 3)
@@ -1717,12 +1735,16 @@ class QueryExecutionPlan(jsonize.Jsonizable):
 
     def __str__(self) -> str:
         if self.is_analyze():
-            analyze_str = f" (execution time={self.execution_time} true cardinality={self.true_cardinality})"
+            exec_time = round(self.execution_time, 3)
+            true_card = round(self.true_cardinality, 3)
+            analyze_str = f" (execution time={exec_time} true cardinality={true_card})"
         else:
             analyze_str = ""
 
         table_str = f" :: {self.table}" if self.table else ""
-        plan_str = f" (cost={self.cost} estimated cardinality={self.estimated_cardinality})"
+        cost = round(self.cost, 3)
+        estimated_card = round(self.estimated_cardinality, 3)
+        plan_str = f" (cost={cost} estimated cardinality={estimated_card})"
         return "".join((self.node_type, table_str, plan_str, analyze_str))
 
 
