@@ -8,6 +8,7 @@ that change the entire structure of the query.
 from __future__ import annotations
 
 import typing
+import warnings
 from collections.abc import Callable, Iterable
 from typing import Optional
 
@@ -977,10 +978,10 @@ def _rename_columns_in_query(query: QueryType,
         raise TypeError("Unknown query type: " + str(query))
 
 
-def _rename_columns_in_expression(expression: Optional[expr.SqlExpression],
-                                  available_renamings: dict[base.ColumnReference, base.ColumnReference]
-                                  ) -> Optional[expr.SqlExpression]:
-    """Handler method to replace specific column references by new references in an expression.
+def rename_columns_in_expression(expression: Optional[expr.SqlExpression],
+                                 available_renamings: dict[base.ColumnReference, base.ColumnReference]
+                                 ) -> Optional[expr.SqlExpression]:
+    """Replaces references to specific columns in an expression.
 
     Parameters
     ----------
@@ -1000,6 +1001,21 @@ def _rename_columns_in_expression(expression: Optional[expr.SqlExpression],
         If the expression is of no known type. This indicates that this method is missing a handler for a specific expressoin
         type that was added later on.
     """
+    return _rename_columns_in_expression(expression, available_renamings)
+
+
+def _rename_columns_in_expression(expression: Optional[expr.SqlExpression],
+                                  available_renamings: dict[base.ColumnReference, base.ColumnReference]
+                                  ) -> Optional[expr.SqlExpression]:
+    """See `rename_columns_in_expression` for details.
+
+    See Also
+    --------
+    rename_columns_in_expression
+    """
+    warnings.warn("This method is deprecated and will be removed in the future. Use `rename_columns_in_expression` instead.",
+                  FutureWarning)
+
     if expression is None:
         return None
 

@@ -42,8 +42,7 @@ import typing
 from collections.abc import Generator, Iterable, Sequence
 from typing import Optional
 
-from postbound.qal import base, clauses, expressions as expr, predicates as preds, qal
-from postbound.qal.expressions import SqlExpression
+from postbound.qal import base, clauses, expressions as expr, predicates as preds, qal, transform
 from postbound.util import collections as collection_utils, dicts as dict_utils
 
 
@@ -1380,6 +1379,10 @@ class Rename(RelNode):
         """
         return self._mapping
 
+    def provided_expressions(self) -> frozenset[expr.SqlExpression]:
+        return frozenset(transform.rename_columns_in_expression(child_expr, self._mapping)
+                         for child_expr in self._input_node.provided_expressions())
+
     def children(self) -> Sequence[RelNode]:
         return [self._input_node]
 
@@ -1420,7 +1423,7 @@ class Rename(RelNode):
         return isinstance(other, type(self)) and self._input_node == other._input_node and self._mapping == other._mapping
 
     def __str__(self) -> str:
-        map_str = ", ".join(f"{col}: {target}" for col, target in self._mapping)
+        map_str = ", ".join(f"{col}: {target}" for col, target in self._mapping.items())
         return f"ϱ ({map_str})"
 
 
@@ -2032,7 +2035,7 @@ class SubqueryScan(RelNode):
     def children(self) -> Sequence[RelNode]:
         return [self._input_node]
 
-    def provided_expressions(self) -> frozenset[SqlExpression]:
+    def provided_expressions(self) -> frozenset[expr.SqlExpression]:
         return {expr.SubqueryExpression(self._subquery)} | super().provided_expressions()
 
     def accept_visitor(self, visitor: RelNodeVisitor[VisitorResult]) -> VisitorResult:

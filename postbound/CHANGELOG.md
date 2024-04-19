@@ -23,7 +23,12 @@ Be carefull when updating and check the changelog!
 
 ### Updates
 - Warnings from the `db` package now provide categories to enable them to be silenced
-- Mutations on relalg trees now also update parent nodes
+- Mutations on `relalg` trees now also update parent nodes
+- Added missing method implementations to the rename operator in `relalg`
+- The `transform` module now provides a public-API `rename_columns_in_expression`
+
+### Fixes
+- Fixed `__str__` implementation for `relalg.Rename`
 
 ---
 
