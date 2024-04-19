@@ -158,6 +158,17 @@ class RelalgParserTests(unittest.TestCase):
         self.assertNotEqual(old_root, new_root)
         self.assertTrue(len(old_node_sequence) + 1 == len(new_node_sequence))
 
+    def test_rename_operator(self):
+        tab_r = base.TableReference("R")
+        col_r_a = base.ColumnReference("a", tab_r)
+        renamed_col = base.ColumnReference("renamed", tab_r)
+        scan_r = relalg.Relation(tab_r, [col_r_a])
+        rename = relalg.Rename(scan_r, {col_r_a: renamed_col})
+
+        expected_expressions = frozenset({expressions.ColumnExpression(renamed_col)})
+        self.assertEqual(rename.provided_expressions(), expected_expressions)
+        self.assertTrue(str(rename))
+
     def _assert_sound_tree_linkage(self, root: relalg.RelNode):
         for child in root.children():
             self.assertEqual(child.parent_node, root, f"(parent {child.parent_node!r} -> child {child!r}) != {root!r}")

@@ -1351,7 +1351,7 @@ class Rename(RelNode):
     This node is currently not used since we do not support natural joins.
     """
     def __init__(self, input_node: RelNode, mapping: dict[base.ColumnReference, base.ColumnReference], *,
-                 parent_node: Optional[RelNode]) -> None:
+                 parent_node: Optional[RelNode] = None) -> None:
         # TODO: check types + add provided / required expressions method
         self._input_node = input_node
         self._mapping = dict_utils.frozendict(mapping)

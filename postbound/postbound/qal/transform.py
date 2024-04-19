@@ -1001,7 +1001,46 @@ def rename_columns_in_expression(expression: Optional[expr.SqlExpression],
         If the expression is of no known type. This indicates that this method is missing a handler for a specific expressoin
         type that was added later on.
     """
-    return _rename_columns_in_expression(expression, available_renamings)
+    if expression is None:
+        return None
+
+    if isinstance(expression, expr.StaticValueExpression) or isinstance(expression, expr.StarExpression):
+        return expression
+    elif isinstance(expression, expr.ColumnExpression):
+        return (expr.ColumnExpression(available_renamings[expression.column])
+                if expression.column in available_renamings else expression)
+    elif isinstance(expression, expr.CastExpression):
+        renamed_child = rename_columns_in_expression(expression.casted_expression, available_renamings)
+        return expr.CastExpression(renamed_child, expression.target_type)
+    elif isinstance(expression, expr.MathematicalExpression):
+        renamed_first_arg = rename_columns_in_expression(expression.first_arg, available_renamings)
+        renamed_second_arg = rename_columns_in_expression(expression.second_arg, available_renamings)
+        return expr.MathematicalExpression(expression.operator, renamed_first_arg, renamed_second_arg)
+    elif isinstance(expression, expr.FunctionExpression):
+        renamed_arguments = [rename_columns_in_expression(arg, available_renamings)
+                             for arg in expression.arguments]
+        return expr.FunctionExpression(expression.function, renamed_arguments, distinct=expression.distinct)
+    elif isinstance(expression, expr.SubqueryExpression):
+        return expr.SubqueryExpression(_rename_columns_in_query(expression.query, available_renamings))
+    elif isinstance(expression, expr.WindowExpression):
+        renamed_function = rename_columns_in_expression(expression.window_function, available_renamings)
+        renamed_partition = [rename_columns_in_expression(part, available_renamings) for part in expression.partitioning]
+        renamed_orderby = rename_columns_in_clause(expression.ordering, available_renamings) if expression.ordering else None
+        renamed_filter = (rename_columns_in_predicate(expression.filter_condition, available_renamings)
+                          if expression.filter_condition else None)
+        return expr.WindowExpression(renamed_function, partitioning=renamed_partition, ordering=renamed_orderby,
+                                     filter_condition=renamed_filter)
+    elif isinstance(expression, expr.CaseExpression):
+        renamed_cases = [(rename_columns_in_predicate(condition, available_renamings),
+                          rename_columns_in_expression(result, available_renamings))
+                         for condition, result in expression.cases]
+        renamed_else = (rename_columns_in_expression(expression.else_expression, available_renamings)
+                        if expression.else_expression else None)
+        return expr.CaseExpression(renamed_cases, else_expr=renamed_else)
+    elif isinstance(expression, expr.BooleanExpression):
+        return expr.BooleanExpression(rename_columns_in_predicate(expression.predicate, available_renamings))
+    else:
+        raise ValueError("Unknown expression type: " + str(expression))
 
 
 def _rename_columns_in_expression(expression: Optional[expr.SqlExpression],
@@ -1015,47 +1054,7 @@ def _rename_columns_in_expression(expression: Optional[expr.SqlExpression],
     """
     warnings.warn("This method is deprecated and will be removed in the future. Use `rename_columns_in_expression` instead.",
                   FutureWarning)
-
-    if expression is None:
-        return None
-
-    if isinstance(expression, expr.StaticValueExpression) or isinstance(expression, expr.StarExpression):
-        return expression
-    elif isinstance(expression, expr.ColumnExpression):
-        return (expr.ColumnExpression(available_renamings[expression.column])
-                if expression.column in available_renamings else expression)
-    elif isinstance(expression, expr.CastExpression):
-        renamed_child = _rename_columns_in_expression(expression.casted_expression, available_renamings)
-        return expr.CastExpression(renamed_child, expression.target_type)
-    elif isinstance(expression, expr.MathematicalExpression):
-        renamed_first_arg = _rename_columns_in_expression(expression.first_arg, available_renamings)
-        renamed_second_arg = _rename_columns_in_expression(expression.second_arg, available_renamings)
-        return expr.MathematicalExpression(expression.operator, renamed_first_arg, renamed_second_arg)
-    elif isinstance(expression, expr.FunctionExpression):
-        renamed_arguments = [_rename_columns_in_expression(arg, available_renamings)
-                             for arg in expression.arguments]
-        return expr.FunctionExpression(expression.function, renamed_arguments, distinct=expression.distinct)
-    elif isinstance(expression, expr.SubqueryExpression):
-        return expr.SubqueryExpression(_rename_columns_in_query(expression.query, available_renamings))
-    elif isinstance(expression, expr.WindowExpression):
-        renamed_function = _rename_columns_in_expression(expression.window_function, available_renamings)
-        renamed_partition = [_rename_columns_in_expression(part, available_renamings) for part in expression.partitioning]
-        renamed_orderby = rename_columns_in_clause(expression.ordering, available_renamings) if expression.ordering else None
-        renamed_filter = (rename_columns_in_predicate(expression.filter_condition, available_renamings)
-                          if expression.filter_condition else None)
-        return expr.WindowExpression(renamed_function, partitioning=renamed_partition, ordering=renamed_orderby,
-                                     filter_condition=renamed_filter)
-    elif isinstance(expression, expr.CaseExpression):
-        renamed_cases = [(rename_columns_in_predicate(condition, available_renamings),
-                          _rename_columns_in_expression(result, available_renamings))
-                         for condition, result in expression.cases]
-        renamed_else = (_rename_columns_in_expression(expression.else_expression, available_renamings)
-                        if expression.else_expression else None)
-        return expr.CaseExpression(renamed_cases, else_expr=renamed_else)
-    elif isinstance(expression, expr.BooleanExpression):
-        return expr.BooleanExpression(rename_columns_in_predicate(expression.predicate, available_renamings))
-    else:
-        raise ValueError("Unknown expression type: " + str(expression))
+    return rename_columns_in_expression(expression, available_renamings)
 
 
 def rename_columns_in_predicate(predicate: Optional[preds.AbstractPredicate],
@@ -1085,21 +1084,21 @@ def rename_columns_in_predicate(predicate: Optional[preds.AbstractPredicate],
         return None
 
     if isinstance(predicate, preds.BinaryPredicate):
-        renamed_first_arg = _rename_columns_in_expression(predicate.first_argument, available_renamings)
-        renamed_second_arg = _rename_columns_in_expression(predicate.second_argument, available_renamings)
+        renamed_first_arg = rename_columns_in_expression(predicate.first_argument, available_renamings)
+        renamed_second_arg = rename_columns_in_expression(predicate.second_argument, available_renamings)
         return preds.BinaryPredicate(predicate.operation, renamed_first_arg, renamed_second_arg)
     elif isinstance(predicate, preds.BetweenPredicate):
-        renamed_col = _rename_columns_in_expression(predicate.column, available_renamings)
-        renamed_interval_start = _rename_columns_in_expression(predicate.interval_start, available_renamings)
-        renamed_interval_end = _rename_columns_in_expression(predicate.interval_end, available_renamings)
+        renamed_col = rename_columns_in_expression(predicate.column, available_renamings)
+        renamed_interval_start = rename_columns_in_expression(predicate.interval_start, available_renamings)
+        renamed_interval_end = rename_columns_in_expression(predicate.interval_end, available_renamings)
         return preds.BetweenPredicate(renamed_col, (renamed_interval_start, renamed_interval_end))
     elif isinstance(predicate, preds.InPredicate):
-        renamed_col = _rename_columns_in_expression(predicate.column, available_renamings)
-        renamed_vals = [_rename_columns_in_expression(val, available_renamings)
+        renamed_col = rename_columns_in_expression(predicate.column, available_renamings)
+        renamed_vals = [rename_columns_in_expression(val, available_renamings)
                         for val in predicate.values]
         return preds.InPredicate(renamed_col, renamed_vals)
     elif isinstance(predicate, preds.UnaryPredicate):
-        return preds.UnaryPredicate(_rename_columns_in_expression(predicate.column, available_renamings),
+        return preds.UnaryPredicate(rename_columns_in_expression(predicate.column, available_renamings),
                                     predicate.operation)
     elif isinstance(predicate, preds.CompoundPredicate):
         renamed_children = ([rename_columns_in_predicate(predicate.children, available_renamings)]
@@ -1185,7 +1184,7 @@ def rename_columns_in_clause(clause: Optional[ClauseType],
                         for cte in clause.queries]
         return clauses.CommonTableExpression(renamed_ctes)
     if isinstance(clause, clauses.Select):
-        renamed_targets = [clauses.BaseProjection(_rename_columns_in_expression(proj.expression, available_renamings),
+        renamed_targets = [clauses.BaseProjection(rename_columns_in_expression(proj.expression, available_renamings),
                                                   proj.target_name)
                            for proj in clause.targets]
         return clauses.Select(renamed_targets, clause.projection_type)
@@ -1201,12 +1200,12 @@ def rename_columns_in_clause(clause: Optional[ClauseType],
     elif isinstance(clause, clauses.Where):
         return clauses.Where(rename_columns_in_predicate(clause.predicate, available_renamings))
     elif isinstance(clause, clauses.GroupBy):
-        renamed_cols = [_rename_columns_in_expression(col, available_renamings) for col in clause.group_columns]
+        renamed_cols = [rename_columns_in_expression(col, available_renamings) for col in clause.group_columns]
         return clauses.GroupBy(renamed_cols, clause.distinct)
     elif isinstance(clause, clauses.Having):
         return clauses.Having(rename_columns_in_predicate(clause.condition, available_renamings))
     elif isinstance(clause, clauses.OrderBy):
-        renamed_cols = [clauses.OrderByExpression(_rename_columns_in_expression(col.column, available_renamings),
+        renamed_cols = [clauses.OrderByExpression(rename_columns_in_expression(col.column, available_renamings),
                                                   col.ascending, col.nulls_first)
                         for col in clause.expressions]
         return clauses.OrderBy(renamed_cols)
