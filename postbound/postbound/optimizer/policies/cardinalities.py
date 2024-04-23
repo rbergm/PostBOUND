@@ -144,11 +144,11 @@ class CardinalityHintsGenerator(stages.ParameterGeneration, abc.ABC):
 
         parameterization = planparams.PlanParameterization()
         for base_table in join_order.table_sequence():
-            estimate = self.calculate_estimate(base_table.tables())
+            estimate = self.calculate_estimate(query, base_table.tables())
             parameterization.add_cardinality_hint(base_table.tables(), estimate)
 
         for join in join_order.join_sequence():
-            estimate = self.calculate_estimate(join.tables())
+            estimate = self.calculate_estimate(query, join.tables())
             parameterization.add_cardinality_hint(join.tables(), estimate)
 
         return parameterization
