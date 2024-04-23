@@ -53,7 +53,7 @@ class RelalgParserTests(unittest.TestCase):
         join_node = relalg.ThetaJoin(select_s, scan_r,
                                      predicates.as_predicate(col_s_b, expressions.LogicalSqlOperators.Equal, col_r_a))
 
-        additional_selection = relalg.Selection(select_s.clone(),
+        additional_selection = relalg.Selection(select_s.clone(),  # we re-use an existing node to create a new one --> clone()
                                                 predicates.as_predicate(col_s_b, expressions.LogicalSqlOperators.Equal, 24))
         new_root = join_node.mutate(left_input=additional_selection).root()
 
@@ -72,8 +72,8 @@ class RelalgParserTests(unittest.TestCase):
 
         selection_a = relalg.Selection(scan_r, predicates.as_predicate(col_r_a, expressions.LogicalSqlOperators.Less, 42))
         selection_b = relalg.Selection(scan_r, predicates.as_predicate(col_r_a, expressions.LogicalSqlOperators.Greater, 24))
-
         union_node = relalg.Union(selection_a, selection_b)
+
         additional_projection = relalg.Projection(selection_b.clone(), [col_r_a])
         new_root = union_node.mutate(right_input=additional_projection).root()
 
@@ -132,7 +132,9 @@ class RelalgParserTests(unittest.TestCase):
         # selection down the tree.
         # Likewise, the new root becomes the previous cross product with the mutated selection as input. Effectively, this
         # pulls the cross product up in the tree.
-        new_second_node = old_root.mutate(input_node=old_root.input_node.left_input.clone())
+
+        # we use an existing node to mutate directly --> no need for cloning
+        new_second_node = old_root.mutate(input_node=old_root.input_node.left_input)
         new_root = old_root.input_node.mutate(left_input=new_second_node, as_root=True).root()
 
         self.assertIsInstance(new_root, relalg.CrossProduct)
@@ -168,6 +170,20 @@ class RelalgParserTests(unittest.TestCase):
         expected_expressions = frozenset({expressions.ColumnExpression(renamed_col)})
         self.assertEqual(rename.provided_expressions(), expected_expressions)
         self.assertTrue(str(rename))
+
+    def test_no_upwards_modification(self):
+        tab_r = base.TableReference("R")
+        col_r_a = base.ColumnReference("a", tab_r)
+        filter_pred = predicates.as_predicate(col_r_a, expressions.LogicalSqlOperators.Greater, 24)
+
+        original_relation = relalg.Relation(tab_r, [col_r_a])
+        original_root = relalg.Projection(original_relation, [col_r_a])
+
+        additional_selection = relalg.Selection(original_root.input_node, filter_pred)
+        new_root = original_root.mutate(input_node=additional_selection)
+        new_relation = new_root.leaf()
+
+        self.assertNotEqual(original_relation.parent_node, new_relation.parent_node)
 
     def _assert_sound_tree_linkage(self, root: relalg.RelNode):
         for child in root.children():

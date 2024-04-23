@@ -116,6 +116,19 @@ class RelNode(abc.ABC):
             return self
         return self._parent.root()
 
+    def leaf(self) -> Optional[RelNode]:
+        """Traverses the algebra tree downwards until a unique leaf node is found.
+
+        Returns
+        -------
+        Optional[RelNode]
+            The leaf node. If multiple leaf nodes exist (e.g. for join nodes), *None* is returned.
+        """
+        children = self.children()
+        if not children:
+            return self
+        return children[0] if len(children) == 1 else None
+
     @abc.abstractmethod
     def children(self) -> Sequence[RelNode]:
         """Provides all input nodes of the current operator.
@@ -217,15 +230,20 @@ class RelNode(abc.ABC):
         1. In-place modifications are the easiest. They occur, if an attribute of the current node should be modified, e.g.
            the predicate of a selection node. In this case, simply calling `mutate` on the selection is sufficient.
         2. Node deletions are a bit more complicated. They usually work by updating the child of the parent node to the child
-           of the node to delete. This is done by calling `mutate` on the parent node and supplying a clone of the child node
-           as parameter. The clone is required to avoid modifying the original tree.
+           of the node to delete. This is done by calling `mutate` on the parent node and supplying the child node
+           as parameter. No cloning is required since we do not create a new node.
         3. Node insertions depend on the kind of node to be inserted. If a new leaf node should be inserted, this can be done
            in one step by calling `mutate` on the parent node and supplying the new node as a child parameter.
-           However, if an existing node should be inserted at a new location, this node has to be cloned first.
+           However, if an existing node should be inserted at a new location, this node has to be cloned first. The same
+           applies when a new intermediate node receives an existing node as input: the new node requires a clone of the
+           existing input node to ensure that the linkage is sound.
         4. Node re-orderings are the most challenging, but follow the same rules as deletions and insertions: the top-most
            node is the one that receives the `mutate` call. All nodes that should be re-ordered have to be mutated first and
            receive their new child nodes as input. These mutations should also set `as_root` to true to skip unnecessary work.
            All child nodes of the nodes to be re-ordered have to be cloned to keep the linkage sound.
+
+        To summarise, cloning is always required when creating a new RelNode object the receives an existing node as input.
+        If existing nodes are supplied to `mutate` calls directly, no cloning is necessary.
 
         The default implementation of `mutate` requires that all attributes that can potentially be modified are passed
         as optional parameters and are named according to their properties. These properties need to be baked by "private"
@@ -238,6 +256,19 @@ class RelNode(abc.ABC):
         See Also
         --------
         RelNode.clone() : for obtaining 1:1 copies of single nodes
+
+        Examples
+        --------
+
+        Cloning is necessary when creating a new node:
+
+        >>> new_selection = Selection(existing_node.clone(), predicate)
+        >>> updated_root = old_root.mutate(input_node=new_selection)
+
+        Cloning is not required if existing nodes are used as input:
+        >>> grand_child = input_node=old_root.input_node.input_node
+        >>> updated_root = old_root.mutate(grand_child)
+
         """
         relalg_copy = _RelNodeUpdateManager(self.root(), initiator=self).make_relalg_copy()
         updated_self: RelNode = relalg_copy.updated_initiator
@@ -252,6 +283,8 @@ class RelNode(abc.ABC):
             actual_attr_name = f"_{attr}"
             if actual_attr_name not in fields:
                 continue
+            if isinstance(value, RelNode):
+                value = value.clone()
             setattr(updated_self, actual_attr_name, value)
 
         updated_root = updated_self.root()
