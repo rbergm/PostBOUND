@@ -31,7 +31,7 @@ from typing import Any, Literal, Optional
 
 from postbound.qal import base, parser, qal
 from postbound.optimizer import jointree, physops, planparams
-from postbound.util import collections as collection_utils, dicts as dict_utils, jsonize, misc
+from postbound.util import collections as collection_utils, dicts as dict_utils, misc
 
 
 class Cursor(typing.Protocol):
@@ -1199,7 +1199,7 @@ class HintService(abc.ABC):
         raise NotImplementedError
 
 
-class QueryExecutionPlan(jsonize.Jsonizable):
+class QueryExecutionPlan:
     """Heavily simplified system-independent model of physical query execution plans.
 
     A plan is a tree structure of `QueryExecutionPlan` objects. Each plan is a node in the tree and can have additional

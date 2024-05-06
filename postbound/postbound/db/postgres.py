@@ -424,15 +424,15 @@ class PostgresInterface(db.Database):
                 query_result = self._cursor.fetchall() if self._cursor.rowcount >= 0 else None
                 if not _modifies_geqo_config(query):
                     self._restore_geqo_state()
+                if cache_enabled:
+                    self._inflate_query_cache()
+                    self._query_cache[prepared_query] = query_result
             except (psycopg.InternalError, psycopg.OperationalError) as e:
                 msg = "\n".join([f"At {utils.current_timestamp()}", "For query:", str(query), "Message:", str(e)])
                 raise db.DatabaseServerError(msg, e)
             except psycopg.Error as e:
                 msg = "\n".join([f"At {utils.current_timestamp()}", "For query:", str(query), "Message:", str(e)])
                 raise db.DatabaseUserError(msg, e)
-            if cache_enabled:
-                self._inflate_query_cache()
-                self._query_cache[query] = query_result
 
         return _simplify_result_set(query_result)
 
