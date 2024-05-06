@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import abc
 import enum
-from typing import Protocol
+from typing import IO, Protocol
 
 import json
 from typing import Any
@@ -51,3 +51,12 @@ def to_json(obj: Any, *args, **kwargs) -> str | None:
         return None
     kwargs.pop("cls", None)
     return json.dumps(obj, *args, cls=JsonizeEncoder, **kwargs)
+
+
+def to_json_dump(obj: Any, file: IO, *args, **kwargs) -> None:
+    """Utility to transform any object to a JSON object and write it to a file, while making use of the `JsonizeEncoder`.
+
+    All arguments other than the object itself are passed to the default Python `json.dump` function.
+    """
+    kwargs.pop("cls", None)
+    json.dump(obj, file, cls=JsonizeEncoder, *args, **kwargs)

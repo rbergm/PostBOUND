@@ -711,6 +711,9 @@ class SqlQuery:
         for clause in self.clauses():
             clause.accept_visitor(clause_visitor)
 
+    def __json__(self) -> str:
+        return str(self)
+
     def __hash__(self) -> int:
         return self._hash_val
 
