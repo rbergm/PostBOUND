@@ -270,10 +270,22 @@ class PreComputedCardinalities(CardinalityHintsGenerator):
         current query. Defaults to *tables*.
     cardinality_col : str, optional
         The column in the CSV file that contains the actual cardinalities. Defaults to *cardinality*.
+    live_fallback : bool, optional
+        Whether to fall back to a live database in case no cardinality estimate is found in the CSV file. This is off by
+        default.
+    live_fallback_style : Literal["actual", "estimated"], optional
+        In case the fallback is enabled, this customizes the calculation strategy. "actual" will calculate the true cardinality
+        of the intermediate in question, whereas "estimated" (the default) will use the native optimizer to estimate the
+        cardinality.
+    live_db : Optional[db.Database], optional
+        The database system that should be used in case of a live fallback. If omitted, the database system is inferred from
+        the database pool.
     """
     def __init__(self, workload: workloads.Workload, lookup_table_path: str, *,
                  include_cross_products: bool = False, default_cardinality: Optional[int] = None,
-                 label_col: str = "label", tables_col: str = "tables", cardinality_col: str = "cardinality") -> None:
+                 label_col: str = "label", tables_col: str = "tables", cardinality_col: str = "cardinality",
+                 live_fallback: bool = False, live_db: Optional[db.Database] = None,
+                 live_fallback_style: Literal["actual", "estimated"] = "estimated") -> None:
         super().__init__(include_cross_products)
         self._workload = workload
         self._label_col = label_col
@@ -281,23 +293,79 @@ class PreComputedCardinalities(CardinalityHintsGenerator):
         self._card_col = cardinality_col
         self._default_card = default_cardinality
         self._lookup_df_path = lookup_table_path
+
+        self._live_db: Optional[db.Database] = None
+        if live_fallback:
+            self._live_db = db.DatabasePool.get_instance().current_database() if live_db is None else live_db
+        else:
+            self._live_db = None
+        self._live_fallback_style = live_fallback_style
+
         self._true_card_df = pd.read_csv(lookup_table_path, converters={tables_col: _parse_tables})
 
     def calculate_estimate(self, query: qal.SqlQuery, tables: frozenset[base.TableReference]) -> int:
         label = self._workload.label_of(query)
         relevant_samples = self._true_card_df[self._true_card_df[self._label_col] == label]
         cardinality_sample = relevant_samples[relevant_samples[self._tables_col] == tables]
-        if len(cardinality_sample) == 0 and self._default_card is None:
-            raise ValueError("No matching sample found")
-        elif len(cardinality_sample) == 0:
-            return self._default_card
-        elif len(cardinality_sample) > 1:
-            raise ValueError("More than one matching sample found")
+
+        tables_debug = "(" + ", ".join(tab.identifier() for tab in tables) + ")"
+        n_samples = len(cardinality_sample)
+        fallback_value = self._attempt_fallback_estimate(n_samples, query, tables)
+
+        if n_samples == 0 and fallback_value is None:
+            raise ValueError(f"No matching sample found for join {tables_debug} in query {label}")
+        elif n_samples == 0:
+            return fallback_value
+        elif n_samples > 1:
+            raise ValueError(f"{n_samples} samples found for join {tables_debug} in query {label}. Expected 1.")
         cardinality = cardinality_sample.iloc[0][self._card_col]
         return int(cardinality)
 
     def describe(self) -> dict:
         return {"name": "pre-computed-cards", "location": self._lookup_df_path, "workload": self._workload.name}
+
+    def _attempt_fallback_estimate(self, n_samples: int, query: qal.SqlQuery,
+                                   tables: frozenset[base.TableReference]) -> Optional[int]:
+        """Tries to infer the fallback value for a specific estimate, if this is necessary.
+
+        The inference strategy applies the following rules:
+
+        1. If exactly one sample was found, no fallback is necessary.
+        2. If no sample was found, but we specified a static fallback value, this value is used.
+        3. If a live fallback is available, the cardinality is calculated according to the `live_fallback_style`.
+        4. Otherwise no fallback is possible.
+
+        Parameters
+        ----------
+        n_samples : int
+            The number of samples found for the current intermediate
+        query : qal.SqlQuery
+            The query for which the cardinality should be estimated
+        tables : frozenset[base.TableReference]
+            The joins that form the current intermediate
+
+        Returns
+        -------
+        Optional[int]
+            The fallback value if it could be inferred, otherwise *None*.
+        """
+        if n_samples == 1:
+            # If we found exactly one sample, we do not need to fall back at all
+            return None
+
+        if self._default_card is not None:
+            return self._default_card
+        if self._live_db is None:
+            return None
+
+        query_fragment = transform.extract_query_fragment(query, tables)
+        if self._live_fallback_style == "actual":
+            true_card_query = transform.as_count_star_query(query_fragment)
+            return self._live_db.execute_query(true_card_query)
+        elif self._live_fallback_style == "estimated":
+            return self._live_db.optimizer().cardinality_estimate(query_fragment)
+        else:
+            raise ValueError(f"Unknown fallback style: '{self._live_fallback_style}'")
 
 
 class CardinalityDistortion(CardinalityHintsGenerator):
