@@ -12,7 +12,7 @@ fi
 root=$(pwd)
 
 echo ".. Building SSB utility"
-patch -fs ssb-kit/dbgen/bm_utils.c ../util/ssb_dbgen.patch
+patch -fs ssb-kit/dbgen/bm_utils.c ../util/ssb_dbgen.patch || true
 cd ssb-kit/dbgen
 make MACHINE=LINUX DATABASE=POSTGRESQL
 
