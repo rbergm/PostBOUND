@@ -237,4 +237,6 @@ def _relalg_child_traversal(node: relalg.RelNode) -> Sequence[relalg.RelNode]:
 
 def plot_relalg(relnode: relalg.RelNode, **kwargs) -> gv.Graph:
     return tree_viz.plot_tree(relnode, _relalg_node_labels, _relalg_child_traversal,
-                              escape_labels=False, strict=True, **kwargs)
+                              escape_labels=False, node_id_generator=id,
+                              strict=True,  # gv.Graph arguments
+                              **kwargs)
