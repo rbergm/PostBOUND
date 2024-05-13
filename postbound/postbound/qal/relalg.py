@@ -203,8 +203,7 @@ class RelNode(abc.ABC):
         The specific parameters depend on the concrete operator type. Calling `mutate()` on *any* node generates a copy of the
         *entire* tree, so make sure to use this operation sparingly.
 
-        See *Notes* for additional important remarks regarding tree modifications and the mutate implementation for additional
-        node types.
+        See *Notes* for important remarks regarding the mutate implementation for custom node types.
 
         Parameters
         ----------
@@ -221,76 +220,24 @@ class RelNode(abc.ABC):
 
         Notes
         -----
-        In order to perform updates on the structure of the algebraic tree, it is important to obtain copies of some of the
-        nodes that should be re-used. This ensures that the linkage between parent and child nodes of the original tree remains
-        sound.
+        Concrete node types should implement their own `mutate()` function which accepts parameters specific to the node type
+        (in addition to the required `as_root` parameter). Other than the function prototype, the methods can share the same
+        default implementation:
 
-        Specifically, we distinguish between four different kinds of tree modifications:
+        .. code-block:: python
+            params = {param: val for param, val in locals().items() if param != "self" and not param.startswith("__")}
+            return super().mutate(**params)
 
-        1. In-place modifications are the easiest. They occur, if an attribute of the current node should be modified, e.g.
-           the predicate of a selection node. In this case, simply calling `mutate` on the selection is sufficient.
-        2. Node deletions are a bit more complicated. They usually work by updating the child of the parent node to the child
-           of the node to delete. This is done by calling `mutate` on the parent node and supplying the child node
-           as parameter. No cloning is required since we do not create a new node.
-        3. Node insertions depend on the kind of node to be inserted. If a new leaf node should be inserted, this can be done
-           in one step by calling `mutate` on the parent node and supplying the new node as a child parameter.
-           However, if an existing node should be inserted at a new location, this node has to be cloned first. The same
-           applies when a new intermediate node receives an existing node as input: the new node requires a clone of the
-           existing input node to ensure that the linkage is sound.
-        4. Node re-orderings are the most challenging, but follow the same rules as deletions and insertions: the top-most
-           node is the one that receives the `mutate` call. All nodes that should be re-ordered have to be mutated first and
-           receive their new child nodes as input. These mutations should also set `as_root` to true to skip unnecessary work.
-           All child nodes of the nodes to be re-ordered have to be cloned to keep the linkage sound.
+        In order for the method to work properly, all field-specific parameters *must* use the common property/attribute
+        conventions. For example, to update a property `input_node` of the operator, its value must be stored in a "private"
+        attribute `_input_node`. At the same time, the `mutate()` method must accept a parameter `input_node` (without the
+        leading underscore). The method will then automatically update the internal attribute with the new value.
 
-        To summarise, cloning is always required when creating a new RelNode object the receives an existing node as input.
-        If existing nodes are supplied to `mutate` calls directly, no cloning is necessary.
-
-        The default implementation of `mutate` requires that all attributes that can potentially be modified are passed
-        as optional parameters and are named according to their properties. These properties need to be baked by "private"
-        attributes that are named with a leading underscore. E.g., if a node contains an attribute *data*, the `mutate` method
-        of this node should accept a parameter *data* that is used to update the internal attribute *_data*.
-        Each concrete implementation of RelNode should simply delegate this task to the RelNode superclass by passing all
-        relevant parameters. Implementations are free to provide their own `mutate` logic, but need to ensure that copy
-        behaviour, linkage and hashing work as expected.
-
-        See Also
-        --------
-        RelNode.clone() : for obtaining 1:1 copies of single nodes
-
-        Examples
-        --------
-
-        Cloning is necessary when creating a new node:
-
-        >>> new_selection = Selection(existing_node.clone(), predicate)
-        >>> updated_root = old_root.mutate(input_node=new_selection)
-
-        Cloning is not required if existing nodes are used as input:
-        >>> grand_child = input_node=old_root.input_node.input_node
-        >>> updated_root = old_root.mutate(grand_child)
-
+        See the implementation of `Selection` for an example.
         """
-        relalg_copy = _RelNodeUpdateManager(self.root(), initiator=self).make_relalg_copy()
-        updated_self: RelNode = relalg_copy.updated_initiator
-
-        if as_root:
-            updated_self._clear_parent_links()
-
-        fields: set[str] = set(vars(self).keys())
-        for attr, value in kwargs.items():
-            if value is None:
-                continue
-            actual_attr_name = f"_{attr}"
-            if actual_attr_name not in fields:
-                continue
-            if isinstance(value, RelNode):
-                value = value.clone()
-            setattr(updated_self, actual_attr_name, value)
-
-        updated_root = updated_self.root()
-        updated_root._rebuild_linkage()
-        updated_root._rehash()
-        return updated_self
+        update_service = _RelNodeUpdateManager(self.root(), initiator=self)
+        relalg_copy = update_service.make_relalg_copy(as_root=as_root, **kwargs)
+        return relalg_copy.updated_initiator
 
     def clone(self) -> RelNode:
         """Obtains a 1:1 copy of the current node.
@@ -2216,12 +2163,15 @@ def _collect_leaf_nodes(root: RelNode) -> set[Relation]:
     return nodes
 
 
-_RelTreeUpdateSet = collections.namedtuple("_RelTreeUpdateSet", ["updated_root", "updated_initiator"])
-"""Holds the root node of the updated tree and the node that asked for the tree update in the first place."""
+@dataclasses.dataclass
+class _RelTreeUpdateSet:
+    """Holds the root node of the updated tree and the node that asked for the tree update in the first place."""
+    updated_root: RelNode
+    updated_initiator: RelNode
 
 
 class _RelNodeUpdateManager:
-    """Handles the process of obtaining a copy of an entire relational algebra tree.
+    """Handles the process of copying and modifying an entire relational algebra tree.
 
     Parameters
     ----------
@@ -2233,40 +2183,141 @@ class _RelNodeUpdateManager:
     def __init__(self, root: RelNode, *, initiator: RelNode) -> None:
         self._root = root
         self._initiator = initiator
-        self._updated_nodes: dict[int, RelNode] = {}
+        self._updated_nodes: dict[RelNode, RelNode] = {}
         self._node_working_set: list[RelNode] = list(_collect_leaf_nodes(root))
 
-    def make_relalg_copy(self) -> _RelTreeUpdateSet:
-        """Produces the actual copy of the relational algebra tree."""
+    def make_relalg_copy(self, **kwargs) -> _RelTreeUpdateSet:
+        """Creates a copy of the relational algebra tree and applies modifications to it.
 
+        Parameters
+        ----------
+        **kwargs
+            Arbitrary keyword arguments to apply to the tree nodes. These are the arguments to the `mutate` call.
+
+        Returns
+        -------
+        _RelTreeUpdateSet
+            The updated relalg tree.
+        """
+        as_root: bool = kwargs.get("as_root", False)
         updated_root: RelNode = None
         updated_initiator: RelNode = None
 
         while self._node_working_set:
             current_node = self._node_working_set.pop(0)
-            already_updated = id(current_node) in self._updated_nodes
-            pending_child_update = any(id(child) not in self._updated_nodes for child in current_node.children())
+            self._update_node_working_set(current_node)
+
+            already_updated = current_node in self._updated_nodes
+            pending_child_update = any(child not in self._updated_nodes for child in current_node.children())
             if already_updated or pending_child_update:
                 continue
 
             updated_node = current_node.clone()
-            updated_node._update_child_nodes([self._updated_nodes[id(child)] for child in current_node.children()])
+            updated_node._update_child_nodes([self._updated_nodes[child] for child in current_node.children()])
             updated_node._clear_parent_links()
 
-            self._updated_nodes[id(current_node)] = updated_node
-            if current_node.parent_node:
-                self._node_working_set.append(current_node.parent_node)
-            self._node_working_set.extend(current_node.sideways_pass)
-
-            if current_node == self._root:
-                updated_root = updated_node
             if current_node == self._initiator:
+                self._perform_node_update(updated_node, **kwargs)
                 updated_initiator = updated_node
+                if as_root:
+                    updated_root = updated_node
+                    break
 
-        assert updated_root is not None
+            self._updated_nodes[current_node] = updated_node
+
+            if not as_root and current_node == self._root:
+                updated_root = updated_node
+
         assert updated_initiator is not None
-        updated_root._maintain_child_links(recursive=True)
+        assert updated_root is not None
+
+        updated_root._rebuild_linkage()
+        updated_root._rehash()
+        self._root._rebuild_linkage()
+        self._root._rehash()
+
         return _RelTreeUpdateSet(updated_root, updated_initiator)
+
+    def _perform_node_update(self, node: RelNode, **kwargs) -> None:
+        """Updates the initiator of a tree mutation with node-specific arguments.
+
+        Parameters
+        ----------
+        node : RelNode
+            The node to update. Must be the *copied* version of the initiator node.
+        **kwargs
+            The arguments to apply to the node
+        """
+        fields: set[str] = set(vars(node).keys())
+        for attr, value in kwargs.items():
+            if value is None:
+                continue
+            actual_attr_name = f"_{attr}"
+            if actual_attr_name not in fields:
+                continue
+
+            if isinstance(value, RelNode):
+                value = self._merge_new_child(value)
+            setattr(node, actual_attr_name, value)
+
+    def _merge_new_child(self, child_node: RelNode) -> RelNode:
+        """Merges a new child node into the tree update process.
+
+        This ensures that all child nodes of the new node correctly reference their updated counterparts.
+
+        Parameters
+        ----------
+        child_node : RelNode
+            The new child node to merge. Must be the *original* version of the child node.
+
+        Returns
+        -------
+        RelNode
+            The updated child node
+        """
+        internal_node_working_set: list[RelNode] = list(_collect_leaf_nodes(child_node))
+        updated_child: RelNode = None
+
+        while internal_node_working_set:
+            current_node = internal_node_working_set.pop(0)
+            already_updated = current_node in self._updated_nodes
+            if already_updated and current_node == child_node:
+                updated_child = self._updated_nodes[current_node]
+                break
+            if already_updated:
+                self._update_node_working_set(current_node, working_set=internal_node_working_set)
+                continue
+            if any(child not in self._updated_nodes for child in current_node.children()):
+                continue
+
+            updated_node = current_node.clone()
+            updated_node._update_child_nodes([self._updated_nodes[child] for child in current_node.children()])
+            updated_node._clear_parent_links()
+
+            self._updated_nodes[current_node] = updated_node
+            if current_node == child_node:
+                updated_child = updated_node
+                break
+
+            self._update_node_working_set(current_node, working_set=internal_node_working_set)
+
+        assert updated_child is not None
+        return updated_child
+
+    def _update_node_working_set(self, node: RelNode, *, working_set: Optional[list[RelNode]] = None) -> None:
+        """Utility method to quickly include all relevant parent nodes into a node working set.
+
+        Parameters
+        ----------
+        node : RelNode
+            The node whose upwards links should be added to the working set
+        working_set : Optional[list[RelNode]], optional
+            The working set to update. If *None*, the internal working set of the update manager is used.
+        """
+        working_set = self._node_working_set if working_set is None else working_set
+        if node.parent_node:
+            working_set.append(node.parent_node)
+        working_set.extend(node.sideways_pass)
 
 
 def _is_aggregation(expression: expr.SqlExpression) -> bool:
