@@ -409,7 +409,7 @@ class PostgresInterface(db.Database):
         return self._db_stats
 
     def hinting(self) -> PostgresHintService:
-        return PostgresHintService()
+        return PostgresHintService(self)
 
     def execute_query(self, query: qal.SqlQuery | str, *, cache_enabled: Optional[bool] = None) -> Any:
         cache_enabled = cache_enabled or (cache_enabled is None and self._cache_enabled)
@@ -461,7 +461,8 @@ class PostgresInterface(db.Database):
             "statistics_settings": {
                 "emulated": self._db_stats.emulated,
                 "cache_enabled": self._db_stats.cache_enabled
-            }
+            },
+            "hinting_mode": self.hinting().describe()
         }
         self._cursor.execute("SELECT name, setting FROM pg_settings")
         system_settings = self._cursor.fetchall()
@@ -700,9 +701,6 @@ class PostgresInterface(db.Database):
         if not isinstance(query, qal.SqlQuery):
             return query
 
-        if query.hints is not None and query.hints.query_hints:
-            self._assert_active_extension("pg_hint_plan")
-
         requires_geqo_deactivation = _query_contains_geqo_sensible_settings(query) and not _modifies_geqo_config(query)
         if requires_geqo_deactivation and self._current_geqo_state.triggers_geqo(query):
             logging.print_if(self.debug, "Disabling GeQO", file=sys.stderr)
@@ -808,7 +806,7 @@ class PostgresInterface(db.Database):
         errors.StateError
             If the given extension is not active
         """
-        if is_shared_object or extension_name == "pg_hint_plan":
+        if is_shared_object or extension_name in ("pg_hint_plan", "pg_lab"):
             shared_object_name = f"{extension_name}.so" if not extension_name.endswith(".so") else extension_name
             loaded_shared_objects = sys_util.open_files(self._connection.info.backend_pid)
             extension_is_active = any(so.endswith(shared_object_name) for so in loaded_shared_objects)
@@ -1252,148 +1250,6 @@ def _is_hash_join(join_tree_node: jointree.IntermediateJoinNode,
             and join_tree_node.annotation.operator.operator == physops.JoinOperators.HashJoin)
 
 
-def _generate_leading_hint_content(join_tree_node: jointree.AbstractJoinTreeNode,
-                                   operator_assignment: Optional[physops.PhysicalOperatorAssignment] = None) -> str:
-    """Builds a substring of the ``Leading`` hint to enforce the join order for a specific part of the join tree.
-
-    Parameters
-    ----------
-    join_tree_node : jointree.AbstractJoinTreeNode
-        Subtree of the join order for which the hint should be generated
-    operator_assignment : Optional[physops.PhysicalOperatorAssignment], optional
-        Operators that allow a smarter assignment of join directions. This is necessary due to pecularities of the
-        ``Leading`` hint. See reference below.
-
-    Returns
-    -------
-    str
-        Part of the join hint that corresponds to the join of the current subtree, e.g. for the join ``R ⋈ S``, the
-        substring would be ``"R S"``.
-
-    Raises
-    ------
-    ValueError
-        If the `join_tree_node` is neither a base table node, nor an intermediate join node. This error should never
-        ever be raised. If it is, it means that the join tree representation was updated to include other types of
-        nodes (whatever these should be), and the implementation of this method was not updated accordingly. This is
-        a severe bug in the method!
-
-    See Also
-    --------
-    _is_hash_join
-
-    Notes
-    -----
-    To assign directions to the join partners, the following rules are used (in the given order):
-
-    1. If the join contains directional information (i.e. is annotated by a `DirectionalJoinOperatorAssignment`),
-       this assignment is used
-    2. If the join has cardinality estimates available on both input relations, the join direction is chosen such that
-       the outer relation is the one with the smaller cardinality estimate. This does not really make a difference for
-       plain nested-loop joins or sort-merge joins, but can lead to significant speedup for index nested-loop joins or
-       hash joins.
-    3. Otherwise, the left child node becomes the outer relation and the right child becomes the inner relation
-
-    Notice that we use the terminology of inner and outer relation in the conventional way here (and not how Postgres
-    applies these terms). Most importantly this means that for a hash join we consider the outer relation to be the
-    one that is put into a hash table and the inner relation to be the one that is used for probing. The necessity to
-    swap this meaning when applying this strategy for Postgres is merely an implementation detail.
-
-    References
-    ----------
-
-    .. pg_hint_plan Leading hint: https://github.com/ossc-db/pg_hint_plan/blob/master/docs/hint_list.md
-    """
-    if isinstance(join_tree_node, jointree.BaseTableNode):
-        return join_tree_node.table.identifier()
-    if not isinstance(join_tree_node, jointree.IntermediateJoinNode):
-        raise ValueError(f"Unknown join tree node: {join_tree_node}")
-
-    # for Postgres, the inner relation of a Hash join is the one that gets the hash table and the outer relation is
-    # the one being probed. For all other joins, the inner/outer relation actually is the inner/outer relation
-    # Therefore, we want to have the smaller relation as the inner relation for hash joins and the other way around
-    # for all other joins
-
-    has_directional_information = isinstance(join_tree_node.annotation, physops.DirectionalJoinOperatorAssignment)
-    if has_directional_information:
-        annotation: physops.DirectionalJoinOperatorAssignment = join_tree_node.annotation
-        inner_tables = annotation.inner
-        inner_child = (join_tree_node.left_child if join_tree_node.left_child.tables() == inner_tables
-                       else join_tree_node.right_child)
-        outer_child = (join_tree_node.left_child if inner_child == join_tree_node.right_child
-                       else join_tree_node.right_child)
-        inner_child, outer_child = ((outer_child, inner_child) if annotation.operator == physops.JoinOperators.HashJoin
-                                    else (inner_child, outer_child))
-    else:
-        left, right = join_tree_node.left_child, join_tree_node.right_child
-        has_left_bound = math.isfinite(left.cardinality)
-        has_right_bound = math.isfinite(right.cardinality)
-
-        if not has_left_bound or not has_right_bound:
-            inner_child, outer_child = right, left
-        # At this point we know that both child nodes have upper bounds
-        elif _is_hash_join(join_tree_node, operator_assignment):
-            # Apply the same Hash join direction correction as above
-            inner_child, outer_child = (left, right) if left.cardinality < right.cardinality else (right, left)
-        else:
-            # Otherwise have the smaller relation be the outer one
-            inner_child, outer_child = (right, left) if right.cardinality < left.cardinality else (left, right)
-
-    inner_hint = _generate_leading_hint_content(inner_child, operator_assignment)
-    outer_hint = _generate_leading_hint_content(outer_child, operator_assignment)
-    return f"({outer_hint} {inner_hint})"
-
-
-def _generate_pg_join_order_hint(query: qal.SqlQuery,
-                                 join_order: jointree.LogicalJoinTree | jointree.PhysicalQueryPlan,
-                                 operator_assignment: Optional[physops.PhysicalOperatorAssignment] = None
-                                 ) -> tuple[qal.SqlQuery, Optional[HintParts]]:
-    """Builds the entire ``Leading`` hint to enforce the join order for a specific query.
-
-    Using a ``Leading`` hint, it is possible to generate the an arbitrarily nested join order for an input query.
-    However, at the same time this hint also enforces the join direction (i.e. inner or outer relation) of the join
-    partners. Due to some pecularities of the interpretation of inner and outer relation by Postgres, this method
-    also needs to access the operator assignment in addition to the join tree. The directions in the hint depend on the
-    selected join operators. See `_generate_leading_hint_content` for details. This method delegates most of the heavy
-    lifting to it.
-
-    Parameters
-    ----------
-    query : qal.SqlQuery
-        The query for which the hint should be generated. Notice that the hint will not be incorporated at this stage
-        already. Strictly speaking, this parameter is not even necessary for the hint generation part. However, it is
-        still included to retain the ability to quickly switch to a query transformation-based join order enforcement
-        at a later point in time.
-    join_order : jointree.LogicalJoinTree | jointree.PhysicalQueryPlan
-        The desired join order
-    operator_assignment : Optional[physops.PhysicalOperatorAssignment], optional
-        The operators that should be used to perform the actual joins. This is necessary to generate the correct join
-        order (as outlined above)
-
-    Returns
-    -------
-    tuple[qal.SqlQuery, Optional[HintParts]]
-        A potentially transformed version of the input query along with the necessary hints to enforce the join order.
-        All future hint generation steps should use the transformed query as input rather than the original one, even
-        though right now no transformations are being performed and the returned query simply matches the input query.
-
-    See Also
-    --------
-    _generate_leading_hint_content
-
-    References
-    ----------
-
-    .. pg_hint_plan Leading hint: https://github.com/ossc-db/pg_hint_plan/blob/master/docs/hint_list.md
-    """
-    if len(join_order) < 2:
-        return query, None
-    leading_hint = _generate_leading_hint_content(join_order.root, operator_assignment)
-    leading_hint = f"Leading({leading_hint})"
-    hints = HintParts([], [leading_hint])
-    return query, hints
-
-
 PostgresOptimizerSettings = {
     physops.JoinOperators.NestedLoopJoin: "enable_nestloop",
     physops.JoinOperators.HashJoin: "enable_hashjoin",
@@ -1405,7 +1261,7 @@ PostgresOptimizerSettings = {
 }
 """All (session-global) optimizer settings that modify the allowed physical operators."""
 
-PostgresOptimizerHints = {
+PGHintPlanOptimizerHints = {
     physops.JoinOperators.NestedLoopJoin: "NestLoop",
     physops.JoinOperators.HashJoin: "HashJoin",
     physops.JoinOperators.SortMergeJoin: "MergeJoin",
@@ -1414,15 +1270,34 @@ PostgresOptimizerHints = {
     physops.ScanOperators.IndexOnlyScan: "IndexOnlyScan",
     physops.ScanOperators.BitmapScan: "BitmapScan"
 }
-"""All physical operators that can be enforced for individual parts of a query.
+"""All physical operators that can be enforced by pg_hint_plan.
 
-These settings operate on a per-relation basis and overwrite the session-global optimizer settings. They are based on
-the *pg_hint_plan* Postgres extension.
+These settings operate on a per-relation basis and overwrite the session-global optimizer settings.
 
 References
 ----------
 
 .. pg_hint_plan hints: https://github.com/ossc-db/pg_hint_plan/blob/master/docs/hint_list.md
+"""
+
+PGLabOptimizerHints = {
+    physops.JoinOperators.NestedLoopJoin: "NestLoop",
+    physops.JoinOperators.HashJoin: "HashJoin",
+    physops.JoinOperators.SortMergeJoin: "MergeJoin",
+    physops.ScanOperators.SequentialScan: "SeqScan",
+    physops.ScanOperators.IndexScan: "IdxScan",
+    physops.ScanOperators.IndexOnlyScan: "IdxScan",
+    physops.ScanOperators.BitmapScan: "IdxScan"
+}
+"""All physical operators that can be enforced by pg_lab.
+
+These settings operate on a per-relation basis and overwrite the session-global optimizer settings.
+
+References
+----------
+
+.. pg_lab extension: TODO
+
 """
 
 
@@ -1440,50 +1315,6 @@ def _generate_join_key(tables: Iterable[base.TableReference]) -> str:
         A *pg_hint_plan* compatible identifier that can be used to enforce operator hints for the join.
     """
     return " ".join(tab.identifier() for tab in tables)
-
-
-def _generate_pg_operator_hints(physical_operators: physops.PhysicalOperatorAssignment) -> HintParts:
-    """Builds the necessary operator-level hints and global settings to enforce a specific operator assignment.
-
-    The resulting hints object will consist of pg_hint_plan hints for all operators that affect individual joins or
-    scans and standard postgres settings that influence the selection of operators for the entire query. Notice that
-    the per-operator hints overwrite global settings, e.g. one can disabled nested-loop joins globally, but than assign
-    a nested-loop join for a specific join again. This will disable nested-loop joins for all joins in the query,
-    except for the one join in question. For that join, a nested-loop join will be forced.
-
-    Parameters
-    ----------
-    physical_operators : physops.PhysicalOperatorAssignment
-        The operator settings in question
-
-    Returns
-    -------
-    HintParts
-        A Postgres and pg_hint_plan compatible encoding of the operator assignment
-    """
-    settings = []
-    for operator, enabled in physical_operators.global_settings.items():
-        setting = "on" if enabled else "off"
-        operator_key = PostgresOptimizerSettings[operator]
-        settings.append(f"SET {operator_key} = '{setting}';")
-
-    hints = []
-    for table, scan_assignment in physical_operators.scan_operators.items():
-        table_key = table.identifier()
-        scan_assignment = PostgresOptimizerHints[scan_assignment.operator]
-        hints.append(f"{scan_assignment}({table_key})")
-
-    if hints:
-        hints.append("")  # insert empty hint to force empty line between scan and join operators
-    for join, join_assignment in physical_operators.join_operators.items():
-        join_key = _generate_join_key(join)
-        join_assignment = PostgresOptimizerHints[join_assignment.operator]
-        hints.append(f"{join_assignment}({join_key})")
-
-    if not settings and not hints:
-        return HintParts.empty()
-
-    return HintParts(settings, hints)
 
 
 def _escape_setting(setting: Any) -> str:
@@ -1515,79 +1346,6 @@ def _escape_setting(setting: Any) -> str:
     elif isinstance(setting, bool):
         return "TRUE" if setting else "FALSE"
     return f"'{setting}'"
-
-
-def _generate_pg_parameter_hints(plan_parameters: planparams.PlanParameterization) -> HintParts:
-    """Builds the necessary operator-level hints and global settings to communicate plan parameters to the optimizer.
-
-    The resulting hints object will consist of pg_hint_plan hints that enforce custom cardinality estimates for
-    specific joins, hints that enforce a parallel scan for a given base table and preparatory statements to accomodate
-    all user-specific settings. Notice that due to limitations of the pg_hint_plan extension, cardinality hints
-    currently only work for intermediate results and not for base tables. Conversely, it is not possible to supply
-    parallelization hints for anything other than base tables, i.e. it is not possible to enforce the parallel
-    execution of a join.
-
-
-    Parameters
-    ----------
-    plan_parameters : planparams.PlanParameterization
-        The parameters in question
-
-    Returns
-    -------
-    HintParts
-        A Postgres and pg_hint_plan compatible encoding of the operator assignment
-
-    Warns
-    -----
-    Emits warnings if either 1) cardinality hints are supplied for base tables (currently pg_hint_plan can only
-    communicate cardinality hints for intermediate joins), or 2) parallel worker hints are supplied for intermediate
-    joins (currently pg_hint_plan can only communicate parallelization hints for parallel scans)
-    """
-    hints, settings = [], []
-    for join, cardinality_hint in plan_parameters.cardinality_hints.items():
-        if len(join) < 2:
-            # pg_hint_plan can only generate cardinality hints for joins
-            warnings.warn(f"Ignoring cardinality hint for base table {join}", category=db.HintWarning)
-            continue
-        join_key = _generate_join_key(join)
-        hints.append(f"Rows({join_key} #{cardinality_hint})")
-
-    for join, num_workers in plan_parameters.parallel_worker_hints.items():
-        if len(join) != 1:
-            # pg_hint_plan can only generate parallelization hints for single tables
-            warnings.warn(f"Ignoring parallel workers hint for join {join}", category=db.HintWarning)
-            continue
-        table: base.TableReference = collection_utils.simplify(join)
-        hints.append(f"Parallel({table.identifier()} {num_workers} hard)")
-
-    for operator, setting in plan_parameters.system_specific_settings.items():
-        setting = _escape_setting(setting)
-        settings.append(f"SET {operator} = {setting};")
-
-    return HintParts(settings, hints)
-
-
-def _generate_hint_block(parts: HintParts) -> Optional[clauses.Hint]:
-    """Transforms a collection of hints into a proper hint clause.
-
-    Parameters
-    ----------
-    parts : HintParts
-        The hints to combine
-
-    Returns
-    -------
-    Optional[clauses.Hint]
-        A syntactically correct hint clause tailored for Postgres and pg_hint_plan. If neither settings nor hints
-        are contained in the `parts`, ``None`` is returned instead.
-    """
-    settings, hints = parts.settings, parts.hints
-    if not settings and not hints:
-        return None
-    settings_block = "\n".join(settings)
-    hints_block = "\n".join(["/*+"] + ["  " + hint for hint in hints] + ["*/"]) if hints else ""
-    return clauses.Hint(settings_block, hints_block)
 
 
 def _apply_hint_block_to_query(query: qal.SqlQuery, hint_block: Optional[clauses.Hint]) -> qal.SqlQuery:
@@ -1725,6 +1483,16 @@ class PostgresHintService(db.HintService):
        Postgres. At the same time, this means that certain scenarios like custom cardinality estimation for the genetic
        optimizer cannot currently be tested
 
+    Parameters
+    ----------
+    postgres_db : PostgresInterface
+        A postgres database with an active hinting backend (pg_hint_plan or pg_lab)
+
+    Raises
+    ------
+    ValueError
+        If the supplied `postgres_db` does not have a supported hinting backend enabled.
+
     See Also
     --------
     _generate_pg_join_order_hint
@@ -1735,6 +1503,17 @@ class PostgresHintService(db.HintService):
     .. pg_hint_plan extension: https://github.com/ossc-db/pg_hint_plan
     .. Postgres query planning configuration: https://www.postgresql.org/docs/current/runtime-config-query.html
     """
+    def __init__(self, postgres_db: PostgresInterface) -> None:
+        connection_pid = postgres_db._connection.info.backend_pid
+        active_extensions = sys_util.open_files(connection_pid)
+
+        self._postgres_db = postgres_db
+        if any(ext.endswith("pg_lab.so") for ext in active_extensions):
+            self._backend = "pg_lab"
+        elif any(ext.endswith("pg_hint_plan.so") for ext in active_extensions):
+            self._backend = "pg_hint_plan"
+        else:
+            raise ValueError(f"No supported hinting backend found for backend with PID {connection_pid}")
 
     def generate_hints(self, query: qal.SqlQuery,
                        join_order: Optional[jointree.LogicalJoinTree | jointree.PhysicalQueryPlan] = None,
@@ -1749,7 +1528,7 @@ class PostgresHintService(db.HintService):
         hint_parts = None
 
         if join_order:
-            adapted_query, hint_parts = _generate_pg_join_order_hint(adapted_query, join_order, physical_operators)
+            adapted_query, hint_parts = self._generate_pg_join_order_hint(adapted_query, join_order, physical_operators)
 
         hint_parts = hint_parts if hint_parts else HintParts.empty()
 
@@ -1761,14 +1540,14 @@ class PostgresHintService(db.HintService):
                            else plan_parameters)
 
         if physical_operators:
-            operator_hints = _generate_pg_operator_hints(physical_operators)
+            operator_hints = self._generate_pg_operator_hints(physical_operators)
             hint_parts = hint_parts.merge_with(operator_hints)
 
         if plan_parameters:
-            plan_hints = _generate_pg_parameter_hints(plan_parameters)
+            plan_hints = self._generate_pg_parameter_hints(plan_parameters)
             hint_parts = hint_parts.merge_with(plan_hints)
 
-        hint_block = _generate_hint_block(hint_parts)
+        hint_block = self._generate_hint_block(hint_parts)
         adapted_query = _apply_hint_block_to_query(adapted_query, hint_block)
         return adapted_query
 
@@ -1782,6 +1561,284 @@ class PostgresHintService(db.HintService):
 
     def supports_hint(self, hint: physops.PhysicalOperator | planparams.HintType) -> bool:
         return hint in PostgresJoinHints | PostgresScanHints | PostgresPlanHints
+
+    def describe(self) -> dict[str, str]:
+        """Provides a JSON-serializable description of the hint service.
+
+        Returns
+        -------
+        dict[str, str]
+            Information about the hinting backend
+        """
+        return {"backend": self._backend}
+
+    def _generate_leading_hint_content(self, join_tree_node: jointree.AbstractJoinTreeNode,
+                                       operator_assignment: Optional[physops.PhysicalOperatorAssignment] = None) -> str:
+        """Builds a substring of the ``Leading`` hint to enforce the join order for a specific part of the join tree.
+
+        Parameters
+        ----------
+        join_tree_node : jointree.AbstractJoinTreeNode
+            Subtree of the join order for which the hint should be generated
+        operator_assignment : Optional[physops.PhysicalOperatorAssignment], optional
+            Operators that allow a smarter assignment of join directions. This is necessary due to pecularities of the
+            ``Leading`` hint. See reference below.
+
+        Returns
+        -------
+        str
+            Part of the join hint that corresponds to the join of the current subtree, e.g. for the join ``R ⋈ S``, the
+            substring would be ``"R S"``.
+
+        Raises
+        ------
+        ValueError
+            If the `join_tree_node` is neither a base table node, nor an intermediate join node. This error should never
+            ever be raised. If it is, it means that the join tree representation was updated to include other types of
+            nodes (whatever these should be), and the implementation of this method was not updated accordingly. This is
+            a severe bug in the method!
+
+        See Also
+        --------
+        _is_hash_join
+
+        Notes
+        -----
+        To assign directions to the join partners, the following rules are used (in the given order):
+
+        1. If the join contains directional information (i.e. is annotated by a `DirectionalJoinOperatorAssignment`),
+        this assignment is used
+        2. If the join has cardinality estimates available on both input relations, the join direction is chosen such that
+        the outer relation is the one with the smaller cardinality estimate. This does not really make a difference for
+        plain nested-loop joins or sort-merge joins, but can lead to significant speedup for index nested-loop joins or
+        hash joins.
+        3. Otherwise, the left child node becomes the outer relation and the right child becomes the inner relation
+
+        Notice that we use the terminology of inner and outer relation in the conventional way here (and not how Postgres
+        applies these terms). Most importantly this means that for a hash join we consider the outer relation to be the
+        one that is put into a hash table and the inner relation to be the one that is used for probing. The necessity to
+        swap this meaning when applying this strategy for Postgres is merely an implementation detail.
+
+        References
+        ----------
+
+        .. pg_hint_plan Leading hint: https://github.com/ossc-db/pg_hint_plan/blob/master/docs/hint_list.md
+        """
+        if isinstance(join_tree_node, jointree.BaseTableNode):
+            return join_tree_node.table.identifier()
+        if not isinstance(join_tree_node, jointree.IntermediateJoinNode):
+            raise ValueError(f"Unknown join tree node: {join_tree_node}")
+
+        # for Postgres, the inner relation of a Hash join is the one that gets the hash table and the outer relation is
+        # the one being probed. For all other joins, the inner/outer relation actually is the inner/outer relation
+        # Therefore, we want to have the smaller relation as the inner relation for hash joins and the other way around
+        # for all other joins
+
+        has_directional_information = isinstance(join_tree_node.annotation, physops.DirectionalJoinOperatorAssignment)
+        if has_directional_information:
+            annotation: physops.DirectionalJoinOperatorAssignment = join_tree_node.annotation
+            inner_tables = annotation.inner
+            inner_child = (join_tree_node.left_child if join_tree_node.left_child.tables() == inner_tables
+                           else join_tree_node.right_child)
+            outer_child = (join_tree_node.left_child if inner_child == join_tree_node.right_child
+                           else join_tree_node.right_child)
+            inner_child, outer_child = ((outer_child, inner_child) if annotation.operator == physops.JoinOperators.HashJoin
+                                        else (inner_child, outer_child))
+        else:
+            left, right = join_tree_node.left_child, join_tree_node.right_child
+            has_left_bound = math.isfinite(left.cardinality)
+            has_right_bound = math.isfinite(right.cardinality)
+
+            if not has_left_bound or not has_right_bound:
+                inner_child, outer_child = right, left
+            # At this point we know that both child nodes have upper bounds
+            elif _is_hash_join(join_tree_node, operator_assignment):
+                # Apply the same Hash join direction correction as above
+                inner_child, outer_child = (left, right) if left.cardinality < right.cardinality else (right, left)
+            else:
+                # Otherwise have the smaller relation be the outer one
+                inner_child, outer_child = (right, left) if right.cardinality < left.cardinality else (left, right)
+
+        inner_hint = self._generate_leading_hint_content(inner_child, operator_assignment)
+        outer_hint = self._generate_leading_hint_content(outer_child, operator_assignment)
+        return f"({outer_hint} {inner_hint})"
+
+    def _generate_pg_join_order_hint(self, query: qal.SqlQuery,
+                                     join_order: jointree.LogicalJoinTree | jointree.PhysicalQueryPlan,
+                                     operator_assignment: Optional[physops.PhysicalOperatorAssignment] = None
+                                     ) -> tuple[qal.SqlQuery, Optional[HintParts]]:
+        """Builds the entire ``Leading`` hint to enforce the join order for a specific query.
+
+        Using a ``Leading`` hint, it is possible to generate the an arbitrarily nested join order for an input query.
+        However, at the same time this hint also enforces the join direction (i.e. inner or outer relation) of the join
+        partners. Due to some pecularities of the interpretation of inner and outer relation by Postgres, this method
+        also needs to access the operator assignment in addition to the join tree. The directions in the hint depend on the
+        selected join operators. See `_generate_leading_hint_content` for details. This method delegates most of the heavy
+        lifting to it.
+
+        Parameters
+        ----------
+        query : qal.SqlQuery
+            The query for which the hint should be generated. Notice that the hint will not be incorporated at this stage
+            already. Strictly speaking, this parameter is not even necessary for the hint generation part. However, it is
+            still included to retain the ability to quickly switch to a query transformation-based join order enforcement
+            at a later point in time.
+        join_order : jointree.LogicalJoinTree | jointree.PhysicalQueryPlan
+            The desired join order
+        operator_assignment : Optional[physops.PhysicalOperatorAssignment], optional
+            The operators that should be used to perform the actual joins. This is necessary to generate the correct join
+            order (as outlined above)
+
+        Returns
+        -------
+        tuple[qal.SqlQuery, Optional[HintParts]]
+            A potentially transformed version of the input query along with the necessary hints to enforce the join order.
+            All future hint generation steps should use the transformed query as input rather than the original one, even
+            though right now no transformations are being performed and the returned query simply matches the input query.
+
+        See Also
+        --------
+        _generate_leading_hint_content
+
+        References
+        ----------
+
+        .. pg_hint_plan Leading hint: https://github.com/ossc-db/pg_hint_plan/blob/master/docs/hint_list.md
+        """
+        if len(join_order) < 2:
+            return query, None
+        leading_hint = self._generate_leading_hint_content(join_order.root, operator_assignment)
+        leading_hint = f"JoinOrder({leading_hint})" if self._backend == "pg_lab" else f"Leading({leading_hint})"
+        hints = HintParts([], [leading_hint])
+        return query, hints
+
+    def _generate_pg_operator_hints(self, physical_operators: physops.PhysicalOperatorAssignment) -> HintParts:
+        """Builds the necessary operator-level hints and global settings to enforce a specific operator assignment.
+
+        The resulting hints object will consist of pg_hint_plan hints for all operators that affect individual joins or
+        scans and standard postgres settings that influence the selection of operators for the entire query. Notice that
+        the per-operator hints overwrite global settings, e.g. one can disabled nested-loop joins globally, but than assign
+        a nested-loop join for a specific join again. This will disable nested-loop joins for all joins in the query,
+        except for the one join in question. For that join, a nested-loop join will be forced.
+
+        Parameters
+        ----------
+        physical_operators : physops.PhysicalOperatorAssignment
+            The operator settings in question
+
+        Returns
+        -------
+        HintParts
+            A Postgres and pg_hint_plan compatible encoding of the operator assignment
+        """
+        settings = []
+        for operator, enabled in physical_operators.global_settings.items():
+            setting = "on" if enabled else "off"
+            operator_key = PostgresOptimizerSettings[operator]
+            settings.append(f"SET {operator_key} = '{setting}';")
+
+        hints = []
+        for table, scan_assignment in physical_operators.scan_operators.items():
+            table_key = table.identifier()
+            scan_assignment = (PGLabOptimizerHints[scan_assignment.operator] if self._backend == "pg_lab"
+                               else PGHintPlanOptimizerHints[scan_assignment.operator])
+            hints.append(f"{scan_assignment}({table_key})")
+
+        if hints:
+            hints.append("")  # insert empty hint to force empty line between scan and join operators
+        for join, join_assignment in physical_operators.join_operators.items():
+            join_key = _generate_join_key(join)
+            join_assignment = (PGLabOptimizerHints[join_assignment.operator] if self._backend == "pg_lab"
+                               else PGHintPlanOptimizerHints[join_assignment.operator])
+            hints.append(f"{join_assignment}({join_key})")
+
+        if not settings and not hints:
+            return HintParts.empty()
+
+        return HintParts(settings, hints)
+
+    def _generate_pg_parameter_hints(self, plan_parameters: planparams.PlanParameterization) -> HintParts:
+        """Builds the necessary operator-level hints and global settings to communicate plan parameters to the optimizer.
+
+        The resulting hints object will consist of pg_hint_plan hints that enforce custom cardinality estimates for
+        specific joins, hints that enforce a parallel scan for a given base table and preparatory statements to accomodate
+        all user-specific settings. Notice that due to limitations of the pg_hint_plan extension, cardinality hints
+        currently only work for intermediate results and not for base tables. Conversely, it is not possible to supply
+        parallelization hints for anything other than base tables, i.e. it is not possible to enforce the parallel
+        execution of a join.
+
+
+        Parameters
+        ----------
+        plan_parameters : planparams.PlanParameterization
+            The parameters in question
+
+        Returns
+        -------
+        HintParts
+            A Postgres and pg_hint_plan compatible encoding of the operator assignment
+
+        Warns
+        -----
+        Emits warnings if either 1) cardinality hints are supplied for base tables (currently pg_hint_plan can only
+        communicate cardinality hints for intermediate joins), or 2) parallel worker hints are supplied for intermediate
+        joins (currently pg_hint_plan can only communicate parallelization hints for parallel scans)
+        """
+        hints, settings = [], []
+        for join, cardinality_hint in plan_parameters.cardinality_hints.items():
+            if len(join) < 2 and self._backend == "pg_hint_plan":
+                # pg_hint_plan can only generate cardinality hints for joins
+                warnings.warn(f"Ignoring cardinality hint for base table {join}", category=db.HintWarning)
+                continue
+            join_key = _generate_join_key(join)
+            hint_text = (f"Card({join_key} #{cardinality_hint})" if self._backend == "pg_lab"
+                         else f"Rows({join_key} #{cardinality_hint})")
+            hints.append(hint_text)
+
+        for join, num_workers in plan_parameters.parallel_worker_hints.items():
+            if self._backend == "pg_lab":
+                warnings.warn("pg_lab does not support parallel worker hints", category=db.HintWarning)
+                continue
+            if len(join) != 1:
+                # pg_hint_plan can only generate parallelization hints for single tables
+                warnings.warn(f"Ignoring parallel workers hint for join {join}", category=db.HintWarning)
+                continue
+
+            table: base.TableReference = collection_utils.simplify(join)
+            hints.append(f"Parallel({table.identifier()} {num_workers} hard)")
+
+        for operator, setting in plan_parameters.system_specific_settings.items():
+            setting = _escape_setting(setting)
+            settings.append(f"SET {operator} = {setting};")
+
+        return HintParts(settings, hints)
+
+    def _generate_hint_block(self, parts: HintParts) -> Optional[clauses.Hint]:
+        """Transforms a collection of hints into a proper hint clause.
+
+        Parameters
+        ----------
+        parts : HintParts
+            The hints to combine
+
+        Returns
+        -------
+        Optional[clauses.Hint]
+            A syntactically correct hint clause tailored for Postgres and pg_hint_plan. If neither settings nor hints
+            are contained in the `parts`, ``None`` is returned instead.
+        """
+        settings, hints = parts.settings, parts.hints
+        if not settings and not hints:
+            return None
+        settings_block = "\n".join(settings)
+        hints_block = "\n".join(["/*+"] + ["  " + hint for hint in hints] + ["*/"]) if hints else ""
+        return clauses.Hint(settings_block, hints_block)
+
+    def __repr__(self) -> str:
+        return f"PostgresHintService(db={self._postgres_db} backend={self._backend})"
+
+    def __str__(self) -> str:
+        return repr(self)
 
 
 class PostgresOptimizer(db.OptimizerInterface):
