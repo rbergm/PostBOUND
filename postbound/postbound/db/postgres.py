@@ -1413,7 +1413,7 @@ class PostgresExplainClause(clauses.Explain):
         super().__init__(original_clause.analyze, original_clause.target_format)
 
     def __str__(self) -> str:
-        explain_args = "("
+        explain_args = "(SETTINGS, "
         if self.analyze:
             explain_args += "ANALYZE, BUFFERS, "
         explain_args += f"FORMAT {self.target_format})"
