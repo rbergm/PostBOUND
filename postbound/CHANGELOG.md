@@ -14,6 +14,24 @@ Be carefull when updating and check the changelog!
 
 ---
 
+## Version 0.4.3
+
+### New features
+- `PreComputedCardinalities` now support live computation for missing estimates
+- Support for [pg_lab](https://github.com/rbergm/pg_lab/) has arrived
+
+### Updates
+- SqlQuery now supports _jsonize_ protocol
+- Update behaviour to relalg nodes has been reworked
+- `EXPLAIN` output now also includes important GUC parameters for Postgres output
+
+## Fixes
+- Various fixes to `relalg.Rename` nodes
+- Various fixes to cardinality estimation code
+- Fixed bugs in query cache
+- Broken links for IMDB setup have been fixed
+
+---
 
 ## Version 0.4.2
 
