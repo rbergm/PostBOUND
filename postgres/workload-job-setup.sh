@@ -77,9 +77,9 @@ else
     echo ".. IMDB source directory does not exist, re-creating"
     echo ".. Fetching IMDB data"
     mkdir $IMDB_DIR
-    curl -o $IMDB_DIR/csv.zip "https://db4701.inf.tu-dresden.de:8443/index.php/s/qN7oW4txNq6W8id/download/csv.zip"
-    curl -o $IMDB_DIR/create.sql "https://db4701.inf.tu-dresden.de:8443/index.php/s/Cddow88EgMRGW7x/download/create.sql"
-    curl -o $IMDB_DIR/import.sql "https://db4701.inf.tu-dresden.de:8443/index.php/s/sXEtp3cxHDqteEQ/download/import.sql"
+    curl -o $IMDB_DIR/csv.zip "https://db4701.inf.tu-dresden.de:8443/index.php/s/H7TKaEBr5JmdaNA/download/csv.zip"
+    curl -o $IMDB_DIR/create.sql "https://db4701.inf.tu-dresden.de:8443/index.php/s/e35mDHTCZx88y6p/download/create.sql"
+    curl -o $IMDB_DIR/import.sql "https://db4701.inf.tu-dresden.de:8443/index.php/s/bNzMwSpmQESRz6P/download/import.sql"
 
     echo ".. Extracting IMDB data"
     unzip $IMDB_DIR/csv.zip -d $IMDB_DIR
