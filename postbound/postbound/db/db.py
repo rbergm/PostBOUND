@@ -372,6 +372,8 @@ class Database(abc.ABC):
         This reads a JSON file that contains all cached queries and their result sets. It should not be edited
         manually.
         """
+        if self._query_cache:
+            return
         query_cache_name = self._query_cache_name()
         if os.path.isfile(query_cache_name):
             with open(query_cache_name, "r") as cache_file:
