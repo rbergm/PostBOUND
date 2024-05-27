@@ -310,16 +310,16 @@ class PreComputedCardinalities(CardinalityHintsGenerator):
 
         tables_debug = "(" + ", ".join(tab.identifier() for tab in tables) + ")"
         n_samples = len(cardinality_sample)
-        fallback_value = self._attempt_fallback_estimate(n_samples, query, tables)
-
-        if n_samples == 0 and fallback_value is None:
-            raise ValueError(f"No matching sample found for join {tables_debug} in query {label}")
-        elif n_samples == 0:
-            return fallback_value
+        if n_samples == 1:
+            cardinality = cardinality_sample.iloc[0][self._card_col]
+            return int(cardinality)
         elif n_samples > 1:
             raise ValueError(f"{n_samples} samples found for join {tables_debug} in query {label}. Expected 1.")
-        cardinality = cardinality_sample.iloc[0][self._card_col]
-        return int(cardinality)
+
+        fallback_value = self._attempt_fallback_estimate(n_samples, query, tables)
+        if fallback_value is None:
+            raise ValueError(f"No matching sample found for join {tables_debug} in query {label}")
+        return fallback_value
 
     def describe(self) -> dict:
         return {"name": "pre-computed-cards", "location": self._lookup_df_path, "workload": self._workload.name}
