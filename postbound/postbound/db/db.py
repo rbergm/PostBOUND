@@ -1679,7 +1679,7 @@ class QueryExecutionPlan:
         prefix = f"{padding}<- " if padding else ""
 
         if not fields:
-            own_inspection = [prefix + str(self)]
+            own_inspection = [prefix + self._explain_text()]
         else:
             attr_values = {attr: getattr(self, attr) for attr in fields}
             pretty_attrs = {attr: round(val, 3) if isinstance(val, numbers.Number) else val
@@ -1721,6 +1721,27 @@ class QueryExecutionPlan:
         summary["phys_ops"] = collections.Counter(child.node_type for child in all_nodes)
         return summary
 
+    def _explain_text(self) -> str:
+        """Generates an EXPLAIN-like text representation of the current node.
+
+        Returns
+        -------
+        str
+            A textual description of the node
+        """
+        if self.is_analyze():
+            exec_time = round(self.execution_time, 3)
+            true_card = round(self.true_cardinality, 3)
+            analyze_str = f" (execution time={exec_time} true cardinality={true_card})"
+        else:
+            analyze_str = ""
+
+        table_str = f" :: {self.table}" if self.table else ""
+        cost = round(self.cost, 3)
+        estimated_card = round(self.estimated_cardinality, 3)
+        plan_str = f" (cost={cost} estimated cardinality={estimated_card})"
+        return "".join((self.node_type, table_str, plan_str, analyze_str))
+
     def __json__(self) -> dict:
         return vars(self)
 
@@ -1736,18 +1757,11 @@ class QueryExecutionPlan:
         return str(self)
 
     def __str__(self) -> str:
-        if self.is_analyze():
-            exec_time = round(self.execution_time, 3)
-            true_card = round(self.true_cardinality, 3)
-            analyze_str = f" (execution time={exec_time} true cardinality={true_card})"
-        else:
-            analyze_str = ""
-
-        table_str = f" :: {self.table}" if self.table else ""
-        cost = round(self.cost, 3)
-        estimated_card = round(self.estimated_cardinality, 3)
-        plan_str = f" (cost={cost} estimated cardinality={estimated_card})"
-        return "".join((self.node_type, table_str, plan_str, analyze_str))
+        normalized_node_type = self.node_type.replace(" ", "")
+        if self.table:
+            return f"{normalized_node_type}({self.table.identifier()})"
+        child_texts = ", ".join(str(child) for child in self.children)
+        return f"{normalized_node_type}({child_texts})"
 
 
 def read_query_plan_json(json_data: dict) -> QueryExecutionPlan:
