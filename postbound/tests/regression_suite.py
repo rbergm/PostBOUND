@@ -5,7 +5,7 @@ import unittest
 
 import psycopg
 
-from postbound.db import postgres
+from postbound.db import db, postgres
 
 
 def _rebuild_result_set(result_set: object) -> list[tuple[object]]:
@@ -107,7 +107,7 @@ class DatabaseTestCase(unittest.TestCase, abc.ABC):
 class QueryTestCase(unittest.TestCase, abc.ABC):
     """Abstract test case that provides assertions on the structure of database queries."""
 
-    def assertQueriesEqual(self, first_query: object, second_query: object, message: str = ""):
+    def assertQueriesEqual(self, first_query: object, second_query: object, message: str = "") -> None:
         """Assertion that fails if the two queries differ in a _significant_ way.
 
         This method is heavily heuristic and compares the two query strings according to the following rules:
@@ -122,6 +122,20 @@ class QueryTestCase(unittest.TestCase, abc.ABC):
         first_query = str(first_query).strip().removesuffix(";").lower()
         second_query = str(second_query).strip().removesuffix(";").lower()
         return self.assertEqual(first_query, second_query, message)
+
+
+class PlanTestCase(unittest.TestCase, abc.ABC):
+    def assertQueryExecutionPlansEqual(self, first_plan: db.QueryExecutionPlan, second_plan: db.QueryExecutionPlan,
+                                       message: str = "", *, _cur_level: int = 0) -> None:
+        if first_plan.node_type != second_plan.node_type:
+            default_msg = f"Different operators at level {_cur_level}: {first_plan} vs. {second_plan}"
+            raise AssertionError(default_msg if not message else f"{message} :: {default_msg}")
+        elif len(first_plan.children) != len(second_plan.children):
+            default_msg = f"Different number of child nodes at level {_cur_level}: {first_plan} vs. {second_plan}"
+            raise AssertionError(default_msg if not message else f"{message} :: {default_msg}")
+
+        for (left_child, right_child) in zip(first_plan.children, second_plan.children):
+            self.assertQueryExecutionPlansEqual(left_child, right_child, message=message, _cur_level=_cur_level + 1)
 
 
 def skip_if_no_db(config_file):
