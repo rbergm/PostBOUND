@@ -397,6 +397,7 @@ class PostgresInterface(db.Database):
 
         self._db_stats = PostgresStatisticsInterface(self)
         self._db_schema = PostgresSchemaInterface(self)
+        self._hinting_backend = PostgresHintService(self)
 
         self._current_geqo_state = self._obtain_geqo_state()
 
@@ -409,7 +410,7 @@ class PostgresInterface(db.Database):
         return self._db_stats
 
     def hinting(self) -> PostgresHintService:
-        return PostgresHintService(self)
+        return self._hinting_backend
 
     def execute_query(self, query: qal.SqlQuery | str, *, cache_enabled: Optional[bool] = None) -> Any:
         cache_enabled = cache_enabled or (cache_enabled is None and self._cache_enabled)
@@ -418,11 +419,11 @@ class PostgresInterface(db.Database):
             query_result = self._query_cache[query]
         else:
             try:
-                prepared_query = self._prepare_query_execution(query)
+                prepared_query, deactivated_geqo = self._prepare_query_execution(query)
                 self._current_geqo_state = self._obtain_geqo_state()
                 self._cursor.execute(prepared_query)
                 query_result = self._cursor.fetchall() if self._cursor.rowcount >= 0 else None
-                if not _modifies_geqo_config(query):
+                if deactivated_geqo:
                     self._restore_geqo_state()
                 if cache_enabled:
                     self._inflate_query_cache()
@@ -453,6 +454,16 @@ class PostgresInterface(db.Database):
         pg_ver = version_match.group("pg_ver")
         return utils.Version(pg_ver)
 
+    def backend_pid(self) -> int:
+        """Provides the backend process ID of the current connection.
+
+        Returns
+        -------
+        int
+            The process ID
+        """
+        return self._connection.info.backend_pid
+
     def describe(self) -> dict:
         base_info = {
             "system_name": self.database_system_name(),
@@ -462,7 +473,7 @@ class PostgresInterface(db.Database):
                 "emulated": self._db_stats.emulated,
                 "cache_enabled": self._db_stats.cache_enabled
             },
-            "hinting_mode": self.hinting().describe()
+            "hinting_mode": self._hinting_backend.describe()
         }
         self._cursor.execute("SELECT name, setting FROM pg_settings")
         system_settings = self._cursor.fetchall()
@@ -481,7 +492,7 @@ class PostgresInterface(db.Database):
 
         return base_info
 
-    def reset_connection(self) -> None:
+    def reset_connection(self) -> int:
         try:
             self._connection.cancel()
             self._cursor.close()
@@ -489,7 +500,7 @@ class PostgresInterface(db.Database):
         except psycopg.Error:
             pass
         self._connection = psycopg.connect(self.connect_string)
-        self._init_connection()
+        return self._init_connection()
 
     def cursor(self) -> psycopg.Cursor:
         return self._cursor
@@ -669,13 +680,20 @@ class PostgresInterface(db.Database):
 
         self._cursor.execute(configuration)
 
-    def _init_connection(self) -> None:
-        """Sets all default connection parameters and creates the actual database cursor."""
+    def _init_connection(self) -> int:
+        """Sets all default connection parameters and creates the actual database cursor.
+
+        Returns
+        -------
+        int
+            The backend process ID of the new connection
+        """
         self._connection.autocommit = True
         self._connection.prepare_threshold = None
         self._cursor: psycopg.Cursor = self._connection.cursor()
+        return self.backend_pid()
 
-    def _prepare_query_execution(self, query: qal.SqlQuery | str, *, drop_explain: bool = False) -> str:
+    def _prepare_query_execution(self, query: qal.SqlQuery | str, *, drop_explain: bool = False) -> tuple[str, bool]:
         """Handles necessary setup logic that enable an arbitrary query to be executed by the database system.
 
         This setup process involves formatting the query to accomodate deviations from standard SQL by the database
@@ -699,10 +717,10 @@ class PostgresInterface(db.Database):
             A unified version of the query that is ready for execution
         """
         if not isinstance(query, qal.SqlQuery):
-            return query
+            return query, False
 
-        requires_geqo_deactivation = _query_contains_geqo_sensible_settings(query) and not _modifies_geqo_config(query)
-        if requires_geqo_deactivation and self._current_geqo_state.triggers_geqo(query):
+        requires_geqo_deactivation = self._hinting_backend._requires_geqo_deactivation(query)
+        if requires_geqo_deactivation:
             logging.print_if(self.debug, "Disabling GeQO", file=sys.stderr)
             self._cursor.execute("SET geqo = 'off';")
 
@@ -711,7 +729,7 @@ class PostgresInterface(db.Database):
         if query.hints and query.hints.preparatory_statements:
             self._cursor.execute(query.hints.preparatory_statements)
             query = transform.drop_hints(query, preparatory_statements_only=True)
-        return self.hinting().format_query(query)
+        return self._hinting_backend.format_query(query), requires_geqo_deactivation
 
     def _obtain_query_plan(self, query: str) -> dict:
         """Provides the query plan that would be used for executing a specific query.
@@ -1515,6 +1533,10 @@ class PostgresHintService(db.HintService):
         else:
             raise ValueError(f"No supported hinting backend found for backend with PID {connection_pid}")
 
+    @property
+    def backend(self) -> Literal["pg_hint_plan", "pg_lab"]:
+        return self._backend
+
     def generate_hints(self, query: qal.SqlQuery,
                        join_order: Optional[jointree.LogicalJoinTree | jointree.PhysicalQueryPlan] = None,
                        physical_operators: Optional[physops.PhysicalOperatorAssignment] = None,
@@ -1571,6 +1593,36 @@ class PostgresHintService(db.HintService):
             Information about the hinting backend
         """
         return {"backend": self._backend}
+
+    def _requires_geqo_deactivation(self, query: qal.SqlQuery) -> bool:
+        """Determines whether the query requires the deactivation of the genetic optimizer (GeQO).
+
+        Parameters
+        ----------
+        query : qal.SqlQuery
+            The query to check
+
+        Returns
+        -------
+        bool
+            Whether GeQO needs to be disabled to ensure a proper execution of the query
+        """
+        if self._backend == "pg_lab":
+            # pg_lab can work with GeQO just fine
+            return False
+
+        if not _query_contains_geqo_sensible_settings(query) or _modifies_geqo_config(query):
+            # If the query does not contain any problematic parts (i.e. hints) that GeQO might interfere with, or if the
+            # query takes care of the GeQO configuration itself, we do not need to deactivate GeQO
+            return False
+
+        if not self._postgres_db._current_geqo_state.triggers_geqo(query):
+            # If the database has GeQO disabled, or if the query is below the GeQO threshold, we do not need to deactivate
+            # GeQO
+            return False
+
+        # If we reach this point, we have to deactivate GeQO
+        return True
 
     def _generate_leading_hint_content(self, join_tree_node: jointree.AbstractJoinTreeNode,
                                        operator_assignment: Optional[physops.PhysicalOperatorAssignment] = None) -> str:
@@ -1831,7 +1883,9 @@ class PostgresHintService(db.HintService):
         if not settings and not hints:
             return None
         settings_block = "\n".join(settings)
-        hints_block = "\n".join(["/*+"] + ["  " + hint for hint in hints] + ["*/"]) if hints else ""
+        hint_prefix = "/*=pg_lab=" if self._backend == "pg_lab" else "/*+"
+        hint_suffix = "*/"
+        hints_block = "\n".join([hint_prefix] + ["  " + hint for hint in hints] + [hint_suffix]) if hints else ""
         return clauses.Hint(settings_block, hints_block)
 
     def __repr__(self) -> str:
@@ -1855,34 +1909,40 @@ class PostgresOptimizer(db.OptimizerInterface):
 
     def query_plan(self, query: qal.SqlQuery | str) -> db.QueryExecutionPlan:
         if isinstance(query, qal.SqlQuery):
-            query = self._pg_instance._prepare_query_execution(query, drop_explain=True)
+            query, deactivated_geqo = self._pg_instance._prepare_query_execution(query, drop_explain=True)
+        else:
+            deactivated_geqo = False
         raw_query_plan = self._pg_instance._obtain_query_plan(query)
         query_plan = PostgresExplainPlan(raw_query_plan)
-        self._pg_instance._restore_geqo_state()
+        if deactivated_geqo:
+            self._pg_instance._restore_geqo_state()
         return query_plan.as_query_execution_plan()
 
     def analyze_plan(self, query: qal.SqlQuery) -> db.QueryExecutionPlan:
-        query = self._pg_instance._prepare_query_execution(transform.as_explain_analyze(query))
+        query, deactivated_geqo = self._pg_instance._prepare_query_execution(transform.as_explain_analyze(query))
         self._pg_instance.cursor().execute(query)
         raw_query_plan = self._pg_instance.cursor().fetchone()[0]
         query_plan = PostgresExplainPlan(raw_query_plan)
-        self._pg_instance._restore_geqo_state()
+        if deactivated_geqo:
+            self._pg_instance._restore_geqo_state()
         return query_plan.as_query_execution_plan()
 
     def cardinality_estimate(self, query: qal.SqlQuery | str) -> int:
         if isinstance(query, qal.SqlQuery):
-            query = self._pg_instance._prepare_query_execution(query, drop_explain=True)
+            query, deactivated_geqo = self._pg_instance._prepare_query_execution(query, drop_explain=True)
         query_plan = self._pg_instance._obtain_query_plan(query)
         estimate = query_plan[0]["Plan"]["Plan Rows"]
-        self._pg_instance._restore_geqo_state()
+        if deactivated_geqo:
+            self._pg_instance._restore_geqo_state()
         return estimate
 
     def cost_estimate(self, query: qal.SqlQuery | str) -> float:
         if isinstance(query, qal.SqlQuery):
-            query = self._pg_instance._prepare_query_execution(query, drop_explain=True)
+            query, deactivated_geqo = self._pg_instance._prepare_query_execution(query, drop_explain=True)
         query_plan = self._pg_instance._obtain_query_plan(query)
         estimate = query_plan[0]["Plan"]["Total Cost"]
-        self._pg_instance._restore_geqo_state()
+        if deactivated_geqo:
+            self._pg_instance._restore_geqo_state()
         return estimate
 
 
