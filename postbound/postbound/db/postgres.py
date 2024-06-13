@@ -412,7 +412,7 @@ class PostgresInterface(db.Database):
     def hinting(self) -> PostgresHintService:
         return self._hinting_backend
 
-    def execute_query(self, query: qal.SqlQuery | str, *, cache_enabled: Optional[bool] = None) -> Any:
+    def execute_query(self, query: qal.SqlQuery | str, *, cache_enabled: Optional[bool] = None, raw: bool = False) -> Any:
         cache_enabled = cache_enabled or (cache_enabled is None and self._cache_enabled)
 
         if cache_enabled and query in self._query_cache:
@@ -435,7 +435,7 @@ class PostgresInterface(db.Database):
                 msg = "\n".join([f"At {utils.current_timestamp()}", "For query:", str(query), "Message:", str(e)])
                 raise db.DatabaseUserError(msg, e)
 
-        return _simplify_result_set(query_result)
+        return query_result if raw else _simplify_result_set(query_result)
 
     def optimizer(self) -> PostgresOptimizer:
         return PostgresOptimizer(self)

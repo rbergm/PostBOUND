@@ -113,7 +113,7 @@ class MysqlInterface(db.Database):
     def hinting(self) -> db.HintService:
         return MysqlHintService(self)
 
-    def execute_query(self, query: qal.SqlQuery | str, *, cache_enabled: Optional[bool] = None) -> Any:
+    def execute_query(self, query: qal.SqlQuery | str, *, cache_enabled: Optional[bool] = None, raw: bool = False) -> Any:
         cache_enabled = cache_enabled or (cache_enabled is None and self._cache_enabled)
         query = self._prepare_query_execution(query)
 
@@ -125,6 +125,9 @@ class MysqlInterface(db.Database):
             if cache_enabled:
                 self._inflate_query_cache()
                 self._query_cache[query] = query_result
+
+        if raw:
+            return query_result
 
         # simplify the query result as much as possible: [(42, 24)] becomes (42, 24) and [(1,), (2,)] becomes [1, 2]
         # [(42, 24), (4.2, 2.4)] is left as-is

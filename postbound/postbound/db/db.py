@@ -203,7 +203,7 @@ class Database(abc.ABC):
         raise NotImplementedError
 
     @abc.abstractmethod
-    def execute_query(self, query: qal.SqlQuery | str, *, cache_enabled: Optional[bool] = None) -> Any:
+    def execute_query(self, query: qal.SqlQuery | str, *, cache_enabled: Optional[bool] = None, raw: bool = False) -> Any:
         """Executes the given query and returns the associated result set.
 
         Parameters
@@ -216,6 +216,9 @@ class Database(abc.ABC):
             "global" configuration of the database system should be used. Setting this parameter to a boolean value
             forces or deactivates caching for the specific query for the specific execution no matter what the "global"
             configuration is.
+        raw : bool, optional
+            Whether the result set should be returned as-is. By default, the result set is simplified. Raw mode skips this
+            step.
 
         Returns
         -------
@@ -224,8 +227,8 @@ class Database(abc.ABC):
             component of the tuple corresponds to a specific column of the result set and each tuple corresponds to a
             row in the result set. However, many queries do not provide a 2-dimensional result set (e.g. ``COUNT(*)``
             queries). In such cases, the nested structure of the result set makes it quite cumbersome to use.
-            Therefore, this method tries to simplify the return value of the query for more convenient use. More
-            specifically, if the query returns just a single row, this row is returned directly as a tuple.
+            Therefore, this method tries to simplify the return value of the query for more convenient use (if `raw` mode is
+            disabled). More specifically, if the query returns just a single row, this row is returned directly as a tuple.
             Furthermore, if the query returns just a single column, the values of that column are returned directly in
             a list. Both simplifications will also be combined, such that a result set of a single row of a single
             value will be returned as that single value directly. In all other cases, the result will be a list
