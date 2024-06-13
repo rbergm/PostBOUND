@@ -218,6 +218,18 @@ class RelalgParserTests(unittest.TestCase):
         self.assertNotEqual(scan_r.sideways_pass, pulled_up_join.left_input.sideways_pass)
         self.assertIs(updated_root.left_input, updated_root.right_input.left_input)
 
+    def test_parse_subquery_in_predicates(self):
+        query = parser.parse_query("SELECT * FROM R WHERE R.a IN (SELECT S.b FROM S WHERE R.a = S.a)")
+        relalg.parse_relalg(query)
+
+    def test_parse_subquery_between_predicates(self):
+        query = parser.parse_query("""SELECT *
+                                   FROM R
+                                   WHERE R.a BETWEEN (SELECT min(S.b) FROM S WHERE R.a = S.a)
+                                        AND (SELECT max(S.b) FROM S WHERE R.a = S.a)
+                                   """)
+        relalg.parse_relalg(query)
+
     def _assert_sound_tree_linkage(self, root: relalg.RelNode):
         if root.parent_node:
             self.assertIn(root, root.parent_node.children())

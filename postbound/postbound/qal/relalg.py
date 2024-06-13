@@ -2560,7 +2560,7 @@ class _BaseTableLookup(expr.SqlExpressionVisitor[Optional[base.TableReference]],
 
     def visit_in_predicate(self, predicate: preds.InPredicate) -> bool:
         base_tables = {predicate.column.accept_visitor(self)}
-        base_tables |= collection_utils.set_union(val.accept_visitor(self) for val in predicate.values)
+        base_tables |= {val.accept_visitor(self) for val in predicate.values}
         return self._fetch_valid_base_tables(base_tables)
 
     def visit_unary_predicate(self, predicate: preds.UnaryPredicate) -> bool:
@@ -3109,9 +3109,9 @@ class _ImplicitRelalgParser:
             return final_fragment
         elif isinstance(predicate, preds.BetweenPredicate):
             # BETWEEN predicate with scalar subquery
-            final_fragment = self._add_expression(predicate.column)
-            final_fragment = self._add_expression(predicate.interval_start)
-            final_fragment = self._add_expression(predicate.interval_end)
+            final_fragment = self._add_expression(predicate.column, input_node=final_fragment)
+            final_fragment = self._add_expression(predicate.interval_start, input_node=final_fragment)
+            final_fragment = self._add_expression(predicate.interval_end, input_node=final_fragment)
             final_fragment = Selection(final_fragment, predicate)
             return final_fragment
 
@@ -3131,9 +3131,9 @@ class _ImplicitRelalgParser:
                 if detected_subqueries and not all(subquery.is_scalar() for subquery in detected_subqueries.subqueries):
                     subquery_in_values.append((value, detected_subqueries))
                 else:
-                    final_fragment = self._add_expression(value)
+                    final_fragment = self._add_expression(value, input_node=final_fragment)
                     pure_in_values.append(value)
-            final_fragment = self._add_expression(predicate.column)
+            final_fragment = self._add_expression(predicate.column, input_node=final_fragment)
             if pure_in_values:
                 reduced_predicate = preds.InPredicate(predicate.column, pure_in_values)
                 final_fragment = Selection(final_fragment, reduced_predicate)
@@ -3327,8 +3327,9 @@ class _ImplicitRelalgParser:
                     case "in" if expression.query.is_scalar():
                         return CrossProduct(input_node, subquery_root)
                     case "in" if not expression.query.is_scalar():
-                        assert isinstance(subquery_root, Projection) and len(subquery_root.columns) == 1
-                        in_predicate = preds.BinaryPredicate.equal(in_column, subquery_root.columns[0])
+                        unwrapped_scan = subquery_root.input_node
+                        assert isinstance(unwrapped_scan, Projection) and len(unwrapped_scan.columns) == 1
+                        in_predicate = preds.BinaryPredicate.equal(in_column, unwrapped_scan.columns[0])
                         return SemiJoin(input_node, subquery_root, in_predicate)
             case expr.CastExpression() | expr.FunctionExpression() | expr.MathematicalExpression():
                 return self._ensure_expression_applicability(expression, input_node)

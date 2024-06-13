@@ -14,6 +14,19 @@ Be carefull when updating and check the changelog!
 
 ---
 
+## Version 0.4.4
+
+### Updates
+- Added a `raw` mode to `execute_query` which does not attempt any simplification of the result set
+- PostgreSQL's GeQO optimizer will now be deactivated based on the current hinting backend.
+
+### Fixes
+- Removed excessive information from join orders extracted from native query plans in `NativeJoinOrderOptimizer`
+- Fixed relalg parsing of `BETWEEN` and `IN` predicates
+- Fixed database query cache not storing results as intended
+
+---
+
 ## Version 0.4.3
 
 ### New features
