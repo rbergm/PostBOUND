@@ -1525,22 +1525,25 @@ class PostgresHintService(db.HintService):
         connection_pid = postgres_db._connection.info.backend_pid
         active_extensions = sys_util.open_files(connection_pid)
 
+        self._inactive = False
         self._postgres_db = postgres_db
         if any(ext.endswith("pg_lab.so") for ext in active_extensions):
             self._backend = "pg_lab"
         elif any(ext.endswith("pg_hint_plan.so") for ext in active_extensions):
             self._backend = "pg_hint_plan"
         else:
-            raise ValueError(f"No supported hinting backend found for backend with PID {connection_pid}")
+            self._inactive = True
+            self._backend = "none"
 
     @property
-    def backend(self) -> Literal["pg_hint_plan", "pg_lab"]:
+    def backend(self) -> Literal["pg_hint_plan", "pg_lab", "none"]:
         return self._backend
 
     def generate_hints(self, query: qal.SqlQuery,
                        join_order: Optional[jointree.LogicalJoinTree | jointree.PhysicalQueryPlan] = None,
                        physical_operators: Optional[physops.PhysicalOperatorAssignment] = None,
                        plan_parameters: Optional[planparams.PlanParameterization] = None) -> qal.SqlQuery:
+        self._assert_active_backend()
         adapted_query = query
         if adapted_query.explain and not isinstance(adapted_query.explain, PostgresExplainClause):
             adapted_query = transform.replace_clause(adapted_query, PostgresExplainClause(adapted_query.explain))
@@ -1582,6 +1585,7 @@ class PostgresHintService(db.HintService):
         return formatter.format_quick(query)
 
     def supports_hint(self, hint: physops.PhysicalOperator | planparams.HintType) -> bool:
+        self._assert_active_backend()
         return hint in PostgresJoinHints | PostgresScanHints | PostgresPlanHints
 
     def describe(self) -> dict[str, str]:
@@ -1607,6 +1611,9 @@ class PostgresHintService(db.HintService):
         bool
             Whether GeQO needs to be disabled to ensure a proper execution of the query
         """
+        if self._inactive:
+            return False
+
         if self._backend == "pg_lab":
             # pg_lab can work with GeQO just fine
             return False
@@ -1887,6 +1894,18 @@ class PostgresHintService(db.HintService):
         hint_suffix = "*/"
         hints_block = "\n".join([hint_prefix] + ["  " + hint for hint in hints] + [hint_suffix]) if hints else ""
         return clauses.Hint(settings_block, hints_block)
+
+    def _assert_active_backend(self) -> None:
+        """Ensures that a proper hinting backend is available.
+
+        Raises
+        ------
+        ValueError
+            If no backend is available.
+        """
+        if self._inactive:
+            connection_pid = self._postgres_db._connection.info.backend_pid
+            raise ValueError(f"No supported hinting backend found for backend with PID {connection_pid}")
 
     def __repr__(self) -> str:
         return f"PostgresHintService(db={self._postgres_db} backend={self._backend})"
