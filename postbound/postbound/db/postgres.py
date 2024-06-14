@@ -1849,6 +1849,7 @@ class PostgresHintService(db.HintService):
                 # pg_hint_plan can only generate cardinality hints for joins
                 warnings.warn(f"Ignoring cardinality hint for base table {join}", category=db.HintWarning)
                 continue
+            cardinality_hint = round(cardinality_hint)
             join_key = _generate_join_key(join)
             hint_text = (f"Card({join_key} #{cardinality_hint})" if self._backend == "pg_lab"
                          else f"Rows({join_key} #{cardinality_hint})")
