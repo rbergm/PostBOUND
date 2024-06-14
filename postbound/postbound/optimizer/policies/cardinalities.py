@@ -22,7 +22,7 @@ from postbound.db import db
 from postbound.experiments import workloads
 from postbound.qal import base, clauses, parser, predicates, qal, transform
 from postbound.optimizer import joingraph, jointree, physops, validation, planparams, stages
-from postbound.util import collections as collection_utils
+from postbound.util import collections as collection_utils, jsonize
 
 
 class CardinalityHintsGenerator(stages.ParameterGeneration, abc.ABC):
@@ -280,12 +280,16 @@ class PreComputedCardinalities(CardinalityHintsGenerator):
     live_db : Optional[db.Database], optional
         The database system that should be used in case of a live fallback. If omitted, the database system is inferred from
         the database pool.
+    save_live_fallback_results : bool, optional
+        Whether the cardinalities computed by the live fallback should be stored in the original file containing the lookup
+        table. This is only used if live fallback is active and enabled by default.
     """
     def __init__(self, workload: workloads.Workload, lookup_table_path: str, *,
                  include_cross_products: bool = False, default_cardinality: Optional[int] = None,
                  label_col: str = "label", tables_col: str = "tables", cardinality_col: str = "cardinality",
                  live_fallback: bool = False, live_db: Optional[db.Database] = None,
-                 live_fallback_style: Literal["actual", "estimated"] = "estimated") -> None:
+                 live_fallback_style: Literal["actual", "estimated"] = "estimated",
+                 save_live_fallback_results: bool = True) -> None:
         super().__init__(include_cross_products)
         self._workload = workload
         self._label_col = label_col
@@ -300,6 +304,7 @@ class PreComputedCardinalities(CardinalityHintsGenerator):
         else:
             self._live_db = None
         self._live_fallback_style = live_fallback_style
+        self._save_life_fallback = save_live_fallback_results
 
         self._true_card_df = pd.read_csv(lookup_table_path, converters={tables_col: _parse_tables})
 
@@ -361,11 +366,42 @@ class PreComputedCardinalities(CardinalityHintsGenerator):
         query_fragment = transform.extract_query_fragment(query, tables)
         if self._live_fallback_style == "actual":
             true_card_query = transform.as_count_star_query(query_fragment)
-            return self._live_db.execute_query(true_card_query)
+            cardinality = self._live_db.execute_query(true_card_query)
         elif self._live_fallback_style == "estimated":
-            return self._live_db.optimizer().cardinality_estimate(query_fragment)
+            cardinality = self._live_db.optimizer().cardinality_estimate(query_fragment)
         else:
             raise ValueError(f"Unknown fallback style: '{self._live_fallback_style}'")
+
+        if self._save_life_fallback:
+            self._dump_fallback_estimate(query, tables, cardinality)
+        return cardinality
+
+    def _dump_fallback_estimate(self, query: qal.SqlQuery, tables: frozenset[base.TableReference], cardinality: int) -> None:
+        """Stores a newly computed cardinality estimate in the lookup table.
+
+        Parameters
+        ----------
+        query : qal.SqlQuery
+            The query for which the cardinality was estimated
+        tables : frozenset[base.TableReference]
+            The tables that form the current intermediate
+        cardinality : int
+            The computed cardinality
+        """
+        result_row = {}
+        result_row[self._label_col] = [self._workload.label_of(query)]
+        result_row[self._tables_col] = [jsonize.to_json(tables)]
+
+        if "query" in self._true_card_df.columns:
+            result_row["query"] = [str(query)]
+        if "query_fragment" in self._true_card_df.columns:
+            result_row["query_fragment"] = [str(transform.extract_query_fragment(query, tables))]
+
+        result_row[self._card_col] = [cardinality]
+        result_df = pd.DataFrame(result_row)
+
+        self._true_card_df = pd.concat([self._true_card_df, result_df], ignore_index=True)
+        self._true_card_df.to_csv(self._lookup_df_path, index=False)
 
 
 class CardinalityDistortion(CardinalityHintsGenerator):
