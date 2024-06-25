@@ -58,7 +58,7 @@ class FormattingSubqueryExpression(expr.SubqueryExpression):
         self._indentation = indentation
 
     def __str__(self) -> str:
-        formatted = "(" + format_quick(self.query, inline_hint_block=self._inline_hint_block) + ")"
+        formatted = "(" + format_quick(self.query, inline_hint_block=self._inline_hint_block, trailing_semicolon=False) + ")"
         prefix = " " * (self._indentation + 2)
         if "\n" not in formatted:
             return prefix + formatted
@@ -125,16 +125,16 @@ def _quick_format_cte(cte_clause: clauses.CommonTableExpression) -> list[str]:
     if len(cte_clause.queries) == 1:
         cte_query = cte_clause.queries[0]
         cte_header = f"WITH {cte_query.target_name} AS ("
-        cte_content = _increase_indentation(format_quick(cte_query.query).removesuffix(";"))
+        cte_content = _increase_indentation(format_quick(cte_query.query, trailing_semicolon=False))
         cte_footer = ")"
         return [cte_header, cte_content, cte_footer]
 
     first_cte, *remaining_ctes = cte_clause.queries
-    first_content = _increase_indentation(format_quick(first_cte.query)).removesuffix(";")
+    first_content = _increase_indentation(format_quick(first_cte.query, trailing_semicolon=False))
     formatted_parts: list[str] = [f"WITH {first_cte.target_name} AS (", first_content]
     for next_cte in remaining_ctes:
         current_header = f"), {next_cte.target_name} AS ("
-        cte_content = _increase_indentation(format_quick(next_cte.query).removesuffix(";"))
+        cte_content = _increase_indentation(format_quick(next_cte.query, trailing_semicolon=False))
 
         formatted_parts.append(current_header)
         formatted_parts.append(cte_content)
@@ -337,7 +337,7 @@ def _case_expression_replacement(expression: expr.SqlExpression, *, indentation:
     return FormattingCaseExpression(expression, indentation)
 
 
-def format_quick(query: qal.SqlQuery, *, inline_hint_block: bool = False,
+def format_quick(query: qal.SqlQuery, *, inline_hint_block: bool = False, trailing_semicolon: bool = True,
                  custom_formatter: Optional[Callable[[qal.SqlQuery], qal.SqlQuery]] = None) -> str:
     """Applies a quick formatting heuristic to structure the given query.
 
@@ -401,5 +401,6 @@ def format_quick(query: qal.SqlQuery, *, inline_hint_block: bool = False,
         else:
             pretty_query_parts.append(str(clause))
 
-    pretty_query_parts[-1] += ";"
+    if trailing_semicolon:
+        pretty_query_parts[-1] += ";"
     return "\n".join(pretty_query_parts)

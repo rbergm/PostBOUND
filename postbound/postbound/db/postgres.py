@@ -2538,20 +2538,29 @@ class PostgresExplainNode:
         ValueError
             If the node contains more than two children.
         """
-        if self.children and len(self.children) > 2:
-            raise ValueError("Cannot transform parent node > 2 children")
-        elif self.children and len(self.children) == 1:
-            child_nodes = [self.children[0].as_query_execution_plan()]
-            inner_child = None
-        elif self.children:
-            first_child, second_child = self.children
-            first_plan, second_plan = first_child.as_query_execution_plan(), second_child.as_query_execution_plan()
-            child_nodes = first_plan, second_plan
-            inner_child = (first_plan if first_child.parent_relationship == "Inner" and self.node_type != "Hash Join"
-                           else second_plan)
-        else:
-            child_nodes = None
-            inner_child = None
+        found_hash_join = self.node_type == "Hash Join"
+        child_nodes = []
+        inner_child, outer_child, subplan_child = None, None, None
+        for child in self.children:
+            parent_rel = child.parent_relationship
+            qep_child = child.as_query_execution_plan()
+            found_inner = (parent_rel == "Inner" and not found_hash_join) or (parent_rel == "Outer" and found_hash_join)
+            found_outer = (parent_rel == "Outer" and not found_hash_join) or (parent_rel == "Inner" and found_hash_join)
+            if found_inner:
+                inner_child = qep_child
+            elif found_outer:
+                outer_child = qep_child
+            elif parent_rel == "SubPlan":
+                subplan_child = qep_child
+            else:
+                raise ValueError("Unknown parent relationship in child node:", child)
+
+        if inner_child and outer_child:
+            child_nodes = (outer_child, inner_child)
+        elif outer_child:
+            child_nodes = (outer_child,)
+        elif inner_child:
+            child = (inner_child,)
 
         table = self.parse_table()
         is_scan = self.is_scan()
@@ -2571,7 +2580,7 @@ class PostgresExplainNode:
                                      cost=self.cost, estimated_cardinality=self.cardinality_estimate,
                                      true_cardinality=true_card, execution_time=self.execution_time,
                                      cached_pages=self.shared_blocks_cached, scanned_pages=self.shared_blocks_read,
-                                     physical_operator=operator, inner_child=inner_child)
+                                     physical_operator=operator, inner_child=inner_child, subplan_input=subplan_child)
 
     def inspect(self, *, _indentation: int = 0) -> str:
         """Provides a pretty string representation of the ``EXPLAIN`` sub-plan that can be printed.

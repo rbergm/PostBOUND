@@ -14,6 +14,20 @@ Be carefull when updating and check the changelog!
 
 ---
 
+## Version 0.4.5
+
+### Updates
+- `PreComputedCardinalities` can now optionally save cardinalities that were computed as part of the live fallback
+- `QueryExecutionPlan` nodes now support inputs from subqueries, as is used by e.g. Postgres. These changes are also reflected
+  in the `inspect()` output of the plan, as well as in the plan visualization.
+
+### Fixes
+- Postgres query plans with more than two child nodes (e.g. for subplans corresponding to subqueries) can now be converted
+  correctly to a `QueryExecutionPlan`
+- Cardinality hints for Postgres are now always output as integer, never as floats
+
+---
+
 ## Version 0.4.4
 
 ### Updates

@@ -13,8 +13,13 @@ from postbound.util import collections as collection_utils
 
 
 def _query_plan_labels(node: db.QueryExecutionPlan, *,
-                       annotation_generator: Optional[Callable[[db.QueryExecutionPlan], str]]) -> tuple[str, dict]:
-    if node.is_join:
+                       annotation_generator: Optional[Callable[[db.QueryExecutionPlan], str]],
+                       _in_subplan: bool = False) -> tuple[str, dict]:
+    if node.is_subplan_root and not _in_subplan:
+        label, params = _query_plan_labels(node, annotation_generator=annotation_generator, _in_subplan=True)
+        label = f"<<SubPlan>>\n{label}"
+        params["style"] = "dashed"
+    elif node.is_join:
         label, params = node.node_type, {"style": "bold"}
     elif node.is_scan:
         label, params = f"<<{node.node_type}>>\n{node.table}", {"color": "grey"}
@@ -37,6 +42,9 @@ def _query_plan_traversal(node: db.QueryExecutionPlan, *,
         children = node.outer_child, node.inner_child
     else:
         children = node.children
+
+    if node.subplan_input:
+        children = children + (node.subplan_input,)
 
     if skip_intermediates:
         skipped = [_query_plan_traversal(child, skip_intermediates=True) if not child.is_scan and not child.is_join

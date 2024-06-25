@@ -1281,6 +1281,11 @@ class QueryExecutionPlan:
         assumes that the operator as exactly two children and allows to infer the outer children. Defaults to ``None``
         if the concept of inner/outer children is not applicable to the database system, not relevant to the current
         context, or if the relation could not be inferred.
+    subplan_input : Optional[QueryExecutionPlan], optional
+        Input node that was computed as part of a nested query. Such nodes will typically be used within the filter predicates
+        of the node.
+    subplan_root : bool, optional
+        Whether the current node is the root of a subplan that computes a nested query. See `subplan_input` for more details.
 
     Notes
     -----
@@ -1296,7 +1301,8 @@ class QueryExecutionPlan:
                  execution_time: float = math.nan,
                  cached_pages: float = math.nan, scanned_pages: float = math.nan,
                  physical_operator: Optional[physops.PhysicalOperator] = None,
-                 inner_child: Optional[QueryExecutionPlan] = None) -> None:
+                 inner_child: Optional[QueryExecutionPlan] = None,
+                 subplan_input: Optional[QueryExecutionPlan] = None, is_subplan_root: bool = False) -> None:
         self.node_type = node_type
         self.physical_operator = physical_operator
         self.is_join = is_join
@@ -1323,6 +1329,11 @@ class QueryExecutionPlan:
 
         self.cached_pages = cached_pages
         self.scanned_pages = scanned_pages
+
+        self.subplan_input = subplan_input
+        if self.subplan_input:
+            self.subplan_input.is_subplan_root = True
+        self.is_subplan_root = is_subplan_root
 
     @property
     def total_accessed_pages(self) -> float:
@@ -1678,6 +1689,7 @@ class QueryExecutionPlan:
         str
             A string representation of the query plan
         """
+        # TODO: include subplan_input in the inspection
         padding = " " * _current_indentation
         prefix = f"{padding}<- " if padding else ""
 
@@ -1693,6 +1705,10 @@ class QueryExecutionPlan:
         child_inspections = [
             child.inspect(fields=fields, skip_intermediates=skip_intermediates, _current_indentation=_current_indentation + 2)
             for child in self.children]
+        if self.subplan_input:
+            child_inspections.append(f"{padding}SubPlan:")
+            child_inspections.append(self.subplan_input.inspect(fields=fields, skip_intermediates=skip_intermediates,
+                                                                _current_indentation=_current_indentation + 2))
 
         if not skip_intermediates or self.is_join or self.is_scan or not _current_indentation:
             return "\n".join(own_inspection + child_inspections)
