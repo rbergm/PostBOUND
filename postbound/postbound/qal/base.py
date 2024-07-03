@@ -16,8 +16,10 @@ class TableReference(jsonize.Jsonizable):
     It can either be a physical table, a CTE, or an entirely virtual query created via subqueries. Note that a table
     reference is indeed just a reference and not a 1:1 "representation" since each table can be sourced multiple times
     in a query. Therefore, in addition to the table name, each instance can optionally also contain an alias to
-    distinguish between different references to the same table. In case of virtual tables, the full name will be empty
-    and only the alias set.
+    distinguish between different references to the same table. In case of virtual tables, the full name will usually be empty
+    and only the alias set. An exception are table references that refer to CTEs: the CTE can be referred to using an alias
+    in the FROM clause of the actual query. In this case, the full name is set to the CTE name , the alias to the alias from
+    the FROM clause and the table is still treated as virtual.
 
     Table references can be sorted lexicographically. All instances should be treated as immutable objects.
 
@@ -38,8 +40,6 @@ class TableReference(jsonize.Jsonizable):
     ------
     ValueError
         If neither full name nor an alias are provided
-    ValueError
-        If the full name is given for a virtual table
     """
 
     @staticmethod
@@ -61,10 +61,8 @@ class TableReference(jsonize.Jsonizable):
     def __init__(self, full_name: str, alias: str = "", virtual: bool = False) -> None:
         if not full_name and not alias:
             raise ValueError("Full name or alias required")
-        if full_name and virtual:
-            raise ValueError("Virtual tables do not have a full name")
-        self._full_name = full_name
-        self._alias = alias
+        self._full_name = full_name if full_name else ""
+        self._alias = alias if alias else ""
         self._virtual = virtual
         self._hash_val = hash((full_name, alias))
 
@@ -136,6 +134,28 @@ class TableReference(jsonize.Jsonizable):
         if self.virtual:
             raise errors.StateError("An alias cannot be dropped from a virtual table!")
         return TableReference(self.full_name)
+
+    def with_alias(self, alias: str) -> TableReference:
+        """Creates a new table reference for the same table but with a different alias.
+
+        Parameters
+        ----------
+        alias : str
+            The new alias
+
+        Returns
+        -------
+        TableReference
+            The updated table reference
+
+        Raises
+        ------
+        errors.StateError
+            If the current table does not have a full name.
+        """
+        if not self.full_name:
+            raise errors.StateError("Cannot add an alias to a table without full name")
+        return TableReference(self.full_name, alias, self.virtual)
 
     def __json__(self) -> object:
         return {"full_name": self._full_name, "alias": self._alias}

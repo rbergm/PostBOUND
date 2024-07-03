@@ -2407,6 +2407,8 @@ class PostgresExplainNode:
         self.relation_name = explain_data.get("Relation Name", None)
         self.relation_alias = explain_data.get("Alias", None)
         self.index_name = explain_data.get("Index Name", None)
+        self.subplan_name = explain_data.get("Subplan Name", None)
+        self.cte_name = explain_data.get("CTE Name", None)
 
         self.filter_condition = explain_data.get("Filter", None)
         self.index_condition = explain_data.get("Index Cond", None)
@@ -2424,6 +2426,7 @@ class PostgresExplainNode:
 
         self.children = [PostgresExplainNode(child) for child in explain_data.get("Plans", [])]
 
+        self.explain_data = explain_data
         self._hash_val = hash((self.node_type, self.relation_name, self.relation_alias, tuple(self.children)))
 
     def is_scan(self) -> bool:
@@ -2550,7 +2553,7 @@ class PostgresExplainNode:
                 inner_child = qep_child
             elif found_outer:
                 outer_child = qep_child
-            elif parent_rel == "SubPlan":
+            elif parent_rel == "SubPlan" or parent_rel == "InitPlan":
                 subplan_child = qep_child
             else:
                 raise ValueError("Unknown parent relationship in child node:", child)
@@ -2619,7 +2622,12 @@ class PostgresExplainNode:
         explain_content = f"(cost={self.cost} rows={self.cardinality_estimate})"
         conditions = " ".join(f"{condition}: {value}" for condition, value in self.filter_conditions().items())
         conditions = " " + conditions if conditions else ""
-        scan_info = f" on {self.parse_table().identifier()}" if self.is_scan() else ""
+        if self.is_scan():
+            scan_info = f" on {self.parse_table().identifier()}"
+        elif self.cte_name:
+            scan_info = f" on {self.cte_name}"
+        else:
+            scan_info = ""
         return self.node_type + scan_info + explain_content + analyze_content + conditions
 
 

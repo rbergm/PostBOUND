@@ -573,7 +573,7 @@ def _parse_table_reference(table: str | dict, *,
         table_name = table["value"]
         table_alias = table.get("name", None)
         if cte_tables and table_name in cte_tables:
-            return cte_tables[table_name]
+            return base.TableReference(cte_tables[table_name], table_alias, True)
         return base.TableReference(table_name, table_alias)
 
     # string-based table format
@@ -584,7 +584,7 @@ def _parse_table_reference(table: str | dict, *,
     alias = "" if not alias else alias
     table = base.TableReference(full_name, alias)
     if cte_tables and full_name in cte_tables:
-        return cte_tables[full_name]
+        return base.TableReference(cte_tables[full_name], alias, True)
     return table
 
 
