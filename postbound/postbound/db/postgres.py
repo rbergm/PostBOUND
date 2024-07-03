@@ -2599,9 +2599,15 @@ class PostgresExplainNode:
         str
             A string representation of the ``EXPLAIN`` sub-plan.
         """
+        if self.parent_relationship in ("InitPlan", "SubPlan"):
+            padding = " " * (max(_indentation - 2, 0))
+            cte_name = self.subplan_name if self.subplan_name else ""
+            own_inspection = [f"{padding}{self.parent_relationship}: {cte_name}"]
+        else:
+            own_inspection = []
         padding = " " * _indentation
         prefix = f"{padding}<- " if padding else ""
-        own_inspection = [prefix + str(self)]
+        own_inspection += [prefix + str(self)]
         child_inspections = [child.inspect(_indentation=_indentation+2) for child in self.inner_outer_children()]
         return "\n".join(own_inspection + child_inspections)
 
