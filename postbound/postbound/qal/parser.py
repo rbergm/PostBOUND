@@ -146,6 +146,7 @@ _MospBinaryOperations = {
     "not_ilike": expr.LogicalSqlOperators.NotILike,
 
     "in": expr.LogicalSqlOperators.In,
+    "nin": expr.LogicalSqlOperators.In,
     "between": expr.LogicalSqlOperators.Between
 }
 """The different kinds of mathematical operators that mo-sql can emit, as well as their mapping to our counterparts."""
@@ -225,6 +226,11 @@ def _parse_mosp_predicate(mosp_data: dict) -> preds.AbstractPredicate:
     # parse binary predicates (logical operators, etc.)
     if operation == "in":
         return _parse_in_predicate(mosp_data)
+    elif operation == "nin":
+        mosp_data = copy.copy(mosp_data)
+        mosp_data["in"] = mosp_data.pop("nin")
+        in_predicate = _parse_in_predicate(mosp_data)
+        return preds.CompoundPredicate.create_not(in_predicate)
     elif operation == "between":
         target_column, interval_start, interval_end = mosp_data[operation]
         parsed_column = _parse_mosp_expression(target_column)
