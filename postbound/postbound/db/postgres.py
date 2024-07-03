@@ -2568,6 +2568,7 @@ class PostgresExplainNode:
         table = self.parse_table()
         is_scan = self.is_scan()
         is_join = self.is_join()
+        subplan_name = self.subplan_name or self.cte_name
         par_workers = self.parallel_workers + 1  # in Postgres the control worker also processes input
         true_card = self.true_cardinality * self.loops
 
@@ -2583,7 +2584,8 @@ class PostgresExplainNode:
                                      cost=self.cost, estimated_cardinality=self.cardinality_estimate,
                                      true_cardinality=true_card, execution_time=self.execution_time,
                                      cached_pages=self.shared_blocks_cached, scanned_pages=self.shared_blocks_read,
-                                     physical_operator=operator, inner_child=inner_child, subplan_input=subplan_child)
+                                     physical_operator=operator, inner_child=inner_child,
+                                     subplan_input=subplan_child, subplan_name=subplan_name)
 
     def inspect(self, *, _indentation: int = 0) -> str:
         """Provides a pretty string representation of the ``EXPLAIN`` sub-plan that can be printed.

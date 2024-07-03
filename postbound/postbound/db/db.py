@@ -1286,6 +1286,9 @@ class QueryExecutionPlan:
         of the node.
     subplan_root : bool, optional
         Whether the current node is the root of a subplan that computes a nested query. See `subplan_input` for more details.
+    subplan_name : str, optional
+        For subplan roots, this is the name of the subplan being exported. For nodes with subplan input, this is the name of
+        the subplan being imported.
 
     Notes
     -----
@@ -1302,7 +1305,8 @@ class QueryExecutionPlan:
                  cached_pages: float = math.nan, scanned_pages: float = math.nan,
                  physical_operator: Optional[physops.PhysicalOperator] = None,
                  inner_child: Optional[QueryExecutionPlan] = None,
-                 subplan_input: Optional[QueryExecutionPlan] = None, is_subplan_root: bool = False) -> None:
+                 subplan_input: Optional[QueryExecutionPlan] = None, is_subplan_root: bool = False,
+                 subplan_name: str = "") -> None:
         self.node_type = node_type
         self.physical_operator = physical_operator
         self.is_join = is_join
@@ -1334,6 +1338,7 @@ class QueryExecutionPlan:
         if self.subplan_input:
             self.subplan_input.is_subplan_root = True
         self.is_subplan_root = is_subplan_root
+        self.subplan_name = subplan_name
 
     @property
     def total_accessed_pages(self) -> float:
@@ -1706,7 +1711,8 @@ class QueryExecutionPlan:
             child.inspect(fields=fields, skip_intermediates=skip_intermediates, _current_indentation=_current_indentation + 2)
             for child in self.children]
         if self.subplan_input:
-            child_inspections.append(f"{padding}SubPlan:")
+            subplan_name = self.subplan_input.subplan_name if self.subplan_input.subplan_name else ""
+            child_inspections.append(f"{padding}SubPlan: {subplan_name}")
             child_inspections.append(self.subplan_input.inspect(fields=fields, skip_intermediates=skip_intermediates,
                                                                 _current_indentation=_current_indentation + 2))
 
@@ -1755,7 +1761,14 @@ class QueryExecutionPlan:
         else:
             analyze_str = ""
 
-        table_str = f" :: {self.table}" if self.table else ""
+        if self.table and (not self.is_subplan_root and self.subplan_name):
+            table_str = f" :: {self.table}, {self.subplan_name}"
+        elif self.table:
+            table_str = f" :: {self.table}" if self.table else ""
+        elif not self.is_subplan_root and self.subplan_name:
+            table_str = f" :: {self.subplan_name}"
+        else:
+            table_str = ""
         cost = round(self.cost, 3)
         estimated_card = round(self.estimated_cardinality, 3)
         plan_str = f" (cost={cost} estimated cardinality={estimated_card})"

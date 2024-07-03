@@ -17,7 +17,8 @@ def _query_plan_labels(node: db.QueryExecutionPlan, *,
                        _in_subplan: bool = False) -> tuple[str, dict]:
     if node.is_subplan_root and not _in_subplan:
         label, params = _query_plan_labels(node, annotation_generator=annotation_generator, _in_subplan=True)
-        label = f"<<SubPlan>>\n{label}"
+        subplan_name = (" " + node.subplan_name) if node.subplan_name else ""
+        label = f"<<SubPlan>>{subplan_name}\n{label}"
         params["style"] = "dashed"
     elif node.is_join:
         label, params = node.node_type, {"style": "bold"}
@@ -26,6 +27,9 @@ def _query_plan_labels(node: db.QueryExecutionPlan, *,
     else:
         label, params = node.node_type, {"style": "dashed", "color": "grey"}
 
+    if not node.is_subplan_root and node.subplan_name:
+        label = f"{label}\nSubplan: {node.subplan_name}"
+
     annotation = annotation_generator(node) if annotation_generator else ""
     label = f"{label}\n{annotation}" if annotation else label
     return label, params
@@ -33,11 +37,15 @@ def _query_plan_labels(node: db.QueryExecutionPlan, *,
 
 def _query_plan_traversal(node: db.QueryExecutionPlan, *,
                           skip_intermediates: bool = False) -> Sequence[db.QueryExecutionPlan]:
+    children = ()
+    if node.subplan_input:
+        children = (node.subplan_input,)
+
     if not node.children:
-        return ()
+        return children
 
     if node.is_scan:
-        return ()
+        return children
     elif node.is_join and node.inner_child:
         children = node.outer_child, node.inner_child
     else:
