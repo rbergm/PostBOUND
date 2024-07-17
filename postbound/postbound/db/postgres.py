@@ -2427,7 +2427,12 @@ class PostgresExplainNode:
         self.children = [PostgresExplainNode(child) for child in explain_data.get("Plans", [])]
 
         self.explain_data = explain_data
-        self._hash_val = hash((self.node_type, self.relation_name, self.relation_alias, tuple(self.children)))
+        self._hash_val = hash((self.node_type,
+                               self.relation_name, self.relation_alias, self.index_name, self.subplan_name, self.cte_name,
+                               self.filter_condition, self.index_condition, self.join_filter, self.hash_condition,
+                               self.recheck_condition,
+                               self.parent_relationship, self.parallel_workers,
+                               tuple(self.children)))
 
     def is_scan(self) -> bool:
         """Checks, whether the current node corresponds to a scan node.
