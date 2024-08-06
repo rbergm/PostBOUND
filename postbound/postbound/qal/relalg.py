@@ -3462,4 +3462,8 @@ def parse_relalg(query: qal.ImplicitSqlQuery) -> RelNode:
         The root node of the relational algebra tree. Notice that in some cases the algebraic expression might not be a tree
         but a directed, acyclic graph instead. However, in this case there still is a single root node.
     """
-    return _ImplicitRelalgParser(query).generate_relnode()
+    raw_relnode = _ImplicitRelalgParser(query).generate_relnode()
+
+    # We perform a final mutation to ensure that sideways passes are generated correctly. This removes redundant subtrees that
+    # could be left over from the initial parsing.
+    return raw_relnode.mutate()

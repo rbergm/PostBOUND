@@ -11,9 +11,9 @@ import sys
 sys.path.insert(0, os.path.abspath('../..'))
 
 project = 'PostBOUND'
-copyright = '2023, Database Group @ TU Dresden'
+copyright = '2024, Database Group @ TU Dresden'
 author = 'Database Group @ TU Dresden'
-release = '0.4.5'
+release = '0.4.6'
 
 # -- General configuration ---------------------------------------------------
 # https://www.sphinx-doc.org/en/master/usage/configuration.html#general-configuration

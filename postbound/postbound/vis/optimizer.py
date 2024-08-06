@@ -182,6 +182,7 @@ def _make_label(text: str) -> str:
 
 
 def _relalg_node_labels(node: relalg.RelNode) -> tuple[str, dict]:
+    node_params = {}
     match node:
         case relalg.Projection():
             projection_targets = ", ".join(str(t) for t in node.columns)
@@ -192,6 +193,12 @@ def _relalg_node_labels(node: relalg.RelNode) -> tuple[str, dict]:
         case relalg.ThetaJoin():
             predicate = str(node.predicate)
             node_str = f"{_make_label('⋈')} {_make_sub(predicate)}"
+        case relalg.SemiJoin():
+            predicate = str(node.predicate)
+            node_str = f"{_make_label('⋉')} {_make_sub(predicate)}"
+        case relalg.AntiJoin():
+            predicate = str(node.predicate)
+            node_str = f"{_make_label('▷')} {_make_sub(predicate)}"
         case relalg.GroupBy():
             columns_str = ", ".join(str(c) for c in node.group_columns)
             aggregates: list[str] = []
@@ -228,7 +235,7 @@ def _relalg_node_labels(node: relalg.RelNode) -> tuple[str, dict]:
             node_str = f"{_make_label('χ')} {_make_sub(mapping_str)}"
         case _:
             node_str = _escape_label(str(node))
-    return f"<{node_str}>", {}
+    return f"<{node_str}>", node_params
 
 
 def _relalg_child_traversal(node: relalg.RelNode) -> Sequence[relalg.RelNode]:

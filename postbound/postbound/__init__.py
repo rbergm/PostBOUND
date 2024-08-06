@@ -20,7 +20,7 @@ well-defined interfaces.
 
 On a high-level, the PostBOUND project is structured as follows:
 
-- the `postbound` module contains the actual optimizaiton pipeline
+- the `postbound` module contains the actual optimization pipeline
 - the `optimizer` package provides the different optimization strategies, interfaces and some pre-defined algorithms
 - the `qal` package provides the query abstraction used throughout PostBOUND, as well as logic to parse and transform
   query instances
@@ -35,3 +35,5 @@ On a high-level, the PostBOUND project is structured as follows:
 
 To get a general idea of how to work with PostBOUND and where to start, take a look at the README and the example scripts.
 """
+
+__version__ = "0.4.6"

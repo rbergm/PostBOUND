@@ -14,6 +14,23 @@ Be carefull when updating and check the changelog!
 
 ---
 
+## Version 0.4.6
+
+### New features
+- Added a `plots` module to quickly draw plots from a dataframe in grid structure
+
+### Updates
+- Improved inspection of subplans in Postgres query plans
+- Improved display of subplans in QEP visualization
+- Improved rendering of semi join and anti join nodes when visualizing relation algebra plans
+
+### Fixes
+- `PostgresExplainNode` now uses more fields to determine its hash value
+- Fixed parsing of `NOT IN` predicates in the SQL abstraction
+- Fixed parsing of `IN` predicates with subqueries in `relalg` module
+
+---
+
 ## Version 0.4.5
 
 ### Updates
