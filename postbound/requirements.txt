@@ -8,4 +8,5 @@ pandas
 psycopg[binary]
 scipy
 setuptools
+tomli==2.0.1
 wheel
