@@ -134,7 +134,7 @@ class DependencyGraph(Generic[T]):
 
         for dep in depends_on:
             dep_id = hash(dep)
-            self._dependencies[dep].append(node_id)
+            self._dependencies[dep_id].append(node_id)
 
             if dep_id not in self._nodes:
                 self._source_nodes.add(dep_id)
@@ -158,3 +158,10 @@ class DependencyGraph(Generic[T]):
                 provided_nodes.add(dep_id)
                 dependency_stack.extend(self._dependencies[dep_id])
         provided_nodes = set()
+
+    def __repr__(self) -> str:
+        return str(self)
+
+    def __str__(self) -> str:
+        nodes_str = ", ".join(str(node) for node in self._nodes.values())
+        return f"DependencyGraph({nodes_str})"
