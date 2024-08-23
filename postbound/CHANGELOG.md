@@ -14,6 +14,11 @@ Be carefull when updating and check the changelog!
 
 ---
 
+## Version 0.5.0
+
+### New features
+- Added support for the [Cardinality Estimation Benchmark](https://www.vldb.org/pvldb/vol14/p2019-negi.pdf)
+
 ## Version 0.4.6
 
 ### New features
