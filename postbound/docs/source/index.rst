@@ -104,6 +104,7 @@ Documentation overview
    qal
    databases
    infrastructure
+   ceb
    examples
    API documentation <generated/modules>
 

@@ -31,9 +31,10 @@ exclude_patterns = []
 # https://www.sphinx-doc.org/en/master/usage/configuration.html#options-for-html-output
 
 html_theme = 'bizstyle'
-html_static_path = ['_static']
 html_theme_options = {
-    'sidebarwidth': 460
+    'body_min_width': 0,
+    'body_max_width': 'none',
+    'sidebarwidth': '30%'
 }
 
 # -- Options for API documentation -------------------------------------------------
