@@ -28,8 +28,8 @@ def main() -> None:
         os.makedirs(args.out_dir)
 
     if not args.with_subdirs:
-        queries = ceb.generate_workload(args.template_dir, queries_per_template=args.queries_per_template,
-                                        template_pattern=args.template_pattern, db_connection=pg_instance)
+        queries = ceb.generate_raw_workload(args.template_dir, queries_per_template=args.queries_per_template,
+                                            template_pattern=args.template_pattern, db_connection=pg_instance)
         ceb.persist_workload(args.out_dir, queries)
         return
 

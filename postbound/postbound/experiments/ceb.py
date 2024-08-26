@@ -519,7 +519,7 @@ class QueryTemplate:
 
         return query
 
-    def generate_query(self) -> SqlQuery:
+    def generate_raw_query(self) -> str:
         """Creates a new SQL query by replacing all placeholders in the base query with appropriate values."""
         dep_graph: DependencyGraph[PredicateGenerator] = DependencyGraph()
         for generator in self._predicate_generators.values():
@@ -535,6 +535,11 @@ class QueryTemplate:
             selected_values = generator.selected_values()
             final_query = self.substitute_placeholders(final_query, selected_values)
 
+        return str(final_query)
+
+    def generate_query(self) -> SqlQuery:
+        """Creates a new SQL query by replacing all placeholders in the base query with appropriate values."""
+        final_query = self.generate_raw_query()
         return parser.parse_query(final_query)
 
     def _lookup_column(self, colname: ColumnName) -> ColumnReference:
@@ -617,6 +622,73 @@ def _parse_template_toml(path: str | pathlib.Path, db_connection: Database) -> Q
     return query_template
 
 
+def generate_raw_workload(path: str | pathlib.Path, *, queries_per_template: int, template_pattern: str = "*.toml",
+                          db_connection: Optional[Database] = None) -> dict[str, str]:
+    """Produces an unoptimized workload based on a number of CEB templates.
+
+    In contrast to `generate_workload`, generated queries are not parsed into actual query objects. Instead, the raw query
+    text is provided. This function is intended for situations where the parser or the query abstraction cannot yet be used
+    to represent the desired structure of the templates.
+
+    Parameters
+    ----------
+    path : str | pathlib.Path
+        The directory containing the template files.
+    queries_per_template : int
+        The number of queries that should be generated for each template. Queries will be distinguished by increasing label
+        numbers.
+    template_pattern : str, optional
+        A GLOB pattern that all template files must match to be recognized as such. Defaults to *\\*.toml*.
+    db_connection : Optional[Database], optional
+        The database to use for fetching appropriate candidate values for the placeholders. If omitted, a default Postgres
+        connection will be opened.
+
+    Returns
+    -------
+    dict[str, str]
+        The generated workload. Maps query labels to the raw query text.
+
+    Raises
+    ------
+    SamplingError
+        If the sampling algorithm could not satisfy all constraints of its predicates.
+
+    See Also
+    --------
+    generate_workload
+    """
+    db_connection = postgres.connect() if db_connection is None else db_connection
+    template_dir = path if isinstance(path, pathlib.Path) else pathlib.Path(path)
+    if not template_dir.is_dir():
+        raise FileNotFoundError(f"Directory '{template_dir}' does not exist")
+
+    templates: list[QueryTemplate] = []
+    for template_file in template_dir.glob(template_pattern):
+        templates.append(_parse_template_toml(template_file, db_connection))
+
+    max_tries = len(templates) * queries_per_template * 10  # TODO: the user should be able to control this parameter?!
+    generated_queries: set[str] = set()
+    workload_queries: dict[str, str] = {}
+    for template in templates:
+        generated_count, num_tries = 0, 0
+        while generated_count < queries_per_template and num_tries <= max_tries:
+            num_tries += 1
+            query = template.generate_raw_query()
+            if query in generated_queries:
+                if num_tries == max_tries:
+                    raise SamplingError("Could not generate enough unique queries for template {template.label}")
+                continue
+            else:
+                generated_queries.add(query)
+                generated_count += 1
+
+            template_idx = str(generated_count)  # this works b/c we already incremented the generated_count just above!
+            query_label = f"{template.label}-{template_idx}"
+            workload_queries[query_label] = query
+
+    return workload_queries
+
+
 def generate_workload(path: str | pathlib.Path, *, queries_per_template: int, name: Optional[str] = None,
                       template_pattern: str = "*.toml", db_connection: Optional[Database] = None) -> Workload[str]:
     """Produces a full workload based on a number of CEB templates.
@@ -646,48 +718,26 @@ def generate_workload(path: str | pathlib.Path, *, queries_per_template: int, na
     SamplingError
         If the sampling algorithm could not satisfy all constraints of its predicates.
     """
-    db_connection = postgres.connect() if db_connection is None else db_connection
     template_dir = path if isinstance(path, pathlib.Path) else pathlib.Path(path)
-    if not template_dir.is_dir():
-        raise FileNotFoundError(f"Directory '{template_dir}' does not exist")
-
-    templates: list[QueryTemplate] = []
-    for template_file in template_dir.glob(template_pattern):
-        templates.append(_parse_template_toml(template_file, db_connection))
-
-    max_tries = len(templates) * queries_per_template * 10  # TODO: the user should be able to control this parameter?!
-    generated_queries: set[SqlQuery] = set()
-    workload_queries: dict[str, SqlQuery] = {}
-    for template in templates:
-        generated_count, num_tries = 0, 0
-        while generated_count < queries_per_template and num_tries <= max_tries:
-            num_tries += 1
-            query = template.generate_query()
-            if query in generated_queries:
-                if num_tries == max_tries:
-                    raise SamplingError("Could not generate enough unique queries for template {template.label}")
-                continue
-            else:
-                generated_queries.add(query)
-                generated_count += 1
-
-            template_idx = str(generated_count)  # this works b/c we already incremented the generated_count just above!
-            query_label = f"{template.label}-{template_idx}"
-            workload_queries[query_label] = query
+    raw_workload = generate_raw_workload(template_dir, queries_per_template=queries_per_template,
+                                         template_pattern=template_pattern, db_connection=db_connection)
+    workload_queries = {label: parser.parse_query(query) for label, query in raw_workload.items()}
 
     return Workload(workload_queries, name=(name if name else ""), root=template_dir)
 
 
-def persist_workload(path: str | pathlib.Path, workload: Workload[str]) -> None:
+def persist_workload(path: str | pathlib.Path, workload: Workload[str] | dict[str, str]) -> None:
     """Stores all queries of a workload with one query per file in a specific directory.
 
     Files are named according to the query lables.
     """
     path = pathlib.Path(path) if isinstance(path, str) else path
-    for label, query in workload.entries():
+    query_iter = workload.entries() if isinstance(workload, Workload) else workload.items()
+    query_formatter = formatter.format_quick if isinstance(workload, Workload) else lambda x: x
+    for label, query in query_iter:
         query_file = path / f"{label}.sql"
         with open(query_file, "w") as query_file:
-            query_file.write(formatter.format_quick(query))
+            query_file.write(query_formatter(query))
 
 
 class SamplingError(RuntimeError):
