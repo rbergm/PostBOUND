@@ -3,8 +3,8 @@ import argparse
 import os
 import pathlib
 
-from ..postbound.db import postgres
-from ..postbound.experiments import ceb
+from postbound.db import postgres
+from postbound.experiments import ceb
 
 
 def main() -> None:
@@ -16,7 +16,9 @@ def main() -> None:
                         help="File name GLOB that all templates must match.")
     parser.add_argument("--with-subdirs", action="store_true",
                         help="Whether queries should be written into different subdirectories for each template.")
-    parser.add_argument("--db-config", type=str, required=False, help="Path to the Postgres config file BLA BLA")
+    parser.add_argument("--db-config", type=str, required=False, help="Path to the Postgres config file used to obtain a "
+                        "database connection. The database is used to determine valid candidate values for the different "
+                        "templates. The connect file has to be supported by psycopg. See postgres.connect() for more details.")
     parser.add_argument("template_dir", type=str, help="Directory containing the templates to use.")
 
     args = parser.parse_args()

@@ -314,7 +314,7 @@ class PredicateGenerator:
         candidate_values = self._db_connection.execute_query(sql_query, raw=True)
         if not candidate_values:
             raise SamplingError(f"No values found for predicate '{self.name}'")
-        return candidate_values
+        return [tuple(candidate) for candidate in candidate_values]
 
     def _draw_scalar_value(self, candidate_values: list[tuple[PlaceHolderValue]]) -> tuple[PlaceHolderValue]:
         """Selects a single value from the candidates according to the specified sampling strategy."""
@@ -737,7 +737,7 @@ def persist_workload(path: str | pathlib.Path, workload: Workload[str] | dict[st
     for label, query in query_iter:
         query_file = path / f"{label}.sql"
         with open(query_file, "w") as query_file:
-            query_file.write(query_formatter(query))
+            query_file.write(query_formatter(query) + "\n")
 
 
 class SamplingError(RuntimeError):
