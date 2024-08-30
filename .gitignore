@@ -195,9 +195,10 @@ localtest*
 util/bin/
 
 # The imdb folder contains all sources for the IMDB dataset, we don't want this in VC
-# The same applies to the TPCH, SSB and Stack data
+# The same applies to the TPCH, SSB, Stats and Stack data
 imdb/
 imdb_data/
 tpch_data/
 ssb_data/
 stack_data/
+stats_data/

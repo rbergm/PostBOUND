@@ -2,9 +2,9 @@
 
 The main abstraction provided by this class is the `Workload`. A number of utility functions to read collections of queries
 from different sources and input formats into workload objects exist as well. The pre-defined workloads include the
-Join Order Benchmark [0]_, Star Schema Benchmark [1]_ and Stack Benchmark [2]_. In order for the utility functions that read
-those workloads to work, PostBOUND assumes that there is a directory which contains the actual queries available somewhere. The
-precise location can be customized via the `workloads_base_dir` variable.
+Join Order Benchmark [0]_, Star Schema Benchmark [1]_, Stack Benchmark [2]_ and Stats Benchmark [3]_. In order for the utility
+functions that read those workloads to work, PostBOUND assumes that there is a directory which contains the actual queries
+available somewhere. The precise location can be customized via the `workloads_base_dir` variable.
 
 The expected directory layout is the following:
 
@@ -17,6 +17,10 @@ The expected directory layout is the following:
     │   └╴ <queries>
     ├╴ Stack-Queries/
     │   └╴ <queries>
+    ├╴ Stats-CEB/
+    |   └╴ queries/
+    |       └╴ <queries>
+
 
 By default, PostBOUND assumes that the workload directory is contained one directory level higher than the root directory that
 contains the PostBOUND source code. The GitHub repository of PostBOUND should have such a file layout by default.
@@ -27,6 +31,7 @@ References
 .. [0] Viktor Leis et al.: How Good Are Query Optimizers, Really? (Proc. VLDB Endow. 9, 3 (2015))
 .. [1] Patrick E. O'Neil et al.: The Star Schema Benchmark and Augmented Fact Table Indexing. (TPCTC'2009)
 .. [2] Ryan Marcus et al.: Bao: Making Learned Query Optimization Practical. (SIGMOD'2021)
+.. [3] Yuxing Han et al.: Cardinality Estimation in DBMS: A Comprehensive Benchmark Evaluation (Proc. VLDB Endow. 15, 4 (2022))
 """
 from __future__ import annotations
 
@@ -615,6 +620,16 @@ def generate_workload(queries: Iterable[qal.SqlQuery], *, name: str = "",
     return Workload(workload_contents, name, workload_root)
 
 
+def _assert_workload_loaded(workload: Workload[LabelType], expected_dir: str) -> None:
+    """Ensures that workload queries have been read successfully. The expected directory is used for error messages."""
+    if not workload:
+        wdir = os.getcwd()
+        raise ValueError(f"Could not load {workload.name} workload. This is likely due to a disparity between workload "
+                         "location and current value of the workloads_base_dir setting. Make sure to point that variable to "
+                         f"the correct path. Your current working directory is '{wdir}' and the expected workload directory "
+                         f"is '{expected_dir}'")
+
+
 def job(file_encoding: str = "utf-8") -> Workload[str]:
     """Reads the Join Order Benchmark, as shipped with the PostBOUND repository.
 
@@ -644,12 +659,7 @@ def job(file_encoding: str = "utf-8") -> Workload[str]:
     """
     job_workload = Workload.read(f"{workloads_base_dir}/JOB-Queries", name="JOB", file_encoding=file_encoding,
                                  bind_columns=False)
-    if not job_workload:
-        wdir = os.getcwd()
-        raise ValueError("Could not load JOB workload. This is likely due to a disparity between workload location and "
-                         "current value of the workloads_base_dir setting. Make sure to point that variable to the correct "
-                         f"path. Your current working directory is '{wdir}' and the expected workload directory is "
-                         f"'{workloads_base_dir}/JOB-Queries'")
+    _assert_workload_loaded(job_workload, f"{workloads_base_dir}/JOB-Queries")
     return job_workload
 
 
@@ -683,12 +693,7 @@ def ssb(file_encoding: str = "utf-8", *, bind_columns: Optional[bool] = None) ->
     bind_columns = bind_columns if bind_columns is not None else not db.DatabasePool.get_instance().empty()
     ssb_workload = Workload.read(f"{workloads_base_dir}/SSB-Queries", name="SSB", file_encoding=file_encoding,
                                  bind_columns=bind_columns)
-    if not ssb_workload:
-        wdir = os.getcwd()
-        raise ValueError("Could not load SSB workload. This is likely due to a disparity between workload location and "
-                         "current value of the workloads_base_dir setting. Make sure to point that variable to the correct "
-                         f"path. Your current working directory is '{wdir}' and the expected workload directory is "
-                         f"'{workloads_base_dir}/SSB-Queries'")
+    _assert_workload_loaded(ssb_workload, f"{workloads_base_dir}/SSB-Queries")
     return ssb_workload
 
 
@@ -732,10 +737,39 @@ def stack(file_encoding: str = "utf-8", *, bind_columns: Optional[bool] = None) 
     bind_columns = bind_columns if bind_columns is not None else not db.DatabasePool.get_instance().empty()
     stack_workload = read_workload(f"{workloads_base_dir}/Stack-Queries", "Stack", recurse_subdirectories=True,
                                    file_encoding=file_encoding, bind_columns=bind_columns)
-    if not stack_workload:
-        wdir = os.getcwd()
-        raise ValueError("Could not load Stack workload. This is likely due to a disparity between workload location and "
-                         "current value of the workloads_base_dir setting. Make sure to point that variable to the correct "
-                         f"path. Your current working directory is '{wdir}' and the expected workload directory is "
-                         f"'{workloads_base_dir}/Stack-Queries'")
+    _assert_workload_loaded(stack_workload, f"{workloads_base_dir}/Stack-Queries")
     return stack_workload
+
+
+def stats(file_encoding: str = "utf-8") -> Workload[str]:
+    """Reads the Stats Benchmark, as shipped with the PostBOUND repository.
+
+    Queries will be read from the Stats directory relative to `workload_base_dir`. The expected layout is:
+    ``<workloads_base_dir>/Stats-CEB/queries/<queries>``. Labels are inferred from the file names, i.e. queries are accessible
+    as ``q-1``, ``q-2``, etc. This labelling is custom to PostBOUND, since the original workload did not include any meaningful
+    labels or candidates for such.
+
+    Parameters
+    ----------
+    file_encoding : str, optional
+        The encoding of the query files, by default UTF-8.
+
+    Returns
+    -------
+    Workload[str]
+        The workload
+
+    Raises
+    ------
+    ValueError
+        If the workload could not be loaded from the expected location
+
+    References
+    ----------
+
+    .. Yuxing Han et al.: Cardinality Estimation in DBMS: A Comprehensive Benchmark Evaluation (Proc. VLDB Endow. 15, 4 (2022))
+    """
+    stats_workload = Workload.read(f"{workloads_base_dir}/Stats-CEB/queries", name="Stats", file_encoding=file_encoding,
+                                   bind_columns=False)
+    _assert_workload_loaded(stats_workload, f"{workloads_base_dir}/Stats-CEB/queries")
+    return stats_workload
