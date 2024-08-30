@@ -59,35 +59,38 @@ def simulate_intermediate_generation(out_file: str, workload: workloads.Workload
     print("unique", len(unique_intermediates), "total", sum(intermediates_per_query.values()))
 
 
-def determine_intermediates(out_file: str = "results/job/job-intermediate-cardinalities.csv",
+def determine_intermediates(benchmark: workloads.Workload[str], *,
+                            out_file: str,
+                            pg_conf: str = ".psycopg_connection",
                             simulate_only: bool = False) -> None:
-    postgres_db = postgres.connect(config_file=".psycopg_connection_job")
-    job_benchmark = workloads.job()
+    postgres_db = postgres.connect(config_file=pg_conf)
 
     if simulate_only:
-        simulate_intermediate_generation(out_file, job_benchmark)
+        simulate_intermediate_generation(out_file, benchmark)
         return
 
     db_pool = postgres.ParallelQueryExecutor(postgres_db.connect_string, n_threads=12)
 
     explored_queries: set[qal.SqlQuery] = set()
     fragment_to_queries_map: dict[qal.SqlQuery, list[qal.SqlQuery]] = collections.defaultdict(list)
+    n_queries = 0
 
-    for intermediate in iter_intermediates(job_benchmark):
+    for intermediate in iter_intermediates(benchmark):
         fragment_to_queries_map[intermediate.query_fragment].append(intermediate.full_query)
         if intermediate.query_fragment in explored_queries:
             continue
         explored_queries.add(intermediate.query_fragment)
         db_pool.queue_query(intermediate.query_fragment)
+        n_queries += 1
 
-    print(".. All queries submitted to DB pool")
+    print(f".. All queries submitted to DB pool - {n_queries} total")
     db_pool.drain_queue()
     fragment_cardinalities: dict[qal.SqlQuery, int] = db_pool.result_set()
 
     queries, fragments, labels, fragment_tables, cardinalities = [], [], [], [], []
     for result_fragment, cardinality in fragment_cardinalities.items():
         for query in fragment_to_queries_map[result_fragment]:
-            query_label = job_benchmark.label_of(query)
+            query_label = benchmark.label_of(query)
             queries.append(query)
             fragments.append(result_fragment)
             labels.append(query_label)
@@ -102,14 +105,17 @@ def determine_intermediates(out_file: str = "results/job/job-intermediate-cardin
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Calculates the cardinalities of all possible intermediate results of the "
-                                     "Join Order Benchmark")
+    parser = argparse.ArgumentParser(description="Calculates the cardinalities of all possible intermediate results of common "
+                                     "benchmarks")
+    parser.add_argument("--bench", "-b", action="store", choices=["job", "stats"], help="The benchmark to estimate")
+    parser.add_argument("--pg-conf", "-c", action="store", help="Path to the Postgres connection config file")
     parser.add_argument("--out", "-o", action="store", help="Name and location of the output CSV file")
     parser.add_argument("--dry", action="store_true", help="Don't actually calculate the intermediates. Instead, determine "
                         "which intermediates would be calculated")
     args = parser.parse_args()
 
-    determine_intermediates(args.out, simulate_only=args.dry)
+    benchmark = workloads.job() if args.bench == "job" else workloads.stats()
+    determine_intermediates(benchmark, pg_conf=args.pg_conf, out_file=args.out, simulate_only=args.dry)
 
 
 if __name__ == "__main__":
