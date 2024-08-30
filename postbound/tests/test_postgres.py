@@ -27,4 +27,4 @@ class HintingTests(regression_suite.PlanTestCase):
                 phys_plan = jointree.PhysicalQueryPlan.load_from_query_plan(native_plan, query, operators_only=True)
                 hinted_query = self.pg_instance.hinting().generate_hints(query, phys_plan)
                 explicit_plan = self.pg_instance.optimizer().query_plan(hinted_query)
-                self.assertQueryExecutionPlansEqual(native_plan, explicit_plan)
+                self.assertQueryExecutionPlansEqual(native_plan.simplify(), explicit_plan.simplify())

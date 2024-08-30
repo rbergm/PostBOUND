@@ -1693,9 +1693,12 @@ class PostgresHintService(db.HintService):
         # Therefore, we want to have the smaller relation as the inner relation for hash joins and the other way around
         # for all other joins
 
-        has_directional_information = isinstance(join_tree_node.annotation, physops.DirectionalJoinOperatorAssignment)
+        has_directional_information = (
+            isinstance(join_tree_node.annotation, jointree.PhysicalJoinMetadata)
+            and isinstance(join_tree_node.annotation.operator, physops.DirectionalJoinOperatorAssignment)
+        )
         if has_directional_information:
-            annotation: physops.DirectionalJoinOperatorAssignment = join_tree_node.annotation
+            annotation: physops.DirectionalJoinOperatorAssignment = join_tree_node.annotation.operator
             inner_tables = annotation.inner
             inner_child = (join_tree_node.left_child if join_tree_node.left_child.tables() == inner_tables
                            else join_tree_node.right_child)
