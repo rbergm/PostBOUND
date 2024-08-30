@@ -7,6 +7,8 @@ WD=$(pwd)
 SSB_DIR=$WD/../stack_data
 CORES=$(($(nproc --all) / 2))
 FORCE_CREATION="false"
+SKIP_EXTENSIONS="false"
+SKIP_VACUUM="false"
 
 show_help() {
     echo "Usage: $0 <options>"
@@ -16,6 +18,16 @@ show_help() {
     echo "-j | --jobs <count> configure the number of worker processes to load the database. Defaults to 1/2 of CPU cores"
     echo "-f | --force delete existing instance of the database if necessary"
     exit 1
+}
+
+attempt_pg_ext_install() {
+    EXTENSION=$1
+    AVAILABLE_EXTS=$(psql $DB_NAME -t -c "SELECT name FROM pg_available_extensions" | grep "$EXTENSION" || true)
+    if [ -z "$AVAILABLE_EXTS" ] ; then
+        echo ".. Extension $EXTENSION not available, skipping"
+        return
+    fi
+    psql $DB_NAME -c "CREATE EXTENSION IF NOT EXISTS $EXTENSION;"
 }
 
 while [ $# -gt 0 ] ; do
@@ -36,6 +48,14 @@ while [ $# -gt 0 ] ; do
             ;;
         -f|--force)
             FORCE_CREATION="true"
+            shift
+            ;;
+        --no-ext)
+            SKIP_EXTENSIONS="true"
+            shift
+            ;;
+        --no-vacuum)
+            SKIP_VACUUM="true"
             shift
             ;;
         *)
@@ -67,9 +87,25 @@ fi
 
 echo ".. Creating Stack database"
 createdb $DB_NAME
-psql $DB_NAME -c "CREATE EXTENSION pg_buffercache;"
-psql $DB_NAME -c "CREATE EXTENSION pg_prewarm;"
-psql $DB_NAME -c "CREATE EXTENSION pg_hint_plan;"
+
+if [ $SKIP_EXTENSIONS == "false" ] ; then
+    attempt_pg_ext_install "pg_buffercache"
+    attempt_pg_ext_install "pg_prewarm"
+    attempt_pg_ext_install "pg_cooldown"
+    attempt_pg_ext_install "pg_hint_plan"
+else
+    echo ".. Skipping extension generation"
+fi
 
 echo ".. Loading Stack dump"
 pg_restore -O -x --exit-on-error --jobs=$CORES --dbname=$DB_NAME $SSB_DIR/stack_dump
+
+if [ $SKIP_VACUUM == "false" ] ; then
+    echo ".. Vacuuming database"
+    psql $DB_NAME -c "VACUUM ANALYZE;"
+else
+    echo ".. Skipping vacuuming"
+fi
+
+echo ".. Done"
+cd $WD

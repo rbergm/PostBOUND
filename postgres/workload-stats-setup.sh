@@ -20,6 +20,16 @@ show_help() {
     exit 1
 }
 
+attempt_pg_ext_install() {
+    EXTENSION=$1
+    AVAILABLE_EXTS=$(psql $DB_NAME -t -c "SELECT name FROM pg_available_extensions" | grep "$EXTENSION" || true)
+    if [ -z "$AVAILABLE_EXTS" ] ; then
+        echo ".. Extension $EXTENSION not available, skipping"
+        return
+    fi
+    psql $DB_NAME -c "CREATE EXTENSION IF NOT EXISTS $EXTENSION;"
+}
+
 while [ $# -gt 0 ] ; do
     case $1 in
         -d|--dir)
@@ -83,9 +93,10 @@ echo ".. Creating Stats database"
 createdb $DB_NAME
 
 if [ $SKIP_EXTENSIONS == "false" ] ; then
-    psql $DB_NAME -c "CREATE EXTENSION pg_buffercache;"
-    psql $DB_NAME -c "CREATE EXTENSION pg_prewarm;"
-    psql $DB_NAME -c "CREATE EXTENSION pg_hint_plan;"
+    attempt_pg_ext_install "pg_buffercache"
+    attempt_pg_ext_install "pg_prewarm"
+    attempt_pg_ext_install "pg_cooldown"
+    attempt_pg_ext_install "pg_hint_plan"
 else
     echo ".. Skipping extension generation"
 fi
@@ -99,7 +110,7 @@ psql $DB_NAME -f import.sql
 
 if [ $SKIP_VACUUM == "false" ] ; then
     echo ".. Vacuuming database"
-    psql $DB_NAME -c "VACUUM VERBOSE ANALYZE;"
+    psql $DB_NAME -c "VACUUM ANALYZE;"
 else
     echo ".. Skipping vacuuming"
 fi

@@ -2,6 +2,16 @@
 
 set -e  # exit on error
 
+attempt_pg_ext_install() {
+    EXTENSION=$1
+    AVAILABLE_EXTS=$(psql $DB_NAME -t -c "SELECT name FROM pg_available_extensions" | grep "$EXTENSION" || true)
+    if [ -z "$AVAILABLE_EXTS" ] ; then
+        echo ".. Extension $EXTENSION not available, skipping"
+        return
+    fi
+    psql $DB_NAME -c "CREATE EXTENSION IF NOT EXISTS $EXTENSION;"
+}
+
 # use custom TPCH scale factor if supplied
 if [ -z "$1" ] ; then
     SF=10
@@ -28,9 +38,10 @@ ssb-kit/dbgen/dbgen -vf -s $SF -T a
 
 echo ".. Creating SSB database schema"
 createdb ssb
-psql ssb -c "CREATE EXTENSION pg_buffercache;"
-psql ssb -c "CREATE EXTENSION pg_prewarm;"
-psql ssb -c "CREATE EXTENSION pg_hint_plan;"
+attempt_pg_ext_install "pg_buffercache"
+attempt_pg_ext_install "pg_prewarm"
+attempt_pg_ext_install "pg_cooldown"
+attempt_pg_ext_install "pg_hint_plan"
 
 wget -nv --output-document ../ssb_data/pg_schema.sql https://raw.githubusercontent.com/gregrahn/ssb-kit/master/scripts/pg_schema.sql
 psql ssb -f ../ssb_data/pg_schema.sql
@@ -44,3 +55,5 @@ psql ssb -f ../ssb_data/pg_load.sql
 
 echo ".. Creating SSB Foreign Key indices"
 psql ssb -f workload-ssb-fk-indexes.sql
+
+psql $DB_NAME -c "VACUUM ANALYZE;"
