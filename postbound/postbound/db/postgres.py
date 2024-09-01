@@ -2076,7 +2076,7 @@ def _parallel_query_initializer(connect_string: str, local_data: threading.local
 
 
 def _parallel_query_worker(query: str | qal.SqlQuery, local_data: threading.local,
-                           verbose: bool = False) -> tuple[qal.SqlQuery | str, Any]:
+                           timeout: Optional[int] = None, verbose: bool = False) -> tuple[qal.SqlQuery | str, Any]:
     """Internal function for the `ParallelQueryExecutor` to run individual queries.
 
     Parameters
@@ -2087,6 +2087,9 @@ def _parallel_query_worker(query: str | qal.SqlQuery, local_data: threading.loca
     local_data : threading.local
         Data object that contains the database connection to use. This should have been initialized by
         `_parallel_query_initializer`
+    timeout : Optional[int], optional
+        The number of seconds to wait until the calculation is aborted. Defaults to ``None``, which indicates no timeout. In
+        case of timeout, *None* is returned.
     verbose : bool, optional
         Whether to print logging information, by default ``False``
 
@@ -2101,10 +2104,19 @@ def _parallel_query_worker(query: str | qal.SqlQuery, local_data: threading.loca
     connection: psycopg.connection.Connection = local_data.connection
     connection.rollback()
     cursor = connection.cursor()
+    if timeout:
+        cursor.execute(f"SET statement_timeout = '{timeout}s';")
 
     log(f"[worker id={threading.get_ident()}, ts={logging.timestamp()}] Now executing query {query}")
-    cursor.execute(str(query))
-    log(f"[worker id={threading.get_ident()}, ts={logging.timestamp()}] Executed query {query}")
+    try:
+        cursor.execute(str(query))
+        log(f"[worker id={threading.get_ident()}, ts={logging.timestamp()}] Executed query {query}")
+    except psycopg.errors.QueryCanceled as e:
+        if "canceling statement due to statement timeout" in e.args:
+            log(f"[worker id={threading.get_ident()}, ts={logging.timestamp()}] Query {query} timed out")
+            return query, None
+        else:
+            raise e
 
     result_set = cursor.fetchall()
     cursor.close()
@@ -2128,8 +2140,12 @@ class ParallelQueryExecutor:
         Connection info to establish a network connection to the Postgres instance. Delegates to Psycopg
     n_threads : Optional[int], optional
         The maximum number of parallel workers to use. If this is not specified, uses ``os.cpu_count()`` many workers.
+    timeout : Optional[int], optional
+        The number of seconds to wait until an individual query is aborted. Timeouts do not affect other queries (both those
+        running in parallel or those running afterwards on the same worker). In case of a timeout, the query's entry in the
+        result set will be *None*.
     verbose : bool, optional
-        Whether to print logging information during the query execution, by default ``False``
+        Whether to print logging information during the query execution. This is off by default.
 
     See Also
     --------
@@ -2143,9 +2159,11 @@ class ParallelQueryExecutor:
        database
     """
 
-    def __init__(self, connect_string: str, n_threads: Optional[int] = None, *, verbose: bool = False) -> None:
+    def __init__(self, connect_string: str, n_threads: Optional[int] = None, *, timeout: Optional[int] = None,
+                 verbose: bool = False) -> None:
         self._n_threads = n_threads if n_threads is not None and n_threads > 0 else os.cpu_count()
         self._connect_string = connect_string
+        self._timeout = timeout
         self._verbose = verbose
 
         self._thread_data = threading.local()
@@ -2163,7 +2181,7 @@ class ParallelQueryExecutor:
         query : qal.SqlQuery | str
             The query to execute
         """
-        future = self._thread_pool.submit(_parallel_query_worker, query, self._thread_data, self._verbose)
+        future = self._thread_pool.submit(_parallel_query_worker, query, self._thread_data, self._timeout, self._verbose)
         self._tasks.append(future)
 
     def drain_queue(self, timeout: Optional[float] = None) -> None:

@@ -5,6 +5,7 @@ import collections
 import warnings
 from collections.abc import Generator
 from dataclasses import dataclass
+from typing import Optional
 
 import pandas as pd
 
@@ -62,6 +63,7 @@ def simulate_intermediate_generation(out_file: str, workload: workloads.Workload
 def determine_intermediates(benchmark: workloads.Workload[str], *,
                             out_file: str,
                             pg_conf: str = ".psycopg_connection",
+                            timeout: Optional[int] = None,
                             simulate_only: bool = False) -> None:
     postgres_db = postgres.connect(config_file=pg_conf)
 
@@ -69,7 +71,7 @@ def determine_intermediates(benchmark: workloads.Workload[str], *,
         simulate_intermediate_generation(out_file, benchmark)
         return
 
-    db_pool = postgres.ParallelQueryExecutor(postgres_db.connect_string, n_threads=12)
+    db_pool = postgres.ParallelQueryExecutor(postgres_db.connect_string, n_threads=12, timeout=timeout)
 
     explored_queries: set[qal.SqlQuery] = set()
     fragment_to_queries_map: dict[qal.SqlQuery, list[qal.SqlQuery]] = collections.defaultdict(list)
@@ -112,10 +114,11 @@ def main():
     parser.add_argument("--out", "-o", action="store", help="Name and location of the output CSV file")
     parser.add_argument("--dry", action="store_true", help="Don't actually calculate the intermediates. Instead, determine "
                         "which intermediates would be calculated")
+    parser.add_argument("--timeout", action="store", type=int, help="Timeout for each query in seconds")
     args = parser.parse_args()
 
     benchmark = workloads.job() if args.bench == "job" else workloads.stats()
-    determine_intermediates(benchmark, pg_conf=args.pg_conf, out_file=args.out, simulate_only=args.dry)
+    determine_intermediates(benchmark, pg_conf=args.pg_conf, out_file=args.out, timeout=args.timeout, simulate_only=args.dry)
 
 
 if __name__ == "__main__":
