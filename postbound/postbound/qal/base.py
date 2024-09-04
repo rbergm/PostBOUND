@@ -281,6 +281,21 @@ class ColumnReference(jsonize.Jsonizable):
         """
         return table == self.table
 
+    def bind_to(self, table: TableReference) -> ColumnReference:
+        """Binds this column to a new table.
+
+        Parameters
+        ----------
+        table : TableReference
+            The new table
+
+        Returns
+        -------
+        ColumnReference
+            The updated column reference, the original reference is not modified.
+        """
+        return ColumnReference(self.name, table)
+
     def __json__(self) -> object:
         return {"name": self._name, "table": self._table}
 
