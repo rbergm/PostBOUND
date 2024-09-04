@@ -77,8 +77,11 @@ def make_out_name(args: argparse.Namespace) -> str:
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Obtains execution times for the Join Order Benchmark")
-    parser.add_argument("--repetitions", "-r", action="store", type=int, default=1, help="The number of repetitions per query.")
+    parser = argparse.ArgumentParser(description="Obtains execution times for different benchmarks")
+    parser.add_argument("--bench", "-b", action="store", default="job", choices=["job", "stats"],
+                        help="The benchmark to execute.")
+    parser.add_argument("--repetitions", "-r", action="store", type=int, default=1,
+                        help="The number of repetitions per query.")
     parser.add_argument("--shuffle", "-s", action="store_true", help="When using query repetitions, shuffle the workload "
                         "after each workload iteration. If shuffling is not used, all repetitions are "
                         "executed in sequence.")
@@ -90,15 +93,16 @@ def main():
 
     logging.basicConfig(level=logging_level, format=logging_format)
 
-    postgres_db = postgres.connect(config_file=".psycopg_connection_job")
+    pg_conf = ".psycopg_connection_job" if args.bench == "job" else ".psycopg_connection_stats"
+    postgres_db = postgres.connect(config_file=pg_conf)
     postgres_db.cache_enabled = False
-    job = workloads.job()
+    workload = workloads.job() if args.bench == "job" else workloads.stats()
 
     if args.repetitions == 1:
-        result_df = execute_single_iteration(job, database=postgres_db, prewarm=args.prewarm)
+        result_df = execute_single_iteration(workload, database=postgres_db, prewarm=args.prewarm)
     else:
-        result_df = execute_multiple_iterations(job, database=postgres_db, repetitions=args.repetitions, prewarm=args.prewarm,
-                                                shuffled=args.shuffle)
+        result_df = execute_multiple_iterations(workload, database=postgres_db, repetitions=args.repetitions,
+                                                prewarm=args.prewarm, shuffled=args.shuffle)
 
     out_file = make_out_name(args)
     result_df.to_csv(out_file, index=False)

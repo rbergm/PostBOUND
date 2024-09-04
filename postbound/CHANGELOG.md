@@ -14,6 +14,19 @@ Be carefull when updating and check the changelog!
 
 ---
 
+## Version 0.6.0
+
+### New features
+- Introduced a utility to compute the cardinality of star-queries
+- Introduced support for the Stats benchmark
+- The PostgreSQL parallel query executor now supports optional timeouts
+
+### Fixes
+- Changed the PostgreSQL column lookup to be case-insensitive
+- Fix PostgreSQL query hinting to invert the direction of hash joins
+
+---
+
 ## Version 0.5.0
 
 ### New features
