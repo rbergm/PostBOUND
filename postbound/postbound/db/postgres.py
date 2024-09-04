@@ -861,6 +861,7 @@ class PostgresSchemaInterface(db.DatabaseSchema):
     def lookup_column(self, column: base.ColumnReference | str,
                       candidate_tables: list[base.TableReference]) -> base.TableReference:
         column = column.name if isinstance(column, base.ColumnReference) else column
+        column = column.lower()
         for table in candidate_tables:
             table_columns = self._fetch_columns(table)
             if column in table_columns:
