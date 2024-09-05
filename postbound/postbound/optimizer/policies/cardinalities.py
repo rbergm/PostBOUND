@@ -64,7 +64,7 @@ class CardinalityHintsGenerator(stages.ParameterGeneration, abc.ABC):
         self.allow_cross_products = allow_cross_products
 
     @abc.abstractmethod
-    def calculate_estimate(self, query: qal.SqlQuery, tables: frozenset[base.TableReference]) -> int:
+    def calculate_estimate(self, query: qal.SqlQuery, tables: frozenset[base.TableReference]) -> Optional[int]:
         """Determines the cardinality estimate for a specific intermediate result.
 
         Ideally this is the only functionality-related method that needs to be implemented by developers using the cardinality
@@ -80,8 +80,8 @@ class CardinalityHintsGenerator(stages.ParameterGeneration, abc.ABC):
 
         Returns
         -------
-        int
-            The estimated cardinality
+        Optional[int]
+            The estimated cardinality if it could be computed, *None* otherwise.
         """
         raise NotImplementedError
 
@@ -132,7 +132,8 @@ class CardinalityHintsGenerator(stages.ParameterGeneration, abc.ABC):
         parameterization = planparams.PlanParameterization()
         for join in self.generate_intermediates(query):
             estimate = self.calculate_estimate(query, join)
-            parameterization.add_cardinality_hint(join, estimate)
+            if estimate is not None:
+                parameterization.add_cardinality_hint(join, estimate)
         return parameterization
 
     def generate_plan_parameters(self, query: qal.SqlQuery,
@@ -145,11 +146,13 @@ class CardinalityHintsGenerator(stages.ParameterGeneration, abc.ABC):
         parameterization = planparams.PlanParameterization()
         for base_table in join_order.table_sequence():
             estimate = self.calculate_estimate(query, base_table.tables())
-            parameterization.add_cardinality_hint(base_table.tables(), estimate)
+            if estimate is not None:
+                parameterization.add_cardinality_hint(base_table.tables(), estimate)
 
         for join in join_order.join_sequence():
             estimate = self.calculate_estimate(query, join.tables())
-            parameterization.add_cardinality_hint(join.tables(), estimate)
+            if estimate is not None:
+                parameterization.add_cardinality_hint(join.tables(), estimate)
 
         return parameterization
 
@@ -273,6 +276,10 @@ class PreComputedCardinalities(CardinalityHintsGenerator):
     live_fallback : bool, optional
         Whether to fall back to a live database in case no cardinality estimate is found in the CSV file. This is off by
         default.
+    error_on_missing_card : bool, optional
+        If live fallback is disabled and we did not find a cardinality estimate for a specific intermediate, we will raise an
+        error by default. If this is not desired and missing values can be handled by the client, this behavior can be disabled
+        with this parameter.
     live_fallback_style : Literal["actual", "estimated"], optional
         In case the fallback is enabled, this customizes the calculation strategy. "actual" will calculate the true cardinality
         of the intermediate in question, whereas "estimated" (the default) will use the native optimizer to estimate the
@@ -287,7 +294,8 @@ class PreComputedCardinalities(CardinalityHintsGenerator):
     def __init__(self, workload: workloads.Workload, lookup_table_path: str, *,
                  include_cross_products: bool = False, default_cardinality: Optional[int] = None,
                  label_col: str = "label", tables_col: str = "tables", cardinality_col: str = "cardinality",
-                 live_fallback: bool = False, live_db: Optional[db.Database] = None,
+                 live_fallback: bool = False, error_on_missing_card: bool = True,
+                 live_db: Optional[db.Database] = None,
                  live_fallback_style: Literal["actual", "estimated"] = "estimated",
                  save_live_fallback_results: bool = True) -> None:
         super().__init__(include_cross_products)
@@ -298,6 +306,7 @@ class PreComputedCardinalities(CardinalityHintsGenerator):
         self._default_card = default_cardinality
         self._lookup_df_path = lookup_table_path
 
+        self._error_on_missing_card = error_on_missing_card
         self._live_db: Optional[db.Database] = None
         if live_fallback:
             self._live_db = db.DatabasePool.get_instance().current_database() if live_db is None else live_db
@@ -308,7 +317,7 @@ class PreComputedCardinalities(CardinalityHintsGenerator):
 
         self._true_card_df = pd.read_csv(lookup_table_path, converters={tables_col: _parse_tables})
 
-    def calculate_estimate(self, query: qal.SqlQuery, tables: frozenset[base.TableReference]) -> int:
+    def calculate_estimate(self, query: qal.SqlQuery, tables: frozenset[base.TableReference]) -> Optional[int]:
         label = self._workload.label_of(query)
         relevant_samples = self._true_card_df[self._true_card_df[self._label_col] == label]
         cardinality_sample = relevant_samples[relevant_samples[self._tables_col] == tables]
@@ -322,7 +331,7 @@ class PreComputedCardinalities(CardinalityHintsGenerator):
             raise ValueError(f"{n_samples} samples found for join {tables_debug} in query {label}. Expected 1.")
 
         fallback_value = self._attempt_fallback_estimate(n_samples, query, tables)
-        if fallback_value is None:
+        if fallback_value is None and self._error_on_missing_card:
             raise ValueError(f"No matching sample found for join {tables_debug} in query {label}")
         return fallback_value
 
@@ -441,8 +450,10 @@ class CardinalityDistortion(CardinalityHintsGenerator):
         return {"name": "cardinality-distortion", "estimator": "distortion",
                 "distortion_factor": self.distortion_factor, "distortion_strategy": self.distortion_strategy}
 
-    def calculate_estimate(self, query: qal.SqlQuery, tables: frozenset[base.TableReference]) -> int:
+    def calculate_estimate(self, query: qal.SqlQuery, tables: frozenset[base.TableReference]) -> Optional[int]:
         card_est = self.estimator.calculate_estimate(query, tables)
+        if not card_est:
+            return None
         if self.distortion_strategy == "fixed":
             distortion_factor = self.distortion_factor
         elif self.distortion_strategy == "random":
