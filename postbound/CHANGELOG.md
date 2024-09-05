@@ -19,6 +19,11 @@ Be carefull when updating and check the changelog!
 ### New features
 - Introduced a transformation to automatically generate join equivalence classes
 
+### Updates
+- Cardinality estimation policies can now return *None* if they cannot compute an estimate for a specific intermediate. As a
+  general rule of thumb, the user should be able to prohibit this behavior when creating a new estimation policy. See
+  implementation of the pre-computed cardinalities as an example.
+
 ### Fixes
 - Make fallback value calculation in pre-computed cardinalities more robust
 

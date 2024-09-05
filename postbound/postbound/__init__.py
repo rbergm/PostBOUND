@@ -36,4 +36,4 @@ On a high-level, the PostBOUND project is structured as follows:
 To get a general idea of how to work with PostBOUND and where to start, take a look at the README and the example scripts.
 """
 
-__version__ = "0.6.0"
+__version__ = "0.6.1"
