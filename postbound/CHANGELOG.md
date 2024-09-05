@@ -14,6 +14,16 @@ Be carefull when updating and check the changelog!
 
 ---
 
+## Version 0.6.1
+
+### New features
+- Introduced a transformation to automatically generate join equivalence classes
+
+### Fixes
+- Make fallback value calculation in pre-computed cardinalities more robust
+
+--
+
 ## Version 0.6.0
 
 ### New features

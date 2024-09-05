@@ -364,6 +364,9 @@ class PreComputedCardinalities(CardinalityHintsGenerator):
             return None
 
         query_fragment = transform.extract_query_fragment(query, tables)
+        if not query_fragment:
+            return None
+
         if self._live_fallback_style == "actual":
             true_card_query = transform.as_count_star_query(query_fragment)
             cardinality = self._live_db.execute_query(true_card_query)
