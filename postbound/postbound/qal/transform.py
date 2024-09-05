@@ -406,6 +406,37 @@ def move_into_subquery(query: qal.SqlQuery, tables: Iterable[base.TableReference
     return final_query
 
 
+def add_ec_predicates(query: qal.ImplicitSqlQuery) -> qal.ImplicitSqlQuery:
+    """Expands the join predicates of a query to include all predicates that are implied by the join equivalence classes.
+
+    Parameters
+    ----------
+    query : qal.ImplicitSqlQuery
+        The query to analyze
+
+    Returns
+    -------
+    qal.ImplicitSqlQuery
+        An equivalent query that explicitly contains all predicates from join equivalence classes.
+
+    See Also
+    --------
+    preds.determine_join_equivalence_classes
+    preds.generate_predicates_for_equivalence_classes
+    """
+    if not query.where_clause:
+        return query
+    predicates = query.predicates()
+
+    ec_classes = preds.determine_join_equivalence_classes(predicates.joins())
+    ec_predicates = preds.generate_predicates_for_equivalence_classes(ec_classes)
+
+    all_predicates = list(ec_predicates) + list(predicates.filters())
+    updated_where_clause = clauses.Where(preds.CompoundPredicate.create_and(all_predicates))
+
+    return replace_clause(query, updated_where_clause)
+
+
 def as_star_query(source_query: QueryType) -> QueryType:
     """Transforms a specific query to use a ``SELECT *`` projection instead.
 
