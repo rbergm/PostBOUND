@@ -4,20 +4,25 @@ set -e  # exit on error
 
 DB_NAME=stack
 WD=$(pwd)
-SSB_DIR=$WD/../stack_data
+TARGET_DIR=$WD/../stack_data
+PG_CONN="-U $USER"
 CORES=$(($(nproc --all) / 2))
 FORCE_CREATION="false"
 SKIP_EXTENSIONS="false"
 SKIP_VACUUM="false"
 
 show_help() {
+    RET=$1
     echo "Usage: $0 <options>"
     echo "Allowed options:"
-    echo "-d | --dir <directory> specifies the directory to store/load the Stack data files, defaults to '../stack_data'"
-    echo "-t | --target <db name> name of the Stack database, defaults to 'stack'"
-    echo "-j | --jobs <count> configure the number of worker processes to load the database. Defaults to 1/2 of CPU cores"
-    echo "-f | --force delete existing instance of the database if necessary"
-    exit 1
+    echo -e "-d | --dir <directory>\tspecifies the directory to store/load the Stack data files, defaults to '../stack_data'"
+    echo -e "-t | --target <db name>\tname of the Stack database, defaults to 'stack'"
+    echo -e "-j | --jobs <count>\tconfigure the number of worker processes to load the database. Defaults to 1/2 of CPU cores"
+    echo -e "-f | --force\t\tdelete existing instance of the database if necessary"
+    echo -e "--pg-conn\t\t<connection> connection string to the PostgreSQL server (server, port, user) if required, e.g. '-h localhost -U admin'"
+    echo -e "--no-ext\t\tdoes not install any extensions"
+    echo -e "--no-vacuum\t\tdoes not run VACUUM ANALYZE after the import"
+    exit $RET
 }
 
 attempt_pg_ext_install() {
@@ -33,7 +38,7 @@ attempt_pg_ext_install() {
 while [ $# -gt 0 ] ; do
     case $1 in
         -d|--dir)
-            SSB_DIR=$2
+            TARGET_DIR=$2
             shift
             shift
             ;;
@@ -50,6 +55,12 @@ while [ $# -gt 0 ] ; do
             FORCE_CREATION="true"
             shift
             ;;
+        --pg-conn)
+            PG_CONN=$2
+            shift
+            shift
+            ;;
+
         --no-ext)
             SKIP_EXTENSIONS="true"
             shift
@@ -58,13 +69,16 @@ while [ $# -gt 0 ] ; do
             SKIP_VACUUM="true"
             shift
             ;;
+        --help)
+            show_help 0
+            ;;
         *)
-            show_help
+            show_help 1
             ;;
     esac
 done
 
-EXISTING_DBS=$(psql -l | grep "$DB_NAME" || true)
+EXISTING_DBS=$(psql $PG_CONN -l | grep "$DB_NAME" || true)
 
 if [ ! -z "$EXISTING_DBS" ] && [ $FORCE_CREATION = "false" ] ; then
     echo ".. Stack database exists, doing nothing"
@@ -72,21 +86,21 @@ if [ ! -z "$EXISTING_DBS" ] && [ $FORCE_CREATION = "false" ] ; then
 fi
 
 if [ ! -z "$EXISTING_DBS" ] ; then
-    dropdb $DB_NAME
+    dropdb $PG_CONN $DB_NAME
 fi
 
-echo ".. Initializing Stack data dir at $SSB_DIR"
-mkdir -p $SSB_DIR
+echo ".. Initializing Stack data dir at $TARGET_DIR"
+mkdir -p $TARGET_DIR
 
-if [ -f $SSB_DIR/stack_dump ] ;  then
+if [ -f $TARGET_DIR/stack_dump ] ;  then
     echo ".. Re-using existing Stack dump"
 else
     echo ".. Downloading Stack database dump"
-    curl --location "https://www.dropbox.com/s/55bxfhilcu19i33/so_pg13?dl=1" --output $SSB_DIR/stack_dump
+    curl --location "https://www.dropbox.com/s/55bxfhilcu19i33/so_pg13?dl=1" --output $TARGET_DIR/stack_dump
 fi
 
 echo ".. Creating Stack database"
-createdb $DB_NAME
+createdb $PG_CONN $DB_NAME
 
 if [ $SKIP_EXTENSIONS == "false" ] ; then
     attempt_pg_ext_install "pg_buffercache"
@@ -98,11 +112,11 @@ else
 fi
 
 echo ".. Loading Stack dump"
-pg_restore -O -x --exit-on-error --jobs=$CORES --dbname=$DB_NAME $SSB_DIR/stack_dump
+pg_restore $PG_CONN -O -x --exit-on-error --jobs=$CORES --dbname=$DB_NAME $TARGET_DIR/stack_dump
 
 if [ $SKIP_VACUUM == "false" ] ; then
     echo ".. Vacuuming database"
-    psql $DB_NAME -c "VACUUM ANALYZE;"
+    psql $PG_CONN $DB_NAME -c "VACUUM ANALYZE;"
 else
     echo ".. Skipping vacuuming"
 fi

@@ -6,28 +6,31 @@ WD=$(pwd)
 DB_NAME="stats"
 FORCE_CREATION="false"
 STATS_DIR="../stats_data"
+PG_CONN="-U $USER"
 SKIP_EXTENSIONS="false"
 SKIP_VACUUM="false"
 
 show_help() {
+    RET=$1
     echo "Usage: $0 <options>"
     echo "Allowed options:"
     echo -e "-d | --dir\t<directory> specifies the directory to store/load the stats data files, defaults to '../stats_data'"
     echo -e "-f | --force\tdelete existing instance of the database if necessary"
     echo -e "-t | --target\t<db name> name of the stats database, defaults to 'stats'"
+    echo -e "--pg-conn\t<connection> connection string to the PostgreSQL server (server, port, user) if required, e.g. '-h localhost -U admin'"
     echo -e "--no-ext\tdoes not install any extensions"
     echo -e "--no-vacuum\tdoes not run VACUUM ANALYZE after the import"
-    exit 1
+    exit $RET
 }
 
 attempt_pg_ext_install() {
     EXTENSION=$1
-    AVAILABLE_EXTS=$(psql $DB_NAME -t -c "SELECT name FROM pg_available_extensions" | grep "$EXTENSION" || true)
+    AVAILABLE_EXTS=$(psql $PG_CONN $DB_NAME -t -c "SELECT name FROM pg_available_extensions" | grep "$EXTENSION" || true)
     if [ -z "$AVAILABLE_EXTS" ] ; then
         echo ".. Extension $EXTENSION not available, skipping"
         return
     fi
-    psql $DB_NAME -c "CREATE EXTENSION IF NOT EXISTS $EXTENSION;"
+    psql $PG_CONN $DB_NAME -c "CREATE EXTENSION IF NOT EXISTS $EXTENSION;"
 }
 
 while [ $# -gt 0 ] ; do
@@ -46,6 +49,11 @@ while [ $# -gt 0 ] ; do
             shift
             shift
             ;;
+        --pg-conn)
+            PG_CONN=$2
+            shift
+            shift
+            ;;
         --no-ext)
             SKIP_EXTENSIONS="true"
             shift
@@ -54,13 +62,16 @@ while [ $# -gt 0 ] ; do
             SKIP_VACUUM="true"
             shift
             ;;
+        --help)
+            show_help 0
+            ;;
         *)
-            show_help
+            show_help 1
             ;;
     esac
 done
 
-EXISTING_DBS=$(psql -l | grep "$DB_NAME" || true)
+EXISTING_DBS=$(psql $PG_CONN -l | grep "$DB_NAME" || true)
 
 echo ".. Working directory is $WD"
 
@@ -70,7 +81,7 @@ if [ ! -z "$EXISTING_DBS" ] && [ $FORCE_CREATION = "false" ] ; then
 fi
 
 if [ ! -z "$EXISTING_DBS" ] ; then
-    dropdb $DB_NAME
+    dropdb $PG_CONN $DB_NAME
 fi
 
 echo ".. Stats source directory is $STATS_DIR"
@@ -90,7 +101,7 @@ else
 fi
 
 echo ".. Creating Stats database"
-createdb $DB_NAME
+createdb $PG_CONN $DB_NAME
 
 if [ $SKIP_EXTENSIONS == "false" ] ; then
     attempt_pg_ext_install "pg_buffercache"
@@ -102,15 +113,15 @@ else
 fi
 
 echo ".. Loading Stats database schema"
-psql $DB_NAME -f $STATS_DIR/schema.sql
+psql $PG_CONN $DB_NAME -f $STATS_DIR/schema.sql
 
 echo ".. Inserting Stats data into database"
 cd $STATS_DIR
-psql $DB_NAME -f import.sql
+psql $PG_CONN $DB_NAME -f import.sql
 
 if [ $SKIP_VACUUM == "false" ] ; then
     echo ".. Vacuuming database"
-    psql $DB_NAME -c "VACUUM ANALYZE;"
+    psql $PG_CONN $DB_NAME -c "VACUUM ANALYZE;"
 else
     echo ".. Skipping vacuuming"
 fi
