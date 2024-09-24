@@ -449,7 +449,7 @@ def parse_nested_table_sequence(sequence: list[dict | list]) -> NestedTableSeque
         raise TypeError(f"Unknown list element: {sequence}")
 
 
-def _read_metadata_json(json_data: dict, base_table: bool) -> BaseTableMetadata | JoinMetadata:
+def _read_metadata_json(json_data: dict, base_table: bool, *, include_cardinalities: bool) -> BaseTableMetadata | JoinMetadata:
     """Generates the appropriate metadata object from a JSON representation.
 
     Parameters
@@ -458,6 +458,8 @@ def _read_metadata_json(json_data: dict, base_table: bool) -> BaseTableMetadata 
         The JSON data that should be parsed.
     base_table : bool
         Whether the metadata represents a scan over a base table or a join between two relations.
+    include_cardinalities : bool
+        Whether cardinality information should be included in the metadata.
 
     Returns
     -------
@@ -466,7 +468,7 @@ def _read_metadata_json(json_data: dict, base_table: bool) -> BaseTableMetadata 
         operators), or a logical metadata object is inferred from the JSON data.
     """
     json_parser = parser.JsonParser()
-    cardinality = json_data.get("cardinality", math.nan)
+    cardinality: float = json_data.get("cardinality", math.nan) if include_cardinalities else math.nan
     if base_table:
         filter_predicate = json_parser.load_predicate(json_data["predicate"]) if "predicate" in json_data else None
         if "operator" in json_data:
@@ -481,7 +483,7 @@ def _read_metadata_json(json_data: dict, base_table: bool) -> BaseTableMetadata 
         return LogicalJoinMetadata(join_predicate, cardinality)
 
 
-def read_from_json(json_data: dict) -> LogicalJoinTree | PhysicalQueryPlan:
+def read_from_json(json_data: dict, *, include_cardinalities: bool = True) -> LogicalJoinTree | PhysicalQueryPlan:
     """Reads a join tree from its JSON representation.
 
     This acts as the reverse operation to the *jsonize* protocol.
@@ -490,6 +492,8 @@ def read_from_json(json_data: dict) -> LogicalJoinTree | PhysicalQueryPlan:
     ----------
     json_data : dict
         The JSON data that should be parsed.
+    include_cardinalities : bool, optional
+        Whether cardinality information should be included in the metadata. By default this is the case.
 
     Returns
     -------
@@ -500,15 +504,15 @@ def read_from_json(json_data: dict) -> LogicalJoinTree | PhysicalQueryPlan:
     json_parser = parser.JsonParser()
     if "table" in json_data:
         base_table = json_parser.load_table(json_data["table"])
-        metadata = _read_metadata_json(json_data["metadata"], base_table=True)
+        metadata = _read_metadata_json(json_data["metadata"], base_table=True, include_cardinalities=include_cardinalities)
         base_table_node = BaseTableNode(base_table, metadata)
         if isinstance(metadata, PhysicalBaseTableMetadata):
             return PhysicalQueryPlan(base_table_node)
         return LogicalJoinTree(base_table_node)
     elif "left" in json_data and "right" in json_data:
-        left_tree = read_from_json(json_data["left"])
-        right_tree = read_from_json(json_data["right"])
-        metadata = _read_metadata_json(json_data["metadata"], base_table=False)
+        left_tree = read_from_json(json_data["left"], include_cardinalities=include_cardinalities)
+        right_tree = read_from_json(json_data["right"], include_cardinalities=include_cardinalities)
+        metadata = _read_metadata_json(json_data["metadata"], base_table=False, include_cardinalities=include_cardinalities)
         if isinstance(metadata, PhysicalJoinMetadata):
             return PhysicalQueryPlan.joining(left_tree, right_tree, metadata)
         return LogicalJoinTree.joining(left_tree, right_tree, metadata)
