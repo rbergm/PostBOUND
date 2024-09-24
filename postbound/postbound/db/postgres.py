@@ -473,7 +473,8 @@ class PostgresInterface(db.Database):
                 "emulated": self._db_stats.emulated,
                 "cache_enabled": self._db_stats.cache_enabled
             },
-            "hinting_mode": self._hinting_backend.describe()
+            "hinting_mode": self._hinting_backend.describe(),
+            "query_cache": self.cache_enabled
         }
         self._cursor.execute("SELECT name, setting FROM pg_settings")
         system_settings = self._cursor.fetchall()
