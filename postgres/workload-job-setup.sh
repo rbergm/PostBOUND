@@ -27,12 +27,12 @@ show_help() {
 
 attempt_pg_ext_install() {
     EXTENSION=$1
-    AVAILABLE_EXTS=$(psql $DB_NAME -t -c "SELECT name FROM pg_available_extensions" | grep "$EXTENSION" || true)
+    AVAILABLE_EXTS=$(psql $PG_CONN $DB_NAME -t -c "SELECT name FROM pg_available_extensions" | grep "$EXTENSION" || true)
     if [ -z "$AVAILABLE_EXTS" ] ; then
         echo ".. Extension $EXTENSION not available, skipping"
         return
     fi
-    psql $DB_NAME -c "CREATE EXTENSION IF NOT EXISTS $EXTENSION;"
+    psql $PG_CONN $DB_NAME -c "CREATE EXTENSION IF NOT EXISTS $EXTENSION;"
 }
 
 while [ $# -gt 0 ] ; do
@@ -99,9 +99,9 @@ else
     echo ".. IMDB source directory does not exist, re-creating"
     echo ".. Fetching IMDB data"
     mkdir $TARGET_DIR
-    curl -o $TARGET_DIR/csv.zip "https://db4701.inf.tu-dresden.de:8443/index.php/s/H7TKaEBr5JmdaNA/download/csv.zip"
-    curl -o $TARGET_DIR/create.sql "https://db4701.inf.tu-dresden.de:8443/index.php/s/e35mDHTCZx88y6p/download/create.sql"
-    curl -o $TARGET_DIR/import.sql "https://db4701.inf.tu-dresden.de:8443/index.php/s/bNzMwSpmQESRz6P/download/import.sql"
+    curl -L -o $TARGET_DIR/csv.zip "https://db4701.inf.tu-dresden.de:8443/index.php/s/H7TKaEBr5JmdaNA/download/csv.zip"
+    curl -L -o $TARGET_DIR/create.sql "https://db4701.inf.tu-dresden.de:8443/index.php/s/e35mDHTCZx88y6p/download/create.sql"
+    curl -L -o $TARGET_DIR/import.sql "https://db4701.inf.tu-dresden.de:8443/index.php/s/bNzMwSpmQESRz6P/download/import.sql"
 
     echo ".. Extracting IMDB data"
     unzip $TARGET_DIR/csv.zip -d $TARGET_DIR

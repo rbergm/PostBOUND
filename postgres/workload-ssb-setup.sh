@@ -13,12 +13,12 @@ SF=10
 
 attempt_pg_ext_install() {
     EXTENSION=$1
-    AVAILABLE_EXTS=$(psql $DB_NAME -t -c "SELECT name FROM pg_available_extensions" | grep "$EXTENSION" || true)
+    AVAILABLE_EXTS=$(psql $PG_CONN $DB_NAME -t -c "SELECT name FROM pg_available_extensions" | grep "$EXTENSION" || true)
     if [ -z "$AVAILABLE_EXTS" ] ; then
         echo ".. Extension $EXTENSION not available, skipping"
         return
     fi
-    psql $DB_NAME -c "CREATE EXTENSION IF NOT EXISTS $EXTENSION;"
+    psql $PG_CONN $DB_NAME -c "CREATE EXTENSION IF NOT EXISTS $EXTENSION;"
 }
 
 show_help() {
