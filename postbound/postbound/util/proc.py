@@ -42,6 +42,11 @@ class ProcResult(str):
         print("stderr:")
         print(self.err_data)
 
+    def raise_if_error(self) -> None:
+        """Raises an exception if the process exited with a non-zero exit code."""
+        if self.exit_code != 0:
+            raise RuntimeError(f"Process exited with code {self.exit_code}: '{self.err_data}'")
+
     def __bool__(self) -> bool:
         return self.exit_code == 0
 
