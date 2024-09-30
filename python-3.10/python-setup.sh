@@ -11,12 +11,12 @@ NCORES=$(($(nproc --all) / 2))
 
 echo ".. Pulling Python 3.10"
 if [ ! -f "$PYTHON_ARCHIVE_NAME" ] ; then
-    curl "https://www.python.org/ftp/python/3.10.11/Python-3.10.11.tgz" --output $PYTHON_ARCHIVE_NAME
+    curl "https://www.python.org/ftp/python/3.10.11/Python-3.10.11.tgz" --output $PYTHON_ARCHIVE_NAME --location
 fi
 
 echo ".. Pulling OpenSSL 1.1"
 if [ ! -f "$OPENSSL_ARCHIVE_NAME" ] ; then
-    curl "https://www.openssl.org/source/openssl-1.1.1t.tar.gz" --output $OPENSSL_ARCHIVE_NAME
+    curl "https://www.openssl.org/source/openssl-1.1.1t.tar.gz" --output $OPENSSL_ARCHIVE_NAME --location
 fi
 
 echo ".. Unpacking archives"
