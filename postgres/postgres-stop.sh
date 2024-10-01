@@ -25,5 +25,8 @@ fi
 if [ -z "$PGPORT" ] ; then
 	unset PGPORT
 fi
+if [ -z "$PGDATA" ] ; then
+    unset PGDATA
+fi
 
 cd $WD

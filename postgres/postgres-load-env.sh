@@ -20,6 +20,7 @@ if [ -z "$INIT" ] ; then
 	export PG_BIN_PATH
 	export PGPORT
 	export PG_CTL_PATH="$WD"
+	export PGDATA="$PG_INSTALL_DIR/data"
 	export PATH="$PG_BIN_PATH:$PATH"
 	export LD_LIBRARY_PATH="$PG_INSTALL_DIR/build/lib:$LD_LIBRARY_PATH"
 	export C_INCLUDE_PATH="$PG_INSTALL_DIR/build/include/server:$C_INCLUDE_PATH"
