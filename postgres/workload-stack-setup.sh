@@ -45,6 +45,7 @@ while [ $# -gt 0 ] ; do
         -j|--jobs)
             CORES=$2
             shift
+            shift
             ;;
         -t|--target)
             DB_NAME=$2
