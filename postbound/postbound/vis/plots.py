@@ -28,7 +28,8 @@ def make_grid_plot(data: pd.DataFrame, *, plot_func: Plotter,
         current_col = (current_col + 1) % ncols
         current_row = current_row + 1 if current_col == 0 else current_row
 
-    for extra_col in range(ncols - len(labels) % ncols):
+    extra_rows = range(ncols - len(labels) % ncols) if len(labels) % ncols != 0 else []
+    for extra_col in extra_rows:
         ax[current_row][ncols - extra_col - 1].axis("off")
 
     return fig, ax
