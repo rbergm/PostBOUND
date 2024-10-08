@@ -4,9 +4,9 @@ set -e  # exit on error
 
 WD=$(pwd)
 USER=$(whoami)
-PG_VER_PRETTY=14
-PG_VERSION=REL_14_STABLE
-PG_HINT_PLAN_VERSION=REL14_1_4_0
+PG_VER_PRETTY=17
+PG_VERSION=REL_17_STABLE
+PG_HINT_PLAN_VERSION=REL17_1_7_0
 PG_TARGET_DIR="$WD/postgres-server"
 PG_DEFAULT_PORT=5432
 PG_PORT=5432
@@ -20,7 +20,7 @@ show_help() {
     echo -e "Usage: $0 <options>"
     echo -e "Setup a local Postgres server with the given options. The default user is the current UNIX username.\n"
     echo -e "Allowed options:"
-    echo -e "--pg-ver <version>\t\tSetup Postgres with the given version.${NEWLINE}Currently allowed values: 12.4, 14 (default), 15, 16)"
+    echo -e "--pg-ver <version>\t\tSetup Postgres with the given version.${NEWLINE}Currently allowed values: 12.4, 14, 15, 16, 17 (default))"
     echo -e "-d | --dir <directory>\t\tInstall Postgres server to the designated directory (postgres-server by default)."
     echo -e "-p | --port <port number>\tConfigure the Postgres server to listen on the given port (5432 by default)."
     echo -e "--remote-password <password>\tEnable remote access for the current user, based on the given password.${NEWLINE}Remote access is disabled if no password is provided."
@@ -40,17 +40,22 @@ while [ $# -gt 0 ] ; do
                 14)
                     PG_VER_PRETTY="14"
                     PG_VERSION=REL_14_STABLE
-                    PG_HINT_PLAN_VERSION=REL14_1_4_0
+                    PG_HINT_PLAN_VERSION=REL14_1_4_3
                     ;;
                 15)
                     PG_VER_PRETTY="15"
                     PG_VERSION=REL_15_STABLE
-                    PG_HINT_PLAN_VERSION=REL15_1_5_0
+                    PG_HINT_PLAN_VERSION=REL15_1_5_2
                     ;;
                 16)
                     PG_VER_PRETTY="16"
                     PG_VERSION=REL_16_STABLE
-                    PG_HINT_PLAN_VERSION=REL16_1_6_0
+                    PG_HINT_PLAN_VERSION=REL16_1_6_1
+                    ;;
+                17)
+                    PG_VER_PRETTY="17"
+                    PG_VERSION=REL_17_STABLE
+                    PG_HINT_PLAN_VERSION=REL17_1_7_0
                     ;;
                 *)
                     show_help
