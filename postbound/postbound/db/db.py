@@ -86,6 +86,50 @@ class Connection(typing.Protocol):
         raise NotImplementedError
 
 
+@typing.runtime_checkable
+class PrewarmingSupport(typing.Protocol):
+    """Some databases might support adding specific tables to their shared buffer.
+
+    If so, they should implement this protocol to allow other parts of the framework to exploit this feature.
+    """
+
+    @abc.abstractmethod
+    def prewarm_tables(self, tables: Optional[base.TableReference | Iterable[base.TableReference]] = None,
+                       *more_tables: base.TableReference, exclude_table_pages: bool = False,
+                       include_primary_index: bool = True, include_secondary_indexes: bool = True) -> None:
+        """Prepares the database buffer pool with tuples from specific tables.
+
+        Parameters
+        ----------
+        tables : Optional[base.TableReference  |  Iterable[base.TableReference]], optional
+            The tables that should be placed into the buffer pool
+        *more_tables : base.TableReference
+            More tables that should be placed into the buffer pool, enabling a more convenient usage of this method.
+            See examples for details on the usage.
+        exclude_table_pages : bool, optional
+            Whether the table data (i.e. pages containing the actual tuples) should *not* be prewarmed. This is off by default,
+            meaning that prewarming is applied to the data pages. This can be toggled on to only prewarm index pages (see
+            `include_primary_index` and `include_secondary_index`).
+        include_primary_index : bool, optional
+            Whether the pages of the primary key index should also be prewarmed. Enabled by default.
+        include_secondary_indexes : bool, optional
+            Whether the pages for secondary indexes should also be prewarmed. Enabled by default.
+
+        Notes
+        -----
+        If the database should prewarm more table pages than can be contained in the shared buffer, the actual contents of the
+        pool are not specified. All prewarming tasks might happen sequentially, in which case the first prewarmed relations
+        will typically be evicted and only the last relations (tables or indexes) are retained in the shared buffer. The
+        precise order in which the prewarming tasks are executed is not specified and depends on the actual relations.
+
+        Examples
+        --------
+        >>> database.prewarm_tables([table1, table2])
+        >>> database.prewarm_tables(table1, table2)
+        """
+        raise NotImplementedError
+
+
 class QueryCacheWarning(UserWarning):
     """Warning to indicate that the query result cache was not found."""
     def __init__(self, msg: str) -> None:
