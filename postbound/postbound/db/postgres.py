@@ -16,6 +16,7 @@ import multiprocessing as mp
 import os
 import pathlib
 import re
+import subprocess
 import sys
 import textwrap
 import threading
@@ -388,9 +389,10 @@ class PostgresInterface(db.Database):
         Whether to enable caching of database queries, by default ``True``
     """
 
-    def __init__(self, connect_string: str, system_name: str = "Postgres", *, cache_enabled: bool = True) -> None:
+    def __init__(self, connect_string: str, system_name: str = "Postgres", *, cache_enabled: bool = True,
+                 debug: bool = False) -> None:
         self.connect_string = connect_string
-        self.debug = False
+        self.debug = debug
         self._connection: psycopg.Connection = psycopg.connect(connect_string, application_name="PostBOUND",
                                                                row_factory=psycopg.rows.tuple_row)
         self._init_connection()
@@ -1486,12 +1488,23 @@ def _replace_postgres_cast_expressions(expression: expressions.SqlExpression) ->
     return _PostgresCastExpression(expression) if isinstance(expression, expressions.CastExpression) else expression
 
 
+PostgresHintingBackend = Literal["pg_hint_plan", "pg_lab", "none"]
+"""The hinting backend being used.
+
+If pg_lab is available, this is the preferred extension. Otherwise, pg_hint_plan is used as a fallback.
+If the hint service is inactive, the backend is set to _none_.
+"""
+
+
 class PostgresHintService(db.HintService):
     """Postgres-specific implementation of the hinting capabilities.
 
     Most importantly, this service implements a mapping from the abstract optimization descisions (join order + operators) to
-    their counterparts in the pg_hint_plan extension and integrates Postgres' few deviations from standard SQL syntax (``CAST``
+    their counterparts in the hinting backend and integrates Postgres' few deviations from standard SQL syntax (``CAST``
     expressions and ``LIMIT`` clauses).
+
+    The hinting service supports two different kinds of backends: pg_lab or pg_hint_plan. The former is the preferred option
+    since it provides cardinality hints for base joins and does not require management of the GeQO optimizer.
 
     Notice that by delegating the adaptation of Postgres' native optimizer to the pg_hint_plan extension, a couple of
     undesired side-effects have to be accepted:
@@ -1524,22 +1537,11 @@ class PostgresHintService(db.HintService):
     .. Postgres query planning configuration: https://www.postgresql.org/docs/current/runtime-config-query.html
     """
     def __init__(self, postgres_db: PostgresInterface) -> None:
-        connection_pid = postgres_db._connection.info.backend_pid
-        active_extensions = sys_util.open_files(connection_pid)
-
-        self._inactive = False
+        self.backend = property(self._get_backend, self._set_backend, doc="The hinting backend in use.")
         self._postgres_db = postgres_db
-        if any(ext.endswith("pg_lab.so") for ext in active_extensions):
-            self._backend = "pg_lab"
-        elif any(ext.endswith("pg_hint_plan.so") for ext in active_extensions):
-            self._backend = "pg_hint_plan"
-        else:
-            self._inactive = True
-            self._backend = "none"
-
-    @property
-    def backend(self) -> Literal["pg_hint_plan", "pg_lab", "none"]:
-        return self._backend
+        self._inactive = True
+        self._backend = "none"
+        self._infer_pg_backend()
 
     def generate_hints(self, query: qal.SqlQuery,
                        join_order: Optional[jointree.LogicalJoinTree | jointree.PhysicalQueryPlan] = None,
@@ -1599,6 +1601,59 @@ class PostgresHintService(db.HintService):
             Information about the hinting backend
         """
         return {"backend": self._backend}
+
+    def _get_backend(self) -> PostgresHintingBackend:
+        return self._backend
+
+    def _set_backend(self, backend_name: PostgresHintingBackend) -> None:
+        self._inactive = backend_name == "none"
+        self._backend = backend_name
+
+    def _infer_pg_backend(self) -> None:
+        """Determines the hinting backend that is provided by the current Postgres instance."""
+
+        connection = self._postgres_db.connection()
+        backend_pid = connection.info.backend_pid
+        hostname = connection.info.host
+
+        # Postgres does not provide a direct method to determine which extensions are currently active if they have only
+        # been loaded as a shared library (as is the case for both pg_hint_plan and pg_lab). Therefore, we have to rely on
+        # the assumption that the Postgres server is running on the same (virtual) machine as our PostBOUND process and can
+        # rely on the operating system to determine open files of the backend process (which will include the shared libaries)
+
+        pg_candidates = subprocess.run(["ps -aux | awk '/" + str(backend_pid) + "/{print $11}'"],
+                                       capture_output=True, shell=True, text=True)
+        found_pg = any(candidate.lower().startswith("postgres") for candidate in pg_candidates.stdout.split())
+
+        # There are some rare edge cases where our heuristics fail. We have to accept them for now, but should improve the
+        # backend detection in the future. Most importantly, the heuristic will pass if we are connected to a remote server
+        # on localhost (e.g. via SSH tunneling or WSL instances) and there is a different Postgres server running on the same
+        # machine as the PostBOUND process. In this case, our heuristics assume that these are the same servers.
+        # In the future, we might want to check the ports as well, but this probably requires superuser privileges.
+
+        if hostname not in ['localhost', '127.0.0.1', '::1'] or not found_pg:
+            warnings.warn("It seems you are connecting to a remote Postgres instance. "
+                          "PostBOUND cannot infer the hinting backend for such connections. "
+                          "We assume that the this server has pg_hint_plan enabled. "
+                          "Please set the backend property to pg_lab manually if you are using pg_lab.")
+            self._backend = "pg_hint_plan"
+            self._inactive = False
+            return
+
+        active_extensions = sys_util.open_files(backend_pid)
+        if any(ext.endswith("pg_lab.so") for ext in active_extensions):
+            logging.print_if(self._postgres_db.debug, "Using pg_lab hinting backend", file=sys.stderr)
+            self._inactive = False
+            self._backend = "pg_lab"
+        elif any(ext.endswith("pg_hint_plan.so") for ext in active_extensions):
+            logging.print_if(self._postgres_db.debug, "Using pg_hint_plan hinting backend", file=sys.stderr)
+            self._inactive = False
+            self._backend = "pg_hint_plan"
+        else:
+            warnings.warn("No supported hinting backend found. "
+                          "Please ensure that either pg_hint_plan or pg_lab is available in your Postgres instance.")
+            self._inactive = True
+            self._backend = "none"
 
     def _requires_geqo_deactivation(self, query: qal.SqlQuery) -> bool:
         """Determines whether the query requires the deactivation of the genetic optimizer (GeQO).
@@ -1973,7 +2028,7 @@ class PostgresOptimizer(db.OptimizerInterface):
 
 def connect(*, name: str = "postgres", connect_string: str | None = None,
             config_file: str | None = ".psycopg_connection", cache_enabled: bool = True,
-            refresh: bool = False, private: bool = False) -> PostgresInterface:
+            refresh: bool = False, private: bool = False, debug: bool = False) -> PostgresInterface:
     """Convenience function to seamlessly connect to a Postgres instance.
 
     This function obtains a connect-string to the database according to the following rules:
@@ -2040,7 +2095,7 @@ def connect(*, name: str = "postgres", connect_string: str | None = None,
                          "connect() method, or put a configuration file in your working directory. See the documentation of "
                          "the connect() method for more details.")
 
-    postgres_db = PostgresInterface(connect_string, system_name=name, cache_enabled=cache_enabled)
+    postgres_db = PostgresInterface(connect_string, system_name=name, cache_enabled=cache_enabled, debug=debug)
     if not private:
         orig_name = name
         instance_idx = 2
