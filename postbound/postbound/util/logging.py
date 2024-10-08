@@ -80,7 +80,7 @@ def print_stderr(*args, **kwargs) -> None:
 def print_if(should_print: bool, *args, use_stderr: bool = False, **kwargs) -> None:
     """A normal `print` that only prints something if `should_print` evaluates true-ish. Can optionally print to stderr."""
     if should_print:
-        out_device = kwargs.get("file", sys.stderr if use_stderr else sys.stdout)
+        out_device = kwargs.pop("file", sys.stderr if use_stderr else sys.stdout)
         print(*args, file=out_device, **kwargs)
 
 
