@@ -484,7 +484,8 @@ def read_workload(path: str, name: str = "", *, query_file_pattern: str = "*.sql
                          else query_label_prefix)
         subdir_prefix += subdir.stem + "/"
         subdir_workload = read_workload(str(subdir), query_file_pattern=query_file_pattern,
-                                        recurse_subdirectories=True, query_label_prefix=subdir_prefix)
+                                        recurse_subdirectories=True, query_label_prefix=subdir_prefix,
+                                        bind_columns=bind_columns)
         merged_queries |= subdir_workload.data
     return Workload(merged_queries, name, root_dir)
 
