@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import math
+import warnings
 from dataclasses import dataclass
 from datetime import datetime
 from collections.abc import Callable, Iterable
@@ -93,8 +94,14 @@ class QueryPreparationService:
         self.explain = explain
         self.analyze = analyze
         self.count_star = count_star
-        self.prewarm = prewarm
         self.preparatory_stmts = preparatory_statements if preparatory_statements else []
+
+        if explain and not analyze:
+            if prewarm:
+                warnings.warn("Ignoring prewarm setting since queries are only explained. Set prewarm manually to overwrite.")
+            self.prewarm = False
+        else:
+            self.prewarm = prewarm
 
     def prepare_query(self, query: qal.SqlQuery, *, on: db.Database) -> qal.SqlQuery:
         """Applies the selected transformations to the given input query and executes the preparatory statements
