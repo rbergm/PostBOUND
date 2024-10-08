@@ -14,6 +14,27 @@ Be carefull when updating and check the changelog!
 
 ---
 
+## Version 0.6.2
+
+### New features
+- Process utilities now contain a new `raise_if_error()` method when a command could not be executed
+- Database interfaces that support table prewarming can now be queried using the new `PrewarmingSupport` protocol
+
+### Updates
+- Reworked detection of hinting backends for the Postgres interface, including much improved error messages. This also allows
+  to set the desired hinting backend manually now.
+- `jointree.read_from_json()` can now ignore cardinalities
+- `Database.describe()` now also contains the global caching mode
+- Can now pass the `debug` parameter directly when using `postgres.connect()`
+- Lots of fixes and improvements to the database setup utilities
+
+### Fixes
+- Fixed out-of-bounds error in `plots.make_grid_plot()` that occurred when all sub-plots could be placed perfectly on the grid
+- Fix parsing of queries in `workloads.read_workload()` not respecting the `bind_columns` parameter when loading workloads
+  recursively
+
+--
+
 ## Version 0.6.1
 
 ### New features
