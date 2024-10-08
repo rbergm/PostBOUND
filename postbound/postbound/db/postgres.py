@@ -1537,11 +1537,19 @@ class PostgresHintService(db.HintService):
     .. Postgres query planning configuration: https://www.postgresql.org/docs/current/runtime-config-query.html
     """
     def __init__(self, postgres_db: PostgresInterface) -> None:
-        self.backend = property(self._get_backend, self._set_backend, doc="The hinting backend in use.")
         self._postgres_db = postgres_db
         self._inactive = True
         self._backend = "none"
         self._infer_pg_backend()
+
+    def _get_backend(self) -> PostgresHintingBackend:
+        return self._backend
+
+    def _set_backend(self, backend_name: PostgresHintingBackend) -> None:
+        self._inactive = backend_name == "none"
+        self._backend = backend_name
+
+    backend = property(_get_backend, _set_backend, doc="The hinting backend in use.")
 
     def generate_hints(self, query: qal.SqlQuery,
                        join_order: Optional[jointree.LogicalJoinTree | jointree.PhysicalQueryPlan] = None,
@@ -1601,13 +1609,6 @@ class PostgresHintService(db.HintService):
             Information about the hinting backend
         """
         return {"backend": self._backend}
-
-    def _get_backend(self) -> PostgresHintingBackend:
-        return self._backend
-
-    def _set_backend(self, backend_name: PostgresHintingBackend) -> None:
-        self._inactive = backend_name == "none"
-        self._backend = backend_name
 
     def _infer_pg_backend(self) -> None:
         """Determines the hinting backend that is provided by the current Postgres instance."""
