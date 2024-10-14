@@ -421,8 +421,8 @@ class PostgresInterface(db.Database):
             query_result = self._query_cache[query]
         else:
             try:
-                prepared_query, deactivated_geqo = self._prepare_query_execution(query)
                 self._current_geqo_state = self._obtain_geqo_state()
+                prepared_query, deactivated_geqo = self._prepare_query_execution(query)
                 self._cursor.execute(prepared_query)
                 query_result = self._cursor.fetchall() if self._cursor.rowcount >= 0 else None
                 if deactivated_geqo:
@@ -716,8 +716,9 @@ class PostgresInterface(db.Database):
 
         Returns
         -------
-        str
-            A unified version of the query that is ready for execution
+        tuple[str, bool]
+            A unified version of the query that is ready for execution and a boolean indicating whether GeQO has been
+            automatically deactivated.
         """
         if not isinstance(query, qal.SqlQuery):
             return query, False
@@ -1989,6 +1990,7 @@ class PostgresOptimizer(db.OptimizerInterface):
         self._pg_instance = postgres_instance
 
     def query_plan(self, query: qal.SqlQuery | str) -> db.QueryExecutionPlan:
+        self._pg_instance._current_geqo_state = self._pg_instance._obtain_geqo_state()
         if isinstance(query, qal.SqlQuery):
             query, deactivated_geqo = self._pg_instance._prepare_query_execution(query, drop_explain=True)
         else:
@@ -2000,6 +2002,7 @@ class PostgresOptimizer(db.OptimizerInterface):
         return query_plan.as_query_execution_plan()
 
     def analyze_plan(self, query: qal.SqlQuery) -> db.QueryExecutionPlan:
+        self._pg_instance._current_geqo_state = self._pg_instance._obtain_geqo_state()
         query, deactivated_geqo = self._pg_instance._prepare_query_execution(transform.as_explain_analyze(query))
         self._pg_instance.cursor().execute(query)
         raw_query_plan = self._pg_instance.cursor().fetchone()[0]
@@ -2010,7 +2013,10 @@ class PostgresOptimizer(db.OptimizerInterface):
 
     def cardinality_estimate(self, query: qal.SqlQuery | str) -> int:
         if isinstance(query, qal.SqlQuery):
+            self._pg_instance._current_geqo_state = self._pg_instance._obtain_geqo_state()
             query, deactivated_geqo = self._pg_instance._prepare_query_execution(query, drop_explain=True)
+        else:
+            deactivated_geqo = False
         query_plan = self._pg_instance._obtain_query_plan(query)
         estimate = query_plan[0]["Plan"]["Plan Rows"]
         if deactivated_geqo:
@@ -2018,8 +2024,11 @@ class PostgresOptimizer(db.OptimizerInterface):
         return estimate
 
     def cost_estimate(self, query: qal.SqlQuery | str) -> float:
+        self._pg_instance._current_geqo_state = self._pg_instance._obtain_geqo_state()
         if isinstance(query, qal.SqlQuery):
             query, deactivated_geqo = self._pg_instance._prepare_query_execution(query, drop_explain=True)
+        else:
+            deactivated_geqo = False
         query_plan = self._pg_instance._obtain_query_plan(query)
         estimate = query_plan[0]["Plan"]["Total Cost"]
         if deactivated_geqo:
