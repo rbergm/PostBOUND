@@ -25,7 +25,7 @@ from postbound.optimizer import joingraph, jointree, physops, validation, planpa
 from postbound.util import collections as collection_utils, jsonize
 
 
-class CardinalityHintsGenerator(stages.ParameterGeneration, abc.ABC):
+class CardinalityHintsGenerator(stages.ParameterGeneration, stages.CardinalityEstimator, abc.ABC):
     """End-to-end cardinality estimator.
 
     Implementations of this service calculate cardinalities for all relevant intermediate results of a query. In turn, these

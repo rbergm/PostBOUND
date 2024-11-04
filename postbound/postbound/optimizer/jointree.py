@@ -35,10 +35,10 @@ import Levenshtein
 from postbound.qal import base, predicates, parser, qal
 from postbound.db import db
 from postbound.optimizer import physops, planparams
-from postbound.util import collections as collection_utils, errors, jsonize, stats
+from postbound.util import collections as collection_utils, errors, stats
 
 
-class BaseMetadata(abc.ABC, jsonize.Jsonizable):
+class BaseMetadata(abc.ABC):
     """Common metadata information that is present on all join and base table nodes.
 
     The interpretation of the data can vary depending on the context in which the join tree is being used. For example,
@@ -49,10 +49,10 @@ class BaseMetadata(abc.ABC, jsonize.Jsonizable):
     ----------
     cardinality : float, optional
         An indicator of the number of tuples that are *produced* by the node. If such a value is not available, the
-        default value of ``math.nan`` can be used.
+        default value of *NaN* can be used.
     """
 
-    def __init__(self, cardinality: float = math.nan) -> None:
+    def __init__(self, *, cardinality: float = math.nan) -> None:
         self._cardinality = cardinality
 
     @property
@@ -66,7 +66,7 @@ class BaseMetadata(abc.ABC, jsonize.Jsonizable):
         Returns
         -------
         float
-            The estimate. Can be ``math.nan`` to indicate that no value is available.
+            The estimate. Can be *NaN* to indicate that no value is available.
         """
         return self._cardinality
 
@@ -83,16 +83,16 @@ class JoinMetadata(BaseMetadata, abc.ABC):
     Parameters
     ----------
     predicate : Optional[predicates.AbstractPredicate], optional
-        The join condition that should be used to combine the child relations of the join node. Defaults to ``None`` if
+        The join condition that should be used to combine the child relations of the join node. Defaults to *None* if
         no condition is available, or if the join corresponds to a cross-product.
     cardinality : float, optional
         An indicator of the number of tuples that are *produced* by the node. If such a value is not available, the
-        default value of ``math.nan`` can be used.
+        default value of *NaN* can be used.
     """
 
-    def __init__(self, predicate: Optional[predicates.AbstractPredicate] = None,
+    def __init__(self, predicate: Optional[predicates.AbstractPredicate] = None, *,
                  cardinality: float = math.nan) -> None:
-        super().__init__(cardinality)
+        super().__init__(cardinality=cardinality)
         self._join_predicate = predicate
 
     @property
@@ -102,7 +102,7 @@ class JoinMetadata(BaseMetadata, abc.ABC):
         Returns
         -------
         Optional[predicates.AbstractPredicate]
-            The predicate or ``None`` if this is either unknown, or if the join node denotes a cross-product.
+            The predicate or *None* if this is either unknown, or if the join node denotes a cross-product.
         """
         return self._join_predicate
 
@@ -129,16 +129,19 @@ class LogicalJoinMetadata(JoinMetadata):
     Parameters
     ----------
     predicate : Optional[predicates.AbstractPredicate], optional
-        The join condition that should be used to combine the child relations of the join node. Defaults to ``None`` if
+        The join condition that should be used to combine the child relations of the join node. Defaults to *None* if
         no condition is available, or if the join corresponds to a cross-product.
     cardinality : float, optional
         An indicator of the number of tuples that are *produced* by the node. If such a value is not available, the
-        default value of ``math.nan`` can be used.
+        default value of *NaN* can be used.
+    cost : float, optional
+        An estimation of how expensive computing the current node is. If such a value is not available, the default value of
+        *NaN* can be used.
     """
 
-    def __init__(self, predicate: Optional[predicates.AbstractPredicate] = None,
+    def __init__(self, predicate: Optional[predicates.AbstractPredicate] = None, *,
                  cardinality: float = math.nan) -> None:
-        super().__init__(predicate, cardinality)
+        super().__init__(predicate, cardinality=cardinality)
         self._hash_val = hash((predicate, cardinality))
 
     __json__ = JoinMetadata.__json__
@@ -146,10 +149,10 @@ class LogicalJoinMetadata(JoinMetadata):
     def __hash__(self) -> int:
         return self._hash_val
 
-    def __eq__(self, __value: object) -> bool:
-        return (isinstance(__value, type(self))
-                and self.join_predicate == __value.join_predicate
-                and self.cardinality == __value.cardinality)
+    def __eq__(self, other: object) -> bool:
+        return (isinstance(other, type(self))
+                and self.join_predicate == other.join_predicate
+                and self.cardinality == other.cardinality)
 
     def __repr__(self) -> str:
         return str(self)
@@ -167,22 +170,27 @@ class PhysicalJoinMetadata(JoinMetadata):
     Parameters
     ----------
     predicate : Optional[predicates.AbstractPredicate], optional
-        The join condition that should be used to combine the child relations of the join node. Defaults to ``None`` if
+        The join condition that should be used to combine the child relations of the join node. Defaults to *None* if
         no condition is available, or if the join corresponds to a cross-product.
     cardinality : float, optional
         An indicator of the number of tuples that are *produced* by the node. If such a value is not available, the
-        default value of ``math.nan`` can be used.
+        default value of *NaN* can be used.
+    cost : float, optional
+        An estimation of how expensive computing the current node is. If such a value is not available, the default value of
+        *NaN* can be used.
     join_info : Optional[physops.JoinOperatorAssignment], optional
         A description of the join operator that should be used for the join. If this is not known, the default value of
-        ``None`` can be used. Notice however, that the entire purpose of the query execution plan is in having
-        precisely this information. Therefore, cases were the `join_info` actually is ``None`` should be rare. If they
-        are frequent, an investigation of other representations of the query plan are recommended.
+        *None* can be used. Notice however, that the entire purpose of the query execution plan is in having
+        precisely this information. Therefore, cases were the `join_info` actually is *None* should be rare. If they
+        are frequent, an investigation of other representations of the query plan is recommended.
     """
-    def __init__(self, predicate: Optional[predicates.AbstractPredicate] = None, cardinality: float = math.nan,
+    def __init__(self, predicate: Optional[predicates.AbstractPredicate] = None, *,
+                 cardinality: float = math.nan, cost: float = math.nan,
                  join_info: Optional[physops.JoinOperatorAssignment] = None) -> None:
-        super().__init__(predicate, cardinality)
+        super().__init__(predicate, cardinality=cardinality)
         self._operator_assignment = join_info
-        self._hash_val = hash((predicate, cardinality, join_info))
+        self._cost = cost
+        self._hash_val = hash((predicate, cardinality, cost, join_info))
 
     @property
     def operator(self) -> Optional[physops.JoinOperatorAssignment]:
@@ -194,6 +202,20 @@ class PhysicalJoinMetadata(JoinMetadata):
             The operator or ``None`` if it is unknown. Such situations should be quite rare however.
         """
         return self._operator_assignment
+
+    @property
+    def cost(self) -> float:
+        """Get the cost that quantifies the expense of computing the current node.
+
+        The cost should include costs for all sub-operations that are necessary to compute the current node. Likewise, the
+        estimate should account for all tuples that are produced by the current node.
+
+        Returns
+        -------
+        float
+            The estimate. Can be *NaN* to indicate that no value is available.
+        """
+        return self._cost
 
     def inspect(self) -> str:
         """Provides the contents of the join node as a natural string.
@@ -207,22 +229,25 @@ class PhysicalJoinMetadata(JoinMetadata):
         return f"{base_inspection} USING {self.operator.operator.value}" if self._operator_assignment else base_inspection
 
     def __json__(self) -> object:
-        return super().__json__() | {"operator": self._operator_assignment}
+        return super().__json__() | {"operator": self._operator_assignment, "cost": self._cost}
 
     def __hash__(self) -> int:
         return self._hash_val
 
-    def __eq__(self, __value: object) -> bool:
-        return (isinstance(__value, type(self))
-                and self.join_predicate == __value.join_predicate
-                and self.cardinality == __value.cardinality
-                and self.operator == __value.operator)
+    def __eq__(self, other: object) -> bool:
+        return (isinstance(other, type(self))
+                and self.join_predicate == other.join_predicate
+                and self.cardinality == other.cardinality
+                and self.cost == other.cost
+                and self.operator == other.operator)
 
     def __repr__(self) -> str:
         return str(self)
 
     def __str__(self) -> str:
-        return f"predicate={self.join_predicate}, cardinality={self.cardinality}, operator={self.operator.operator}"
+        s = f"predicate={self.join_predicate}, cardinality={self.cardinality}, "
+        s += f"cost={self.cost}, operator={self.operator.operator}"
+        return s
 
 
 class BaseTableMetadata(BaseMetadata, abc.ABC):
@@ -233,15 +258,15 @@ class BaseTableMetadata(BaseMetadata, abc.ABC):
     Parameters
     ----------
     filter_predicate : Optional[predicates.AbstractPredicate], optional
-        The filter condition that restricts the allowed tuples from the base table. Defaults to ``None`` if
+        The filter condition that restricts the allowed tuples from the base table. Defaults to *None* if
         no condition is available, or if the base table is not filtered.
     cardinality : float, optional
         An indicator of the number of tuples that are *produced* by the node. If such a value is not available, the
-        default value of ``math.nan`` can be used.
+        default value of *NaN* can be used.
     """
-    def __init__(self, filter_predicate: Optional[predicates.AbstractPredicate],
+    def __init__(self, filter_predicate: Optional[predicates.AbstractPredicate], *,
                  cardinality: float = math.nan) -> None:
-        super().__init__(cardinality)
+        super().__init__(cardinality=cardinality)
         self._filter_predicate = filter_predicate
 
     @property
@@ -279,15 +304,15 @@ class LogicalBaseTableMetadata(BaseTableMetadata):
     Parameters
     ----------
     filter_predicate : Optional[predicates.AbstractPredicate], optional
-        The filter condition that restricts the allowed tuples from the base table. Defaults to ``None`` if
+        The filter condition that restricts the allowed tuples from the base table. Defaults to *None* if
         no condition is available, or if the base table is not filtered.
     cardinality : float, optional
         An indicator of the number of tuples that are *produced* by the node. If such a value is not available, the
-        default value of ``math.nan`` can be used.
+        default value of *NaN* can be used.
     """
-    def __init__(self, filter_predicate: Optional[predicates.AbstractPredicate],
+    def __init__(self, filter_predicate: Optional[predicates.AbstractPredicate], *,
                  cardinality: float = math.nan) -> None:
-        super().__init__(filter_predicate, cardinality)
+        super().__init__(filter_predicate, cardinality=cardinality)
         self._hash_val = hash((filter_predicate, cardinality))
 
     __json__ = BaseTableMetadata.__json__
@@ -295,10 +320,10 @@ class LogicalBaseTableMetadata(BaseTableMetadata):
     def __hash__(self) -> int:
         return self._hash_val
 
-    def __eq__(self, __value: object) -> bool:
-        return (isinstance(__value, type(self))
-                and self.filter_predicate == __value.filter_predicate
-                and self.cardinality == __value.cardinality)
+    def __eq__(self, other: object) -> bool:
+        return (isinstance(other, type(self))
+                and self.filter_predicate == other.filter_predicate
+                and self.cardinality == other.cardinality)
 
 
 class PhysicalBaseTableMetadata(BaseTableMetadata):
@@ -310,23 +335,28 @@ class PhysicalBaseTableMetadata(BaseTableMetadata):
     Parameters
     ----------
     filter_predicate : Optional[predicates.AbstractPredicate], optional
-        The filter condition that restricts the allowed tuples from the base table. Defaults to ``None`` if
+        The filter condition that restricts the allowed tuples from the base table. Defaults to *None* if
         no condition is available, or if the base table is not filtered.
     cardinality : float, optional
         An indicator of the number of tuples that are *produced* by the node. If such a value is not available, the
-        default value of ``math.nan`` can be used.
+        default value of *NaN* can be used.
+    cost : float, optional
+        An estimation of how expensive computing the current node is. If such a value is not available, the default value of
+        *NaN* can be used.
     scan_info : Optional[physops.ScanOperatorAssignment], optional
         A description of the scan operator that should be used for the base table. If this is not known, the default
-        value of ``None`` can be used. Notice however, that the entire purpose of the query execution plan is in having
-        precisely this information. Therefore, cases were the `scan_info` actually is ``None`` should be rare. If they
+        value of *None* can be used. Notice however, that the entire purpose of the query execution plan is in having
+        precisely this information. Therefore, cases were the `scan_info` actually is *None* should be rare. If they
         are frequent, an investigation of other representations of the query plan are recommended.
     """
 
-    def __init__(self, filter_predicate: Optional[predicates.AbstractPredicate], cardinality: float = math.nan,
+    def __init__(self, filter_predicate: Optional[predicates.AbstractPredicate], *,
+                 cardinality: float = math.nan, cost: float = math.nan,
                  scan_info: Optional[physops.ScanOperatorAssignment] = None) -> None:
-        super().__init__(filter_predicate, cardinality)
+        super().__init__(filter_predicate, cardinality=cardinality)
         self._operator_assignment = scan_info
-        self._hash_val = hash((filter_predicate, cardinality, scan_info))
+        self._cost = cost
+        self._hash_val = hash((filter_predicate, cardinality, cost, scan_info))
 
     @property
     def operator(self) -> Optional[physops.ScanOperatorAssignment]:
@@ -338,6 +368,20 @@ class PhysicalBaseTableMetadata(BaseTableMetadata):
             The operator or ``None`` if it is unknown. Such situations should be quite rare however.
         """
         return self._operator_assignment
+
+    @property
+    def cost(self) -> float:
+        """Get the cost that quantifies the expense of computing the current node.
+
+        The cost should include costs for all sub-operations that are necessary to compute the current node. Likewise, the
+        estimate should account for all tuples that are produced by the current node.
+
+        Returns
+        -------
+        float
+            The estimate. Can be *NaN* to indicate that no value is available.
+        """
+        return self._cost
 
     def inspect(self) -> str:
         """Provides the contents of the scan node as a natural string.
@@ -351,22 +395,25 @@ class PhysicalBaseTableMetadata(BaseTableMetadata):
         return f"{base_inspection} USING {self.operator.operator.value}" if self._operator_assignment else base_inspection
 
     def __json__(self) -> object:
-        return super().__json__() | {"operator": self._operator_assignment}
+        return super().__json__() | {"operator": self._operator_assignment, "cost": self._cost}
 
     def __hash__(self) -> int:
         return self._hash_val
 
-    def __eq__(self, __value: object) -> bool:
-        return (isinstance(__value, type(self))
-                and self.filter_predicate == __value.filter_predicate
-                and self.cardinality == __value.cardinality
-                and self.operator == __value.operator)
+    def __eq__(self, other: object) -> bool:
+        return (isinstance(other, type(self))
+                and self.filter_predicate == other.filter_predicate
+                and self.cardinality == other.cardinality
+                and self.cost == other.cost
+                and self.operator == other.operator)
 
     def __repr__(self) -> str:
         return str(self)
 
     def __str__(self) -> str:
-        return f"predicate={self.filter_predicate}, upper bound={self.cardinality}, operator={self.operator.operator}"
+        s = f"predicate={self.filter_predicate}, cardinality={self.cardinality}, "
+        s += f"cost={self.cost}, operator={self.operator.operator}"
+        return s
 
 
 class JoinTreeVisitor(abc.ABC):
@@ -449,7 +496,7 @@ def parse_nested_table_sequence(sequence: list[dict | list]) -> NestedTableSeque
         raise TypeError(f"Unknown list element: {sequence}")
 
 
-def _read_metadata_json(json_data: dict, base_table: bool, *, include_cardinalities: bool) -> BaseTableMetadata | JoinMetadata:
+def _read_metadata_json(json_data: dict, base_table: bool, *, include_estimates: bool) -> BaseTableMetadata | JoinMetadata:
     """Generates the appropriate metadata object from a JSON representation.
 
     Parameters
@@ -458,8 +505,8 @@ def _read_metadata_json(json_data: dict, base_table: bool, *, include_cardinalit
         The JSON data that should be parsed.
     base_table : bool
         Whether the metadata represents a scan over a base table or a join between two relations.
-    include_cardinalities : bool
-        Whether cardinality information should be included in the metadata.
+    include_estimates : bool
+        Whether cardinality and cost information should be included in the metadata.
 
     Returns
     -------
@@ -468,22 +515,25 @@ def _read_metadata_json(json_data: dict, base_table: bool, *, include_cardinalit
         operators), or a logical metadata object is inferred from the JSON data.
     """
     json_parser = parser.JsonParser()
-    cardinality: float = json_data.get("cardinality", math.nan) if include_cardinalities else math.nan
+    cardinality: float = json_data.get("cardinality", math.nan) if include_estimates else math.nan
     if base_table:
         filter_predicate = json_parser.load_predicate(json_data["predicate"]) if "predicate" in json_data else None
         if "operator" in json_data:
             scan_assignment = physops.read_operator_json(json_data["operator"])
-            return PhysicalBaseTableMetadata(filter_predicate, cardinality, scan_assignment)
-        return LogicalBaseTableMetadata(filter_predicate, cardinality)
+            cost = json_data.get("cost", math.nan) if include_estimates else math.nan
+            return PhysicalBaseTableMetadata(filter_predicate, cardinality=cardinality, cost=cost,
+                                             scan_info=scan_assignment)
+        return LogicalBaseTableMetadata(filter_predicate, cardinality=cardinality)
     else:
         join_predicate = json_parser.load_predicate(json_data["predicate"]) if "predicate" in json_data else None
         if "operator" in json_data:
             join_assignment = physops.read_operator_json(json_data["operator"])
-            return PhysicalJoinMetadata(join_predicate, cardinality, join_assignment)
-        return LogicalJoinMetadata(join_predicate, cardinality)
+            cost = json_data.get("cost", math.nan) if include_estimates else math.nan
+            return PhysicalJoinMetadata(join_predicate, cardinality=cardinality, cost=cost, join_info=join_assignment)
+        return LogicalJoinMetadata(join_predicate, cardinality=cardinality)
 
 
-def read_from_json(json_data: dict, *, include_cardinalities: bool = True) -> LogicalJoinTree | PhysicalQueryPlan:
+def read_from_json(json_data: dict, *, include_estimates: bool = True) -> LogicalJoinTree | PhysicalQueryPlan:
     """Reads a join tree from its JSON representation.
 
     This acts as the reverse operation to the *jsonize* protocol.
@@ -492,8 +542,8 @@ def read_from_json(json_data: dict, *, include_cardinalities: bool = True) -> Lo
     ----------
     json_data : dict
         The JSON data that should be parsed.
-    include_cardinalities : bool, optional
-        Whether cardinality information should be included in the metadata. By default this is the case.
+    include_estimates : bool, optional
+        Whether cardinality and cost information should be included in the metadata. By default this is the case.
 
     Returns
     -------
@@ -504,15 +554,15 @@ def read_from_json(json_data: dict, *, include_cardinalities: bool = True) -> Lo
     json_parser = parser.JsonParser()
     if "table" in json_data:
         base_table = json_parser.load_table(json_data["table"])
-        metadata = _read_metadata_json(json_data["metadata"], base_table=True, include_cardinalities=include_cardinalities)
+        metadata = _read_metadata_json(json_data["metadata"], base_table=True, include_estimates=include_estimates)
         base_table_node = BaseTableNode(base_table, metadata)
         if isinstance(metadata, PhysicalBaseTableMetadata):
             return PhysicalQueryPlan(base_table_node)
         return LogicalJoinTree(base_table_node)
     elif "left" in json_data and "right" in json_data:
-        left_tree = read_from_json(json_data["left"], include_cardinalities=include_cardinalities)
-        right_tree = read_from_json(json_data["right"], include_cardinalities=include_cardinalities)
-        metadata = _read_metadata_json(json_data["metadata"], base_table=False, include_cardinalities=include_cardinalities)
+        left_tree = read_from_json(json_data["left"], include_estimates=include_estimates)
+        right_tree = read_from_json(json_data["right"], include_estimates=include_estimates)
+        metadata = _read_metadata_json(json_data["metadata"], base_table=False, include_estimates=include_estimates)
         if isinstance(metadata, PhysicalJoinMetadata):
             return PhysicalQueryPlan.joining(left_tree, right_tree, metadata)
         return LogicalJoinTree.joining(left_tree, right_tree, metadata)
@@ -520,8 +570,7 @@ def read_from_json(json_data: dict, *, include_cardinalities: bool = True) -> Lo
         raise ValueError("Malformed json data")
 
 
-class AbstractJoinTreeNode(jsonize.Jsonizable, abc.ABC, Container[base.TableReference],
-                           Generic[JoinMetadataType, BaseTableMetadataType]):
+class AbstractJoinTreeNode(abc.ABC, Container[base.TableReference], Generic[JoinMetadataType, BaseTableMetadataType]):
     """The fundamental type to construct a join tree. This node contains the actual entries/data.
 
     A join tree distinguishes between two types of nodes: join nodes which act as intermediate nodes that join
@@ -1284,7 +1333,7 @@ AnnotationMerger = Optional[Callable[[Optional[BaseMetadata], Optional[BaseMetad
 """Type alias for methods that can combine different metadata objects."""
 
 
-class JoinTree(jsonize.Jsonizable, Container[base.TableReference], Generic[JoinMetadataType, BaseTableMetadataType]):
+class JoinTree(Container[base.TableReference], Generic[JoinMetadataType, BaseTableMetadataType]):
     """The join tree captures the order in which base tables as well as intermediate results are joined together.
 
     Each join tree maintains the root of a composite tree structure consisting of `BaseTableNode` as leaves and
@@ -1990,7 +2039,7 @@ class LogicalJoinTree(JoinTree[LogicalJoinMetadata, LogicalBaseTableMetadata]):
                 raise ValueError(f"Scan nodes must have an associated table: {query_plan}")
             filter_predicate = query.predicates().filters_for(table) if query else None
             cardinality = query_plan.true_cardinality if query_plan.is_analyze() else query_plan.estimated_cardinality
-            table_annotation = LogicalBaseTableMetadata(filter_predicate, cardinality)
+            table_annotation = LogicalBaseTableMetadata(filter_predicate, cardinality=cardinality)
             return current_join_tree.join_with_base_table(table, table_annotation)
         elif query_plan.is_join:
             if len(query_plan.children) != 2:
@@ -2004,7 +2053,7 @@ class LogicalJoinTree(JoinTree[LogicalJoinMetadata, LogicalBaseTableMetadata]):
             join_predicate = (query.predicates().joins_between(outer_tree.tables(), inner_tree.tables())
                               if query else None)
             cardinality = query_plan.true_cardinality if query_plan.is_analyze() else query_plan.estimated_cardinality
-            join_annotation = LogicalJoinMetadata(join_predicate, cardinality)
+            join_annotation = LogicalJoinMetadata(join_predicate, cardinality=cardinality)
             return outer_tree.join_with_subtree(inner_tree, join_annotation, insert_left=False)
 
         if len(query_plan.children) != 1:
@@ -2077,7 +2126,7 @@ def _physical_to_logical(physical_node: AbstractJoinTreeNode[PhysicalJoinMetadat
     if isinstance(physical_node, BaseTableNode):
         physical_annotation = physical_node.annotation
         logical_annotation = (LogicalBaseTableMetadata(physical_annotation.filter_predicate,
-                                                       physical_annotation.cardinality)
+                                                       cardinality=physical_annotation.cardinality)
                               if physical_annotation else None)
         return BaseTableNode(physical_node.table, logical_annotation)
 
@@ -2085,7 +2134,7 @@ def _physical_to_logical(physical_node: AbstractJoinTreeNode[PhysicalJoinMetadat
     left_logical = _physical_to_logical(physical_node.left_child)
     right_logical = _physical_to_logical(physical_node.right_child)
     physical_annotation = physical_node.annotation
-    logical_annotation = (LogicalJoinMetadata(physical_annotation.join_predicate, physical_annotation.cardinality)
+    logical_annotation = (LogicalJoinMetadata(physical_annotation.join_predicate, cardinality=physical_annotation.cardinality)
                           if physical_annotation else None)
     return IntermediateJoinNode(left_logical, right_logical, logical_annotation)
 
@@ -2183,8 +2232,8 @@ class PhysicalQueryPlan(JoinTree[PhysicalJoinMetadata, PhysicalBaseTableMetadata
             The query that was planned. If this is specified, the query will be used to inflate some of the annotations
             of the nodes in the join tree.
         operators_only : bool, optional
-            Whether only the physical operators should extracted from the query plan. If enabled, no cardinalities or parallel
-            workers are loaded. Disabled by default.
+            Whether only the physical operators should extracted from the query plan. If enabled, no cardinalities, costs, or
+            parallel workers are loaded. Disabled by default.
 
         Returns
         -------
@@ -2209,13 +2258,16 @@ class PhysicalQueryPlan(JoinTree[PhysicalJoinMetadata, PhysicalBaseTableMetadata
             if operators_only:
                 scan_info = physops.ScanOperatorAssignment(query_plan.physical_operator, table)
                 cardinality = math.nan
+                cost = math.nan
             else:
                 cardinality = query_plan.true_cardinality if query_plan.is_analyze() else query_plan.estimated_cardinality
+                cost = query_plan.cost
                 scan_info = (physops.ScanOperatorAssignment(query_plan.physical_operator, table,
                                                             query_plan.parallel_workers)
                              if query_plan.physical_operator else None)
 
-            table_annotation = PhysicalBaseTableMetadata(filter_predicate, cardinality, scan_info)
+            table_annotation = PhysicalBaseTableMetadata(filter_predicate, cardinality=cardinality, cost=cost,
+                                                         scan_info=scan_info)
             return PhysicalQueryPlan.for_base_table(table, table_annotation)
         elif query_plan.is_join:
             if len(query_plan.children) != 2:
@@ -2233,6 +2285,7 @@ class PhysicalQueryPlan(JoinTree[PhysicalJoinMetadata, PhysicalBaseTableMetadata
                 join_info = physops.DirectionalJoinOperatorAssignment(query_plan.physical_operator,
                                                                       outer=outer_child.tables(), inner=inner_child.tables())
                 cardinality = math.nan
+                cost = math.nan
             else:
                 join_info = (physops.DirectionalJoinOperatorAssignment(query_plan.physical_operator,
                                                                        outer=outer_child.tables(),
@@ -2240,8 +2293,9 @@ class PhysicalQueryPlan(JoinTree[PhysicalJoinMetadata, PhysicalBaseTableMetadata
                                                                        parallel_workers=query_plan.parallel_workers)
                              if query_plan.physical_operator else None)
                 cardinality = query_plan.true_cardinality if query_plan.is_analyze() else query_plan.estimated_cardinality
+                cost = query_plan.cost
 
-            join_annotation = PhysicalJoinMetadata(join_predicate, cardinality, join_info)
+            join_annotation = PhysicalJoinMetadata(join_predicate, cardinality=cardinality, cost=cost, join_info=join_info)
             return outer_tree.join_with_subtree(inner_tree, join_annotation, insert_left=False)
 
         if len(query_plan.children) != 1:
@@ -2290,7 +2344,8 @@ class PhysicalQueryPlan(JoinTree[PhysicalJoinMetadata, PhysicalBaseTableMetadata
             join_cardinality = (metadata.cardinality_hints.get(root_node.tables(), math.nan) if metadata
                                 else (root_node.annotation.cardinality if root_node.annotation else math.nan))
             join_operator = operators[root_node.tables()] if operators else None
-            join_annotation = PhysicalJoinMetadata(join_predicate, join_cardinality, join_operator)
+            join_annotation = PhysicalJoinMetadata(join_predicate, cardinality=join_cardinality, cost=math.nan,
+                                                   join_info=join_operator)
 
             physical_join_node = IntermediateJoinNode(physical_left_child.root, physical_right_child.root, join_annotation)
             return PhysicalQueryPlan(physical_join_node)
@@ -2299,7 +2354,9 @@ class PhysicalQueryPlan(JoinTree[PhysicalJoinMetadata, PhysicalBaseTableMetadata
             scan_cardinality = (metadata.cardinality_hints.get(root_node.tables(), math.nan) if metadata
                                 else (root_node.annotation.cardinality if root_node.annotation else math.nan))
             scan_operator = operators[root_node.table] if operators else None
-            scan_annotation = PhysicalBaseTableMetadata(filter_predicate, scan_cardinality, scan_operator)
+            scan_annotation = PhysicalBaseTableMetadata(filter_predicate, cardinality=scan_cardinality, cost=math.nan,
+                                                        scan_info=scan_operator)
+
             physical_scan_node = BaseTableNode(root_node.table, scan_annotation)
             return PhysicalQueryPlan(physical_scan_node)
         else:
@@ -2311,6 +2368,34 @@ class PhysicalQueryPlan(JoinTree[PhysicalJoinMetadata, PhysicalBaseTableMetadata
         super().__init__(root)
         self._global_settings = (global_operator_settings.global_settings_only() if global_operator_settings
                                  else physops.PhysicalOperatorAssignment())
+
+    @property
+    def cardinality(self) -> float:
+        """Get the total cardinality of the plan.
+
+        Depending on the context, this cardinality can be interpreted in different ways, including as a traditional cardinality
+        estimate, as an upper bound on the actual cardinality, or as a precise count of the number of tuples.
+
+        Returns
+        -------
+        float
+            The estimate. Can be *NaN* to indicate that no value is available.
+        """
+        return self.root.annotation.cardinality if self.root and self.root.annotation else math.nan
+
+    @property
+    def cost(self) -> float:
+        """Get the cost for computing the entire plan.
+
+        The cost includes costs for all sub-operations that are necessary to compute the plan. Likewise, the estimate accounts
+        for computing all result tuples.
+
+        Returns
+        -------
+        float
+            The estimate. Can be *NaN* to indicate that no value is available.
+        """
+        return self.root.annotation.cost if self.root and self.root.annotation else math.nan
 
     @property
     def global_settings(self) -> physops.PhysicalOperatorAssignment:
@@ -2426,7 +2511,7 @@ class PhysicalQueryPlan(JoinTree[PhysicalJoinMetadata, PhysicalBaseTableMetadata
             return LogicalJoinTree()
         return LogicalJoinTree(_physical_to_logical(self.root))
 
-    def plan_hash(self, *, exclude_predicates: bool = False, exclude_cardinalities: bool = True) -> int:
+    def plan_hash(self, *, exclude_predicates: bool = False, exclude_estimates: bool = True) -> int:
         """Calculates a hash value that considers the join order as well as the assigned physical operators.
 
         This method differs from the default hash method because join trees do only consider the structure of the tree, but
@@ -2437,8 +2522,8 @@ class PhysicalQueryPlan(JoinTree[PhysicalJoinMetadata, PhysicalBaseTableMetadata
         ----------
         exclude_predicates : bool, optional
             Whether the hash should ignore the join and filter predicates. This is off by default.
-        exclude_cardinalities : bool, optional
-            Whether the hash should ignore the cardinality estimates. This is on by default.
+        exclude_estimates : bool, optional
+            Whether the hash should ignore the cardinality and cost estimates. This is on by default.
 
         Returns
         -------
@@ -2455,8 +2540,9 @@ class PhysicalQueryPlan(JoinTree[PhysicalJoinMetadata, PhysicalBaseTableMetadata
             current_annotation = [annotation.operator]
             if not exclude_predicates:
                 current_annotation.append(annotation.join_predicate)
-            if not exclude_cardinalities:
+            if not exclude_estimates:
                 current_annotation.append(annotation.cardinality)
+                current_annotation.append(annotation.cost)
             join_hash_components.append(tuple(current_annotation))
 
         scan_hash_components = []
@@ -2468,8 +2554,9 @@ class PhysicalQueryPlan(JoinTree[PhysicalJoinMetadata, PhysicalBaseTableMetadata
             current_annotation = [annotation.operator]
             if not exclude_predicates:
                 current_annotation.append(annotation.filter_predicate)
-            if not exclude_cardinalities:
+            if not exclude_estimates:
                 current_annotation.append(annotation.cardinality)
+                current_annotation.append(annotation.cost)
             scan_hash_components.append(tuple(current_annotation))
 
         join_hash_values = hash(tuple(join_hash_components))
@@ -2482,8 +2569,9 @@ def physical_join_tree_annotation_merger(first_annotation: Optional[PhysicalPlan
     """Default handler to combine two physical annotations.
 
     There is no meaningful way to infer the operator of a merged annotation, even based on the operators of the
-    input annotation. Therefore, this handler completely ignores the operator annotation. However, predicate and
-    cardinality are handled in the following way (similar to the `logical_join_tree_annotation_merger`):
+    input annotation. Therefore, this handler completely ignores the operator annotation. The same applies for the cost
+    estimate since costs rely on operators. However, predicate and cardinality are handled in the following way (similar to the
+    `logical_join_tree_annotation_merger`):
 
     - If both annotations specify a join predicate, those predicates are combined in a conjunction. Otherwise valid
       predicates are retained or ``None`` is used.
@@ -2511,7 +2599,55 @@ def physical_join_tree_annotation_merger(first_annotation: Optional[PhysicalPlan
         merged_predicate = predicates.CompoundPredicate.create_and([merged_predicate,
                                                                     second_annotation.join_predicate])
     return PhysicalJoinMetadata(merged_predicate,
-                                cardinality=first_annotation.cardinality * second_annotation.cardinality)
+                                cardinality=first_annotation.cardinality * second_annotation.cardinality,
+                                cost=math.nan)
+
+
+def update_cost_estimate(query_plan: PhysicalQueryPlan, cost: float) -> PhysicalQueryPlan:
+    """Sets the cost estimate of the root node for a query plan.
+
+    Parameters
+    ----------
+    query_plan : PhysicalQueryPlan
+        The query plan to update
+    cost : float
+        The cost of the root node
+
+    Returns
+    -------
+    PhysicalQueryPlan
+        The updated plan. The original plan is not modified.
+
+    Raises
+    ------
+    ValueError
+        If the query plan is empty
+    """
+    if not query_plan:
+        raise ValueError("Empty query plan")
+    root_node = query_plan.root
+
+    if root_node.is_base_table_node():
+        node: BaseTableNode[PhysicalJoinMetadata, PhysicalBaseTableMetadata] = root_node
+        base_annotation: PhysicalBaseTableMetadata = (root_node.annotation if root_node.annotation
+                                                      else PhysicalBaseTableMetadata(None))
+        updated_annotation = PhysicalBaseTableMetadata(base_annotation.filter_predicate,
+                                                       cardinality=base_annotation.cardinality,
+                                                       cost=cost,
+                                                       scan_info=base_annotation.operator)
+        updated_node = BaseTableNode(node.table, updated_annotation)
+    elif root_node.is_join_node():
+        node: IntermediateJoinNode[PhysicalJoinMetadata, PhysicalBaseTableMetadata] = root_node
+        join_annotation: PhysicalJoinMetadata = root_node.annotation
+        updated_annotation = PhysicalJoinMetadata(join_annotation.join_predicate,
+                                                  cardinality=join_annotation.cardinality,
+                                                  cost=cost,
+                                                  join_info=join_annotation.operator)
+        updated_node = IntermediateJoinNode(node.left_child, node.right_child, updated_annotation)
+    else:
+        raise ValueError("Unknown node type: " + str(root_node))
+
+    return updated_node
 
 
 def top_down_similarity(a: JoinTree | AbstractJoinTreeNode, b: JoinTree | AbstractJoinTreeNode, *,
@@ -2729,7 +2865,7 @@ class JointreeChangeEntry:
         the same, the roles in a specific join are reversed: the inner relation of one tree acts as the outer relation in the
         other one and vice-versa. *physical-op* means that two structurally identical nodes (i.e. same join or base table)
         differ in the assigned physical operator. *card-est* indicates that two structurally identifcal nodes (i.e. same join
-        or base table) differ in the estimated cardinality.
+        or base table) differ in the estimated cardinality, while *cost-est* does the same, just for the estimated cost.
     left_state : frozenset[base.TableReference] | physops.PhysicalOperator | float
         Depending on the `change_type` this attribute describes the left tree. For example, for different tree structures,
         these are the tables in the left subtree, for different physical operators, this is the operator assigned to the node
@@ -2741,7 +2877,7 @@ class JointreeChangeEntry:
         attribute is unset by default.
     """
 
-    change_type: Literal["tree-structure", "join-direction", "physical-op", "card-est"]
+    change_type: Literal["tree-structure", "join-direction", "physical-op", "card-est", "cost-est"]
     left_state: frozenset[base.TableReference] | physops.PhysicalOperator | float
     right_state: frozenset[base.TableReference] | physops.PhysicalOperator | float
     context: Optional[frozenset[base.TableReference]] = None
@@ -2767,6 +2903,9 @@ class JointreeChangeEntry:
                 return f"Different physical operators on node {self.context}: left={self.left_state} right={self.right_state}"
             case "card-est":
                 return (f"Different cardinality estimates on node {self.context}: "
+                        f"left={self.left_state} right={self.right_state}")
+            case "cost-est":
+                return (f"Different cost estimates on node {self.context}: "
                         f"left={self.left_state} right={self.right_state}")
             case _:
                 raise errors.StateError(f"Unknown change type '{self.change_type}'")
@@ -2813,11 +2952,34 @@ def _extract_card_from_annotation(node: AbstractJoinTreeNode | None) -> float:
     if node is None:
         return math.nan
 
-    if isinstance(node, BaseTableMetadata):
-        return node.cardinality
-    elif isinstance(node, JoinMetadata):
-        return node.cardinality
+    annot = node.annotation
+    if isinstance(annot, BaseTableMetadata):
+        return annot.cardinality
+    elif isinstance(annot, JoinMetadata):
+        return annot.cardinality
 
+    return math.nan
+
+
+def _extract_cost_from_annotation(node: AbstractJoinTreeNode | None) -> float:
+    """Provides the cost estiamte froma join tree node if there is any.
+
+    Parameters
+    ----------
+    node : AbstractJoinTreeNode | None
+        The node to extract from
+
+    Returns
+    -------
+    float
+        The node's cost. Can be *NaN* if either the node is undefined, does not support cost estimates (e.g. for logical
+        nodes), or does not contain an annotated cost.
+    """
+    if node is None:
+        return math.nan
+
+    if isinstance(node.annotation, (PhysicalBaseTableMetadata, PhysicalJoinMetadata)):
+        return node.annotation.cost
     return math.nan
 
 
@@ -2837,10 +2999,11 @@ def _extract_operator_from_annotation(node: AbstractJoinTreeNode | None) -> Opti
     if node is None:
         return None
 
-    if isinstance(node, PhysicalBaseTableMetadata):
-        return node.operator
-    elif isinstance(node, PhysicalJoinMetadata):
-        return node.operator
+    annot = node.annotation
+    if isinstance(annot, PhysicalBaseTableMetadata):
+        return annot.operator
+    elif isinstance(annot, PhysicalJoinMetadata):
+        return annot.operator
 
     return None
 
@@ -2870,8 +3033,11 @@ def compare_jointrees(left: JoinTree | AbstractJoinTreeNode,
     changes: list[JointreeChangeEntry] = []
 
     left_card, right_card = _extract_card_from_annotation(left), _extract_card_from_annotation(right)
+    left_cost, right_cost = _extract_cost_from_annotation(left), _extract_cost_from_annotation(right)
     if left_card != right_card and not (math.isnan(left_card) and math.isnan(right_card)):
         changes.append(JointreeChangeEntry("card-est", left_state=left_card, right_state=right_card, context=left.tables()))
+    if left_cost != right_cost and not (math.isnan(left_cost) and math.isnan(left_cost)):
+        changes.append(JointreeChangeEntry("cost-est", left_state=left_cost, right_state=right_cost, context=left.tables()))
 
     left_op, right_op = _extract_operator_from_annotation(left), _extract_operator_from_annotation(right)
     if left_op != right_op:

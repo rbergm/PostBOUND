@@ -11,8 +11,9 @@ import abc
 from typing import Optional
 
 from postbound.db import db
-from postbound.qal import qal
+from postbound.qal import base, qal
 from postbound.optimizer import jointree, physops, planparams, validation
+from postbound.util.jsonize import jsondict
 
 
 class CompleteOptimizationAlgorithm(abc.ABC):
@@ -38,12 +39,12 @@ class CompleteOptimizationAlgorithm(abc.ABC):
         raise NotImplementedError
 
     @abc.abstractmethod
-    def describe(self) -> dict:
+    def describe(self) -> jsondict:
         """Provides a JSON-serializable representation of the specific strategy, as well as important parameters.
 
         Returns
         -------
-        dict
+        jsondict
             The description
 
         See Also
@@ -53,7 +54,175 @@ class CompleteOptimizationAlgorithm(abc.ABC):
         raise NotImplementedError
 
     def pre_check(self) -> validation.OptimizationPreCheck:
-        """Provides requirements that an input query has to satisfy in order for the optimizer to work properly.
+        """Provides requirements that input query or database system have to satisfy for the optimizer to work properly.
+
+        Returns
+        -------
+        validation.OptimizationPreCheck
+            The check instance. Can be an empty check if no specific requirements exist.
+        """
+        return validation.EmptyPreCheck()
+
+
+Cost = float
+"""Type alias for a cost estimate."""
+
+Cardinality = int
+"""Type alias for a cardinality estimate."""
+
+
+class CardinalityEstimator(abc.ABC):
+    """The cardinality estimator calculates how many tuples specific operators will produce."""
+
+    @abc.abstractmethod
+    def calculate_estimate(self, query: qal.SqlQuery, intermediate: frozenset[base.TableReference]) -> Cardinality:
+        """Determines the cardinality of a specific intermediate.
+
+        Parameters
+        ----------
+        query : qal.SqlQuery
+            The query being optimized
+        intermediate : frozenset[base.TableReference]
+            The intermediate for which the cardinality should be estimated. All filter predicates, etc. that are applicable
+            to the intermediate can be assumed to be applied.
+
+        Returns
+        -------
+        Cardinality
+            the estimate
+        """
+        raise NotImplementedError
+
+    @abc.abstractmethod
+    def describe(self) -> jsondict:
+        """Provides a JSON-serializable representation of the specific estimator, as well as important parameters.
+
+        Returns
+        -------
+        jsondict
+            The description
+
+        See Also
+        --------
+        postbound.postbound.OptimizationPipeline.describe
+        """
+        raise NotImplementedError
+
+    def pre_check(self) -> validation.OptimizationPreCheck:
+        """Provides requirements that input query or database system have to satisfy for the optimizer to work properly.
+
+        Returns
+        -------
+        validation.OptimizationPreCheck
+            The check instance. Can be an empty check if no specific requirements exist.
+        """
+        return validation.EmptyPreCheck()
+
+
+class CostModel(abc.ABC):
+    """The cost model estimates how expensive computing a certain query plan is."""
+
+    @abc.abstractmethod
+    def estimate_cost(self, query: qal.SqlQuery, plan: jointree.PhysicalQueryPlan) -> Cost:
+        """Computes the cost estimate for a specific plan.
+
+        The following conventions are used for the estimation: the root node of the plan will not have any cost set. However,
+        all input nodes will have already been estimated by earlier calls to the cost model. Hence, while estimating the cost
+        of the root node, all earlier costs will be available as inputs.
+
+        It is not the responsibility of the cost model to set the estimate on the plan, this is the task of the enumerator
+        (which can decide whether the plan should be considered any further).
+
+        Parameters
+        ----------
+        query : qal.SqlQuery
+            The query being optimized
+        plan : jointree.PhysicalQueryPlan
+            The plan to estimate.
+
+        Returns
+        -------
+        Cost
+            The estimated cost
+        """
+        raise NotImplementedError
+
+    @abc.abstractmethod
+    def describe(self) -> jsondict:
+        """Provides a JSON-serializable representation of the specific cost model, as well as important parameters.
+
+        Returns
+        -------
+        jsondict
+            The description
+
+        See Also
+        --------
+        postbound.postbound.OptimizationPipeline.describe
+        """
+        raise NotImplementedError
+
+    def pre_check(self) -> validation.OptimizationPreCheck:
+        """Provides requirements that input query or database system have to satisfy for the optimizer to work properly.
+
+        Returns
+        -------
+        validation.OptimizationPreCheck
+            The check instance. Can be an empty check if no specific requirements exist.
+        """
+        return validation.EmptyPreCheck()
+
+
+class PlanEnumerator(abc.ABC):
+    """The plan enumerator traverses the space of different candidate plans and ultimately selects the optimal one."""
+
+    @abc.abstractmethod
+    def generate_execution_plan(self, query: qal.SqlQuery, *, cost_model: CostModel,
+                                cardinality_estimator: CardinalityEstimator) -> jointree.PhysicalQueryPlan:
+        """Computes the optimal plan to execute the given query.
+
+        Parameters
+        ----------
+        query : qal.SqlQuery
+            The query to optimize
+        cost_model : CostModel
+            The cost model to compare different candidate plans
+        cardinality_estimator : CardinalityEstimator
+            The cardinality estimator to calculate the sizes of intermediate results
+
+        Returns
+        -------
+        jointree.PhysicalQueryPlan
+            The query plan
+
+        Notes
+        -----
+        The precise generation "style" (e.g. top-down vs. bottom-up, complete plans vs. plan fragments, etc.) is completely up
+        to the specific algorithm. Therefore, it is really hard to provide a more expressive interface for the enumerator
+        beyond just generating a plan. Generally the enumerator should query the cost model to compare different candidates.
+        The top-most operator of each candidate will usually not have a cost estimate set at the beginning and it is the
+        enumerator's responsibility to set the estimate correctly. The `jointree.update_cost_estimate` function can be used to
+        help with this.
+        """
+        raise NotImplementedError
+
+    @abc.abstractmethod
+    def describe(self) -> jsondict:
+        """Provides a JSON-serializable representation of the specific enumerator, as well as important parameters.
+
+        Returns
+        -------
+        jsondict
+            The description
+
+        See Also
+        --------
+        postbound.postbound.OptimizationPipeline.describe
+        """
+        raise NotImplementedError
+
+    def pre_check(self) -> validation.OptimizationPreCheck:
+        """Provides requirements that input query or database system have to satisfy for the optimizer to work properly.
 
         Returns
         -------
@@ -96,12 +265,12 @@ class JoinOrderOptimization(abc.ABC):
         raise NotImplementedError
 
     @abc.abstractmethod
-    def describe(self) -> dict:
+    def describe(self) -> jsondict:
         """Provides a JSON-serializable representation of the specific strategy, as well as important parameters.
 
         Returns
         -------
-        dict
+        jsondict
             The description
 
         See Also
@@ -111,7 +280,7 @@ class JoinOrderOptimization(abc.ABC):
         raise NotImplementedError
 
     def pre_check(self) -> validation.OptimizationPreCheck:
-        """Provides requirements that an input query has to satisfy in order for the optimizer to work properly.
+        """Provides requirements that input query or database system have to satisfy for the optimizer to work properly.
 
         Returns
         -------
@@ -182,12 +351,12 @@ class PhysicalOperatorSelection(abc.ABC):
         raise NotImplementedError
 
     @abc.abstractmethod
-    def describe(self) -> dict:
+    def describe(self) -> jsondict:
         """Provides a JSON-serializable representation of the specific strategy, as well as important parameters.
 
         Returns
         -------
-        dict
+        jsondict
             The description
 
         See Also
@@ -197,7 +366,7 @@ class PhysicalOperatorSelection(abc.ABC):
         raise NotImplementedError
 
     def pre_check(self) -> validation.OptimizationPreCheck:
-        """Provides requirements that an input query has to satisfy in order for the optimizer to work properly.
+        """Provides requirements that input query or database system have to satisfy for the optimizer to work properly.
 
         Returns
         -------
@@ -255,12 +424,12 @@ class ParameterGeneration(abc.ABC):
         raise NotImplementedError
 
     @abc.abstractmethod
-    def describe(self) -> dict:
+    def describe(self) -> jsondict:
         """Provides a JSON-serializable representation of the specific strategy, as well as important parameters.
 
         Returns
         -------
-        dict
+        jsondict
             The description
 
         See Also
@@ -270,7 +439,7 @@ class ParameterGeneration(abc.ABC):
         raise NotImplementedError
 
     def pre_check(self) -> validation.OptimizationPreCheck:
-        """Provides requirements that an input query has to satisfy in order for the optimizer to work properly.
+        """Provides requirements that input query or database system have to satisfy for the optimizer to work properly.
 
         Returns
         -------
@@ -316,12 +485,12 @@ class IncrementalOptimizationStep(abc.ABC):
         raise NotImplementedError
 
     @abc.abstractmethod
-    def describe(self) -> dict:
+    def describe(self) -> jsondict:
         """Provides a JSON-serializable representation of the specific strategy, as well as important parameters.
 
         Returns
         -------
-        dict
+        jsondict
             The description
 
         See Also
@@ -331,7 +500,7 @@ class IncrementalOptimizationStep(abc.ABC):
         raise NotImplementedError
 
     def pre_check(self) -> validation.OptimizationPreCheck:
-        """Provides requirements that an input query has to satisfy in order for the optimizer to work properly.
+        """Provides requirements that input query or database system have to satisfy for the optimizer to work properly.
 
         Returns
         -------
@@ -401,7 +570,7 @@ class _CompleteAlgorithmEmulator(CompleteOptimizationAlgorithm):
         query_plan = self.database.optimizer().query_plan(hinted_query)
         return jointree.PhysicalQueryPlan(query_plan, query)
 
-    def describe(self) -> dict:
+    def describe(self) -> jsondict:
         return self.stage().describe()
 
     def pre_check(self) -> validation.OptimizationPreCheck:

@@ -1,13 +1,13 @@
 """Provides PostBOUND's main optimization pipeline.
 
-In fact, PostBOUND does not provide a single pipeline implementation. Rather, different pipeline types exists to
-accomodate different use-cases. See the documentation of the general `OptimizationPipeline` protocol for details. That
-class serves as the smallest common denominator among all pipeline implementations.
+In fact, PostBOUND does not provide a single pipeline implementation. Rather, different pipeline types exists to accomodate
+different use-cases. See the documentation of the general `OptimizationPipeline` base class for details. That class serves as
+the smallest common denominator among all pipeline implementations.
 """
 from __future__ import annotations
 
 import abc
-from typing import Optional, Protocol
+from typing import Optional
 
 from postbound.qal import qal, transform
 from postbound.optimizer import jointree, presets, stages, validation
@@ -16,20 +16,20 @@ from postbound.db import db
 from postbound.util import errors
 
 
-class OptimizationPipeline(Protocol):
+class OptimizationPipeline(abc.ABC):
     """The optimization pipeline is the main tool to apply different strategies to optimize SQL queries.
 
-    Depending on the specific scenario, different concrete pipeline implementations exist. For example, to apply
-    a two-stage optimization design (e.g. consisting of join ordering and a subsequent physical operator selection),
-    the `TwoStageOptimizationPipeline` exists. Similarly, for optimization algorithms that perform join ordering and
-    operator selection in one process (as in the traditional dynamic programming-based approach),
-    an `IntegratedOptimizationPipeline` is available. Lastly, to model approaches that subsequently improve query plans
-    by correcting some previous optimization decisions (e.g. transforming a hash join to a nested loop join), the
-    `IncrementalOptimizationPipeline` is provided. Consult the individual pipeline documentation for more details. This
-    protocol class only describes the basic interface that is shared by all the pipeline implementations.
+    Depending on the specific scenario, different concrete pipeline implementations exist. For example, to apply a two-stage
+    optimization design (e.g. consisting of join ordering and a subsequent physical operator selection), the
+    `TwoStageOptimizationPipeline` exists. Similarly, for optimization algorithms that perform join ordering and operator
+    selection in one process, an `IntegratedOptimizationPipeline` is available. The `TextBookOptimizationPipeline` is modelled
+    after the traditional interplay of cardinality estimator, cost model and plan enumerator. Lastly, to model approaches that
+    subsequently improve query plans by correcting some previous optimization decisions (e.g. transforming a hash join to a
+    nested loop join), the `IncrementalOptimizationPipeline` is provided. Consult the individual pipeline documentation for
+    more details. This class only describes the basic interface that is shared by all the pipeline implementations.
 
-    If in doubt what the best pipeline implementation is, it is probably best to start with the
-    `TwoStageOptimizationPipeline`, since it is the most flexible.
+    If in doubt what the best pipeline implementation is, it is probably best to start with the `TwoStageOptimizationPipeline`
+    or the `TextBookOptimizationPipeline`, since they are the most flexible.
     """
 
     @abc.abstractmethod
@@ -146,18 +146,15 @@ class OptimizationPipeline(Protocol):
 
 
 class IntegratedOptimizationPipeline(OptimizationPipeline):
-    """This pipeline is modeled after a *traditional* optimization algorithm, such as dynamic programming.
+    """This pipeline is intended for algorithms that calculate the entire query plan in a single process.
 
-    *Traditional* in this context means that all required optimization information is calculated in one algorithm,
-    e.g. both join order and physical operators are derived in one pass. To configure the pipeline, assign the selected
-    strategy to the `optimization_algorithm` property.
+    To configure the pipeline, assign the selected strategy to the `optimization_algorithm` property.
 
     Parameters
     ----------
     target_db : Optional[db.Database], optional
         The database for which the optimized queries should be generated. If this is not given, he default database is
         extracted from the `DatabasePool`.
-    optimization_algorithm
     """
 
     def __init__(self, target_db: Optional[db.Database] = None) -> None:
@@ -245,6 +242,136 @@ class IntegratedOptimizationPipeline(OptimizationPipeline):
         return {"name": "integrated_pipeline",
                 "database_system": self._target_db.describe(),
                 "optimization_algorithm": algorithm_description}
+
+
+class TextBookOptimizationPipeline(OptimizationPipeline):
+    """This pipeline is modelled after the traditional approach to query optimization as used in most real-world systems.
+
+    The optimizer consists of a cardinality estimator that calculates the size of intermediate results, a cost model that
+    quantifies how expensive specific access paths for the intermediates are, and an enumerator that generates the
+    intermediates in the first place.
+
+    To configure the pipeline, specific strategies for each of the three components have to be assigned. Notice that it is
+    currently not possible to leave any component empty.
+
+    Parameters
+    ----------
+    target_db : db.Database
+        The database for which the optimized queries should be generated.
+    """
+
+    def __init__(self, target_db: db.Database) -> None:
+        self._target_db = target_db
+        self._card_est: Optional[stages.CardinalityEstimator] = None
+        self._cost_model: Optional[stages.CostModel] = None
+        self._plan_enumerator: Optional[stages.PlanEnumerator] = None
+        self._support_check = validation.EmptyPreCheck()
+        self._build = False
+
+    def setup_cardinality_estimator(self, estimator: stages.CardinalityEstimator) -> TextBookOptimizationPipeline:
+        """Configures the cardinality estimator of the optimizer.
+
+        Setting a new algorithm requires the pipeline to be build again.
+
+        Parameters
+        ----------
+        estimator : stages.CardinalityEstimator
+            The estimator to be used
+
+        Returns
+        -------
+        self
+            The current pipeline to allow for easy method-chaining.
+        """
+        self._build = False
+        self._card_est = estimator
+        return self
+
+    def setup_cost_model(self, cost_model: stages.CostModel) -> TextBookOptimizationPipeline:
+        """Configures the cost model of the optimizer.
+
+        Setting a new algorithm requires the pipeline to be build again.
+
+        Parameters
+        ----------
+        cost_model : stages.CostModel
+            The cost model to be used
+
+        Returns
+        -------
+        self
+            The current pipeline to allow for easy method-chaining.
+        """
+        self._build = False
+        self._cost_model = cost_model
+        return self
+
+    def setup_plan_enumerator(self, plan_enumerator: stages.PlanEnumerator) -> TextBookOptimizationPipeline:
+        """Configures the plan enumerator of the optimizer.
+
+        Setting a new algorithm requires the pipeline to be build again.
+
+        Parameters
+        ----------
+        plan_enumerator : stages.PlanEnumerator
+            The enumerator to be used
+
+        Returns
+        -------
+        self
+            The current pipeline to allow for easy method-chaining.
+        """
+        self._build = False
+        self._plan_enumerator = plan_enumerator
+        return self
+
+    def build(self) -> TextBookOptimizationPipeline:
+        """Constructs the optimization pipeline.
+
+        This includes checking all strategies for compatibility with the `target_db`. Afterwards, the pipeline is ready to
+        optimize queries.
+
+        Returns
+        -------
+        self
+            The current pipeline to allow for easy method-chaining.
+
+        Raises
+        ------
+        validation.UnsupportedSystemError
+            If any of the selected optimization stages is not compatible with the `target_db`.
+        """
+        if self._card_est is None:
+            raise errors.StateError("Missing cardinality estimator")
+        if self._cost_model is None:
+            raise errors.StateError("Missing cost model")
+        if self._plan_enumerator is None:
+            raise errors.StateError("Missing plan enumerator")
+
+        self._support_check = validation.merge_checks([self._card_est.pre_check(),
+                                                       self._cost_model.pre_check(),
+                                                       self._plan_enumerator.pre_check()])
+        self._support_check.check_supported_database_system(self._target_db).ensure_all_passed(self._target_db)
+
+        self._build = True
+        return self
+
+    def query_execution_plan(self, query: qal.SqlQuery) -> jointree.PhysicalQueryPlan:
+        if not self._build:
+            raise errors.StateError("Pipeline has not been build")
+        self._support_check.check_supported_query(query).ensure_all_passed(query)
+
+        return self._plan_enumerator.generate_execution_plan(query, cardinality_estimator=self._card_est,
+                                                             cost_model=self._cost_model)
+
+    def describe(self) -> dict:
+        return {
+            "name": "textbook_pipeline",
+            "database_system": self._target_db.describe(),
+            "plan_enumerator": self._plan_enumerator.describe() if self._plan_enumerator is not None else None,
+            "cost_model": self._cost_model.describe() if self._cost_model is not None else None,
+            "cardinality_estimator": self._card_est.describe() if self._card_est is not None else None
+        }
 
 
 class TwoStageOptimizationPipeline(OptimizationPipeline):

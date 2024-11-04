@@ -17,6 +17,10 @@ import json
 from typing import Any
 
 
+jsondict = dict
+"""Type alias for a JSON-izeable dictionary."""
+
+
 class Jsonizable(Protocol):
     """Protocol to indicate that a certain class provides the `__json__` method."""
 
