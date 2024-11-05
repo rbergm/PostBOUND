@@ -18,4 +18,4 @@ Furthermore, Python scripts have to be run as modules, e.g. `python3 -m tools.ce
 
 ## References
 
-[^1] Parimarjan Negi et al.: "Flow-Loss: Learning Cardinality Estimates That Matter" (PVLDB 2021)
+[^1]: Parimarjan Negi et al.: "Flow-Loss: Learning Cardinality Estimates That Matter" (PVLDB 2021)
