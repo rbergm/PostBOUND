@@ -25,7 +25,7 @@ class Jsonizable(Protocol):
     """Protocol to indicate that a certain class provides the `__json__` method."""
 
     @abc.abstractmethod
-    def __json__(self) -> object:
+    def __json__(self) -> jsondict:
         raise NotImplementedError
 
 

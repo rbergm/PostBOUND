@@ -1198,6 +1198,18 @@ class HintParts:
         """
         return HintParts([], [])
 
+    def add(self, hint: str) -> None:
+        """Adds a new hint.
+
+        This modifies the current object.
+
+        Parameters
+        ----------
+        hint : str
+            The hint to add
+        """
+        self.hints.append(hint)
+
     def merge_with(self, other: HintParts) -> HintParts:
         """Combines the hints that are contained in this hint parts object with all hints in the other object.
 
@@ -1214,7 +1226,7 @@ class HintParts:
             A new hint parts object that contains the hints from both source objects
         """
         merged_settings = self.settings + [setting for setting in other.settings if setting not in self.settings]
-        merged_hints = self.hints + [hint for hint in other.hints if hint not in self.hints]
+        merged_hints = self.hints + [""] + [hint for hint in other.hints if hint not in self.hints]
         return HintParts(merged_settings, merged_hints)
 
 
@@ -1489,6 +1501,19 @@ def _replace_postgres_cast_expressions(expression: expressions.SqlExpression) ->
     return _PostgresCastExpression(expression) if isinstance(expression, expressions.CastExpression) else expression
 
 
+class _IntermediateNodesCollector(jointree.JoinTreeVisitor[set[jointree.AuxiliaryNode]]):
+    """Visitor to extract all intermediate (Memoize/Materialize) nodes from a join tree."""
+
+    def visit_base_table_node(self, node: jointree.BaseTableNode) -> set[jointree.AuxiliaryNode]:
+        return set()
+
+    def visit_intermediate_node(self, node: jointree.IntermediateJoinNode) -> set[jointree.AuxiliaryNode]:
+        return node.left_child.accept_visitor(self) | node.right_child.accept_visitor(self)
+
+    def visit_auxiliary_node(self, node: jointree.AuxiliaryNode) -> set[jointree.AuxiliaryNode]:
+        return {node} | node.input_node.accept_visitor(self)
+
+
 PostgresHintingBackend = Literal["pg_hint_plan", "pg_lab", "none"]
 """The hinting backend being used.
 
@@ -1580,6 +1605,10 @@ class PostgresHintService(db.HintService):
         if physical_operators:
             operator_hints = self._generate_pg_operator_hints(physical_operators)
             hint_parts = hint_parts.merge_with(operator_hints)
+
+        if isinstance(join_order, jointree.PhysicalQueryPlan):
+            intermediate_hints = self._generate_pg_intermediate_hints(join_order)
+            hint_parts = hint_parts.merge_with(intermediate_hints)
 
         if plan_parameters:
             plan_hints = self._generate_pg_parameter_hints(plan_parameters)
@@ -1744,6 +1773,8 @@ class PostgresHintService(db.HintService):
         """
         if isinstance(join_tree_node, jointree.BaseTableNode):
             return join_tree_node.table.identifier()
+        if isinstance(join_tree_node, jointree.AuxiliaryNode):
+            return self._generate_leading_hint_content(join_tree_node.input_node, operator_assignment)
         if not isinstance(join_tree_node, jointree.IntermediateJoinNode):
             raise ValueError(f"Unknown join tree node: {join_tree_node}")
 
@@ -1836,6 +1867,8 @@ class PostgresHintService(db.HintService):
     def _generate_pg_operator_hints(self, physical_operators: physops.PhysicalOperatorAssignment) -> HintParts:
         """Builds the necessary operator-level hints and global settings to enforce a specific operator assignment.
 
+        ..TODO: documentation is slightly outdated, update to reflect new pg_lab backend!
+
         The resulting hints object will consist of pg_hint_plan hints for all operators that affect individual joins or
         scans and standard postgres settings that influence the selection of operators for the entire query. Notice that
         the per-operator hints overwrite global settings, e.g. one can disabled nested-loop joins globally, but than assign
@@ -1880,6 +1913,8 @@ class PostgresHintService(db.HintService):
 
     def _generate_pg_parameter_hints(self, plan_parameters: planparams.PlanParameterization) -> HintParts:
         """Builds the necessary operator-level hints and global settings to communicate plan parameters to the optimizer.
+
+        ..TODO: documentation is slightly outdated, update to reflect new pg_lab backend!
 
         The resulting hints object will consist of pg_hint_plan hints that enforce custom cardinality estimates for
         specific joins, hints that enforce a parallel scan for a given base table and preparatory statements to accomodate
@@ -1934,6 +1969,36 @@ class PostgresHintService(db.HintService):
             settings.append(f"SET {operator} = {setting};")
 
         return HintParts(settings, hints)
+
+    def _generate_pg_intermediate_hints(self, query_plan: jointree.PhysicalQueryPlan) -> HintParts:
+        """Generates hints for auxiliary nodes in the query plan.
+
+        This includes nodes that are neither scans nor joins, such as Memoize and Materialize. Notice that such hints are
+        currently only supported by the pg_lab extension.
+
+        Parameters
+        ----------
+        query_plan : jointree.PhysicalQueryPlan
+            The plan to encode
+
+        Returns
+        -------
+        HintParts
+            A pg_lab-compatible encoding of the intermediate nodes.
+        """
+        if self._backend != "pg_lab":
+            return HintParts.empty()
+
+        auxiliaries = query_plan.accept_visitor(_IntermediateNodesCollector())
+        hints = HintParts.empty()
+        for aux_node in auxiliaries:
+            if aux_node.name == "Materialize":
+                table_identifier = ", ".join(tab.identifier() for tab in aux_node.tables())
+                hints.add(f"Material({table_identifier})")
+            elif aux_node.name == "Memoize":
+                table_identifier = ", ".join(tab.identifier() for tab in aux_node.tables())
+                hints.add(f"Memo({table_identifier})")
+        return hints
 
     def _generate_hint_block(self, parts: HintParts) -> Optional[clauses.Hint]:
         """Transforms a collection of hints into a proper hint clause.

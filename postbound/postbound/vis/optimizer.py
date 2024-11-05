@@ -19,12 +19,15 @@ def _join_tree_labels(node: jointree.AbstractJoinTreeNode) -> tuple[str, dict]:
     if node.is_join_node():
         base_text = "⋈"
         base_style = {"style": "bold"}
+    elif node.is_auxiliary_node():
+        base_text = str(node.name)
+        base_style = {"color": "grey", "style": "dashed"}
     else:
-        assert isinstance(node, jointree.BaseTableNode)
+        assert node.is_base_table_node()
         base_text = str(node.table)
         base_style = {"color": "grey"}
 
-    if "operator" in dir(node.annotation):
+    if "annotation" in dir(node) and "operator" in dir(node.annotation):
         base_text += "\n" + node.annotation.operator.operator.value
 
     return base_text, base_style
@@ -33,7 +36,9 @@ def _join_tree_labels(node: jointree.AbstractJoinTreeNode) -> tuple[str, dict]:
 def _join_tree_traversal(node: jointree.AbstractJoinTreeNode) -> Sequence[jointree.AbstractJoinTreeNode]:
     if node.is_base_table_node():
         return ()
-    assert isinstance(node, jointree.IntermediateJoinNode)
+    elif node.is_auxiliary_node():
+        return (node.input_node,)
+    assert node.is_join_node()
     return node.children
 
 

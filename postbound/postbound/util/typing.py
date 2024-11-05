@@ -3,7 +3,10 @@ from __future__ import annotations
 
 import functools
 import warnings
-from typing import Callable
+from typing import Callable, TypeVar
+
+T = TypeVar("T")
+"""Generic type var placeholder."""
 
 
 def deprecated(func: Callable) -> Callable:
@@ -23,3 +26,10 @@ def module_local(func: Callable) -> Callable:
     the same module.
     """
     return func
+
+
+Lazy = None
+"""A placeholder to indicate that a value is not yet computed, but will be computed lazily."""
+
+LazyVal = T | Lazy
+"""Type hint for a value that is computed lazily."""

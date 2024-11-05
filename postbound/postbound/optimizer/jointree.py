@@ -36,6 +36,8 @@ from postbound.qal import base, predicates, parser, qal
 from postbound.db import db
 from postbound.optimizer import physops, planparams
 from postbound.util import collections as collection_utils, errors, stats
+from postbound.util.jsonize import jsondict
+from postbound.util.typing import Lazy, LazyVal
 
 
 class BaseMetadata(abc.ABC):
@@ -416,7 +418,11 @@ class PhysicalBaseTableMetadata(BaseTableMetadata):
         return s
 
 
-class JoinTreeVisitor(abc.ABC):
+VisitorResult = typing.TypeVar("VisitorResult")
+"""Result type of visitor processes."""
+
+
+class JoinTreeVisitor(abc.ABC, Generic[VisitorResult]):
     """Basic visitor to operator on arbitrary join trees.
 
     See Also
@@ -430,12 +436,15 @@ class JoinTreeVisitor(abc.ABC):
     """
 
     @abc.abstractmethod
-    def visit_intermediate_node(self, node: IntermediateJoinNode) -> None:
+    def visit_intermediate_node(self, node: IntermediateJoinNode) -> VisitorResult:
         raise NotImplementedError
 
     @abc.abstractmethod
-    def visit_base_table_node(self, node: BaseTableNode) -> None:
+    def visit_base_table_node(self, node: BaseTableNode) -> VisitorResult:
         raise NotImplementedError
+
+    def visit_auxiliary_node(self, node: AuxiliaryNode) -> VisitorResult:
+        return node.input_node.accept(self)
 
 
 JoinMetadataType = typing.TypeVar("JoinMetadataType", bound=JoinMetadata)
@@ -552,22 +561,29 @@ def read_from_json(json_data: dict, *, include_estimates: bool = True) -> Logica
         based on the JSON data.
     """
     json_parser = parser.JsonParser()
-    if "table" in json_data:
+    entry_type = json_data.get("type", "")
+    if entry_type == "table" and "table" in json_data:
         base_table = json_parser.load_table(json_data["table"])
         metadata = _read_metadata_json(json_data["metadata"], base_table=True, include_estimates=include_estimates)
         base_table_node = BaseTableNode(base_table, metadata)
         if isinstance(metadata, PhysicalBaseTableMetadata):
             return PhysicalQueryPlan(base_table_node)
         return LogicalJoinTree(base_table_node)
-    elif "left" in json_data and "right" in json_data:
+    elif entry_type == "join" and "left" in json_data and "right" in json_data:
         left_tree = read_from_json(json_data["left"], include_estimates=include_estimates)
         right_tree = read_from_json(json_data["right"], include_estimates=include_estimates)
         metadata = _read_metadata_json(json_data["metadata"], base_table=False, include_estimates=include_estimates)
         if isinstance(metadata, PhysicalJoinMetadata):
             return PhysicalQueryPlan.joining(left_tree, right_tree, metadata)
         return LogicalJoinTree.joining(left_tree, right_tree, metadata)
+    elif entry_type == "auxiliary" and "input" in json_data:
+        node_name = json_data["name"]
+        input_tree = read_from_json(json_data["input"], include_estimates=include_estimates)
+        metadata = json_data.get("metadata", {})
+        return AuxiliaryNode(node_name, input_tree, metadata=metadata)
     else:
-        raise ValueError("Malformed json data")
+        keys = ", ".join(json_data.keys())
+        raise ValueError("Malformed json data. Keys are " + keys)
 
 
 class AbstractJoinTreeNode(abc.ABC, Container[base.TableReference], Generic[JoinMetadataType, BaseTableMetadataType]):
@@ -629,7 +645,7 @@ class AbstractJoinTreeNode(abc.ABC, Container[base.TableReference], Generic[Join
     def is_base_table_node(self) -> bool:
         """Checks, whether this node is a base table node.
 
-        This is the inverse of `is_join_node`. Each node will either be a join node, or a base table node.
+        This is the inverse of `is_join_node`. Each node will either be a join node, a base table node, or an auxiliary node.
 
         Returns
         -------
@@ -637,6 +653,19 @@ class AbstractJoinTreeNode(abc.ABC, Container[base.TableReference], Generic[Join
             Whether this node is a leaf node. If it is, it should not have any more children.
         """
         return not self.is_join_node()
+
+    def is_auxiliary_node(self) -> bool:
+        """Checks, whether this node is an auxiliary node.
+
+        Auxiliary nodes are neither joins nor scans, but correspond to additional intermediate processing operations, e.g.
+        materialization or memoization.
+
+        Returns
+        -------
+        bool
+            Whether this node is an auxiliary node. If it is, it will have exactly one child node (the input node).
+        """
+        return False
 
     @abc.abstractmethod
     def is_left_deep(self) -> bool:
@@ -744,7 +773,7 @@ class AbstractJoinTreeNode(abc.ABC, Container[base.TableReference], Generic[Join
 
     @abc.abstractmethod
     def tree_depth(self) -> int:
-        """Provides the maximum number of nodes that need to be passed until a base table node is reached.
+        """Provides the maximum number of join nodes that need to be passed until a base table node is reached.
 
         This is equivalent to performing a depth-first search and determining the length of the returned path. An
         alternative take on this number is "the largest amount of hops that need to be passed until a base table is
@@ -752,6 +781,8 @@ class AbstractJoinTreeNode(abc.ABC, Container[base.TableReference], Generic[Join
 
         The depth treats the base table as a node that needs to be passed as well, i.e. calling `tree_depth` on
         a base table node will return `1`.
+
+        Notice that auxiliary nodes will not be counted in the depth of the tree, they are transient for most calculations.
 
         Returns
         -------
@@ -921,7 +952,7 @@ class AbstractJoinTreeNode(abc.ABC, Container[base.TableReference], Generic[Join
         raise NotImplementedError
 
     @abc.abstractmethod
-    def accept_visitor(self, visitor: JoinTreeVisitor) -> None:
+    def accept_visitor(self, visitor: JoinTreeVisitor[VisitorResult]) -> VisitorResult:
         """Enables processing of the current node by a join tree visitor.
 
         Parameters
@@ -932,7 +963,7 @@ class AbstractJoinTreeNode(abc.ABC, Container[base.TableReference], Generic[Join
         raise NotImplementedError
 
     @abc.abstractmethod
-    def __json__(self) -> object:
+    def __json__(self) -> jsondict:
         raise NotImplementedError
 
     @abc.abstractmethod
@@ -948,7 +979,7 @@ class AbstractJoinTreeNode(abc.ABC, Container[base.TableReference], Generic[Join
         raise NotImplementedError
 
     @abc.abstractmethod
-    def __eq__(self, __value: object) -> bool:
+    def __eq__(self, other: object) -> bool:
         raise NotImplementedError
 
     def __repr__(self) -> str:
@@ -986,6 +1017,7 @@ class IntermediateJoinNode(AbstractJoinTreeNode[JoinMetadataType, BaseTableMetad
         self._left_child = left_child
         self._right_child = right_child
         self._annotation = annotation
+        self._tables: LazyVal[frozenset[base.TableReference]] = Lazy
         self._hash_val = hash((left_child, right_child))
 
     @property
@@ -1051,7 +1083,7 @@ class IntermediateJoinNode(AbstractJoinTreeNode[JoinMetadataType, BaseTableMetad
         bool
             Whether this join joins two base tables
         """
-        return self.left_child.is_base_table_node() and self.right_child.is_base_table_node()
+        return len(self.tables()) == 2
 
     def is_bushy_join(self) -> bool:
         """Checks, whether this join node is a join of two intermediate results.
@@ -1062,22 +1094,22 @@ class IntermediateJoinNode(AbstractJoinTreeNode[JoinMetadataType, BaseTableMetad
             Whether this join joins two intermediate results, i.e. relations that are themselves composed of joins of
             other intermediates and/or base tables.
         """
-        return self.left_child.is_join_node() and self.right_child.is_join_node()
+        return len(self._left_child.tables()) > 1 and len(self._right_child.tables()) > 1
 
     def is_left_deep(self) -> bool:
-        if not self.right_child.is_base_table_node():
+        if len(self._right_child.tables()) > 1:
             return False
-        return self.left_child.is_left_deep()
+        return self._left_child.is_left_deep()
 
     def is_right_deep(self) -> bool:
-        if not self.left_child.is_base_table_node():
+        if len(self._left_child.tables()) > 1:
             return False
-        return self.right_child.is_right_deep()
+        return self._right_child.is_right_deep()
 
     def is_zigzag(self) -> bool:
-        if self.left_child.is_join_node() and self.right_child.is_join_node():
+        if len(self._left_child.tables()) > 1 and len(self._right_child.tables()) > 1:
             return False
-        return self.left_child.is_zigzag() and self.right_child.is_zigzag()
+        return self._left_child.is_zigzag() and self._right_child.is_zigzag()
 
     def lookup(self, tables: set[base.TableReference]) -> Optional[base.TableReference]:
         own_tables = self.tables()
@@ -1102,7 +1134,10 @@ class IntermediateJoinNode(AbstractJoinTreeNode[JoinMetadataType, BaseTableMetad
         return 1 + max(self.left_child.tree_depth(), self.right_child.tree_depth())
 
     def tables(self) -> frozenset[base.TableReference]:
-        return frozenset(self._left_child.tables() | self._right_child.tables())
+        if self._tables is not None:
+            return self._tables
+        self._tables = frozenset(self._left_child.tables() | self._right_child.tables())
+        return self._tables
 
     def columns(self) -> frozenset[base.ColumnReference]:
         predicate_columns = (self.annotation.join_predicate.columns()
@@ -1139,8 +1174,8 @@ class IntermediateJoinNode(AbstractJoinTreeNode[JoinMetadataType, BaseTableMetad
 
     def table_sequence(self) -> Sequence[BaseTableNode[JoinMetadataType, BaseTableMetadataType]]:
         if self.is_base_join():
-            assert isinstance(self.left_child, BaseTableNode) and isinstance(self.right_child, BaseTableNode)
-            return [self.left_child, self.right_child]
+            # account for auxiliary nodes: we cannot extract the base table nodes directly!
+            return self.left_child.table_sequence() + self.right_child.table_sequence()
 
         deep_child, flat_child = self.children_by_depth()
         return list(deep_child.table_sequence()) + list(flat_child.table_sequence())
@@ -1170,11 +1205,15 @@ class IntermediateJoinNode(AbstractJoinTreeNode[JoinMetadataType, BaseTableMetad
         right_inspection = self.right_child.inspect(_indentation=_indentation + 2)
         return "\n".join([own_inspection, left_inspection, right_inspection])
 
-    def accept_visitor(self, visitor: JoinTreeVisitor) -> None:
-        visitor.visit_intermediate_node(self)
+    def accept_visitor(self, visitor: JoinTreeVisitor[VisitorResult]) -> VisitorResult:
+        return visitor.visit_intermediate_node(self)
 
-    def __json__(self) -> object:
-        return {"left": self.left_child, "right": self.right_child, "metadata": self.annotation}
+    def __json__(self) -> jsondict:
+        return {
+            "type": "join",
+            "left": self.left_child, "right": self.right_child,
+            "metadata": self.annotation
+        }
 
     def __contains__(self, item) -> bool:
         if item == self:
@@ -1189,10 +1228,10 @@ class IntermediateJoinNode(AbstractJoinTreeNode[JoinMetadataType, BaseTableMetad
     def __hash__(self) -> int:
         return self._hash_val
 
-    def __eq__(self, __value: object) -> bool:
-        return (isinstance(__value, type(self))
-                and self.left_child == __value.left_child
-                and self.right_child == __value.right_child)
+    def __eq__(self, other: object) -> bool:
+        return (isinstance(other, type(self))
+                and self.left_child == other.left_child
+                and self.right_child == other.right_child)
 
     def __str__(self) -> str:
         left_str = str(self.left_child)
@@ -1300,11 +1339,15 @@ class BaseTableNode(AbstractJoinTreeNode[JoinMetadataType, BaseTableMetadataType
         annotation_str = f" {self.annotation.inspect()}" if self.annotation else ""
         return f"{prefix} SCAN :: {self.table}{annotation_str}"
 
-    def accept_visitor(self, visitor: JoinTreeVisitor) -> None:
-        visitor.visit_base_table_node(self)
+    def accept_visitor(self, visitor: JoinTreeVisitor[VisitorResult]) -> VisitorResult:
+        return visitor.visit_base_table_node(self)
 
-    def __json__(self) -> object:
-        return {"table": self.table, "metadata": self.annotation}
+    def __json__(self) -> jsondict:
+        return {
+            "type": "table",
+            "table": self.table,
+            "metadata": self.annotation
+        }
 
     def __contains__(self, item) -> bool:
         if item == self:
@@ -1319,11 +1362,208 @@ class BaseTableNode(AbstractJoinTreeNode[JoinMetadataType, BaseTableMetadataType
     def __hash__(self) -> int:
         return self._hash_val
 
-    def __eq__(self, __value: object) -> bool:
-        return isinstance(__value, type(self)) and self._table == __value._table
+    def __eq__(self, other: object) -> bool:
+        return isinstance(other, type(self)) and self._table == other._table
 
     def __str__(self) -> str:
         return self._table.identifier()
+
+
+class AuxiliaryNode(AbstractJoinTreeNode[JoinMetadataType, BaseTableMetadataType],
+                    Generic[JoinMetadataType, BaseTableMetadataType]):
+    """An auxiliary node represents an arbitrary intermediate processing step in the physical query plan.
+
+    Auxiliary nodes are neither base table nodes nor join nodes. They are used to model additional steps, such as
+    materialization or memoization, that are not directly related to the join order. Auxiliary nodes do not influence most
+    statistics of the query plan, such as the join depth.
+
+    Users are free to use auxiliary nodes to model system-specific aspects of query plans and hinting backends of database
+    systems will typically emit these nodes if they are recognized and discard them otherwise. The same strategy should be used
+    for all other processing operations: if some algorithm does not know how to handle the specific auxiliary node, it should
+    just ignore it until a processing step is reached that can consume it.
+
+    Parameters
+    ----------
+    name : str
+        The operation to apply to the input node.
+    input_node : AbstractJoinTreeNode[JoinMetadataType, BaseTableMetadataType]
+        The input node that is processed by the auxiliary node.
+    cardinality : float, optional
+        Cardinality produced by the auxiliary node, defaults to *NaN*.
+    cost : float, optional
+        Cost of the auxiliary node, defaults to *NaN*.
+    metadata : Optional[dict], optional
+        Additional metadata that describes the auxiliary node.
+    """
+
+    @staticmethod
+    def memoize(input_node: AbstractJoinTreeNode[JoinMetadataType, BaseTableMetadataType], *,
+                cardinality: float = math.nan, cost: float = math.nan,
+                metadata: Optional[dict] = None) -> AuxiliaryNode[JoinMetadataType, BaseTableMetadataType]:
+        """Creates a new Memoize auxiliary node.
+
+        Memoize basically caches tuples from the input node, preventing the need to recompute the same tuples multiple times.
+
+        Parameters
+        ----------
+        input_node : AbstractJoinTreeNode[JoinMetadataType, BaseTableMetadataType]
+            The node that is being cached.
+        cardinality : float, optional
+            Total cardinality produced by the auxiliary node, defaults to *NaN*.
+        cost : float, optional
+            Cost of computing all tuples produced after caching, defaults to *NaN*.
+        metadata : Optional[dict], optional
+            Additional metadata to describe the memo, e.g. caching strategy.
+
+        Returns
+        -------
+        AuxiliaryNode[JoinMetadataType, BaseTableMetadataType]
+            The memoize node.
+        """
+        return AuxiliaryNode("Memoize", input_node, cardinality=cardinality, cost=cost, metadata=metadata)
+
+    @staticmethod
+    def materialize(input_node: AbstractJoinTreeNode[JoinMetadataType, BaseTableMetadataType], *,
+                    cardinality: float = math.nan, cost: float = math.nan,
+                    metadata: Optional[dict] = None) -> AuxiliaryNode[JoinMetadataType, BaseTableMetadataType]:
+        """Creates a new Materialize auxiliary node.
+
+        Materialize is used to store the result of the input node in a temporary table.
+
+        Parameters
+        ----------
+        input_node : AbstractJoinTreeNode[JoinMetadataType, BaseTableMetadataType]
+            The node that is being materialized.
+        cardinality : float, optional
+            Total cardinality produced by the auxiliary node, defaults to *NaN*.
+        cost : float, optional
+            Cost of computing all tuples produced after materialization, defaults to *NaN*.
+        metadata : Optional[dict], optional
+            Additional metadata to describe the node.
+
+        Returns
+        -------
+        AuxiliaryNode[JoinMetadataType, BaseTableMetadataType]
+            Tha materialize node.
+        """
+        return AuxiliaryNode("Materialize", input_node, cardinality=cardinality, cost=cost, metadata=metadata)
+
+    def __init__(self, name: str, input_node: AbstractJoinTreeNode[JoinMetadataType, BaseTableMetadataType], *,
+                 cardinality: float = math.nan, cost: float = math.nan, metadata: Optional[dict] = None, **kwargs) -> None:
+        self._name = name
+        self._input_node = input_node
+        self._metadata = {"cardinality": cardinality, "cost": cost} | (metadata or {}) | kwargs
+        self._hash_val = hash((self._name, self._input_node))
+
+    @property
+    def name(self) -> str:
+        """Get the name (i.e. operation) of the auxiliary node."""
+        return self._name
+
+    @property
+    def input_node(self) -> AbstractJoinTreeNode[JoinMetadataType, BaseTableMetadataType]:
+        """Get the input node that is processed by the auxiliary node."""
+        return self._input_node
+
+    @property
+    def metadata(self) -> dict:
+        """Get additional metadata that describes the node.
+
+        Entries can be set according to the needs of the user. Additionally, `cardinality` and `cost` can be specified while
+        creating the node.
+        """
+        return self._metadata
+
+    @property
+    def annotation(self) -> Optional[JoinMetadataType | BaseTableMetadataType]:
+        return None
+
+    def is_join_node(self) -> bool:
+        return False
+
+    def is_base_table_node(self) -> bool:
+        return False
+
+    def is_auxiliary_node(self) -> bool:
+        return True
+
+    def is_left_deep(self) -> bool:
+        return self._input_node.is_left_deep()
+
+    def is_right_deep(self) -> bool:
+        return self._input_node.is_right_deep()
+
+    def is_zigzag(self) -> bool:
+        return self._input_node.is_zigzag()
+
+    def lookup(self, tables: set[base.TableReference]) -> AbstractJoinTreeNode[JoinMetadataType, BaseTableMetadataType] | None:
+        return self._input_node.lookup(tables)
+
+    def tree_depth(self) -> int:
+        return self._input_node.tree_depth()
+
+    def tables(self) -> frozenset[base.TableReference]:
+        return self._input_node.tables()
+
+    def columns(self) -> frozenset[base.ColumnReference]:
+        return self._input_node.columns()
+
+    def join_sequence(self) -> Sequence[IntermediateJoinNode[JoinMetadataType, BaseTableMetadataType]]:
+        return self._input_node.join_sequence()
+
+    def table_sequence(self) -> Sequence[BaseTableNode[JoinMetadataType, BaseTableMetadataType]]:
+        return self._input_node.table_sequence()
+
+    def as_list(self) -> Sequence[Sequence[NestedTableSequence] | base.TableReference] | base.TableReference:
+        return self._input_node.as_list()
+
+    def count_cross_product_joins(self) -> int:
+        return self._input_node.count_cross_product_joins()
+
+    def homomorphic_hash(self) -> int:
+        return self._input_node.homomorphic_hash()
+
+    def base_table(self, traverse_right: bool = True) -> base.TableReference:
+        return self._input_node.base_table(traverse_right)
+
+    def inspect(self, *, _indentation: int = 0) -> str:
+        padding = " " * _indentation
+        prefix = f"{padding}<- " if padding else ""
+        metadata_str = ", ".join(f"{key}: {val}" for key, val in self.metadata.items())
+        metadata_str = f" ({metadata_str})" if metadata_str else ""
+        axuiliary_str = f"{prefix} AUX :: {self.name}{metadata_str}"
+        child_inspection = self.input_node.inspect(_indentation=_indentation + 2)
+        return f"{axuiliary_str}\n{child_inspection}"
+
+    def accept_visitor(self, visitor: JoinTreeVisitor[VisitorResult]) -> VisitorResult:
+        return visitor.visit_auxiliary_node(self)
+
+    def __json__(self) -> jsondict:
+        return {
+            "type": "auxiliary",
+            "name": self.name,
+            "input": self.input_node,
+            "metadata": self.metadata
+        }
+
+    def __contains__(self, item) -> bool:
+        if item == self:
+            return True
+        return item in self._input_node
+
+    def __len__(self) -> int:
+        return len(self._input_node)
+
+    def __hash__(self) -> int:
+        return self._hash_val
+
+    def __eq__(self, other: object) -> bool:
+        return (isinstance(other, type(self))
+                and self.name == other.name
+                and self.input_node == other.input_node)
+
+    def __str__(self) -> str:
+        return f"{self.name}({self._input_node})"
 
 
 JoinTreeType = typing.TypeVar("JoinTreeType", bound="JoinTree")
@@ -1810,7 +2050,7 @@ class JoinTree(Container[base.TableReference], Generic[JoinMetadataType, BaseTab
         join_node = IntermediateJoinNode(left, right, annotation)
         return JoinTree(join_node)
 
-    def accept_visitor(self, visitor: JoinTreeVisitor) -> None:
+    def accept_visitor(self, visitor: JoinTreeVisitor[VisitorResult]) -> VisitorResult:
         """Enables an arbitrary algorithm to be executed on the join tree.
 
         Parameters
@@ -1819,7 +2059,7 @@ class JoinTree(Container[base.TableReference], Generic[JoinMetadataType, BaseTab
             The visitor algorithm to use
         """
         self._assert_not_empty()
-        self._root.accept_visitor(visitor)
+        return self._root.accept_visitor(visitor)
 
     def _assert_not_empty(self) -> None:
         """Raises an error if this tree is empty.
@@ -2144,7 +2384,8 @@ class PhysicalQueryPlan(JoinTree[PhysicalJoinMetadata, PhysicalBaseTableMetadata
 
     The intermediate join nodes do no longer just denote which tables should be combined, but also which join
     algorithms, etc. should be used. Likewise, base table nodes do not just describe the table that should be scanned,
-    but also how the scan should take place.
+    but also how the scan should take place. In addition to joins and scans, `AuxiliaryNode` instances can be used to designate
+    arbitrary intermediate processing steps, such as materialization, sorting, etc.
 
     In addition to the static factory methods that are also present on the normal join tree class, physical query plans
     provide an additional `load_from_query_plan` factory method that can be used to create new join tree instances from
@@ -2154,7 +2395,7 @@ class PhysicalQueryPlan(JoinTree[PhysicalJoinMetadata, PhysicalBaseTableMetadata
     ----------
     root : Optional[AbstractJoinTreeNode[PhysicalJoinMetadata, PhysicalBaseTableMetadata]], optional
         The root node of the tree structure that should be maintained by this join tree. Can be ``None``, in which
-        case the join tree remain empty.
+        case the join tree remains empty.
     global_operator_settings : Optional[physops.PhysicalOperatorAssignment], optional
         Settings that apply to the join tree as a whole, rather than to individual joins or scans. Defaults to ``None``
         which indicates that there are no such settings. If the assignment contain per-operator choices, these are
@@ -2214,7 +2455,7 @@ class PhysicalQueryPlan(JoinTree[PhysicalJoinMetadata, PhysicalBaseTableMetadata
 
     @staticmethod
     def load_from_query_plan(query_plan: db.QueryExecutionPlan, query: Optional[qal.SqlQuery] = None, *,
-                             operators_only: bool = False) -> PhysicalQueryPlan:
+                             operators_only: bool = False, include_auxiliary: bool = True) -> PhysicalQueryPlan:
         """Creates a join tree from a query plan.
 
         The join order used in the query plan will become the join order of the join tree. Furthermore, physical
@@ -2234,6 +2475,9 @@ class PhysicalQueryPlan(JoinTree[PhysicalJoinMetadata, PhysicalBaseTableMetadata
         operators_only : bool, optional
             Whether only the physical operators should extracted from the query plan. If enabled, no cardinalities, costs, or
             parallel workers are loaded. Disabled by default.
+        include_auxiliary : bool, optional
+            Whether non-base table and non-join nodes should be included as auxiliary nodes in the join tree. Enabled by
+            default.
 
         Returns
         -------
@@ -2300,7 +2544,20 @@ class PhysicalQueryPlan(JoinTree[PhysicalJoinMetadata, PhysicalBaseTableMetadata
 
         if len(query_plan.children) != 1:
             raise ValueError(f"Non join/scan nodes must have exactly one child: {query_plan}")
-        return PhysicalQueryPlan.load_from_query_plan(query_plan.children[0], query, operators_only=operators_only)
+
+        if not include_auxiliary:
+            return PhysicalQueryPlan.load_from_query_plan(query_plan.children[0], query,
+                                                          operators_only=operators_only, include_auxiliary=include_auxiliary)
+
+        if operators_only:
+            cardinality, cost = math.nan, math.nan
+        else:
+            cardinality = query_plan.true_cardinality if query_plan.is_analyze() else query_plan.estimated_cardinality
+            cost = query_plan.cost
+        child_plan = PhysicalQueryPlan.load_from_query_plan(query_plan.children[0], query,
+                                                            operators_only=operators_only, include_auxiliary=include_auxiliary)
+        aux_node = AuxiliaryNode(query_plan.node_type, child_plan.root, cardinality=cardinality, cost=cost)
+        return PhysicalQueryPlan(aux_node)
 
     @staticmethod
     def load_from_logical_order(logical_order: LogicalJoinTree,
