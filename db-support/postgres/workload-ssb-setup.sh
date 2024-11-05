@@ -104,7 +104,7 @@ else
     if [ ! -d "$TARGET_DIR/ssb-kit" ] ; then
         echo ".. Building SSB utility"
         git clone https://github.com/gregrahn/ssb-kit.git
-        patch -fs ssb-kit/dbgen/bm_utils.c ../util/ssb_dbgen.patch || true
+        patch -fs ssb-kit/dbgen/bm_utils.c $WD/workload-ssb-dbgen.patch || true
         cd ssb-kit/dbgen
         make MACHINE=LINUX DATABASE=POSTGRESQL
     fi

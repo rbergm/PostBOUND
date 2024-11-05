@@ -203,3 +203,9 @@ tpch_data/
 ssb_data/
 stack_data/
 stats_data/
+
+# Build artifacts
+dist/
+results/
+docs/build/
+docs/source/generated/
