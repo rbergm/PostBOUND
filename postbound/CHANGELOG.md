@@ -14,6 +14,18 @@ Be carefull when updating and check the changelog!
 
 ---
 
+## Version 0.7.0
+
+### New features
+- Added novel `TextBookOptimizationPipeline` for cardinality estimation + cost model + plan enumerator-style algorithms
+- Added `AuxiliaryNode`s to physical query plans to represent intermediate computations, e.g. materialization
+
+### Fixes
+- Ensure that Postgres interface always updates the GEQO state before running any affected query
+- Fixed hinting backend sometimes not initialization internal state correctly
+
+--
+
 ## Version 0.6.2
 
 ### New features
