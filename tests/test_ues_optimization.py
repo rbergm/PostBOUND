@@ -11,7 +11,7 @@ from __future__ import annotations
 import os
 import unittest
 
-from postbound import postbound as pb
+import postbound as pb
 from postbound.db import db, postgres
 from postbound.qal import parser, transform
 from postbound.experiments import workloads

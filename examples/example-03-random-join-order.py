@@ -11,7 +11,7 @@ import random
 import warnings
 from typing import Optional
 
-from postbound import postbound as pb
+import postbound as pb
 from postbound.qal import qal
 from postbound.db import db, postgres
 from postbound.experiments import workloads

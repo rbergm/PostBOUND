@@ -627,7 +627,7 @@ class UESJoinOrderOptimizer(stages.JoinOrderOptimization):
 
             if join_tree.is_empty():
                 filter_pred = query.predicates().filters_for(lowest_bound_table)
-                annotation = jointree.LogicalBaseTableMetadata(filter_pred, lowest_bound)
+                annotation = jointree.LogicalBaseTableMetadata(filter_pred, cardinality=lowest_bound)
                 join_tree = jointree.LogicalJoinTree.for_base_table(lowest_bound_table, annotation)
                 join_graph.mark_joined(lowest_bound_table)
                 self.stats_container.upper_bounds[join_tree] = lowest_bound
@@ -639,8 +639,8 @@ class UESJoinOrderOptimizer(stages.JoinOrderOptimization):
                     filter_pred = query.predicates().filters_for(target_table)
                     join_bound = self.join_estimation.estimate_for(pk_join.join_condition, join_graph)
                     join_graph.mark_joined(target_table, pk_join.join_condition)
-                    base_annotation = jointree.LogicalBaseTableMetadata(filter_pred, base_cardinality)
-                    join_annotation = jointree.LogicalJoinMetadata(pk_join.join_condition, join_bound)
+                    base_annotation = jointree.LogicalBaseTableMetadata(filter_pred, cardinality=base_cardinality)
+                    join_annotation = jointree.LogicalJoinMetadata(pk_join.join_condition, cardinality=join_bound)
                     join_tree = join_tree.join_with_base_table(pk_join.target_table, base_annotation, join_annotation)
                 self._log_optimization_progress("Initial table selection", lowest_bound_table, pk_joins)
                 continue
@@ -664,8 +664,8 @@ class UESJoinOrderOptimizer(stages.JoinOrderOptimization):
                             else join_graph.available_pk_fk_joins_for(candidate_table))
             candidate_filters = query.predicates().filters_for(candidate_table)
             candidate_base_cardinality = self.stats_container.base_table_estimates[candidate_table]
-            join_annotation = jointree.LogicalJoinMetadata(selected_candidate.join_condition, lowest_bound)
-            base_annotation = jointree.LogicalBaseTableMetadata(candidate_filters, candidate_base_cardinality)
+            join_annotation = jointree.LogicalJoinMetadata(selected_candidate.join_condition, cardinality=lowest_bound)
+            base_annotation = jointree.LogicalBaseTableMetadata(candidate_filters, cardinality=candidate_base_cardinality)
             self._log_optimization_progress("n:m join", candidate_table, all_pk_joins,
                                             join_condition=selected_candidate.join_condition,
                                             subquery_join=create_subquery)
@@ -725,10 +725,10 @@ class UESJoinOrderOptimizer(stages.JoinOrderOptimization):
         join_predicate = query.predicates().joins_between(large_table, small_table)
         join_bound = self.join_estimation.estimate_for(join_predicate, join_graph)
 
-        base_annotation = jointree.LogicalBaseTableMetadata(large_filter, large_card)
+        base_annotation = jointree.LogicalBaseTableMetadata(large_filter, cardinality=large_card)
         join_tree = jointree.LogicalJoinTree.for_base_table(large_table, base_annotation)
-        partner_annotation = jointree.LogicalBaseTableMetadata(small_filter, small_card)
-        join_annotation = jointree.LogicalJoinMetadata(join_predicate, join_bound)
+        partner_annotation = jointree.LogicalBaseTableMetadata(small_filter, cardinality=small_card)
+        join_annotation = jointree.LogicalJoinMetadata(join_predicate, cardinality=join_bound)
         join_tree = join_tree.join_with_base_table(small_table, partner_annotation, join_annotation, insert_left=True)
         return join_tree
 
@@ -762,8 +762,8 @@ class UESJoinOrderOptimizer(stages.JoinOrderOptimization):
 
         start_table = lowest_bound_join.start_table
         start_filters = query.predicates().filters_for(start_table)
-        start_annotation = jointree.LogicalBaseTableMetadata(start_filters,
-                                                             self.stats_container.base_table_estimates[start_table])
+        start_card = self.stats_container.base_table_estimates[start_table]
+        start_annotation = jointree.LogicalBaseTableMetadata(start_filters, cardinality=start_card)
         join_tree = jointree.LogicalJoinTree.for_base_table(start_table, start_annotation)
         join_graph.mark_joined(start_table)
         join_tree = self._apply_pk_fk_join(query, lowest_bound_join, join_bound=lowest_bound, join_graph=join_graph,
@@ -835,8 +835,8 @@ class UESJoinOrderOptimizer(stages.JoinOrderOptimization):
         target_table = pk_fk_join.target_table
         target_filters = query.predicates().filters_for(target_table)
         target_cardinality = self.stats_container.base_table_estimates[target_table]
-        base_annotation = jointree.LogicalBaseTableMetadata(target_filters, target_cardinality)
-        join_annotation = jointree.LogicalJoinMetadata(pk_fk_join.join_condition, join_bound)
+        base_annotation = jointree.LogicalBaseTableMetadata(target_filters, cardinality=target_cardinality)
+        join_annotation = jointree.LogicalJoinMetadata(pk_fk_join.join_condition, cardinality=join_bound)
         updated_join_tree = current_join_tree.join_with_base_table(target_table, base_annotation, join_annotation)
         join_graph.mark_joined(target_table, pk_fk_join.join_condition)
         self.stats_container.upper_bounds[updated_join_tree] = join_bound
@@ -872,8 +872,8 @@ class UESJoinOrderOptimizer(stages.JoinOrderOptimization):
             pk_filters = query.predicates().filters_for(pk_table)
             pk_join_bound = self.join_estimation.estimate_for(pk_join.join_condition, join_graph)
             pk_base_cardinality = self.stats_container.base_table_estimates[pk_table]
-            base_annotation = jointree.LogicalBaseTableMetadata(pk_filters, pk_base_cardinality)
-            join_annotation = jointree.LogicalJoinMetadata(pk_join.join_condition, pk_join_bound)
+            base_annotation = jointree.LogicalBaseTableMetadata(pk_filters, cardinality=pk_base_cardinality)
+            join_annotation = jointree.LogicalJoinMetadata(pk_join.join_condition, cardinality=pk_join_bound)
             join_tree = join_tree.join_with_base_table(pk_table, base_annotation, join_annotation)
             join_graph.mark_joined(pk_table, pk_join.join_condition)
             self.stats_container.upper_bounds[join_tree] = pk_join_bound

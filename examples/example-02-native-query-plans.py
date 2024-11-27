@@ -6,7 +6,7 @@
 # the utilities in the root postgres directory.
 #
 
-from postbound import postbound as pb
+import postbound as pb
 from postbound.db import db, postgres
 from postbound.qal import qal, formatter
 from postbound.optimizer import jointree, stages

@@ -10,7 +10,7 @@
 
 import math
 
-from postbound import postbound as pb
+import postbound as pb
 from postbound.db import postgres
 from postbound.experiments import workloads, runner
 from postbound.optimizer.strategies import tonic

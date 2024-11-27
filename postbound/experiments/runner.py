@@ -11,7 +11,7 @@ from typing import Optional
 import numpy as np
 import pandas as pd
 
-from postbound import postbound as pb
+import postbound as pb
 from postbound.db import db
 from postbound.qal import qal, transform, clauses
 from postbound.optimizer import validation

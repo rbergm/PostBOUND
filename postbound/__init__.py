@@ -36,4 +36,20 @@ On a high-level, the PostBOUND project is structured as follows:
 To get a general idea of how to work with PostBOUND and where to start, take a look at the README and the example scripts.
 """
 
+from ._pipelines import (
+  OptimizationPipeline,
+  IntegratedOptimizationPipeline,
+  TextBookOptimizationPipeline,
+  TwoStageOptimizationPipeline,
+  IncrementalOptimizationPipeline
+)
+
 __version__ = "0.7.0"
+
+__all__ = [
+  "OptimizationPipeline",
+  "IntegratedOptimizationPipeline",
+  "TextBookOptimizationPipeline",
+  "TwoStageOptimizationPipeline",
+  "IncrementalOptimizationPipeline"
+]

@@ -9,11 +9,12 @@ from __future__ import annotations
 import abc
 from typing import Optional
 
-from postbound.qal import qal, transform
-from postbound.optimizer import jointree, presets, stages, validation
-from postbound.optimizer.strategies import noopt
-from postbound.db import db
-from postbound.util import errors
+from .qal.qal import SqlQuery
+from .optimizer.jointree import PhysicalQueryPlan
+from .optimizer import presets, stages, validation
+from .optimizer.strategies import noopt
+from .db import db
+from .util import errors
 
 
 class OptimizationPipeline(abc.ABC):
@@ -33,12 +34,12 @@ class OptimizationPipeline(abc.ABC):
     """
 
     @abc.abstractmethod
-    def query_execution_plan(self, query: qal.SqlQuery) -> jointree.PhysicalQueryPlan:
+    def query_execution_plan(self, query: SqlQuery) -> PhysicalQueryPlan:
         """Applies the current pipeline configuration to obtain an optimized plan for the input query.
 
         Parameters
         ----------
-        query : qal.SqlQuery
+        query : SqlQuery
             The query that should be optimized
 
         Returns
@@ -59,7 +60,7 @@ class OptimizationPipeline(abc.ABC):
         """
         raise NotImplementedError
 
-    def optimize_query(self, query: qal.SqlQuery) -> qal.SqlQuery:
+    def optimize_query(self, query: SqlQuery) -> SqlQuery:
         """Applies the current pipeline configuration to optimize the input query.
 
         This process also involges the generation of appropriate optimization information that enforces the selected
@@ -67,12 +68,12 @@ class OptimizationPipeline(abc.ABC):
 
         Parameters
         ----------
-        query : qal.SqlQuery
+        query : SqlQuery
             The query that should be optimized
 
         Returns
         -------
-        qal.SqlQuery
+        SqlQuery
             A transformed query that encapsulates all the optimization decisions made by the pipeline. What this
             actually means depends on the selected optimization strategies, as well as specifics of the target database
             system:
@@ -222,7 +223,7 @@ class IntegratedOptimizationPipeline(OptimizationPipeline):
             pre_check.check_supported_database_system(self._target_db).ensure_all_passed()
         self._optimization_algorithm = algorithm
 
-    def query_execution_plan(self, query: qal.SqlQuery) -> jointree.PhysicalQueryPlan:
+    def query_execution_plan(self, query: SqlQuery) -> PhysicalQueryPlan:
         if self.optimization_algorithm is None:
             raise errors.StateError("No algorithm has been selected")
 
@@ -356,7 +357,7 @@ class TextBookOptimizationPipeline(OptimizationPipeline):
         self._build = True
         return self
 
-    def query_execution_plan(self, query: qal.SqlQuery) -> jointree.PhysicalQueryPlan:
+    def query_execution_plan(self, query: SqlQuery) -> PhysicalQueryPlan:
         if not self._build:
             raise errors.StateError("Pipeline has not been build")
         self._support_check.check_supported_query(query).ensure_all_passed(query)
@@ -650,22 +651,17 @@ class TwoStageOptimizationPipeline(OptimizationPipeline):
     def target_database(self) -> db.Database:
         return self.target_db
 
-    def query_execution_plan(self, query: qal.SqlQuery) -> jointree.PhysicalQueryPlan:
+    def query_execution_plan(self, query: SqlQuery) -> PhysicalQueryPlan:
         optimized_query = self.optimize_query(query)
         db_plan = self.target_db.optimizer().query_plan(optimized_query)
-        physical_qep = jointree.PhysicalQueryPlan.load_from_query_plan(db_plan, query=query)
+        physical_qep = PhysicalQueryPlan.load_from_query_plan(db_plan, query=query)
         return physical_qep
 
-    def optimize_query(self, query: qal.SqlQuery) -> qal.SqlQuery:
+    def optimize_query(self, query: SqlQuery) -> SqlQuery:
         self._assert_is_build()
         supported_query_check = self._pre_check.check_supported_query(query)
         if not supported_query_check.passed:
             raise validation.UnsupportedQueryError(query, supported_query_check.failure_reason)
-
-        if isinstance(query, qal.ExplicitSqlQuery):
-            query = transform.explicit_to_implicit(query)
-        elif not isinstance(query, qal.ImplicitSqlQuery):
-            raise ValueError(f"Unknown query type '{type(query)}' for query '{query}'")
 
         join_order = self._join_order_enumerator.optimize_join_order(query)
         physical_operators = self._physical_operator_selection.select_physical_operators(query, join_order)
@@ -790,7 +786,7 @@ class IncrementalOptimizationPipeline(OptimizationPipeline):
     def target_database(self) -> db.Database:
         return self.target_db
 
-    def query_execution_plan(self, query: qal.SqlQuery) -> jointree.PhysicalQueryPlan:
+    def query_execution_plan(self, query: SqlQuery) -> PhysicalQueryPlan:
         self._ensure_supported_query(query)
         current_plan = (self.initial_plan_generator.optimize_query(query) if self.initial_plan_generator is not None
                         else self.target_db.optimizer().query_plan(query))
@@ -848,12 +844,12 @@ class IncrementalOptimizationPipeline(OptimizationPipeline):
                 continue
             incremental_step.pre_check().check_supported_database_system(database).ensure_all_passed(database)
 
-    def _ensure_supported_query(self, query: qal.SqlQuery) -> None:
+    def _ensure_supported_query(self, query: SqlQuery) -> None:
         """Applies all relevant pre-checks to the input query.
 
         Parameters
         ----------
-        query : qal.SqlQuery
+        query : SqlQuery
             The input query
 
         Raises

@@ -7,7 +7,7 @@
 # the utilities in the root postgres directory.
 #
 
-from postbound import postbound as pb
+import postbound as pb
 from postbound.db import postgres
 from postbound.experiments import workloads, runner
 from postbound.optimizer import presets

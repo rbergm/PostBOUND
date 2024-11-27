@@ -9,7 +9,7 @@
 
 # Step 0: imports
 # this includes the optimization modules, database modules and possibly workload modules
-from postbound import postbound as pb
+import postbound as pb
 from postbound.optimizer import presets
 from postbound.db import postgres
 from postbound.experiments import workloads
