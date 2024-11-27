@@ -19,7 +19,8 @@ Be carefull when updating and check the changelog!
 ### Fixes
 - Fixed CTE names being contained twice in the `tables()` output for `SqlQuery` instances
 
---
+---
+
 
 ## ➡ Version 0.7.0
 
@@ -31,7 +32,8 @@ Be carefull when updating and check the changelog!
 - Ensure that Postgres interface always updates the GEQO state before running any affected query
 - Fixed hinting backend sometimes not initialization internal state correctly
 
---
+---
+
 
 ## Version 0.6.2
 
@@ -52,7 +54,8 @@ Be carefull when updating and check the changelog!
 - Fix parsing of queries in `workloads.read_workload()` not respecting the `bind_columns` parameter when loading workloads
   recursively
 
---
+---
+
 
 ## Version 0.6.1
 
@@ -67,7 +70,8 @@ Be carefull when updating and check the changelog!
 ### Fixes
 - Make fallback value calculation in pre-computed cardinalities more robust
 
---
+---
+
 
 ## Version 0.6.0
 
@@ -81,6 +85,7 @@ Be carefull when updating and check the changelog!
 - Fix PostgreSQL query hinting to invert the direction of hash joins
 
 ---
+
 
 ## Version 0.5.0
 
@@ -104,6 +109,7 @@ Be carefull when updating and check the changelog!
 
 ---
 
+
 ## Version 0.4.5
 
 ### Updates
@@ -118,6 +124,7 @@ Be carefull when updating and check the changelog!
 
 ---
 
+
 ## Version 0.4.4
 
 ### Updates
@@ -130,6 +137,7 @@ Be carefull when updating and check the changelog!
 - Fixed database query cache not storing results as intended
 
 ---
+
 
 ## Version 0.4.3
 
@@ -150,6 +158,7 @@ Be carefull when updating and check the changelog!
 
 ---
 
+
 ## Version 0.4.2
 
 ### New features
@@ -167,6 +176,7 @@ Be carefull when updating and check the changelog!
 
 ---
 
+
 ## Version 0.4.1
 
 ### Updates
@@ -180,6 +190,7 @@ Be carefull when updating and check the changelog!
 - Fixed bash scripts cancelling prematurely when exit codes in subshells caused `set -e` to abort execution
 
 ---
+
 
 ## Version 0.4.0
 
@@ -201,6 +212,7 @@ Be carefull when updating and check the changelog!
 
 ---
 
+
 ## Version 0.3.1
 
 ### New features
@@ -215,6 +227,7 @@ Be carefull when updating and check the changelog!
 
 ---
 
+
 ## Version 0.3.0
 
 ### New features
@@ -227,12 +240,16 @@ Be carefull when updating and check the changelog!
 - Added a `post_repetition_callback` to the workload runner
 - During Postgres setup, remote access can now optionally be enabled
 
+---
+
 
 ## Version 0.2.1
 
 ### Fixes
 - Fixed parsing of `SELECT *` queries for newer versions of _mo\_sql\_parsing_
 - Fixed missing visitor implementation for simplified filter views
+
+---
 
 
 ## Version 0.2.0
@@ -267,6 +284,7 @@ This is pretty much a new major version, but we are not ready for 1.0 yet and do
 
 ---
 
+
 ## Version 0.1.0
 
 ### New features
@@ -295,6 +313,9 @@ This is pretty much a new major version, but we are not ready for 1.0 yet and do
 ### Fixes
 - `transform.replace_clause` now correctly respects subclasses. This also fixes Postgres `LIMIT` clauses not being applied
   correctly while formatting queries for that system.
+
+---
+
 
 ## Version 0.0.2-beta
 
