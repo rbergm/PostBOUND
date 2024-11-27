@@ -16,9 +16,9 @@ from collections.abc import Iterable, Sequence
 from typing import Any, Optional
 
 from postbound.qal import qal, base, predicates, transform, parser as qal_parser
-from postbound.db import db
-from postbound.optimizer import jointree, physops, stages
-from postbound.util import collections as collection_utils, dicts as dict_utils
+from .. import jointree, physops, stages
+from ... import db, util
+
 
 # TODO: there should be more documentation of the technical design of the QEP-S structure
 # More specifically, this documentation should describe the strategies to integrate subquery nodes, and the QEP-S traversal
@@ -139,7 +139,7 @@ def _normalize_filter_predicate(tables: base.TableReference | Iterable[base.Tabl
     """
     if not filter_predicate:
         return None
-    tables: set[base.TableReference] = set(collection_utils.enlist(tables))
+    tables: set[base.TableReference] = set(util.enlist(tables))
     referenced_tables = tables & filter_predicate.tables()
     renamed_tables = {table: table.drop_alias() for table in referenced_tables}
     renamed_columns = {col: base.ColumnReference(col.name, renamed_tables[col.table])
@@ -160,7 +160,7 @@ def _tables_in_qeps_path(qeps_path: Sequence[QepsIdentifier]) -> frozenset[base.
     frozenset[base.TableReference]
         All tables in the path
     """
-    return collection_utils.set_union(identifier.tables() for identifier in qeps_path)
+    return util.set_union(identifier.tables() for identifier in qeps_path)
 
 
 class QepsIdentifier:
@@ -192,7 +192,7 @@ class QepsIdentifier:
                  filter_predicate: Optional[predicates.AbstractPredicate] = None) -> None:
         if not tables:
             raise ValueError("Tables required")
-        self._tables = frozenset(tab.drop_alias() for tab in collection_utils.enlist(tables))
+        self._tables = frozenset(tab.drop_alias() for tab in util.enlist(tables))
         self._filter_predicate = _normalize_filter_predicate(tables, filter_predicate)
         self._hash_val = hash((self._tables, self._filter_predicate))
 
@@ -207,7 +207,7 @@ class QepsIdentifier:
         """
         if not len(self._tables) == 1:
             return None
-        return collection_utils.get_any(self._tables)
+        return util.collections.get_any(self._tables)
 
     @property
     def tables(self) -> frozenset[base.TableReference]:
@@ -316,7 +316,7 @@ class QepsNode:
         self.filter_aware = filter_aware
         self.gamma = gamma
         self.operator_costs: dict[physops.JoinOperators, float] = collections.defaultdict(float)
-        self.child_nodes = dict_utils.DynamicDefaultDict(self._init_qeps)
+        self.child_nodes = util.dicts.DynamicDefaultDict(self._init_qeps)
         self._subquery_root: Optional[QepsNode] = None  # only used for subquery nodes
         self._parent = parent
         self._identifier = identifier
@@ -373,7 +373,7 @@ class QepsNode:
             All tables of all identifiers along the path. For the root node, the set is empty. Notice that this does only
             include directly designated tables, i.e. tables from filter predicates are neglected.
         """
-        return frozenset(collection_utils.set_union(qeps_id.tables for qeps_id in self.path()))
+        return frozenset(util.set_union(qeps_id.tables for qeps_id in self.path()))
 
     def recommend_operators(self, query: qal.SqlQuery, join_order: Sequence[jointree.IntermediateJoinNode],
                             current_assignment: physops.PhysicalOperatorAssignment, *,
@@ -579,7 +579,7 @@ class QepsNode:
         Optional[physops.JoinOperators]
             The best operator, or ``None`` if not enough information exists to make a good decision.
         """
-        return dict_utils.argmin(self.operator_costs) if len(self.operator_costs) > 1 else None
+        return util.argmin(self.operator_costs) if len(self.operator_costs) > 1 else None
 
     def update_costs(self, operator: physops.JoinOperators, cost: float) -> None:
         """Updates the cost of a specific operator for this node.
@@ -672,7 +672,7 @@ class QepsNode:
         QepsIdentifier
             The identifier
         """
-        table = collection_utils.simplify(table)
+        table = util.simplify(table)
         filter_predicate = query.predicates().filters_for(table) if self.filter_aware else None
         return QepsIdentifier(table, filter_predicate)
 

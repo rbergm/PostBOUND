@@ -3,10 +3,10 @@ from __future__ import annotations
 
 import unittest
 
+import postbound as pb
 from postbound.db import postgres
 from postbound.experiments import workloads
 from postbound.qal import transform
-from postbound import postbound as pb
 from postbound.optimizer.strategies import tonic
 
 from tests import regression_suite

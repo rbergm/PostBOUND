@@ -4,7 +4,7 @@ from __future__ import annotations
 import abc
 
 from postbound.qal import qal, predicates
-from postbound.optimizer import joingraph, validation
+from .. import joingraph, validation
 
 
 class BranchGenerationPolicy(abc.ABC):

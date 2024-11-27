@@ -18,11 +18,10 @@ from typing import Literal, Optional
 
 import pandas as pd
 
-from postbound.db import db
 from postbound.experiments import workloads
 from postbound.qal import base, clauses, parser, predicates, qal, transform
-from postbound.optimizer import joingraph, jointree, physops, validation, planparams, stages
-from postbound.util import collections as collection_utils, jsonize
+from .. import joingraph, jointree, physops, validation, planparams, stages
+from ... import db, util
 
 
 class CardinalityHintsGenerator(stages.ParameterGeneration, stages.CardinalityEstimator, abc.ABC):
@@ -105,7 +104,7 @@ class CardinalityHintsGenerator(stages.ParameterGeneration, stages.CardinalityEs
         The default implementation of this method does not work for queries that naturally contain cross products. If such a
         query is passed, no intermediates with tables from different partitions of the join graph are yielded.
         """
-        for candidate_join in collection_utils.powerset(query.tables()):
+        for candidate_join in util.powerset(query.tables()):
             if not candidate_join:  # skip empty set (which is an artefact of the powerset method)
                 continue
             if not self.allow_cross_products and not query.predicates().joins_tables(candidate_join):
@@ -402,7 +401,7 @@ class PreComputedCardinalities(CardinalityHintsGenerator):
         """
         result_row = {}
         result_row[self._label_col] = [self._workload.label_of(query)]
-        result_row[self._tables_col] = [jsonize.to_json(tables)]
+        result_row[self._tables_col] = [util.to_json(tables)]
 
         if "query" in self._true_card_df.columns:
             result_row["query"] = [str(query)]

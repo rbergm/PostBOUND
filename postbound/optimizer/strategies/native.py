@@ -13,9 +13,9 @@ from __future__ import annotations
 
 from typing import Optional
 
-from postbound.db import db
 from postbound.qal import qal
-from postbound.optimizer import jointree, physops, planparams, stages
+from .. import jointree, physops, planparams, stages
+from ... import db
 
 
 class NativeJoinOrderOptimizer(stages.JoinOrderOptimization):

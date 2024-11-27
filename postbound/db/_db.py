@@ -31,7 +31,7 @@ from typing import Any, Literal, Optional
 
 from postbound.qal import base, parser, qal
 from postbound.optimizer import jointree, physops, planparams
-from postbound.util import collections as collection_utils, dicts as dict_utils, misc
+from .. import util
 
 
 class Cursor(typing.Protocol):
@@ -318,12 +318,12 @@ class Database(abc.ABC):
         return self.system_name
 
     @abc.abstractmethod
-    def database_system_version(self) -> misc.Version:
+    def database_system_version(self) -> util.Version:
         """Returns the release version of the database management system that this interface is connected to.
 
         Returns
         -------
-        misc.Version
+        util.Version
             The version
         """
         raise NotImplementedError
@@ -1432,7 +1432,7 @@ class QueryExecutionPlan:
             The tables
         """
         own_table = [self.table] if self.table else []
-        return frozenset(own_table + collection_utils.flatten(child.tables() for child in self.children))
+        return frozenset(own_table + util.flatten(child.tables() for child in self.children))
 
     def is_base_join(self) -> bool:
         """Checks, whether this operator is a join and only contains base table children.
@@ -1578,7 +1578,7 @@ class QueryExecutionPlan:
             The scan nodes
         """
         own_node = [self] if self.is_scan else []
-        child_scans = collection_utils.flatten(child.scan_nodes() for child in self.children)
+        child_scans = util.flatten(child.scan_nodes() for child in self.children)
         return frozenset(own_node + child_scans)
 
     def join_nodes(self) -> frozenset[QueryExecutionPlan]:
@@ -1590,7 +1590,7 @@ class QueryExecutionPlan:
             The join nodes
         """
         own_node = [self] if self.is_join else []
-        child_joins = collection_utils.flatten(child.join_nodes() for child in self.children)
+        child_joins = util.flatten(child.join_nodes() for child in self.children)
         return frozenset(own_node + child_joins)
 
     def iternodes(self) -> Iterable[QueryExecutionPlan]:
@@ -2008,7 +2008,7 @@ class DatabasePool:
         ValueError
             If there are multiple database instances registered in the pool
         """
-        return dict_utils.value(self._pool)
+        return util.dicts.value(self._pool)
 
     def register_database(self, key: str, db: Database) -> None:
         """Stores a new database in the pool.

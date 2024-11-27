@@ -12,9 +12,9 @@ import warnings
 from collections.abc import Callable, Iterable
 from typing import Optional
 
-from postbound.db import db
 from postbound.qal import qal, base, clauses, expressions as expr, predicates as preds
 from postbound.util import collections as collection_utils
+from .. import db
 
 # TODO: at a later point in time, the entire query traversal/modification logic could be refactored to use unified
 # access instead of implementing the same pattern matching and traversal logic all over again

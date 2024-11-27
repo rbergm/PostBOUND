@@ -10,8 +10,7 @@ from typing import Literal, Optional
 import networkx as nx
 
 from postbound.qal import base, predicates, qal, transform
-from postbound.db import db
-from postbound.util import collections as collection_utils, networkx as nx_utils
+from .. import db, util
 
 
 @dataclass(frozen=True)
@@ -719,8 +718,8 @@ class JoinGraph(Mapping[base.TableReference, TableInfo]):
 
         predicate: predicates.AbstractPredicate = self._graph.edges[fk_table, pk_table]["predicate"]
         for base_predicate in predicate.base_predicates():
-            fk_col = collection_utils.simplify(base_predicate.columns_of(fk_table))
-            pk_col = collection_utils.simplify(base_predicate.columns_of(pk_table))
+            fk_col = util.simplify(base_predicate.columns_of(fk_table))
+            pk_col = util.simplify(base_predicate.columns_of(pk_table))
             if self._index_structures[fk_col].is_indexed() and self._index_structures[pk_col].is_primary():
                 return True
         return False
@@ -805,13 +804,13 @@ class JoinGraph(Mapping[base.TableReference, TableInfo]):
             All deep primary key/foreign key join paths, starting at the `fk_table`
         """
         self._assert_contains_table(fk_table)
-        available_joins = nx_utils.nx_bfs_tree(self._graph, fk_table, self._check_pk_fk_join, node_order=ordering)
+        available_joins = util.nx.nx_bfs_tree(self._graph, fk_table, self._check_pk_fk_join, node_order=ordering)
         join_paths = []
         for join in available_joins:
             current_pk_table: base.TableReference = join[0]
             join_predicate: predicates.AbstractPredicate = join[1]["predicate"]
-            current_fk_table = collection_utils.simplify({column.table for column
-                                                          in join_predicate.join_partners_of(current_pk_table)})
+            current_fk_table = util.simplify({column.table for column
+                                              in join_predicate.join_partners_of(current_pk_table)})
             join_paths.append(JoinPath(current_fk_table, current_pk_table, join_predicate))
         return join_paths
 
@@ -862,8 +861,8 @@ class JoinGraph(Mapping[base.TableReference, TableInfo]):
         Collection[predicates.AbstractPredicate]
             All join predicates
         """
-        first_tables = collection_utils.enlist(first_tables)
-        second_tables = collection_utils.enlist(second_tables) if second_tables else first_tables
+        first_tables = util.enlist(first_tables)
+        second_tables = util.enlist(second_tables) if second_tables else first_tables
         matching_predicates = set()
 
         for first_table in first_tables:
@@ -975,8 +974,8 @@ class JoinGraph(Mapping[base.TableReference, TableInfo]):
         """
         join_predicate: predicates.AbstractPredicate = edge_data["predicate"]
         for base_predicate in join_predicate.base_predicates():
-            fk_table = collection_utils.simplify({column.table
-                                                  for column in base_predicate.join_partners_of(pk_table)})
+            fk_table = util.simplify({column.table
+                                      for column in base_predicate.join_partners_of(pk_table)})
             if self.is_pk_fk_join(fk_table, pk_table):
                 return True
         return False

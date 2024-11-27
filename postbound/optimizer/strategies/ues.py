@@ -34,11 +34,12 @@ from typing import Generic, Optional
 
 import numpy as np
 
-from postbound.db import db
+
 from postbound.qal import base, qal, predicates
-from postbound.optimizer import joingraph, jointree, physops, stages, validation
-from postbound.optimizer.policies import cardinalities as card_policy, jointree as tree_policy
-from postbound.util import collections as collection_utils, dicts as dict_utils
+from .. import joingraph, jointree, physops, stages, validation
+from ..policies import cardinalities as cardpol, jointree as treepol
+from ... import db, util
+
 
 ColumnType = typing.TypeVar("ColumnType")
 """The type of the columns for which statistics are generated."""
@@ -91,7 +92,7 @@ class StatisticsContainer(abc.ABC, Generic[StatsType]):
         self.query: Optional[qal.SqlQuery] = None
 
     def setup_for_query(self, query: qal.SqlQuery,
-                        base_table_estimator: card_policy.BaseTableCardinalityEstimator) -> None:
+                        base_table_estimator: cardpol.BaseTableCardinalityEstimator) -> None:
         """Initializes the internal data of the statistics container for a specific query.
 
         Parameters
@@ -157,7 +158,7 @@ class StatisticsContainer(abc.ABC, Generic[StatsType]):
 
         joined_columns_frequencies = {joined_col: self.attribute_frequencies[joined_col] for joined_col
                                       in join_condition.columns_of(joined_table)}
-        lowest_joined_column_frequency = dict_utils.argmin(joined_columns_frequencies)
+        lowest_joined_column_frequency = util.argmin(joined_columns_frequencies)
         for third_party_column in third_party_columns:
             self._update_third_party_column_frequency(lowest_joined_column_frequency, third_party_column)
 
@@ -179,7 +180,7 @@ class StatisticsContainer(abc.ABC, Generic[StatsType]):
         self.attribute_frequencies = {}
         self.query = None
 
-    def _inflate_base_table_estimates(self, base_table_estimator: card_policy.BaseTableCardinalityEstimator):
+    def _inflate_base_table_estimates(self, base_table_estimator: cardpol.BaseTableCardinalityEstimator):
         """Retrieves the base table estimate for each table in the current query.
 
         Parameters
@@ -267,7 +268,7 @@ class MaxFrequencyStatsContainer(StatisticsContainer[MaxFrequency]):
             if not top1_list:
                 mcv_frequency = self._uniform_frequency(column)
             else:
-                _, mcv_frequency = collection_utils.simplify(top1_list)
+                _, mcv_frequency = util.simplify(top1_list)
             self.attribute_frequencies[column] = mcv_frequency
 
     def _update_partner_column_frequency(self, joined_column: base.ColumnReference,
@@ -301,7 +302,7 @@ class MaxFrequencyStatsContainer(StatisticsContainer[MaxFrequency]):
         return n_tuples / n_distinct
 
 
-class UESJoinBoundEstimator(card_policy.JoinCardinalityEstimator):
+class UESJoinBoundEstimator(cardpol.JoinCardinalityEstimator):
     """Implementation of the UES formula to calculate upper bounds of join cardinalities.
 
     The formula distinuishes two cases: n:m joins are estimated according to the maximum frequencies of the join columns.
@@ -331,7 +332,7 @@ class UESJoinBoundEstimator(card_policy.JoinCardinalityEstimator):
         current_min_bound = np.inf
 
         for base_predicate in join_edge.base_predicates():
-            first_col, second_col = collection_utils.simplify(base_predicate.join_partners())
+            first_col, second_col = util.simplify(base_predicate.join_partners())
             if join_graph.is_pk_fk_join(first_col.table, second_col.table):
                 join_bound = self._estimate_pk_fk_join(first_col, second_col)
             elif join_graph.is_pk_fk_join(second_col.table, first_col.table):
@@ -421,7 +422,7 @@ class UESJoinBoundEstimator(card_policy.JoinCardinalityEstimator):
                 else self.stats_container.base_table_estimates[table])
 
 
-class UESSubqueryGenerationPolicy(tree_policy.BranchGenerationPolicy):
+class UESSubqueryGenerationPolicy(treepol.BranchGenerationPolicy):
     """Implementation of the UES policy to decide when to insert branches into the join order.
 
     In short, the policy generates subqueries whenever they guarantee a reduction of the upper bound of the n:m join partner
@@ -506,16 +507,16 @@ class UESJoinOrderOptimizer(stages.JoinOrderOptimization):
     .. A. Hertzschuch et al.: "Simplicity Done Right for Join Ordering", CIDR'2021
     """
 
-    def __init__(self, *, base_table_estimation: Optional[card_policy.BaseTableCardinalityEstimator] = None,
-                 join_estimation: Optional[card_policy.JoinCardinalityEstimator] = None,
-                 subquery_policy: Optional[tree_policy.BranchGenerationPolicy] = None,
+    def __init__(self, *, base_table_estimation: Optional[cardpol.BaseTableCardinalityEstimator] = None,
+                 join_estimation: Optional[cardpol.JoinCardinalityEstimator] = None,
+                 subquery_policy: Optional[treepol.BranchGenerationPolicy] = None,
                  stats_container: Optional[StatisticsContainer] = None,
                  pull_eager_pk_tables: bool = False,
                  database: Optional[db.Database] = None, verbose: bool = False) -> None:
         super().__init__()
         self.database = database if database else db.DatabasePool().get_instance().current_database()
         self.base_table_estimation = (base_table_estimation if base_table_estimation
-                                      else card_policy.NativeCardinalityEstimator(self.database))
+                                      else cardpol.NativeCardinalityEstimator(self.database))
         self.join_estimation = join_estimation if join_estimation else UESJoinBoundEstimator()
         self.subquery_policy = subquery_policy if subquery_policy else UESSubqueryGenerationPolicy()
         self.stats_container = (stats_container if stats_container
@@ -623,7 +624,7 @@ class UESJoinOrderOptimizer(stages.JoinOrderOptimization):
                 if candidate_min_bound < lowest_bound:
                     lowest_bound = candidate_min_bound
                     lowest_bound_table = candidate_table
-            self._log_information(".. Current bounds: " + dict_utils.stringify(self.stats_container.upper_bounds))
+            self._log_information(".. Current bounds: " + util.dicts.stringify(self.stats_container.upper_bounds))
 
             if join_tree.is_empty():
                 filter_pred = query.predicates().filters_for(lowest_bound_table)

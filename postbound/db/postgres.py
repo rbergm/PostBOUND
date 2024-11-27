@@ -29,11 +29,23 @@ from typing import Any, Literal, Optional
 import psycopg
 import psycopg.rows
 
-from postbound.db import db
 from postbound.qal import qal, base, expressions, clauses, transform, formatter
 from postbound.optimizer import jointree, physops, planparams
-from postbound.util import collections as collection_utils, dicts as dict_utils, logging
-from postbound.util import errors, misc as utils, system as sys_util
+from ._db import (
+    Database,
+    DatabaseSchema,
+    DatabaseStatistics,
+    HintService,
+    QueryExecutionPlan,
+    OptimizerInterface,
+    DatabasePool,
+    HintWarning,
+    DatabaseServerError,
+    DatabaseUserError,
+    UnsupportedDatabaseFeatureError
+)
+from .. import util
+from ..util import Version, StateError
 
 # TODO: find a nice way to support index nested-loop join hints.
 # Probably inspired by the join order/join direction handling?
@@ -376,7 +388,7 @@ def _simplify_result_set(result_set: list[tuple[Any]]) -> Any:
     return result_set
 
 
-class PostgresInterface(db.Database):
+class PostgresInterface(Database):
     """Database implementation for PostgreSQL backends.
 
     Parameters
@@ -431,11 +443,11 @@ class PostgresInterface(db.Database):
                     self._inflate_query_cache()
                     self._query_cache[prepared_query] = query_result
             except (psycopg.InternalError, psycopg.OperationalError) as e:
-                msg = "\n".join([f"At {utils.current_timestamp()}", "For query:", str(query), "Message:", str(e)])
-                raise db.DatabaseServerError(msg, e)
+                msg = "\n".join([f"At {util.timestamp()}", "For query:", str(query), "Message:", str(e)])
+                raise DatabaseServerError(msg, e)
             except psycopg.Error as e:
-                msg = "\n".join([f"At {utils.current_timestamp()}", "For query:", str(query), "Message:", str(e)])
-                raise db.DatabaseUserError(msg, e)
+                msg = "\n".join([f"At {util.timestamp()}", "For query:", str(query), "Message:", str(e)])
+                raise DatabaseUserError(msg, e)
 
         return query_result if raw else _simplify_result_set(query_result)
 
@@ -447,14 +459,14 @@ class PostgresInterface(db.Database):
         db_name = self._cursor.fetchone()[0]
         return db_name
 
-    def database_system_version(self) -> utils.Version:
+    def database_system_version(self) -> Version:
         self._cursor.execute("SELECT VERSION();")
         version_string = self._cursor.fetchone()[0]
         version_match = _PGVersionPattern.match(version_string)
         if not version_match:
             raise RuntimeError(f"Could not extract Postgres version from string '{version_string}'")
         pg_ver = version_match.group("pg_ver")
-        return utils.Version(pg_ver)
+        return Version(pg_ver)
 
     def backend_pid(self) -> int:
         """Provides the backend process ID of the current connection.
@@ -569,14 +581,14 @@ class PostgresInterface(db.Database):
         >>> pg.prewarm_tables(table1, table2)
         """
         self._assert_active_extension("pg_prewarm")
-        tables: Iterable[base.TableReference] = list(collection_utils.enlist(tables)) + list(more_tables)
+        tables: Iterable[base.TableReference] = list(util.enlist(tables)) + list(more_tables)
         if not tables:
             return
         tables = set(tab.full_name for tab in tables)  # eliminate duplicates if tables are selected multiple times
 
         table_indexes = ([self._fetch_index_relnames(tab) for tab in tables]
                          if include_primary_index or include_secondary_indexes else [])
-        indexes_to_prewarm = {idx for idx, primary in collection_utils.flatten(table_indexes)
+        indexes_to_prewarm = {idx for idx, primary in util.flatten(table_indexes)
                               if (primary and include_primary_index) or (not primary and include_secondary_indexes)}
         tables = indexes_to_prewarm if exclude_table_pages else tables | indexes_to_prewarm
         if not tables:
@@ -617,14 +629,14 @@ class PostgresInterface(db.Database):
         >>> pg.cooldown_tables(table1, table2)
         """
         self._assert_active_extension("pg_cooldown")
-        tables: Iterable[base.TableReference] = list(collection_utils.enlist(tables)) + list(more_tables)
+        tables: Iterable[base.TableReference] = list(util.enlist(tables)) + list(more_tables)
         if not tables:
             return
         tables = set(tab.full_name for tab in tables)  # eliminate duplicates if tables are selected multiple times
 
         table_indexes = ([self._fetch_index_relnames(tab) for tab in tables]
                          if include_primary_index or include_secondary_indexes else [])
-        indexes_to_cooldown = {idx for idx, primary in collection_utils.flatten(table_indexes)
+        indexes_to_cooldown = {idx for idx, primary in util.flatten(table_indexes)
                                if (primary and include_primary_index) or (not primary and include_secondary_indexes)}
         tables = indexes_to_cooldown if exclude_table_pages else tables | indexes_to_cooldown
         if not tables:
@@ -725,7 +737,7 @@ class PostgresInterface(db.Database):
 
         requires_geqo_deactivation = self._hinting_backend._requires_geqo_deactivation(query)
         if requires_geqo_deactivation:
-            logging.print_if(self.debug, "Disabling GeQO", file=sys.stderr)
+            util.logging.print_if(self.debug, "Disabling GeQO", file=sys.stderr)
             self._cursor.execute("SET geqo = 'off';")
 
         if drop_explain:
@@ -825,22 +837,22 @@ class PostgresInterface(db.Database):
 
         Raises
         ------
-        errors.StateError
+        StateError
             If the given extension is not active
         """
         if is_shared_object or extension_name in ("pg_hint_plan", "pg_lab"):
             shared_object_name = f"{extension_name}.so" if not extension_name.endswith(".so") else extension_name
-            loaded_shared_objects = sys_util.open_files(self._connection.info.backend_pid)
+            loaded_shared_objects = util.system.open_files(self._connection.info.backend_pid)
             extension_is_active = any(so.endswith(shared_object_name) for so in loaded_shared_objects)
         else:
             self._cursor.execute("SELECT extname FROM pg_extension;")
             extension_is_active = any(ext[0] == extension_name for ext in self._cursor.fetchall())
 
         if not extension_is_active:
-            raise errors.StateError(f"Extension '{extension_name}' is not active in database '{self.database_name()}'")
+            raise StateError(f"Extension '{extension_name}' is not active in database '{self.database_name()}'")
 
 
-class PostgresSchemaInterface(db.DatabaseSchema):
+class PostgresSchemaInterface(DatabaseSchema):
     """Database schema implementation for Postgres systems.
 
     Parameters
@@ -1003,7 +1015,7 @@ _DTypeArrayConverters = {
 }
 
 
-class PostgresStatisticsInterface(db.DatabaseStatistics):
+class PostgresStatisticsInterface(DatabaseStatistics):
     """Statistics implementation for Postgres systems.
 
     Parameters
@@ -1054,18 +1066,18 @@ class PostgresStatisticsInterface(db.DatabaseStatistics):
         if not columns and not tables:
             tables = [tab for tab in self._db.schema().tables() if not self._db.schema().is_view(tab)]
         if not columns and tables:
-            tables = collection_utils.enlist(tables)
-            columns = collection_utils.set_union(self._db.schema().columns(tab) for tab in tables)
+            tables = util.enlist(tables)
+            columns = util.set_union(self._db.schema().columns(tab) for tab in tables)
 
         assert columns is not None
-        columns: Iterable[base.ColumnReference] = collection_utils.enlist(columns)
-        columns_map: dict[base.TableReference, list[str]] = dict_utils.generate_multi((col.table, col.name)
+        columns: Iterable[base.ColumnReference] = util.enlist(columns)
+        columns_map: dict[base.TableReference, list[str]] = util.dicts.generate_multi((col.table, col.name)
                                                                                       for col in columns)
         distinct_values: dict[base.ColumnReference, int] = {}
 
         if perfect_mcv or perfect_n_distinct:
             for column in columns:
-                logging.print_if(verbose, logging.timestamp(), ":: Now preparing column", column, use_stderr=True)
+                util.logging.print_if(verbose, util.timestamp(), ":: Now preparing column", column, use_stderr=True)
                 n_distinct = round(self.distinct_values(column, emulated=True, cache_enabled=True))
                 if perfect_n_distinct:
                     distinct_values[column] = n_distinct
@@ -1086,7 +1098,7 @@ class PostgresStatisticsInterface(db.DatabaseStatistics):
         columns_str = {table: ", ".join(col for col in columns) for table, columns in columns_map.items()}
         tables_and_columns = ", ".join(f"{table.full_name}({cols})" for table, cols in columns_str.items())
 
-        logging.print_if(verbose, logging.timestamp(), ":: Now analyzing columns", tables_and_columns, use_stderr=True)
+        util.logging.print_if(verbose, util.timestamp(), ":: Now analyzing columns", tables_and_columns, use_stderr=True)
         query_template = f"ANALYZE {tables_and_columns}"
         self._db.cursor().execute(query_template)
 
@@ -1131,7 +1143,7 @@ class PostgresStatisticsInterface(db.DatabaseStatistics):
     def _retrieve_min_max_values_from_stats(self, column: base.ColumnReference) -> Optional[tuple[Any, Any]]:
         # Postgres does not keep track of min/max values, so we need to determine them manually
         if not self.enable_emulation_fallback:
-            raise db.UnsupportedDatabaseFeatureError(self._db, "min/max value statistics")
+            raise UnsupportedDatabaseFeatureError(self._db, "min/max value statistics")
         return self._calculate_min_max_values(column, cache_enabled=True)
 
     def _retrieve_most_common_values_from_stats(self, column: base.ColumnReference,
@@ -1522,7 +1534,7 @@ If the hint service is inactive, the backend is set to _none_.
 """
 
 
-class PostgresHintService(db.HintService):
+class PostgresHintService(HintService):
     """Postgres-specific implementation of the hinting capabilities.
 
     Most importantly, this service implements a mapping from the abstract optimization descisions (join order + operators) to
@@ -1671,13 +1683,13 @@ class PostgresHintService(db.HintService):
             self._inactive = False
             return
 
-        active_extensions = sys_util.open_files(backend_pid)
+        active_extensions = util.system.open_files(backend_pid)
         if any(ext.endswith("pg_lab.so") for ext in active_extensions):
-            logging.print_if(self._postgres_db.debug, "Using pg_lab hinting backend", file=sys.stderr)
+            util.logging.print_if(self._postgres_db.debug, "Using pg_lab hinting backend", file=sys.stderr)
             self._inactive = False
             self._backend = "pg_lab"
         elif any(ext.endswith("pg_hint_plan.so") for ext in active_extensions):
-            logging.print_if(self._postgres_db.debug, "Using pg_hint_plan hinting backend", file=sys.stderr)
+            util.logging.print_if(self._postgres_db.debug, "Using pg_hint_plan hinting backend", file=sys.stderr)
             self._inactive = False
             self._backend = "pg_hint_plan"
         else:
@@ -1944,7 +1956,7 @@ class PostgresHintService(db.HintService):
         for join, cardinality_hint in plan_parameters.cardinality_hints.items():
             if len(join) < 2 and self._backend == "pg_hint_plan":
                 # pg_hint_plan can only generate cardinality hints for joins
-                warnings.warn(f"Ignoring cardinality hint for base table {join}", category=db.HintWarning)
+                warnings.warn(f"Ignoring cardinality hint for base table {join}", category=HintWarning)
                 continue
             cardinality_hint = round(cardinality_hint)
             join_key = _generate_join_key(join)
@@ -1954,14 +1966,14 @@ class PostgresHintService(db.HintService):
 
         for join, num_workers in plan_parameters.parallel_worker_hints.items():
             if self._backend == "pg_lab":
-                warnings.warn("pg_lab does not support parallel worker hints", category=db.HintWarning)
+                warnings.warn("pg_lab does not support parallel worker hints", category=HintWarning)
                 continue
             if len(join) != 1:
                 # pg_hint_plan can only generate parallelization hints for single tables
-                warnings.warn(f"Ignoring parallel workers hint for join {join}", category=db.HintWarning)
+                warnings.warn(f"Ignoring parallel workers hint for join {join}", category=HintWarning)
                 continue
 
-            table: base.TableReference = collection_utils.simplify(join)
+            table: base.TableReference = util.simplify(join)
             hints.append(f"Parallel({table.identifier()} {num_workers} hard)")
 
         for operator, setting in plan_parameters.system_specific_settings.items():
@@ -2042,7 +2054,7 @@ class PostgresHintService(db.HintService):
         return repr(self)
 
 
-class PostgresOptimizer(db.OptimizerInterface):
+class PostgresOptimizer(OptimizerInterface):
     """Optimizer introspection for Postgres.
 
     Parameters
@@ -2054,7 +2066,7 @@ class PostgresOptimizer(db.OptimizerInterface):
     def __init__(self, postgres_instance: PostgresInterface) -> None:
         self._pg_instance = postgres_instance
 
-    def query_plan(self, query: qal.SqlQuery | str) -> db.QueryExecutionPlan:
+    def query_plan(self, query: qal.SqlQuery | str) -> QueryExecutionPlan:
         self._pg_instance._current_geqo_state = self._pg_instance._obtain_geqo_state()
         if isinstance(query, qal.SqlQuery):
             query, deactivated_geqo = self._pg_instance._prepare_query_execution(query, drop_explain=True)
@@ -2066,7 +2078,7 @@ class PostgresOptimizer(db.OptimizerInterface):
             self._pg_instance._restore_geqo_state()
         return query_plan.as_query_execution_plan()
 
-    def analyze_plan(self, query: qal.SqlQuery) -> db.QueryExecutionPlan:
+    def analyze_plan(self, query: qal.SqlQuery) -> QueryExecutionPlan:
         self._pg_instance._current_geqo_state = self._pg_instance._obtain_geqo_state()
         query, deactivated_geqo = self._pg_instance._prepare_query_execution(transform.as_explain_analyze(query))
         self._pg_instance.cursor().execute(query)
@@ -2152,7 +2164,7 @@ def connect(*, name: str = "postgres", connect_string: str | None = None,
     .. Psyopg v3: https://www.psycopg.org/psycopg3/ This is used internally by the Postgres interface to interact with the
        database
     """
-    db_pool = db.DatabasePool.get_instance()
+    db_pool = DatabasePool.get_instance()
     if name in db_pool and not refresh:
         return db_pool.retrieve_database(name)
 
@@ -2199,12 +2211,12 @@ def _parallel_query_initializer(connect_string: str, local_data: threading.local
     .. Psyopg v3: https://www.psycopg.org/psycopg3/ This is used internally by the Postgres interface to interact with the
        database
     """
-    log = logging.make_logger(verbose)
+    log = util.make_logger(verbose)
     tid = threading.get_ident()
     connection = psycopg.connect(connect_string, application_name=f"PostBOUND parallel worker ID {tid}")
     connection.autocommit = True
     local_data.connection = connection
-    log(f"[worker id={tid}, ts={logging.timestamp()}] Connected")
+    log(f"[worker id={tid}, ts={util.timestamp()}] Connected")
 
 
 def _parallel_query_worker(query: str | qal.SqlQuery, local_data: threading.local,
@@ -2232,20 +2244,20 @@ def _parallel_query_worker(query: str | qal.SqlQuery, local_data: threading.loca
         simplification process. This method applies the same rules. The query is also provided to distinguish the different
         result sets that arrive in parallel.
     """
-    log = logging.make_logger(verbose)
+    log = util.make_logger(verbose)
     connection: psycopg.connection.Connection = local_data.connection
     connection.rollback()
     cursor = connection.cursor()
     if timeout:
         cursor.execute(f"SET statement_timeout = '{timeout}s';")
 
-    log(f"[worker id={threading.get_ident()}, ts={logging.timestamp()}] Now executing query {query}")
+    log(f"[worker id={threading.get_ident()}, ts={util.timestamp()}] Now executing query {query}")
     try:
         cursor.execute(str(query))
-        log(f"[worker id={threading.get_ident()}, ts={logging.timestamp()}] Executed query {query}")
+        log(f"[worker id={threading.get_ident()}, ts={util.timestamp()}] Executed query {query}")
     except psycopg.errors.QueryCanceled as e:
         if "canceling statement due to statement timeout" in e.args:
-            log(f"[worker id={threading.get_ident()}, ts={logging.timestamp()}] Query {query} timed out")
+            log(f"[worker id={threading.get_ident()}, ts={util.timestamp()}] Query {query} timed out")
             return query, None
         else:
             raise e
@@ -2400,7 +2412,7 @@ class TimeoutQueryExecutor:
     """
     def __init__(self, postgres_instance: Optional[PostgresInterface] = None) -> None:
         self._pg_instance = (postgres_instance if postgres_instance is not None
-                             else db.DatabasePool.get_instance().current_database())
+                             else DatabasePool.get_instance().current_database())
 
     def execute_query(self, query: qal.SqlQuery | str, timeout: float) -> Any:
         """Runs a query on the database connection, cancelling if it takes longer than a specific timeout.
@@ -2679,7 +2691,7 @@ class PostgresExplainNode:
         alias = self.relation_alias if self.relation_alias is not None and self.relation_alias != self.relation_name else ""
         return base.TableReference(self.relation_name, alias)
 
-    def as_query_execution_plan(self) -> db.QueryExecutionPlan:
+    def as_query_execution_plan(self) -> QueryExecutionPlan:
         """Transforms the postgres-specific plan to a standardized `QueryExecutionPlan` instance.
 
         Notice that this transformation is lossy since not all information from the Postgres plan can be represented in query
@@ -2737,13 +2749,13 @@ class PostgresExplainNode:
         else:
             operator = None
 
-        return db.QueryExecutionPlan(self.node_type, is_join=is_join, is_scan=is_scan, table=table,
-                                     children=child_nodes, parallel_workers=par_workers,
-                                     cost=self.cost, estimated_cardinality=self.cardinality_estimate,
-                                     true_cardinality=true_card, execution_time=self.execution_time,
-                                     cached_pages=self.shared_blocks_cached, scanned_pages=self.shared_blocks_read,
-                                     physical_operator=operator, inner_child=inner_child,
-                                     subplan_input=subplan_child, subplan_name=subplan_name)
+        return QueryExecutionPlan(self.node_type, is_join=is_join, is_scan=is_scan, table=table,
+                                  children=child_nodes, parallel_workers=par_workers,
+                                  cost=self.cost, estimated_cardinality=self.cardinality_estimate,
+                                  true_cardinality=true_card, execution_time=self.execution_time,
+                                  cached_pages=self.shared_blocks_cached, scanned_pages=self.shared_blocks_read,
+                                  physical_operator=operator, inner_child=inner_child,
+                                  subplan_input=subplan_child, subplan_name=subplan_name)
 
     def inspect(self, *, _indentation: int = 0) -> str:
         """Provides a pretty string representation of the ``EXPLAIN`` sub-plan that can be printed.
@@ -2844,7 +2856,7 @@ class PostgresExplainPlan:
         """
         return self.query_plan.is_analyze()
 
-    def as_query_execution_plan(self) -> db.QueryExecutionPlan:
+    def as_query_execution_plan(self) -> QueryExecutionPlan:
         """Provides the actual explain plan as a normalized query execution plan instance
 
         For notes on pecularities of this method, take a look at the *See Also* section
@@ -3270,5 +3282,5 @@ class WorkloadShifter:
         total_n_rows = self.pg_instance.statistics().total_rows(base.TableReference(table),
                                                                 cache_enabled=False, emulated=True)
         if total_n_rows is None:
-            raise errors.StateError("Could not determine total number of rows for table " + table)
+            raise StateError("Could not determine total number of rows for table " + table)
         return round(row_pct * total_n_rows)

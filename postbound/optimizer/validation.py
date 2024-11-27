@@ -13,9 +13,8 @@ from dataclasses import dataclass
 
 import networkx as nx
 
-from postbound.db import db
 from postbound.qal import qal, expressions, predicates
-from postbound.util import collections as collection_utils, errors
+from .. import db, util
 
 ImplicitFromClauseFailure = "NO_IMPLICIT_FROM_CLAUSE"
 EquiJoinFailure = "NON_EQUI_JOIN"
@@ -70,7 +69,7 @@ class PreCheckResult:
 
         Raises
         ------
-        errors.StateError
+        util.StateError
             In case of failure if there is no additional context available
         UnsupportedQueryError
             In case of failure if the context is an SQL query
@@ -80,7 +79,7 @@ class PreCheckResult:
         if self.passed:
             return
         if context is None:
-            raise errors.StateError(f"Pre check failed {self._generate_failure_str()}")
+            raise util.StateError(f"Pre check failed {self._generate_failure_str()}")
         elif isinstance(context, qal.SqlQuery):
             raise UnsupportedQueryError(context, self.failure_reason)
         elif isinstance(context, db.Database):
@@ -200,14 +199,14 @@ class CompoundCheck(OptimizationPreCheck):
 
     def __init__(self, checks: Iterable[OptimizationPreCheck]) -> None:
         super().__init__("compound-check")
-        checks = collection_utils.flatten([check.checks if isinstance(check, CompoundCheck) else [check]
-                                           for check in checks if not isinstance(check, EmptyPreCheck)])
+        checks = util.flatten([check.checks if isinstance(check, CompoundCheck) else [check]
+                               for check in checks if not isinstance(check, EmptyPreCheck)])
         self.checks = [check for check in checks if not isinstance(check, EmptyPreCheck)]
 
     def check_supported_query(self, query: qal.SqlQuery) -> PreCheckResult:
         check_results = [check.check_supported_query(query) for check in self.checks]
         aggregated_passed = all(check_result.passed for check_result in check_results)
-        aggregated_failures = (collection_utils.flatten(check_result.failure_reason for check_result in check_results)
+        aggregated_failures = (util.flatten(check_result.failure_reason for check_result in check_results)
                                if not aggregated_passed else [])
         return PreCheckResult(aggregated_passed, aggregated_failures)
 
@@ -254,12 +253,12 @@ def merge_checks(checks: OptimizationPreCheck | Iterable[OptimizationPreCheck], 
     all_checks = {check for check in all_checks if check}
     compound_checks = [check for check in all_checks if isinstance(check, CompoundCheck)]
     atomic_checks = {check for check in all_checks if not isinstance(check, CompoundCheck)}
-    compound_check_children = collection_utils.set_union(set(check.checks) for check in compound_checks)
+    compound_check_children = util.set_union(set(check.checks) for check in compound_checks)
     merged_checks = atomic_checks | compound_check_children
     merged_checks = {check for check in merged_checks if not isinstance(check, EmptyPreCheck)}
     if not merged_checks:
         return EmptyPreCheck()
-    return CompoundCheck(merged_checks) if len(merged_checks) > 1 else collection_utils.simplify(merged_checks)
+    return CompoundCheck(merged_checks) if len(merged_checks) > 1 else util.simplify(merged_checks)
 
 
 class EmptyPreCheck(OptimizationPreCheck):
@@ -447,7 +446,7 @@ class SupportedHintCheck(OptimizationPreCheck):
 
     def __init__(self, hints: object) -> None:
         super().__init__("database-check")
-        self._features = collection_utils.enlist(hints)
+        self._features = util.enlist(hints)
 
     def check_supported_database_system(self, database_instance: db.Database) -> PreCheckResult:
         failures = [hint for hint in self._features if not database_instance.hinting().supports_hint(hint)]

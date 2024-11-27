@@ -4,7 +4,7 @@ from typing import Optional
 
 from postbound.experiments import workloads
 from postbound.qal import qal
-from postbound.optimizer import jointree, physops, stages
+from .. import jointree, physops, stages
 
 
 def hints_to_operators(hints) -> physops.PhysicalOperatorAssignment:

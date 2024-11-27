@@ -6,11 +6,11 @@ from __future__ import annotations
 
 from typing import Literal, Optional, Protocol
 
-from postbound.db import db
 from postbound.qal import parser
-from postbound.optimizer import stages, validation
-from postbound.optimizer.policies import cardinalities
-from postbound.optimizer.strategies import ues, native
+from . import stages, validation
+from .policies import cardinalities
+from .strategies import ues, native
+from .. import db
 
 
 def apply_standard_system_options(database: Optional[db.Database] = None) -> None:

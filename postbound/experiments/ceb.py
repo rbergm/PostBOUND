@@ -25,8 +25,7 @@ import numpy as np
 import tomli
 
 from .workloads import Workload
-from ..db import postgres
-from ..db.db import Database
+from ..db import Database, postgres
 from ..qal import parser, formatter
 from ..qal.base import ColumnReference, TableReference
 from ..qal.qal import SqlQuery

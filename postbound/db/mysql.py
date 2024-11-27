@@ -38,11 +38,21 @@ from typing import Any, Optional
 
 import mysql.connector
 
-from postbound.db import db
-from postbound.db.db import QueryExecutionPlan
 from postbound.qal import qal, base, expressions as expr, clauses, transform, formatter
 from postbound.optimizer import jointree, physops, planparams
-from postbound.util import misc
+from ._db import (
+    Cursor,
+    Database,
+    DatabaseSchema,
+    DatabaseStatistics,
+    QueryExecutionPlan,
+    OptimizerInterface,
+    HintService,
+    DatabasePool,
+    UnsupportedDatabaseFeatureError
+)
+from .. import util
+from ..util import Version
 
 
 @dataclasses.dataclass(frozen=True)
@@ -79,7 +89,7 @@ class MysqlConnectionArguments:
         return dataclasses.asdict(self)
 
 
-class MysqlInterface(db.Database):
+class MysqlInterface(Database):
     """MySQL-specific implementation of the general `Database` interface."""
 
     def __init__(self, connection_args: MysqlConnectionArguments, system_name: str = "MySQL", *,
@@ -110,7 +120,7 @@ class MysqlInterface(db.Database):
     def statistics(self) -> MysqlStatisticsInterface:
         return self._db_stats
 
-    def hinting(self) -> db.HintService:
+    def hinting(self) -> HintService:
         return MysqlHintService(self)
 
     def execute_query(self, query: qal.SqlQuery | str, *, cache_enabled: Optional[bool] = None, raw: bool = False) -> Any:
@@ -138,7 +148,7 @@ class MysqlInterface(db.Database):
             query_result = [row[0] for row in query_result]  # if it is just one column, unwrap it
         return query_result if len(query_result) > 1 else query_result[0]  # if it is just one row, unwrap it
 
-    def optimizer(self) -> db.OptimizerInterface:
+    def optimizer(self) -> OptimizerInterface:
         return MysqlOptimizer(self)
 
     def database_name(self) -> str:
@@ -146,10 +156,10 @@ class MysqlInterface(db.Database):
         db_name = self._cur.fetchone()[0]
         return db_name
 
-    def database_system_version(self) -> misc.Version:
+    def database_system_version(self) -> Version:
         self._cur.execute("SELECT VERSION();")
         version = self._cur.fetchone()[0]
-        return misc.Version(version)
+        return Version(version)
 
     def server_mode(self) -> str:
         """Provides the current settings in the ``sql_mode`` MySQL variable.
@@ -183,7 +193,7 @@ class MysqlInterface(db.Database):
         self._cnx.cmd_reset_connection()
         self._cur = self._cnx.cursor()
 
-    def cursor(self) -> db.Cursor:
+    def cursor(self) -> Cursor:
         return self._cur
 
     def close(self) -> None:
@@ -215,7 +225,7 @@ class MysqlInterface(db.Database):
         return json.loads(result)
 
 
-class MysqlSchemaInterface(db.DatabaseSchema):
+class MysqlSchemaInterface(DatabaseSchema):
     def __init__(self, mysql_db: MysqlInterface):
         super().__init__(mysql_db)
 
@@ -280,7 +290,7 @@ class MysqlSchemaInterface(db.DatabaseSchema):
         return index_map
 
 
-class MysqlStatisticsInterface(db.DatabaseStatistics):
+class MysqlStatisticsInterface(DatabaseStatistics):
     def __init__(self, mysql_db: MysqlInterface):
         super().__init__(mysql_db)
 
@@ -304,13 +314,13 @@ class MysqlStatisticsInterface(db.DatabaseStatistics):
 
     def _retrieve_min_max_values_from_stats(self, column: base.ColumnReference) -> Optional[tuple[Any, Any]]:
         if not self.enable_emulation_fallback:
-            raise db.UnsupportedDatabaseFeatureError(self._db, "min/max value statistics")
+            raise UnsupportedDatabaseFeatureError(self._db, "min/max value statistics")
         return self._calculate_min_max_values(column, cache_enabled=True)
 
     def _retrieve_most_common_values_from_stats(self, column: base.ColumnReference,
                                                 k: int) -> Sequence[tuple[Any, int]]:
         if not self.enable_emulation_fallback:
-            raise db.UnsupportedDatabaseFeatureError(self._db, "most common values statistics")
+            raise UnsupportedDatabaseFeatureError(self._db, "most common values statistics")
         return self._calculate_most_common_values(column, k=k, cache_enabled=True)
 
 
@@ -446,7 +456,7 @@ def _obtain_plan_parameters(join_order: Optional[jointree.LogicalJoinTree | join
     return join_order.plan_parameters().merge_with(plan_parameters)
 
 
-class MysqlHintService(db.HintService):
+class MysqlHintService(HintService):
     def __init__(self, mysql_instance: MysqlInterface) -> None:
         super().__init__()
         self._mysql_instance = mysql_instance
@@ -456,8 +466,8 @@ class MysqlHintService(db.HintService):
                        physical_operators: Optional[physops.PhysicalOperatorAssignment] = None,
                        plan_parameters: Optional[planparams.PlanParameterization] = None) -> qal.SqlQuery:
         if join_order and not join_order.is_linear():
-            raise db.UnsupportedDatabaseFeatureError(self._mysql_instance,
-                                                     "Can only enforce join order for linear join trees for now")
+            raise UnsupportedDatabaseFeatureError(self._mysql_instance,
+                                                  "Can only enforce join order for linear join trees for now")
 
         join_order_hint = _generate_join_order_hint(join_order)
         physical_operators = _obtain_physical_operators(join_order, physical_operators)
@@ -488,7 +498,7 @@ class MysqlHintService(db.HintService):
         return hint in MysqlJoinHints | MysqlScanHints | MysqlPlanHints
 
 
-class MysqlOptimizer(db.OptimizerInterface):
+class MysqlOptimizer(OptimizerInterface):
     def __init__(self, mysql_instance: MysqlInterface) -> None:
         self._mysql_instance = mysql_instance
 
@@ -530,14 +540,14 @@ def _parse_mysql_connection(config_file: str) -> MysqlConnectionArguments:
     for key in ["Password", "Host", "Port", "UseUnicode", "Charset", "AutoCommit", "SqlMode"]:
         if key not in mysql_config:
             continue
-        optional_settings[misc.camel_case2snake_case(key)] = mysql_config[key]
+        optional_settings[util.camel_case2snake_case(key)] = mysql_config[key]
     return MysqlConnectionArguments(user, database, **optional_settings)
 
 
 def connect(*, name: str = "mysql", connection_args: Optional[MysqlConnectionArguments] = None,
             config_file: str = ".mysql_connection.config",
             cache_enabled: Optional[bool] = None, private: bool = False) -> MysqlInterface:
-    db_pool = db.DatabasePool.get_instance()
+    db_pool = DatabasePool.get_instance()
     if config_file and not connection_args:
         if not os.path.exists(config_file):
             raise ValueError("Config file was given, but does not exist: " + config_file)
@@ -811,7 +821,7 @@ _MysqlExplainJoinNodes = {
 }
 
 
-def _node_sequence_to_qep(nodes: Sequence[MysqlExplainNode]) -> db.QueryExecutionPlan:
+def _node_sequence_to_qep(nodes: Sequence[MysqlExplainNode]) -> QueryExecutionPlan:
     assert nodes
     if len(nodes) == 1:
         return nodes[0]._make_qep_node_for_scan()
@@ -821,11 +831,11 @@ def _node_sequence_to_qep(nodes: Sequence[MysqlExplainNode]) -> db.QueryExecutio
         final_qep = final_table._make_qep_node_for_scan()
         first_qep = first_table._make_qep_node_for_scan()
         join_operator = _MysqlExplainJoinNodes.get(final_table.join_type, physops.JoinOperators.NestedLoopJoin)
-        join_node = db.QueryExecutionPlan(final_table.join_type, True, False,
-                                          children=[final_qep, first_qep], inner_child=final_qep,
-                                          cost=final_table.join_cost,
-                                          estimated_cardinality=final_table.join_cardinality_estimate,
-                                          physical_operator=join_operator)
+        join_node = QueryExecutionPlan(final_table.join_type, True, False,
+                                       children=[final_qep, first_qep], inner_child=final_qep,
+                                       cost=final_table.join_cost,
+                                       estimated_cardinality=final_table.join_cardinality_estimate,
+                                       physical_operator=join_operator)
         return join_node
 
     if len(nodes) > 2:
@@ -834,11 +844,11 @@ def _node_sequence_to_qep(nodes: Sequence[MysqlExplainNode]) -> db.QueryExecutio
         final_qep = final_table._make_qep_node_for_scan()
 
         join_operator = _MysqlExplainJoinNodes.get(final_table.join_type, physops.JoinOperators.NestedLoopJoin)
-        join_node = db.QueryExecutionPlan(final_table.join_type, True, False,
-                                          children=[final_qep, former_qep], inner_child=final_qep,
-                                          cost=final_table.join_cost,
-                                          estimated_cardinality=final_table.join_cardinality_estimate,
-                                          physical_operator=join_operator)
+        join_node = QueryExecutionPlan(final_table.join_type, True, False,
+                                       children=[final_qep, former_qep], inner_child=final_qep,
+                                       cost=final_table.join_cost,
+                                       estimated_cardinality=final_table.join_cardinality_estimate,
+                                       physical_operator=join_operator)
         return join_node
 
 
@@ -860,11 +870,11 @@ class MysqlExplainNode:
         self.join_cardinality_estimate = join_cardinality_estimate
         self.subquery = subquery_node
 
-    def as_query_execution_plan(self) -> db.QueryExecutionPlan:
+    def as_query_execution_plan(self) -> QueryExecutionPlan:
         if self.node_type is not None:
             subquery_plan = [self.subquery.as_query_execution_plan()] if self.subquery is not None else []
-            own_node = db.QueryExecutionPlan(self.node_type, False, False, table=self.table, children=subquery_plan,
-                                             cost=self.join_cost, estimated_cardinality=self.join_cardinality_estimate)
+            own_node = QueryExecutionPlan(self.node_type, False, False, table=self.table, children=subquery_plan,
+                                          cost=self.join_cost, estimated_cardinality=self.join_cardinality_estimate)
             return own_node
 
         if not self.next_node:
@@ -892,10 +902,10 @@ class MysqlExplainNode:
             return [self]
         return self.next_node._collect_node_sequence() + [self]
 
-    def _make_qep_node_for_scan(self) -> db.QueryExecutionPlan:
-        return db.QueryExecutionPlan(self.scan_type, False, True, table=self.table, cost=self.scan_cost,
-                                     estimated_cardinality=self.scan_cardinality_estimate,
-                                     physical_operator=_MysqlExplainScanNodes.get(self.scan_type))
+    def _make_qep_node_for_scan(self) -> QueryExecutionPlan:
+        return QueryExecutionPlan(self.scan_type, False, True, table=self.table, cost=self.scan_cost,
+                                  estimated_cardinality=self.scan_cardinality_estimate,
+                                  physical_operator=_MysqlExplainScanNodes.get(self.scan_type))
 
     def _join_str(self) -> str:
         if self.node_type is not None:
@@ -936,7 +946,7 @@ class MysqlExplainPlan:
         self.root = root
         self.total_cost = total_cost
 
-    def as_query_execution_plan(self) -> db.QueryExecutionPlan:
+    def as_query_execution_plan(self) -> QueryExecutionPlan:
         return self.root.as_query_execution_plan()
 
     def inspect(self) -> str:

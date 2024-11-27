@@ -10,10 +10,10 @@ from __future__ import annotations
 import abc
 from typing import Optional
 
-from postbound.db import db
 from postbound.qal import base, qal
-from postbound.optimizer import jointree, physops, planparams, validation
-from postbound.util.jsonize import jsondict
+from . import jointree, physops, planparams, validation
+from .. import db
+from ..util.jsonize import jsondict
 
 
 class CompleteOptimizationAlgorithm(abc.ABC):

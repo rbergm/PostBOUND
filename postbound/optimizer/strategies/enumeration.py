@@ -11,10 +11,10 @@ from typing import Literal, Optional
 
 import networkx as nx
 
-from postbound.db import db
 from postbound.qal import base, qal
-from postbound.optimizer import jointree, physops
-from postbound.util import networkx as nx_utils
+from .. import jointree, physops
+from ... import db
+from ...util import networkx as nx_utils
 
 
 def _merge_nodes(query: qal.SqlQuery, start: jointree.LogicalJoinTree | base.TableReference,

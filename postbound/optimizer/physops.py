@@ -8,7 +8,7 @@ from collections.abc import Collection
 from typing import Iterable
 
 from postbound.qal import base, parser
-from postbound.util import dicts as dict_utils, jsonize
+from .. import util
 
 
 class ScanOperators(enum.Enum):
@@ -47,7 +47,7 @@ class JoinOperators(enum.Enum):
         return self.value < other.value
 
 
-class ScanOperatorAssignment(jsonize.Jsonizable):
+class ScanOperatorAssignment:
     """Models the selection of a scan operator to a specific base table.
 
     Attributes
@@ -131,7 +131,7 @@ class ScanOperatorAssignment(jsonize.Jsonizable):
         return f"{self.operator.value}({self.table})"
 
 
-class JoinOperatorAssignment(jsonize.Jsonizable):
+class JoinOperatorAssignment:
     """Models the selection of a join operator for a specific join of tables.
 
     Each join is identified by all base tables that are involved in the join. The assignment to intermediate results does not
@@ -606,9 +606,9 @@ class PhysicalOperatorAssignment:
             return None
 
     def __hash__(self) -> int:
-        return hash((dict_utils.hash_dict(self.global_settings),
-                     dict_utils.hash_dict(self.scan_operators),
-                     dict_utils.hash_dict(self.join_operators)))
+        return hash((util.hash_dict(self.global_settings),
+                     util.hash_dict(self.scan_operators),
+                     util.hash_dict(self.join_operators)))
 
     def __eq__(self, other: object) -> bool:
         return (isinstance(other, type(self))

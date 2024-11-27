@@ -15,7 +15,7 @@ from .dicts import (
 from . import dicts
 from .errors import StateError
 from . import errors
-from .jsonize import to_json
+from .jsonize import jsondict, to_json
 from .logging import timestamp, make_logger
 from .misc import camel_case2snake_case, Version, DependencyGraph
 from . import networkx as nx
@@ -25,6 +25,7 @@ from .stats import jaccard
 from . import stats
 from .system import open_files
 from . import system
+from . import typing
 
 __all__ = [
     "flatten",
@@ -38,6 +39,7 @@ __all__ = [
     "dicts",
     "StateError",
     "errors",
+    "jsondict",
     "to_json",
     "timestamp",
     "make_logger",
@@ -50,5 +52,6 @@ __all__ = [
     "jaccard",
     "stats",
     "open_files",
-    "system"
+    "system",
+    "typing"
 ]

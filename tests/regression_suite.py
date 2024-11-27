@@ -5,7 +5,7 @@ import unittest
 
 import psycopg
 
-from postbound.db import db, postgres
+from postbound import db
 
 
 def _rebuild_result_set(result_set: object) -> list[tuple[object]]:
@@ -147,7 +147,7 @@ def skip_if_no_db(config_file):
         The config file that describes the connection to the database. Must be compatible with the postgres.connect()
     """
     try:
-        pg_instance = postgres.connect(config_file=config_file, private=True)
+        pg_instance = db.postgres.connect(config_file=config_file, private=True)
         pg_instance.close()
         return lambda f: f
     except psycopg.OperationalError:

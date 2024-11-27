@@ -18,7 +18,8 @@ from typing import Optional
 import numpy as np
 import pandas as pd
 
-from postbound.db import db, postgres
+from postbound import db
+from postbound.db import postgres
 from postbound.qal import qal, base, transform
 from postbound.experiments import workloads
 from postbound.optimizer import jointree, physops, planparams
@@ -75,7 +76,7 @@ def skip_existing_results(workload: workloads.Workload, *,
 
     if not existing_results:
         return workload
-    skipped_workload = workload.filter_by(lambda l, __: l not in existing_results)
+    skipped_workload = workload.filter_by(lambda label, __: label not in existing_results)
     next_query = skipped_workload.head()
     assert next_query is not None
     logging.info("Skipping existing results until label %s", next_query[0])

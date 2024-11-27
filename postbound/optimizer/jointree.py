@@ -33,11 +33,10 @@ from typing import Generic, Literal, Optional, Union
 import Levenshtein
 
 from postbound.qal import base, predicates, parser, qal
-from postbound.db import db
-from postbound.optimizer import physops, planparams
-from postbound.util import collections as collection_utils, errors, stats
-from postbound.util.jsonize import jsondict
-from postbound.util.typing import Lazy, LazyVal
+from . import physops, planparams
+from .. import db, util
+from ..util import jsondict, StateError
+from ..util.typing import Lazy, LazyVal
 
 
 class BaseMetadata(abc.ABC):
@@ -1850,9 +1849,9 @@ class JoinTree(Container[base.TableReference], Generic[JoinMetadataType, BaseTab
         frozenset[base.ColumnReference]
             The columns that appear in jion predicates.
         """
-        return frozenset(collection_utils.set_union(join_node.annotation.join_predicate.columns() for join_node
-                                                    in self.join_sequence()
-                                                    if join_node.annotation and join_node.annotation.join_predicate))
+        return frozenset(util.set_union(join_node.annotation.join_predicate.columns() for join_node
+                                        in self.join_sequence()
+                                        if join_node.annotation and join_node.annotation.join_predicate))
 
     def join_sequence(self) -> Sequence[IntermediateJoinNode[JoinMetadataType, BaseTableMetadataType]]:
         """Provides all join nodes in the join tree in depth-first order.
@@ -2066,11 +2065,11 @@ class JoinTree(Container[base.TableReference], Generic[JoinMetadataType, BaseTab
 
         Raises
         ------
-        errors.StateError
+        StateError
             If the join tree is empty
         """
         if self.is_empty():
-            raise errors.StateError("Empty join tree")
+            raise StateError("Empty join tree")
 
     def __json__(self) -> object:
         return self._root
@@ -2950,8 +2949,8 @@ def top_down_similarity(a: JoinTree | AbstractJoinTreeNode, b: JoinTree | Abstra
         intermediate_tree = b if leaf_tree == a else a
         assert isinstance(intermediate_tree, IntermediateJoinNode)
 
-        left_score = stats.jaccard(leaf_tree.tables(), intermediate_tree.left_child.tables())
-        right_score = stats.jaccard(leaf_tree.tables(), intermediate_tree.right_child.tables())
+        left_score = util.jaccard(leaf_tree.tables(), intermediate_tree.left_child.tables())
+        right_score = util.jaccard(leaf_tree.tables(), intermediate_tree.right_child.tables())
 
         return normalization_factor * max(left_score, right_score)
 
@@ -2961,10 +2960,10 @@ def top_down_similarity(a: JoinTree | AbstractJoinTreeNode, b: JoinTree | Abstra
     a_left, a_right = a.left_child, a.right_child
     b_left, b_right = b.left_child, b.right_child
 
-    symmetric_score = (stats.jaccard(a_left.tables(), b_left.tables())
-                       + stats.jaccard(a_right.tables(), b_right.tables()))
-    crossover_score = (stats.jaccard(a_left.tables(), b_right.tables())
-                       + stats.jaccard(a_right.tables(), b_left.tables())
+    symmetric_score = (util.jaccard(a_left.tables(), b_left.tables())
+                       + util.jaccard(a_right.tables(), b_right.tables()))
+    crossover_score = (util.jaccard(a_left.tables(), b_right.tables())
+                       + util.jaccard(a_right.tables(), b_left.tables())
                        if symmetric else 0)
     node_score = normalization_factor * max(symmetric_score, crossover_score)
 
@@ -2999,7 +2998,7 @@ def bottom_up_similarity(a: JoinTree, b: JoinTree) -> float:
     """
     a_subtrees = {join.tables() for join in a.join_sequence()}
     b_subtrees = {join.tables() for join in b.join_sequence()}
-    return stats.jaccard(a_subtrees, b_subtrees)
+    return util.jaccard(a_subtrees, b_subtrees)
 
 
 def linearized_levenshtein_distance(a: JoinTree, b: JoinTree) -> int:
@@ -3165,7 +3164,7 @@ class JointreeChangeEntry:
                 return (f"Different cost estimates on node {self.context}: "
                         f"left={self.left_state} right={self.right_state}")
             case _:
-                raise errors.StateError(f"Unknown change type '{self.change_type}'")
+                raise StateError(f"Unknown change type '{self.change_type}'")
 
 
 @dataclasses.dataclass

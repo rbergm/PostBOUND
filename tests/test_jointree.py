@@ -6,7 +6,7 @@ import textwrap
 
 import unittest
 
-from postbound.db import db, postgres
+from postbound import db
 from postbound.qal import base, parser
 from postbound.optimizer import jointree, physops
 
@@ -40,7 +40,7 @@ class JoinTreeLoadingTests(unittest.TestCase):
 
     @regression_suite.skip_if_no_db(imdb_config_file)
     def test_load_from_explain(self) -> None:
-        pg_db = postgres.connect(config_file=imdb_config_file)
+        pg_db = db.postgres.connect(config_file=imdb_config_file)
 
         query = parser.parse_query(textwrap.dedent("""SELECT *
                                                    FROM title t

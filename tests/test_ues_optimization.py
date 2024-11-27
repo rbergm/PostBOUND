@@ -12,7 +12,8 @@ import os
 import unittest
 
 import postbound as pb
-from postbound.db import db, postgres
+from postbound import db
+from postbound.db import postgres
 from postbound.qal import parser, transform
 from postbound.experiments import workloads
 from postbound.optimizer import presets, validation
