@@ -12,7 +12,7 @@ import pandas as pd
 from postbound.qal import qal, transform
 from postbound.db import postgres
 from postbound.experiments import workloads, analysis
-from postbound.util import collections as collection_utils, jsonize
+from postbound import util
 
 workloads.workloads_base_dir = "../workloads"
 
@@ -33,7 +33,7 @@ def iter_intermediates(workload: workloads.Workload) -> Generator[QueryIntermedi
 
         tables = query.tables()
         query_predicates = query.predicates()
-        candidate_joins = collection_utils.powerset(tables)
+        candidate_joins = util.collections.powerset(tables)
 
         for joined_tables in candidate_joins:
             if not joined_tables:
@@ -96,7 +96,7 @@ def determine_intermediates(benchmark: workloads.Workload[str], *,
             queries.append(query)
             fragments.append(result_fragment)
             labels.append(query_label)
-            fragment_tables.append(jsonize.to_json(list(result_fragment.tables())))
+            fragment_tables.append(util.to_json(list(result_fragment.tables())))
             cardinalities.append(cardinality)
 
     result_df = pd.DataFrame({"label": labels, "query": queries,

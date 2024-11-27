@@ -17,7 +17,7 @@ from postbound.qal import qal, transform
 from postbound.db import db, postgres
 from postbound.experiments import workloads
 from postbound.optimizer import stages, jointree, physops, planparams
-from postbound.util import collections as collection_utils
+from postbound import util
 
 warnings.simplefilter("ignore")
 
@@ -47,7 +47,7 @@ class JitteringCardinalityEstimator(stages.ParameterGeneration):
         # In our case, the easiest way to do so is to construct the powerset of all tables in the query. This spans all
         # possible intermediate results.
 
-        for join in collection_utils.powerset(query.tables()):
+        for join in util.collections.powerset(query.tables()):
             if not join:
                 # skip the empty set
                 continue

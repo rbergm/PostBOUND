@@ -4,7 +4,7 @@ from __future__ import annotations
 import os
 from typing import Optional
 
-from postbound.util import proc
+from . import proc
 
 
 def open_files(pid: Optional[int] = None) -> list[str]:

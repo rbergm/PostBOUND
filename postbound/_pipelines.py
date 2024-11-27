@@ -14,7 +14,7 @@ from .optimizer.jointree import PhysicalQueryPlan
 from .optimizer import presets, stages, validation
 from .optimizer.strategies import noopt
 from .db import db
-from .util import errors
+from .util import StateError
 
 
 class OptimizationPipeline(abc.ABC):
@@ -225,7 +225,7 @@ class IntegratedOptimizationPipeline(OptimizationPipeline):
 
     def query_execution_plan(self, query: SqlQuery) -> PhysicalQueryPlan:
         if self.optimization_algorithm is None:
-            raise errors.StateError("No algorithm has been selected")
+            raise StateError("No algorithm has been selected")
 
         pre_check = self.optimization_algorithm.pre_check()
         if pre_check is not None:
@@ -343,11 +343,11 @@ class TextBookOptimizationPipeline(OptimizationPipeline):
             If any of the selected optimization stages is not compatible with the `target_db`.
         """
         if self._card_est is None:
-            raise errors.StateError("Missing cardinality estimator")
+            raise StateError("Missing cardinality estimator")
         if self._cost_model is None:
-            raise errors.StateError("Missing cost model")
+            raise StateError("Missing cost model")
         if self._plan_enumerator is None:
-            raise errors.StateError("Missing plan enumerator")
+            raise StateError("Missing plan enumerator")
 
         self._support_check = validation.merge_checks([self._card_est.pre_check(),
                                                        self._cost_model.pre_check(),
@@ -359,7 +359,7 @@ class TextBookOptimizationPipeline(OptimizationPipeline):
 
     def query_execution_plan(self, query: SqlQuery) -> PhysicalQueryPlan:
         if not self._build:
-            raise errors.StateError("Pipeline has not been build")
+            raise StateError("Pipeline has not been build")
         self._support_check.check_supported_query(query).ensure_all_passed(query)
 
         return self._plan_enumerator.generate_execution_plan(query, cardinality_estimator=self._card_est,
@@ -685,7 +685,7 @@ class TwoStageOptimizationPipeline(OptimizationPipeline):
     def _assert_is_build(self) -> None:
         """Raises an error if the pipeline has not been build yet."""
         if not self._build:
-            raise errors.StateError("Pipeline has not been build")
+            raise StateError("Pipeline has not been build")
 
     def __repr__(self) -> str:
         return str(self)

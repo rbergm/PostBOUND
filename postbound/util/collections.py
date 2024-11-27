@@ -6,7 +6,7 @@ import typing
 from collections.abc import Callable, Collection, Container, Generator, Iterator, Iterable, Sequence, Sized
 from typing import Any, Optional
 
-from postbound.util import dicts as dict_utils
+from .dicts import HashableDict
 
 T = typing.TypeVar("T")
 """The type parameter that is used for all generics in this module."""
@@ -253,7 +253,7 @@ def make_hashable(obj: Any) -> Any:
     elif isinstance(obj, list) or isinstance(obj, tuple):
         return tuple(make_hashable(elem) for elem in obj)
     elif isinstance(obj, dict):
-        return dict_utils.HashableDict({k: make_hashable(v) for k, v in obj.items()})
+        return HashableDict({k: make_hashable(v) for k, v in obj.items()})
     else:
         return obj
 

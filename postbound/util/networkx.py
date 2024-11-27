@@ -17,7 +17,7 @@ from typing import Optional
 
 import networkx as nx
 
-from postbound.util import collections as collection_utils
+from .collections import Queue
 
 NodeType = typing.TypeVar("NodeType")
 """Generic type to model the specific nodes contained in a NetworkX graph."""
@@ -150,7 +150,7 @@ def nx_bfs_tree(graph: nx.Graph, start_node: NodeType,
     .. NetworkX documentation on usage and definition of edge data:
        https://networkx.org/documentation/stable/reference/introduction.html#nodes-and-edges
     """
-    shell_nodes = collection_utils.Queue([(node, edge) for node, edge in graph.adj[start_node].items()])
+    shell_nodes = Queue([(node, edge) for node, edge in graph.adj[start_node].items()])
     visited_nodes = {start_node}
     while shell_nodes:
         current_node, current_edge = shell_nodes.pop()
