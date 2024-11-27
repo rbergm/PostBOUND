@@ -480,7 +480,17 @@ class SqlQuery:
         set[base.TableReference]
             All tables that are referenced in the query.
         """
-        return collection_utils.set_union(clause.tables() for clause in self.clauses())
+        relevant_clauses: list[clauses.BaseClause] = [self._select_clause,
+                                                      self._from_clause,
+                                                      self._where_clause, self._groupby_clause, self._having_clause,
+                                                      self._orderby_clause, self._limit_clause]
+
+        tabs = set()
+        tabs |= self.cte_clause.referenced_tables() if self.cte_clause else set()
+        for clause in relevant_clauses:
+            if clause:
+                tabs |= clause.tables()
+        return tabs
 
     def columns(self) -> set[base.ColumnReference]:
         """Provides all columns that are referenced at any point in the query.

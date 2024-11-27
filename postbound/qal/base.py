@@ -17,9 +17,8 @@ class TableReference(jsonize.Jsonizable):
     reference is indeed just a reference and not a 1:1 "representation" since each table can be sourced multiple times
     in a query. Therefore, in addition to the table name, each instance can optionally also contain an alias to
     distinguish between different references to the same table. In case of virtual tables, the full name will usually be empty
-    and only the alias set. An exception are table references that refer to CTEs: the CTE can be referred to using an alias
-    in the FROM clause of the actual query. In this case, the full name is set to the CTE name , the alias to the alias from
-    the FROM clause and the table is still treated as virtual.
+    and only the alias set. An exception are table references that refer to CTEs: their full name is set to the CTE name, the
+    alias to the alias from the FROM clause (if present) and the table is still treated as virtual.
 
     Table references can be sorted lexicographically. All instances should be treated as immutable objects.
 
@@ -43,20 +42,22 @@ class TableReference(jsonize.Jsonizable):
     """
 
     @staticmethod
-    def create_virtual(alias: str) -> TableReference:
+    def create_virtual(alias: str, *, full_name: str = "") -> TableReference:
         """Generates a new virtual table reference with the given alias.
 
         Parameters
         ----------
         alias : str
             The alias of the virtual table. Cannot be ``None``.
+        full_name : str, optional
+            An optional full name for the entire table. This is mostly used to create references to CTE tables.
 
         Returns
         -------
         TableReference
             The virtual table reference
         """
-        return TableReference("", alias, True)
+        return TableReference(full_name, alias, True)
 
     def __init__(self, full_name: str, alias: str = "", virtual: bool = False) -> None:
         if not full_name and not alias:

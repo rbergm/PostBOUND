@@ -356,8 +356,8 @@ class TransformationTests(unittest.TestCase):
         expected_tables = {base.TableReference("R"), base.TableReference("S"),  # WITH clauses
                            base.TableReference("A"), base.TableReference("B"),  # FROM clauses
                            base.TableReference("M"), base.TableReference("N"),  # subquery tables
-                           base.TableReference.create_virtual("cte_a"), base.TableReference.create_virtual("cte_b"),
-                           base.TableReference.create_virtual("sq_m_n")}
+                           base.TableReference.create_virtual("", full_name="cte_a"),  # CTEs
+                           base.TableReference.create_virtual("sq_m_n")}  # subquery aliases
         self.assertEqual(parsed.tables(), expected_tables)
 
 
@@ -428,7 +428,8 @@ class ParserTests(regression_suite.QueryTestCase):
         query = "WITH cte_r AS (SELECT * FROM R) SELECT * FROM cte_r JOIN R ON cte_r.id = R.id"
         parsed = parser.parse_query(query)
         self.assertQueriesEqual(query, parsed, "Did not parse/format CTE query correctly")
-        self.assertTrue(len(parsed.cte_clause.queries) == 1, "Did not recognize CTE correctly")
+        self.assertEqual(len(parsed.cte_clause.queries),  1, "Did not recognize CTE correctly")
+        self.assertEqual(len(parsed.tables()), 2, "Did not resolve tables correctly")
 
     def test_multiple_cte(self) -> None:
         query = "WITH cte_r AS (SELECT * FROM R), cte_s AS (SELECT MIN(S.c) FROM S WHERE S.c < 42) SELECT * FROM cte_r, cte_s"

@@ -590,7 +590,7 @@ def _parse_table_reference(table: str | dict, *,
     alias = "" if not alias else alias
     table = base.TableReference(full_name, alias)
     if cte_tables and full_name in cte_tables:
-        return base.TableReference(cte_tables[full_name], alias, True)
+        return base.TableReference(full_name, alias, True)
     return table
 
 

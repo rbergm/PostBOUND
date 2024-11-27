@@ -14,7 +14,14 @@ Be carefull when updating and check the changelog!
 
 ---
 
-## Version 0.7.0
+## 👷 Version 0.7.1 🚧
+
+### Fixes
+- Fixed CTE names being contained twice in the `tables()` output for `SqlQuery` instances
+
+--
+
+## ➡ Version 0.7.0
 
 ### New features
 - Added novel `TextBookOptimizationPipeline` for cardinality estimation + cost model + plan enumerator-style algorithms

@@ -463,6 +463,11 @@ class CommonTableExpression(BaseClause):
     ValueError
         If `with_queries` does not contain any CTE
 
+    Warnings
+    --------
+    The `tables()` method provides all tables that are referenced as part of the CTEs as well as their aliases.
+    The `referenced_tables()` method does not include the CTE aliases. Likewise, the `aliases()` method provides all the
+    aliases, but not the tables that are referenced within the CTEs.
     """
     def __init__(self, with_queries: Iterable[WithQuery]):
         self._with_queries = tuple(with_queries)
@@ -486,6 +491,26 @@ class CommonTableExpression(BaseClause):
         for cte in self._with_queries:
             all_tables |= cte.tables() | {cte.target_table}
         return all_tables
+
+    def referenced_tables(self) -> set[base.TableReference]:
+        """Provides all tables that are referenced in the CTEs. This does not include the CTE aliases.
+
+        Returns
+        -------
+        set[base.TableReference]
+            The tables.
+        """
+        return collection_utils.set_union(cte.tables() for cte in self._with_queries)
+
+    def aliases(self) -> set[base.TableReference]:
+        """Provides all aliases that are used in the CTEs.
+
+        Returns
+        -------
+        set[base.TableReference]
+            The aliases.
+        """
+        return {cte.target_table for cte in self._with_queries}
 
     def columns(self) -> set[base.ColumnReference]:
         return collection_utils.set_union(with_query.columns() for with_query in self._with_queries)
