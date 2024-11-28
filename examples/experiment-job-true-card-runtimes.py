@@ -38,7 +38,7 @@ def true_cardinalities(label: str) -> planparams.PlanParameterization:
     return plan_params
 
 
-workloads.workloads_base_dir = "../workloads/"
+workloads.workloads_base_dir = "workloads/"
 pg_db = postgres.connect(config_file=".psycopg_connection_job")
 pg_db.cache_enabled = False
 db_config = pg_db.describe()

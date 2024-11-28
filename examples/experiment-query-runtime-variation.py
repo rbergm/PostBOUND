@@ -31,7 +31,7 @@ CancelEvaluation = False
 Interactive = True
 logging_format = "%(asctime)s %(levelname)s %(message)s"
 logging_level = logging.DEBUG
-workloads.workloads_base_dir = "../workloads"
+workloads.workloads_base_dir = "workloads/"
 
 
 @dataclasses.dataclass(frozen=True)

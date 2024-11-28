@@ -8,11 +8,10 @@ from typing import Literal, Optional
 import graphviz as gv
 import networkx as nx
 
-from postbound.db import db
 from postbound.qal import qal, base, transform, relalg
 from postbound.optimizer import joingraph, jointree
 from postbound.vis import trees as tree_viz
-from postbound.util import collections as collection_utils
+from .. import db, util
 
 
 def _join_tree_labels(node: jointree.AbstractJoinTreeNode) -> tuple[str, dict]:
@@ -209,12 +208,12 @@ def _relalg_node_labels(node: relalg.RelNode) -> tuple[str, dict]:
             aggregates: list[str] = []
             for group_columns, agg_func in node.aggregates.items():
                 if len(group_columns) == 1:
-                    group_str = str(collection_utils.simplify(group_columns))
+                    group_str = str(util.simplify(group_columns))
                 else:
                     group_str = "(" + ", ".join(str(c) for c in group_columns) + ")"
 
                 if len(agg_func) == 1:
-                    func_str = str(collection_utils.simplify(agg_func))
+                    func_str = str(util.simplify(agg_func))
                 else:
                     func_str = "(" + ", ".join(str(agg) for agg in agg_func) + ")"
                 aggregates.append(f"{group_str}: {func_str}")
@@ -226,12 +225,12 @@ def _relalg_node_labels(node: relalg.RelNode) -> tuple[str, dict]:
             pretty_mapping: dict[str, str] = {}
             for target_col, expression in node.mapping.items():
                 if len(target_col) == 1:
-                    target_col = collection_utils.simplify(target_col)
+                    target_col = util.simplify(target_col)
                     target_str = str(target_col)
                 else:
                     target_str = "(" + ", ".join(str(t) for t in target_col) + ")"
                 if len(expression) == 1:
-                    expression = collection_utils.simplify(expression)
+                    expression = util.simplify(expression)
                     expr_str = str(expression)
                 else:
                     expr_str = "(" + ", ".join(str(e) for e in expression) + ")"

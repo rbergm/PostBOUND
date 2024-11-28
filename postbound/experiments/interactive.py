@@ -3,9 +3,9 @@ from __future__ import annotations
 import dataclasses
 from typing import Optional
 
-from postbound.db import db
 from postbound.qal import base, qal, transform
 from postbound.optimizer import joingraph, jointree
+from .. import db
 
 
 @dataclasses.dataclass(frozen=True)

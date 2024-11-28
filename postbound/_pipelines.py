@@ -13,7 +13,7 @@ from .qal.qal import SqlQuery
 from .optimizer.jointree import PhysicalQueryPlan
 from .optimizer import presets, stages, validation
 from .optimizer.strategies import noopt
-from .db import db
+from . import db
 from .util import StateError
 
 

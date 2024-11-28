@@ -7,13 +7,13 @@ from typing import Optional
 
 import graphviz as gv
 
-from postbound.db import db
 from postbound.vis import trees as tree_viz
-from postbound.util import collections as collection_utils
+from ..db import QueryExecutionPlan
+from .. import util
 
 
-def _query_plan_labels(node: db.QueryExecutionPlan, *,
-                       annotation_generator: Optional[Callable[[db.QueryExecutionPlan], str]],
+def _query_plan_labels(node: QueryExecutionPlan, *,
+                       annotation_generator: Optional[Callable[[QueryExecutionPlan], str]],
                        _in_subplan: bool = False) -> tuple[str, dict]:
     if node.is_subplan_root and not _in_subplan:
         label, params = _query_plan_labels(node, annotation_generator=annotation_generator, _in_subplan=True)
@@ -35,8 +35,8 @@ def _query_plan_labels(node: db.QueryExecutionPlan, *,
     return label, params
 
 
-def _query_plan_traversal(node: db.QueryExecutionPlan, *,
-                          skip_intermediates: bool = False) -> Sequence[db.QueryExecutionPlan]:
+def _query_plan_traversal(node: QueryExecutionPlan, *,
+                          skip_intermediates: bool = False) -> Sequence[QueryExecutionPlan]:
     children = ()
     if node.subplan_input:
         children = (node.subplan_input,)
@@ -57,16 +57,16 @@ def _query_plan_traversal(node: db.QueryExecutionPlan, *,
     if skip_intermediates:
         skipped = [_query_plan_traversal(child, skip_intermediates=True) if not child.is_scan and not child.is_join
                    else child for child in children]
-        children = collection_utils.flatten(skipped)
+        children = util.flatten(skipped)
     return children
 
 
-def annotate_estimates(node: db.QueryExecutionPlan) -> str:
+def annotate_estimates(node: QueryExecutionPlan) -> str:
     return f"cost={node.cost} cardinality={node.estimated_cardinality}"
 
 
-def plot_query_plan(plan: db.QueryExecutionPlan,
-                    annotation_generator: Optional[Callable[[db.QueryExecutionPlan], str]] = None, *,
+def plot_query_plan(plan: QueryExecutionPlan,
+                    annotation_generator: Optional[Callable[[QueryExecutionPlan], str]] = None, *,
                     skip_intermediates: bool = False, **kwargs) -> gv.Graph:
     if not plan:
         return gv.Graph()
@@ -75,14 +75,14 @@ def plot_query_plan(plan: db.QueryExecutionPlan,
                               **kwargs)
 
 
-def _explain_analyze_annotations(node: db.QueryExecutionPlan) -> str:
+def _explain_analyze_annotations(node: QueryExecutionPlan) -> str:
     card_row = f"[Rows expected={node.estimated_cardinality} actual={node.true_cardinality}]"
     exec_time = round(node.execution_time, 4)
     runtime_row = f"[Exec time={exec_time}s]"
     return card_row + "\n" + runtime_row
 
 
-def plot_analyze_plan(plan: db.QueryExecutionPlan, *, skip_intermediates: bool = False, **kwargs) -> gv.Graph:
+def plot_analyze_plan(plan: QueryExecutionPlan, *, skip_intermediates: bool = False, **kwargs) -> gv.Graph:
     if not plan:
         return gv.Graph()
     return tree_viz.plot_tree(plan,

@@ -14,7 +14,7 @@ from postbound.db import postgres
 from postbound.experiments import workloads, analysis
 from postbound import util
 
-workloads.workloads_base_dir = "../workloads"
+workloads.workloads_base_dir = "workloads/"
 
 
 @dataclass

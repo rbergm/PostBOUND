@@ -38,7 +38,6 @@ from ._db import (
     DatabaseServerError,
     DatabaseUserError
 )
-from . import postgres
 
 __all__ = [
     "Cursor",
@@ -56,6 +55,5 @@ __all__ = [
     "DatabasePool",
     "UnsupportedDatabaseFeatureError",
     "DatabaseServerError",
-    "DatabaseUserError",
-    "postgres"
+    "DatabaseUserError"
 ]

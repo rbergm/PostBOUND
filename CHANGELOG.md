@@ -16,6 +16,9 @@ Be carefull when updating and check the changelog!
 
 ## 👷 Version 0.7.1 🚧
 
+### Updates
+- Moved the `bind_columns` function into the parser modules. `transform` no longer depends on the database layer.
+
 ### Fixes
 - Fixed CTE names being contained twice in the `tables()` output for `SqlQuery` instances
 - Fixed auto discovery of the Postgres hinting backend not working on non-POSIX systems

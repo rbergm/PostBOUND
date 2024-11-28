@@ -8,13 +8,14 @@
 
 import postbound as pb
 from postbound import db
+from postbound.db import postgres
 from postbound.qal import qal, formatter
 from postbound.optimizer import jointree, stages
 from postbound.optimizer.strategies import native
 from postbound.experiments import workloads
 
 # Setup: we optimize queries from the Join Order Benchmark on a Postgres database
-postgres_db = db.postgres.connect()
+postgres_db = postgres.connect()
 job_workload = workloads.job()
 
 # Since obtaining native execution plans is a pretty common use-case, there already is a pre-defined strategy to do this.

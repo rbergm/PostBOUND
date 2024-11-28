@@ -14,7 +14,6 @@ from typing import Optional
 
 from postbound.qal import qal, base, clauses, expressions as expr, predicates as preds
 from postbound.util import collections as collection_utils
-from .. import db
 
 # TODO: at a later point in time, the entire query traversal/modification logic could be refactored to use unified
 # access instead of implementing the same pattern matching and traversal logic all over again
@@ -957,9 +956,9 @@ def replace_predicate(query: qal.ImplicitSqlQuery, predicate_to_replace: preds.A
     return replace_clause(query, [clause for clause in (replaced_where, replaced_having) if clause])
 
 
-def _rename_columns_in_query(query: QueryType,
-                             available_renamings: dict[base.ColumnReference, base.ColumnReference]) -> QueryType:
-    """Handler method to replace specific column references by new references for an entire query.
+def rename_columns_in_query(query: QueryType,
+                            available_renamings: dict[base.ColumnReference, base.ColumnReference]) -> QueryType:
+    """Replaces specific column references by new references for an entire query.
 
     Parameters
     ----------
@@ -1052,7 +1051,7 @@ def rename_columns_in_expression(expression: Optional[expr.SqlExpression],
                              for arg in expression.arguments]
         return expr.FunctionExpression(expression.function, renamed_arguments, distinct=expression.distinct)
     elif isinstance(expression, expr.SubqueryExpression):
-        return expr.SubqueryExpression(_rename_columns_in_query(expression.query, available_renamings))
+        return expr.SubqueryExpression(rename_columns_in_query(expression.query, available_renamings))
     elif isinstance(expression, expr.WindowExpression):
         renamed_function = rename_columns_in_expression(expression.window_function, available_renamings)
         renamed_partition = [rename_columns_in_expression(part, available_renamings) for part in expression.partitioning]
@@ -1169,7 +1168,7 @@ def _rename_columns_in_table_source(table_source: clauses.TableSource,
     if isinstance(table_source, clauses.DirectTableSource):
         return table_source
     elif isinstance(table_source, clauses.SubqueryTableSource):
-        renamed_subquery = _rename_columns_in_query(table_source.query, available_renamings)
+        renamed_subquery = rename_columns_in_query(table_source.query, available_renamings)
         return clauses.SubqueryTableSource(renamed_subquery, table_source.target_name)
     elif isinstance(table_source, clauses.JoinTableSource):
         renamed_source = _rename_columns_in_table_source(table_source.source, available_renamings)
@@ -1211,7 +1210,7 @@ def rename_columns_in_clause(clause: Optional[ClauseType],
     if isinstance(clause, clauses.Hint) or isinstance(clause, clauses.Explain):
         return clause
     if isinstance(clause, clauses.CommonTableExpression):
-        renamed_ctes = [clauses.WithQuery(_rename_columns_in_query(cte.query, available_renamings), cte.target_name)
+        renamed_ctes = [clauses.WithQuery(rename_columns_in_query(cte.query, available_renamings), cte.target_name)
                         for cte in clause.queries]
         return clauses.CommonTableExpression(renamed_ctes)
     if isinstance(clause, clauses.Select):
@@ -1273,91 +1272,4 @@ def rename_table(source_query: QueryType, from_table: base.TableReference, targe
     for column in filter(lambda col: col.table == from_table, source_query.columns()):
         new_column_name = f"{column.table.identifier()}_{column.name}" if prefix_column_names else column.name
         necessary_renamings[column] = base.ColumnReference(new_column_name, target_table)
-    return _rename_columns_in_query(source_query, necessary_renamings)
-
-
-def bind_columns(query: QueryType, *, with_schema: bool = True,
-                 db_schema: Optional[db.DatabaseSchema] = None) -> QueryType:
-    """Determines the tables that each column belongs to and sets the appropriate references.
-
-    This binding of columns to their tables happens in two phases: During the first phase, a *syntactic* binding is performed.
-    This operates on column names of the form ``<alias>.<column name>``, where ``<alias>`` is either an actual alias of a table
-    from the ``FROM`` clause, or the full name of such a table. For all such names, the reference is set up directly.
-    During the second phase, a *schema* binding is performed. This is applied to all columns that could not be bound during the
-    first phase and involves querying the schema catalog of a live database. It determines which of the tables from the
-    ``FROM`` clause contain a column with a name similar to the name of the unbound column and sets up the corresponding table
-    reference. If multiple tables contain a specific column, any of them might be chosen. The second phase is entirely
-    optional and can be skipped altogether. In this case, some columns might end up without a valid table reference, however.
-    This in turn might break some applications.
-
-    Parameters
-    ----------
-    query : QueryType
-        The query whose columns should be bound
-    with_schema : bool, optional
-        Whether the second binding phase based on the schema catalog of a live database should be performed. This is enabled by
-        default
-    db_schema : Optional[db.DatabaseSchema], optional
-        The schema to use for the second binding phase. If `with_schema` is enabled, but this parameter is ``None``, the schema
-        is inferred based on the current database of the `DatabasePool`. This defaults to ``None``.
-
-    Returns
-    -------
-    QueryType
-        The updated query. Notice that some columns might still remain unbound if none of the phases was able to find a table.
-    """
-    if not query.from_clause:
-        return query
-
-    table_alias_map: dict[str, base.TableReference] = {}
-    unbound_tables: set[base.TableReference] = set()
-    pure_virtual_tables: set[base.TableReference] = set()
-    if query.cte_clause:
-        for cte in query.cte_clause.queries:
-            pure_virtual_tables.add(cte.target_table)
-    for table_source in query.from_clause.items:
-        if isinstance(table_source, clauses.SubqueryTableSource):
-            pure_virtual_tables.add(table_source.target_table)
-
-    for table in query.tables():
-        if table in pure_virtual_tables:
-            table_alias_map[table.alias] = table
-
-        if table.full_name and table.alias:
-            table_alias_map[table.full_name] = table
-            table_alias_map[table.alias] = table
-        elif table.full_name:
-            table_alias_map[table.full_name] = table
-        else:
-            unbound_tables.add(table)
-    for table in unbound_tables:
-        if table.alias not in table_alias_map:
-            table_alias_map[table.alias] = table
-
-    unbound_columns: list[base.ColumnReference] = []
-    necessary_renamings: dict[base.ColumnReference, base.ColumnReference] = {}
-    for column in query.columns():
-        if not column.table:
-            unbound_columns.append(column)
-        elif column.table.identifier() in table_alias_map:
-            bound_column = base.ColumnReference(column.name, table_alias_map[column.table.identifier()])
-            necessary_renamings[column] = bound_column
-
-    partially_bound_query = _rename_columns_in_query(query, necessary_renamings)
-    if not with_schema:
-        return partially_bound_query
-
-    db_schema = db_schema if db_schema else db.DatabasePool().get_instance().current_database().schema()
-    candidate_tables = [table for table in query.tables() if table.full_name]
-    unbound_renamings: dict[base.ColumnReference, base.ColumnReference] = {}
-    for column in unbound_columns:
-        try:
-            target_table = db_schema.lookup_column(column, candidate_tables)
-            bound_column = base.ColumnReference(column.name, target_table)
-            unbound_renamings[column] = bound_column
-        except ValueError:
-            # A ValueError is raised if the column is not found in any of the tables. However, this can still be
-            # a valid query, e.g. a dependent subquery. Therefore, we simply ignore this error and leave the column
-            # unbound.
-            pass
-    return _rename_columns_in_query(partially_bound_query, unbound_renamings)
+    return rename_columns_in_query(source_query, necessary_renamings)

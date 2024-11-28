@@ -32,9 +32,10 @@ from typing import Any, Optional
 import mo_sql_parsing as mosp
 
 from postbound.qal import base, qal, clauses, expressions as expr, predicates as preds
-from postbound.qal import transform
-from postbound.db import db
-from postbound.util import collections as collection_utils, dicts as dict_utils
+from . import transform
+from .transform import QueryType
+from .. import util
+from ..db._db import DatabaseSchema, DatabasePool
 
 auto_bind_columns: bool = False
 """Indicates whether the parser should use the database catalog to obtain column bindings."""
@@ -203,7 +204,7 @@ def _parse_mosp_predicate(mosp_data: dict) -> preds.AbstractPredicate:
         other data, yet. However, we never encountered this case during testing. If it can be emitted for a valid
         query, we need to extend our parsing logic.
     """
-    operation = dict_utils.key(mosp_data)
+    operation = util.dicts.key(mosp_data)
 
     # parse compound statements: AND / OR / NOT
     if operation in _MospCompoundOperations and operation != "not":
@@ -270,7 +271,7 @@ def _parse_in_predicate(mosp_data: dict) -> preds.InPredicate:
         # by mosp as {"literal": "foo"} without any lists
         # Therefore we enlist the literal values first, and then construct individual literal clauses for each of them.
         parsed_values = [_parse_mosp_expression({"literal": val})
-                         for val in collection_utils.enlist(values["literal"])]
+                         for val in util.enlist(values["literal"])]
     else:
         parsed_values = [_parse_mosp_expression(values)]
     return preds.InPredicate(parsed_column, parsed_values)
@@ -331,10 +332,10 @@ def _parse_mosp_expression(mosp_data: Any) -> expr.SqlExpression:
     # multiple keys left.
     distinct = mosp_data.pop("distinct") if "distinct" in mosp_data else None  # side effect is intentional!
 
-    operation = dict_utils.key(mosp_data)
+    operation = util.dicts.key(mosp_data)
     if operation == "cast":
         cast_target, cast_type = mosp_data["cast"]
-        return expr.CastExpression(_parse_mosp_expression(cast_target), dict_utils.key(cast_type))
+        return expr.CastExpression(_parse_mosp_expression(cast_target), util.dicts.key(cast_type))
     elif operation in _MospMathematicalOperations:
         parsed_arguments = [_parse_mosp_expression(arg) for arg in mosp_data[operation]]
         first_arg, *remaining_args = parsed_arguments
@@ -1162,8 +1163,95 @@ class _MospQueryParser:
             self._mosp_data = self._mosp_data["explain"]
 
 
+def bind_column_references(query: QueryType, *, with_schema: bool = True,
+                           db_schema: Optional[DatabaseSchema] = None) -> QueryType:
+    """Determines the tables that each column belongs to and sets the appropriate references.
+
+    This binding of columns to their tables happens in two phases: During the first phase, a *syntactic* binding is performed.
+    This operates on column names of the form ``<alias>.<column name>``, where ``<alias>`` is either an actual alias of a table
+    from the ``FROM`` clause, or the full name of such a table. For all such names, the reference is set up directly.
+    During the second phase, a *schema* binding is performed. This is applied to all columns that could not be bound during the
+    first phase and involves querying the schema catalog of a live database. It determines which of the tables from the
+    ``FROM`` clause contain a column with a name similar to the name of the unbound column and sets up the corresponding table
+    reference. If multiple tables contain a specific column, any of them might be chosen. The second phase is entirely
+    optional and can be skipped altogether. In this case, some columns might end up without a valid table reference, however.
+    This in turn might break some applications.
+
+    Parameters
+    ----------
+    query : QueryType
+        The query whose columns should be bound
+    with_schema : bool, optional
+        Whether the second binding phase based on the schema catalog of a live database should be performed. This is enabled by
+        default
+    db_schema : Optional[db.DatabaseSchema], optional
+        The schema to use for the second binding phase. If `with_schema` is enabled, but this parameter is ``None``, the schema
+        is inferred based on the current database of the `DatabasePool`. This defaults to ``None``.
+
+    Returns
+    -------
+    QueryType
+        The updated query. Notice that some columns might still remain unbound if none of the phases was able to find a table.
+    """
+    if not query.from_clause:
+        return query
+
+    table_alias_map: dict[str, base.TableReference] = {}
+    unbound_tables: set[base.TableReference] = set()
+    pure_virtual_tables: set[base.TableReference] = set()
+    if query.cte_clause:
+        for cte in query.cte_clause.queries:
+            pure_virtual_tables.add(cte.target_table)
+    for table_source in query.from_clause.items:
+        if isinstance(table_source, clauses.SubqueryTableSource):
+            pure_virtual_tables.add(table_source.target_table)
+
+    for table in query.tables():
+        if table in pure_virtual_tables:
+            table_alias_map[table.alias] = table
+
+        if table.full_name and table.alias:
+            table_alias_map[table.full_name] = table
+            table_alias_map[table.alias] = table
+        elif table.full_name:
+            table_alias_map[table.full_name] = table
+        else:
+            unbound_tables.add(table)
+    for table in unbound_tables:
+        if table.alias not in table_alias_map:
+            table_alias_map[table.alias] = table
+
+    unbound_columns: list[base.ColumnReference] = []
+    necessary_renamings: dict[base.ColumnReference, base.ColumnReference] = {}
+    for column in query.columns():
+        if not column.table:
+            unbound_columns.append(column)
+        elif column.table.identifier() in table_alias_map:
+            bound_column = base.ColumnReference(column.name, table_alias_map[column.table.identifier()])
+            necessary_renamings[column] = bound_column
+
+    partially_bound_query = transform.rename_columns_in_query(query, necessary_renamings)
+    if not with_schema:
+        return partially_bound_query
+
+    db_schema = db_schema if db_schema else DatabasePool().get_instance().current_database().schema()
+    candidate_tables = [table for table in query.tables() if table.full_name]
+    unbound_renamings: dict[base.ColumnReference, base.ColumnReference] = {}
+    for column in unbound_columns:
+        try:
+            target_table = db_schema.lookup_column(column, candidate_tables)
+            bound_column = base.ColumnReference(column.name, target_table)
+            unbound_renamings[column] = bound_column
+        except ValueError:
+            # A ValueError is raised if the column is not found in any of the tables. However, this can still be
+            # a valid query, e.g. a dependent subquery. Therefore, we simply ignore this error and leave the column
+            # unbound.
+            pass
+    return transform.rename_columns_in_query(partially_bound_query, unbound_renamings)
+
+
 def parse_query(query: str, *, bind_columns: bool | None = None,
-                db_schema: Optional[db.DatabaseSchema] = None, _skip_all_binding: bool = False) -> qal.SqlQuery:
+                db_schema: Optional[DatabaseSchema] = None, _skip_all_binding: bool = False) -> qal.SqlQuery:
     """Parses a query string into a proper `SqlQuery` object.
 
     During parsing, the appropriate type of SQL query (i.e. with implicit, explicit or mixed ``FROM`` clause) will be
@@ -1195,84 +1283,78 @@ def parse_query(query: str, *, bind_columns: bool | None = None,
     """
     bind_columns = bind_columns if bind_columns is not None else auto_bind_columns
     db_schema = (db_schema if db_schema or not bind_columns
-                 else db.DatabasePool.get_instance().current_database().schema())
+                 else DatabasePool.get_instance().current_database().schema())
     mosp_data = mosp.parse(query)
     parsed_query = _MospQueryParser(mosp_data, query).parse_query()
     if _skip_all_binding:
         return parsed_query
-    return transform.bind_columns(parsed_query, with_schema=bind_columns, db_schema=db_schema)
+    return bind_column_references(parsed_query, with_schema=bind_columns, db_schema=db_schema)
 
 
-class JsonParser:
-    """Parser to load different components of QAL objects that have been serialized by the jsonize encoder.
+def load_table_json(json_data: dict) -> Optional[base.TableReference]:
+    """Re-creates a table reference from its JSON encoding.
 
-    See Also
-    ---------
-    jsonize
+    Parameters
+    ----------
+    json_data : dict
+        The encoded table
+
+    Returns
+    -------
+    Optional[base.TableReference]
+        The actual table. If the dictionary is empty or otherwise invalid, *None* is returned.
     """
+    if not json_data:
+        return None
+    return base.TableReference(json_data.get("full_name", ""), json_data.get("alias", ""))
 
-    def load_table(self, json_data: dict) -> Optional[base.TableReference]:
-        """Re-creates a table reference from its JSON encoding.
 
-        Parameters
-        ----------
-        json_data : dict
-            The encoded table
+def load_column_json(json_data: dict) -> Optional[base.ColumnReference]:
+    """Re-creates a column reference from its JSON encoding.
 
-        Returns
-        -------
-        Optional[base.TableReference]
-            The actual table. If the dictionary is empty or otherwise invalid, ``None`` is returned.
-        """
-        if not json_data:
-            return None
-        return base.TableReference(json_data.get("full_name", ""), json_data.get("alias", ""))
+    Parameters
+    ----------
+    json_data : dict
+        The encoded column
 
-    def load_column(self, json_data: dict) -> Optional[base.ColumnReference]:
-        """Re-creates a column reference from its JSON encoding.
+    Returns
+    -------
+    Optional[base.ColumnReference]
+        The actual column. It the dictionary is empty or otherwise invalid, *None* is returned.
+    """
+    if not json_data:
+        return None
+    return base.ColumnReference(json_data.get("column"), load_table_json(json_data.get("table", None)))
 
-        Parameters
-        ----------
-        json_data : dict
-            The encoded column
 
-        Returns
-        -------
-        Optional[base.ColumnReference]
-            The actual column. It the dictionary is empty or otherwise invalid, ``None`` is returned.
-        """
-        if not json_data:
-            return None
-        return base.ColumnReference(json_data.get("column"), self.load_table(json_data.get("table", None)))
+def load_predicate_json(json_data: dict) -> Optional[preds.AbstractPredicate]:
+    """Re-creates an arbitrary predicate from its JSON encoding.
 
-    def load_predicate(self, json_data: dict) -> Optional[preds.AbstractPredicate]:
-        """Re-creates an arbitrary predicate from its JSON encoding.
+    Parameters
+    ----------
+    json_data : dict
+        The encoded predicate
 
-        Parameters
-        ----------
-        json_data : dict
-            The encoded predicate
+    Returns
+    -------
+    Optional[preds.AbstractPredicate]
+        The actual predicate. If the dictionary is empty or *None*, *None* is returned. Notice that in case of
+        malformed data, errors are raised.
 
-        Returns
-        -------
-        Optional[preds.AbstractPredicate]
-            The actual predicate. If the dictionary is empty or ``None``, ``None`` is returned. Notice that in case of
-            malformed data, errors are raised.
-
-        Raises
-        ------
-        KeyError
-            If the encoding does not specify the tables that are referenced in the predicate
-        KeyError
-            If the encoding does not contain the actual predicate
-        """
-        if not json_data:
-            return None
-        tables = [self.load_table(table_data) for table_data in json_data.get("tables", [])]
-        if not tables:
-            raise KeyError("Predicate needs at least one table!")
-        from_clause_str = ", ".join(str(tab) for tab in tables)
-        predicate_str = json_data["predicate"]
-        emulated_query = f"SELECT * FROM {from_clause_str} WHERE {predicate_str}"
-        parsed_query = parse_query(emulated_query)
-        return parsed_query.where_clause.predicate
+    Raises
+    ------
+    KeyError
+        If the encoding does not specify the tables that are referenced in the predicate
+    KeyError
+        If the encoding does not contain the actual predicate
+    """
+    if not json_data:
+        return None
+    tables = [load_table_json(table_data) for table_data in json_data.get("tables", [])]
+    if not tables:
+        raise KeyError("Predicate needs at least one table!")
+    from_clause_str = ", ".join(str(tab) for tab in tables)
+    predicate_str = json_data["predicate"]
+    emulated_query = f"SELECT * FROM {from_clause_str} WHERE {predicate_str}"
+    parsed_query = parse_query(emulated_query)
+    return parsed_query.where_clause.predicate

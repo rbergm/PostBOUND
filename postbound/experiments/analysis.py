@@ -9,11 +9,10 @@ import natsort
 import numpy as np
 import pandas as pd
 
-from postbound.db import db
 from postbound.qal import base, qal, clauses, predicates, expressions, parser, transform
 from postbound.experiments import runner
 from postbound.optimizer import jointree
-from postbound.util import collections as collection_utils, jsonize, stats as num, logging
+from .. import db, util
 
 
 def prepare_export(results_df: pd.DataFrame) -> pd.DataFrame:
@@ -52,9 +51,9 @@ def prepare_export(results_df: pd.DataFrame) -> pd.DataFrame:
         prepared_df[runner.COL_RESULT] = prepared_df[runner.COL_RESULT].apply(json.dumps)
 
     if runner.COL_OPT_SETTINGS in prepared_df:
-        prepared_df[runner.COL_OPT_SETTINGS] = prepared_df[runner.COL_OPT_SETTINGS].apply(jsonize.to_json)
+        prepared_df[runner.COL_OPT_SETTINGS] = prepared_df[runner.COL_OPT_SETTINGS].apply(util.to_json)
     if runner.COL_DB_CONFIG in prepared_df:
-        prepared_df[runner.COL_DB_CONFIG] = prepared_df[runner.COL_DB_CONFIG].apply(jsonize.to_json)
+        prepared_df[runner.COL_DB_CONFIG] = prepared_df[runner.COL_DB_CONFIG].apply(util.to_json)
 
     return prepared_df
 
@@ -116,7 +115,7 @@ def possible_plans_bound(query: qal.SqlQuery, *,
     """
     n_tables = len(query.tables())
 
-    join_orders = num.catalan_number(n_tables)
+    join_orders = util.stats.catalan_number(n_tables)
     joins = (n_tables - 1) * len(join_operators)
     scans = n_tables * len(scan_operators)
 
@@ -212,7 +211,7 @@ def star_query_cardinality(query: qal.SqlQuery, fact_table_pk_column: base.Colum
     and the query has to be rewritten to operate on the views instead.
     It is the user's responsibility to ensure that the query is well-formed in these regards.
     """
-    logger = logging.make_logger(verbose, prefix=logging.timestamp)
+    logger = util.make_logger(verbose, prefix=util.timestamp)
     database = db.DatabasePool().get_instance().current_database() if database is None else database
     fact_table = (fact_table_pk_column.table if fact_table_pk_column.is_bound()
                   else database.schema().lookup_column(fact_table_pk_column, query.tables()))
@@ -235,7 +234,7 @@ def star_query_cardinality(query: qal.SqlQuery, fact_table_pk_column: base.Colum
         if not len(join_partner) == 1:
             raise ValueError("Currently only singular joins are supported")
 
-        partner_table: base.ColumnReference = collection_utils.simplify(join_partner).table
+        partner_table: base.ColumnReference = util.simplify(join_partner).table
         query_fragment = transform.extract_query_fragment(query, [fact_table, partner_table])
         base_query_fragments[join_pred] = transform.as_count_star_query(query_fragment)
 

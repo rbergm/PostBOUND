@@ -12,11 +12,10 @@ import numpy as np
 import pandas as pd
 
 import postbound as pb
-from postbound.db import db
 from postbound.qal import qal, transform, clauses
 from postbound.optimizer import validation
 from postbound.experiments import workloads
-from postbound.util import logging
+from .. import db, util
 
 COL_LABEL = "label"
 COL_QUERY = "query"
@@ -341,7 +340,7 @@ def execute_workload(queries: Iterable[qal.SqlQuery] | workloads.Workload, datab
     execute_query
     """
     queries = _wrap_workload(queries)
-    logger = logging.make_logger(False) if logger is None else logger
+    logger = util.make_logger(False) if logger is None else logger
     results = []
     current_execution_index = 1
     for i in range(workload_repetitions):
@@ -499,7 +498,7 @@ def optimize_and_execute_workload(queries: Iterable[qal.SqlQuery] | workloads.Wo
     execute_workload
     """
     queries = _wrap_workload(queries)
-    logger = logging.make_logger(False) if logger is None else logger
+    logger = util.make_logger(False) if logger is None else logger
     results = []
     current_execution_index = 1
     for i in range(workload_repetitions):

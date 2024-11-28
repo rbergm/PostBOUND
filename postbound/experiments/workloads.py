@@ -46,9 +46,8 @@ from typing import Optional
 import natsort
 import pandas as pd
 
-from postbound.db import db
 from postbound.qal import qal, parser
-from postbound.util import dicts as dict_utils
+from .. import db, util
 
 workloads_base_dir = "workloads"
 """Indicates the PostBOUND directory that contains all natively supported workloads.
@@ -154,7 +153,7 @@ class Workload(collections.UserDict[LabelType, qal.SqlQuery]):
         self._sorted_queries: list[qal.SqlQuery] = []
         self._update_query_order()
 
-        self._label_mapping = dict_utils.invert(self.data)
+        self._label_mapping = util.dicts.invert(self.data)
 
     @property
     def name(self) -> str:
@@ -409,7 +408,7 @@ class Workload(collections.UserDict[LabelType, qal.SqlQuery]):
             return Workload(reduced_workload, name=self._name, root=self._root)
         elif not isinstance(other, Workload):
             raise TypeError("Expected workload or labels to subtract")
-        return Workload(dict_utils.difference(self.data, other.data), name=self._name, root=self._root)
+        return Workload(util.dicts.difference(self.data, other.data), name=self._name, root=self._root)
 
     def __and__(self, other: Workload[LabelType]) -> Workload[LabelType]:
         if not isinstance(other, Workload) and isinstance(other, Iterable):
@@ -418,7 +417,7 @@ class Workload(collections.UserDict[LabelType, qal.SqlQuery]):
             return Workload(reduced_workload, name=self._name, root=self._root)
         elif not isinstance(other, Workload):
             raise TypeError("Expected workload or labels to compute union")
-        return Workload(dict_utils.intersection(self.data, other.data), name=self._name, root=self._root)
+        return Workload(util.dicts.intersection(self.data, other.data), name=self._name, root=self._root)
 
     def __or__(self, other: Workload[LabelType]) -> Workload[LabelType]:
         if not isinstance(other, Workload):
@@ -617,7 +616,7 @@ def generate_workload(queries: Iterable[qal.SqlQuery], *, name: str = "",
     name = name if name else (workload_root.stem if workload_root else "")
     if not labels:
         labels: dict[qal.SqlQuery, int] = {query: idx + 1 for idx, query in enumerate(queries)}
-    workload_contents = dict_utils.invert(labels)
+    workload_contents = util.dicts.invert(labels)
     return Workload(workload_contents, name, workload_root)
 
 

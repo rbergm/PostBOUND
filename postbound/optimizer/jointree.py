@@ -522,10 +522,9 @@ def _read_metadata_json(json_data: dict, base_table: bool, *, include_estimates:
         The parsed metadata object. Whether this is a physical metadata object (i.e. containing information about physical
         operators), or a logical metadata object is inferred from the JSON data.
     """
-    json_parser = parser.JsonParser()
     cardinality: float = json_data.get("cardinality", math.nan) if include_estimates else math.nan
     if base_table:
-        filter_predicate = json_parser.load_predicate(json_data["predicate"]) if "predicate" in json_data else None
+        filter_predicate = parser.load_predicate_json(json_data["predicate"]) if "predicate" in json_data else None
         if "operator" in json_data:
             scan_assignment = physops.read_operator_json(json_data["operator"])
             cost = json_data.get("cost", math.nan) if include_estimates else math.nan
@@ -533,7 +532,7 @@ def _read_metadata_json(json_data: dict, base_table: bool, *, include_estimates:
                                              scan_info=scan_assignment)
         return LogicalBaseTableMetadata(filter_predicate, cardinality=cardinality)
     else:
-        join_predicate = json_parser.load_predicate(json_data["predicate"]) if "predicate" in json_data else None
+        join_predicate = parser.load_predicate_json(json_data["predicate"]) if "predicate" in json_data else None
         if "operator" in json_data:
             join_assignment = physops.read_operator_json(json_data["operator"])
             cost = json_data.get("cost", math.nan) if include_estimates else math.nan

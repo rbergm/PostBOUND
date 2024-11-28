@@ -5,7 +5,7 @@ from postbound.optimizer import jointree
 
 from tests import regression_suite
 
-workloads.workloads_base_dir = "../workloads"
+workloads.workloads_base_dir = "workloads/"
 pg_connect_dir = "."
 
 
