@@ -3,8 +3,8 @@ from __future__ import annotations
 
 from typing import Optional
 
-from postbound.qal import qal
 from .. import jointree, physops, planparams, stages
+from ... import qal
 
 
 class EmptyJoinOrderOptimizer(stages.JoinOrderOptimization):

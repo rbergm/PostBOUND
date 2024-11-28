@@ -18,9 +18,8 @@ from typing import Optional
 import numpy as np
 import pandas as pd
 
-from postbound import db
+from postbound import db, qal
 from postbound.db import postgres
-from postbound.qal import qal, base, transform
 from postbound.experiments import workloads
 from postbound.optimizer import jointree, physops, planparams
 from postbound.optimizer.strategies import enumeration, randomized
@@ -219,9 +218,9 @@ def restrict_to_hash_join(join_order: jointree.JoinTree) -> OperatorSelection:
     return operator_selection, plan_params
 
 
-def parse_tables_list(tables: str) -> set[base.TableReference]:
+def parse_tables_list(tables: str) -> set[qal.TableReference]:
     jsonized = json.loads(tables)
-    return {base.TableReference(tab["full_name"], tab.get("alias")) for tab in jsonized}
+    return {qal.TableReference(tab["full_name"], tab.get("alias")) for tab in jsonized}
 
 
 class TrueCardinalityGenerator:
@@ -272,7 +271,7 @@ def execute_single_query(label: str, query: qal.SqlQuery, join_order: jointree.L
     optimized_query = query_generator.generate_hints(query, join_order=join_order,
                                                      physical_operators=operator_selection,
                                                      plan_parameters=plan_params)
-    optimized_query = transform.as_explain_analyze(optimized_query)
+    optimized_query = qal.transform.as_explain_analyze(optimized_query)
 
     query_timeout = determine_timeout(label, total_query_runtime, n_executed_plans, config=config)
     query_duration_receiver, query_duration_sender = mp.Pipe(False)
@@ -291,7 +290,7 @@ def execute_single_query(label: str, query: qal.SqlQuery, join_order: jointree.L
 
         # We cannot use db.optimizer().query_plan() here, b/c we need to JSON-serialize the raw plan later on. This is
         # currently not supported by the QueryExecutionPlan
-        query_plan = db_instance.execute_query(transform.as_explain(optimized_query), cache_enabled=False)
+        query_plan = db_instance.execute_query(qal.transform.as_explain(optimized_query), cache_enabled=False)
         query_runtime = np.inf
     else:
         query_plan, query_runtime = query_duration_receiver.recv()

@@ -7,8 +7,8 @@ import typing
 from collections.abc import Collection
 from typing import Iterable
 
-from postbound.qal import base, parser
 from .. import util
+from ..qal import parser, TableReference
 
 
 class ScanOperators(enum.Enum):
@@ -54,13 +54,13 @@ class ScanOperatorAssignment:
     -------
     operator : ScanOperators
         The selected operator
-    table : base.TableReference
+    table : TableReference
         The table that is scanned using the operator
     parallel_workers : float | int
         The number of parallel processes that should be used to execute the scan. Can be set to 1 to indicate sequential
         operation. Defaults to NaN to indicate that no choice has been made.
     """
-    def __init__(self, operator: ScanOperators, table: base.TableReference, parallel_workers: float | int = math.nan) -> None:
+    def __init__(self, operator: ScanOperators, table: TableReference, parallel_workers: float | int = math.nan) -> None:
         self._operator = operator
         self._table = table
         self._parallel_workers = parallel_workers
@@ -78,12 +78,12 @@ class ScanOperatorAssignment:
         return self._operator
 
     @property
-    def table(self) -> base.TableReference:
+    def table(self) -> TableReference:
         """Get the table being scanned.
 
         Returns
         -------
-        base.TableReference
+        TableReference
             The table
         """
         return self._table
@@ -145,7 +145,7 @@ class JoinOperatorAssignment:
     ----------
     operator : JoinOperators
         The selected operator
-    join : Collection[base.TableReference]
+    join : Collection[TableReference]
         The base tables that are joined using the operator
     parallel_workers : float | int, optional
         The number of parallel processes that should be used to execute the join. Can be set to 1 to indicate sequential
@@ -157,7 +157,7 @@ class JoinOperatorAssignment:
         If `join` contains less than 2 tables
     """
 
-    def __init__(self, operator: JoinOperators, join: Collection[base.TableReference], *,
+    def __init__(self, operator: JoinOperators, join: Collection[TableReference], *,
                  parallel_workers: float | int = math.nan) -> None:
         if len(join) < 2:
             raise ValueError("At least 2 join tables must be given")
@@ -179,7 +179,7 @@ class JoinOperatorAssignment:
         return self._operator
 
     @property
-    def join(self) -> frozenset[base.TableReference]:
+    def join(self) -> frozenset[TableReference]:
         """Get the tables that are joined together.
 
         For joins of more than 2 base tables this usually means that the join combines an intermediate result with a base table
@@ -190,7 +190,7 @@ class JoinOperatorAssignment:
 
         Returns
         -------
-        frozenset[base.TableReference]
+        frozenset[TableReference]
             The tables that are joined together
         """
         return self._join
@@ -270,9 +270,9 @@ class DirectionalJoinOperatorAssignment(JoinOperatorAssignment):
     ----------
     operator : JoinOperators
         The selected operator
-    inner : Collection[base.TableReference]
+    inner : Collection[TableReference]
         The tables that form the inner relation of the join
-    outer : Collection[base.TableReference]
+    outer : Collection[TableReference]
         The tables that form the outer relation of the join
     parallel_workers : float | int, optional
         The number of parallel processes that should be used to execute the join. Can be set to 1 to indicate sequential
@@ -283,8 +283,8 @@ class DirectionalJoinOperatorAssignment(JoinOperatorAssignment):
     ValueError
         If either `inner` or `outer` is empty.
     """
-    def __init__(self, operator: JoinOperators, inner: Collection[base.TableReference],
-                 outer: Collection[base.TableReference], *, parallel_workers: float | int = math.nan) -> None:
+    def __init__(self, operator: JoinOperators, inner: Collection[TableReference],
+                 outer: Collection[TableReference], *, parallel_workers: float | int = math.nan) -> None:
         if not inner or not outer:
             raise ValueError("Both inner and outer relations must be given")
         self._inner = frozenset(inner)
@@ -292,23 +292,23 @@ class DirectionalJoinOperatorAssignment(JoinOperatorAssignment):
         super().__init__(operator, self._inner | self._outer, parallel_workers=parallel_workers)
 
     @property
-    def inner(self) -> frozenset[base.TableReference]:
+    def inner(self) -> frozenset[TableReference]:
         """Get the inner relation of the join.
 
         Returns
         -------
-        frozenset[base.TableReference]
+        frozenset[TableReference]
             The tables of the inner relation
         """
         return self._inner
 
     @property
-    def outer(self) -> frozenset[base.TableReference]:
+    def outer(self) -> frozenset[TableReference]:
         """Get the outer relation of the join.
 
         Returns
         -------
-        frozenset[base.TableReference]
+        frozenset[TableReference]
             The tables of the outer relation
         """
         return self._outer
@@ -399,11 +399,10 @@ def read_operator_json(json_data: dict | str) -> PhysicalOperator | ScanOperator
         else:
             raise ValueError(f"Unknown physical operator: '{json_data}'")
 
-    json_parser = parser.JsonParser()
     parallel_workers = json_data.get("parallel_workers", math.nan)
 
     if "table" in json_data:
-        parsed_table = json_parser.load_table(json_data["table"])
+        parsed_table = parser.load_table_json(json_data["table"])
         scan_operator = ScanOperators(json_data["operator"])
         return ScanOperatorAssignment(scan_operator, parsed_table, parallel_workers)
     elif "join" not in json_data and not ("inner" in json_data and "outer" in json_data):
@@ -412,11 +411,11 @@ def read_operator_json(json_data: dict | str) -> PhysicalOperator | ScanOperator
     directional = json_data["directional"]
     join_operator = JoinOperators(json_data["operator"])
     if directional:
-        inner = [json_parser.load_table(tab) for tab in json_data["inner"]]
-        outer = [json_parser.load_table(tab) for tab in json_data["outer"]]
+        inner = [parser.load_table_json(tab) for tab in json_data["inner"]]
+        outer = [parser.load_table_json(tab) for tab in json_data["outer"]]
         return DirectionalJoinOperatorAssignment(join_operator, inner, outer, parallel_workers=parallel_workers)
 
-    joined_tables = [json_parser.load_table(tab) for tab in json_data["join"]]
+    joined_tables = [parser.load_table_json(tab) for tab in json_data["join"]]
     return JoinOperatorAssignment(join_operator, joined_tables, parallel_workers=parallel_workers)
 
 
@@ -445,11 +444,11 @@ class PhysicalOperatorAssignment:
     global_settings : dict[ScanOperators | JoinOperators, bool]
         Contains the global settings. Each operator is mapped to whether it is enable for the entire query or not. If an
         operator is not present in the dictionary, the default setting of the database system is used.
-    join_operators : dict[frozenset[base.TableReference], JoinOperatorAssignment]
+    join_operators : dict[frozenset[TableReference], JoinOperatorAssignment]
         Contains the join operators that should be used for individual joins. All joins are identified by the base tables that
         they combine. If a join does not appear in this dictionary, the database system has to choose an appropriate operator
         (perhaps while considering the `global_settings`).
-    scan_operators : dict[base.TableReference, ScanOperatorAssignment]
+    scan_operators : dict[TableReference, ScanOperatorAssignment]
         Contains the scan operators that should be used for individual base table scans. Each scan is identified by the table
         that should be scanned. If a table does not appear in this dictionary, the database system has to choose an appropriate
         operator (perhaps while considering the `global_settings`).
@@ -457,8 +456,8 @@ class PhysicalOperatorAssignment:
 
     def __init__(self) -> None:
         self.global_settings: dict[ScanOperators | JoinOperators, bool] = {}
-        self.join_operators: dict[frozenset[base.TableReference], JoinOperatorAssignment] = {}
-        self.scan_operators: dict[base.TableReference, ScanOperatorAssignment] = {}
+        self.join_operators: dict[frozenset[TableReference], JoinOperatorAssignment] = {}
+        self.scan_operators: dict[TableReference, ScanOperatorAssignment] = {}
 
     def get_globally_enabled_operators(self, include_by_default: bool = True) -> frozenset[PhysicalOperator]:
         """Provides all operators that are enabled globally.
@@ -594,11 +593,11 @@ class PhysicalOperatorAssignment:
     def __bool__(self) -> bool:
         return bool(self.global_settings) or bool(self.join_operators) or bool(self.scan_operators)
 
-    def __getitem__(self, item: base.TableReference | Iterable[base.TableReference] | ScanOperators | JoinOperators
+    def __getitem__(self, item: TableReference | Iterable[TableReference] | ScanOperators | JoinOperators
                     ) -> ScanOperatorAssignment | JoinOperatorAssignment | bool | None:
         if isinstance(item, ScanOperators) or isinstance(item, JoinOperators):
             return self.global_settings.get(item, None)
-        elif isinstance(item, base.TableReference):
+        elif isinstance(item, TableReference):
             return self.scan_operators.get(item, None)
         elif isinstance(item, Iterable):
             return self.join_operators.get(frozenset(item), None)

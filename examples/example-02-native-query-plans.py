@@ -7,9 +7,8 @@
 #
 
 import postbound as pb
-from postbound import db
+from postbound import db, qal
 from postbound.db import postgres
-from postbound.qal import qal, formatter
 from postbound.optimizer import jointree, stages
 from postbound.optimizer.strategies import native
 from postbound.experiments import workloads
@@ -56,10 +55,10 @@ query = job_workload["1a"]
 
 print("Pre-defined strategy:")
 predef_optimization = predef_pipeline.optimize_query(query)
-print(formatter.format_quick(predef_optimization))
+print(qal.format_quick(predef_optimization))
 print("--- --- ---")
 
 print("Custom strategy:")
 custom_optimization = custom_pipeline.optimize_query(query)
-print(formatter.format_quick(custom_optimization))
+print(qal.format_quick(custom_optimization))
 print("--- --- ---")

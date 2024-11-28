@@ -8,10 +8,10 @@ from typing import Literal, Optional
 import graphviz as gv
 import networkx as nx
 
-from postbound.qal import qal, base, transform, relalg
 from postbound.optimizer import joingraph, jointree
-from postbound.vis import trees as tree_viz
-from .. import db, util
+from . import trees as tree_viz
+from .. import db, qal, util
+from ..qal import relalg, TableReference
 
 
 def _join_tree_labels(node: jointree.AbstractJoinTreeNode) -> tuple[str, dict]:
@@ -47,13 +47,13 @@ def plot_join_tree(join_tree: jointree.JoinTree) -> gv.Graph:
     return tree_viz.plot_tree(join_tree.root, _join_tree_labels, _join_tree_traversal)
 
 
-def _fallback_default_join_edge(graph: gv.Digraph, join_table: base.TableReference,
-                                partner_table: base.TableReference) -> None:
+def _fallback_default_join_edge(graph: gv.Digraph, join_table: TableReference,
+                                partner_table: TableReference) -> None:
     graph.edge(str(join_table), str(partner_table), dir="none")
 
 
 def _render_pk_fk_join_edge(graph: gv.Digraph, query: qal.SqlQuery,
-                            join_table: base.TableReference, partner_table: base.TableReference) -> None:
+                            join_table: TableReference, partner_table: TableReference) -> None:
     db_schema = db.DatabasePool.get_instance().current_database().schema()
     join_predicate = query.predicates().joins_between(join_table, partner_table)
     if not join_predicate:
@@ -72,7 +72,7 @@ def _render_pk_fk_join_edge(graph: gv.Digraph, query: qal.SqlQuery,
         _fallback_default_join_edge(graph, join_table, partner_table)
 
 
-def _plot_join_graph_from_query(query: qal.SqlQuery, table_annotations: Optional[Callable[[base.TableReference], str]] = None,
+def _plot_join_graph_from_query(query: qal.SqlQuery, table_annotations: Optional[Callable[[TableReference], str]] = None,
                                 include_pk_fk_joins: bool = False) -> gv.Graph:
     if not query.predicates():
         return gv.Graph()
@@ -91,7 +91,7 @@ def _plot_join_graph_from_query(query: qal.SqlQuery, table_annotations: Optional
 
 
 def _plot_join_graph_directly(join_graph: joingraph.JoinGraph,
-                              table_annotations: Optional[Callable[[base.TableReference], str]] = None) -> gv.Digraph:
+                              table_annotations: Optional[Callable[[TableReference], str]] = None) -> gv.Digraph:
     gv_graph = gv.Digraph()
     for table in join_graph:
         node_color = "black" if join_graph.is_free_table(table) else "blue"
@@ -109,7 +109,7 @@ def _plot_join_graph_directly(join_graph: joingraph.JoinGraph,
 
 
 def plot_join_graph(query_or_join_graph: qal.SqlQuery | joingraph.JoinGraph,
-                    table_annotations: Optional[Callable[[base.TableReference], str]] = None, *,
+                    table_annotations: Optional[Callable[[TableReference], str]] = None, *,
                     include_pk_fk_joins: bool = False, out_path: str = "", out_format: str = "svg") -> gv.Graph | gv.Digraph:
     if isinstance(query_or_join_graph, qal.SqlQuery):
         graph = _plot_join_graph_from_query(query_or_join_graph, table_annotations, include_pk_fk_joins)
@@ -123,40 +123,40 @@ def plot_join_graph(query_or_join_graph: qal.SqlQuery | joingraph.JoinGraph,
     return graph
 
 
-def estimated_cards(table: base.TableReference, *, query: qal.SqlQuery, database: Optional[db.Database] = None) -> str:
+def estimated_cards(table: TableReference, *, query: qal.SqlQuery, database: Optional[db.Database] = None) -> str:
     database = database if database is not None else db.DatabasePool.get_instance().current_database()
-    filter_query = transform.extract_query_fragment(query, [table])
-    filter_query = transform.as_star_query(filter_query)
+    filter_query = qal.transform.extract_query_fragment(query, [table])
+    filter_query = qal.transform.as_star_query(filter_query)
     card_est = database.optimizer().cardinality_estimate(filter_query)
     return f"[{card_est} rows estimated]"
 
 
-def annotate_filter_cards(table: base.TableReference, *, query: qal.SqlQuery,
+def annotate_filter_cards(table: TableReference, *, query: qal.SqlQuery,
                           database: Optional[db.Database] = None) -> str:
     database = database if database is not None else db.DatabasePool.get_instance().current_database()
-    filter_query = transform.extract_query_fragment(query, [table])
-    count_query = transform.as_count_star_query(filter_query)
+    filter_query = qal.transform.extract_query_fragment(query, [table])
+    count_query = qal.transform.as_count_star_query(filter_query)
     card = database.execute_query(count_query, cache_enabled=True)
     return f"[{card} rows]"
 
 
-def annotate_cards(table: base.TableReference, *, query: qal.SqlQuery, database: Optional[db.Database] = None) -> str:
+def annotate_cards(table: TableReference, *, query: qal.SqlQuery, database: Optional[db.Database] = None) -> str:
     database = database if database is not None else db.DatabasePool.get_instance().current_database()
-    filter_query = transform.extract_query_fragment(query, [table])
-    count_query = transform.as_count_star_query(filter_query)
+    filter_query = qal.transform.extract_query_fragment(query, [table])
+    count_query = qal.transform.as_count_star_query(filter_query)
     filter_card = database.execute_query(count_query, cache_enabled=True)
     total_card = database.statistics().total_rows(table, emulated=True, cache_enabled=True)
     return f"|R| = {total_card} |σ(R)| = {filter_card}"
 
 
-def merged_annotation(*annotations) -> Callable[[base.TableReference], str]:
-    def _merger(table: base.TableReference) -> str:
+def merged_annotation(*annotations) -> Callable[[TableReference], str]:
+    def _merger(table: TableReference) -> str:
         return "\n".join(annotator(table) for annotator in annotations)
     return _merger
 
 
 def setup_annotations(*annotations: Literal["estimated-cards", "filter-cards", "true-cards"], query: qal.SqlQuery,
-                      database: Optional[db.Database] = None) -> Callable[[base.TableReference], str]:
+                      database: Optional[db.Database] = None) -> Callable[[TableReference], str]:
     annotators = []
     for annotator in annotations:
         if annotator == "estimated-cards":

@@ -46,8 +46,7 @@ from typing import Optional
 import natsort
 import pandas as pd
 
-from postbound.qal import qal, parser
-from .. import db, util
+from .. import db, qal, util
 
 workloads_base_dir = "workloads"
 """Indicates the PostBOUND directory that contains all natively supported workloads.
@@ -138,7 +137,7 @@ class Workload(collections.UserDict[LabelType, qal.SqlQuery]):
             with open(query_file_path, "r", encoding=file_encoding) as query_file:
                 raw_contents = query_file.readlines()
             query_contents = "\n".join([line for line in raw_contents])
-            parsed_query = parser.parse_query(query_contents, bind_columns=bind_columns)
+            parsed_query = qal.parse_query(query_contents, bind_columns=bind_columns)
             query_label = query_file_path.stem
             queries[label_prefix + query_label] = parsed_query
 
@@ -517,7 +516,7 @@ def read_batch_workload(filename: str, name: str = "", *, file_encoding: str = "
     name = name if name else filepath.stem
     with open(filename, "r", encoding=file_encoding) as query_file:
         raw_queries = query_file.readlines()
-        parsed_queries = [parser.parse_query(raw) for raw in raw_queries if raw]
+        parsed_queries = [qal.parse_query(raw) for raw in raw_queries if raw]
         return generate_workload(parsed_queries, name=name, workload_root=filepath)
 
 
@@ -570,7 +569,7 @@ def read_csv_workload(filename: str, name: str = "", *, query_column: str = "que
         pd_args.pop("converters", None)
         pd_args.pop("encoding", None)
 
-    workload_df = pd.read_csv(filename, usecols=columns, converters={query_column: parser.parse_query},
+    workload_df = pd.read_csv(filename, usecols=columns, converters={query_column: qal.parse_query},
                               encoding=file_encoding, **pd_args)
 
     queries = workload_df[query_column].tolist()

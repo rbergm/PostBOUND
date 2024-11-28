@@ -9,11 +9,12 @@ from __future__ import annotations
 import abc
 from typing import Optional
 
-from .qal.qal import SqlQuery
+
+from . import db
+from .qal import SqlQuery
 from .optimizer.jointree import PhysicalQueryPlan
 from .optimizer import presets, stages, validation
 from .optimizer.strategies import noopt
-from . import db
 from .util import StateError
 
 

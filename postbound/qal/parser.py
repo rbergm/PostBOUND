@@ -31,11 +31,20 @@ from typing import Any, Optional
 
 import mo_sql_parsing as mosp
 
-from postbound.qal import base, qal, clauses, expressions as expr, predicates as preds
 from . import transform
+from ._core import (
+    TableReference, ColumnReference,
+    SelectType, JoinType,
+    CompoundOperators, MathematicalSqlOperators, LogicalSqlOperators,
+    BaseProjection, WithQuery, DirectTableSource, JoinTableSource, SubqueryTableSource, OrderByExpression,
+    SqlQuery, ImplicitSqlQuery, ExplicitSqlQuery, MixedSqlQuery,
+    Select, Where, From, GroupBy, Having, OrderBy, Limit, CommonTableExpression, ImplicitFromClause, ExplicitFromClause,
+    AbstractPredicate, BinaryPredicate, InPredicate, BetweenPredicate, CompoundPredicate, UnaryPredicate,
+    SqlExpression, StarExpression, StaticValueExpression, ColumnExpression, SubqueryExpression, CastExpression,
+    MathematicalExpression, FunctionExpression, BooleanExpression, WindowExpression, CaseExpression
+)
 from .transform import QueryType
 from .. import util
-from ..db._db import DatabaseSchema, DatabasePool
 
 auto_bind_columns: bool = False
 """Indicates whether the parser should use the database catalog to obtain column bindings."""
@@ -57,47 +66,47 @@ auto_bind_columns: bool = False
 # a wrong way. The hope is that with enough time and testing, those cases will be identified and fixed.
 
 _MospSelectTypes = {
-    "select": clauses.SelectType.Select,
-    "select_distinct": clauses.SelectType.SelectDistinct
+    "select": SelectType.Select,
+    "select_distinct": SelectType.SelectDistinct
 }
 """The different kinds of ``SELECT`` clauses that mo-sql can emit"""
 
 _MospJoinTypes = {
     # INNER JOIN
-    "join": clauses.JoinType.InnerJoin,
-    "inner join": clauses.JoinType.InnerJoin,
+    "join": JoinType.InnerJoin,
+    "inner join": JoinType.InnerJoin,
 
     # CROSS JOIN
-    "cross join": clauses.JoinType.CrossJoin,
+    "cross join": JoinType.CrossJoin,
 
     # FULL OUTER JOIN
-    "full join": clauses.JoinType.OuterJoin,
-    "outer join": clauses.JoinType.OuterJoin,
-    "full outer join": clauses.JoinType.OuterJoin,
+    "full join": JoinType.OuterJoin,
+    "outer join": JoinType.OuterJoin,
+    "full outer join": JoinType.OuterJoin,
 
     # LEFT OUTER JOIN
-    "left join": clauses.JoinType.LeftJoin,
-    "left outer join": clauses.JoinType.LeftJoin,
+    "left join": JoinType.LeftJoin,
+    "left outer join": JoinType.LeftJoin,
 
     # RIGHT OUTER JOIN
-    "right join": clauses.JoinType.RightJoin,
-    "right outer join": clauses.JoinType.RightJoin,
+    "right join": JoinType.RightJoin,
+    "right outer join": JoinType.RightJoin,
 
     # NATURAL INNER JOIN
-    "natural join": clauses.JoinType.NaturalInnerJoin,
-    "natural inner join": clauses.JoinType.NaturalInnerJoin,
+    "natural join": JoinType.NaturalInnerJoin,
+    "natural inner join": JoinType.NaturalInnerJoin,
 
     # NATURAL OUTER JOIN
-    "natural outer join": clauses.JoinType.NaturalOuterJoin,
-    "natural full outer join": clauses.JoinType.NaturalOuterJoin,
+    "natural outer join": JoinType.NaturalOuterJoin,
+    "natural full outer join": JoinType.NaturalOuterJoin,
 
     # NATURAL LEFT OUTER JOIN
-    "natural left join": clauses.JoinType.NaturalLeftJoin,
-    "natural left outer join": clauses.JoinType.NaturalLeftJoin,
+    "natural left join": JoinType.NaturalLeftJoin,
+    "natural left outer join": JoinType.NaturalLeftJoin,
 
     # NATURAL RIGHT OUTER JOIN
-    "natural right join": clauses.JoinType.NaturalRightJoin,
-    "natural right outer join": clauses.JoinType.NaturalRightJoin
+    "natural right join": JoinType.NaturalRightJoin,
+    "natural right outer join": JoinType.NaturalRightJoin
 }
 """The different kinds of ``JOIN`` statements that mo-sql can emit, as well as their mapping to our counterparts.
 
@@ -108,47 +117,47 @@ See Also
 """
 
 _MospCompoundOperations = {
-    "and": expr.LogicalSqlCompoundOperators.And,
-    "or": expr.LogicalSqlCompoundOperators.Or,
-    "not": expr.LogicalSqlCompoundOperators.Not
+    "and": CompoundOperators.And,
+    "or": CompoundOperators.Or,
+    "not": CompoundOperators.Not
 }
 """The different kinds of aggregate operators that mo-sql can emit, as well as their mapping to our counterparts."""
 
-_MospUnaryOperations = {"exists": expr.LogicalSqlOperators.Exists, "missing": expr.LogicalSqlOperators.Missing}
+_MospUnaryOperations = {"exists": LogicalSqlOperators.Exists, "missing": LogicalSqlOperators.Missing}
 """The different kinds of unary operators that mo-sql can emit, as well as their mapping to our counterparts."""
 
 _MospMathematicalOperations = {
-    "add": expr.MathematicalSqlOperators.Add,
-    "sub": expr.MathematicalSqlOperators.Subtract,
-    "neg": expr.MathematicalSqlOperators.Negate,
-    "mul": expr.MathematicalSqlOperators.Multiply,
-    "div": expr.MathematicalSqlOperators.Divide,
-    "mod": expr.MathematicalSqlOperators.Modulo
+    "add": MathematicalSqlOperators.Add,
+    "sub": MathematicalSqlOperators.Subtract,
+    "neg": MathematicalSqlOperators.Negate,
+    "mul": MathematicalSqlOperators.Multiply,
+    "div": MathematicalSqlOperators.Divide,
+    "mod": MathematicalSqlOperators.Modulo
 }
 """The different kinds of mathematical operators that mo-sql can emit, as well as their mapping to our counterparts."""
 
 _MospBinaryOperations = {
     # comparison operators
-    "eq": expr.LogicalSqlOperators.Equal,
-    "neq": expr.LogicalSqlOperators.NotEqual,
+    "eq": LogicalSqlOperators.Equal,
+    "neq": LogicalSqlOperators.NotEqual,
 
-    "lt": expr.LogicalSqlOperators.Less,
-    "le": expr.LogicalSqlOperators.LessEqual,
-    "lte": expr.LogicalSqlOperators.LessEqual,
+    "lt": LogicalSqlOperators.Less,
+    "le": LogicalSqlOperators.LessEqual,
+    "lte": LogicalSqlOperators.LessEqual,
 
-    "gt": expr.LogicalSqlOperators.Greater,
-    "ge": expr.LogicalSqlOperators.GreaterEqual,
-    "gte": expr.LogicalSqlOperators.GreaterEqual,
+    "gt": LogicalSqlOperators.Greater,
+    "ge": LogicalSqlOperators.GreaterEqual,
+    "gte": LogicalSqlOperators.GreaterEqual,
 
     # other operators:
-    "like": expr.LogicalSqlOperators.Like,
-    "not_like": expr.LogicalSqlOperators.NotLike,
-    "ilike": expr.LogicalSqlOperators.ILike,
-    "not_ilike": expr.LogicalSqlOperators.NotILike,
+    "like": LogicalSqlOperators.Like,
+    "not_like": LogicalSqlOperators.NotLike,
+    "ilike": LogicalSqlOperators.ILike,
+    "not_ilike": LogicalSqlOperators.NotILike,
 
-    "in": expr.LogicalSqlOperators.In,
-    "nin": expr.LogicalSqlOperators.In,
-    "between": expr.LogicalSqlOperators.Between
+    "in": LogicalSqlOperators.In,
+    "nin": LogicalSqlOperators.In,
+    "between": LogicalSqlOperators.Between
 }
 """The different kinds of mathematical operators that mo-sql can emit, as well as their mapping to our counterparts."""
 
@@ -159,7 +168,7 @@ _MospOperationSql = (_MospCompoundOperations
 """All different operators that mo-sql can emit as one large dictionary."""
 
 
-def _parse_where_clause(mosp_data: dict) -> clauses.Where:
+def _parse_where_clause(mosp_data: dict) -> Where:
     """Parsing logic for the ``WHERE`` clause.
 
     Parameters
@@ -169,7 +178,7 @@ def _parse_where_clause(mosp_data: dict) -> clauses.Where:
 
     Returns
     -------
-    clauses.Where
+    Where
         The parsed clause
 
     Raises
@@ -180,10 +189,10 @@ def _parse_where_clause(mosp_data: dict) -> clauses.Where:
     """
     if not isinstance(mosp_data, dict):
         raise ValueError("Unknown predicate format: " + str(mosp_data))
-    return clauses.Where(_parse_mosp_predicate(mosp_data))
+    return Where(_parse_mosp_predicate(mosp_data))
 
 
-def _parse_mosp_predicate(mosp_data: dict) -> preds.AbstractPredicate:
+def _parse_mosp_predicate(mosp_data: dict) -> AbstractPredicate:
     """Parsing logic for arbitrary SQL predicates
 
     Parameters
@@ -194,7 +203,7 @@ def _parse_mosp_predicate(mosp_data: dict) -> preds.AbstractPredicate:
 
     Returns
     -------
-    preds.AbstractPredicate
+    AbstractPredicate
         The parsed predicate
 
     Raises
@@ -209,20 +218,20 @@ def _parse_mosp_predicate(mosp_data: dict) -> preds.AbstractPredicate:
     # parse compound statements: AND / OR / NOT
     if operation in _MospCompoundOperations and operation != "not":
         child_statements = [_parse_mosp_predicate(child) for child in mosp_data[operation]]
-        return preds.CompoundPredicate(_MospCompoundOperations[operation], child_statements)
+        return CompoundPredicate(_MospCompoundOperations[operation], child_statements)
     elif operation == "not":
-        return preds.CompoundPredicate(_MospCompoundOperations[operation], _parse_mosp_predicate(mosp_data[operation]))
+        return CompoundPredicate(_MospCompoundOperations[operation], _parse_mosp_predicate(mosp_data[operation]))
 
     # parse IS NULL / IS NOT NULL
     if operation in _MospUnaryOperations:
-        return preds.UnaryPredicate(_parse_mosp_expression(mosp_data[operation]), _MospUnaryOperations[operation])
+        return UnaryPredicate(_parse_mosp_expression(mosp_data[operation]), _MospUnaryOperations[operation])
 
     # FIXME: cannot parse unary filter functions at the moment: SELECT * FROM R WHERE my_udf(R.a)
     # this likely requires changes to the UnaryPredicate implementation as well
     # TODO: check if this is still valid. Most likely this has already been fixed and the comment was forgotten.
 
     if operation not in _MospBinaryOperations:
-        return preds.UnaryPredicate(_parse_mosp_expression(mosp_data))
+        return UnaryPredicate(_parse_mosp_expression(mosp_data))
 
     # parse binary predicates (logical operators, etc.)
     if operation == "in":
@@ -231,19 +240,19 @@ def _parse_mosp_predicate(mosp_data: dict) -> preds.AbstractPredicate:
         mosp_data = copy.copy(mosp_data)
         mosp_data["in"] = mosp_data.pop("nin")
         in_predicate = _parse_in_predicate(mosp_data)
-        return preds.CompoundPredicate.create_not(in_predicate)
+        return CompoundPredicate.create_not(in_predicate)
     elif operation == "between":
         target_column, interval_start, interval_end = mosp_data[operation]
         parsed_column = _parse_mosp_expression(target_column)
         parsed_interval = (_parse_mosp_expression(interval_start), _parse_mosp_expression(interval_end))
-        return preds.BetweenPredicate(parsed_column, parsed_interval)
+        return BetweenPredicate(parsed_column, parsed_interval)
     else:
         first_arg, second_arg = mosp_data[operation]
-        return preds.BinaryPredicate(_MospOperationSql[operation], _parse_mosp_expression(first_arg),
-                                     _parse_mosp_expression(second_arg))
+        return BinaryPredicate(_MospOperationSql[operation], _parse_mosp_expression(first_arg),
+                               _parse_mosp_expression(second_arg))
 
 
-def _parse_in_predicate(mosp_data: dict) -> preds.InPredicate:
+def _parse_in_predicate(mosp_data: dict) -> InPredicate:
     """Parsing logic for ``IN`` predicates.
 
     Parameters
@@ -255,7 +264,7 @@ def _parse_in_predicate(mosp_data: dict) -> preds.InPredicate:
 
     Returns
     -------
-    preds.InPredicate
+    InPredicate
         The parsed ``IN`` predicate.
     """
     target_column, values = mosp_data["in"]
@@ -274,10 +283,10 @@ def _parse_in_predicate(mosp_data: dict) -> preds.InPredicate:
                          for val in util.enlist(values["literal"])]
     else:
         parsed_values = [_parse_mosp_expression(values)]
-    return preds.InPredicate(parsed_column, parsed_values)
+    return InPredicate(parsed_column, parsed_values)
 
 
-def _parse_mosp_expression(mosp_data: Any) -> expr.SqlExpression:
+def _parse_mosp_expression(mosp_data: Any) -> SqlExpression:
     """Parsing logic for arbitrary expressions.
 
     This method detects the actual expression type and delegates to a specialized parser if necessary. Consult the
@@ -290,31 +299,31 @@ def _parse_mosp_expression(mosp_data: Any) -> expr.SqlExpression:
 
     Returns
     -------
-    expr.SqlExpression
+    SqlExpression
         The parsed expression
     """
     # TODO: support for CASE WHEN expressions
     # TODO: support for string concatenation
 
     if mosp_data == "*":
-        return expr.StarExpression()
+        return StarExpression()
     if isinstance(mosp_data, str):
-        return expr.ColumnExpression(_parse_column_reference(mosp_data))
+        return ColumnExpression(_parse_column_reference(mosp_data))
 
     if not isinstance(mosp_data, dict):
-        return expr.StaticValueExpression(mosp_data)
+        return StaticValueExpression(mosp_data)
     if "null" in mosp_data:
         # NULL values are encoded as {'null': {}} in mosql
-        return expr.StaticValueExpression(None)
+        return StaticValueExpression(None)
 
     # parse string literals
     if "literal" in mosp_data:
-        return expr.StaticValueExpression(mosp_data["literal"])
+        return StaticValueExpression(mosp_data["literal"])
 
     # parse subqueries
     if "select" in mosp_data or "select_distinct" in mosp_data:
         subquery = _MospQueryParser(mosp_data, mosp.format(mosp_data)).parse_query()
-        return expr.SubqueryExpression(subquery)
+        return SubqueryExpression(subquery)
 
     if "over" in mosp_data:
         return _parse_window_function(mosp_data)
@@ -335,13 +344,13 @@ def _parse_mosp_expression(mosp_data: Any) -> expr.SqlExpression:
     operation = util.dicts.key(mosp_data)
     if operation == "cast":
         cast_target, cast_type = mosp_data["cast"]
-        return expr.CastExpression(_parse_mosp_expression(cast_target), util.dicts.key(cast_type))
+        return CastExpression(_parse_mosp_expression(cast_target), util.dicts.key(cast_type))
     elif operation in _MospMathematicalOperations:
         parsed_arguments = [_parse_mosp_expression(arg) for arg in mosp_data[operation]]
         first_arg, *remaining_args = parsed_arguments
-        return expr.MathematicalExpression(_MospOperationSql[operation], first_arg, remaining_args)
+        return MathematicalExpression(_MospOperationSql[operation], first_arg, remaining_args)
     elif operation in _MospBinaryOperations:
-        return expr.BooleanExpression(_parse_mosp_predicate(mosp_data))
+        return BooleanExpression(_parse_mosp_predicate(mosp_data))
 
     # parse aggregate (COUNT / AVG / MIN / ...) or function call (CURRENT_DATE() etc)
     arguments = mosp_data[operation] if mosp_data[operation] else []
@@ -349,10 +358,10 @@ def _parse_mosp_expression(mosp_data: Any) -> expr.SqlExpression:
         parsed_arguments = [_parse_mosp_expression(arg) for arg in arguments]
     else:
         parsed_arguments = [_parse_mosp_expression(arguments)]
-    return expr.FunctionExpression(operation, parsed_arguments, distinct=distinct)
+    return FunctionExpression(operation, parsed_arguments, distinct=distinct)
 
 
-def _parse_with_query(mosp_data: dict) -> clauses.WithQuery:
+def _parse_with_query(mosp_data: dict) -> WithQuery:
     """Parsing logic for individual ``WITH`` queries.
 
     Parameters
@@ -363,16 +372,16 @@ def _parse_with_query(mosp_data: dict) -> clauses.WithQuery:
 
     Returns
     -------
-    clauses.WithQuery
+    WithQuery
         The parsed query
     """
     target_name = mosp_data["name"]
     mosp_query = mosp_data["value"]
     parsed_query = _MospQueryParser(mosp_query).parse_query()
-    return clauses.WithQuery(parsed_query, target_name)
+    return WithQuery(parsed_query, target_name)
 
 
-def _parse_cte_clause(mosp_data: dict | list) -> clauses.CommonTableExpression:
+def _parse_cte_clause(mosp_data: dict | list) -> CommonTableExpression:
     """Parsing logic for an entire CTE.
 
     Parameters
@@ -383,7 +392,7 @@ def _parse_cte_clause(mosp_data: dict | list) -> clauses.CommonTableExpression:
 
     Returns
     -------
-    clauses.CommonTableExpression
+    CommonTableExpression
         The parsed CTE
 
     Raises
@@ -398,10 +407,10 @@ def _parse_cte_clause(mosp_data: dict | list) -> clauses.CommonTableExpression:
         with_queries = [_parse_with_query(mosp_data)]
     else:
         raise ValueError("Unknown WITH format: " + str(mosp_data))
-    return clauses.CommonTableExpression(with_queries)
+    return CommonTableExpression(with_queries)
 
 
-def _parse_window_function(mosp_data: dict) -> expr.WindowFunctionExpression:
+def _parse_window_function(mosp_data: dict) -> WindowExpression:
     """Parsing logic for window functions.
 
     Parameters
@@ -412,7 +421,7 @@ def _parse_window_function(mosp_data: dict) -> expr.WindowFunctionExpression:
 
     Returns
     -------
-    expr.WindowFunctionExpression
+    WindowFunctionExpression
         The parsed window function
     """
     function = _parse_mosp_expression(mosp_data["value"])
@@ -428,10 +437,10 @@ def _parse_window_function(mosp_data: dict) -> expr.WindowFunctionExpression:
     else:
         orderby = None
     # Window function filters (e.g. SUM(salary) FILTER (WHERE salary > 100) OVER()) are currently not supported by mosp
-    return expr.WindowExpression(function, partitioning=partition_targets, ordering=orderby, filter_condition=None)
+    return WindowExpression(function, partitioning=partition_targets, ordering=orderby, filter_condition=None)
 
 
-def _parse_case_expression(mosp_data: dict | list) -> expr.CaseExpression:
+def _parse_case_expression(mosp_data: dict | list) -> CaseExpression:
     """Parsing logic for ``CASE`` expressions.
 
     Parameters
@@ -441,17 +450,17 @@ def _parse_case_expression(mosp_data: dict | list) -> expr.CaseExpression:
 
     Returns
     -------
-    expr.CaseExpression
+    CaseExpression
         The parsed case expression
     """
     if isinstance(mosp_data, dict):
         case_condition = _parse_mosp_predicate(mosp_data["when"])
         case_result = _parse_mosp_expression(mosp_data["then"])
         cases = [(case_condition, case_result)]
-        return expr.CaseExpression(cases)
+        return CaseExpression(cases)
 
-    cases: list[tuple[preds.AbstractPredicate, expr.SqlExpression]] = []
-    else_result: expr.SqlExpression | None = None
+    cases: list[tuple[AbstractPredicate, SqlExpression]] = []
+    else_result: SqlExpression | None = None
     for mosp_case in mosp_data:
         if not isinstance(mosp_case, dict) or "when" not in mosp_case:
             else_result = _parse_mosp_expression(mosp_case)
@@ -459,10 +468,10 @@ def _parse_case_expression(mosp_data: dict | list) -> expr.CaseExpression:
         case_condition = _parse_mosp_predicate(mosp_case["when"])
         case_result = _parse_mosp_expression(mosp_case["then"])
         cases.append((case_condition, case_result))
-    return expr.CaseExpression(cases, else_expr=else_result)
+    return CaseExpression(cases, else_expr=else_result)
 
 
-def _parse_select_statement(mosp_data: dict | str) -> clauses.BaseProjection:
+def _parse_select_statement(mosp_data: dict | str) -> BaseProjection:
     """Parsing logic for a single projection of the ``SELECT`` clause.
 
     The method basically tries to infer which kind of projection is described by the input data and potentially
@@ -475,7 +484,7 @@ def _parse_select_statement(mosp_data: dict | str) -> clauses.BaseProjection:
 
     Returns
     -------
-    clauses.BaseProjection
+    BaseProjection
         The parsed projection.
     """
     if isinstance(mosp_data, dict) and "value" in mosp_data:
@@ -483,16 +492,16 @@ def _parse_select_statement(mosp_data: dict | str) -> clauses.BaseProjection:
         select_target = copy.copy(mosp_data["value"])
         target_name = mosp_data.get("name", None)
         parsed_target = _parse_mosp_expression(mosp_data) if "over" in mosp_data else _parse_mosp_expression(select_target)
-        return clauses.BaseProjection(parsed_target, target_name)
+        return BaseProjection(parsed_target, target_name)
     elif isinstance(mosp_data, dict) and "all_columns" in mosp_data:
-        return clauses.BaseProjection.star()
+        return BaseProjection.star()
     if mosp_data == "*":
-        return clauses.BaseProjection.star()
+        return BaseProjection.star()
     target_column = _parse_column_reference(mosp_data)
-    return clauses.BaseProjection(expr.ColumnExpression(target_column))
+    return BaseProjection(ColumnExpression(target_column))
 
 
-def _parse_select_clause(mosp_data: dict) -> clauses.Select:
+def _parse_select_clause(mosp_data: dict) -> Select:
     """Parsing logic for the ``SELECT`` clause.
 
     This determines the select type and delegates to specialized methods to handle the parsing of the individual
@@ -506,7 +515,7 @@ def _parse_select_clause(mosp_data: dict) -> clauses.Select:
 
     Returns
     -------
-    clauses.Select
+    Select
         The parsed clause
 
     Raises
@@ -532,7 +541,7 @@ def _parse_select_clause(mosp_data: dict) -> clauses.Select:
     else:
         raise ValueError("Unknown SELECT format: " + str(select_targets))
 
-    return clauses.Select(parsed_targets, _MospSelectTypes[select_type])
+    return Select(parsed_targets, _MospSelectTypes[select_type])
 
 
 _TableReferencePattern = re.compile(r"(?P<full_name>\S+)( (AS )?(?P<alias>\S+))?")
@@ -552,7 +561,7 @@ References
 
 
 def _parse_table_reference(table: str | dict, *,
-                           cte_tables: Optional[dict[str, base.TableReference]] = None) -> base.TableReference:
+                           cte_tables: Optional[dict[str, TableReference]] = None) -> TableReference:
     """Parsing logic to generate table references
 
     Parameters
@@ -562,7 +571,7 @@ def _parse_table_reference(table: str | dict, *,
 
     Returns
     -------
-    base.TableReference
+    TableReference
         The parsed table
 
     Raises
@@ -580,8 +589,8 @@ def _parse_table_reference(table: str | dict, *,
         table_name = table["value"]
         table_alias = table.get("name", None)
         if cte_tables and table_name in cte_tables:
-            return base.TableReference(cte_tables[table_name], table_alias, True)
-        return base.TableReference(table_name, table_alias)
+            return TableReference(cte_tables[table_name], table_alias, True)
+        return TableReference(table_name, table_alias)
 
     # string-based table format
     pattern_match = _TableReferencePattern.match(table)
@@ -589,13 +598,13 @@ def _parse_table_reference(table: str | dict, *,
         raise ValueError(f"Could not parse table reference for '{table}'")
     full_name, alias = pattern_match.group("full_name", "alias")
     alias = "" if not alias else alias
-    table = base.TableReference(full_name, alias)
+    table = TableReference(full_name, alias)
     if cte_tables and full_name in cte_tables:
-        return base.TableReference(full_name, alias, True)
+        return TableReference(full_name, alias, True)
     return table
 
 
-def _parse_column_reference(column: str) -> base.ColumnReference:
+def _parse_column_reference(column: str) -> ColumnReference:
     """Parsing logic to generate column references.
 
     This tries to setup a column with its associated table if the encoding contains a dot (``.``). Otherwise, it
@@ -608,7 +617,7 @@ def _parse_column_reference(column: str) -> base.ColumnReference:
 
     Returns
     -------
-    base.ColumnReference
+    ColumnReference
         The parsed column reference
 
     Notes
@@ -623,28 +632,28 @@ def _parse_column_reference(column: str) -> base.ColumnReference:
     The binding process is there to reconcile this situation and normalize all table references.
     """
     if "." not in column:
-        return base.ColumnReference(column)
+        return ColumnReference(column)
 
     table, column = column.split(".")
-    table_ref = base.TableReference("", table)
-    return base.ColumnReference(column, table_ref)
+    table_ref = TableReference("", table)
+    return ColumnReference(column, table_ref)
 
 
-def _parse_implicit_from_clause(mosp_data: dict, *, cte_tables: Optional[dict[str, base.TableReference]] = None
-                                ) -> Optional[clauses.ImplicitFromClause]:
+def _parse_implicit_from_clause(mosp_data: dict, *, cte_tables: Optional[dict[str, TableReference]] = None
+                                ) -> Optional[ImplicitFromClause]:
     """Parsing logic for ``FROM`` clauses that only reference plain tables and do not contain subqueries.
 
     Parameters
     ----------
     mosp_data : dict
         The entire ``FROM`` clause, i.e. starting at and including the ``"from"`` key.
-    cte_tables : Optional[dict[str, base.TableReference]], optional
+    cte_tables : Optional[dict[str, TableReference]], optional
         Tables that have been exported by a *WITH* statement. These can also appear in the *FROM* clause and should be treated
         as virtual tables. The default assumption is that there are no such tables.
 
     Returns
     -------
-    Optional[clauses.ImplicitFromClause]
+    Optional[ImplicitFromClause]
         The parsed clause. This can be ``None`` if the `mosp_data` does not contain a ``"from"`` key.
 
     Raises
@@ -662,16 +671,16 @@ def _parse_implicit_from_clause(mosp_data: dict, *, cte_tables: Optional[dict[st
     from_clause = mosp_data["from"]
     if isinstance(from_clause, (str, dict)):
         table = _parse_table_reference(from_clause, cte_tables=cte_tables)
-        return clauses.ImplicitFromClause(clauses.DirectTableSource(table))
+        return ImplicitFromClause(DirectTableSource(table))
     elif not isinstance(from_clause, list):
         raise ValueError("Unknown FROM clause structure: " + str(from_clause))
-    parsed_sources = [clauses.DirectTableSource(_parse_table_reference(table, cte_tables=cte_tables))
+    parsed_sources = [DirectTableSource(_parse_table_reference(table, cte_tables=cte_tables))
                       for table in from_clause]
-    return clauses.ImplicitFromClause(parsed_sources)
+    return ImplicitFromClause(parsed_sources)
 
 
 def _parse_explicit_from_clause(mosp_data: dict, *,
-                                cte_tables: Optional[dict[str, base.TableReference]] = None) -> clauses.ExplicitFromClause:
+                                cte_tables: Optional[dict[str, TableReference]] = None) -> ExplicitFromClause:
     """Parsing logic for ``FROM`` clauses that exclusively make use of the ``JOIN ON`` syntax.
 
     In contrast to implicit ``FROM`` clauses, their explicit counterparts can join both plain tables as well as
@@ -681,13 +690,13 @@ def _parse_explicit_from_clause(mosp_data: dict, *,
     ----------
     mosp_data : dict
         The entire ``FROM`` clause, i.e. starting at and including the ``"from"`` key.
-    cte_tables : Optional[dict[str, base.TableReference]], optional
+    cte_tables : Optional[dict[str, TableReference]], optional
         Tables that have been exported by a *WITH* statement. These can also appear in the *FROM* clause and should be treated
         as virtual tables. The default assumption is that there are no such tables.
 
     Returns
     -------
-    clauses.ExplicitFromClause
+    ExplicitFromClause
         The parsed clause
 
     Raises
@@ -712,11 +721,11 @@ def _parse_explicit_from_clause(mosp_data: dict, *,
     first_table, *joined_tables = from_clause
     initial_table = _parse_table_reference(first_table, cte_tables=cte_tables)
     parsed_joins = [_parse_explicit_join(joined_table, cte_tables=cte_tables) for joined_table in joined_tables]
-    return clauses.ExplicitFromClause(clauses.DirectTableSource(initial_table), parsed_joins)
+    return ExplicitFromClause(DirectTableSource(initial_table), parsed_joins)
 
 
 def _parse_explicit_join(joined_table: dict, *,
-                         cte_tables: Optional[dict[str, base.TableReference]] = None) -> clauses.JoinTableSource:
+                         cte_tables: Optional[dict[str, TableReference]] = None) -> JoinTableSource:
     join_condition = _parse_mosp_predicate(joined_table["on"]) if "on" in joined_table else None
     join_type = next(jt for jt in _MospJoinTypes.keys() if jt in joined_table)
     parsed_join_type = _MospJoinTypes[join_type]
@@ -729,29 +738,29 @@ def _parse_explicit_join(joined_table: dict, *,
         # we found a subquery
         joined_subquery = _MospQueryParser(join_source["value"], mosp.format(join_source)).parse_query()
         join_alias = joined_table.get("name", None)
-        return clauses.JoinTableSource(clauses.SubqueryTableSource(joined_subquery, join_alias), join_condition,
-                                       join_type=parsed_join_type)
+        return JoinTableSource(SubqueryTableSource(joined_subquery, join_alias), join_condition,
+                               join_type=parsed_join_type)
     elif isinstance(join_source, dict):
         # we found a normal table join with an alias
         parsed_table = _parse_table_reference(join_source, cte_tables=cte_tables)
-        return clauses.JoinTableSource(clauses.DirectTableSource(parsed_table), join_condition, join_type=parsed_join_type)
+        return JoinTableSource(DirectTableSource(parsed_table), join_condition, join_type=parsed_join_type)
     elif isinstance(join_source, str):
         # we found a normal table join without an alias
         parsed_table = _parse_table_reference(join_source, cte_tables=cte_tables)
-        return clauses.JoinTableSource(clauses.DirectTableSource(parsed_table), join_condition, join_type=parsed_join_type)
+        return JoinTableSource(DirectTableSource(parsed_table), join_condition, join_type=parsed_join_type)
     elif isinstance(join_source, list):
         # we found an join with a nested JOIN statement
         base_table, *nested_joins = join_source
-        parsed_table = clauses.DirectTableSource(_parse_table_reference(base_table, cte_tables=cte_tables))
+        parsed_table = DirectTableSource(_parse_table_reference(base_table, cte_tables=cte_tables))
         nested_tables = [_parse_explicit_join(nested_join, cte_tables=cte_tables) for nested_join in nested_joins]
-        return clauses.JoinTableSource(parsed_table, join_condition, joined_tables=nested_tables, join_type=parsed_join_type)
+        return JoinTableSource(parsed_table, join_condition, joined_tables=nested_tables, join_type=parsed_join_type)
     else:
         raise ValueError("Unknown JOIN format: " + str(joined_table))
 
 
 def _parse_base_table_source(mosp_data: dict | str, *,
-                             cte_tables: Optional[dict[str, base.TableReference]] = None
-                             ) -> clauses.DirectTableSource | clauses.SubqueryTableSource:
+                             cte_tables: Optional[dict[str, TableReference]] = None
+                             ) -> DirectTableSource | SubqueryTableSource:
     """Parsing logic for table sources that do not use the ``JOIN ON`` syntax.
 
     This method will determine the appropriate type of source (pure table or subquery) and potentially delegate its
@@ -762,13 +771,13 @@ def _parse_base_table_source(mosp_data: dict | str, *,
     mosp_data : dict | str
         The table encoding. Strings are direct sources, whereas dicts can encode both direct table sources as well as
         subqueries.
-    cte_tables : Optional[dict[str, base.TableReference]], optional
+    cte_tables : Optional[dict[str, TableReference]], optional
         Tables that have been exported by a *WITH* statement. These can also appear in the *FROM* clause and should be treated
         as virtual tables. The default assumption is that there are no such tables.
 
     Returns
     -------
-    clauses.DirectTableSource | clauses.SubqueryTableSource
+    DirectTableSource | SubqueryTableSource
         The parsed source
 
     Raises
@@ -783,24 +792,24 @@ def _parse_base_table_source(mosp_data: dict | str, *,
         during testing. If it can be emitted for a valid query, we need to extend our parsing logic.
     """
     if isinstance(mosp_data, str):
-        return clauses.DirectTableSource(_parse_table_reference(mosp_data, cte_tables=cte_tables))
+        return DirectTableSource(_parse_table_reference(mosp_data, cte_tables=cte_tables))
     if not isinstance(mosp_data, dict) or "value" not in mosp_data or "name" not in mosp_data:
         raise TypeError("Unknown FROM clause target: " + str(mosp_data))
 
     value_target = mosp_data["value"]
     if isinstance(value_target, str):
-        return clauses.DirectTableSource(_parse_table_reference(mosp_data, cte_tables=cte_tables))
+        return DirectTableSource(_parse_table_reference(mosp_data, cte_tables=cte_tables))
     is_subquery_table = (isinstance(value_target, dict)
                          and any(select_type in value_target for select_type in _MospSelectTypes))
     if not is_subquery_table:
         raise TypeError("Unknown FROM clause target: " + str(mosp_data))
     parsed_subquery = _MospQueryParser(value_target, mosp.format(value_target)).parse_query()
     subquery_target = mosp_data["name"]
-    return clauses.SubqueryTableSource(parsed_subquery, subquery_target)
+    return SubqueryTableSource(parsed_subquery, subquery_target)
 
 
 def _parse_join_table_source(mosp_data: dict, *,
-                             cte_tables: Optional[dict[str, base.TableReference]] = None) -> clauses.JoinTableSource:
+                             cte_tables: Optional[dict[str, TableReference]] = None) -> JoinTableSource:
     """Parsing logic for a single ``JOIN ON``statement in the ``FROM`` clause.
 
     This method will determine the precise kind of join being used (which are encoded as part of the key in mo-sql) and
@@ -811,13 +820,13 @@ def _parse_join_table_source(mosp_data: dict, *,
     ----------
     mosp_data : dict
         The join encoding. This dictionary has to contain the key describing the precise join type at the root level.
-    cte_tables : Optional[dict[str, base.TableReference]], optional
+    cte_tables : Optional[dict[str, TableReference]], optional
         Tables that have been exported by a *WITH* statement. These can also appear in the *FROM* clause and should be treated
         as virtual tables. The default assumption is that there are no such tables.
 
     Returns
     -------
-    clauses.JoinTableSource
+    JoinTableSource
         The parsed table source
 
     See Also
@@ -829,10 +838,10 @@ def _parse_join_table_source(mosp_data: dict, *,
     parsed_target = _parse_base_table_source(join_target)
     parsed_join_type = _MospJoinTypes[join_type]
     join_condition = _parse_mosp_predicate(mosp_data["on"]) if "on" in mosp_data else None
-    return clauses.JoinTableSource(parsed_target, join_condition, join_type=parsed_join_type)
+    return JoinTableSource(parsed_target, join_condition, join_type=parsed_join_type)
 
 
-def _parsed_mixed_from_clause(mosp_data: dict, *, cte_tables: Optional[dict[str, base.TableReference]] = None) -> clauses.From:
+def _parsed_mixed_from_clause(mosp_data: dict, *, cte_tables: Optional[dict[str, TableReference]] = None) -> From:
     """Parsing logic for ``FROM`` clauses that consist of pure table sources, explicit ``JOIN``s and subqueries.
 
     The method will figure out the most appropriate representation for each source and delegate its construction to a
@@ -842,13 +851,13 @@ def _parsed_mixed_from_clause(mosp_data: dict, *, cte_tables: Optional[dict[str,
     ----------
     mosp_data : dict
         The entire ``FROM`` clause, i.e. starting at and including the ``"from"`` key.
-    cte_tables : Optional[dict[str, base.TableReference]], optional
+    cte_tables : Optional[dict[str, TableReference]], optional
         Tables that have been exported by a *WITH* statement. These can also appear in the *FROM* clause and should be treated
         as virtual tables. The default assumption is that there are no such tables.
 
     Returns
     -------
-    clauses.From
+    From
         The parsed clause
 
     Raises
@@ -859,13 +868,13 @@ def _parsed_mixed_from_clause(mosp_data: dict, *, cte_tables: Optional[dict[str,
         valid query, we need to extend our parsing logic.
     """
     if "from" not in mosp_data:
-        return clauses.From([])
+        return From([])
     from_clause = mosp_data["from"]
 
     if isinstance(from_clause, str):
-        return clauses.From(clauses.DirectTableSource(_parse_table_reference(from_clause, cte_tables=cte_tables)))
+        return From(DirectTableSource(_parse_table_reference(from_clause, cte_tables=cte_tables)))
     elif isinstance(from_clause, dict):
-        return clauses.From(_parse_base_table_source(from_clause, cte_tables=cte_tables))
+        return From(_parse_base_table_source(from_clause, cte_tables=cte_tables))
     elif not isinstance(from_clause, list):
         raise ValueError("Unknown FROM clause type: " + str(from_clause))
 
@@ -875,11 +884,11 @@ def _parsed_mixed_from_clause(mosp_data: dict, *, cte_tables: Optional[dict[str,
         parsed_entry = (_parse_join_table_source(entry, cte_tables=cte_tables) if join_entry
                         else _parse_base_table_source(entry, cte_tables=cte_tables))
         parsed_from_clause_entries.append(parsed_entry)
-    return clauses.From(parsed_from_clause_entries)
+    return From(parsed_from_clause_entries)
 
 
-def _parse_groupby_clause(mosp_data: dict | list) -> clauses.GroupBy:
-    """Parsing logic for ``GROUP BY`` clauses.
+def _parse_groupby_clause(mosp_data: dict | list) -> GroupBy:
+    """Parsing logic for ``GROUP BY``
 
     Parameters
     ----------
@@ -888,7 +897,7 @@ def _parse_groupby_clause(mosp_data: dict | list) -> clauses.GroupBy:
 
     Returns
     -------
-    clauses.GroupBy
+    GroupBy
         The parsed clause
     """
 
@@ -898,19 +907,19 @@ def _parse_groupby_clause(mosp_data: dict | list) -> clauses.GroupBy:
     if isinstance(mosp_data, list):
         columns = [_parse_mosp_expression(col["value"]) for col in mosp_data]
         distinct = False
-        return clauses.GroupBy(columns, distinct)
+        return GroupBy(columns, distinct)
 
     mosp_data = mosp_data["value"]
     if "distinct" in mosp_data:
         groupby_clause = _parse_groupby_clause(mosp_data["distinct"])
-        groupby_clause = clauses.GroupBy(groupby_clause.group_columns, True)
+        groupby_clause = GroupBy(groupby_clause.group_columns, True)
         return groupby_clause
     else:
         columns = [_parse_mosp_expression(mosp_data)]
-        return clauses.GroupBy(columns, False)
+        return GroupBy(columns, False)
 
 
-def _parse_having_clause(mosp_data: dict) -> clauses.Having:
+def _parse_having_clause(mosp_data: dict) -> Having:
     """Parsing logic for ``HAVING`` clauses.
 
     Parameters
@@ -920,13 +929,13 @@ def _parse_having_clause(mosp_data: dict) -> clauses.Having:
 
     Returns
     -------
-    clauses.Having
+    Having
         The parsed clause
     """
-    return clauses.Having(_parse_mosp_predicate(mosp_data))
+    return Having(_parse_mosp_predicate(mosp_data))
 
 
-def _parse_orderby_expression(mosp_data: dict) -> clauses.OrderByExpression:
+def _parse_orderby_expression(mosp_data: dict) -> OrderByExpression:
     """Parsing logic for individual parts of ``ORDER BY`` clauses.
 
     Parameters
@@ -936,15 +945,15 @@ def _parse_orderby_expression(mosp_data: dict) -> clauses.OrderByExpression:
 
     Returns
     -------
-    clauses.OrderByExpression
+    OrderByExpression
         The parsed expression
     """
     column = _parse_mosp_expression(mosp_data["value"])
     ascending = mosp_data["sort"] == "asc" if "sort" in mosp_data else None
-    return clauses.OrderByExpression(column, ascending)
+    return OrderByExpression(column, ascending)
 
 
-def _parse_orderby_clause(mosp_data: dict | list) -> clauses.OrderBy:
+def _parse_orderby_clause(mosp_data: dict | list) -> OrderBy:
     """Parsing logic for entire ``ORDER BY`` clauses
 
     Parameters
@@ -954,17 +963,17 @@ def _parse_orderby_clause(mosp_data: dict | list) -> clauses.OrderBy:
 
     Returns
     -------
-    clauses.OrderBy
+    OrderBy
         The parsed clause
     """
     if isinstance(mosp_data, list):
         order_expressions = [_parse_orderby_expression(order_expr) for order_expr in mosp_data]
     else:
         order_expressions = [_parse_orderby_expression(mosp_data)]
-    return clauses.OrderBy(order_expressions)
+    return OrderBy(order_expressions)
 
 
-def _parse_limit_clause(mosp_data: dict) -> clauses.Limit:
+def _parse_limit_clause(mosp_data: dict) -> Limit:
     """Parsing logic for ``LIMIT`` clauses.
 
     Parameters
@@ -975,7 +984,7 @@ def _parse_limit_clause(mosp_data: dict) -> clauses.Limit:
 
     Returns
     -------
-    clauses.Limit
+    Limit
         The parsed clause.
 
     Raises
@@ -988,7 +997,7 @@ def _parse_limit_clause(mosp_data: dict) -> clauses.Limit:
 
     limit = mosp_data.get("limit", None)
     offset = mosp_data.get("offset", None)
-    return clauses.Limit(limit=limit, offset=offset)
+    return Limit(limit=limit, offset=offset)
 
 
 def _is_implicit_query(mosp_data: dict) -> bool:
@@ -1080,12 +1089,12 @@ class _MospQueryParser:
 
         self._prepare_query()
 
-    def parse_query(self) -> qal.SqlQuery:
+    def parse_query(self) -> SqlQuery:
         """Handles the parsing process for the entire query.
 
         Returns
         -------
-        qal.SqlQuery
+        SqlQuery
             The parsed query
         """
         if "with" in self._mosp_data:
@@ -1131,23 +1140,23 @@ class _MospQueryParser:
             limit_clause = None
 
         if implicit and not explicit:
-            return qal.ImplicitSqlQuery(select_clause=select_clause, from_clause=from_clause,
-                                        where_clause=where_clause,
-                                        groupby_clause=groupby_clause, having_clause=having_clause,
-                                        orderby_clause=orderby_clause, limit_clause=limit_clause,
-                                        cte_clause=cte_clause)
+            return ImplicitSqlQuery(select_clause=select_clause, from_clause=from_clause,
+                                    where_clause=where_clause,
+                                    groupby_clause=groupby_clause, having_clause=having_clause,
+                                    orderby_clause=orderby_clause, limit_clause=limit_clause,
+                                    cte_clause=cte_clause)
         elif not implicit and explicit:
-            return qal.ExplicitSqlQuery(select_clause=select_clause, from_clause=from_clause,
-                                        where_clause=where_clause,
-                                        groupby_clause=groupby_clause, having_clause=having_clause,
-                                        orderby_clause=orderby_clause, limit_clause=limit_clause,
-                                        cte_clause=cte_clause)
+            return ExplicitSqlQuery(select_clause=select_clause, from_clause=from_clause,
+                                    where_clause=where_clause,
+                                    groupby_clause=groupby_clause, having_clause=having_clause,
+                                    orderby_clause=orderby_clause, limit_clause=limit_clause,
+                                    cte_clause=cte_clause)
         else:
-            return qal.MixedSqlQuery(select_clause=select_clause, from_clause=from_clause,
-                                     where_clause=where_clause,
-                                     groupby_clause=groupby_clause, having_clause=having_clause,
-                                     orderby_clause=orderby_clause, limit_clause=limit_clause,
-                                     cte_clause=cte_clause)
+            return MixedSqlQuery(select_clause=select_clause, from_clause=from_clause,
+                                 where_clause=where_clause,
+                                 groupby_clause=groupby_clause, having_clause=having_clause,
+                                 orderby_clause=orderby_clause, limit_clause=limit_clause,
+                                 cte_clause=cte_clause)
 
     def _prepare_query(self) -> None:
         """Performs necessary pre-processing steps before the actual parsing can take place.
@@ -1164,7 +1173,7 @@ class _MospQueryParser:
 
 
 def bind_column_references(query: QueryType, *, with_schema: bool = True,
-                           db_schema: Optional[DatabaseSchema] = None) -> QueryType:
+                           db_schema: Optional["DatabaseSchema"] = None) -> QueryType:  # noqa: F821
     """Determines the tables that each column belongs to and sets the appropriate references.
 
     This binding of columns to their tables happens in two phases: During the first phase, a *syntactic* binding is performed.
@@ -1184,7 +1193,7 @@ def bind_column_references(query: QueryType, *, with_schema: bool = True,
     with_schema : bool, optional
         Whether the second binding phase based on the schema catalog of a live database should be performed. This is enabled by
         default
-    db_schema : Optional[db.DatabaseSchema], optional
+    db_schema : Optional[DatabaseSchema], optional
         The schema to use for the second binding phase. If `with_schema` is enabled, but this parameter is ``None``, the schema
         is inferred based on the current database of the `DatabasePool`. This defaults to ``None``.
 
@@ -1193,17 +1202,19 @@ def bind_column_references(query: QueryType, *, with_schema: bool = True,
     QueryType
         The updated query. Notice that some columns might still remain unbound if none of the phases was able to find a table.
     """
+    from ..db import DatabasePool
+
     if not query.from_clause:
         return query
 
-    table_alias_map: dict[str, base.TableReference] = {}
-    unbound_tables: set[base.TableReference] = set()
-    pure_virtual_tables: set[base.TableReference] = set()
+    table_alias_map: dict[str, TableReference] = {}
+    unbound_tables: set[TableReference] = set()
+    pure_virtual_tables: set[TableReference] = set()
     if query.cte_clause:
         for cte in query.cte_clause.queries:
             pure_virtual_tables.add(cte.target_table)
     for table_source in query.from_clause.items:
-        if isinstance(table_source, clauses.SubqueryTableSource):
+        if isinstance(table_source, SubqueryTableSource):
             pure_virtual_tables.add(table_source.target_table)
 
     for table in query.tables():
@@ -1221,13 +1232,13 @@ def bind_column_references(query: QueryType, *, with_schema: bool = True,
         if table.alias not in table_alias_map:
             table_alias_map[table.alias] = table
 
-    unbound_columns: list[base.ColumnReference] = []
-    necessary_renamings: dict[base.ColumnReference, base.ColumnReference] = {}
+    unbound_columns: list[ColumnReference] = []
+    necessary_renamings: dict[ColumnReference, ColumnReference] = {}
     for column in query.columns():
         if not column.table:
             unbound_columns.append(column)
         elif column.table.identifier() in table_alias_map:
-            bound_column = base.ColumnReference(column.name, table_alias_map[column.table.identifier()])
+            bound_column = ColumnReference(column.name, table_alias_map[column.table.identifier()])
             necessary_renamings[column] = bound_column
 
     partially_bound_query = transform.rename_columns_in_query(query, necessary_renamings)
@@ -1236,11 +1247,11 @@ def bind_column_references(query: QueryType, *, with_schema: bool = True,
 
     db_schema = db_schema if db_schema else DatabasePool().get_instance().current_database().schema()
     candidate_tables = [table for table in query.tables() if table.full_name]
-    unbound_renamings: dict[base.ColumnReference, base.ColumnReference] = {}
+    unbound_renamings: dict[ColumnReference, ColumnReference] = {}
     for column in unbound_columns:
         try:
             target_table = db_schema.lookup_column(column, candidate_tables)
-            bound_column = base.ColumnReference(column.name, target_table)
+            bound_column = ColumnReference(column.name, target_table)
             unbound_renamings[column] = bound_column
         except ValueError:
             # A ValueError is raised if the column is not found in any of the tables. However, this can still be
@@ -1251,7 +1262,7 @@ def bind_column_references(query: QueryType, *, with_schema: bool = True,
 
 
 def parse_query(query: str, *, bind_columns: bool | None = None,
-                db_schema: Optional[DatabaseSchema] = None, _skip_all_binding: bool = False) -> qal.SqlQuery:
+                db_schema: Optional["DatabaseSchema"] = None, _skip_all_binding: bool = False) -> SqlQuery:  # noqa: F821
     """Parses a query string into a proper `SqlQuery` object.
 
     During parsing, the appropriate type of SQL query (i.e. with implicit, explicit or mixed ``FROM`` clause) will be
@@ -1272,15 +1283,17 @@ def parse_query(query: str, *, bind_columns: bool | None = None,
         Whether to use *live binding*. This does not control the text-based binding, which is always performed. If this
         parameter is ``None`` (the default), the global `auto_bind_columns` variable will be queried. Depending on its
         value, live binding will be performed or not.
-    db_schema : Optional[db.DatabaseSchema], optional
+    db_schema : Optional[DatabaseSchema], optional
         For live binding, this indicates the database to use. If this is ``None`` (the default), the database will be
         tried to extract from the `DatabasePool`
 
     Returns
     -------
-    qal.SqlQuery
+    SqlQuery
         The parsed SQL query.
     """
+    from ..db import DatabasePool
+
     bind_columns = bind_columns if bind_columns is not None else auto_bind_columns
     db_schema = (db_schema if db_schema or not bind_columns
                  else DatabasePool.get_instance().current_database().schema())
@@ -1291,7 +1304,7 @@ def parse_query(query: str, *, bind_columns: bool | None = None,
     return bind_column_references(parsed_query, with_schema=bind_columns, db_schema=db_schema)
 
 
-def load_table_json(json_data: dict) -> Optional[base.TableReference]:
+def load_table_json(json_data: dict) -> Optional[TableReference]:
     """Re-creates a table reference from its JSON encoding.
 
     Parameters
@@ -1301,15 +1314,15 @@ def load_table_json(json_data: dict) -> Optional[base.TableReference]:
 
     Returns
     -------
-    Optional[base.TableReference]
+    Optional[TableReference]
         The actual table. If the dictionary is empty or otherwise invalid, *None* is returned.
     """
     if not json_data:
         return None
-    return base.TableReference(json_data.get("full_name", ""), json_data.get("alias", ""))
+    return TableReference(json_data.get("full_name", ""), json_data.get("alias", ""))
 
 
-def load_column_json(json_data: dict) -> Optional[base.ColumnReference]:
+def load_column_json(json_data: dict) -> Optional[ColumnReference]:
     """Re-creates a column reference from its JSON encoding.
 
     Parameters
@@ -1319,15 +1332,15 @@ def load_column_json(json_data: dict) -> Optional[base.ColumnReference]:
 
     Returns
     -------
-    Optional[base.ColumnReference]
+    Optional[ColumnReference]
         The actual column. It the dictionary is empty or otherwise invalid, *None* is returned.
     """
     if not json_data:
         return None
-    return base.ColumnReference(json_data.get("column"), load_table_json(json_data.get("table", None)))
+    return ColumnReference(json_data.get("column"), load_table_json(json_data.get("table", None)))
 
 
-def load_predicate_json(json_data: dict) -> Optional[preds.AbstractPredicate]:
+def load_predicate_json(json_data: dict) -> Optional[AbstractPredicate]:
     """Re-creates an arbitrary predicate from its JSON encoding.
 
     Parameters
@@ -1337,7 +1350,7 @@ def load_predicate_json(json_data: dict) -> Optional[preds.AbstractPredicate]:
 
     Returns
     -------
-    Optional[preds.AbstractPredicate]
+    Optional[AbstractPredicate]
         The actual predicate. If the dictionary is empty or *None*, *None* is returned. Notice that in case of
         malformed data, errors are raised.
 

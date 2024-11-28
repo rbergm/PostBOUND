@@ -29,9 +29,9 @@ input query can be converted like so:
 
 .. code-block:: python
 
-    from postbound.qal import parser, relalg, transform
+    from postbound import qal
     from postbound.vis import optimizer as opt_vis
 
-    parsed_query = parser.parse_query("SELECT * FROM R, S WHERE R.r_a < 42 AND R.r_id = S.s_id")
-    relnode = relalg.parse_relalg(parsed_query)
+    parsed_query = qal.parse_query("SELECT * FROM R, S WHERE R.r_a < 42 AND R.r_id = S.s_id")
+    relnode = qal.relalg.parse_relalg(parsed_query)
     opt_vis.plot_relalg(relnode)

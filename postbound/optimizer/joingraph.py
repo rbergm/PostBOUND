@@ -9,8 +9,8 @@ from typing import Literal, Optional
 
 import networkx as nx
 
-from postbound.qal import base, predicates, qal, transform
-from .. import db, util
+from .. import db, qal, util
+from ..qal import TableReference, ColumnReference, AbstractPredicate
 
 
 @dataclass(frozen=True)
@@ -22,27 +22,27 @@ class JoinPath:
 
     Attributes
     ----------
-    start_table : base.TableReference
+    start_table : TableReference
         The first join partner involved in the join. This is the table that is already part of the intermediate result of the
         query
-    target_table : base.TableReference
+    target_table : TableReference
         The second join partner involved in the join. This is the table that is not yet part of any intermediate result. Thus,
         this is the table that should be joined next
-    join_condition : Optional[predicates.AbstractPredicate], optional
+    join_condition : Optional[AbstractPredicate], optional
         The predicate that is used to actually join the `target_table` with the current intermediate result. Usually the
         predicate is restricted to the the join between `start_table` and `target_table`, but can also include additional join
         predicates over other tables in the intermediate results.
     """
-    start_table: base.TableReference
-    target_table: base.TableReference
-    join_condition: Optional[predicates.AbstractPredicate] = None
+    start_table: TableReference
+    target_table: TableReference
+    join_condition: Optional[AbstractPredicate] = None
 
-    def tables(self) -> tuple[base.TableReference, base.TableReference]:
+    def tables(self) -> tuple[TableReference, TableReference]:
         """Provides the tables that are joined.
 
         Returns
         -------
-        tuple[base.TableReference, base.TableReference]
+        tuple[TableReference, TableReference]
             The tables
 
         Warnings
@@ -53,12 +53,12 @@ class JoinPath:
         """
         return self.start_table, self.target_table
 
-    def spans_table(self, table: base.TableReference) -> bool:
+    def spans_table(self, table: TableReference) -> bool:
         """Checks, whether a specific table is either the start, or the target table in this path.
 
         Parameters
         ----------
-        table : base.TableReference
+        table : TableReference
             The table to check
 
         Returns
@@ -99,7 +99,7 @@ class IndexInfo:
 
     Parameters
     ----------
-    column : base.ColumnReference
+    column : ColumnReference
         The column fr which the index is created
     index_type : Literal["primary", "secondary", "none"]
         The kind of index that is maintained. ``"none"`` indicates that there is no index on the column. This is a different
@@ -110,12 +110,12 @@ class IndexInfo:
     """
 
     @staticmethod
-    def primary_index(column: base.ColumnReference) -> IndexInfo:
+    def primary_index(column: ColumnReference) -> IndexInfo:
         """Creates index information for a primary key index.
 
         Parameters
         ----------
-        column : base.ColumnReference
+        column : ColumnReference
             The indexed column
 
         Returns
@@ -126,14 +126,14 @@ class IndexInfo:
         return IndexInfo(column, "primary")
 
     @staticmethod
-    def secondary_index(column: base.ColumnReference) -> IndexInfo:
+    def secondary_index(column: ColumnReference) -> IndexInfo:
         """Creates index information for a secondary index.
 
         Foreign key indexes are often defined this way.
 
         Parameters
         ----------
-        column : base.ColumnReference
+        column : ColumnReference
             The indexed column
 
         Returns
@@ -144,12 +144,12 @@ class IndexInfo:
         return IndexInfo(column, "secondary")
 
     @staticmethod
-    def no_index(column: base.ColumnReference) -> IndexInfo:
+    def no_index(column: ColumnReference) -> IndexInfo:
         """Creates index information that indicates the absence of an index.
 
         Parameters
         ----------
-        column : base.ColumnReference
+        column : ColumnReference
             A column that does not have any index
 
         Returns
@@ -160,12 +160,12 @@ class IndexInfo:
         return IndexInfo(column, "none")
 
     @staticmethod
-    def generate_for(column: base.ColumnReference, db_schema: db.DatabaseSchema) -> IndexInfo:
+    def generate_for(column: ColumnReference, db_schema: db.DatabaseSchema) -> IndexInfo:
         """Determines available indexes for a specific column.
 
         Parameters
         ----------
-        column : base.ColumnReference
+        column : ColumnReference
             The column. It has to be connected to a valid, non-virtual table reference
         db_schema : db.DatabaseSchema
             The schema of the database to which the column belongs.
@@ -187,19 +187,19 @@ class IndexInfo:
         else:
             return IndexInfo.no_index(column)
 
-    def __init__(self, column: base.ColumnReference, index_type: Literal["primary", "secondary", "none"],
+    def __init__(self, column: ColumnReference, index_type: Literal["primary", "secondary", "none"],
                  invalid: bool = False) -> None:
         self._column = column
         self._index_type = index_type
         self._is_invalid = invalid
 
     @property
-    def column(self) -> base.ColumnReference:
+    def column(self) -> ColumnReference:
         """Get the column to which the index information belongs.
 
         Returns
         -------
-        base.ColumnReference
+        ColumnReference
             The column
         """
         return self._column
@@ -334,11 +334,11 @@ class TableInfo:
     index_info: Collection[IndexInfo]
 
 
-_PredicateMap = collections.defaultdict[frozenset[base.TableReference], list[predicates.AbstractPredicate]]
+_PredicateMap = collections.defaultdict[frozenset[TableReference], list[AbstractPredicate]]
 """Type alias for an (internally used) predicate map"""
 
 
-class JoinGraph(Mapping[base.TableReference, TableInfo]):
+class JoinGraph(Mapping[TableReference, TableInfo]):
     """The join graph models the connection between different tables in a query.
 
     All tables that are referenced in the query are represented as the nodes in the graph. If two tables are joined via a join
@@ -388,7 +388,7 @@ class JoinGraph(Mapping[base.TableReference, TableInfo]):
         db_schema = db_schema if db_schema else db.DatabasePool.get_instance().current_database().schema()
         self.query = query
         self._db_schema = db_schema
-        self._index_structures: dict[base.ColumnReference, IndexInfo] = {}
+        self._index_structures: dict[ColumnReference, IndexInfo] = {}
 
         graph = nx.Graph()
         graph.add_nodes_from(query.tables(), free=True)
@@ -396,8 +396,8 @@ class JoinGraph(Mapping[base.TableReference, TableInfo]):
         predicate_map: _PredicateMap = collections.defaultdict(list)
         join_predicates = query.predicates().joins()
         if include_predicate_equivalence_classes:
-            join_equivalence_classes = predicates.determine_join_equivalence_classes(join_predicates)
-            equivalence_class_predicates = predicates.generate_predicates_for_equivalence_classes(join_equivalence_classes)
+            join_equivalence_classes = qal.determine_join_equivalence_classes(join_predicates)
+            equivalence_class_predicates = qal.generate_predicates_for_equivalence_classes(join_equivalence_classes)
             join_predicates = set(join_predicates) | equivalence_class_predicates
         for join_predicate in join_predicates:
             if len(join_predicate.columns()) != 2:
@@ -407,7 +407,7 @@ class JoinGraph(Mapping[base.TableReference, TableInfo]):
 
         for tables, joins in predicate_map.items():
             first_tab, second_tab = tables
-            join_predicate = predicates.CompoundPredicate.create_and(joins)
+            join_predicate = qal.CompoundPredicate.create_and(joins)
             edges.append((first_tab, second_tab, {"predicate": join_predicate}))
             for column in join_predicate.columns():
                 self._index_structures[column] = IndexInfo.generate_for(column, db_schema)
@@ -492,36 +492,36 @@ class JoinGraph(Mapping[base.TableReference, TableInfo]):
         """
         components = []
         for component in nx.connected_components(self._graph):
-            component_query = transform.extract_query_fragment(self.query, component)
+            component_query = qal.transform.extract_query_fragment(self.query, component)
             components.append(JoinGraph(component_query, self._db_schema))
         return components
 
-    def joined_tables(self) -> frozenset[base.TableReference]:
+    def joined_tables(self) -> frozenset[TableReference]:
         """Provides all non-free tables in the join graph.
 
         Returns
         -------
-        frozenset[base.TableReference]
+        frozenset[TableReference]
             The tables that have already been joined / consumed.
         """
         return frozenset(table for table in self if not self.is_free_table(table))
 
-    def free_tables(self) -> frozenset[base.TableReference]:
+    def free_tables(self) -> frozenset[TableReference]:
         """Provides all tables that have not been joined, yet.
 
         Returns
         -------
-        frozenset[base.TableReference]
+        frozenset[TableReference]
             The tables that are not consumed
         """
         return frozenset(table for table in self if self.is_free_table(table))
 
-    def all_joins(self) -> Iterable[tuple[base.TableReference, base.TableReference]]:
+    def all_joins(self) -> Iterable[tuple[TableReference, TableReference]]:
         """Provides all edges in the join graph, no matter whether they are available or not.
 
         Returns
         -------
-        Iterable[tuple[base.TableReference, base.TableReference]]
+        Iterable[tuple[TableReference, TableReference]]
             The possible joins in the graph. The assignment to the first or second component of the tuple is arbitrary
         """
         return list(self._graph.edges)
@@ -597,7 +597,7 @@ class JoinGraph(Mapping[base.TableReference, TableInfo]):
                     n_m_paths.append(join_path.flip_direction())
         return n_m_paths
 
-    def available_join_paths_for(self, table: base.TableReference) -> Iterable[JoinPath]:
+    def available_join_paths_for(self, table: TableReference) -> Iterable[JoinPath]:
         """Returns all possible joins of a specific table.
 
         What constitutes a possible join depends on the state of the join graph: for an initial join graph, the only
@@ -606,7 +606,7 @@ class JoinGraph(Mapping[base.TableReference, TableInfo]):
 
         Parameters
         ----------
-        table : base.TableReference
+        table : TableReference
             The table that should be joined
 
         Returns
@@ -629,14 +629,14 @@ class JoinGraph(Mapping[base.TableReference, TableInfo]):
         """
         return copy.deepcopy(self._graph)
 
-    def is_free_table(self, table: base.TableReference) -> bool:
+    def is_free_table(self, table: TableReference) -> bool:
         """Checks, whether a specific table is still free in this join graph.
 
         If the table is not part of the join graph, an error is raised.
 
         Parameters
         ----------
-        table : base.TableReference
+        table : TableReference
             The table to check
 
         Returns
@@ -646,16 +646,16 @@ class JoinGraph(Mapping[base.TableReference, TableInfo]):
         """
         return self._graph.nodes[table]["free"]
 
-    def joins_tables(self, first_table: base.TableReference, second_table: base.TableReference) -> bool:
+    def joins_tables(self, first_table: TableReference, second_table: TableReference) -> bool:
         """Checks, whether the join graph contains an edge between specific tables.
 
         This check does not require the join in question to be available (this is what `is_available_join` is for).
 
         Parameters
         ----------
-        first_table : base.TableReference
+        first_table : TableReference
             The first join partner
-        second_table : base.TableReference
+        second_table : TableReference
             The second join partner
 
         Returns
@@ -666,7 +666,7 @@ class JoinGraph(Mapping[base.TableReference, TableInfo]):
         """
         return (first_table, second_table) in self._graph.edges
 
-    def is_available_join(self, first_table: base.TableReference, second_table: base.TableReference) -> bool:
+    def is_available_join(self, first_table: TableReference, second_table: TableReference) -> bool:
         """Checks, whether the join between two tables is still available.
 
         For initial join graphs, this check passes as long as there is a valid join predicate between the two given tables. In
@@ -674,9 +674,9 @@ class JoinGraph(Mapping[base.TableReference, TableInfo]):
 
         Parameters
         ----------
-        first_table : base.TableReference
+        first_table : TableReference
             The first join partner
-        second_table : base.TableReference
+        second_table : TableReference
             The second join partner
 
         Returns
@@ -690,16 +690,16 @@ class JoinGraph(Mapping[base.TableReference, TableInfo]):
         available_join = (first_free and not second_free) or (not first_free and second_free) or self.initial()
         return valid_join and available_join
 
-    def is_pk_fk_join(self, fk_table: base.TableReference, pk_table: base.TableReference) -> bool:
+    def is_pk_fk_join(self, fk_table: TableReference, pk_table: TableReference) -> bool:
         """Checks, whether the join between the supplied tables is a primary key/foreign key join.
 
         This check does not require the indicated join to be available.
 
         Parameters
         ----------
-        fk_table : base.TableReference
+        fk_table : TableReference
             The foreign key table
-        pk_table : base.TableReference
+        pk_table : TableReference
             The primary key table
 
         Returns
@@ -716,7 +716,7 @@ class JoinGraph(Mapping[base.TableReference, TableInfo]):
         if not self.joins_tables(fk_table, pk_table):
             return False
 
-        predicate: predicates.AbstractPredicate = self._graph.edges[fk_table, pk_table]["predicate"]
+        predicate: AbstractPredicate = self._graph.edges[fk_table, pk_table]["predicate"]
         for base_predicate in predicate.base_predicates():
             fk_col = util.simplify(base_predicate.columns_of(fk_table))
             pk_col = util.simplify(base_predicate.columns_of(pk_table))
@@ -724,16 +724,16 @@ class JoinGraph(Mapping[base.TableReference, TableInfo]):
                 return True
         return False
 
-    def is_n_m_join(self, first_table: base.TableReference, second_table: base.TableReference) -> bool:
+    def is_n_m_join(self, first_table: TableReference, second_table: TableReference) -> bool:
         """Checks, whether the join between the supplied tables is an n:m join.
 
         This check does not require the indicated join to be available.
 
         Parameters
         ----------
-        first_table : base.TableReference
+        first_table : TableReference
             The first join partner
-        second_table : base.TableReference
+        second_table : TableReference
             The second join partner
 
         Returns
@@ -750,14 +750,14 @@ class JoinGraph(Mapping[base.TableReference, TableInfo]):
                 and not self.is_pk_fk_join(first_table, second_table)
                 and not self.is_pk_fk_join(second_table, first_table))
 
-    def available_pk_fk_joins_for(self, fk_table: base.TableReference) -> Iterable[JoinPath]:
+    def available_pk_fk_joins_for(self, fk_table: TableReference) -> Iterable[JoinPath]:
         """Provides all available primary key/foreign key joins with a specific foreign key table.
 
         This method does not restrict itself to available joins, but requires that at least one of the join parts is free.
 
         Parameters
         ----------
-        fk_table : base.TableReference
+        fk_table : TableReference
             The foreign key table. This will be the start table in all join paths.
 
         Returns
@@ -771,8 +771,8 @@ class JoinGraph(Mapping[base.TableReference, TableInfo]):
                 in self._graph.adj[fk_table].items()
                 if self.is_pk_fk_join(fk_table, pk_table) and (self.is_free_table(fk_table) or self.is_free_table(pk_table))]
 
-    def available_deep_pk_join_paths_for(self, fk_table: base.TableReference,
-                                         ordering: Callable[[base.TableReference, dict], int] | None = None
+    def available_deep_pk_join_paths_for(self, fk_table: TableReference,
+                                         ordering: Callable[[TableReference, dict], int] | None = None
                                          ) -> Iterable[JoinPath]:
         """Provides all available pk/fk joins with the given table, as well as follow-up pk/fk joins.
 
@@ -792,9 +792,9 @@ class JoinGraph(Mapping[base.TableReference, TableInfo]):
 
         Parameters
         ----------
-        fk_table : base.TableReference
+        fk_table : TableReference
             The foreign key table at which the search should be anchored.
-        ordering : Callable[[base.TableReference, dict], int] | None, optional
+        ordering : Callable[[TableReference, dict], int] | None, optional
             How to sort different primary key join partners on the same level. Lower values mean earlier positioning. This
             defaults to ``None``, in which case an arbitrary ordering is used.
 
@@ -807,37 +807,37 @@ class JoinGraph(Mapping[base.TableReference, TableInfo]):
         available_joins = util.nx.nx_bfs_tree(self._graph, fk_table, self._check_pk_fk_join, node_order=ordering)
         join_paths = []
         for join in available_joins:
-            current_pk_table: base.TableReference = join[0]
-            join_predicate: predicates.AbstractPredicate = join[1]["predicate"]
+            current_pk_table: TableReference = join[0]
+            join_predicate: AbstractPredicate = join[1]["predicate"]
             current_fk_table = util.simplify({column.table for column
                                               in join_predicate.join_partners_of(current_pk_table)})
             join_paths.append(JoinPath(current_fk_table, current_pk_table, join_predicate))
         return join_paths
 
-    def join_partners_from(self, table: base.TableReference,
-                           candidate_tables: Iterable[base.TableReference]) -> set[base.TableReference]:
+    def join_partners_from(self, table: TableReference,
+                           candidate_tables: Iterable[TableReference]) -> set[TableReference]:
         """Provides exactly those tables from a set of candidates that are joined with a specific given table.
 
         This check does not require the joins in question to be available. The existence of a join edge is sufficient.
 
         Parameters
         ----------
-        table : base.TableReference
+        table : TableReference
             The table that should be joined with the candidates
-        candidate_tables : Iterable[base.TableReference]
+        candidate_tables : Iterable[TableReference]
             Possible join partners for the `table`. Join type and direction do not matter
 
         Returns
         -------
-        set[base.TableReference]
+        set[TableReference]
             Those tables of the `candidate_tables` that can be joined with the partner table.
         """
         candidate_tables = set(candidate_tables)
         return set(neighbor for neighbor in self._graph.adj[table].keys() if neighbor in candidate_tables)
 
-    def join_predicates_between(self, first_tables: base.TableReference | Iterable[base.TableReference],
-                                second_tables: Optional[base.TableReference | Iterable[base.TableReference]] = None
-                                ) -> Collection[predicates.AbstractPredicate]:
+    def join_predicates_between(self, first_tables: TableReference | Iterable[TableReference],
+                                second_tables: Optional[TableReference | Iterable[TableReference]] = None
+                                ) -> Collection[AbstractPredicate]:
         """Provides all join predicates between sets of tables.
 
         This method operates in two modes: if only one set of tables is given, all join predicates for tables within that set
@@ -848,17 +848,17 @@ class JoinGraph(Mapping[base.TableReference, TableInfo]):
 
         Parameters
         ----------
-        first_tables : base.TableReference | Iterable[base.TableReference]
+        first_tables : TableReference | Iterable[TableReference]
             The first set of candidate tables. Can optionally also be a single table, in which case the check is only
             performed for this table and the partner set
-        second_tables : Optional[base.TableReference  |  Iterable[base.TableReference]], optional
+        second_tables : Optional[TableReference  |  Iterable[TableReference]], optional
             The second set of candidate tables. By default this is ``None``, which results in collecting only join predicates
             for tables from `first_tables`. Can also be a single table, in which case the check is only performed for this
             table and the partner set
 
         Returns
         -------
-        Collection[predicates.AbstractPredicate]
+        Collection[AbstractPredicate]
             All join predicates
         """
         first_tables = util.enlist(first_tables)
@@ -873,7 +873,7 @@ class JoinGraph(Mapping[base.TableReference, TableInfo]):
 
         return matching_predicates
 
-    def mark_joined(self, table: base.TableReference, join_edge: Optional[predicates.AbstractPredicate] = None) -> None:
+    def mark_joined(self, table: TableReference, join_edge: Optional[AbstractPredicate] = None) -> None:
         """Updates the join graph to include a specific table in the intermediate result.
 
         This procedure also changes the available index structures according to the kind of join that was executed.
@@ -882,9 +882,9 @@ class JoinGraph(Mapping[base.TableReference, TableInfo]):
 
         Parameters
         ----------
-        table : base.TableReference
+        table : TableReference
             The tables that becomes part of an intermediate result
-        join_edge : Optional[predicates.AbstractPredicate], optional
+        join_edge : Optional[AbstractPredicate], optional
             The condition that is used to carry out the join. Defaults to ``None``, in which case the predicate is inferred
             from the predicates that have been supplied by the initial query.
         """
@@ -941,12 +941,12 @@ class JoinGraph(Mapping[base.TableReference, TableInfo]):
         cloned._index_structures = copy.deepcopy(self._index_structures)
         return cloned
 
-    def _assert_contains_table(self, table: base.TableReference) -> None:
+    def _assert_contains_table(self, table: TableReference) -> None:
         """Raises an error if a specific table is not part of the join graph.
 
         Parameters
         ----------
-        table : base.TableReference
+        table : TableReference
             The table to check
 
         Raises
@@ -957,12 +957,12 @@ class JoinGraph(Mapping[base.TableReference, TableInfo]):
         if table not in self:
             raise ValueError(f"Join graph does not contain table {table}")
 
-    def _check_pk_fk_join(self, pk_table: base.TableReference, edge_data: dict) -> bool:
+    def _check_pk_fk_join(self, pk_table: TableReference, edge_data: dict) -> bool:
         """Checks, whether a specific table acts as a primary key in the join as indicated by a join graph edge.
 
         Parameters
         ----------
-        pk_table : base.TableReference
+        pk_table : TableReference
             The table to check
         edge_data : dict
             The join that should be performed. This has to be contained in the ``"predicate"`` key.
@@ -972,7 +972,7 @@ class JoinGraph(Mapping[base.TableReference, TableInfo]):
         bool
             Whether the `pk_table` actually acts as the primary key in the given join edge.
         """
-        join_predicate: predicates.AbstractPredicate = edge_data["predicate"]
+        join_predicate: AbstractPredicate = edge_data["predicate"]
         for base_predicate in join_predicate.base_predicates():
             fk_table = util.simplify({column.table
                                       for column in base_predicate.join_partners_of(pk_table)})
@@ -980,44 +980,44 @@ class JoinGraph(Mapping[base.TableReference, TableInfo]):
                 return True
         return False
 
-    def _invalidate_indexes_on(self, table: base.TableReference) -> None:
+    def _invalidate_indexes_on(self, table: TableReference) -> None:
         """Invalidates all indexes on all columns that belong to the given table.
 
         Parameters
         ----------
-        table : base.TableReference
+        table : TableReference
             The table for which the invalidation should take place
         """
         for column, index in self._index_structures.items():
             if column.table == table:
                 index.invalidate()
 
-    def _fetch_join_predicate(self, first_table: base.TableReference,
-                              second_table: base.TableReference) -> Optional[predicates.AbstractPredicate]:
+    def _fetch_join_predicate(self, first_table: TableReference,
+                              second_table: TableReference) -> Optional[AbstractPredicate]:
         """Provides the join predicate between specific tables if there is one.
 
         Parameters
         ----------
-        first_table : base.TableReference
+        first_table : TableReference
             The first join partner
-        second_table : base.TableReference
+        second_table : TableReference
             The second join partner
 
         Returns
         -------
-        Optional[predicates.AbstractPredicate]
+        Optional[AbstractPredicate]
             The join predicate if exists or ``None`` otherwise. The status of the join partners does not matter
         """
         if (first_table, second_table) not in self._graph.edges:
             return None
         return self._graph.edges[first_table, second_table]["predicate"]
 
-    def _index_info_for(self, table: base.TableReference) -> Collection[IndexInfo]:
+    def _index_info_for(self, table: TableReference) -> Collection[IndexInfo]:
         """Provides all index info for a specific table (i.e. for each column that belongs to the table).
 
         Parameters
         ----------
-        table : base.TableReference
+        table : TableReference
             The table to retrieve the index info for
 
         Returns
@@ -1031,13 +1031,13 @@ class JoinGraph(Mapping[base.TableReference, TableInfo]):
     def __len__(self) -> int:
         return len(self._graph)
 
-    def __iter__(self) -> Iterator[base.TableReference]:
+    def __iter__(self) -> Iterator[TableReference]:
         return iter(self._graph.nodes)
 
     def __contains__(self, x: object) -> bool:
         return x in self._graph.nodes
 
-    def __getitem__(self, key: base.TableReference) -> TableInfo:
+    def __getitem__(self, key: TableReference) -> TableInfo:
         if key not in self:
             raise KeyError(f"Table {key} is not part of the join graph")
         free = self.is_free_table(key)

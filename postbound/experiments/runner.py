@@ -12,10 +12,9 @@ import numpy as np
 import pandas as pd
 
 import postbound as pb
-from postbound.qal import qal, transform, clauses
 from postbound.optimizer import validation
 from postbound.experiments import workloads
-from .. import db, util
+from .. import db, qal, util
 
 COL_LABEL = "label"
 COL_QUERY = "query"
@@ -118,12 +117,12 @@ class QueryPreparationService:
             The prepared query
         """
         if self.analyze:
-            query = transform.as_explain(query, clauses.Explain.explain_analyze())
+            query = qal.transform.as_explain(query, qal.Explain.explain_analyze())
         elif self.explain:
-            query = transform.as_explain(query, clauses.Explain.plan())
+            query = qal.transform.as_explain(query, qal.Explain.plan())
 
         if self.count_star:
-            query = transform.as_count_star_query(query)
+            query = qal.as_count_star_query(query)
 
         if self.prewarm:
             on.prewarm_tables(query.tables())
@@ -156,7 +155,7 @@ def _failed_execution_result(query: qal.SqlQuery, database: db.Database, repetit
         The data frame for the failed query
     """
     return pd.DataFrame({
-        COL_QUERY: [transform.drop_hints(query)] * repetitions,
+        COL_QUERY: [qal.transform.drop_hints(query)] * repetitions,
         COL_QUERY_HINTS: [query.hints] * repetitions,
         COL_T_EXEC: [np.nan] * repetitions,
         COL_RESULT: [np.nan] * repetitions,
@@ -251,7 +250,7 @@ def execute_query(query: qal.SqlQuery, database: db.Database, *,
         _invoke_post_process(execution_result, post_process)
 
     return pd.DataFrame({
-        COL_QUERY: [transform.drop_hints(original_query)] * repetitions,
+        COL_QUERY: [qal.transform.drop_hints(original_query)] * repetitions,
         COL_QUERY_HINTS: [original_query.hints] * repetitions,
         COL_T_EXEC: execution_times,
         COL_RESULT: query_results,

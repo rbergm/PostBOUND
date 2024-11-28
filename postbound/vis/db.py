@@ -7,9 +7,9 @@ from typing import Optional
 
 import graphviz as gv
 
-from postbound.vis import trees as tree_viz
-from ..db import QueryExecutionPlan
+from . import trees
 from .. import util
+from ..db import QueryExecutionPlan
 
 
 def _query_plan_labels(node: QueryExecutionPlan, *,
@@ -70,9 +70,9 @@ def plot_query_plan(plan: QueryExecutionPlan,
                     skip_intermediates: bool = False, **kwargs) -> gv.Graph:
     if not plan:
         return gv.Graph()
-    return tree_viz.plot_tree(plan, functools.partial(_query_plan_labels, annotation_generator=annotation_generator),
-                              functools.partial(_query_plan_traversal, skip_intermediates=skip_intermediates),
-                              **kwargs)
+    return trees.plot_tree(plan, functools.partial(_query_plan_labels, annotation_generator=annotation_generator),
+                           functools.partial(_query_plan_traversal, skip_intermediates=skip_intermediates),
+                           **kwargs)
 
 
 def _explain_analyze_annotations(node: QueryExecutionPlan) -> str:
@@ -85,7 +85,7 @@ def _explain_analyze_annotations(node: QueryExecutionPlan) -> str:
 def plot_analyze_plan(plan: QueryExecutionPlan, *, skip_intermediates: bool = False, **kwargs) -> gv.Graph:
     if not plan:
         return gv.Graph()
-    return tree_viz.plot_tree(plan,
-                              functools.partial(_query_plan_labels, annotation_generator=_explain_analyze_annotations),
-                              functools.partial(_query_plan_traversal, skip_intermediates=skip_intermediates),
-                              **kwargs)
+    return trees.plot_tree(plan,
+                           functools.partial(_query_plan_labels, annotation_generator=_explain_analyze_annotations),
+                           functools.partial(_query_plan_traversal, skip_intermediates=skip_intermediates),
+                           **kwargs)

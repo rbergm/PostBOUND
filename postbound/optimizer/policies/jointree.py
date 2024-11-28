@@ -3,8 +3,8 @@ from __future__ import annotations
 
 import abc
 
-from postbound.qal import qal, predicates
 from .. import joingraph, validation
+from ... import qal
 
 
 class BranchGenerationPolicy(abc.ABC):
@@ -36,12 +36,12 @@ class BranchGenerationPolicy(abc.ABC):
         raise NotImplementedError
 
     @abc.abstractmethod
-    def generate_subquery_for(self, join: predicates.AbstractPredicate, join_graph: joingraph.JoinGraph) -> bool:
+    def generate_subquery_for(self, join: qal.AbstractPredicate, join_graph: joingraph.JoinGraph) -> bool:
         """Decides whether the given join should be executed in a subquery.
 
         Parameters
         ----------
-        join : predicates.AbstractPredicate
+        join : qal.AbstractPredicate
             The join that should be executed **within the subquery**. This is not the predicate that should be used to combine
             the results of two intermediate relations.
         join_graph : joingraph.JoinGraph
@@ -92,7 +92,7 @@ class LinearJoinTreeGenerationPolicy(BranchGenerationPolicy):
     def setup_for_query(self, query: qal.SqlQuery) -> None:
         pass
 
-    def generate_subquery_for(self, join: predicates.AbstractPredicate, join_graph: joingraph.JoinGraph) -> bool:
+    def generate_subquery_for(self, join: qal.AbstractPredicate, join_graph: joingraph.JoinGraph) -> bool:
         return False
 
     def describe(self) -> dict:

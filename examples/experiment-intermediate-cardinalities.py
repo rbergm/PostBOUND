@@ -9,10 +9,9 @@ from typing import Optional
 
 import pandas as pd
 
-from postbound.qal import qal, transform
+from postbound import qal, util
 from postbound.db import postgres
 from postbound.experiments import workloads, analysis
-from postbound import util
 
 workloads.workloads_base_dir = "workloads/"
 
@@ -42,9 +41,9 @@ def iter_intermediates(workload: workloads.Workload) -> Generator[QueryIntermedi
                 continue
 
             joined_tables = sorted(joined_tables)
-            query_fragment = transform.extract_query_fragment(query, joined_tables)
+            query_fragment = qal.transform.extract_query_fragment(query, joined_tables)
             assert query_fragment is not None
-            query_fragment = transform.as_count_star_query(query_fragment)
+            query_fragment = qal.transform.as_count_star_query(query_fragment)
             yield QueryIntermediate(label, query, query_fragment)
 
 

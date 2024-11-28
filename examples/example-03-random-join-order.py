@@ -12,8 +12,7 @@ import warnings
 from typing import Optional
 
 import postbound as pb
-from postbound.qal import qal
-from postbound import db
+from postbound import db, qal
 from postbound.db import postgres
 from postbound.experiments import workloads
 from postbound.optimizer import stages, jointree, joingraph, validation

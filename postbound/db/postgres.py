@@ -29,7 +29,6 @@ from typing import Any, Literal, Optional
 import psycopg
 import psycopg.rows
 
-from postbound.qal import qal, base, expressions, clauses, transform, formatter
 from postbound.optimizer import jointree, physops, planparams
 from ._db import (
     Database,
@@ -44,7 +43,11 @@ from ._db import (
     DatabaseUserError,
     UnsupportedDatabaseFeatureError
 )
-from .. import util
+from .. import qal, util
+from ..qal import (
+    TableReference, ColumnReference,
+    UnboundColumnError, VirtualTableError,
+)
 from ..util import Version, StateError
 
 # TODO: find a nice way to support index nested-loop join hints.
@@ -547,16 +550,16 @@ class PostgresInterface(Database):
         self._cursor.close()
         self._connection.close()
 
-    def prewarm_tables(self, tables: Optional[base.TableReference | Iterable[base.TableReference]] = None,
-                       *more_tables: base.TableReference, exclude_table_pages: bool = False,
+    def prewarm_tables(self, tables: Optional[TableReference | Iterable[TableReference]] = None,
+                       *more_tables: TableReference, exclude_table_pages: bool = False,
                        include_primary_index: bool = True, include_secondary_indexes: bool = True) -> None:
         """Prepares the Postgres buffer pool with tuples from specific tables.
 
         Parameters
         ----------
-        tables : Optional[base.TableReference  |  Iterable[base.TableReference]], optional
+        tables : Optional[TableReference  |  Iterable[TableReference]], optional
             The tables that should be placed into the buffer pool
-        *more_tables : base.TableReference
+        *more_tables : TableReference
             More tables that should be placed into the buffer pool, enabling a more convenient usage of this method.
             See examples for details on the usage.
         exclude_table_pages : bool, optional
@@ -581,7 +584,7 @@ class PostgresInterface(Database):
         >>> pg.prewarm_tables(table1, table2)
         """
         self._assert_active_extension("pg_prewarm")
-        tables: Iterable[base.TableReference] = list(util.enlist(tables)) + list(more_tables)
+        tables: Iterable[TableReference] = list(util.enlist(tables)) + list(more_tables)
         if not tables:
             return
         tables = set(tab.full_name for tab in tables)  # eliminate duplicates if tables are selected multiple times
@@ -600,8 +603,8 @@ class PostgresInterface(Database):
 
         self._cursor.execute(prewarm_query)
 
-    def cooldown_tables(self, tables: Optional[base.TableReference | Iterable[base.TableReference]] = None,
-                        *more_tables: base.TableReference, exclude_table_pages: bool = False,
+    def cooldown_tables(self, tables: Optional[TableReference | Iterable[TableReference]] = None,
+                        *more_tables: TableReference, exclude_table_pages: bool = False,
                         include_primary_index: bool = True, include_secondary_indexes: bool = True) -> None:
         """Removes tuples from specific tables from  the Postgres buffer pool.
 
@@ -609,9 +612,9 @@ class PostgresInterface(Database):
 
         Parameters
         ----------
-        tables : Optional[base.TableReference  |  Iterable[base.TableReference]], optional
+        tables : Optional[TableReference  |  Iterable[TableReference]], optional
             The tables that should be removed from the buffer pool
-        *more_tables : base.TableReference
+        *more_tables : TableReference
             More tables that should be removed into the buffer pool, enabling a more convenient usage of this method.
             See examples for details on the usage.
         exclude_table_pages : bool, optional
@@ -629,7 +632,7 @@ class PostgresInterface(Database):
         >>> pg.cooldown_tables(table1, table2)
         """
         self._assert_active_extension("pg_cooldown")
-        tables: Iterable[base.TableReference] = list(util.enlist(tables)) + list(more_tables)
+        tables: Iterable[TableReference] = list(util.enlist(tables)) + list(more_tables)
         if not tables:
             return
         tables = set(tab.full_name for tab in tables)  # eliminate duplicates if tables are selected multiple times
@@ -741,10 +744,10 @@ class PostgresInterface(Database):
             self._cursor.execute("SET geqo = 'off';")
 
         if drop_explain:
-            query = transform.drop_clause(query, clauses.Explain)
+            query = qal.transform.drop_clause(query, qal.Explain)
         if query.hints and query.hints.preparatory_statements:
             self._cursor.execute(query.hints.preparatory_statements)
-            query = transform.drop_hints(query, preparatory_statements_only=True)
+            query = qal.transform.drop_hints(query, preparatory_statements_only=True)
         return self._hinting_backend.format_query(query), requires_geqo_deactivation
 
     def _obtain_query_plan(self, query: str) -> dict:
@@ -792,12 +795,12 @@ class PostgresInterface(Database):
         self._cursor.execute(f"SET geqo = '{geqo_enabled}';")
         self._cursor.execute(f"SET geqo_threshold = {self._current_geqo_state.threshold};")
 
-    def _fetch_index_relnames(self, table: base.TableReference | str) -> Iterable[tuple[str, bool]]:
+    def _fetch_index_relnames(self, table: TableReference | str) -> Iterable[tuple[str, bool]]:
         """Loads all physical index relations for a physical table.
 
         Parameters
         ----------
-        table : base.TableReference
+        table : TableReference
             The table for which to load the indexes
 
         Returns
@@ -814,7 +817,7 @@ class PostgresInterface(Database):
                                             JOIN pg_class owner_cls ON idx.indrelid = owner_cls.oid
                                          WHERE owner_cls.relname = %s;
                                          """)
-        table = table.full_name if isinstance(table, base.TableReference) else table
+        table = table.full_name if isinstance(table, TableReference) else table
         self._cursor.execute(query_template, (table, ))
         return list(self._cursor.fetchall())
 
@@ -864,7 +867,7 @@ class PostgresSchemaInterface(DatabaseSchema):
     def __int__(self, postgres_db: PostgresInterface) -> None:
         super().__init__(postgres_db)
 
-    def tables(self) -> set[base.TableReference]:
+    def tables(self) -> set[TableReference]:
         query_template = textwrap.dedent("""
                                          SELECT table_name
                                          FROM information_schema.tables
@@ -872,11 +875,11 @@ class PostgresSchemaInterface(DatabaseSchema):
         self._db.cursor().execute(query_template, (self._db.database_name(),))
         result_set = self._db.cursor().fetchall()
         assert result_set is not None
-        return set(base.TableReference(row[0]) for row in result_set)
+        return set(TableReference(row[0]) for row in result_set)
 
-    def lookup_column(self, column: base.ColumnReference | str,
-                      candidate_tables: list[base.TableReference]) -> base.TableReference:
-        column = column.name if isinstance(column, base.ColumnReference) else column
+    def lookup_column(self, column: ColumnReference | str,
+                      candidate_tables: list[TableReference]) -> TableReference:
+        column = column.name if isinstance(column, ColumnReference) else column
         column = column.lower()
         for table in candidate_tables:
             table_columns = self._fetch_columns(table)
@@ -885,43 +888,43 @@ class PostgresSchemaInterface(DatabaseSchema):
         candidate_tables = [table.full_name for table in candidate_tables]
         raise ValueError(f"Column '{column}' not found in candidate tables {candidate_tables}")
 
-    def primary_key_column(self, table: base.TableReference | str) -> base.ColumnReference:
+    def primary_key_column(self, table: TableReference | str) -> ColumnReference:
         """Determines the primary key column of a specific table.
 
         Parameters
         ----------
-        table : base.TableReference | str
+        table : TableReference | str
             The table to check
 
         Returns
         -------
-        base.ColumnReference
+        ColumnReference
             The column that acts as the primary key.
 
         Warnings
         --------
         Calling this method on a table with no primary key, or with a composite primary key yields undefined behavior.
         """
-        table = base.TableReference(table) if isinstance(table, str) else table
+        table = TableReference(table) if isinstance(table, str) else table
         indexes = self._fetch_indexes(table)
         col_name = next((col for col, primary in indexes.items() if primary), None)
         if col_name is None:
             raise ValueError("No primary key column found on table " + str(table))
-        return base.ColumnReference(col_name, table)
+        return ColumnReference(col_name, table)
 
-    def is_primary_key(self, column: base.ColumnReference) -> bool:
+    def is_primary_key(self, column: ColumnReference) -> bool:
         if not column.table:
-            raise base.UnboundColumnError(column)
+            raise UnboundColumnError(column)
         if column.table.virtual:
-            raise base.VirtualTableError(column.table)
+            raise VirtualTableError(column.table)
         index_map = self._fetch_indexes(column.table)
         return index_map.get(column.name, False)
 
-    def has_secondary_index(self, column: base.ColumnReference) -> bool:
+    def has_secondary_index(self, column: ColumnReference) -> bool:
         if not column.table:
-            raise base.UnboundColumnError(column)
+            raise UnboundColumnError(column)
         if column.table.virtual:
-            raise base.VirtualTableError(column.table)
+            raise VirtualTableError(column.table)
         index_map = self._fetch_indexes(column.table)
 
         # The index map contains an entry for each attribute that actually has an index. The value is True, if the
@@ -931,11 +934,11 @@ class PostgresSchemaInterface(DatabaseSchema):
         # value.
         return not index_map.get(column.name, True)
 
-    def datatype(self, column: base.ColumnReference) -> str:
+    def datatype(self, column: ColumnReference) -> str:
         if not column.table:
-            raise base.UnboundColumnError(column)
+            raise UnboundColumnError(column)
         if column.table.virtual:
-            raise base.VirtualTableError(column.table)
+            raise VirtualTableError(column.table)
         query_template = textwrap.dedent("""
             SELECT data_type FROM information_schema.columns
             WHERE table_name = '{tab}' AND column_name = '{col}'""".format(tab=column.table.full_name, col=column.name))
@@ -943,12 +946,12 @@ class PostgresSchemaInterface(DatabaseSchema):
         result_set = self._db.cursor().fetchone()
         return result_set[0]
 
-    def _fetch_columns(self, table: base.TableReference) -> list[str]:
+    def _fetch_columns(self, table: TableReference) -> list[str]:
         """Retrieves all physical columns for a given table from the PG metadata catalogs.
 
         Parameters
         ----------
-        table : base.TableReference
+        table : TableReference
             The table whose columns should be loaded
 
         Returns
@@ -962,18 +965,18 @@ class PostgresSchemaInterface(DatabaseSchema):
             If the table is a virtual table (e.g. subquery or CTE)
         """
         if table.virtual:
-            raise base.VirtualTableError(table)
+            raise VirtualTableError(table)
         query_template = "SELECT column_name FROM information_schema.columns WHERE table_name = %s"
         self._db.cursor().execute(query_template, (table.full_name,))
         result_set = self._db.cursor().fetchall()
         return [col[0] for col in result_set]
 
-    def _fetch_indexes(self, table: base.TableReference) -> dict[str, bool]:
+    def _fetch_indexes(self, table: TableReference) -> dict[str, bool]:
         """Retrieves all index structures for a given table based on the PG metadata catalogs.
 
         Parameters
         ----------
-        table : base.TableReference
+        table : TableReference
             The table whose indexes should be loaded
 
         Returns
@@ -988,7 +991,7 @@ class PostgresSchemaInterface(DatabaseSchema):
             If the table is a virtual table (e.g. subquery or CTE)
         """
         if table.virtual:
-            raise base.VirtualTableError(table)
+            raise VirtualTableError(table)
         # query adapted from https://wiki.postgresql.org/wiki/Retrieve_primary_key_columns
         index_query = textwrap.dedent(f"""
             SELECT attr.attname, idx.indisprimary
@@ -1037,8 +1040,8 @@ class PostgresStatisticsInterface(DatabaseStatistics):
         super().__init__(postgres_db, emulated=emulated, enable_emulation_fallback=enable_emulation_fallback,
                          cache_enabled=cache_enabled)
 
-    def update_statistics(self, columns: Optional[base.ColumnReference | Iterable[base.ColumnReference]] = None, *,
-                          tables: Optional[base.TableReference | Iterable[base.TableReference]] = None,
+    def update_statistics(self, columns: Optional[ColumnReference | Iterable[ColumnReference]] = None, *,
+                          tables: Optional[TableReference | Iterable[TableReference]] = None,
                           perfect_mcv: bool = False, perfect_n_distinct: bool = False, verbose: bool = False) -> None:
         """Instructs the Postgres server to update statistics for specific columns.
 
@@ -1046,10 +1049,10 @@ class PostgresStatisticsInterface(DatabaseStatistics):
 
         Parameters
         ----------
-        columns : Optional[base.ColumnReference  |  Iterable[base.ColumnReference]], optional
+        columns : Optional[ColumnReference  |  Iterable[ColumnReference]], optional
             The columns for which statistics should be updated. If no columns are given, columns are inferred based on the
             `tables` and all detected columns are used.
-        tables : Optional[base.TableReference  |  Iterable[base.TableReference]], optional
+        tables : Optional[TableReference  |  Iterable[TableReference]], optional
             The table for which statistics should be updated. If `columns` are given, this parameter is completely ignored. If
             no columns and no tables are given, all tables in the current database are used.
         perfect_mcv : bool, optional
@@ -1070,10 +1073,9 @@ class PostgresStatisticsInterface(DatabaseStatistics):
             columns = util.set_union(self._db.schema().columns(tab) for tab in tables)
 
         assert columns is not None
-        columns: Iterable[base.ColumnReference] = util.enlist(columns)
-        columns_map: dict[base.TableReference, list[str]] = util.dicts.generate_multi((col.table, col.name)
-                                                                                      for col in columns)
-        distinct_values: dict[base.ColumnReference, int] = {}
+        columns: Iterable[ColumnReference] = util.enlist(columns)
+        columns_map: dict[TableReference, list[str]] = util.dicts.generate_multi((col.table, col.name) for col in columns)
+        distinct_values: dict[ColumnReference, int] = {}
 
         if perfect_mcv or perfect_n_distinct:
             for column in columns:
@@ -1110,7 +1112,7 @@ class PostgresStatisticsInterface(DatabaseStatistics):
                                                     """)
             self._db.cursor().execute(distinct_update_query)
 
-    def _retrieve_total_rows_from_stats(self, table: base.TableReference) -> Optional[int]:
+    def _retrieve_total_rows_from_stats(self, table: TableReference) -> Optional[int]:
         count_query = f"SELECT reltuples FROM pg_class WHERE oid = '{table.full_name}'::regclass"
         self._db.cursor().execute(count_query)
         result_set = self._db.cursor().fetchone()
@@ -1119,7 +1121,7 @@ class PostgresStatisticsInterface(DatabaseStatistics):
         count = result_set[0]
         return count
 
-    def _retrieve_distinct_values_from_stats(self, column: base.ColumnReference) -> Optional[int]:
+    def _retrieve_distinct_values_from_stats(self, column: ColumnReference) -> Optional[int]:
         dist_query = "SELECT n_distinct FROM pg_stats WHERE tablename = %s and attname = %s"
         self._db.cursor().execute(dist_query, (column.table.full_name, column.name))
         result_set = self._db.cursor().fetchone()
@@ -1140,13 +1142,13 @@ class PostgresStatisticsInterface(DatabaseStatistics):
         n_rows = self._retrieve_total_rows_from_stats(column.table)
         return -1 * n_rows * dist_values
 
-    def _retrieve_min_max_values_from_stats(self, column: base.ColumnReference) -> Optional[tuple[Any, Any]]:
+    def _retrieve_min_max_values_from_stats(self, column: ColumnReference) -> Optional[tuple[Any, Any]]:
         # Postgres does not keep track of min/max values, so we need to determine them manually
         if not self.enable_emulation_fallback:
             raise UnsupportedDatabaseFeatureError(self._db, "min/max value statistics")
         return self._calculate_min_max_values(column, cache_enabled=True)
 
-    def _retrieve_most_common_values_from_stats(self, column: base.ColumnReference,
+    def _retrieve_most_common_values_from_stats(self, column: ColumnReference,
                                                 k: int) -> Sequence[tuple[Any, int]]:
         # Postgres stores the Most common values in a column of type anyarray (since in this column, many MCVs from
         # many different tables and data types are present). However, this type is not very convenient to work on.
@@ -1178,7 +1180,7 @@ class HintParts:
 
     See Also
     --------
-    postbound.qal.clauses.Hint
+    qal.Hint
     """
     settings: list[str]
     """Settings are global to the current database connection and influence the selection of operators for all queries.
@@ -1348,12 +1350,12 @@ References
 """
 
 
-def _generate_join_key(tables: Iterable[base.TableReference]) -> str:
+def _generate_join_key(tables: Iterable[TableReference]) -> str:
     """Produces an identifier for the given join that is compatible with the *pg_hint_plan* operator hint syntax.
 
     Parameters
     ----------
-    tables : Iterable[base.TableReference]
+    tables : Iterable[TableReference]
         The join in question, consisting exactly of the given tables.
 
     Returns
@@ -1395,7 +1397,7 @@ def _escape_setting(setting: Any) -> str:
     return f"'{setting}'"
 
 
-def _apply_hint_block_to_query(query: qal.SqlQuery, hint_block: Optional[clauses.Hint]) -> qal.SqlQuery:
+def _apply_hint_block_to_query(query: qal.SqlQuery, hint_block: Optional[qal.Hint]) -> qal.SqlQuery:
     """Ensures that a hint block is added to a query.
 
     Since the query abstraction layer consists of immutable data objects, a new query has to be created. This method's
@@ -1405,7 +1407,7 @@ def _apply_hint_block_to_query(query: qal.SqlQuery, hint_block: Optional[clauses
     ----------
     query : qal.SqlQuery
         The query to apply the hint block to
-    hint_block : Optional[clauses.Hint]
+    hint_block : Optional[qal.Hint]
         The hint block to apply. If this is ``None``, no modifications are performed.
 
     Returns
@@ -1413,7 +1415,7 @@ def _apply_hint_block_to_query(query: qal.SqlQuery, hint_block: Optional[clauses
     qal.SqlQuery
         The input query with the hint block applied
     """
-    return transform.add_clause(query, hint_block) if hint_block else query
+    return qal.transform.add_clause(query, hint_block) if hint_block else query
 
 
 PostgresJoinHints = {physops.JoinOperators.NestedLoopJoin, physops.JoinOperators.HashJoin,
@@ -1430,33 +1432,33 @@ PostgresPlanHints = {planparams.HintType.CardinalityHint, planparams.HintType.Pa
 """All non-operator hints supported by Postgres, that can be used to enforce additional optimizer behaviour."""
 
 
-class _PostgresCastExpression(expressions.CastExpression):
+class _PostgresCastExpression(qal.CastExpression):
     """A specialized cast expression to handle the custom syntax for ``CAST`` statements used by Postgres.
 
     Parameters
     ----------
-    original_cast : expressions.CastExpression
+    original_cast : qal.CastExpression
         The actual cast expression. The new cast expression acts as a decorator around the original expression.
     """
 
-    def __init__(self, original_cast: expressions.CastExpression) -> None:
+    def __init__(self, original_cast: qal.CastExpression) -> None:
         super().__init__(original_cast.casted_expression, original_cast.target_type)
 
     def __str__(self) -> str:
         return f"{self.casted_expression}::{self.target_type}"
 
 
-class PostgresExplainClause(clauses.Explain):
+class PostgresExplainClause(qal.Explain):
     """A specialized ``EXPLAIN`` clause implementation to handle Postgres custom syntax for query plans.
 
     If ``ANALYZE`` is enabled, this also retrieves information about shared buffer usage (page hits and disk reads).
 
     Parameters
     ----------
-    original_clause : clauses.Explain
+    original_clause : qal.Explain
         The actual ``EXPLAIN`` clause. The new explain clause acts as a decorator around the original clause.
     """
-    def __init__(self, original_clause: clauses.Explain) -> None:
+    def __init__(self, original_clause: qal.Explain) -> None:
         super().__init__(original_clause.analyze, original_clause.target_format)
 
     def __str__(self) -> str:
@@ -1467,16 +1469,16 @@ class PostgresExplainClause(clauses.Explain):
         return f"EXPLAIN {explain_args}"
 
 
-class PostgresLimitClause(clauses.Limit):
+class PostgresLimitClause(qal.Limit):
     """A specialized ``LIMIT`` clause implementation to handle Postgres custom syntax for limits / offsets
 
     Parameters
     ----------
-    original_clause : clauses.Limit
+    original_clause : qal.Limit
         The actual ``LIMIT`` clause. The new limit clause acts as a decorator around the original clause.
     """
 
-    def __init__(self, original_clause: clauses.Limit) -> None:
+    def __init__(self, original_clause: qal.Limit) -> None:
         super().__init__(limit=original_clause.limit, offset=original_clause.offset)
 
     def __str__(self) -> str:
@@ -1490,7 +1492,7 @@ class PostgresLimitClause(clauses.Limit):
             return ""
 
 
-def _replace_postgres_cast_expressions(expression: expressions.SqlExpression) -> expressions.SqlExpression:
+def _replace_postgres_cast_expressions(expression: qal.SqlExpression) -> qal.SqlExpression:
     """Wraps a given expression by a `_PostgresCastExpression` if necessary.
 
     This is the replacment method required by the `replace_expressions` transformation. It wraps all `CastExpression`
@@ -1498,19 +1500,19 @@ def _replace_postgres_cast_expressions(expression: expressions.SqlExpression) ->
 
     Parameters
     ----------
-    expression : expressions.SqlExpression
+    expression : qal.SqlExpression
         The expression to check
 
     Returns
     -------
-    expressions.SqlExpression
+    qal.SqlExpression
         A potentially wrapped version of the original expression
 
     See Also
     --------
     postbound.qal.transform.replace_expressions
     """
-    return _PostgresCastExpression(expression) if isinstance(expression, expressions.CastExpression) else expression
+    return _PostgresCastExpression(expression) if isinstance(expression, qal.CastExpression) else expression
 
 
 class _IntermediateNodesCollector(jointree.JoinTreeVisitor[set[jointree.AuxiliaryNode]]):
@@ -1596,9 +1598,9 @@ class PostgresHintService(HintService):
         self._assert_active_backend()
         adapted_query = query
         if adapted_query.explain and not isinstance(adapted_query.explain, PostgresExplainClause):
-            adapted_query = transform.replace_clause(adapted_query, PostgresExplainClause(adapted_query.explain))
+            adapted_query = qal.transform.replace_clause(adapted_query, PostgresExplainClause(adapted_query.explain))
         if adapted_query.limit_clause and not isinstance(adapted_query.limit_clause, PostgresLimitClause):
-            adapted_query = transform.replace_clause(adapted_query, PostgresLimitClause(adapted_query.limit_clause))
+            adapted_query = qal.transform.replace_clause(adapted_query, PostgresLimitClause(adapted_query.limit_clause))
 
         hint_parts = None
 
@@ -1631,12 +1633,12 @@ class PostgresHintService(HintService):
         return adapted_query
 
     def format_query(self, query: qal.SqlQuery) -> str:
-        query = transform.replace_expressions(query, _replace_postgres_cast_expressions)
+        query = qal.transform.replace_expressions(query, _replace_postgres_cast_expressions)
         if query.explain and not isinstance(query.explain, PostgresExplainClause):
-            query = transform.replace_clause(query, PostgresExplainClause(query.explain))
+            query = qal.transform.replace_clause(query, PostgresExplainClause(query.explain))
         if query.limit_clause and not isinstance(query.limit_clause, PostgresLimitClause):
-            query = transform.replace_clause(query, PostgresLimitClause(query.limit_clause))
-        return formatter.format_quick(query)
+            query = qal.transform.replace_clause(query, PostgresLimitClause(query.limit_clause))
+        return qal.format_quick(query)
 
     def supports_hint(self, hint: physops.PhysicalOperator | planparams.HintType) -> bool:
         self._assert_active_backend()
@@ -1984,7 +1986,7 @@ class PostgresHintService(HintService):
                 warnings.warn(f"Ignoring parallel workers hint for join {join}", category=HintWarning)
                 continue
 
-            table: base.TableReference = util.simplify(join)
+            table: TableReference = util.simplify(join)
             hints.append(f"Parallel({table.identifier()} {num_workers} hard)")
 
         for operator, setting in plan_parameters.system_specific_settings.items():
@@ -2023,7 +2025,7 @@ class PostgresHintService(HintService):
                 hints.add(f"Memo({table_identifier})")
         return hints
 
-    def _generate_hint_block(self, parts: HintParts) -> Optional[clauses.Hint]:
+    def _generate_hint_block(self, parts: HintParts) -> Optional[qal.Hint]:
         """Transforms a collection of hints into a proper hint clause.
 
         Parameters
@@ -2033,7 +2035,7 @@ class PostgresHintService(HintService):
 
         Returns
         -------
-        Optional[clauses.Hint]
+        Optional[qal.Hint]
             A syntactically correct hint clause tailored for Postgres and pg_hint_plan. If neither settings nor hints
             are contained in the `parts`, ``None`` is returned instead.
         """
@@ -2044,7 +2046,7 @@ class PostgresHintService(HintService):
         hint_prefix = "/*=pg_lab=" if self._backend == "pg_lab" else "/*+"
         hint_suffix = "*/"
         hints_block = "\n".join([hint_prefix] + ["  " + hint for hint in hints] + [hint_suffix]) if hints else ""
-        return clauses.Hint(settings_block, hints_block)
+        return qal.Hint(settings_block, hints_block)
 
     def _assert_active_backend(self) -> None:
         """Ensures that a proper hinting backend is available.
@@ -2091,7 +2093,7 @@ class PostgresOptimizer(OptimizerInterface):
 
     def analyze_plan(self, query: qal.SqlQuery) -> QueryExecutionPlan:
         self._pg_instance._current_geqo_state = self._pg_instance._obtain_geqo_state()
-        query, deactivated_geqo = self._pg_instance._prepare_query_execution(transform.as_explain_analyze(query))
+        query, deactivated_geqo = self._pg_instance._prepare_query_execution(qal.transform.as_explain_analyze(query))
         self._pg_instance.cursor().execute(query)
         raw_query_plan = self._pg_instance.cursor().fetchone()[0]
         query_plan = PostgresExplainPlan(raw_query_plan)
@@ -2689,18 +2691,18 @@ class PostgresExplainNode:
         outer_child = first_child if second_child == inner_child else second_child
         return (inner_child, outer_child)
 
-    def parse_table(self) -> Optional[base.TableReference]:
+    def parse_table(self) -> Optional[TableReference]:
         """Provides the table that is processed by this node.
 
         Returns
         -------
-        Optional[base.TableReference]
+        Optional[TableReference]
             The table being scanned. For non-scan nodes, or nodes where no table can be inferred, ``None`` will be returned.
         """
         if not self.relation_name:
             return None
         alias = self.relation_alias if self.relation_alias is not None and self.relation_alias != self.relation_name else ""
-        return base.TableReference(self.relation_name, alias)
+        return TableReference(self.relation_name, alias)
 
     def as_query_execution_plan(self) -> QueryExecutionPlan:
         """Transforms the postgres-specific plan to a standardized `QueryExecutionPlan` instance.
@@ -2943,13 +2945,13 @@ class WorkloadShifter:
     def __init__(self, pg_instance: PostgresInterface) -> None:
         self.pg_instance = pg_instance
 
-    def remove_random(self, table: base.TableReference | str, *,
+    def remove_random(self, table: TableReference | str, *,
                       n_rows: Optional[int] = None, row_pct: Optional[float] = None, vacuum: bool = False) -> None:
         """Deletes tuples from a specific tables at random.
 
         Parameters
         ----------
-        table : base.TableReference | str
+        table : TableReference | str
             The table from which to delete
         n_rows : Optional[int], optional
             The absolute number of rows to delete. Defaults to ``None`` in which case the `row_pct` is used.
@@ -2969,7 +2971,7 @@ class WorkloadShifter:
         --------
         Notice that deletions in the given table can trigger further deletions in other tables through cascades in the schema.
         """
-        table_name = table.full_name if isinstance(table, base.TableReference) else table
+        table_name = table.full_name if isinstance(table, TableReference) else table
         n_rows = self._determine_row_cnt(table_name, n_rows, row_pct)
         pk_column = self.pg_instance.schema().primary_key_column(table_name)
         removal_template = textwrap.dedent("""
@@ -2985,7 +2987,7 @@ class WorkloadShifter:
         removal_query = removal_template.format(table=table_name, col=pk_column.name, cnt=n_rows)
         self._perform_removal(removal_query, vacuum)
 
-    def remove_ordered(self, column: base.ColumnReference | str, *,
+    def remove_ordered(self, column: ColumnReference | str, *,
                        n_rows: Optional[int] = None, row_pct: Optional[float] = None,
                        ascending: bool = True, null_placement: Optional[Literal["first", "last"]] = None,
                        vacuum: bool = False) -> None:
@@ -2993,7 +2995,7 @@ class WorkloadShifter:
 
         Parameters
         ----------
-        column : base.ColumnReference | str
+        column : ColumnReference | str
             The column to infer the deletion order. Can be either a proper column reference including the containing table, or
             a fully-qualified column string such as _table.column_ .
         n_rows : Optional[int], optional
@@ -3022,7 +3024,7 @@ class WorkloadShifter:
 
         if isinstance(column, str):
             table_name, col_name = column.split(".")
-        elif isinstance(column, base.ColumnReference):
+        elif isinstance(column, ColumnReference):
             table_name, col_name = column.table.full_name, column.name
         else:
             raise TypeError("Unknown column type: " + str(column))
@@ -3079,7 +3081,7 @@ class WorkloadShifter:
         """
         marker_table = f"{target_table}_delete_marker" if marker_table is None else marker_table
         marker_column = f"{target_table}_{target_column}" if marker_column is None else marker_column
-        target_col_ref = base.ColumnReference(target_column, base.TableReference(target_table))
+        target_col_ref = ColumnReference(target_column, TableReference(target_table))
         target_column_type = self.pg_instance.schema().datatype(target_col_ref)
         marker_create_query = textwrap.dedent(f"""
                                               CREATE TABLE IF NOT EXISTS {marker_table} (
@@ -3176,7 +3178,7 @@ class WorkloadShifter:
         in_file = pathlib.Path(f"{marker_table}.csv").absolute() if in_file is None else in_file
 
         if target_column_type is None:
-            target_col_ref = base.ColumnReference(target_column, base.TableReference(target_table))
+            target_col_ref = ColumnReference(target_column, TableReference(target_table))
             target_column_type = self.pg_instance.schema().datatype(target_col_ref)
 
         marker_create_query = textwrap.dedent(f"""
@@ -3290,7 +3292,7 @@ class WorkloadShifter:
         if not 0.0 < row_pct < 1.0:
             raise ValueError("Not a valid row percentage: " + str(row_pct))
 
-        total_n_rows = self.pg_instance.statistics().total_rows(base.TableReference(table),
+        total_n_rows = self.pg_instance.statistics().total_rows(TableReference(table),
                                                                 cache_enabled=False, emulated=True)
         if total_n_rows is None:
             raise StateError("Could not determine total number of rows for table " + table)

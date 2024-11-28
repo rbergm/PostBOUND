@@ -35,10 +35,10 @@ from typing import Generic, Optional
 import numpy as np
 
 
-from postbound.qal import base, qal, predicates
 from .. import joingraph, jointree, physops, stages, validation
 from ..policies import cardinalities as cardpol, jointree as treepol
-from ... import db, util
+from ... import db, qal, util
+from ...qal import TableReference, ColumnReference
 
 
 ColumnType = typing.TypeVar("ColumnType")
@@ -71,13 +71,13 @@ class StatisticsContainer(abc.ABC, Generic[StatsType]):
 
     Attributes
     ----------
-    base_table_estimates : dict[base.TableReference, int]
+    base_table_estimates : dict[TableReference, int]
         These statistics are intended for tables that are not part of the intermediate result, yet. The estimates approximate
         the number of rows that are returned when scanning the table.
-    upper_bounds : dict[base.TableReference | jointree.LogicalJoinTree, int]
+    upper_bounds : dict[TableReference | jointree.LogicalJoinTree, int]
         These statistics contain the cardinality estimates for intermediate results of the input query. Inserting new bounds
         can result in an update of the column statistics.
-    attribute_frequencies : dict[base.ColumnReference, StatsType]
+    attribute_frequencies : dict[ColumnReference, StatsType]
         This statistic contains the current statistics value for individual columns. This is the main data structure that has
         to be maintained during the query optimization process to update the column statistics once they become part of an
         intermediate result (and get changed as part of the join process).
@@ -86,9 +86,9 @@ class StatisticsContainer(abc.ABC, Generic[StatsType]):
     """
 
     def __init__(self) -> None:
-        self.base_table_estimates: dict[base.TableReference, int] = {}
-        self.upper_bounds: dict[base.TableReference | jointree.LogicalJoinTree, int] = {}
-        self.attribute_frequencies: dict[base.ColumnReference, StatsType] = {}
+        self.base_table_estimates: dict[TableReference, int] = {}
+        self.upper_bounds: dict[TableReference | jointree.LogicalJoinTree, int] = {}
+        self.attribute_frequencies: dict[ColumnReference, StatsType] = {}
         self.query: Optional[qal.SqlQuery] = None
 
     def setup_for_query(self, query: qal.SqlQuery,
@@ -119,8 +119,8 @@ class StatisticsContainer(abc.ABC, Generic[StatsType]):
         return {join_tree: bound for join_tree, bound in self.upper_bounds.items()
                 if isinstance(join_tree, jointree.LogicalJoinTree)}
 
-    def trigger_frequency_update(self, join_tree: jointree.LogicalJoinTree, joined_table: base.TableReference,
-                                 join_condition: predicates.AbstractPredicate) -> None:
+    def trigger_frequency_update(self, join_tree: jointree.LogicalJoinTree, joined_table: TableReference,
+                                 join_condition: qal.AbstractPredicate) -> None:
         """Updates the `attribute_frequencies` according to a new n:m join.
 
         The update procedure distinguishes between two different types of column statistics and uses different
@@ -139,12 +139,12 @@ class StatisticsContainer(abc.ABC, Generic[StatsType]):
         join_tree : jointree.LogicalJoinTree
             A join order that indicates the last join that was performed. This is the join that is used to infer the necessary
             updates.
-        joined_table : base.TableReference
+        joined_table : TableReference
             The actual table that was joined. Remember that UES performs either primary key/foreign key joins, or joins with
             exactly one n:m table join partner. In the first case, no frequency updates are necessary since cardinalities may
             never increase when the foreign key is already part of an intermediate result. In the second case, there is exactly
             one partner table that is denoted by this parameter.
-        join_condition : predicates.AbstractPredicate
+        join_condition : qal.AbstractPredicate
             The predicate that was used for the join. This is required to determine the columns that were directly involved in
             the join. These columns have to be updated in a different way compared to other columns in the intermediate result.
         """
@@ -202,8 +202,8 @@ class StatisticsContainer(abc.ABC, Generic[StatsType]):
         raise NotImplementedError
 
     @abc.abstractmethod
-    def _update_partner_column_frequency(self, joined_column: base.ColumnReference,
-                                         partner_column: base.ColumnReference) -> None:
+    def _update_partner_column_frequency(self, joined_column: ColumnReference,
+                                         partner_column: ColumnReference) -> None:
         """Performs the frequency update for a partner column.
 
         This implies that there is a join between the joined column and the partner column, and the partner column is already
@@ -212,16 +212,16 @@ class StatisticsContainer(abc.ABC, Generic[StatsType]):
 
         Parameters
         ----------
-        joined_column : base.ColumnReference
+        joined_column : ColumnReference
             A column that is already part of the intermediate result
-        partner_column : base.ColumnReference
+        partner_column : ColumnReference
             A column of the relation that has just been joined with the current intermedaite result
         """
         raise NotImplementedError
 
     @abc.abstractmethod
-    def _update_third_party_column_frequency(self, joined_column: base.ColumnReference,
-                                             third_party_column: base.ColumnReference) -> None:
+    def _update_third_party_column_frequency(self, joined_column: ColumnReference,
+                                             third_party_column: ColumnReference) -> None:
         """Performs the frequency update for a third party column (see `trigger_frequency_update`).
 
         This implies that there is a join between the joined column and some other column from the intermediate result. The
@@ -230,9 +230,9 @@ class StatisticsContainer(abc.ABC, Generic[StatsType]):
 
         Parameters
         ----------
-        joined_column : base.ColumnReference
+        joined_column : ColumnReference
             A column that is already part of the intermediate result
-        third_party_column : base.ColumnReference
+        third_party_column : ColumnReference
             A column of the relation that has just been joined with the current intermediate result
         """
         raise NotImplementedError
@@ -271,23 +271,23 @@ class MaxFrequencyStatsContainer(StatisticsContainer[MaxFrequency]):
                 _, mcv_frequency = util.simplify(top1_list)
             self.attribute_frequencies[column] = mcv_frequency
 
-    def _update_partner_column_frequency(self, joined_column: base.ColumnReference,
-                                         partner_column: base.ColumnReference) -> None:
+    def _update_partner_column_frequency(self, joined_column: ColumnReference,
+                                         partner_column: ColumnReference) -> None:
         joined_frequency = self.attribute_frequencies[joined_column]
         partner_frequency = self.attribute_frequencies[partner_column]
         self.attribute_frequencies[joined_column] *= partner_frequency
         self.attribute_frequencies[partner_column] *= joined_frequency
 
-    def _update_third_party_column_frequency(self, joined_column: base.ColumnReference,
-                                             third_party_column: base.ColumnReference) -> None:
+    def _update_third_party_column_frequency(self, joined_column: ColumnReference,
+                                             third_party_column: ColumnReference) -> None:
         self.attribute_frequencies[third_party_column] *= self.attribute_frequencies[joined_column]
 
-    def _uniform_frequency(self, column: base.ColumnReference) -> float:
+    def _uniform_frequency(self, column: ColumnReference) -> float:
         """Calculates the value frequency for a column, assuming that all values are uniformly distributed.
 
         Parameters
         ----------
-        column : base.ColumnReference
+        column : ColumnReference
             The column to calculate for
 
         Returns
@@ -328,7 +328,7 @@ class UESJoinBoundEstimator(cardpol.JoinCardinalityEstimator):
         """
         self.stats_container = stats_container
 
-    def estimate_for(self, join_edge: predicates.AbstractPredicate, join_graph: joingraph.JoinGraph) -> int:
+    def estimate_for(self, join_edge: qal.AbstractPredicate, join_graph: joingraph.JoinGraph) -> int:
         current_min_bound = np.inf
 
         for base_predicate in join_edge.base_predicates():
@@ -353,14 +353,14 @@ class UESJoinBoundEstimator(cardpol.JoinCardinalityEstimator):
         # It suffices to check that there are only conjunctive equi joins.
         return UESOptimizationPreCheck
 
-    def _estimate_pk_fk_join(self, fk_column: base.ColumnReference, pk_column: base.ColumnReference) -> int:
+    def _estimate_pk_fk_join(self, fk_column: ColumnReference, pk_column: ColumnReference) -> int:
         """Estimation formula for primary key/foreign key joins.
 
         Parameters
         ----------
-        fk_column : base.ColumnReference
+        fk_column : ColumnReference
             The foreign key column
-        pk_column : base.ColumnReference
+        pk_column : ColumnReference
             The primary key column
 
         Returns
@@ -372,14 +372,14 @@ class UESJoinBoundEstimator(cardpol.JoinCardinalityEstimator):
         fk_frequency = self.stats_container.attribute_frequencies[fk_column]
         return math.ceil(fk_frequency * pk_cardinality)
 
-    def _estimate_n_m_join(self, first_column: base.ColumnReference, second_column: base.ColumnReference) -> int:
+    def _estimate_n_m_join(self, first_column: ColumnReference, second_column: ColumnReference) -> int:
         """Estimation formula for n:m joins.
 
         Parameters
         ----------
-        first_column : base.ColumnReference
+        first_column : ColumnReference
             The join column from the first partner
-        second_column : base.ColumnReference
+        second_column : ColumnReference
             The join column from the second partner
 
         Returns
@@ -400,7 +400,7 @@ class UESJoinBoundEstimator(cardpol.JoinCardinalityEstimator):
         n_m_bound = min(first_distinct_vals, second_distinct_vals) * first_freq * second_freq
         return math.ceil(n_m_bound)
 
-    def _fetch_bound(self, column: base.ColumnReference) -> int:
+    def _fetch_bound(self, column: ColumnReference) -> int:
         """Provides the appropriate table bound (based on upper bound or base table estimate) for the given column.
 
         This is a utility method to work with the statistics container in a more convenient way, since the container can store
@@ -409,7 +409,7 @@ class UESJoinBoundEstimator(cardpol.JoinCardinalityEstimator):
 
         Parameters
         ----------
-        column : base.ColumnReference
+        column : ColumnReference
             The column for which the upper bound of the corresponding base table should be loaded.
 
         Returns
@@ -447,7 +447,7 @@ class UESSubqueryGenerationPolicy(treepol.BranchGenerationPolicy):
         """
         self.stats_container = stats_container
 
-    def generate_subquery_for(self, join: predicates.AbstractPredicate, join_graph: joingraph.JoinGraph) -> bool:
+    def generate_subquery_for(self, join: qal.AbstractPredicate, join_graph: joingraph.JoinGraph) -> bool:
         if join_graph.count_consumed_tables() < 2:
             return False
 
@@ -785,7 +785,7 @@ class UESJoinOrderOptimizer(stages.JoinOrderOptimization):
 
         return join_tree
 
-    def _table_base_cardinality_ordering(self, table: base.TableReference, join_edge: dict) -> int:
+    def _table_base_cardinality_ordering(self, table: TableReference, join_edge: dict) -> int:
         """Utility method to impose an ordering of multiple primary key tables for a foreign key join.
 
         The actual ordering sorts the primary key tables according to their upper bounds and is used internally by the join
@@ -793,7 +793,7 @@ class UESJoinOrderOptimizer(stages.JoinOrderOptimization):
 
         Parameters
         ----------
-        table : base.TableReference
+        table : TableReference
             The table for which the cardinality should be retrieved.
         join_edge : dict
             The edge of the join graph that describes the current join. This is ignored by the calculation and only required
@@ -908,9 +908,9 @@ class UESJoinOrderOptimizer(stages.JoinOrderOptimization):
         if self._logging_enabled:
             print(info)
 
-    def _log_optimization_progress(self, phase: str, candidate_table: base.TableReference,
+    def _log_optimization_progress(self, phase: str, candidate_table: TableReference,
                                    pk_joins: Iterable[joingraph.JoinPath], *,
-                                   join_condition: predicates.AbstractPredicate | None = None,
+                                   join_condition: qal.AbstractPredicate | None = None,
                                    subquery_join: bool | None = None) -> None:
         """Displays the current optimizer state.
 
@@ -921,11 +921,11 @@ class UESJoinOrderOptimizer(stages.JoinOrderOptimization):
         ----------
         phase : str
             The phase of the UES algorithm, e.g. initial table selection of n:m join execution
-        candidate_table : base.TableReference
+        candidate_table : TableReference
             The table that is considered as the next join partner
         pk_joins : Iterable[joingraph.JoinPath]
             Primary key joins that should be applied to the candidate table
-        join_condition : predicates.AbstractPredicate | None, optional
+        join_condition : qal.AbstractPredicate | None, optional
             The join condition that was used to find the candidate table. Can be ``None`` to omit this information, e.g. when
             it is not applicable for the current phase.
         subquery_join : bool | None, optional

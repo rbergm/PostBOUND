@@ -32,9 +32,9 @@ from typing import Generic, Literal, Optional, Union
 
 import Levenshtein
 
-from postbound.qal import base, predicates, parser, qal
 from . import physops, planparams
-from .. import db, util
+from .. import db, qal, util
+from ..qal import parser, TableReference, ColumnReference
 from ..util import jsondict, StateError
 from ..util.typing import Lazy, LazyVal
 
@@ -83,7 +83,7 @@ class JoinMetadata(BaseMetadata, abc.ABC):
 
     Parameters
     ----------
-    predicate : Optional[predicates.AbstractPredicate], optional
+    predicate : Optional[qal.AbstractPredicate], optional
         The join condition that should be used to combine the child relations of the join node. Defaults to *None* if
         no condition is available, or if the join corresponds to a cross-product.
     cardinality : float, optional
@@ -91,18 +91,18 @@ class JoinMetadata(BaseMetadata, abc.ABC):
         default value of *NaN* can be used.
     """
 
-    def __init__(self, predicate: Optional[predicates.AbstractPredicate] = None, *,
+    def __init__(self, predicate: Optional[qal.AbstractPredicate] = None, *,
                  cardinality: float = math.nan) -> None:
         super().__init__(cardinality=cardinality)
         self._join_predicate = predicate
 
     @property
-    def join_predicate(self) -> Optional[predicates.AbstractPredicate]:
+    def join_predicate(self) -> Optional[qal.AbstractPredicate]:
         """Get the condition that should be used to combine the child relations of the join node.
 
         Returns
         -------
-        Optional[predicates.AbstractPredicate]
+        Optional[qal.AbstractPredicate]
             The predicate or *None* if this is either unknown, or if the join node denotes a cross-product.
         """
         return self._join_predicate
@@ -129,7 +129,7 @@ class LogicalJoinMetadata(JoinMetadata):
 
     Parameters
     ----------
-    predicate : Optional[predicates.AbstractPredicate], optional
+    predicate : Optional[qal.AbstractPredicate], optional
         The join condition that should be used to combine the child relations of the join node. Defaults to *None* if
         no condition is available, or if the join corresponds to a cross-product.
     cardinality : float, optional
@@ -140,7 +140,7 @@ class LogicalJoinMetadata(JoinMetadata):
         *NaN* can be used.
     """
 
-    def __init__(self, predicate: Optional[predicates.AbstractPredicate] = None, *,
+    def __init__(self, predicate: Optional[qal.AbstractPredicate] = None, *,
                  cardinality: float = math.nan) -> None:
         super().__init__(predicate, cardinality=cardinality)
         self._hash_val = hash((predicate, cardinality))
@@ -170,7 +170,7 @@ class PhysicalJoinMetadata(JoinMetadata):
 
     Parameters
     ----------
-    predicate : Optional[predicates.AbstractPredicate], optional
+    predicate : Optional[qal.AbstractPredicate], optional
         The join condition that should be used to combine the child relations of the join node. Defaults to *None* if
         no condition is available, or if the join corresponds to a cross-product.
     cardinality : float, optional
@@ -185,7 +185,7 @@ class PhysicalJoinMetadata(JoinMetadata):
         precisely this information. Therefore, cases were the `join_info` actually is *None* should be rare. If they
         are frequent, an investigation of other representations of the query plan is recommended.
     """
-    def __init__(self, predicate: Optional[predicates.AbstractPredicate] = None, *,
+    def __init__(self, predicate: Optional[qal.AbstractPredicate] = None, *,
                  cardinality: float = math.nan, cost: float = math.nan,
                  join_info: Optional[physops.JoinOperatorAssignment] = None) -> None:
         super().__init__(predicate, cardinality=cardinality)
@@ -258,25 +258,25 @@ class BaseTableMetadata(BaseMetadata, abc.ABC):
 
     Parameters
     ----------
-    filter_predicate : Optional[predicates.AbstractPredicate], optional
+    filter_predicate : Optional[qal.AbstractPredicate], optional
         The filter condition that restricts the allowed tuples from the base table. Defaults to *None* if
         no condition is available, or if the base table is not filtered.
     cardinality : float, optional
         An indicator of the number of tuples that are *produced* by the node. If such a value is not available, the
         default value of *NaN* can be used.
     """
-    def __init__(self, filter_predicate: Optional[predicates.AbstractPredicate], *,
+    def __init__(self, filter_predicate: Optional[qal.AbstractPredicate], *,
                  cardinality: float = math.nan) -> None:
         super().__init__(cardinality=cardinality)
         self._filter_predicate = filter_predicate
 
     @property
-    def filter_predicate(self) -> Optional[predicates.AbstractPredicate]:
+    def filter_predicate(self) -> Optional[qal.AbstractPredicate]:
         """Get the condition that should be used to filter the base table.
 
         Returns
         -------
-        Optional[predicates.AbstractPredicate]
+        Optional[qal.AbstractPredicate]
             The predicate or ``None`` if this is either unknown, or if the base table is unfiltered.
         """
         return self._filter_predicate
@@ -304,14 +304,14 @@ class LogicalBaseTableMetadata(BaseTableMetadata):
 
     Parameters
     ----------
-    filter_predicate : Optional[predicates.AbstractPredicate], optional
+    filter_predicate : Optional[qal.AbstractPredicate], optional
         The filter condition that restricts the allowed tuples from the base table. Defaults to *None* if
         no condition is available, or if the base table is not filtered.
     cardinality : float, optional
         An indicator of the number of tuples that are *produced* by the node. If such a value is not available, the
         default value of *NaN* can be used.
     """
-    def __init__(self, filter_predicate: Optional[predicates.AbstractPredicate], *,
+    def __init__(self, filter_predicate: Optional[qal.AbstractPredicate], *,
                  cardinality: float = math.nan) -> None:
         super().__init__(filter_predicate, cardinality=cardinality)
         self._hash_val = hash((filter_predicate, cardinality))
@@ -335,7 +335,7 @@ class PhysicalBaseTableMetadata(BaseTableMetadata):
 
     Parameters
     ----------
-    filter_predicate : Optional[predicates.AbstractPredicate], optional
+    filter_predicate : Optional[qal.AbstractPredicate], optional
         The filter condition that restricts the allowed tuples from the base table. Defaults to *None* if
         no condition is available, or if the base table is not filtered.
     cardinality : float, optional
@@ -351,7 +351,7 @@ class PhysicalBaseTableMetadata(BaseTableMetadata):
         are frequent, an investigation of other representations of the query plan are recommended.
     """
 
-    def __init__(self, filter_predicate: Optional[predicates.AbstractPredicate], *,
+    def __init__(self, filter_predicate: Optional[qal.AbstractPredicate], *,
                  cardinality: float = math.nan, cost: float = math.nan,
                  scan_info: Optional[physops.ScanOperatorAssignment] = None) -> None:
         super().__init__(filter_predicate, cardinality=cardinality)
@@ -452,7 +452,7 @@ JoinMetadataType = typing.TypeVar("JoinMetadataType", bound=JoinMetadata)
 BaseTableMetadataType = typing.TypeVar("BaseTableMetadataType", bound=BaseTableMetadata)
 """Generic type that is bound to the actual metadata type that is used for the scans in a join tree."""
 
-NestedTableSequence = Union[Sequence["NestedTableSequence"], base.TableReference]
+NestedTableSequence = Union[Sequence["NestedTableSequence"], TableReference]
 """Type alias for a convenient format to notate join trees.
 
 The notation is composed of nested lists. These lists can either contain more lists, or references to base tables.
@@ -499,7 +499,7 @@ def parse_nested_table_sequence(sequence: list[dict | list]) -> NestedTableSeque
         return [parse_nested_table_sequence(item) for item in sequence]
     elif isinstance(sequence, dict):
         table_name, alias = sequence["full_name"], sequence.get("alias", "")
-        return base.TableReference(table_name, alias)
+        return TableReference(table_name, alias)
     else:
         raise TypeError(f"Unknown list element: {sequence}")
 
@@ -584,7 +584,7 @@ def read_from_json(json_data: dict, *, include_estimates: bool = True) -> Logica
         raise ValueError("Malformed json data. Keys are " + keys)
 
 
-class AbstractJoinTreeNode(abc.ABC, Container[base.TableReference], Generic[JoinMetadataType, BaseTableMetadataType]):
+class AbstractJoinTreeNode(abc.ABC, Container[TableReference], Generic[JoinMetadataType, BaseTableMetadataType]):
     """The fundamental type to construct a join tree. This node contains the actual entries/data.
 
     A join tree distinguishes between two types of nodes: join nodes which act as intermediate nodes that join
@@ -752,13 +752,13 @@ class AbstractJoinTreeNode(abc.ABC, Container[base.TableReference], Generic[Join
         return not self.is_linear()
 
     @abc.abstractmethod
-    def lookup(self, tables: set[base.TableReference]
+    def lookup(self, tables: set[TableReference]
                ) -> Optional[AbstractJoinTreeNode[JoinMetadataType, BaseTableMetadataType]]:
         """Traverse the join tree until a branch that exactly contains a specific set of tables is found.
 
         Parameters
         ----------
-        tables : set[base.TableReference]
+        tables : set[TableReference]
             The tables for which to search.
 
         Returns
@@ -790,7 +790,7 @@ class AbstractJoinTreeNode(abc.ABC, Container[base.TableReference], Generic[Join
         raise NotImplementedError
 
     @abc.abstractmethod
-    def tables(self) -> frozenset[base.TableReference]:
+    def tables(self) -> frozenset[TableReference]:
         """Provides all tables that are scanned in the subtree under and including this node.
 
         Notice that this only checks the tables that are directly referenced by the leaf nodes. If join or filter
@@ -798,13 +798,13 @@ class AbstractJoinTreeNode(abc.ABC, Container[base.TableReference], Generic[Join
 
         Returns
         -------
-        frozenset[base.TableReference]
+        frozenset[TableReference]
             The tables in the leaf nodes.
         """
         raise NotImplementedError
 
     @abc.abstractmethod
-    def columns(self) -> frozenset[base.ColumnReference]:
+    def columns(self) -> frozenset[ColumnReference]:
         """Provides all columns that are present in the subtree under and including this node.
 
         In contrast to the `tables` method, this method actually checks the join and filter conditions of the nodes
@@ -813,7 +813,7 @@ class AbstractJoinTreeNode(abc.ABC, Container[base.TableReference], Generic[Join
 
         Returns
         -------
-        frozenset[base.ColumnReference]
+        frozenset[ColumnReference]
             The columns that are referenced in the current branch of the join tree.
 
         Notes
@@ -910,7 +910,7 @@ class AbstractJoinTreeNode(abc.ABC, Container[base.TableReference], Generic[Join
         raise NotImplementedError
 
     @abc.abstractmethod
-    def base_table(self, traverse_right: bool = True) -> base.TableReference:
+    def base_table(self, traverse_right: bool = True) -> TableReference:
         """Provides the base table that is located farthest down in one direction of the tree.
 
         The join tree can be traversed either in right-deep or left-deep manner and the direction will stay the same
@@ -923,7 +923,7 @@ class AbstractJoinTreeNode(abc.ABC, Container[base.TableReference], Generic[Join
 
         Returns
         -------
-        base.TableReference
+        TableReference
             The table that is scanned in the right-most or left-most base table node of the current branch
 
         See Also
@@ -1015,7 +1015,7 @@ class IntermediateJoinNode(AbstractJoinTreeNode[JoinMetadataType, BaseTableMetad
         self._left_child = left_child
         self._right_child = right_child
         self._annotation = annotation
-        self._tables: LazyVal[frozenset[base.TableReference]] = Lazy
+        self._tables: LazyVal[frozenset[TableReference]] = Lazy
         self._hash_val = hash((left_child, right_child))
 
     @property
@@ -1109,7 +1109,7 @@ class IntermediateJoinNode(AbstractJoinTreeNode[JoinMetadataType, BaseTableMetad
             return False
         return self._left_child.is_zigzag() and self._right_child.is_zigzag()
 
-    def lookup(self, tables: set[base.TableReference]) -> Optional[base.TableReference]:
+    def lookup(self, tables: set[TableReference]) -> Optional[TableReference]:
         own_tables = self.tables()
         if len(own_tables) < len(tables):
             return None
@@ -1131,13 +1131,13 @@ class IntermediateJoinNode(AbstractJoinTreeNode[JoinMetadataType, BaseTableMetad
     def tree_depth(self) -> int:
         return 1 + max(self.left_child.tree_depth(), self.right_child.tree_depth())
 
-    def tables(self) -> frozenset[base.TableReference]:
+    def tables(self) -> frozenset[TableReference]:
         if self._tables is not None:
             return self._tables
         self._tables = frozenset(self._left_child.tables() | self._right_child.tables())
         return self._tables
 
-    def columns(self) -> frozenset[base.ColumnReference]:
+    def columns(self) -> frozenset[ColumnReference]:
         predicate_columns = (self.annotation.join_predicate.columns()
                              if self.annotation and self.annotation.join_predicate else set())
         return frozenset(self._left_child.columns() | self._right_child.columns() | predicate_columns)
@@ -1192,7 +1192,7 @@ class IntermediateJoinNode(AbstractJoinTreeNode[JoinMetadataType, BaseTableMetad
         right_hash = self.right_child.homomorphic_hash()
         return hash((left_hash, right_hash)) if left_hash < right_hash else hash((right_hash, left_hash))
 
-    def base_table(self, traverse_right: bool = True) -> base.TableReference:
+    def base_table(self, traverse_right: bool = True) -> TableReference:
         return self.right_child.base_table(True) if traverse_right else self.left_child.base_table(False)
 
     def inspect(self, *, _indentation: int = 0) -> str:
@@ -1251,13 +1251,13 @@ class BaseTableNode(AbstractJoinTreeNode[JoinMetadataType, BaseTableMetadataType
 
     Parameters
     ----------
-    table : base.TableReference
+    table : TableReference
         The table that is scanned in this node
     annotation : Optional[BaseTableMetadataType]
         Additional metadata that describes the scan. If no such information exists, ``None`` can be passed.
     """
 
-    def __init__(self, table: base.TableReference, annotation: Optional[BaseTableMetadataType]):
+    def __init__(self, table: TableReference, annotation: Optional[BaseTableMetadataType]):
         if not table:
             raise ValueError("Table is required")
         self._table = table
@@ -1265,12 +1265,12 @@ class BaseTableNode(AbstractJoinTreeNode[JoinMetadataType, BaseTableMetadataType
         self._hash_val = hash(table)
 
     @property
-    def table(self) -> base.TableReference:
+    def table(self) -> TableReference:
         """Get the table that is scanned in this node.
 
         Returns
         -------
-        base.TableReference
+        TableReference
             The table
         """
         return self._table
@@ -1298,7 +1298,7 @@ class BaseTableNode(AbstractJoinTreeNode[JoinMetadataType, BaseTableMetadataType
     def is_zigzag(self) -> bool:
         return True
 
-    def lookup(self, tables: set[base.TableReference]) -> Optional[base.TableReference]:
+    def lookup(self, tables: set[TableReference]) -> Optional[TableReference]:
         if len(tables) == 1 and self.table in tables:
             return self.table
         return None
@@ -1306,10 +1306,10 @@ class BaseTableNode(AbstractJoinTreeNode[JoinMetadataType, BaseTableMetadataType
     def tree_depth(self) -> int:
         return 1
 
-    def tables(self) -> frozenset[base.TableReference]:
+    def tables(self) -> frozenset[TableReference]:
         return frozenset({self._table})
 
-    def columns(self) -> frozenset[base.ColumnReference]:
+    def columns(self) -> frozenset[ColumnReference]:
         return frozenset(self.annotation.filter_predicate.columns()
                          if self.annotation and self.annotation.filter_predicate else set())
 
@@ -1328,7 +1328,7 @@ class BaseTableNode(AbstractJoinTreeNode[JoinMetadataType, BaseTableMetadataType
     def homomorphic_hash(self) -> int:
         return hash(self)
 
-    def base_table(self, traverse_right: bool = True) -> base.TableReference:
+    def base_table(self, traverse_right: bool = True) -> TableReference:
         return self._table
 
     def inspect(self, *, _indentation: int = 0) -> str:
@@ -1350,7 +1350,7 @@ class BaseTableNode(AbstractJoinTreeNode[JoinMetadataType, BaseTableMetadataType
     def __contains__(self, item) -> bool:
         if item == self:
             return True
-        if isinstance(item, predicates.AbstractPredicate):
+        if isinstance(item, qal.AbstractPredicate):
             return self.annotation.filter_predicate == item if self.annotation else False
         return item == self._table
 
@@ -1494,16 +1494,16 @@ class AuxiliaryNode(AbstractJoinTreeNode[JoinMetadataType, BaseTableMetadataType
     def is_zigzag(self) -> bool:
         return self._input_node.is_zigzag()
 
-    def lookup(self, tables: set[base.TableReference]) -> AbstractJoinTreeNode[JoinMetadataType, BaseTableMetadataType] | None:
+    def lookup(self, tables: set[TableReference]) -> AbstractJoinTreeNode[JoinMetadataType, BaseTableMetadataType] | None:
         return self._input_node.lookup(tables)
 
     def tree_depth(self) -> int:
         return self._input_node.tree_depth()
 
-    def tables(self) -> frozenset[base.TableReference]:
+    def tables(self) -> frozenset[TableReference]:
         return self._input_node.tables()
 
-    def columns(self) -> frozenset[base.ColumnReference]:
+    def columns(self) -> frozenset[ColumnReference]:
         return self._input_node.columns()
 
     def join_sequence(self) -> Sequence[IntermediateJoinNode[JoinMetadataType, BaseTableMetadataType]]:
@@ -1512,7 +1512,7 @@ class AuxiliaryNode(AbstractJoinTreeNode[JoinMetadataType, BaseTableMetadataType
     def table_sequence(self) -> Sequence[BaseTableNode[JoinMetadataType, BaseTableMetadataType]]:
         return self._input_node.table_sequence()
 
-    def as_list(self) -> Sequence[Sequence[NestedTableSequence] | base.TableReference] | base.TableReference:
+    def as_list(self) -> Sequence[Sequence[NestedTableSequence] | TableReference] | TableReference:
         return self._input_node.as_list()
 
     def count_cross_product_joins(self) -> int:
@@ -1521,7 +1521,7 @@ class AuxiliaryNode(AbstractJoinTreeNode[JoinMetadataType, BaseTableMetadataType
     def homomorphic_hash(self) -> int:
         return self._input_node.homomorphic_hash()
 
-    def base_table(self, traverse_right: bool = True) -> base.TableReference:
+    def base_table(self, traverse_right: bool = True) -> TableReference:
         return self._input_node.base_table(traverse_right)
 
     def inspect(self, *, _indentation: int = 0) -> str:
@@ -1571,7 +1571,7 @@ AnnotationMerger = Optional[Callable[[Optional[BaseMetadata], Optional[BaseMetad
 """Type alias for methods that can combine different metadata objects."""
 
 
-class JoinTree(Container[base.TableReference], Generic[JoinMetadataType, BaseTableMetadataType]):
+class JoinTree(Container[TableReference], Generic[JoinMetadataType, BaseTableMetadataType]):
     """The join tree captures the order in which base tables as well as intermediate results are joined together.
 
     Each join tree maintains the root of a composite tree structure consisting of `BaseTableNode` as leaves and
@@ -1645,7 +1645,7 @@ class JoinTree(Container[base.TableReference], Generic[JoinMetadataType, BaseTab
         return JoinTree(current_root)
 
     @staticmethod
-    def for_base_table(table: base.TableReference,
+    def for_base_table(table: TableReference,
                        base_annotation: Optional[BaseTableMetadataType] = None) -> JoinTreeType:
         """Generates a new join tree that only scans a specific base table.
 
@@ -1654,7 +1654,7 @@ class JoinTree(Container[base.TableReference], Generic[JoinMetadataType, BaseTab
 
         Parameters
         ----------
-        table : base.TableReference
+        table : TableReference
             The table that should be scanned
         base_annotation : Optional[BaseTableMetadataType], optional
             The annotation for the base table. By default ``None`` is supplied, which indicates that there is no
@@ -1801,7 +1801,7 @@ class JoinTree(Container[base.TableReference], Generic[JoinMetadataType, BaseTab
         """
         return self._root
 
-    def lookup(self, tables: Iterable[base.TableReference]) -> Optional[AbstractJoinTreeNode]:
+    def lookup(self, tables: Iterable[TableReference]) -> Optional[AbstractJoinTreeNode]:
         """Traverses the join tree until a branch has been found that provides a specific set of tables exactly.
 
         See Also
@@ -1815,7 +1815,7 @@ class JoinTree(Container[base.TableReference], Generic[JoinMetadataType, BaseTab
             return None
         return self._root.lookup(tables)
 
-    def tables(self) -> frozenset[base.TableReference]:
+    def tables(self) -> frozenset[TableReference]:
         """Provides all tables that are contained in the join tree.
 
         See Also
@@ -1826,7 +1826,7 @@ class JoinTree(Container[base.TableReference], Generic[JoinMetadataType, BaseTab
             return frozenset()
         return self._root.tables()
 
-    def columns(self) -> frozenset[base.ColumnReference]:
+    def columns(self) -> frozenset[ColumnReference]:
         """Provides all columns that are referenced by the join and filter predicates of this join tree.
 
         See Also
@@ -1837,7 +1837,7 @@ class JoinTree(Container[base.TableReference], Generic[JoinMetadataType, BaseTab
             return frozenset()
         return self._root.columns()
 
-    def join_columns(self) -> frozenset[base.ColumnReference]:
+    def join_columns(self) -> frozenset[ColumnReference]:
         """Provides all columns that are referenced by the join predicates in this join tree.
 
         In contrast to the `columns` method, this excludes all columns that are only accessed as part of filter
@@ -1845,7 +1845,7 @@ class JoinTree(Container[base.TableReference], Generic[JoinMetadataType, BaseTab
 
         Returns
         -------
-        frozenset[base.ColumnReference]
+        frozenset[ColumnReference]
             The columns that appear in jion predicates.
         """
         return frozenset(util.set_union(join_node.annotation.join_predicate.columns() for join_node
@@ -1900,7 +1900,7 @@ class JoinTree(Container[base.TableReference], Generic[JoinMetadataType, BaseTab
             return []
         return self._root.as_list()
 
-    def base_table(self, direction: Literal["left", "right"] = "right") -> base.TableReference:
+    def base_table(self, direction: Literal["left", "right"] = "right") -> TableReference:
         """Provides the base table is located the farthest down a direction in the join tree.
 
         Parameters
@@ -1910,7 +1910,7 @@ class JoinTree(Container[base.TableReference], Generic[JoinMetadataType, BaseTab
 
         Returns
         -------
-        base.TableReference
+        TableReference
             The base table
 
         Raises
@@ -1963,7 +1963,7 @@ class JoinTree(Container[base.TableReference], Generic[JoinMetadataType, BaseTab
             return "[EMPTY JOIN TREE]"
         return self.root.inspect()
 
-    def join_with_base_table(self, table: base.TableReference, base_annotation: Optional[BaseTableMetadataType] = None,
+    def join_with_base_table(self, table: TableReference, base_annotation: Optional[BaseTableMetadataType] = None,
                              join_annotation: Optional[JoinMetadataType] = None, *,
                              insert_left: bool = False) -> JoinTreeType:
         """Adds a new join with a base table to the current join tree.
@@ -1973,7 +1973,7 @@ class JoinTree(Container[base.TableReference], Generic[JoinMetadataType, BaseTab
 
         Parameters
         ----------
-        table : base.TableReference
+        table : TableReference
             The table that should be joined
         base_annotation : Optional[BaseTableMetadataType], optional
             Additional metadata about the table and its scan. Can be ``None`` if no metadata exists
@@ -2149,7 +2149,7 @@ class LogicalJoinTree(JoinTree[LogicalJoinMetadata, LogicalBaseTableMetadata]):
         return LogicalJoinTree(current_root)
 
     @staticmethod
-    def for_base_table(table: base.TableReference,
+    def for_base_table(table: TableReference,
                        base_annotation: Optional[LogicalBaseTableMetadata] = None) -> LogicalJoinTree:
         """Generates a new join tree that only scans a specific base table.
 
@@ -2332,8 +2332,7 @@ def logical_join_tree_annotation_merger(first_annotation: Optional[LogicalTreeMe
     if merged_predicate is None:
         merged_predicate = second_annotation.join_predicate
     elif second_annotation.join_predicate is not None:
-        merged_predicate = predicates.CompoundPredicate.create_and([merged_predicate,
-                                                                    second_annotation.join_predicate])
+        merged_predicate = qal.CompoundPredicate.create_and([merged_predicate, second_annotation.join_predicate])
 
     return LogicalJoinMetadata(merged_predicate,
                                cardinality=first_annotation.cardinality * second_annotation.cardinality)
@@ -2424,7 +2423,7 @@ class PhysicalQueryPlan(JoinTree[PhysicalJoinMetadata, PhysicalBaseTableMetadata
         return PhysicalQueryPlan(current_root)
 
     @staticmethod
-    def for_base_table(table: base.TableReference,
+    def for_base_table(table: TableReference,
                        base_annotation: Optional[PhysicalBaseTableMetadata] = None) -> PhysicalQueryPlan:
         """Generates a new join tree that only scans a specific base table.
 
@@ -2711,7 +2710,7 @@ class PhysicalQueryPlan(JoinTree[PhysicalJoinMetadata, PhysicalBaseTableMetadata
 
         return parameters
 
-    def join_with_base_table(self, table: base.TableReference, base_annotation: Optional[BaseTableMetadataType] = None,
+    def join_with_base_table(self, table: TableReference, base_annotation: Optional[BaseTableMetadataType] = None,
                              join_annotation: Optional[JoinMetadataType] = None, *,
                              insert_left: bool = True) -> PhysicalQueryPlan:
         """Adds a new join with a base table to the current join tree.
@@ -2851,8 +2850,7 @@ def physical_join_tree_annotation_merger(first_annotation: Optional[PhysicalPlan
     if merged_predicate is None:
         merged_predicate = second_annotation.join_predicate
     elif second_annotation.join_predicate is not None:
-        merged_predicate = predicates.CompoundPredicate.create_and([merged_predicate,
-                                                                    second_annotation.join_predicate])
+        merged_predicate = qal.CompoundPredicate.create_and([merged_predicate, second_annotation.join_predicate])
     return PhysicalJoinMetadata(merged_predicate,
                                 cardinality=first_annotation.cardinality * second_annotation.cardinality,
                                 cost=math.nan)
@@ -3080,7 +3078,7 @@ def _traverse_join_tree_depth(current_node: AbstractJoinTreeNode, current_depth:
         return _DepthState(updated_depth, left_depth.depths | right_depth.depths)
 
 
-def join_depth(join_tree: JoinTree) -> dict[base.TableReference, int]:
+def join_depth(join_tree: JoinTree) -> dict[TableReference, int]:
     """Calculates for each base table in a join tree the join index when it was integrated into an intermediate result.
 
     For joins of two base tables, the depth value is 1. If a table is joined with the intermediate result of the base
@@ -3094,7 +3092,7 @@ def join_depth(join_tree: JoinTree) -> dict[base.TableReference, int]:
 
     Returns
     -------
-    dict[base.TableReference, int]
+    dict[TableReference, int]
         A mapping from tables to their depth values.
 
     Examples
@@ -3121,21 +3119,21 @@ class JointreeChangeEntry:
         other one and vice-versa. *physical-op* means that two structurally identical nodes (i.e. same join or base table)
         differ in the assigned physical operator. *card-est* indicates that two structurally identifcal nodes (i.e. same join
         or base table) differ in the estimated cardinality, while *cost-est* does the same, just for the estimated cost.
-    left_state : frozenset[base.TableReference] | physops.PhysicalOperator | float
+    left_state : frozenset[TableReference] | physops.PhysicalOperator | float
         Depending on the `change_type` this attribute describes the left tree. For example, for different tree structures,
         these are the tables in the left subtree, for different physical operators, this is the operator assigned to the node
         in the left tree and so on. For different join directions, this is the entire join node
-    right_state : frozenset[base.TableReference] | physops.PhysicalOperator | float
+    right_state : frozenset[TableReference] | physops.PhysicalOperator | float
         Equivalent attribute to `left_state`, just for the right tree.
-    context : Optional[frozenset[base.TableReference]], optional
+    context : Optional[frozenset[TableReference]], optional
         For different physical operators or cardinality estimates, this describes the intermediate that is different. This
         attribute is unset by default.
     """
 
     change_type: Literal["tree-structure", "join-direction", "physical-op", "card-est", "cost-est"]
-    left_state: frozenset[base.TableReference] | physops.PhysicalOperator | float
-    right_state: frozenset[base.TableReference] | physops.PhysicalOperator | float
-    context: Optional[frozenset[base.TableReference]] = None
+    left_state: frozenset[TableReference] | physops.PhysicalOperator | float
+    right_state: frozenset[TableReference] | physops.PhysicalOperator | float
+    context: Optional[frozenset[TableReference]] = None
 
     def inspect(self) -> str:
         """Provides a human-readable string of the diff.

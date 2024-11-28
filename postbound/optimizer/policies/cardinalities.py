@@ -18,10 +18,10 @@ from typing import Literal, Optional
 
 import pandas as pd
 
-from postbound.experiments import workloads
-from postbound.qal import base, clauses, parser, predicates, qal, transform
 from .. import joingraph, jointree, physops, validation, planparams, stages
-from ... import db, util
+from ... import db, qal, util
+from ...qal import parser, TableReference
+from ...experiments import workloads
 
 
 class CardinalityHintsGenerator(stages.ParameterGeneration, stages.CardinalityEstimator, abc.ABC):
@@ -63,7 +63,7 @@ class CardinalityHintsGenerator(stages.ParameterGeneration, stages.CardinalityEs
         self.allow_cross_products = allow_cross_products
 
     @abc.abstractmethod
-    def calculate_estimate(self, query: qal.SqlQuery, tables: frozenset[base.TableReference]) -> Optional[int]:
+    def calculate_estimate(self, query: qal.SqlQuery, tables: frozenset[TableReference]) -> Optional[int]:
         """Determines the cardinality estimate for a specific intermediate result.
 
         Ideally this is the only functionality-related method that needs to be implemented by developers using the cardinality
@@ -73,7 +73,7 @@ class CardinalityHintsGenerator(stages.ParameterGeneration, stages.CardinalityEs
         ----------
         query : qal.SqlQuery
             The query to optimize
-        tables : frozenset[base.TableReference]
+        tables : frozenset[TableReference]
             The intermediate which should be estimated. The intermediate is described by its tables. It should be assumed that
             all filters and join predicates have been pushed down as far as possible.
 
@@ -84,7 +84,7 @@ class CardinalityHintsGenerator(stages.ParameterGeneration, stages.CardinalityEs
         """
         raise NotImplementedError
 
-    def generate_intermediates(self, query: qal.SqlQuery) -> Generator[frozenset[base.TableReference], None, None]:
+    def generate_intermediates(self, query: qal.SqlQuery) -> Generator[frozenset[TableReference], None, None]:
         """Provides all intermediate results of a query.
 
         The inclusion of cross-products between arbitrary tables can be configured via the `allow_cross_products` attribute.
@@ -96,7 +96,7 @@ class CardinalityHintsGenerator(stages.ParameterGeneration, stages.CardinalityEs
 
         Yields
         ------
-        Generator[frozenset[base.TableReference], None, None]
+        Generator[frozenset[TableReference], None, None]
             The intermediates
 
         Warnings
@@ -177,8 +177,8 @@ class NativeCardinalityHintGenerator(CardinalityHintsGenerator):
     def describe(self) -> dict:
         return {"name": "native-cards", "database": self.database.describe()}
 
-    def calculate_estimate(self, query: qal.SqlQuery, tables: frozenset[base.TableReference]) -> int:
-        partial_query = transform.as_star_query(transform.extract_query_fragment(query, tables))
+    def calculate_estimate(self, query: qal.SqlQuery, tables: frozenset[TableReference]) -> int:
+        partial_query = qal.transform.as_star_query(qal.transform.extract_query_fragment(query, tables))
         return self.database.optimizer().cardinality_estimate(partial_query)
 
 
@@ -216,8 +216,8 @@ class PreciseCardinalityHintGenerator(CardinalityHintsGenerator):
     def describe(self) -> dict:
         return {"name": "true-cards", "database": self.database.describe()}
 
-    def calculate_estimate(self, query: qal.SqlQuery, tables: frozenset[base.TableReference]) -> int:
-        partial_query = transform.as_count_star_query(transform.extract_query_fragment(query, tables))
+    def calculate_estimate(self, query: qal.SqlQuery, tables: frozenset[TableReference]) -> int:
+        partial_query = qal.transform.as_count_star_query(qal.transform.extract_query_fragment(query, tables))
         if partial_query in self._cardinality_cache:
             return self._cardinality_cache[partial_query]
         cardinality = self.database.execute_query(partial_query)
@@ -228,7 +228,7 @@ class PreciseCardinalityHintGenerator(CardinalityHintsGenerator):
         self._cardinality_cache.clear()
 
 
-def _parse_tables(tabs: str) -> set[base.TableReference]:
+def _parse_tables(tabs: str) -> set[TableReference]:
     """Utility to load tables from their JSON representation.
 
     Parameters
@@ -238,11 +238,10 @@ def _parse_tables(tabs: str) -> set[base.TableReference]:
 
     Returns
     -------
-    set[base.TableReference]
+    set[TableReference]
         The corresponding tables
     """
-    json_parser = parser.JsonParser()
-    return {json_parser.load_table(t) for t in json.loads(tabs)}
+    return {parser.load_table_json(t) for t in json.loads(tabs)}
 
 
 class PreComputedCardinalities(CardinalityHintsGenerator):
@@ -316,7 +315,7 @@ class PreComputedCardinalities(CardinalityHintsGenerator):
 
         self._true_card_df = pd.read_csv(lookup_table_path, converters={tables_col: _parse_tables})
 
-    def calculate_estimate(self, query: qal.SqlQuery, tables: frozenset[base.TableReference]) -> Optional[int]:
+    def calculate_estimate(self, query: qal.SqlQuery, tables: frozenset[TableReference]) -> Optional[int]:
         label = self._workload.label_of(query)
         relevant_samples = self._true_card_df[self._true_card_df[self._label_col] == label]
         cardinality_sample = relevant_samples[relevant_samples[self._tables_col] == tables]
@@ -338,7 +337,7 @@ class PreComputedCardinalities(CardinalityHintsGenerator):
         return {"name": "pre-computed-cards", "location": self._lookup_df_path, "workload": self._workload.name}
 
     def _attempt_fallback_estimate(self, n_samples: int, query: qal.SqlQuery,
-                                   tables: frozenset[base.TableReference]) -> Optional[int]:
+                                   tables: frozenset[TableReference]) -> Optional[int]:
         """Tries to infer the fallback value for a specific estimate, if this is necessary.
 
         The inference strategy applies the following rules:
@@ -354,7 +353,7 @@ class PreComputedCardinalities(CardinalityHintsGenerator):
             The number of samples found for the current intermediate
         query : qal.SqlQuery
             The query for which the cardinality should be estimated
-        tables : frozenset[base.TableReference]
+        tables : frozenset[TableReference]
             The joins that form the current intermediate
 
         Returns
@@ -371,12 +370,12 @@ class PreComputedCardinalities(CardinalityHintsGenerator):
         if self._live_db is None:
             return None
 
-        query_fragment = transform.extract_query_fragment(query, tables)
+        query_fragment = qal.transform.extract_query_fragment(query, tables)
         if not query_fragment:
             return None
 
         if self._live_fallback_style == "actual":
-            true_card_query = transform.as_count_star_query(query_fragment)
+            true_card_query = qal.transform.as_count_star_query(query_fragment)
             cardinality = self._live_db.execute_query(true_card_query)
         elif self._live_fallback_style == "estimated":
             cardinality = self._live_db.optimizer().cardinality_estimate(query_fragment)
@@ -387,14 +386,14 @@ class PreComputedCardinalities(CardinalityHintsGenerator):
             self._dump_fallback_estimate(query, tables, cardinality)
         return cardinality
 
-    def _dump_fallback_estimate(self, query: qal.SqlQuery, tables: frozenset[base.TableReference], cardinality: int) -> None:
+    def _dump_fallback_estimate(self, query: qal.SqlQuery, tables: frozenset[TableReference], cardinality: int) -> None:
         """Stores a newly computed cardinality estimate in the lookup table.
 
         Parameters
         ----------
         query : qal.SqlQuery
             The query for which the cardinality was estimated
-        tables : frozenset[base.TableReference]
+        tables : frozenset[TableReference]
             The tables that form the current intermediate
         cardinality : int
             The computed cardinality
@@ -406,7 +405,7 @@ class PreComputedCardinalities(CardinalityHintsGenerator):
         if "query" in self._true_card_df.columns:
             result_row["query"] = [str(query)]
         if "query_fragment" in self._true_card_df.columns:
-            result_row["query_fragment"] = [str(transform.extract_query_fragment(query, tables))]
+            result_row["query_fragment"] = [str(qal.transform.extract_query_fragment(query, tables))]
 
         result_row[self._card_col] = [cardinality]
         result_df = pd.DataFrame(result_row)
@@ -449,7 +448,7 @@ class CardinalityDistortion(CardinalityHintsGenerator):
         return {"name": "cardinality-distortion", "estimator": "distortion",
                 "distortion_factor": self.distortion_factor, "distortion_strategy": self.distortion_strategy}
 
-    def calculate_estimate(self, query: qal.SqlQuery, tables: frozenset[base.TableReference]) -> Optional[int]:
+    def calculate_estimate(self, query: qal.SqlQuery, tables: frozenset[TableReference]) -> Optional[int]:
         card_est = self.estimator.calculate_estimate(query, tables)
         if not card_est:
             return None
@@ -491,7 +490,7 @@ class BaseTableCardinalityEstimator(abc.ABC):
         raise NotImplementedError
 
     @abc.abstractmethod
-    def estimate_for(self, table: base.TableReference) -> int:
+    def estimate_for(self, table: TableReference) -> int:
         """Calculates the cardinality for an arbitrary base table of the query.
 
         If the query is not filtered, this method should fall back to `estimate_total_rows`. Furthermore, the table can be
@@ -499,7 +498,7 @@ class BaseTableCardinalityEstimator(abc.ABC):
 
         Parameters
         ----------
-        table : base.TableReference
+        table : TableReference
             The table to estimate.
 
         Returns
@@ -510,12 +509,12 @@ class BaseTableCardinalityEstimator(abc.ABC):
         raise NotImplementedError
 
     @abc.abstractmethod
-    def estimate_total_rows(self, table: base.TableReference) -> int:
+    def estimate_total_rows(self, table: TableReference) -> int:
         """Calculates an estimate of the number of rows in the table, ignoring all filter predicates.
 
         Parameters
         ----------
-        table : base.TableReference
+        table : TableReference
             The table to estimate.
 
         Returns
@@ -546,7 +545,7 @@ class BaseTableCardinalityEstimator(abc.ABC):
         """
         return validation.EmptyPreCheck()
 
-    def __getitem__(self, item: base.TableReference) -> int:
+    def __getitem__(self, item: TableReference) -> int:
         return self.estimate_for(item)
 
     def __repr__(self) -> str:
@@ -573,21 +572,21 @@ class NativeCardinalityEstimator(BaseTableCardinalityEstimator):
     def setup_for_query(self, query: qal.SqlQuery) -> None:
         self.query = query
 
-    def estimate_for(self, table: base.TableReference) -> int:
+    def estimate_for(self, table: TableReference) -> int:
         filters = self.query.predicates().filters_for(table)
         if not filters:
             return self.estimate_total_rows(table)
 
-        select_clause = clauses.Select(clauses.BaseProjection.star())
-        from_clause = clauses.ImplicitFromClause.create_for(table)
-        where_clause = clauses.Where(filters) if filters else None
+        select_clause = qal.Select(qal.BaseProjection.star())
+        from_clause = qal.ImplicitFromClause.create_for(table)
+        where_clause = qal.Where(filters) if filters else None
 
         emulated_query = qal.ImplicitSqlQuery(select_clause=select_clause,
                                               from_clause=from_clause,
                                               where_clause=where_clause)
         return self.database.optimizer().cardinality_estimate(emulated_query)
 
-    def estimate_total_rows(self, table: base.TableReference) -> int:
+    def estimate_total_rows(self, table: TableReference) -> int:
         return self.database.statistics().total_rows(table, emulated=True)
 
     def describe(self) -> dict:
@@ -616,12 +615,12 @@ class PreciseCardinalityEstimator(BaseTableCardinalityEstimator):
     def setup_for_query(self, query: qal.SqlQuery) -> None:
         self.query = query
 
-    def estimate_for(self, table: base.TableReference) -> int:
-        select_clause = clauses.Select(clauses.BaseProjection.count_star())
-        from_clause = clauses.ImplicitFromClause.create_for(table)
+    def estimate_for(self, table: TableReference) -> int:
+        select_clause = qal.Select(qal.BaseProjection.count_star())
+        from_clause = qal.ImplicitFromClause.create_for(table)
 
         filters = self.query.predicates().filters_for(table)
-        where_clause = clauses.Where(filters) if filters else None
+        where_clause = qal.Where(filters) if filters else None
 
         emulated_query = qal.ImplicitSqlQuery(select_clause=select_clause,
                                               from_clause=from_clause,
@@ -630,7 +629,7 @@ class PreciseCardinalityEstimator(BaseTableCardinalityEstimator):
         cache_enabled = self.database.statistics().cache_enabled  # this should be treated like a statistics query
         return self.database.execute_query(emulated_query, cache_enabled=cache_enabled)
 
-    def estimate_total_rows(self, table: base.TableReference) -> int:
+    def estimate_total_rows(self, table: TableReference) -> int:
         return self.database.statistics().total_rows(table, emulated=False)
 
     def describe(self) -> dict:
@@ -664,12 +663,12 @@ class JoinCardinalityEstimator(abc.ABC):
         raise NotImplementedError
 
     @abc.abstractmethod
-    def estimate_for(self, join_edge: predicates.AbstractPredicate, join_graph: joingraph.JoinGraph) -> int:
+    def estimate_for(self, join_edge: qal.AbstractPredicate, join_graph: joingraph.JoinGraph) -> int:
         """Calculates the cardinality estimate for a specific join predicate, given the current state in the join graph.
 
         Parameters
         ----------
-        join_edge : predicates.AbstractPredicate
+        join_edge : qal.AbstractPredicate
             The predicate that should be estimated.
         join_graph : joingraph.JoinGraph
             A graph describing the currently joined relations as well as the join types (e.g. primary key/foreign key or n:m

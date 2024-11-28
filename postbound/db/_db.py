@@ -29,9 +29,10 @@ import warnings
 from collections.abc import Callable, Iterable, Sequence
 from typing import Any, Literal, Optional
 
-from postbound.qal import base, parser, qal
 from postbound.optimizer import jointree, physops, planparams
 from .. import util
+from ..qal import TableReference, ColumnReference, SqlQuery, VirtualTableError, UnboundColumnError
+from ..qal import parser
 
 
 class Cursor(typing.Protocol):
@@ -94,16 +95,16 @@ class PrewarmingSupport(typing.Protocol):
     """
 
     @abc.abstractmethod
-    def prewarm_tables(self, tables: Optional[base.TableReference | Iterable[base.TableReference]] = None,
-                       *more_tables: base.TableReference, exclude_table_pages: bool = False,
+    def prewarm_tables(self, tables: Optional[TableReference | Iterable[TableReference]] = None,
+                       *more_tables: TableReference, exclude_table_pages: bool = False,
                        include_primary_index: bool = True, include_secondary_indexes: bool = True) -> None:
         """Prepares the database buffer pool with tuples from specific tables.
 
         Parameters
         ----------
-        tables : Optional[base.TableReference  |  Iterable[base.TableReference]], optional
+        tables : Optional[TableReference  |  Iterable[TableReference]], optional
             The tables that should be placed into the buffer pool
-        *more_tables : base.TableReference
+        *more_tables : TableReference
             More tables that should be placed into the buffer pool, enabling a more convenient usage of this method.
             See examples for details on the usage.
         exclude_table_pages : bool, optional
@@ -247,12 +248,12 @@ class Database(abc.ABC):
         raise NotImplementedError
 
     @abc.abstractmethod
-    def execute_query(self, query: qal.SqlQuery | str, *, cache_enabled: Optional[bool] = None, raw: bool = False) -> Any:
+    def execute_query(self, query: SqlQuery | str, *, cache_enabled: Optional[bool] = None, raw: bool = False) -> Any:
         """Executes the given query and returns the associated result set.
 
         Parameters
         ----------
-        query : qal.SqlQuery | str
+        query : SqlQuery | str
             The query to execute. If it contains a `Hint` with `preparatory_statements`, these will be executed
             beforehand. Notice that such statements are never subject to caching.
         cache_enabled : Optional[bool], optional
@@ -490,41 +491,41 @@ class DatabaseSchema(abc.ABC):
     def __init__(self, db: Database):
         self._db = db
 
-    def tables(self) -> set[base.TableReference]:
+    def tables(self) -> set[TableReference]:
         """Fetches all user-defined tables that are contained in the current database.
 
         Returns
         -------
-        set[base.TableReference]
+        set[TableReference]
             All tables in the current schema, including materialized views, etc.
         """
         query_template = "SELECT table_name FROM information_schema.tables WHERE table_catalog = %s"
         self._db.cursor().execute(query_template, (self._db.database_name(),))
         result_set = self._db.cursor().fetchall()
         assert result_set is not None
-        return set(base.TableReference(row[0]) for row in result_set)
+        return set(TableReference(row[0]) for row in result_set)
 
-    def columns(self, table: base.TableReference | str) -> set[base.ColumnReference]:
+    def columns(self, table: TableReference | str) -> set[ColumnReference]:
         """Fetches all columns of the given table.
 
         Parameters
         ----------
-        table : base.TableReference | str
+        table : TableReference | str
             A table in the current schema
 
         Returns
         -------
-        set[base.ColumnReference]
+        set[ColumnReference]
             All columns for the given table. Will be empty if the table is not found or does not contain any columns.
 
         Raises
         ------
-        postbound.qal.base.VirtualTableError
+        postbound.qal.VirtualTableError
             If the given table is virtual (e.g. subquery or CTE)
         """
-        table = table if isinstance(table, base.TableReference) else base.TableReference(table)
+        table = table if isinstance(table, TableReference) else TableReference(table)
         if table.virtual:
-            raise base.VirtualTableError(table)
+            raise VirtualTableError(table)
         query_template = textwrap.dedent("""
                                          SELECT column_name
                                          FROM information_schema.columns
@@ -534,14 +535,14 @@ class DatabaseSchema(abc.ABC):
         self._db.cursor().execute(query_template, (db_name, table.full_name))
         result_set = self._db.cursor().fetchall()
         assert result_set is not None
-        return set(base.ColumnReference(row[0], table) for row in result_set)
+        return set(ColumnReference(row[0], table) for row in result_set)
 
-    def is_view(self, table: base.TableReference | str) -> bool:
+    def is_view(self, table: TableReference | str) -> bool:
         """Checks, whether a specific table is actually is a view.
 
         Parameters
         ----------
-        table : base.TableReference | str
+        table : TableReference | str
             The table to check. May not be a virtual table.
 
         Returns
@@ -554,8 +555,8 @@ class DatabaseSchema(abc.ABC):
         ValueError
             If the table was not found in the current database
         """
-        if isinstance(table, base.TableReference) and table.virtual:
-            raise base.VirtualTableError(table)
+        if isinstance(table, TableReference) and table.virtual:
+            raise VirtualTableError(table)
         table = table if isinstance(table, str) else table.full_name
         db_name = self._db.database_name()
         query_template = textwrap.dedent("""
@@ -572,20 +573,20 @@ class DatabaseSchema(abc.ABC):
         return table_type == "VIEW"
 
     @abc.abstractmethod
-    def lookup_column(self, column: base.ColumnReference | str,
-                      candidate_tables: Iterable[base.TableReference]) -> base.TableReference:
+    def lookup_column(self, column: ColumnReference | str,
+                      candidate_tables: Iterable[TableReference]) -> TableReference:
         """Searches for a table that owns the given column.
 
         Parameters
         ----------
-        column : base.ColumnReference | str
+        column : ColumnReference | str
             The column that is being looked up
-        candidate_tables : Iterable[base.TableReference]
+        candidate_tables : Iterable[TableReference]
             Tables that could possibly own the given column
 
         Returns
         -------
-        base.TableReference
+        TableReference
             The first of the `candidate_tables` that has a column of similar name.
 
         Raises
@@ -596,12 +597,12 @@ class DatabaseSchema(abc.ABC):
         raise NotImplementedError
 
     @abc.abstractmethod
-    def is_primary_key(self, column: base.ColumnReference) -> bool:
+    def is_primary_key(self, column: ColumnReference) -> bool:
         """Checks, whether a column is the primary key for its associated table.
 
         Parameters
         ----------
-        column : base.ColumnReference
+        column : ColumnReference
             The column to check
 
         Returns
@@ -612,20 +613,20 @@ class DatabaseSchema(abc.ABC):
 
         Raises
         ------
-        postbound.qal.base.UnboundColumnError
+        postbound.qal.UnboundColumnError
             If the column is not associated with any table
-        postbound.qal.base.VirtualTableError
+        postbound.qal.VirtualTableError
             If the table associated with the column is a virtual table (e.g. subquery or CTE)
         """
         raise NotImplementedError
 
     @abc.abstractmethod
-    def has_secondary_index(self, column: base.ColumnReference) -> bool:
+    def has_secondary_index(self, column: ColumnReference) -> bool:
         """Checks, whether a secondary index is available for a specific column.
 
         Parameters
         ----------
-        column : base.ColumnReference
+        column : ColumnReference
             The column to check
 
         Returns
@@ -636,19 +637,19 @@ class DatabaseSchema(abc.ABC):
 
         Raises
         ------
-        postbound.qal.base.UnboundColumnError
+        postbound.qal.UnboundColumnError
             If the column is not associated with any table
-        postbound.qal.base.VirtualTableError
+        postbound.qal.VirtualTableError
             If the table associated with the column is a virtual table (e.g. subquery or CTE)
         """
         raise NotImplementedError
 
-    def has_index(self, column: base.ColumnReference) -> bool:
+    def has_index(self, column: ColumnReference) -> bool:
         """Checks, whether there is any index structure available on a column
 
         Parameters
         ----------
-        column : base.ColumnReference
+        column : ColumnReference
             The column to check
 
         Returns
@@ -659,15 +660,15 @@ class DatabaseSchema(abc.ABC):
 
         Raises
         ------
-        postbound.qal.base.UnboundColumnError
+        postbound.qal.UnboundColumnError
             If the column is not associated with any table
-        postbound.qal.base.VirtualTableError
+        postbound.qal.VirtualTableError
             If the table associated with the column is a virtual table (e.g. subquery or CTE)
         """
         return self.is_primary_key(column) or self.has_secondary_index(column)
 
     @abc.abstractmethod
-    def datatype(self, column: base.ColumnReference) -> str:
+    def datatype(self, column: ColumnReference) -> str:
         """Retrieves the (physical) data type of a column.
 
         The provided type can be a standardized SQL-type, but it can be a type specific to the concrete database
@@ -675,7 +676,7 @@ class DatabaseSchema(abc.ABC):
 
         Parameters
         ----------
-        column : base.ColumnReference
+        column : ColumnReference
             The colum to check
 
         Returns
@@ -685,9 +686,9 @@ class DatabaseSchema(abc.ABC):
 
         Raises
         ------
-        postbound.qal.base.UnboundColumnError
+        postbound.qal.UnboundColumnError
             If the column is not associated with any table
-        postbound.qal.base.VirtualTableError
+        postbound.qal.VirtualTableError
             If the table associated with the column is a virtual table (e.g. subquery or CTE)
         """
         raise NotImplementedError
@@ -760,13 +761,13 @@ class DatabaseStatistics(abc.ABC):
         self.cache_enabled = cache_enabled
         self._db = db
 
-    def total_rows(self, table: base.TableReference, *, emulated: Optional[bool] = None,
+    def total_rows(self, table: TableReference, *, emulated: Optional[bool] = None,
                    cache_enabled: Optional[bool] = None) -> Optional[int]:
         """Provides (an estimate of) the total number of rows in a table.
 
         Parameters
         ----------
-        table : base.TableReference
+        table : TableReference
             The table to check
         emulated : Optional[bool], optional
             Whether to force emulation mode for this single call. Defaults to ``None`` which indicates that the
@@ -785,24 +786,24 @@ class DatabaseStatistics(abc.ABC):
 
         Raises
         ------
-        base.VirtualTableError
+        VirtualTableError
             If the given table is virtual (e.g. subquery or CTE)
         """
         if table.virtual:
-            raise base.VirtualTableError(table)
+            raise VirtualTableError(table)
         if emulated or (emulated is None and self.emulated):
             return self._calculate_total_rows(table,
                                               cache_enabled=self._determine_caching_behavior(cache_enabled))
         else:
             return self._retrieve_total_rows_from_stats(table)
 
-    def distinct_values(self, column: base.ColumnReference, *, emulated: Optional[bool] = None,
+    def distinct_values(self, column: ColumnReference, *, emulated: Optional[bool] = None,
                         cache_enabled: Optional[bool] = None) -> Optional[int]:
         """Provides (an estimate of) the total number of different column values of a specific column.
 
         Parameters
         ----------
-        column : base.ColumnReference
+        column : ColumnReference
             The column to check
         emulated : Optional[bool], optional
             Whether to force emulation mode for this single call. Defaults to ``None`` which indicates that the
@@ -821,28 +822,28 @@ class DatabaseStatistics(abc.ABC):
 
         Raises
         ------
-        postbound.qal.base.UnboundColumnError
+        postbound.qal.UnboundColumnError
             If the column is not associated with any table
-        postbound.qal.base.VirtualTableError
+        postbound.qal.VirtualTableError
             If the table associated with the column is a virtual table (e.g. subquery or CTE)
         """
         if not column.table:
-            raise base.UnboundColumnError(column)
+            raise UnboundColumnError(column)
         elif column.table.virtual:
-            raise base.VirtualTableError(column.table)
+            raise VirtualTableError(column.table)
         if emulated or (emulated is None and self.emulated):
             return self._calculate_distinct_values(column,
                                                    cache_enabled=self._determine_caching_behavior(cache_enabled))
         else:
             return self._retrieve_distinct_values_from_stats(column)
 
-    def min_max(self, column: base.ColumnReference, *, emulated: Optional[bool] = None,
+    def min_max(self, column: ColumnReference, *, emulated: Optional[bool] = None,
                 cache_enabled: Optional[bool] = None) -> Optional[tuple[Any, Any]]:
         """Provides (an estimate of) the minimum and maximum values in a column.
 
         Parameters
         ----------
-        column : base.ColumnReference
+        column : ColumnReference
             The column to check
         emulated : Optional[bool], optional
             Whether to force emulation mode for this single call. Defaults to ``None`` which indicates that the
@@ -860,28 +861,28 @@ class DatabaseStatistics(abc.ABC):
 
         Raises
         ------
-        postbound.qal.base.UnboundColumnError
+        postbound.qal.UnboundColumnError
             If the column is not associated with any table
-        postbound.qal.base.VirtualTableError
+        postbound.qal.VirtualTableError
             If the table associated with the column is a virtual table (e.g. subquery or CTE)
         """
         if not column.table:
-            raise base.UnboundColumnError(column)
+            raise UnboundColumnError(column)
         elif column.table.virtual:
-            raise base.VirtualTableError(column.table)
+            raise VirtualTableError(column.table)
         if emulated or (emulated is None and self.emulated):
             return self._calculate_min_max_values(column,
                                                   cache_enabled=self._determine_caching_behavior(cache_enabled))
         else:
             return self._retrieve_min_max_values_from_stats(column)
 
-    def most_common_values(self, column: base.ColumnReference, *, k: int = 10, emulated: Optional[bool] = None,
+    def most_common_values(self, column: ColumnReference, *, k: int = 10, emulated: Optional[bool] = None,
                            cache_enabled: Optional[bool] = None) -> Sequence[tuple[Any, int]]:
         """Provides (an estimate of) the total number of occurrences of the `k` most frequent values of a column.
 
         Parameters
         ----------
-        column : base.ColumnReference
+        column : ColumnReference
             The column to check
         k : int, optional
             The maximum number of most common values to return. Defaults to 10. If there are less values available, all
@@ -904,29 +905,29 @@ class DatabaseStatistics(abc.ABC):
 
         Raises
         ------
-        postbound.qal.base.UnboundColumnError
+        postbound.qal.UnboundColumnError
             If the column is not associated with any table
-        postbound.qal.base.VirtualTableError
+        postbound.qal.VirtualTableError
             If the table associated with the column is a virtual table (e.g. subquery or CTE)
         """
         if not column.table:
-            raise base.UnboundColumnError(column)
+            raise UnboundColumnError(column)
         elif column.table.virtual:
-            raise base.VirtualTableError(column.table)
+            raise VirtualTableError(column.table)
         if emulated or (emulated is None and self.emulated):
             return self._calculate_most_common_values(column, k,
                                                       cache_enabled=self._determine_caching_behavior(cache_enabled))
         else:
             return self._retrieve_most_common_values_from_stats(column, k)
 
-    def _calculate_total_rows(self, table: base.TableReference, *, cache_enabled: Optional[bool] = None) -> int:
+    def _calculate_total_rows(self, table: TableReference, *, cache_enabled: Optional[bool] = None) -> int:
         """Retrieves the total number of rows of a table by issuing a ``COUNT(*)`` query against the live database.
 
         The table is assumed to be non-virtual.
 
         Parameters
         ----------
-        table : base.TableReference
+        table : TableReference
             The table to check
         cache_enabled : Optional[bool], optional
             Whether to enable result caching in emulation mode. Defaults to ``None`` which indicates that the caching
@@ -940,7 +941,7 @@ class DatabaseStatistics(abc.ABC):
         query_template = "SELECT COUNT(*) FROM {tab}".format(tab=table.full_name)
         return self._db.execute_query(query_template, cache_enabled=self._determine_caching_behavior(cache_enabled))
 
-    def _calculate_distinct_values(self, column: base.ColumnReference, *, cache_enabled: Optional[bool] = None) -> int:
+    def _calculate_distinct_values(self, column: ColumnReference, *, cache_enabled: Optional[bool] = None) -> int:
         """Retrieves the number of distinct column values by issuing a ``COUNT(*)`` / ``GROUP BY`` query over that
         column against the live database.
 
@@ -948,7 +949,7 @@ class DatabaseStatistics(abc.ABC):
 
         Parameters
         ----------
-        column : base.ColumnReference
+        column : ColumnReference
             The column to check
         cache_enabled : Optional[bool], optional
             Whether to enable result caching in emulation mode. Defaults to ``None`` which indicates that the caching
@@ -962,7 +963,7 @@ class DatabaseStatistics(abc.ABC):
         query_template = "SELECT COUNT(DISTINCT {col}) FROM {tab}".format(col=column.name, tab=column.table.full_name)
         return self._db.execute_query(query_template, cache_enabled=self._determine_caching_behavior(cache_enabled))
 
-    def _calculate_min_max_values(self, column: base.ColumnReference, *,
+    def _calculate_min_max_values(self, column: ColumnReference, *,
                                   cache_enabled: Optional[bool] = None) -> tuple[Any, Any]:
         """Retrieves the minimum/maximum values in a column by issuing an aggregation query for that column against the
         live database.
@@ -971,7 +972,7 @@ class DatabaseStatistics(abc.ABC):
 
         Parameters
         ----------
-        column : base.ColumnReference
+        column : ColumnReference
             The column to check
         cache_enabled : Optional[bool], optional
             Whether to enable result caching in emulation mode. Defaults to ``None`` which indicates that the caching
@@ -985,7 +986,7 @@ class DatabaseStatistics(abc.ABC):
         query_template = "SELECT MIN({col}), MAX({col}) FROM {tab}".format(col=column.name, tab=column.table.full_name)
         return self._db.execute_query(query_template, cache_enabled=self._determine_caching_behavior(cache_enabled))
 
-    def _calculate_most_common_values(self, column: base.ColumnReference, k: int, *,
+    def _calculate_most_common_values(self, column: ColumnReference, k: int, *,
                                       cache_enabled: Optional[bool] = None) -> Sequence[tuple[Any, int]]:
         """Retrieves the `k` most frequent values of a column along with their frequencies by issuing a query over that
         column against the live database.
@@ -997,7 +998,7 @@ class DatabaseStatistics(abc.ABC):
 
         Parameters
         ----------
-        column : base.ColumnReference
+        column : ColumnReference
             The column to check
         k : int
             The number of most frequent values to retrieve. If less values are available (because there are not as much
@@ -1021,14 +1022,14 @@ class DatabaseStatistics(abc.ABC):
         return self._db.execute_query(query_template, cache_enabled=self._determine_caching_behavior(cache_enabled))
 
     @abc.abstractmethod
-    def _retrieve_total_rows_from_stats(self, table: base.TableReference) -> Optional[int]:
+    def _retrieve_total_rows_from_stats(self, table: TableReference) -> Optional[int]:
         """Queries the DBMS-internal metadata for the number of rows in a table.
 
         The table is assumed to be non-virtual.
 
         Parameters
         ----------
-        table : base.TableReference
+        table : TableReference
             The table to check
 
         Returns
@@ -1042,14 +1043,14 @@ class DatabaseStatistics(abc.ABC):
         raise NotImplementedError
 
     @abc.abstractmethod
-    def _retrieve_distinct_values_from_stats(self, column: base.ColumnReference) -> Optional[int]:
+    def _retrieve_distinct_values_from_stats(self, column: ColumnReference) -> Optional[int]:
         """Queries the DBMS-internal metadata for the number of distinct values of the column.
 
         The column is assumed to be bound to a (non-virtual) table.
 
         Parameters
         ----------
-        column : base.ColumnReference
+        column : ColumnReference
             The column to check
 
         Returns
@@ -1063,14 +1064,14 @@ class DatabaseStatistics(abc.ABC):
         raise NotImplementedError
 
     @abc.abstractmethod
-    def _retrieve_min_max_values_from_stats(self, column: base.ColumnReference) -> Optional[tuple[Any, Any]]:
+    def _retrieve_min_max_values_from_stats(self, column: ColumnReference) -> Optional[tuple[Any, Any]]:
         """Queries the DBMS-internal metadata for the minimum / maximum value in a column.
 
         The column is assumed to be bound to a (non-virtual) table.
 
         Parameters
         ----------
-        column : base.ColumnReference
+        column : ColumnReference
             The column to check
 
         Returns
@@ -1083,7 +1084,7 @@ class DatabaseStatistics(abc.ABC):
         raise NotImplementedError
 
     @abc.abstractmethod
-    def _retrieve_most_common_values_from_stats(self, column: base.ColumnReference,
+    def _retrieve_most_common_values_from_stats(self, column: ColumnReference,
                                                 k: int) -> Sequence[tuple[Any, int]]:
         """Queries the DBMS-internal metadata for the `k` most common values of the `column`.
 
@@ -1091,7 +1092,7 @@ class DatabaseStatistics(abc.ABC):
 
         Parameters
         ----------
-        column : base.ColumnReference
+        column : ColumnReference
             The column to check
         k : int, optional
             The maximum number of most common values to return. Defaults to 10. If there are less values available, all
@@ -1154,10 +1155,10 @@ class HintService(abc.ABC):
     """
 
     @abc.abstractmethod
-    def generate_hints(self, query: qal.SqlQuery,
+    def generate_hints(self, query: SqlQuery,
                        join_order: Optional[jointree.LogicalJoinTree | jointree.PhysicalQueryPlan] = None,
                        physical_operators: Optional[physops.PhysicalOperatorAssignment] = None,
-                       plan_parameters: Optional[planparams.PlanParameterization] = None) -> qal.SqlQuery:
+                       plan_parameters: Optional[planparams.PlanParameterization] = None) -> SqlQuery:
         """Transforms the input query such that the given optimization decisions are respected during query execution.
 
         In the most common case this involves building a `Hint` clause that encodes the optimization decisions in a
@@ -1171,7 +1172,7 @@ class HintService(abc.ABC):
 
         Parameters
         ----------
-        query : qal.SqlQuery
+        query : SqlQuery
             The query that should be transformed
         join_order : Optional[jointree.LogicalJoinTree  |  jointree.PhysicalQueryPlan], optional
             The sequence in which individual joins should be executed. If this is a `PhysicalQueryPlan` and all other
@@ -1194,7 +1195,7 @@ class HintService(abc.ABC):
 
         Returns
         -------
-        qal.SqlQuery
+        SqlQuery
             The transformed query. It contains all necessary information to enforce the optimization decisions as best
             as possible. Notice that whether the native optimizer of the database system is obliged to respect the
             optimization decisions depends on the specific system. For example, for MySQL hints are really just hints
@@ -1203,7 +1204,7 @@ class HintService(abc.ABC):
         raise NotImplementedError
 
     @abc.abstractmethod
-    def format_query(self, query: qal.SqlQuery) -> str:
+    def format_query(self, query: SqlQuery) -> str:
         """Transforms the query into a database-specific string, mostly to incorporate deviations from standard SQL.
 
         This method is necessary because the query abstraction layer is focused on modelling and unifying different
@@ -1215,7 +1216,7 @@ class HintService(abc.ABC):
 
         Parameters
         ----------
-        query : qal.SqlQuery
+        query : SqlQuery
             The query that should be adapted for the database system
 
         Returns
@@ -1281,7 +1282,7 @@ class QueryExecutionPlan:
     is_scan : bool
         Whether the operator represents a scan. This is usually but not always mutually exclusive to the `is_join`
         attribute.
-    table : Optional[base.TableReference], optional
+    table : Optional[TableReference], optional
         For scan operators this can denote the table being scanned. Defaults to ``None`` if not applicable.
     children : Optional[Iterable[QueryExecutionPlan]], optional
         The sub-operators that provide input for the current operator. Can be ``None`` leaf nodes (most probably scans)
@@ -1341,7 +1342,7 @@ class QueryExecutionPlan:
     took to execute the entire operator (which just happened to include parallel processing), **not** an average of the
     worker execution time or some other measure.
     """
-    def __init__(self, node_type: str, is_join: bool, is_scan: bool, *, table: Optional[base.TableReference] = None,
+    def __init__(self, node_type: str, is_join: bool, is_scan: bool, *, table: Optional[TableReference] = None,
                  children: Optional[Iterable[QueryExecutionPlan]] = None,
                  parallel_workers: float = math.nan, cost: float = math.nan,
                  estimated_cardinality: float = math.nan, true_cardinality: float = math.nan,
@@ -1421,14 +1422,14 @@ class QueryExecutionPlan:
         """
         return not math.isnan(self.true_cardinality) or not math.isnan(self.execution_time)
 
-    def tables(self) -> frozenset[base.TableReference]:
+    def tables(self) -> frozenset[TableReference]:
         """Collects all tables that are referenced by this operator as well as all child operators.
 
         Most likely this corresponds to all tables that were scanned below the current operator.
 
         Returns
         -------
-        frozenset[base.TableReference]
+        frozenset[TableReference]
             The tables
         """
         own_table = [self.table] if self.table else []
@@ -1488,7 +1489,7 @@ class QueryExecutionPlan:
         """
         return self.is_join or (len(self.children) == 1 and self.children[0].is_join_branch())
 
-    def fetch_base_table(self) -> Optional[base.TableReference]:
+    def fetch_base_table(self) -> Optional[TableReference]:
         """Provides the base table that is associated with this scan branch.
 
         This method basically traverses the current branch of the query execution plan until a node with an associated
@@ -1496,7 +1497,7 @@ class QueryExecutionPlan:
 
         Returns
         -------
-        Optional[base.TableReference]
+        Optional[TableReference]
             The associated table of the highest child node that has a valid `table` attribute. As a special case this
             might be the table of this very plan node. If none of the child nodes contain a valid table returns
             ``None``.
@@ -1864,7 +1865,7 @@ def read_query_plan_json(json_data: dict) -> QueryExecutionPlan:
 
     table = json_data["table"]
     if table is not None:
-        json_data["table"] = parser.JsonParser().load_table(json_data["table"])
+        json_data["table"] = parser.load_table_json(json_data["table"])
 
     operator: str = json_data["physical_operator"]
     if operator is not None:
@@ -1880,14 +1881,14 @@ class OptimizerInterface(abc.ABC):
     support all of this functions.
     """
     @abc.abstractmethod
-    def query_plan(self, query: qal.SqlQuery | str) -> QueryExecutionPlan:
+    def query_plan(self, query: SqlQuery | str) -> QueryExecutionPlan:
         """Obtains the query execution plan for a specific query.
 
         This respects all hints that potentially influence the optimization process.
 
         Parameters
         ----------
-        query : qal.SqlQuery | str
+        query : SqlQuery | str
             The input query
 
         Returns
@@ -1900,14 +1901,14 @@ class OptimizerInterface(abc.ABC):
         raise NotImplementedError
 
     @abc.abstractmethod
-    def analyze_plan(self, query: qal.SqlQuery) -> QueryExecutionPlan:
+    def analyze_plan(self, query: SqlQuery) -> QueryExecutionPlan:
         """Executes a specific query and provides the query execution plan supplemented with runtime information.
 
         This respects all hints that potentially influence the optimization process.
 
         Parameters
         ----------
-        query : qal.SqlQuery
+        query : SqlQuery
             The input query
 
         Returns
@@ -1920,7 +1921,7 @@ class OptimizerInterface(abc.ABC):
         raise NotImplementedError
 
     @abc.abstractmethod
-    def cardinality_estimate(self, query: qal.SqlQuery | str) -> int:
+    def cardinality_estimate(self, query: SqlQuery | str) -> int:
         """Queries the DBMS query optimizer for its cardinality estimate, instead of executing the query.
 
         The cardinality estimate will correspond to the estimate for the final node. Therefore, running this method
@@ -1928,7 +1929,7 @@ class OptimizerInterface(abc.ABC):
 
         Parameters
         ----------
-        query : qal.SqlQuery | str
+        query : SqlQuery | str
             The input query
 
         Returns
@@ -1939,7 +1940,7 @@ class OptimizerInterface(abc.ABC):
         raise NotImplementedError
 
     @abc.abstractmethod
-    def cost_estimate(self, query: qal.SqlQuery | str) -> float:
+    def cost_estimate(self, query: SqlQuery | str) -> float:
         """Queries the DBMS query optimizer for the estimated cost of executing the query.
 
         The cost estimate will correspond to the estimate for the final node. Typically, this cost includes the cost
@@ -1947,7 +1948,7 @@ class OptimizerInterface(abc.ABC):
 
         Parameters
         ----------
-        query : qal.SqlQuery | str
+        query : SqlQuery | str
             The input query
 
         Returns

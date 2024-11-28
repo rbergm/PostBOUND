@@ -10,9 +10,8 @@ from __future__ import annotations
 import abc
 from typing import Optional
 
-from postbound.qal import base, qal
 from . import jointree, physops, planparams, validation
-from .. import db
+from .. import db, qal
 from ..util.jsonize import jsondict
 
 
@@ -75,14 +74,14 @@ class CardinalityEstimator(abc.ABC):
     """The cardinality estimator calculates how many tuples specific operators will produce."""
 
     @abc.abstractmethod
-    def calculate_estimate(self, query: qal.SqlQuery, intermediate: frozenset[base.TableReference]) -> Cardinality:
+    def calculate_estimate(self, query: qal.SqlQuery, intermediate: frozenset[qal.TableReference]) -> Cardinality:
         """Determines the cardinality of a specific intermediate.
 
         Parameters
         ----------
         query : qal.SqlQuery
             The query being optimized
-        intermediate : frozenset[base.TableReference]
+        intermediate : frozenset[qal.TableReference]
             The intermediate for which the cardinality should be estimated. All filter predicates, etc. that are applicable
             to the intermediate can be assumed to be applied.
 

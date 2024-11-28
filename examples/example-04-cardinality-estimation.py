@@ -13,8 +13,7 @@ import warnings
 from typing import Optional
 
 import postbound as pb
-from postbound.qal import qal, transform
-from postbound import db, util
+from postbound import db, qal, util
 from postbound.db import postgres
 from postbound.experiments import workloads
 from postbound.optimizer import stages, jointree, physops, planparams
@@ -56,8 +55,8 @@ class JitteringCardinalityEstimator(stages.ParameterGeneration):
             # the query execution of our current intermediate result. This is done by constructing a specialized SQL query that
             # only handles the computation of the intermediate result. Afterwards, we can ask the optimizer for its cardinality
             # estimate of the specialized query to obtain the cardinality estimate for the intermediate result.
-            query_fragment = transform.extract_query_fragment(query, join)
-            query_fragment = transform.as_star_query(query_fragment)
+            query_fragment = qal.transform.extract_query_fragment(query, join)
+            query_fragment = qal.transform.as_star_query(query_fragment)
             native_estimate = self.optimizer.cardinality_estimate(query_fragment)
 
             # Apply the distortion to the estimated cardinality

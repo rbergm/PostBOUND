@@ -1,10 +1,10 @@
 """Shortcuts provide simple methods to generate instances of different PostBOUND objects, mostly for REPL contexts."""
 from __future__ import annotations
 
-from postbound.qal import base, qal, parser
+from . import qal
 
 
-def tab(table: str) -> base.TableReference:
+def tab(table: str) -> qal.TableReference:
     """Creates a table instance.
 
     Parameters
@@ -14,17 +14,17 @@ def tab(table: str) -> base.TableReference:
 
     Returns
     -------
-    base.TableReference
+    qal.TableReference
         The resulting table. This will never be a virtual table.
     """
     if " " in table:
         full_name, alias = table.split(" ")
-        return base.TableReference(full_name, alias)
+        return qal.TableReference(full_name, alias)
     else:
-        return base.TableReference(table)
+        return qal.TableReference(table)
 
 
-def col(column: str) -> base.ColumnReference:
+def col(column: str) -> qal.ColumnReference:
     """Creates a column instance.
 
     Parameters
@@ -34,14 +34,15 @@ def col(column: str) -> base.ColumnReference:
 
     Returns
     -------
-    base.ColumnReference
-        The resulting column. If a table name is included before the ``.``, it will be parsed according to the rules of `tab()`.
+    qal.ColumnReference
+        The resulting column. If a table name is included before the ``.``, it will be parsed according to the rules of
+        `tab()`.
     """
     if "." in column:
         table_name, column_name = column.split(".")
-        return base.ColumnReference(column_name, tab(table_name))
+        return qal.ColumnReference(column_name, tab(table_name))
     else:
-        return base.ColumnReference(column)
+        return qal.ColumnReference(column)
 
 
 def q(query: str) -> qal.SqlQuery:
@@ -58,10 +59,10 @@ def q(query: str) -> qal.SqlQuery:
     -------
     qal.SqlQuery
         A QAL query object corresponding to the given input query. Errors can be produced according to the documentation of
-        `qal.parser.parse_query`.
+        `qal.parse_query`.
 
     See Also
     --------
-    qal.parser.parse_query
+    qal.parse_query
     """
-    return parser.parse_query(query)
+    return qal.parse_query(query)

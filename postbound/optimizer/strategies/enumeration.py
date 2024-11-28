@@ -11,14 +11,13 @@ from typing import Literal, Optional
 
 import networkx as nx
 
-from postbound.qal import base, qal
 from .. import jointree, physops
-from ... import db
+from ... import db, qal
 from ...util import networkx as nx_utils
 
 
-def _merge_nodes(query: qal.SqlQuery, start: jointree.LogicalJoinTree | base.TableReference,
-                 end: jointree.LogicalJoinTree | base.TableReference) -> jointree.LogicalJoinTree:
+def _merge_nodes(query: qal.SqlQuery, start: jointree.LogicalJoinTree | qal.TableReference,
+                 end: jointree.LogicalJoinTree | qal.TableReference) -> jointree.LogicalJoinTree:
     """Provides a join tree that combines two specific trees or tables.
 
     This is a shortcut method to merge arbitrary tables or trees without having to check whether a table-based or tree-based
@@ -26,9 +25,9 @@ def _merge_nodes(query: qal.SqlQuery, start: jointree.LogicalJoinTree | base.Tab
 
     Parameters
     ----------
-    start : jointree.LogicalJoinTree | base.TableReference
+    start : jointree.LogicalJoinTree | qal.TableReference
         The first tree to merge. If this is a base table, it will be treated as a join tree of just a scan of that table.
-    end : jointree.LogicalJoinTree | base.TableReference
+    end : jointree.LogicalJoinTree | qal.TableReference
         The second tree to merge. If this is a base table, it will be treated as a join tree of just a scan of that table.
 
     Returns
@@ -37,10 +36,10 @@ def _merge_nodes(query: qal.SqlQuery, start: jointree.LogicalJoinTree | base.Tab
         A join tree combining the input trees. The `start` node will be the left node of the tree and the `end` node will be
         the right node.
     """
-    if isinstance(start, base.TableReference):
+    if isinstance(start, qal.TableReference):
         start_annotation = jointree.LogicalBaseTableMetadata(query.predicates().filters_for(start))
         start = jointree.LogicalJoinTree.for_base_table(start, start_annotation)
-    if isinstance(end, base.TableReference):
+    if isinstance(end, qal.TableReference):
         end_annotation = jointree.LogicalBaseTableMetadata(query.predicates().filters_for(end))
         end = jointree.LogicalJoinTree.for_base_table(end, end_annotation)
     join_annotation = jointree.LogicalJoinMetadata(query.predicates().joins_between(start.tables(), end.tables()))

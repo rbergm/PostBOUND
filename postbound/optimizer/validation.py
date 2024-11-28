@@ -13,8 +13,7 @@ from dataclasses import dataclass
 
 import networkx as nx
 
-from postbound.qal import qal, expressions, predicates
-from .. import db, util
+from .. import db, qal, util
 
 ImplicitFromClauseFailure = "NO_IMPLICIT_FROM_CLAUSE"
 EquiJoinFailure = "NON_EQUI_JOIN"
@@ -343,12 +342,12 @@ class EquiJoinPreCheck(OptimizationPreCheck):
             "allow_nesting": self._allow_nesting
         }
 
-    def _perform_predicate_check(self, predicate: predicates.AbstractPredicate) -> bool:
+    def _perform_predicate_check(self, predicate: qal.AbstractPredicate) -> bool:
         """Handler method to dispatch to the appropriate check utility depending on the predicate type.
 
         Parameters
         ----------
-        predicate : predicates.AbstractPredicate
+        predicate : qal.AbstractPredicate
             The predicate to check
 
         Returns
@@ -356,19 +355,19 @@ class EquiJoinPreCheck(OptimizationPreCheck):
         bool
             Whether the predicate passed the check
         """
-        if isinstance(predicate, predicates.BasePredicate):
+        if isinstance(predicate, qal.BasePredicate):
             return self._perform_base_predicate_check(predicate)
-        elif isinstance(predicate, predicates.CompoundPredicate):
+        elif isinstance(predicate, qal.CompoundPredicate):
             return self._perform_compound_predicate_check(predicate)
         else:
             return False
 
-    def _perform_base_predicate_check(self, predicate: predicates.BasePredicate) -> bool:
+    def _perform_base_predicate_check(self, predicate: qal.BasePredicate) -> bool:
         """Handler method to check a single base predicate.
 
         Parameters
         ----------
-        predicate : predicates.BasePredicate
+        predicate : qal.BasePredicate
             The predicate to check
 
         Returns
@@ -376,23 +375,23 @@ class EquiJoinPreCheck(OptimizationPreCheck):
         bool
             Whether the predicate passed the check
         """
-        if not isinstance(predicate, predicates.BinaryPredicate) or len(predicate.columns()) != 2:
+        if not isinstance(predicate, qal.BinaryPredicate) or len(predicate.columns()) != 2:
             return False
-        if predicate.operation != expressions.LogicalSqlOperators.Equal:
+        if predicate.operation != qal.LogicalSqlOperators.Equal:
             return False
 
         if self._allow_nesting:
             return True
-        first_is_col = isinstance(predicate.first_argument, expressions.ColumnExpression)
-        second_is_col = isinstance(predicate.second_argument, expressions.ColumnExpression)
+        first_is_col = isinstance(predicate.first_argument, qal.ColumnExpression)
+        second_is_col = isinstance(predicate.second_argument, qal.ColumnExpression)
         return first_is_col and second_is_col
 
-    def _perform_compound_predicate_check(self, predicate: predicates.CompoundPredicate) -> bool:
+    def _perform_compound_predicate_check(self, predicate: qal.CompoundPredicate) -> bool:
         """Handler method to check a compound predicate.
 
         Parameters
         ----------
-        predicate : predicates.CompoundPredicate
+        predicate : qal.CompoundPredicate
             The predicate to check
 
         Returns
@@ -402,7 +401,7 @@ class EquiJoinPreCheck(OptimizationPreCheck):
         """
         if not self._allow_conjunctions:
             return False
-        elif predicate.operation != expressions.LogicalSqlCompoundOperators.And:
+        elif predicate.operation != qal.CompoundOperators.And:
             return False
         return all(self._perform_predicate_check(child_pred) for child_pred in predicate.children)
 

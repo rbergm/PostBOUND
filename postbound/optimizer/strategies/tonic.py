@@ -15,9 +15,10 @@ import random
 from collections.abc import Iterable, Sequence
 from typing import Any, Optional
 
-from postbound.qal import qal, base, predicates, transform, parser as qal_parser
 from .. import jointree, physops, stages
-from ... import db, util
+from ... import db, qal, util
+from ...qal import parser as query_parser
+from ...qal import TableReference, ColumnReference
 
 
 # TODO: there should be more documentation of the technical design of the QEP-S structure
@@ -119,35 +120,35 @@ def _iterate_join_tree(current_node: jointree.AbstractJoinTreeNode) -> Sequence[
     return list(_iterate_join_tree(right_child)) + [current_node]
 
 
-def _normalize_filter_predicate(tables: base.TableReference | Iterable[base.TableReference],
-                                filter_predicate: Optional[predicates.AbstractPredicate]
-                                ) -> Optional[predicates.AbstractPredicate]:
+def _normalize_filter_predicate(tables: TableReference | Iterable[TableReference],
+                                filter_predicate: Optional[qal.AbstractPredicate]
+                                ) -> Optional[qal.AbstractPredicate]:
     """Removes all alias information from a specific set of tables in a predicate.
 
     Parameters
     ----------
-    tables : base.TableReference | Iterable[base.TableReference]
+    tables : TableReference | Iterable[TableReference]
         The tables whose alias information should be removed
-    filter_predicate : Optional[predicates.AbstractPredicate]
+    filter_predicate : Optional[qal.AbstractPredicate]
         The predicate from which the alias information should be removed. Can be ``None``, in which case no removal is
         performed.
 
     Returns
     -------
-    Optional[predicates.AbstractPredicate]
+    Optional[qal.AbstractPredicate]
         The normalized predicate or ``None`` if no predicate was given in the first place.
     """
     if not filter_predicate:
         return None
-    tables: set[base.TableReference] = set(util.enlist(tables))
+    tables: set[TableReference] = set(util.enlist(tables))
     referenced_tables = tables & filter_predicate.tables()
     renamed_tables = {table: table.drop_alias() for table in referenced_tables}
-    renamed_columns = {col: base.ColumnReference(col.name, renamed_tables[col.table])
+    renamed_columns = {col: ColumnReference(col.name, renamed_tables[col.table])
                        for col in filter_predicate.columns() if col.table in renamed_tables}
-    return transform.rename_columns_in_predicate(filter_predicate, renamed_columns)
+    return qal.transform.rename_columns_in_predicate(filter_predicate, renamed_columns)
 
 
-def _tables_in_qeps_path(qeps_path: Sequence[QepsIdentifier]) -> frozenset[base.TableReference]:
+def _tables_in_qeps_path(qeps_path: Sequence[QepsIdentifier]) -> frozenset[TableReference]:
     """Extracts all tables along a QEP-S path
 
     Parameters
@@ -157,7 +158,7 @@ def _tables_in_qeps_path(qeps_path: Sequence[QepsIdentifier]) -> frozenset[base.
 
     Returns
     -------
-    frozenset[base.TableReference]
+    frozenset[TableReference]
         All tables in the path
     """
     return util.set_union(identifier.tables() for identifier in qeps_path)
@@ -175,10 +176,10 @@ class QepsIdentifier:
 
     Parameters
     ----------
-    tables : base.TableReference | Iterable[base.TableReference]
+    tables : TableReference | Iterable[TableReference]
         The tables that constitute the QEP-S node. Subquery nodes consist of multiple tables (the tables in the subquery) and
         scan nodes consist of a single table
-    filter_predicate : Optional[predicates.AbstractPredicate], optional
+    filter_predicate : Optional[qal.AbstractPredicate], optional
         The filter predicate that is used to restrict the allowed tuples of the base table. This does not have any meaning for
         subquery nodes.
 
@@ -188,8 +189,8 @@ class QepsIdentifier:
         If no table is supplied (either as a ``None`` argument, or as an empty iterable).
     """
 
-    def __init__(self, tables: base.TableReference | Iterable[base.TableReference],
-                 filter_predicate: Optional[predicates.AbstractPredicate] = None) -> None:
+    def __init__(self, tables: TableReference | Iterable[TableReference],
+                 filter_predicate: Optional[qal.AbstractPredicate] = None) -> None:
         if not tables:
             raise ValueError("Tables required")
         self._tables = frozenset(tab.drop_alias() for tab in util.enlist(tables))
@@ -197,12 +198,12 @@ class QepsIdentifier:
         self._hash_val = hash((self._tables, self._filter_predicate))
 
     @property
-    def table(self) -> Optional[base.TableReference]:
+    def table(self) -> Optional[TableReference]:
         """Get the table that is represented by this base table identifier.
 
         Returns
         -------
-        Optional[base.TableReference]
+        Optional[TableReference]
             The table or ``None`` if this node corresponds to a subquery node.
         """
         if not len(self._tables) == 1:
@@ -210,23 +211,23 @@ class QepsIdentifier:
         return util.collections.get_any(self._tables)
 
     @property
-    def tables(self) -> frozenset[base.TableReference]:
+    def tables(self) -> frozenset[TableReference]:
         """Get the tables that represent this identifier.
 
         Returns
         -------
-        frozenset[base.TableReference]
+        frozenset[TableReference]
             The tables. This can be a set of just a single table for base table identifiers, but the set will never be empty.
         """
         return self._tables
 
     @property
-    def filter_predicate(self) -> Optional[predicates.AbstractPredicate]:
+    def filter_predicate(self) -> Optional[qal.AbstractPredicate]:
         """Get the filter predicate that is used to describe this identifier.
 
         Returns
         -------
-        Optional[predicates.AbstractPredicate]
+        Optional[qal.AbstractPredicate]
             The predicate. May be ``None`` if no predicate exists or was specified. For subquery node identifiers, this should
             always be ``None``.
         """
@@ -364,12 +365,12 @@ class QepsNode:
         parent_path = self._parent.path() if self._parent else []
         return parent_path + [self._identifier] if parent_path else [self._identifier]
 
-    def tables(self) -> frozenset[base.TableReference]:
+    def tables(self) -> frozenset[TableReference]:
         """Provides all tables along the join path that leads to the current node.
 
         Returns
         -------
-        frozenset[base.TableReference]
+        frozenset[TableReference]
             All tables of all identifiers along the path. For the root node, the set is empty. Notice that this does only
             include directly designated tables, i.e. tables from filter predicates are neglected.
         """
@@ -511,7 +512,7 @@ class QepsNode:
 
     def detect_unknown_costs(self, query: qal.SqlQuery, join_order: Sequence[jointree.IntermediateJoinNode],
                              allowed_operators: frozenset[physops.JoinOperators],
-                             unknown_ops: dict[frozenset[base.TableReference], frozenset[physops.JoinOperators]],
+                             unknown_ops: dict[frozenset[TableReference], frozenset[physops.JoinOperators]],
                              _skip_first_table: bool = False) -> None:
         """Collects all joins in the QEP-S that do not have cost information for all possible operators.
 
@@ -527,7 +528,7 @@ class QepsNode:
         allowed_operators : frozenset[physops.JoinOperators]
             Operators for which cost information should exist. If the node does not have a cost information for any of the
             operators, this is an unknown cost
-        unknown_ops : dict[frozenset[base.TableReference], frozenset[physops.JoinOperators]]
+        unknown_ops : dict[frozenset[TableReference], frozenset[physops.JoinOperators]]
             The unknown operators that have been detected so far
         _skip_first_table : bool, optional
             Internal parameter that should only be set by the QEP-S implementation. This parameter is required to correctly
@@ -653,7 +654,7 @@ class QepsNode:
         return QepsNode(self.filter_aware, self.gamma, parent=self, identifier=identifier)
 
     def _make_identifier(self, query: qal.SqlQuery,
-                         table: base.TableReference | Iterable[base.TableReference]) -> QepsIdentifier:
+                         table: TableReference | Iterable[TableReference]) -> QepsIdentifier:
         """Generates an identifier for a specific table(s).
 
         The concrete identifier information depends on the configuration of this node, e.g. regarding the filter behavior.
@@ -663,7 +664,7 @@ class QepsNode:
         query : qal.SqlQuery
             The query for which the QEP-S identifier should be created. This parameter is necessary to infer filter predicates
             if necessary.
-        table : base.TableReference | Iterable[base.TableReference]
+        table : TableReference | Iterable[TableReference]
             The table that should be stored in the identifier. Subquery identifiers will contain multiple tables, but no filter
             predicate.
 
@@ -798,7 +799,7 @@ class QueryExecutionPlanSynopsis:
 
     def detect_unknown_costs(self, query: qal.SqlQuery, join_order: jointree.JoinTree,
                              allowed_operators: set[physops.JoinOperators]
-                             ) -> dict[frozenset[base.TableReference], frozenset[physops.JoinOperators]]:
+                             ) -> dict[frozenset[TableReference], frozenset[physops.JoinOperators]]:
         """Collects all joins in the QEP-S that do not have cost information for all possible operators.
 
         Parameters
@@ -813,7 +814,7 @@ class QueryExecutionPlanSynopsis:
 
         Returns
         -------
-        dict[frozenset[base.TableReference], frozenset[physops.JoinOperators]]
+        dict[frozenset[TableReference], frozenset[physops.JoinOperators]]
             A mapping from join to the unknown operators at that join. If a join is not contained in the mapping, it is either
             not contained in the `join_order`, or it has cost information for all operators.
         """
@@ -867,9 +868,8 @@ def _load_qeps_id_from_json(json_data: dict) -> QepsIdentifier:
     ValueError
         If the encoding does not contain any tables
     """
-    parser = qal_parser.JsonParser()
-    tables = [parser.load_table(json_table) for json_table in json_data.get("tables", [])]
-    filter_pred = parser.load_predicate(json_data.get("filter_predicate"), {})
+    tables = [query_parser.load_table_json(json_table) for json_table in json_data.get("tables", [])]
+    filter_pred = query_parser.load_predicate_json(json_data.get("filter_predicate"), {})
     return QepsIdentifier(tables, filter_pred)
 
 
@@ -919,12 +919,12 @@ def _load_qeps_from_json(json_data: dict, qeps_id: Optional[QepsIdentifier], par
     return node
 
 
-def make_qeps(path: Iterable[base.TableReference], root: Optional[QepsNode] = None, *, gamma: float = 0.8) -> QepsNode:
+def make_qeps(path: Iterable[TableReference], root: Optional[QepsNode] = None, *, gamma: float = 0.8) -> QepsNode:
     """Generates a QEP-S for the given join path.
 
     Parameters
     ----------
-    path : Iterable[base.TableReference]
+    path : Iterable[TableReference]
         The join sequence corresponding to the branch in the QEP-S.
     root : Optional[QepsNode], optional
         An optional root node. If this is specified, a branch below that node is inserted. This can be used to construct bushy
@@ -969,7 +969,7 @@ def _obtain_accurate_cost_estimate(query: qal.SqlQuery, database: db.Database) -
 
 
 def _generate_all_cost_estimates(query: qal.SqlQuery, join_order: jointree.JoinTree,
-                                 available_operators: dict[frozenset[base.TableReference], frozenset[physops.JoinOperators]],
+                                 available_operators: dict[frozenset[TableReference], frozenset[physops.JoinOperators]],
                                  database: db.Database) -> Iterable[db.QueryExecutionPlan]:
     """Provides all cost estimates based on plans with specific operator combinations.
 
@@ -983,7 +983,7 @@ def _generate_all_cost_estimates(query: qal.SqlQuery, join_order: jointree.JoinT
         The query for which the cost estimates should be generated
     join_order : jointree.JoinTree
         The join order to use
-    available_operators : dict[frozenset[base.TableReference], frozenset[physops.JoinOperators]]
+    available_operators : dict[frozenset[TableReference], frozenset[physops.JoinOperators]]
         A mapping from joins to allowed operators. All possible combinations will be explored.
     database : db.Database
         The database to use for the query execution and cost estimation.
@@ -1006,7 +1006,7 @@ def _generate_all_cost_estimates(query: qal.SqlQuery, join_order: jointree.JoinT
 
 
 def _sample_cost_estimates(query: qal.SqlQuery, join_order: jointree.JoinTree,
-                           available_operators: dict[frozenset[base.TableReference], frozenset[physops.JoinOperators]],
+                           available_operators: dict[frozenset[TableReference], frozenset[physops.JoinOperators]],
                            n_samples: int, database: db.Database) -> Iterable[db.QueryExecutionPlan]:
     """Generates cost estimates based on sampled plans with specific operator combinations.
 
@@ -1022,7 +1022,7 @@ def _sample_cost_estimates(query: qal.SqlQuery, join_order: jointree.JoinTree,
         The query for which the cost estimates should be generated
     join_order : jointree.JoinTree
         The join order to use
-    available_operators : dict[frozenset[base.TableReference], frozenset[physops.JoinOperators]]
+    available_operators : dict[frozenset[TableReference], frozenset[physops.JoinOperators]]
         A mapping from joins to allowed operators. The actual operator assignments will be sampled from this mapping.
     n_samples : int
         The number of samples to generate. If there are less unique plans than samples requested, only the unique plans are

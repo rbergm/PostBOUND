@@ -6,9 +6,8 @@ import textwrap
 
 import unittest
 
-from postbound import db
+from postbound import db, qal
 from postbound.db import postgres
-from postbound.qal import base, parser
 from postbound.optimizer import jointree, physops
 
 from tests import regression_suite
@@ -20,8 +19,8 @@ imdb_config_file = f"{pg_connect_dir}/.psycopg_connection_job"
 
 class JoinTreeLoadingTests(unittest.TestCase):
     def test_load_from_query_plan(self) -> None:
-        title = base.TableReference("title")
-        movie_info = base.TableReference("movie_info")
+        title = qal.TableReference("title")
+        movie_info = qal.TableReference("movie_info")
         t_explain_plan = db.QueryExecutionPlan(node_type="Seq Scan", is_join=False, is_scan=True, children=[],
                                                table=title, physical_operator=physops.ScanOperators.SequentialScan)
         mi_explain_plan = db.QueryExecutionPlan(node_type="Seq Scan", is_join=False, is_scan=True, children=[],
@@ -43,16 +42,16 @@ class JoinTreeLoadingTests(unittest.TestCase):
     def test_load_from_explain(self) -> None:
         pg_db = postgres.connect(config_file=imdb_config_file)
 
-        query = parser.parse_query(textwrap.dedent("""SELECT *
+        query = qal.parse_query(textwrap.dedent("""SELECT *
                                                    FROM title t
                                                     JOIN movie_companies mc
                                                     ON t.id = mc.movie_id
                                                     JOIN movie_info mi
                                                     ON t.id = mi.movie_id AND mi.movie_id = mc.movie_id"""))
 
-        t = base.TableReference("title", "t")
-        mc = base.TableReference("movie_companies", "mc")
-        mi = base.TableReference("movie_info", "mi")
+        t = qal.TableReference("title", "t")
+        mc = qal.TableReference("movie_companies", "mc")
+        mi = qal.TableReference("movie_info", "mi")
 
         join_order = jointree.LogicalJoinTree.load_from_list([t, mc, mi])
         annotated_query = pg_db.hinting().generate_hints(query, join_order)

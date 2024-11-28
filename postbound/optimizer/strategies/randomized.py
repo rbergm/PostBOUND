@@ -7,14 +7,14 @@ from typing import Literal, Optional
 
 import networkx as nx
 
-from postbound.qal import base, qal
 from .. import jointree, physops, stages, validation
-from ... import db
+from ... import db, qal
+from ...qal import TableReference
 from ...util import networkx as nx_utils
 
 
-def _merge_nodes(query: qal.SqlQuery, start: jointree.LogicalJoinTree | base.TableReference,
-                 end: jointree.LogicalJoinTree | base.TableReference) -> jointree.LogicalJoinTree:
+def _merge_nodes(query: qal.SqlQuery, start: jointree.LogicalJoinTree | TableReference,
+                 end: jointree.LogicalJoinTree | TableReference) -> jointree.LogicalJoinTree:
     """Provides a join tree that combines two specific trees or tables.
 
     This is a shortcut method to merge arbitrary tables or trees without having to check whether a table-based or tree-based
@@ -25,9 +25,9 @@ def _merge_nodes(query: qal.SqlQuery, start: jointree.LogicalJoinTree | base.Tab
     query : qal.SqlQuery
         The query to which the (partial) join trees belong. This parameter is necessary to generate the correct metadata for
         the join tree
-    start : jointree.LogicalJoinTree | base.TableReference
+    start : jointree.LogicalJoinTree | TableReference
         The first tree to merge. If this is a base table, it will be treated as a join tree of just a scan of that table.
-    end : jointree.LogicalJoinTree | base.TableReference
+    end : jointree.LogicalJoinTree | TableReference
         The second tree to merge. If this is a base table, it will be treated as a join tree of just a scan of that table.
 
     Returns
@@ -36,10 +36,10 @@ def _merge_nodes(query: qal.SqlQuery, start: jointree.LogicalJoinTree | base.Tab
         A join tree combining the input trees. The `start` node will be the left node of the tree and the `end` node will be
         the right node.
     """
-    if isinstance(start, base.TableReference):
+    if isinstance(start, TableReference):
         start_annotation = jointree.LogicalBaseTableMetadata(query.predicates().filters_for(start))
         start = jointree.LogicalJoinTree.for_base_table(start, start_annotation)
-    if isinstance(end, base.TableReference):
+    if isinstance(end, TableReference):
         end_annotation = jointree.LogicalBaseTableMetadata(query.predicates().filters_for(end))
         end = jointree.LogicalJoinTree.for_base_table(end, end_annotation)
     join_annotation = jointree.LogicalJoinMetadata(query.predicates().joins_between(start.tables(), end.tables()))
@@ -47,7 +47,7 @@ def _merge_nodes(query: qal.SqlQuery, start: jointree.LogicalJoinTree | base.Tab
 
 
 def _sample_join_graph(query: qal.SqlQuery, join_graph: nx.Graph, *,
-                       base_table: Optional[base.TableReference] = None) -> jointree.LogicalJoinTree:
+                       base_table: Optional[TableReference] = None) -> jointree.LogicalJoinTree:
     """Generates a random join order for the given join graph.
 
     Parameters
@@ -57,7 +57,7 @@ def _sample_join_graph(query: qal.SqlQuery, join_graph: nx.Graph, *,
         tree.
     join_graph : nx.Graph
         The join graph that should be "optimized". This should be a pure join graph as provided by the *qal* module.
-    base_table : Optional[base.TableReference], optional
+    base_table : Optional[TableReference], optional
             An optional table that should always be joined first. If unspecified, base tables are selected at random.
 
     Returns
@@ -77,7 +77,7 @@ def _sample_join_graph(query: qal.SqlQuery, join_graph: nx.Graph, *,
     graph. Depending on the order in which the edges are selected, a different join tree is produced.
     """
     if base_table is not None:
-        candidate_edges: list[base.TableReference] = list(join_graph.adj[base_table])
+        candidate_edges: list[TableReference] = list(join_graph.adj[base_table])
         initial_join_partner = random.choice(candidate_edges)
         right, left = (base_table, initial_join_partner) if random.random() < 0.5 else (initial_join_partner, base_table)
         join_tree = _merge_nodes(query, right, left)
@@ -126,14 +126,14 @@ class RandomJoinOrderGenerator:
         self._tree_structure = tree_structure
 
     def random_join_orders_for(self, query: qal.SqlQuery, *,
-                               base_table: Optional[base.TableReference] = None) -> Generator[jointree.LogicalJoinTree]:
+                               base_table: Optional[TableReference] = None) -> Generator[jointree.LogicalJoinTree]:
         """Provides a generator that successively provides join orders at random.
 
         Parameters
         ----------
         query : qal.SqlQuery
             The query for which the join orders should be generated
-        base_table : Optional[base.TableReference], optional
+        base_table : Optional[TableReference], optional
             An optional table that should always be joined first. If unspecified, base tables are selected at random.
 
         Yields
@@ -180,7 +180,7 @@ class RandomJoinOrderGenerator:
             yield current_join_order
 
     def _linear_join_orders(self, query: qal.SqlQuery, join_graph: nx.Graph, *,
-                            base_table: Optional[base.TableReference] = None
+                            base_table: Optional[TableReference] = None
                             ) -> Generator[jointree.LogicalJoinTree, None, None]:
         """Handler method to generate left-deep or right-deep join orders.
 
@@ -192,7 +192,7 @@ class RandomJoinOrderGenerator:
             The query to "optimize"
         join_graph : nx.Graph
             The join graph of the query to optimize
-        base_table : Optional[base.TableReference], optional
+        base_table : Optional[TableReference], optional
             An optional table that should always be joined first. If unspecified, the base join is selected at random.
 
         Yields
@@ -215,7 +215,7 @@ class RandomJoinOrderGenerator:
             yield join_tree
 
     def _bushy_join_orders(self, query: qal.SqlQuery, join_graph: nx.Graph, *,
-                           base_table: Optional[base.TableReference] = None
+                           base_table: Optional[TableReference] = None
                            ) -> Generator[jointree.LogicalJoinTree, None, None]:
         """Handler method to generate bushy join orders.
 
@@ -228,7 +228,7 @@ class RandomJoinOrderGenerator:
             The query to "optimize"
         join_graph : nx.Graph
             The join graph of the query to optimize
-        base_table : Optional[base.TableReference], optional
+        base_table : Optional[TableReference], optional
             An optional table that should always be joined first. If unspecified, base tables are selected at random.
 
         Yields

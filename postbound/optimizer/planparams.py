@@ -4,7 +4,7 @@ from __future__ import annotations
 import enum
 from typing import Any, Iterable
 
-from postbound.qal import base
+from ..qal import TableReference
 
 
 class PlanParameterization:
@@ -27,10 +27,10 @@ class PlanParameterization:
 
     Attributes
     ----------
-    cardinality_hints : dict[frozenset[base.TableReference], int | float]
+    cardinality_hints : dict[frozenset[TableReference], int | float]
         Contains the cardinalities for individual joins and scans. This is always the cardinality that is emitted by a specific
         operator. All joins are identified by the base tables that they combine. Keys of single tables correpond to scans.
-    paralell_worker_hints : dict[frozenset[base.TableReference], int]
+    paralell_worker_hints : dict[frozenset[TableReference], int]
         Contains the number of parallel processes that should be used to execute a join or scan. All joins are identified by
         the base tables that they combine. Keys of single tables correpond to scans. "Processes" does not necessarily mean
         "system processes". The database system can also choose to use threads or other means of parallelization. This is not
@@ -42,23 +42,23 @@ class PlanParameterization:
     """
 
     def __init__(self) -> None:
-        self.cardinality_hints: dict[frozenset[base.TableReference], int | float] = {}
-        self.parallel_worker_hints: dict[frozenset[base.TableReference], int] = {}
+        self.cardinality_hints: dict[frozenset[TableReference], int | float] = {}
+        self.parallel_worker_hints: dict[frozenset[TableReference], int] = {}
         self.system_specific_settings: dict[str, Any] = {}
 
-    def add_cardinality_hint(self, tables: Iterable[base.TableReference], cardinality: int | float) -> None:
+    def add_cardinality_hint(self, tables: Iterable[TableReference], cardinality: int | float) -> None:
         """Assigns a specific cardinality hint to a (join of) tables.
 
         Parameters
         ----------
-        tables : Iterable[base.TableReference]
+        tables : Iterable[TableReference]
             The tables for which the hint is generated. This can be an iterable of a single table, which denotes a scan hint.
         cardinality : int | float
             The estimated or known cardinality.
         """
         self.cardinality_hints[frozenset(tables)] = cardinality
 
-    def add_parallelization_hint(self, tables: Iterable[base.TableReference], num_workers: int) -> None:
+    def add_parallelization_hint(self, tables: Iterable[TableReference], num_workers: int) -> None:
         """Assigns a specific number of parallel workers to a (join of) tables.
 
         How these workers are implemented depends on the database system. They could become actual system processes, threads,
@@ -66,7 +66,7 @@ class PlanParameterization:
 
         Parameters
         ----------
-        tables : Iterable[base.TableReference]
+        tables : Iterable[TableReference]
             The tables for which the hint is generated. This can be an iterable of a single table, which denotes a scan hint.
         num_workers : int
             The desired number of worker processes. This denotes the total number of processes, not an additional amount. For

@@ -25,10 +25,9 @@ import numpy as np
 import tomli
 
 from .workloads import Workload
+from .. import qal
 from ..db import Database, postgres
-from ..qal import parser, formatter
-from ..qal.base import ColumnReference, TableReference
-from ..qal.qal import SqlQuery
+from ..qal import ColumnReference, TableReference, SqlQuery
 from ..util.errors import StateError
 from ..util.misc import DependencyGraph
 
@@ -539,7 +538,7 @@ class QueryTemplate:
     def generate_query(self) -> SqlQuery:
         """Creates a new SQL query by replacing all placeholders in the base query with appropriate values."""
         final_query = self.generate_raw_query()
-        return parser.parse_query(final_query)
+        return qal.parse_query(final_query)
 
     def _lookup_column(self, colname: ColumnName) -> ColumnReference:
         """Generates an actual column reference for a specific column name."""
@@ -720,7 +719,7 @@ def generate_workload(path: str | pathlib.Path, *, queries_per_template: int, na
     template_dir = path if isinstance(path, pathlib.Path) else pathlib.Path(path)
     raw_workload = generate_raw_workload(template_dir, queries_per_template=queries_per_template,
                                          template_pattern=template_pattern, db_connection=db_connection)
-    workload_queries = {label: parser.parse_query(query) for label, query in raw_workload.items()}
+    workload_queries = {label: qal.parse_query(query) for label, query in raw_workload.items()}
 
     return Workload(workload_queries, name=(name if name else ""), root=template_dir)
 
@@ -732,7 +731,7 @@ def persist_workload(path: str | pathlib.Path, workload: Workload[str] | dict[st
     """
     path = pathlib.Path(path) if isinstance(path, str) else path
     query_iter = workload.entries() if isinstance(workload, Workload) else workload.items()
-    query_formatter = formatter.format_quick if isinstance(workload, Workload) else lambda x: x
+    query_formatter = qal.format_quick if isinstance(workload, Workload) else lambda x: x
     for label, query in query_iter:
         query_file = path / f"{label}.sql"
         with open(query_file, "w") as query_file:
