@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import abc
+import os
 import unittest
 
 import psycopg
 
 from postbound import db
+from postbound.db import postgres
 
 
 def _rebuild_result_set(result_set: object) -> list[tuple[object]]:
@@ -146,8 +148,11 @@ def skip_if_no_db(config_file):
     config_file : _type_
         The config file that describes the connection to the database. Must be compatible with the postgres.connect()
     """
+    if not os.path.exists(config_file):
+        return unittest.skip(f"Config file '{config_file}' does not exist.")
+
     try:
-        pg_instance = db.postgres.connect(config_file=config_file, private=True)
+        pg_instance = postgres.connect(config_file=config_file, private=True)
         pg_instance.close()
         return lambda f: f
     except psycopg.OperationalError:
