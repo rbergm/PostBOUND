@@ -20,7 +20,7 @@ well-defined interfaces.
 
 On a high-level, the PostBOUND project is structured as follows:
 
-- the `postbound` module contains the actual optimization pipeline
+- this module contains the actual optimization pipelines
 - the `optimizer` package provides the different optimization strategies, interfaces and some pre-defined algorithms
 - the `qal` package provides the query abstraction used throughout PostBOUND, as well as logic to parse and transform
   query instances
@@ -34,6 +34,26 @@ On a high-level, the PostBOUND project is structured as follows:
   are frequently encoutered in the optimization context (such as join trees, query execution plans and join orders)
 
 To get a general idea of how to work with PostBOUND and where to start, take a look at the README and the example scripts.
+
+
+Optimization pipeline
+---------------------
+
+PostBOUND does not provide a single pipeline implementation. Rather, different pipeline types exists to accomodate
+different use-cases. See the documentation of the general `OptimizationPipeline` base class for details. That class serves as
+the smallest common denominator among all pipeline implementations. Based on the general interface, the most commonly used
+pipelines are the `TextBookOptimizationPipeline` and the `TwoStageOptimizationPipeline`. The former models an optimizer based
+on the traditional architecture of cost-based optimizers (i.e. plan enumerator, cost model and cardinality estimator). The
+latter first computes a join order and selects the physical operators for this join order afterwards. The resulting plan can be
+further parameterized, e.g. using cardinality estimates. Importantly, the `TwoStageOptimizationPipeline` allows to leave some
+of the stages empty, which forces the native query optimizer to "fill the gaps" with its own policies. For example, one might
+only compute a join order along with the cardinality estimates. The target optimizer would then select the physical operators
+based on its own cost model, but using the cardinality estimates in place of its own estimation procedures.
+
+To develop custom optimization algorithms and make use of PostBOUND's pipeline abstraction, the optimization stages are the
+interfaces that need to be implemented. They specify the basic interface that pipelines expect and provide additional
+information about the selected optimization strategies. Depending on the specific pipeline type, different stages have to be
+implemented. Refer to the documentation of the respective pipelines for details.
 """
 
 from ._pipelines import (
