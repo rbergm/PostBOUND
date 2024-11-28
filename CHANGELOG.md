@@ -18,6 +18,7 @@ Be carefull when updating and check the changelog!
 
 ### Fixes
 - Fixed CTE names being contained twice in the `tables()` output for `SqlQuery` instances
+- Fixed auto discovery of the Postgres hinting backend not working on non-POSIX systems
 
 ---
 

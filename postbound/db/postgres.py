@@ -1655,6 +1655,17 @@ class PostgresHintService(HintService):
     def _infer_pg_backend(self) -> None:
         """Determines the hinting backend that is provided by the current Postgres instance."""
 
+        if os.name != "posix":
+            warnings.warn("It seems you are running PostBOUND on a non-POSIX system. "
+                          "Please beware that PostBOUND is currently not intended to run on different systems and "
+                          "there might be (many) dragons. "
+                          "Proceed at your own risk. "
+                          "We assume that the Postgres server has pg_hint_plan enabled. "
+                          "Please set the backend property to pg_lab manually if you are using pg_lab.")
+            self._backend = "pg_hint_plan"
+            self._inactive = False
+            return
+
         connection = self._postgres_db.connection()
         backend_pid = connection.info.backend_pid
         hostname = connection.info.host
