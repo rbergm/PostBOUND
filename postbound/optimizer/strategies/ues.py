@@ -35,7 +35,8 @@ from typing import Generic, Optional
 import numpy as np
 
 
-from .. import joingraph, jointree, physops, stages, validation
+from .. import joingraph, jointree, physops, validation
+from .._pipelines import JoinOrderOptimization, PhysicalOperatorSelection, JoinOrderOptimizationError
 from ..policies import cardinalities as cardpol, jointree as treepol
 from ... import db, qal, util
 from ...qal import TableReference, ColumnReference
@@ -471,7 +472,7 @@ class UESSubqueryGenerationPolicy(treepol.BranchGenerationPolicy):
         return {"name": "defensive"}
 
 
-class UESJoinOrderOptimizer(stages.JoinOrderOptimization):
+class UESJoinOrderOptimizer(JoinOrderOptimization):
     """Implementation of the UES join order algorithm.
 
     Our implementation expands upon the original algorithm in a number of ways. These are used to enable a variation of
@@ -550,7 +551,7 @@ class UESJoinOrderOptimizer(stages.JoinOrderOptimization):
                 # FIXME: join components might consist of single tables!
                 optimized_component = self._clone().optimize_join_order(component.query)
                 if not optimized_component:
-                    raise stages.JoinOrderOptimizationError(component.query)
+                    raise JoinOrderOptimizationError(component.query)
                 optimized_components.append(optimized_component)
 
             # insert cross-products such that the smaller partitions are joined first
@@ -944,7 +945,7 @@ class UESJoinOrderOptimizer(stages.JoinOrderOptimization):
         print(log_message)
 
 
-class UESOperatorSelection(stages.PhysicalOperatorSelection):
+class UESOperatorSelection(PhysicalOperatorSelection):
     """Implementation of the operator selection used in the UES algorithm.
 
     UES is actually not concerned with operator selection and focuses exclusively on join orders. Therefore, this

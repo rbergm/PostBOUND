@@ -18,13 +18,14 @@ from typing import Literal, Optional
 
 import pandas as pd
 
-from .. import joingraph, jointree, physops, validation, planparams, stages
+from .. import joingraph, jointree, physops, validation, planparams
+from .._pipelines import ParameterGeneration, CardinalityEstimator
 from ... import db, qal, util
 from ...qal import parser, TableReference
 from ...experiments import workloads
 
 
-class CardinalityHintsGenerator(stages.ParameterGeneration, stages.CardinalityEstimator, abc.ABC):
+class CardinalityHintsGenerator(ParameterGeneration, CardinalityEstimator, abc.ABC):
     """End-to-end cardinality estimator.
 
     Implementations of this service calculate cardinalities for all relevant intermediate results of a query. In turn, these

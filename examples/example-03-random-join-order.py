@@ -15,12 +15,12 @@ import postbound as pb
 from postbound import db, qal
 from postbound.db import postgres
 from postbound.experiments import workloads
-from postbound.optimizer import stages, jointree, joingraph, validation
+from postbound.optimizer import jointree, joingraph, validation
 
 warnings.simplefilter("ignore")
 
 
-class RandomJoinOrderOptimizer(stages.JoinOrderOptimization):
+class RandomJoinOrderOptimizer(pb.JoinOrderOptimization):
     # The entire join ordering algorithm is implemented in this class. It satisfies the interface of the corresponding
     # optimization stage.
 

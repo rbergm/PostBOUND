@@ -16,12 +16,12 @@ import postbound as pb
 from postbound import db, qal, util
 from postbound.db import postgres
 from postbound.experiments import workloads
-from postbound.optimizer import stages, jointree, physops, planparams
+from postbound.optimizer import jointree, physops, planparams
 
 warnings.simplefilter("ignore")
 
 
-class JitteringCardinalityEstimator(stages.ParameterGeneration):
+class JitteringCardinalityEstimator(pb.ParameterGeneration):
     # The entire estimation algorithm is implemented in this class. It satisfies the interface of the corresponding
     # optimization stage.
 

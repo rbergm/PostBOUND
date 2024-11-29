@@ -2,7 +2,8 @@
 import random
 from typing import Optional
 
-from .. import jointree, physops, stages
+from .. import jointree, physops
+from .._pipelines import PhysicalOperatorSelection
 from ... import qal
 from ...experiments import workloads
 
@@ -19,7 +20,7 @@ def load_model_from_path(path: str):
     pass
 
 
-class FastgresOperatorSelection(stages.PhysicalOperatorSelection):
+class FastgresOperatorSelection(PhysicalOperatorSelection):
 
     def __init__(self, workload: workloads.Workload, *, rand_seed: float = random.random()) -> None:
         # TODO: fastgres initialization, model loading, sanity checks

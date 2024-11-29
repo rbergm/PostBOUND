@@ -7,7 +7,8 @@ from typing import Literal, Optional
 
 import networkx as nx
 
-from .. import jointree, physops, stages, validation
+from .. import jointree, physops, validation
+from .._pipelines import JoinOrderOptimization, PhysicalOperatorSelection, CompleteOptimizationAlgorithm
 from ... import db, qal
 from ...qal import TableReference
 from ...util import networkx as nx_utils
@@ -240,7 +241,7 @@ class RandomJoinOrderGenerator:
             yield _sample_join_graph(query, join_graph, base_table=base_table)
 
 
-class RandomJoinOrderOptimizer(stages.JoinOrderOptimization):
+class RandomJoinOrderOptimizer(JoinOrderOptimization):
     """Optimization stage that produces a randomized join order.
 
     This class acts as a wrapper around a `RandomJoinOrderGenerator` for the join optimization interface. The setup of the
@@ -382,7 +383,7 @@ class RandomOperatorGenerator:
         return self.allowed_join_ops | self.allowed_scan_ops
 
 
-class RandomOperatorOptimizer(stages.PhysicalOperatorSelection):
+class RandomOperatorOptimizer(PhysicalOperatorSelection):
     """Optimization stage that produces a randomized operator assignment.
 
     This class acts as a wrapper around a `RandomOperatorGenerator` for the operator optimization interface. The setup of the
@@ -491,7 +492,7 @@ class RandomPlanGenerator:
             yield query_plan
 
 
-class RandomPlanOptimizer(stages.CompleteOptimizationAlgorithm):
+class RandomPlanOptimizer(CompleteOptimizationAlgorithm):
     """Optimization stage that produces a random query plan.
 
     This class acts as a wrapper around a `RandomPlanGenerator` and passes all its arguments to that service.

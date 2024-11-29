@@ -13,11 +13,12 @@ from __future__ import annotations
 
 from typing import Optional
 
-from .. import jointree, physops, planparams, stages
+from .. import jointree, physops, planparams
+from .._pipelines import JoinOrderOptimization, PhysicalOperatorSelection, ParameterGeneration, CompleteOptimizationAlgorithm
 from ... import db, qal
 
 
-class NativeJoinOrderOptimizer(stages.JoinOrderOptimization):
+class NativeJoinOrderOptimizer(JoinOrderOptimization):
     """Obtains the join order for an input query by using the optimizer of an actual database system.
 
     Parameters
@@ -38,7 +39,7 @@ class NativeJoinOrderOptimizer(stages.JoinOrderOptimization):
         return {"name": "native", "database_system": self.db_instance.describe()}
 
 
-class NativePhysicalOperatorSelection(stages.PhysicalOperatorSelection):
+class NativePhysicalOperatorSelection(PhysicalOperatorSelection):
     """Obtains the physical operators for an input query by using the optimizer of an actual database system.
 
     Since this process normally is the second stage in the optimization pipeline, the operators are selected according to a
@@ -67,7 +68,7 @@ class NativePhysicalOperatorSelection(stages.PhysicalOperatorSelection):
         return {"name": "native", "database_system": self.db_instance.describe()}
 
 
-class NativePlanParameterization(stages.ParameterGeneration):
+class NativePlanParameterization(ParameterGeneration):
     """Obtains the plan parameters for an inpuit querry by using the optimizer of an actual database system.
 
     This process determines the parameters according to a join order and physical operators. If no such information exists, it
@@ -97,7 +98,7 @@ class NativePlanParameterization(stages.ParameterGeneration):
         return {"name": "native", "database_system": self.db_instance.describe()}
 
 
-class NativeOptimizer(stages.CompleteOptimizationAlgorithm):
+class NativeOptimizer(CompleteOptimizationAlgorithm):
     """Obtains a complete query execution plan by using the optimizer of an actual database system.
 
     Parameters

@@ -3,11 +3,12 @@ from __future__ import annotations
 
 from typing import Optional
 
-from .. import jointree, physops, planparams, stages
+from .. import jointree, physops, planparams
+from .._pipelines import JoinOrderOptimization, PhysicalOperatorSelection, ParameterGeneration
 from ... import qal
 
 
-class EmptyJoinOrderOptimizer(stages.JoinOrderOptimization):
+class EmptyJoinOrderOptimizer(JoinOrderOptimization):
     """Dummy implementation of the join order optimizer that does not actually optimize anything."""
 
     def __init__(self) -> None:
@@ -20,7 +21,7 @@ class EmptyJoinOrderOptimizer(stages.JoinOrderOptimization):
         return {"name": "no_ordering"}
 
 
-class EmptyPhysicalOperatorSelection(stages.PhysicalOperatorSelection):
+class EmptyPhysicalOperatorSelection(PhysicalOperatorSelection):
     """Dummy implementation of operator optimization that does not actually optimize anything."""
 
     def select_physical_operators(self, query: qal.SqlQuery,
@@ -32,7 +33,7 @@ class EmptyPhysicalOperatorSelection(stages.PhysicalOperatorSelection):
         return {"name": "no_selection"}
 
 
-class EmptyParameterization(stages.ParameterGeneration):
+class EmptyParameterization(ParameterGeneration):
     """Dummy implementation of the plan parameterization that does not actually generate any parameters."""
 
     def generate_plan_parameters(self, query: qal.SqlQuery,

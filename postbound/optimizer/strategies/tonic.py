@@ -15,7 +15,8 @@ import random
 from collections.abc import Iterable, Sequence
 from typing import Any, Optional
 
-from .. import jointree, physops, stages
+from .. import jointree, physops
+from .._pipelines import PhysicalOperatorSelection
 from ... import db, qal, util
 from ...qal import parser as query_parser
 from ...qal import TableReference, ColumnReference
@@ -1057,7 +1058,7 @@ def _sample_cost_estimates(query: qal.SqlQuery, join_order: jointree.JoinTree,
     return plans
 
 
-class TonicOperatorSelection(stages.PhysicalOperatorSelection):
+class TonicOperatorSelection(PhysicalOperatorSelection):
     """Implementation of the TONIC/QEP-S learned operator recommendation.
 
     The implementation supports bushy join orders, plain QEP-S and filter-aware QEP-S

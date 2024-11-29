@@ -4,10 +4,14 @@ The current design of the presets is targeted at the `TwoStageOptimizationPipeli
 """
 from __future__ import annotations
 
-from typing import Literal, Optional, Protocol
+from typing import Literal, Optional
 
 from postbound.qal import parser
-from . import stages, validation
+from ._pipelines import (
+    OptimizationSettings,
+    JoinOrderOptimization, PhysicalOperatorSelection,
+    OptimizationPreCheck
+)
 from .policies import cardinalities
 from .strategies import ues, native
 from .. import db
@@ -40,55 +44,6 @@ def apply_standard_system_options(database: Optional[db.Database] = None) -> Non
     parser.auto_bind_columns = True
 
 
-class OptimizationSettings(Protocol):
-    """Captures related settings for the optimization pipeline to make them more easily accessible.
-
-    All components are optional, depending on the specific optimization scenario/approach.
-    """
-
-    def query_pre_check(self) -> Optional[validation.OptimizationPreCheck]:
-        """The required query pre-check.
-
-        Returns
-        -------
-        Optional[validation.OptimizationPreCheck]
-            The pre-check if one is necessary, or ``None`` otherwise.
-        """
-        return None
-
-    def build_join_order_optimizer(self) -> Optional[stages.JoinOrderOptimization]:
-        """The algorithm that is used to obtain the optimized join order.
-
-        Returns
-        -------
-        Optional[stages.JoinOrderOptimization]
-            The optimization strategy for the join order, or ``None`` if the scenario does not include a join order
-            optimization.
-        """
-        return None
-
-    def build_physical_operator_selection(self) -> Optional[stages.PhysicalOperatorSelection]:
-        """The algorithm that is used to determine the physical operators.
-
-        Returns
-        -------
-        Optional[stages.PhysicalOperatorSelection]
-            The optimization strategy for the physical operators, or ``None`` if the scenario does not include an operator
-            optimization.
-        """
-        return None
-
-    def build_plan_parameterization(self) -> Optional[stages.ParameterGeneration]:
-        """The algorithm that is used to further parameterize the query plan.
-
-        Returns
-        -------
-        Optional[stages.ParameterGeneration]
-            The parameter optimization strategy, or ``None`` if the scenario does not include such a stage.
-        """
-        return None
-
-
 class UESOptimizationSettings(OptimizationSettings):
     """Provides the optimization settings that are used for the UES query optimizer.
 
@@ -107,10 +62,10 @@ class UESOptimizationSettings(OptimizationSettings):
     def __init__(self, database: Optional[db.Database] = None):
         self.database = database if database else db.DatabasePool.get_instance().current_database()
 
-    def query_pre_check(self) -> validation.OptimizationPreCheck | None:
+    def query_pre_check(self) -> Optional[OptimizationPreCheck]:
         return ues.UESOptimizationPreCheck
 
-    def build_join_order_optimizer(self) -> stages.JoinOrderOptimization | None:
+    def build_join_order_optimizer(self) -> Optional[JoinOrderOptimization]:
         base_table_estimator = cardinalities.NativeCardinalityEstimator(self.database)
         join_cardinality_estimator = ues.UESJoinBoundEstimator()
         subquery_policy = ues.UESSubqueryGenerationPolicy()
@@ -122,7 +77,7 @@ class UESOptimizationSettings(OptimizationSettings):
                                                database=self.database)
         return enumerator
 
-    def build_physical_operator_selection(self) -> stages.PhysicalOperatorSelection | None:
+    def build_physical_operator_selection(self) -> Optional[PhysicalOperatorSelection]:
         return ues.UESOperatorSelection(self.database)
 
 
@@ -138,10 +93,10 @@ class NativeOptimizationSettings(OptimizationSettings):
     def __init__(self, database: Optional[db.Database] = None) -> None:
         self.database = database
 
-    def build_join_order_optimizer(self) -> stages.JoinOrderOptimization | None:
+    def build_join_order_optimizer(self) -> Optional[JoinOrderOptimization]:
         return native.NativeJoinOrderOptimizer(self.database)
 
-    def build_physical_operator_selection(self) -> stages.PhysicalOperatorSelection | None:
+    def build_physical_operator_selection(self) -> Optional[PhysicalOperatorSelection]:
         return native.NativePhysicalOperatorSelection(self.database)
 
 

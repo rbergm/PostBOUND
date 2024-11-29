@@ -88,6 +88,14 @@ class JobWorkloadTests(regression_suite.DatabaseTestCase):
         if not detected_subqueries:
             print("No subqueries have been detected. This could indicate a programming error!")
 
+    def test_basic_behavior(self) -> None:
+        optimization_pipeline = (pb.TwoStageOptimizationPipeline(target_db=self.db)
+                                 .load_settings(presets.fetch("ues"))
+                                 .build())
+        query = self.job["1a"]
+        optimized_query = optimization_pipeline.optimize_query(query)
+        self.db.optimizer().query_plan(optimized_query)
+
 
 @regression_suite.skip_if_no_db(f"{pg_connect_dir}/.psycopg_connection_ssb")
 class SsbWorkloadTests(regression_suite.DatabaseTestCase):

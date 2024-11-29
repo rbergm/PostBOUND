@@ -9,7 +9,7 @@
 import postbound as pb
 from postbound import db, qal
 from postbound.db import postgres
-from postbound.optimizer import jointree, stages
+from postbound.optimizer import jointree
 from postbound.optimizer.strategies import native
 from postbound.experiments import workloads
 
@@ -26,7 +26,7 @@ predef_pipeline.optimization_algorithm = native.NativeOptimizer(postgres_db)
 
 
 # Nevertheless, native optimization (or parts of it) can still be implemented using only a couple lines of code:
-class OurNativeOptimizer(stages.CompleteOptimizationAlgorithm):
+class OurNativeOptimizer(pb.CompleteOptimizationAlgorithm):
     def __init__(self, optimizer: db.OptimizerInterface) -> None:
         super().__init__()
         self.optimizer = optimizer

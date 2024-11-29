@@ -56,20 +56,24 @@ information about the selected optimization strategies. Depending on the specifi
 implemented. Refer to the documentation of the respective pipelines for details.
 """
 
-from ._pipelines import (
+from .optimizer._pipelines import (
   OptimizationPipeline,
-  IntegratedOptimizationPipeline,
-  TextBookOptimizationPipeline,
-  TwoStageOptimizationPipeline,
-  IncrementalOptimizationPipeline
+  CompleteOptimizationAlgorithm, IntegratedOptimizationPipeline,
+  Cost, Cardinality,
+  CardinalityEstimator, CostModel, PlanEnumerator, TextBookOptimizationPipeline,
+  JoinOrderOptimization, PhysicalOperatorSelection, PlanParameterization, TwoStageOptimizationPipeline,
+  IncrementalOptimizationStep, IncrementalOptimizationPipeline,
+  as_complete_algorithm, OptimizationSettings
 )
 
 __version__ = "0.7.0"
 
 __all__ = [
   "OptimizationPipeline",
-  "IntegratedOptimizationPipeline",
-  "TextBookOptimizationPipeline",
-  "TwoStageOptimizationPipeline",
-  "IncrementalOptimizationPipeline"
+  "CompleteOptimizationAlgorithm", "IntegratedOptimizationPipeline",
+  "Cost", "Cardinality",
+  "CardinalityEstimator", "CostModel", "PlanEnumerator", "TextBookOptimizationPipeline",
+  "JoinOrderOptimization", "PhysicalOperatorSelection", "PlanParameterization", "TwoStageOptimizationPipeline",
+  "IncrementalOptimizationStep", "IncrementalOptimizationPipeline",
+  "as_complete_algorithm", "OptimizationSettings"
 ]
