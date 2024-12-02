@@ -2,12 +2,13 @@
 from __future__ import annotations
 
 import json
+import functools
 import math
 import warnings
 from dataclasses import dataclass
 from datetime import datetime
 from collections.abc import Callable, Iterable
-from typing import Optional
+from typing import Any, Optional
 
 import natsort
 import numpy as np
@@ -15,8 +16,9 @@ import pandas as pd
 
 from . import workloads
 from .. import db, qal, util
-from ..optimizer import validation
 from .._pipelines import OptimizationPipeline
+from ..optimizer import validation
+from ..db import postgres
 
 COL_LABEL = "label"
 COL_QUERY = "query"
@@ -61,6 +63,9 @@ class ExecutionResult:
     This execution time includes the entire end-to-end processing, i.e. starting with supplying the query to the
     database until the last byte of the result set was transferred back to PostBOUND. Therefore, this duration also
     includes the optimization time by the database system, as well as the entire time for data transfer.
+
+    A value of *Inf* indicates that the query did not complete successfully and was cancelled due to a timeout. *NaN* encodes
+    a failure in the execution process.
     """
 
 
@@ -69,24 +74,24 @@ class QueryPreparationService:
 
     These transformations mostly ensure that all queries in a workload provide the same type of result even in face
     of input queries that are structured slightly differently. For example, the preparation service can transform
-    all the queries to be executed as ``EXPLAIN`` or ``COUNT(*)`` queries. Furthermore, the preparation service can
+    all the queries to be executed as *EXPLAIN* or *COUNT(*)* queries. Furthermore, the preparation service can
     store SQL statements that have to be executed before running the query. For example, a statement that disables
     parallel execution could be supplied here.
 
     Parameters
     ----------
     explain : bool, optional
-        Whether to force all queries to be executed as ``EXPLAIN`` queries, by default ``False``
+        Whether to force all queries to be executed as *EXPLAIN* queries, by default *False*
     count_star : bool, optional
-        Whether to force all queries to be executed as ``COUNT(*)`` queries, overwriting their default projection. Defaults to
-        ``False``
+        Whether to force all queries to be executed as *COUNT(*)* queries, overwriting their default projection. Defaults to
+        *False*
     analyze : bool, optional
         Whether to force all queries to be executed as ``EXPLAIN ANALYZE`` queries. Setting this option implies `explain`,
-        which therefore does not need to set manually. Defaults to ``False``
+        which therefore does not need to set manually. Defaults to *False*
     prewarm : bool, optional
         For database systems that support prewarming, this inflates the buffer pool with pages from the prepared query.
     preparatory_statements : Optional[list[str]], optional
-        Statements that are executed as-is on the database connection before running the query, by default ``None``
+        Statements that are executed as-is on the database connection before running the query, by default *None*
     """
 
     def __init__(self, *, explain: bool = False, count_star: bool = False, analyze: bool = False, prewarm: bool = False,
@@ -124,15 +129,38 @@ class QueryPreparationService:
             query = qal.transform.as_explain(query, qal.Explain.plan())
 
         if self.count_star:
-            query = qal.as_count_star_query(query)
+            query = qal.transform.as_count_star_query(query)
 
         if self.prewarm:
-            on.prewarm_tables(query.tables())
+            if not isinstance(on, db.PrewarmingSupport):
+                warnings.warn("Ignoring prewarm setting since the database does not support prewarming")
+            else:
+                on.prewarm_tables(query.tables())
 
         for stmt in self.preparatory_stmts:
             on.execute_query(stmt, cache_enabled=False)
 
         return query
+
+
+def _standard_executor(query: qal.SqlQuery, *, target: db.Database) -> tuple[Any, float]:
+    start = datetime.now()
+    result_set = target.execute_query(query, cache_enabled=False)
+    end = datetime.now()
+    runtime = (end - start).total_seconds()
+    return result_set, runtime
+
+
+def _timeout_executor(query: qal.SqlQuery, *, target: postgres.PostgresInterface, timeout: float) -> tuple[Any, float]:
+    timeout_executor = postgres.TimeoutQueryExecutor(target)
+    try:
+        start = datetime.now()
+        result_set = timeout_executor.execute_query(query, timeout=timeout)
+        end = datetime.now()
+        runtime = (end - start).total_seconds()
+        return result_set, runtime
+    except TimeoutError:
+        return None, math.inf
 
 
 def _failed_execution_result(query: qal.SqlQuery, database: db.Database, repetitions: int = 1) -> pd.DataFrame:
@@ -176,7 +204,7 @@ def _invoke_post_process(execution_result: ExecutionResult,
         The result of the query execution
     action : Optional[Callable[[ExecutionResult], None]], optional
         The post-process handler. It receives the execution result as input and does not produce any output. If this is
-        ``None``, no post-processing is executed
+        *None*, no post-processing is executed
     """
     if not action:
         return
@@ -184,8 +212,10 @@ def _invoke_post_process(execution_result: ExecutionResult,
 
 
 def execute_query(query: qal.SqlQuery, database: db.Database, *,
-                  repetitions: int = 1, query_preparation: Optional[QueryPreparationService] = None,
+                  repetitions: int = 1,
+                  query_preparation: Optional[QueryPreparationService] = None,
                   post_process: Optional[Callable[[ExecutionResult], None]] = None,
+                  timeout: Optional[float] = None,
                   _optimization_time: float = math.nan) -> pd.DataFrame:
     """Runs the given query on the provided database.
 
@@ -217,10 +247,14 @@ def execute_query(query: qal.SqlQuery, database: db.Database, *,
         The number of times the query should be executed, by default 1
     query_preparation : Optional[QueryPreparationService], optional
         Preparation steps that should be performed before running the query. The preparation result will be used in place of
-        the original query for all repetitions. Defaults to ``None``, which means "no preparation".
+        the original query for all repetitions. Defaults to *None*, which means "no preparation".
     post_process : Optional[Callable[[ExecutionResult], None]], optional
         A post-process action that should be executed after each repetition of the query has been completed. Defaults to
-        ``None``, which means no post-processing.
+        *None*, which means no post-processing.
+    timeout : Optional[float], optional
+        The maximum time in seconds that the query is allowed to run. If the query exceeds this time, the execution is
+        cancelled and the execution time is set to *Inf*. If this parameter is omitted, no timeout is enforced. Notice that
+        timeouts are currently only supported for PostgreSQL. If another database system is used, an error will be raised.
     _optimization_time : float, optional
         The optimization time that has been spent to generate the input query. This should not be set directly by the user, but
         is initialized by other runner methods instead (see below). Defaults to ``NaN``, which indicates no optimization time.
@@ -238,14 +272,17 @@ def execute_query(query: qal.SqlQuery, database: db.Database, *,
     if query_preparation:
         query = query_preparation.prepare_query(query, on=database)
 
+    if timeout is not None:
+        if not isinstance(database, postgres.PostgresInterface):
+            raise ValueError("Timeouts are currently only supported for PostgreSQL databases")
+        query_executor = functools.partial(_timeout_executor, target=database, timeout=timeout)
+    else:
+        query_executor = functools.partial(_standard_executor, target=database)
+
     query_results = []
     execution_times = []
     for __ in range(repetitions):
-        start_time = datetime.now()
-        current_result = database.execute_query(query, cache_enabled=False)
-        end_time = datetime.now()
-        exec_time = (end_time - start_time).total_seconds()
-
+        current_result, exec_time = query_executor(query)
         query_results.append(current_result)
         execution_times.append(exec_time)
         execution_result = ExecutionResult(query, current_result, _optimization_time, exec_time)
@@ -279,7 +316,9 @@ def _wrap_workload(queries: Iterable[qal.SqlQuery] | workloads.Workload) -> work
 
 def execute_workload(queries: Iterable[qal.SqlQuery] | workloads.Workload, database: db.Database, *,
                      workload_repetitions: int = 1, per_query_repetitions: int = 1, shuffled: bool = False,
-                     query_preparation: Optional[QueryPreparationService] = None, include_labels: bool = False,
+                     query_preparation: Optional[QueryPreparationService] = None,
+                     timeout: Optional[float] = None,
+                     include_labels: bool = False,
                      post_process: Optional[Callable[[ExecutionResult], None]] = None,
                      post_repetition_callback: Optional[Callable[[int], None]] = None,
                      logger: Optional[Callable[[str], None]] = None) -> pd.DataFrame:
@@ -319,12 +358,16 @@ def execute_workload(queries: Iterable[qal.SqlQuery] | workloads.Workload, datab
         repetition. Per query repetitions are *not* influenced by this setting.
     query_preparation : Optional[QueryPreparationService], optional
         Preparation steps that should be performed before running the query. The preparation result will be used in place of
-        the original query for all repetitions. Defaults to ``None``, which means "no preparation".
+        the original query for all repetitions. Defaults to *None*, which means "no preparation".
+    timeout : Optional[float], optional
+        The maximum time in seconds that the query is allowed to run. If the query exceeds this time, the execution is
+        cancelled and the execution time is set to *Inf*. If this parameter is omitted, no timeout is enforced. Notice that
+        timeouts are currently only supported for PostgreSQL. If another database system is used, an error will be raised.
     include_labels : bool, optional
-        Whether to add the label of each query to the workload results, by default ``False``
+        Whether to add the label of each query to the workload results, by default *False*
     post_process : Optional[Callable[[ExecutionResult], None]], optional
         A post-process action that should be executed after each repetition of the query has been completed. Defaults to
-        ``None``, which means no post-processing.
+        *None*, which means no post-processing.
     post_repetition_callback : Optional[Callable[[int], None]], optional
         An optional post-process action that is executed after each workload repetition. The current repetition number is
         provided as the only argument. Repetitions start at 0.
@@ -352,6 +395,7 @@ def execute_workload(queries: Iterable[qal.SqlQuery] | workloads.Workload, datab
         for label, query in queries.entries():
             logger(f"Now benchmarking query {label} (repetition {i+1}/{workload_repetitions})")
             execution_result = execute_query(query, database, repetitions=per_query_repetitions,
+                                             timeout=timeout,
                                              query_preparation=query_preparation, post_process=post_process)
             execution_result[COL_EXEC_IDX] = list(range(current_execution_index,
                                                         current_execution_index + per_query_repetitions))
@@ -379,7 +423,8 @@ def execute_workload(queries: Iterable[qal.SqlQuery] | workloads.Workload, datab
 def optimize_and_execute_query(query: qal.SqlQuery, optimization_pipeline: OptimizationPipeline, *,
                                repetitions: int = 1,
                                query_preparation: Optional[QueryPreparationService] = None,
-                               post_process: Optional[Callable[[ExecutionResult], None]] = None) -> pd.DataFrame:
+                               post_process: Optional[Callable[[ExecutionResult], None]] = None,
+                               timeout: Optional[float] = None) -> pd.DataFrame:
     """Optimizes the a query according to the settings of an optimization pipeline and executes it afterwards.
 
     This function delegates most of its work to `execute_query`. In addition, the resulting data frame contains the
@@ -403,10 +448,14 @@ def optimize_and_execute_query(query: qal.SqlQuery, optimization_pipeline: Optim
         first execution.
     query_preparation : Optional[QueryPreparationService], optional
         Preparation steps that should be performed before running the query. The preparation result will be used in place of
-        the original query for all repetitions. Defaults to ``None``, which means "no preparation".
+        the original query for all repetitions. Defaults to *None*, which means "no preparation".
     post_process : Optional[Callable[[ExecutionResult], None]], optional
         A post-process action that should be executed after each repetition of the query has been completed. Defaults to
-        ``None``, which means no post-processing.
+        *None*, which means no post-processing.
+    timeout : Optional[float], optional
+        The maximum time in seconds that the query is allowed to run. If the query exceeds this time, the execution is
+        cancelled and the execution time is set to *Inf*. If this parameter is omitted, no timeout is enforced. Notice that
+        timeouts are currently only supported for PostgreSQL. If another database system is used, an error will be raised.
 
     Returns
     -------
@@ -425,7 +474,7 @@ def optimize_and_execute_query(query: qal.SqlQuery, optimization_pipeline: Optim
 
         execution_result = execute_query(optimized_query, repetitions=repetitions, query_preparation=query_preparation,
                                          database=optimization_pipeline.target_database(),
-                                         post_process=post_process, _optimization_time=optimization_time)
+                                         post_process=post_process, timeout=timeout, _optimization_time=optimization_time)
         execution_result[COL_T_OPT] = optimization_time
         execution_result[COL_OPT_SUCCESS] = True
         execution_result[COL_OPT_FAILURE_REASON] = None
@@ -446,6 +495,7 @@ def optimize_and_execute_workload(queries: Iterable[qal.SqlQuery] | workloads.Wo
                                   per_query_repetitions: int = 1,
                                   shuffled: bool = False,
                                   query_preparation: Optional[QueryPreparationService] = None,
+                                  timeout: Optional[float] = None,
                                   include_labels: bool = False,
                                   post_process: Optional[Callable[[ExecutionResult], None]] = None,
                                   post_repetition_callback: Optional[Callable[[int], None]] = None,
@@ -476,12 +526,16 @@ def optimize_and_execute_workload(queries: Iterable[qal.SqlQuery] | workloads.Wo
         repetition. Per query repetitions are *not* influenced by this setting.
     query_preparation : Optional[QueryPreparationService], optional
         Preparation steps that should be performed before running the query. The preparation result will be used in place of
-        the original query for all repetitions. Defaults to ``None``, which means "no preparation".
+        the original query for all repetitions. Defaults to *None*, which means "no preparation".
+    timeout : Optional[float], optional
+        The maximum time in seconds that the query is allowed to run. If the query exceeds this time, the execution is
+        cancelled and the execution time is set to *Inf*. If this parameter is omitted, no timeout is enforced. Notice that
+        timeouts are currently only supported for PostgreSQL. If another database system is used, an error will be raised.
     include_labels : bool, optional
-        Whether to add the label of each query to the workload results, by default ``False``
+        Whether to add the label of each query to the workload results, by default *False*
     post_process : Optional[Callable[[ExecutionResult], None]], optional
         A post-process action that should be executed after each repetition of the query has been completed. Defaults to
-        ``None``, which means no post-processing.
+        *None*, which means no post-processing.
     post_repetition_callback : Optional[Callable[[int], None]], optional
         An optional post-process action that is executed after each workload repetition. The current repetition number is
         provided as the only argument. Repetitions start at 0.
@@ -511,6 +565,7 @@ def optimize_and_execute_workload(queries: Iterable[qal.SqlQuery] | workloads.Wo
             logger(f"Now benchmarking query {label} (repetition {i+1}/{workload_repetitions})")
             execution_result = optimize_and_execute_query(query, optimization_pipeline,
                                                           repetitions=per_query_repetitions,
+                                                          timeout=timeout,
                                                           query_preparation=query_preparation,
                                                           post_process=post_process)
             execution_result[COL_EXEC_IDX] = list(range(current_execution_index,

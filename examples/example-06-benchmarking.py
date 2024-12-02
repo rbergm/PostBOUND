@@ -29,10 +29,10 @@ query_preparation = executor.QueryPreparationService(count_star=True)
 
 # Benchmark the native workload
 native_results = executor.execute_workload(job_workload, postgres_db,
-                                         workload_repetitions=3, per_query_repetitions=3, shuffled=True,
-                                         query_preparation=query_preparation, include_labels=True)
+                                           workload_repetitions=3, per_query_repetitions=3, shuffled=True,
+                                           query_preparation=query_preparation, include_labels=True)
 
 # Benchmark the UES workload
 ues_results = executor.optimize_and_execute_workload(job_workload, ues_pipeline,
-                                                   workload_repetitions=3, per_query_repetitions=3, shuffled=True,
-                                                   query_preparation=query_preparation, include_labels=True)
+                                                     workload_repetitions=3, per_query_repetitions=3, shuffled=True,
+                                                     query_preparation=query_preparation, include_labels=True)
