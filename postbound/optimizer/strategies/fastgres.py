@@ -3,8 +3,8 @@ import random
 import warnings
 from typing import Optional
 
-from .. import jointree
 from .._hints import PhysicalOperatorAssignment
+from ..jointree import LogicalJoinTree
 from ..._pipelines import PhysicalOperatorSelection
 from ... import qal
 from ...experiments import workloads
@@ -34,8 +34,7 @@ class FastgresOperatorSelection(PhysicalOperatorSelection):
         super().__init__()
 
     def select_physical_operators(self, query: qal.SqlQuery,
-                                  join_order: Optional[jointree.LogicalJoinTree | jointree.PhysicalQueryPlan]
-                                  ) -> PhysicalOperatorAssignment:
+                                  join_order: Optional[LogicalJoinTree]) -> PhysicalOperatorAssignment:
         hints = self.model.predict(str(query))
         assignment = hints_to_operators(hints)
         return assignment

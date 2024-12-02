@@ -26,7 +26,7 @@ class EmptyPhysicalOperatorSelection(PhysicalOperatorSelection):
     """Dummy implementation of operator optimization that does not actually optimize anything."""
 
     def select_physical_operators(self, query: qal.SqlQuery,
-                                  join_order: Optional[jointree.LogicalJoinTree | jointree.PhysicalQueryPlan]
+                                  join_order: Optional[jointree.LogicalJoinTree]
                                   ) -> PhysicalOperatorAssignment:
         return PhysicalOperatorAssignment()
 
@@ -37,10 +37,8 @@ class EmptyPhysicalOperatorSelection(PhysicalOperatorSelection):
 class EmptyParameterization(ParameterGeneration):
     """Dummy implementation of the plan parameterization that does not actually generate any parameters."""
 
-    def generate_plan_parameters(self, query: qal.SqlQuery,
-                                 join_order: Optional[jointree.LogicalJoinTree | jointree.PhysicalQueryPlan],
-                                 operator_assignment: Optional[PhysicalOperatorAssignment]
-                                 ) -> Optional[PlanParameterization]:
+    def generate_plan_parameters(self, query: qal.SqlQuery, join_order: Optional[jointree.LogicalJoinTree],
+                                 operator_assignment: Optional[PhysicalOperatorAssignment]) -> Optional[PlanParameterization]:
         return None
 
     def describe(self) -> dict:

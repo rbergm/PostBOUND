@@ -137,10 +137,8 @@ class CardinalityHintsGenerator(ParameterGeneration, CardinalityEstimator, abc.A
                 parameterization.add_cardinality_hint(join, estimate)
         return parameterization
 
-    def generate_plan_parameters(self, query: qal.SqlQuery,
-                                 join_order: Optional[jointree.LogicalJoinTree | jointree.PhysicalQueryPlan],
-                                 operator_assignment: Optional[PhysicalOperatorAssignment]
-                                 ) -> PlanParameterization:
+    def generate_plan_parameters(self, query: qal.SqlQuery, join_order: Optional[jointree.LogicalJoinTree],
+                                 operator_assignment: Optional[PhysicalOperatorAssignment]) -> PlanParameterization:
         if join_order is None:
             return self.estimate_cardinalities(query)
 

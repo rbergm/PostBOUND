@@ -407,8 +407,7 @@ class RandomOperatorOptimizer(PhysicalOperatorSelection):
         self._generator = RandomOperatorGenerator(**generator_args)
 
     def select_physical_operators(self, query: qal.SqlQuery,
-                                  join_order: Optional[jointree.LogicalJoinTree | jointree.PhysicalQueryPlan]
-                                  ) -> PhysicalOperatorAssignment:
+                                  join_order: Optional[jointree.LogicalJoinTree]) -> PhysicalOperatorAssignment:
         return next(self._generator.random_operator_assignments_for(query, join_order))
 
     def describe(self) -> dict:

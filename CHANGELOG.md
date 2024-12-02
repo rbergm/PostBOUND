@@ -17,6 +17,9 @@ Be carefull when updating and check the changelog!
 ## 👷 Version 0.7.1 🚧
 
 ### Updates
+- The two-stage optimization pipeline no longer tolerates `PhysicalQueryPlan` instances where a `LogicalJoinTree` is expected.
+  This clarifies the interfaces a lot and makes development of novel algorithms more straightforward. To ensure a graceful
+  handling of older implementations, the two-stage pipeline transforms physical plans into logical join orders as a safeguard.
 - Moved the `bind_columns` function into the parser modules. `transform` no longer depends on the database layer.
 
 ### Fixes

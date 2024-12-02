@@ -600,11 +600,12 @@ class JoinOrderOptimization(abc.ABC):
     """
 
     @abc.abstractmethod
-    def optimize_join_order(self, query: SqlQuery) -> Optional[LogicalJoinTree | PhysicalQueryPlan]:
+    def optimize_join_order(self, query: SqlQuery) -> Optional[LogicalJoinTree]:
         """Performs the actual join ordering process.
 
         The join tree can be further annotated with an initial operator assignment, if that is an inherent part of
-        the specific optimization strategy.
+        the specific optimization strategy. However, this is generally discouraged and the two-stage pipeline will discard such
+        operators to prepare for the subsequent physical operator selection.
 
         Other than the join order and operator assignment, the algorithm should add as much information to the join
         tree as possible, e.g. including join conditions and cardinality estimates that were calculated for the
@@ -617,7 +618,7 @@ class JoinOrderOptimization(abc.ABC):
 
         Returns
         -------
-        Optional[LogicalJoinTree | PhysicalQueryPlan]
+        Optional[LogicalJoinTree]
             The join order. If for some reason there is no valid join order for the given query (e.g. queries with just a
             single selected table), `None` can be returned. Otherwise, the selected join order has to be described using a
             `JoinTree`.
@@ -679,15 +680,14 @@ class PhysicalOperatorSelection(abc.ABC):
     """
 
     @abc.abstractmethod
-    def select_physical_operators(self, query: SqlQuery,
-                                  join_order: Optional[LogicalJoinTree | PhysicalQueryPlan]) -> PhysicalOperatorAssignment:
+    def select_physical_operators(self, query: SqlQuery, join_order: Optional[LogicalJoinTree]) -> PhysicalOperatorAssignment:
         """Performs the operator assignment.
 
         Parameters
         ----------
         query : SqlQuery
             The query to optimize
-        join_order : Optional[LogicalJoinTree  |  PhysicalQueryPlan]
+        join_order : Optional[LogicalJoinTree]
             The selected join order of the query
 
         Returns
@@ -697,12 +697,8 @@ class PhysicalOperatorSelection(abc.ABC):
 
         Notes
         -----
-        The operator selection should handle a number of different special cases:
-
-        - if no join ordering has been performed, or no valid join order exists the join tree might be `None`.
-        - if the join order optimization algorithm already provided an initial choice of physical operators, this
-          assignment can be further customized or overwritten entirely by the physical operator selection strategy. The
-          initial assignment is contained in the provided `PhysicalQueryPlan`.
+        The operator selection should handle a `None` join order gracefully. This can happen if the query does not require
+        any joins (e.g. processing of a single table.
 
         Depending on the specific optimization settings, it is also possible to raise an error if such a situation occurs and
         there is no reasonable way to deal with it.
@@ -749,7 +745,7 @@ class ParameterGeneration(abc.ABC):
     """
 
     @abc.abstractmethod
-    def generate_plan_parameters(self, query: SqlQuery, join_order: Optional[LogicalJoinTree | PhysicalQueryPlan],
+    def generate_plan_parameters(self, query: SqlQuery, join_order: Optional[LogicalJoinTree],
                                  operator_assignment: Optional[PhysicalOperatorAssignment]) -> PlanParameterization:
         """Executes the actual parameterization.
 
@@ -757,7 +753,7 @@ class ParameterGeneration(abc.ABC):
         ----------
         query : SqlQuery
             The query to optimize
-        join_order : Optional[LogicalJoinTree  |  PhysicalQueryPlan]
+        join_order : Optional[LogicalJoinTree]
             The selected join order for the query.
         operator_assignment : Optional[PhysicalOperatorAssignment]
             The selected operators for the query
@@ -1103,11 +1099,13 @@ class TwoStageOptimizationPipeline(OptimizationPipeline):
         if self.physical_operator_selection is None:
             physical_operators = PhysicalOperatorAssignment()
         else:
+            join_order = join_order.as_logical_join_tree() if isinstance(join_order, PhysicalQueryPlan) else join_order
             physical_operators = self.physical_operator_selection.select_physical_operators(query, join_order)
 
         if self.plan_parameterization is None:
             plan_parameters = PlanParameterization()
         else:
+            join_order = join_order.as_logical_join_tree() if isinstance(join_order, PhysicalQueryPlan) else join_order
             plan_parameters = self._plan_parameterization.generate_plan_parameters(query, join_order, physical_operators)
 
         return self._target_db.hinting().generate_hints(query, join_order=join_order,

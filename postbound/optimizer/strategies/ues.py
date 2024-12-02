@@ -527,8 +527,7 @@ class UESJoinOrderOptimizer(JoinOrderOptimization):
         self._pull_eager_pk_tables = pull_eager_pk_tables
         self._logging_enabled = verbose
 
-    def optimize_join_order(self, query: qal.SqlQuery
-                            ) -> Optional[jointree.LogicalJoinTree]:
+    def optimize_join_order(self, query: qal.SqlQuery) -> Optional[jointree.LogicalJoinTree]:
         if not isinstance(query, qal.ImplicitSqlQuery):
             raise ValueError("UES optimization only works for implicit queries for now")
         if len(query.tables()) < 2:
@@ -973,8 +972,7 @@ class UESOperatorSelection(PhysicalOperatorSelection):
         self.database = database
 
     def select_physical_operators(self, query: qal.SqlQuery,
-                                  join_order: Optional[jointree.LogicalJoinTree | jointree.PhysicalQueryPlan]
-                                  ) -> PhysicalOperatorAssignment:
+                                  join_order: Optional[jointree.LogicalJoinTree]) -> PhysicalOperatorAssignment:
         if isinstance(join_order, jointree.PhysicalQueryPlan):
             assignment = join_order.physical_operators().clone()
         else:
