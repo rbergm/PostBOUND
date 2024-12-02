@@ -1,6 +1,6 @@
 """Contains utilities to conveniently execute individual queries or entire workloads and to evaluate their results."""
 
-from .runner import (
+from .executor import (
     QueryPreparationService,
     execute_query, optimize_and_execute_query,
     execute_workload, optimize_and_execute_workload,

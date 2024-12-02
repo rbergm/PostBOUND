@@ -73,7 +73,7 @@ from ._pipelines import (
   as_complete_algorithm, OptimizationSettings
 )
 from .experiments import workloads
-from .experiments.runner import execute_workload, optimize_and_execute_workload
+from .experiments.executor import execute_workload, optimize_and_execute_workload
 
 __version__ = "0.7.0"
 
