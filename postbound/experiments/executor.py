@@ -1,6 +1,7 @@
 """Utilities to optimize and execute queries and workloads in a reproducible and transparent manner."""
 from __future__ import annotations
 
+import json
 import math
 import warnings
 from dataclasses import dataclass
@@ -8,13 +9,14 @@ from datetime import datetime
 from collections.abc import Callable, Iterable
 from typing import Optional
 
+import natsort
 import numpy as np
 import pandas as pd
 
-import postbound as pb
-from postbound.optimizer import validation
-from postbound.experiments import workloads
+from . import workloads
 from .. import db, qal, util
+from ..optimizer import validation
+from .._pipelines import OptimizationPipeline
 
 COL_LABEL = "label"
 COL_QUERY = "query"
@@ -374,7 +376,7 @@ def execute_workload(queries: Iterable[qal.SqlQuery] | workloads.Workload, datab
     return result_df[target_labels]
 
 
-def optimize_and_execute_query(query: qal.SqlQuery, optimization_pipeline: pb.OptimizationPipeline, *,
+def optimize_and_execute_query(query: qal.SqlQuery, optimization_pipeline: OptimizationPipeline, *,
                                repetitions: int = 1,
                                query_preparation: Optional[QueryPreparationService] = None,
                                post_process: Optional[Callable[[ExecutionResult], None]] = None) -> pd.DataFrame:
@@ -393,7 +395,7 @@ def optimize_and_execute_query(query: qal.SqlQuery, optimization_pipeline: pb.Op
     ----------
     query : qal.SqlQuery
         The query to execute
-    optimization_pipeline : pb.OptimizationPipeline
+    optimization_pipeline : OptimizationPipeline
         The optimization settings that should be used to optimize the given query. The pipeline is also used to extract the
         target database which is used to execute the query
     repetitions : int, optional
@@ -439,7 +441,7 @@ def optimize_and_execute_query(query: qal.SqlQuery, optimization_pipeline: pb.Op
 
 
 def optimize_and_execute_workload(queries: Iterable[qal.SqlQuery] | workloads.Workload,
-                                  optimization_pipeline: pb.OptimizationPipeline, *,
+                                  optimization_pipeline: OptimizationPipeline, *,
                                   workload_repetitions: int = 1,
                                   per_query_repetitions: int = 1,
                                   shuffled: bool = False,
@@ -460,7 +462,7 @@ def optimize_and_execute_workload(queries: Iterable[qal.SqlQuery] | workloads.Wo
     ----------
     queries : Iterable[qal.SqlQuery] | workloads.Workload
         The queries that should be optimized and benchmarked
-    optimization_pipeline : pb.OptimizationPipeline
+    optimization_pipeline : OptimizationPipeline
         The optimization settings that should be used to optimize the given workload. The pipeline is also used to extract the
         target database which is used to execute the queries
     workload_repetitions : int, optional
@@ -534,3 +536,73 @@ def optimize_and_execute_workload(queries: Iterable[qal.SqlQuery] | workloads.Wo
                       COL_OPT_SUCCESS, COL_OPT_FAILURE_REASON,
                       COL_ORIG_QUERY, COL_OPT_SETTINGS, COL_DB_CONFIG]
     return result_df[target_labels]
+
+
+def prepare_export(results_df: pd.DataFrame) -> pd.DataFrame:
+    """Modifies a benchmark result dataframe such that it can be written to CSV files without problems.
+
+    This mostly involves converting Python objects to JSON counterparts that allow a reconstruction of equivalent data.
+
+    More specifically, the function handles two main aspects:
+
+    1. making sure that the query result can be written to CSV, and
+    2. making sure that the description of the optimization pipeline can be written to CSV.
+
+    In both cases, the column values will be transformed to JSON-objects if necessary.
+
+    Parameters
+    ----------
+    results_df : pd.DataFrame
+        The result dataframe created by one of the benchmark functions
+
+    Returns
+    -------
+    pd.DataFrame
+        The prepared dataframe
+
+    See Also
+    --------
+    postbound.experiments.runner : Functions to obtain benchmark results
+    """
+    if not len(results_df):
+        return results_df
+
+    prepared_df = results_df.copy()
+
+    example_result = prepared_df[COL_RESULT].iloc[0]
+    if isinstance(example_result, list) or isinstance(example_result, tuple) or isinstance(example_result, dict):
+        prepared_df[COL_RESULT] = prepared_df[COL_RESULT].apply(json.dumps)
+
+    if COL_OPT_SETTINGS in prepared_df:
+        prepared_df[COL_OPT_SETTINGS] = prepared_df[COL_OPT_SETTINGS].apply(util.to_json)
+    if COL_DB_CONFIG in prepared_df:
+        prepared_df[COL_DB_CONFIG] = prepared_df[COL_DB_CONFIG].apply(util.to_json)
+
+    return prepared_df
+
+
+def sort_results(results_df: pd.DataFrame,
+                 by_column: str | tuple[str] = (COL_LABEL, COL_EXEC_IDX)) -> pd.DataFrame:
+    """Provides a better sorting of the benchmark results in a data frame.
+
+    By default, the entries in the result data frame will be sorted either sequentially, or by a lexicographic ordering on the
+    label column. This function uses a natural ordering over the column labels.
+
+    In contrast to lexicographic sorting, natural sorting handles numeric labels in a better way: labels like
+    1a, 10a and 100a are sorted in this order instead of in reverse.
+
+    Parameters
+    ----------
+    results_df : pd.DataFrame
+        Data frame containing the results to sort
+    by_column : str | tuple[str], optional
+        The columns by which to order, by default `(COL_LABEL, COL_EXEC_IDX)`. A lexicographic ordering will
+        be applied to all of them.
+
+    Returns
+    -------
+    pd.DataFrame
+        A reordered data frame. The original data frame is not modified
+    """
+    return results_df.sort_values(by=by_column,
+                                  key=lambda series: np.argsort(natsort.index_natsorted(series)))

@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
 #
 # This script demonstrates the usage of different benchmarking tools. It contrasts native optimization by an actual database
-# system to a defensive optimization scheme using the UES algorithm
+# system to a defensive optimization scheme using the UES algorithm.
+# Notice that some of the imports can be omitted since the main import postbound as pb already provides shortcuts to them.
+# This includes the call to workloads.job() as well as execute_workload and optimize_and_execute_workload.
 #
 # Requirements: a running IMDB instance on Postgres with the connect file being set-up correctly. This can be achieved using
 # the utilities in the root postgres directory.

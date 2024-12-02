@@ -12,12 +12,11 @@ import math
 
 import postbound as pb
 from postbound.db import postgres
-from postbound.experiments import workloads, runner
 from postbound.optimizer.strategies import tonic
 
 # Setup: we optimize queries from the Join Order Benchmark on a Postgres database
 postgres_db = postgres.connect()
-job_workload = workloads.job()
+job_workload = pb.workloads.job()
 
 # Obtain a training and test split
 n_train_queries = math.floor(0.2 * len(job_workload))
@@ -40,8 +39,8 @@ pipeline.build()
 # for us. Take a look at the dedicated example for more details on the benchmarking tools.
 # Notice that we use the online-learning capabilities of TONIC to update the underlying QEP-S model once an optimized query has
 # been executed
-result_df = runner.optimize_and_execute_workload(test_queries, pipeline,
-                                                 post_process=lambda res: tonic_recommender.simulate_feedback(res.query))
+result_df = pb.optimize_and_execute_workload(test_queries, pipeline,
+                                             post_process=lambda res: tonic_recommender.simulate_feedback(res.query))
 
 print("Benchmark results:")
 print(result_df)

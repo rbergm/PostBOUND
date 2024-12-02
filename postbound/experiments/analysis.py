@@ -1,87 +1,11 @@
-"""Provides utilities to work with benchmark results, including some analysis tools and data export functions."""
+"""Provides a collection of utilities related to query optimization."""
 
 from __future__ import annotations
 
-import json
 from typing import Optional, Any
 
-import natsort
-import numpy as np
-import pandas as pd
 
-from postbound.experiments import runner
-from postbound.optimizer import jointree
-from .. import db, qal, util
-
-
-def prepare_export(results_df: pd.DataFrame) -> pd.DataFrame:
-    """Modifies a benchmark result dataframe such that it can be written to CSV files without problems.
-
-    This mostly involves converting Python objects to JSON counterparts that allow a reconstruction of equivalent data.
-
-    More specifically, the function handles two main aspects:
-
-    1. making sure that the query result can be written to CSV, and
-    2. making sure that the description of the optimization pipeline can be written to CSV.
-
-    In both cases, the column values will be transformed to JSON-objects if necessary.
-
-    Parameters
-    ----------
-    results_df : pd.DataFrame
-        The result dataframe created by one of the benchmark functions
-
-    Returns
-    -------
-    pd.DataFrame
-        The prepared dataframe
-
-    See Also
-    --------
-    postbound.experiments.runner : Functions to obtain benchmark results
-    """
-    if not len(results_df):
-        return results_df
-
-    prepared_df = results_df.copy()
-
-    example_result = prepared_df[runner.COL_RESULT].iloc[0]
-    if isinstance(example_result, list) or isinstance(example_result, tuple) or isinstance(example_result, dict):
-        prepared_df[runner.COL_RESULT] = prepared_df[runner.COL_RESULT].apply(json.dumps)
-
-    if runner.COL_OPT_SETTINGS in prepared_df:
-        prepared_df[runner.COL_OPT_SETTINGS] = prepared_df[runner.COL_OPT_SETTINGS].apply(util.to_json)
-    if runner.COL_DB_CONFIG in prepared_df:
-        prepared_df[runner.COL_DB_CONFIG] = prepared_df[runner.COL_DB_CONFIG].apply(util.to_json)
-
-    return prepared_df
-
-
-def sort_results(results_df: pd.DataFrame,
-                 by_column: str | tuple[str] = (runner.COL_LABEL, runner.COL_EXEC_IDX)) -> pd.DataFrame:
-    """Provides a better sorting of the benchmark results in a data frame.
-
-    By default, the entries in the result data frame will be sorted either sequentially, or by a lexicographic ordering on the
-    label column. This function uses a natural ordering over the column labels.
-
-    In contrast to lexicographic sorting, natural sorting handles numeric labels in a better way: labels like
-    1a, 10a and 100a are sorted in this order instead of in reverse.
-
-    Parameters
-    ----------
-    results_df : pd.DataFrame
-        Data frame containing the results to sort
-    by_column : str | tuple[str], optional
-        The columns by which to order, by default (runner.COL_LABEL, runner.COL_EXEC_IDX). A lexicographic ordering will
-        be applied to all of them.
-
-    Returns
-    -------
-    pd.DataFrame
-        A reordered data frame. The original data frame is not modified
-    """
-    return results_df.sort_values(by=by_column,
-                                  key=lambda series: np.argsort(natsort.index_natsorted(series)))
+from .. import db, qal, optimizer, util
 
 
 def possible_plans_bound(query: qal.SqlQuery, *,
@@ -140,7 +64,7 @@ def actual_plan_cost(query: qal.SqlQuery, analyze_plan: db.QueryExecutionPlan, *
         _description_
     """
     database = database if database is not None else db.DatabasePool().get_instance()
-    physical_plan = jointree.PhysicalQueryPlan.load_from_query_plan(analyze_plan, query)
+    physical_plan = optimizer.PhysicalQueryPlan.load_from_query_plan(analyze_plan, query)
     hinted_query = database.hinting().generate_hints(query, physical_plan)
     return database.optimizer().cost_estimate(hinted_query)
 

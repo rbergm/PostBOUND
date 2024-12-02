@@ -11,7 +11,7 @@ import pandas as pd
 
 from postbound import qal, util
 from postbound.db import postgres
-from postbound.experiments import workloads, analysis
+from postbound.experiments import workloads, runner
 
 workloads.workloads_base_dir = "workloads/"
 
@@ -101,7 +101,7 @@ def determine_intermediates(benchmark: workloads.Workload[str], *,
     result_df = pd.DataFrame({"label": labels, "query": queries,
                               "query_fragment": fragments, "tables": fragment_tables,
                               "cardinality": cardinalities})
-    result_df = analysis.sort_results(result_df, "label")
+    result_df = runner.sort_results(result_df, "label")
     result_df.to_csv(out_file, index=False)
 
 

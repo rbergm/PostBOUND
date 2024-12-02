@@ -7,9 +7,8 @@
 #
 
 import postbound as pb
-from postbound import db, qal
+from postbound import db, qal, optimizer
 from postbound.db import postgres
-from postbound.optimizer import jointree
 from postbound.optimizer.strategies import native
 from postbound.experiments import workloads
 
@@ -31,14 +30,14 @@ class OurNativeOptimizer(pb.CompleteOptimizationAlgorithm):
         super().__init__()
         self.optimizer = optimizer
 
-    def optimize_query(self, query: qal.SqlQuery) -> jointree.PhysicalQueryPlan:
+    def optimize_query(self, query: qal.SqlQuery) -> optimizer.PhysicalQueryPlan:
         # Obtain the native query exection plan
         native_plan = self.optimizer.query_plan(query)
 
         # Generate the optimizer information for the plan.
         # Notice the distinction between an execution plan as modelled by the database interface, and the execution plan as
         # used by the optimization strategies
-        execution_plan = jointree.PhysicalQueryPlan.load_from_query_plan(native_plan)
+        execution_plan = optimizer.PhysicalQueryPlan.load_from_query_plan(native_plan)
         return execution_plan
 
     def describe(self) -> dict:

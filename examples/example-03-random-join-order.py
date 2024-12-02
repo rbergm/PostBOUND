@@ -14,7 +14,6 @@ from typing import Optional
 import postbound as pb
 from postbound import db, qal
 from postbound.db import postgres
-from postbound.experiments import workloads
 from postbound.optimizer import jointree, joingraph, validation
 
 warnings.simplefilter("ignore")
@@ -67,7 +66,7 @@ class RandomJoinOrderOptimizer(pb.JoinOrderOptimization):
 
 # Setup: we optimize queries from the Join Order Benchmark on a Postgres database
 postgres_db = postgres.connect()
-job_workload = workloads.job()
+job_workload = pb.workloads.job()
 
 # Now let's generate the optimization pipeline with our new optimizer
 pipeline = pb.TwoStageOptimizationPipeline(postgres_db)

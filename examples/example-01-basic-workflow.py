@@ -12,12 +12,11 @@
 import postbound as pb
 from postbound.optimizer import presets
 from postbound.db import postgres
-from postbound.experiments import workloads
 
 # Step 1: System setup
 postgres_instance = postgres.connect()
 presets.apply_standard_system_options()
-job_workload = workloads.job()
+job_workload = pb.workloads.job()
 
 # Step 2: Optimization pipeline setup
 # If necessary, this step can also include the definition of different optimization strategies

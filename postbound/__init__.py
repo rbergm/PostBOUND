@@ -56,6 +56,13 @@ information about the selected optimization strategies. Depending on the specifi
 implemented. Refer to the documentation of the respective pipelines for details.
 """
 
+from . import (
+  db,
+  optimizer as opt,
+  qal,
+  experiments,
+  util
+)
 from ._pipelines import (
   OptimizationPipeline,
   CompleteOptimizationAlgorithm, IntegratedOptimizationPipeline,
@@ -65,15 +72,19 @@ from ._pipelines import (
   IncrementalOptimizationStep, IncrementalOptimizationPipeline,
   as_complete_algorithm, OptimizationSettings
 )
+from .experiments import workloads
+from .experiments.runner import execute_workload, optimize_and_execute_workload
 
 __version__ = "0.7.0"
 
 __all__ = [
+  "db", "opt", "qal", "experiments", "util",
   "OptimizationPipeline",
   "CompleteOptimizationAlgorithm", "IntegratedOptimizationPipeline",
   "Cost", "Cardinality",
   "CardinalityEstimator", "CostModel", "PlanEnumerator", "TextBookOptimizationPipeline",
   "JoinOrderOptimization", "PhysicalOperatorSelection", "PlanParameterization", "TwoStageOptimizationPipeline",
   "IncrementalOptimizationStep", "IncrementalOptimizationPipeline",
-  "as_complete_algorithm", "OptimizationSettings"
+  "as_complete_algorithm", "OptimizationSettings",
+  "workloads", "execute_workload", "optimize_and_execute_workload"
 ]
