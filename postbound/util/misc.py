@@ -7,7 +7,7 @@ from collections.abc import Iterable
 from datetime import datetime
 from typing import Any, Generator, Generic, Optional, TypeVar
 
-from postbound.util import jsonize
+from . import jsonize
 
 T = TypeVar("T")
 

@@ -7,8 +7,10 @@ from typing import Literal, Optional
 
 import networkx as nx
 
-from .. import jointree, physops, validation
-from .._pipelines import JoinOrderOptimization, PhysicalOperatorSelection, CompleteOptimizationAlgorithm
+from .. import jointree, validation
+from .._hints import PhysicalOperatorAssignment, JoinOperatorAssignment, ScanOperatorAssignment
+from ..._core import JoinOperators, ScanOperators, PhysicalOperator
+from ..._pipelines import JoinOrderOptimization, PhysicalOperatorSelection, CompleteOptimizationAlgorithm
 from ... import db, qal
 from ...qal import TableReference
 from ...util import networkx as nx_utils
@@ -283,11 +285,11 @@ class RandomOperatorGenerator:
 
     Parameters
     ----------
-    scan_operators : Optional[Iterable[physops.ScanOperators]], optional
+    scan_operators : Optional[Iterable[ScanOperators]], optional
         The scan operators that can be used in the query plans. If this is ``None`` or empty, all scans supported by the
         `database` are used. Likewise, if the iterable contains an operator that is not supported by the database, it is
         exlcuded from generation.
-    join_operators : Optional[Iterable[physops.JoinOperators]], optional
+    join_operators : Optional[Iterable[JoinOperators]], optional
         The join operators that can be used in the query plans. If this is ``None`` or empty, all joins supported by the
         `database` are used. Likewise, if the iterable contains an operator that is not supported by the database, it is
         exlcuded from generation.
@@ -311,8 +313,8 @@ class RandomOperatorGenerator:
         If both scans and joins are disabled
     """
 
-    def __init__(self, scan_operators: Optional[Iterable[physops.ScanOperators]] = None,
-                 join_operators: Optional[Iterable[physops.JoinOperators]] = None, *,
+    def __init__(self, scan_operators: Optional[Iterable[ScanOperators]] = None,
+                 join_operators: Optional[Iterable[JoinOperators]] = None, *,
                  include_scans: bool = True, include_joins: bool = True,
                  eliminate_duplicates: bool = False, database: Optional[db.Database] = None) -> None:
         if not include_joins and not include_scans:
@@ -321,13 +323,13 @@ class RandomOperatorGenerator:
         self._eliminate_duplicates = eliminate_duplicates
         self._include_scans = include_scans
         self._include_joins = include_joins
-        allowed_scan_ops = scan_operators if scan_operators else physops.ScanOperators
-        allowed_join_ops = join_operators if join_operators else physops.JoinOperators
+        allowed_scan_ops = scan_operators if scan_operators else ScanOperators
+        allowed_join_ops = join_operators if join_operators else JoinOperators
         self.allowed_scan_ops = frozenset(scan_op for scan_op in allowed_scan_ops if self._db.hinting().supports_hint(scan_op))
         self.allowed_join_ops = frozenset(join_op for join_op in allowed_join_ops if self._db.hinting().supports_hint(join_op))
 
     def random_operator_assignments_for(self, query: qal.SqlQuery, join_order: jointree.LogicalJoinTree
-                                        ) -> Generator[physops.PhysicalOperatorAssignment, None, None]:
+                                        ) -> Generator[PhysicalOperatorAssignment, None, None]:
         """Produces a generator for random operator assignments of the allowed operators.
 
         The precise structure of the operator assignments depends on the service configuration. Take a look at the class
@@ -342,7 +344,7 @@ class RandomOperatorGenerator:
 
         Yields
         ------
-        Generator[physops.PhysicalOperatorAssignment, None, None]
+        Generator[PhysicalOperatorAssignment, None, None]
             A generator producing random operator assignments. The assignments will not contain any cost estimates, nor
             will they specify join directions or parallization data.
         """
@@ -351,17 +353,17 @@ class RandomOperatorGenerator:
         assignment_hashes = set()
 
         while True:
-            current_assignment = physops.PhysicalOperatorAssignment()
+            current_assignment = PhysicalOperatorAssignment()
 
             if self._include_joins:
                 for join in join_order.join_sequence():
                     selected_operator = random.choice(allowed_joins)
-                    current_assignment.set_join_operator(physops.JoinOperatorAssignment(selected_operator, join.tables()))
+                    current_assignment.set_join_operator(JoinOperatorAssignment(selected_operator, join.tables()))
 
             if self._include_scans:
                 for table in join_order.tables():
                     selected_operator = random.choice(allowed_scans)
-                    current_assignment.set_scan_operator(physops.ScanOperatorAssignment(selected_operator, table))
+                    current_assignment.set_scan_operator(ScanOperatorAssignment(selected_operator, table))
 
             if self._eliminate_duplicates:
                 current_hash = hash(current_assignment)
@@ -372,12 +374,12 @@ class RandomOperatorGenerator:
 
             yield current_assignment
 
-    def necessary_hints(self) -> frozenset[physops.PhysicalOperator]:
+    def necessary_hints(self) -> frozenset[PhysicalOperator]:
         """Provides all hints that a database system must support in order for the generator to work properly.
 
         Returns
         -------
-        frozenset[physops.PhysicalOperator]
+        frozenset[PhysicalOperator]
             The required operator hints
         """
         return self.allowed_join_ops | self.allowed_scan_ops
@@ -406,7 +408,7 @@ class RandomOperatorOptimizer(PhysicalOperatorSelection):
 
     def select_physical_operators(self, query: qal.SqlQuery,
                                   join_order: Optional[jointree.LogicalJoinTree | jointree.PhysicalQueryPlan]
-                                  ) -> physops.PhysicalOperatorAssignment:
+                                  ) -> PhysicalOperatorAssignment:
         return next(self._generator.random_operator_assignments_for(query, join_order))
 
     def describe(self) -> dict:

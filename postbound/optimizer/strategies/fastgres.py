@@ -1,14 +1,19 @@
 
 import random
+import warnings
 from typing import Optional
 
-from .. import jointree, physops
-from .._pipelines import PhysicalOperatorSelection
+from .. import jointree
+from .._hints import PhysicalOperatorAssignment
+from ..._pipelines import PhysicalOperatorSelection
 from ... import qal
 from ...experiments import workloads
 
 
-def hints_to_operators(hints) -> physops.PhysicalOperatorAssignment:
+warnings.warn("FASTgres implementation is not yet functional", FutureWarning)
+
+
+def hints_to_operators(hints) -> PhysicalOperatorAssignment:
     pass
 
 
@@ -30,7 +35,7 @@ class FastgresOperatorSelection(PhysicalOperatorSelection):
 
     def select_physical_operators(self, query: qal.SqlQuery,
                                   join_order: Optional[jointree.LogicalJoinTree | jointree.PhysicalQueryPlan]
-                                  ) -> physops.PhysicalOperatorAssignment:
+                                  ) -> PhysicalOperatorAssignment:
         hints = self.model.predict(str(query))
         assignment = hints_to_operators(hints)
         return assignment

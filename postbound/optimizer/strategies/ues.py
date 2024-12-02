@@ -35,9 +35,11 @@ from typing import Generic, Optional
 import numpy as np
 
 
-from .. import joingraph, jointree, physops, validation
-from .._pipelines import JoinOrderOptimization, PhysicalOperatorSelection, JoinOrderOptimizationError
+from .. import joingraph, jointree, validation
+from .._hints import PhysicalOperatorAssignment
 from ..policies import cardinalities as cardpol, jointree as treepol
+from ..._core import JoinOperators
+from ..._pipelines import JoinOrderOptimization, PhysicalOperatorSelection, JoinOrderOptimizationError
 from ... import db, qal, util
 from ...qal import TableReference, ColumnReference
 
@@ -972,14 +974,14 @@ class UESOperatorSelection(PhysicalOperatorSelection):
 
     def select_physical_operators(self, query: qal.SqlQuery,
                                   join_order: Optional[jointree.LogicalJoinTree | jointree.PhysicalQueryPlan]
-                                  ) -> physops.PhysicalOperatorAssignment:
+                                  ) -> PhysicalOperatorAssignment:
         if isinstance(join_order, jointree.PhysicalQueryPlan):
             assignment = join_order.physical_operators().clone()
         else:
-            assignment = physops.PhysicalOperatorAssignment()
+            assignment = PhysicalOperatorAssignment()
 
-        if self.database.hinting().supports_hint(physops.JoinOperators.NestedLoopJoin):
-            assignment.set_operator_enabled_globally(physops.JoinOperators.NestedLoopJoin, False,
+        if self.database.hinting().supports_hint(JoinOperators.NestedLoopJoin):
+            assignment.set_operator_enabled_globally(JoinOperators.NestedLoopJoin, False,
                                                      overwrite_fine_grained_selection=True)
         return assignment
 

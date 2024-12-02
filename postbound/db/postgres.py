@@ -29,13 +29,11 @@ from typing import Any, Literal, Optional
 import psycopg
 import psycopg.rows
 
-from postbound.optimizer import jointree, physops, planparams
 from ._db import (
     Database,
     DatabaseSchema,
     DatabaseStatistics,
     HintService,
-    QueryExecutionPlan,
     OptimizerInterface,
     DatabasePool,
     HintWarning,
@@ -44,9 +42,20 @@ from ._db import (
     UnsupportedDatabaseFeatureError
 )
 from .. import qal, util
+from .._core import JoinOperators, ScanOperators, PhysicalOperator, QueryExecutionPlan
 from ..qal import (
     TableReference, ColumnReference,
     UnboundColumnError, VirtualTableError,
+)
+from ..optimizer.jointree import (
+    AbstractJoinTreeNode, IntermediateJoinNode, AuxiliaryNode, BaseTableNode,
+    PhysicalQueryPlan, LogicalJoinTree,
+    PhysicalJoinMetadata,
+    JoinTreeVisitor,
+)
+from ..optimizer._hints import (
+    JoinOperatorAssignment, PhysicalOperatorAssignment, DirectionalJoinOperatorAssignment,
+    PlanParameterization, HintType
 )
 from ..util import Version, StateError
 
@@ -1244,16 +1253,16 @@ class HintParts:
         return HintParts(merged_settings, merged_hints)
 
 
-def _is_hash_join(join_tree_node: jointree.IntermediateJoinNode,
-                  operator_assignment: Optional[physops.PhysicalOperatorAssignment]) -> bool:
+def _is_hash_join(join_tree_node: IntermediateJoinNode,
+                  operator_assignment: Optional[PhysicalOperatorAssignment]) -> bool:
     """Checks, whether a specific join should be executed as a hash join.
 
     Parameters
     ----------
-    join_tree_node : jointree.IntermediateJoinNode
+    join_tree_node : IntermediateJoinNode
         The join to check. Can contain a `PhysicalJoinMetadata` annotation that describes the join operator. This
         metadata is checked if no dedicated `operator_assignment` is provided.
-    operator_assignment : Optional[physops.PhysicalOperatorAssignment]
+    operator_assignment : Optional[PhysicalOperatorAssignment]
         The operator assignment. If such an assignment is available, it will take precedence over all eventual
         operator selections that are part of the `join_tree_node` annotation.
 
@@ -1277,9 +1286,9 @@ def _is_hash_join(join_tree_node: jointree.IntermediateJoinNode,
     `_is_hash_join` method implements the logic for figuring out whether the is necessary for a specific join.
     """
     if operator_assignment is not None:
-        selected_operator: Optional[physops.JoinOperatorAssignment] = operator_assignment[join_tree_node.tables()]
+        selected_operator: Optional[JoinOperatorAssignment] = operator_assignment[join_tree_node.tables()]
         if selected_operator is not None:
-            return selected_operator.operator == physops.JoinOperators.HashJoin
+            return selected_operator.operator == JoinOperators.HashJoin
 
         # We do not need to check the global hash join setting b/c it is overwritten by the per-join setting
         # if we would not have a per-join setting, but a global setting the decision is the same in all cases:
@@ -1289,35 +1298,35 @@ def _is_hash_join(join_tree_node: jointree.IntermediateJoinNode,
         # The only special case is if the hash join is the only globally enabled join operator and there is no per-join
         # assignment. In this case, the join has to be a hash join. This condition is checked below
         global_join_ops = {op for op in operator_assignment.get_globally_enabled_operators()
-                           if isinstance(op, physops.JoinOperators)}
-        return len(global_join_ops) == 1 and physops.JoinOperators.HashJoin in global_join_ops
+                           if isinstance(op, JoinOperators)}
+        return len(global_join_ops) == 1 and JoinOperators.HashJoin in global_join_ops
 
-    if not isinstance(join_tree_node.annotation, jointree.PhysicalJoinMetadata):
+    if not isinstance(join_tree_node.annotation, PhysicalJoinMetadata):
         return False
 
     return (join_tree_node.annotation.operator is not None
-            and join_tree_node.annotation.operator.operator == physops.JoinOperators.HashJoin)
+            and join_tree_node.annotation.operator.operator == JoinOperators.HashJoin)
 
 
 PostgresOptimizerSettings = {
-    physops.JoinOperators.NestedLoopJoin: "enable_nestloop",
-    physops.JoinOperators.HashJoin: "enable_hashjoin",
-    physops.JoinOperators.SortMergeJoin: "enable_mergejoin",
-    physops.ScanOperators.SequentialScan: "enable_seqscan",
-    physops.ScanOperators.IndexScan: "enable_indexscan",
-    physops.ScanOperators.IndexOnlyScan: "enable_indexonlyscan",
-    physops.ScanOperators.BitmapScan: "enable_bitmapscan"
+    JoinOperators.NestedLoopJoin: "enable_nestloop",
+    JoinOperators.HashJoin: "enable_hashjoin",
+    JoinOperators.SortMergeJoin: "enable_mergejoin",
+    ScanOperators.SequentialScan: "enable_seqscan",
+    ScanOperators.IndexScan: "enable_indexscan",
+    ScanOperators.IndexOnlyScan: "enable_indexonlyscan",
+    ScanOperators.BitmapScan: "enable_bitmapscan"
 }
 """All (session-global) optimizer settings that modify the allowed physical operators."""
 
 PGHintPlanOptimizerHints = {
-    physops.JoinOperators.NestedLoopJoin: "NestLoop",
-    physops.JoinOperators.HashJoin: "HashJoin",
-    physops.JoinOperators.SortMergeJoin: "MergeJoin",
-    physops.ScanOperators.SequentialScan: "SeqScan",
-    physops.ScanOperators.IndexScan: "IndexOnlyScan",
-    physops.ScanOperators.IndexOnlyScan: "IndexOnlyScan",
-    physops.ScanOperators.BitmapScan: "BitmapScan"
+    JoinOperators.NestedLoopJoin: "NestLoop",
+    JoinOperators.HashJoin: "HashJoin",
+    JoinOperators.SortMergeJoin: "MergeJoin",
+    ScanOperators.SequentialScan: "SeqScan",
+    ScanOperators.IndexScan: "IndexOnlyScan",
+    ScanOperators.IndexOnlyScan: "IndexOnlyScan",
+    ScanOperators.BitmapScan: "BitmapScan"
 }
 """All physical operators that can be enforced by pg_hint_plan.
 
@@ -1330,13 +1339,13 @@ References
 """
 
 PGLabOptimizerHints = {
-    physops.JoinOperators.NestedLoopJoin: "NestLoop",
-    physops.JoinOperators.HashJoin: "HashJoin",
-    physops.JoinOperators.SortMergeJoin: "MergeJoin",
-    physops.ScanOperators.SequentialScan: "SeqScan",
-    physops.ScanOperators.IndexScan: "IdxScan",
-    physops.ScanOperators.IndexOnlyScan: "IdxScan",
-    physops.ScanOperators.BitmapScan: "IdxScan"
+    JoinOperators.NestedLoopJoin: "NestLoop",
+    JoinOperators.HashJoin: "HashJoin",
+    JoinOperators.SortMergeJoin: "MergeJoin",
+    ScanOperators.SequentialScan: "SeqScan",
+    ScanOperators.IndexScan: "IdxScan",
+    ScanOperators.IndexOnlyScan: "IdxScan",
+    ScanOperators.BitmapScan: "IdxScan"
 }
 """All physical operators that can be enforced by pg_lab.
 
@@ -1418,17 +1427,16 @@ def _apply_hint_block_to_query(query: qal.SqlQuery, hint_block: Optional[qal.Hin
     return qal.transform.add_clause(query, hint_block) if hint_block else query
 
 
-PostgresJoinHints = {physops.JoinOperators.NestedLoopJoin, physops.JoinOperators.HashJoin,
-                     physops.JoinOperators.SortMergeJoin}
+PostgresJoinHints = {JoinOperators.NestedLoopJoin, JoinOperators.HashJoin, JoinOperators.SortMergeJoin}
 """All join operators that are supported by Postgres."""
 
-PostgresScanHints = {physops.ScanOperators.SequentialScan, physops.ScanOperators.IndexScan,
-                     physops.ScanOperators.IndexOnlyScan, physops.ScanOperators.BitmapScan}
+PostgresScanHints = {ScanOperators.SequentialScan, ScanOperators.IndexScan,
+                     ScanOperators.IndexOnlyScan, ScanOperators.BitmapScan}
 """All scan operators that are supported by Postgres."""
 
-PostgresPlanHints = {planparams.HintType.CardinalityHint, planparams.HintType.ParallelizationHint,
-                     planparams.HintType.JoinOrderHint, planparams.HintType.JoinSubqueryHint,
-                     planparams.HintType.JoinDirectionHint, planparams.HintType.OperatorHint}
+PostgresPlanHints = {HintType.CardinalityHint, HintType.ParallelizationHint,
+                     HintType.JoinOrderHint, HintType.JoinSubqueryHint,
+                     HintType.JoinDirectionHint, HintType.OperatorHint}
 """All non-operator hints supported by Postgres, that can be used to enforce additional optimizer behaviour."""
 
 
@@ -1515,16 +1523,16 @@ def _replace_postgres_cast_expressions(expression: qal.SqlExpression) -> qal.Sql
     return _PostgresCastExpression(expression) if isinstance(expression, qal.CastExpression) else expression
 
 
-class _IntermediateNodesCollector(jointree.JoinTreeVisitor[set[jointree.AuxiliaryNode]]):
+class _IntermediateNodesCollector(JoinTreeVisitor[set[AuxiliaryNode]]):
     """Visitor to extract all intermediate (Memoize/Materialize) nodes from a join tree."""
 
-    def visit_base_table_node(self, node: jointree.BaseTableNode) -> set[jointree.AuxiliaryNode]:
+    def visit_base_table_node(self, node: BaseTableNode) -> set[AuxiliaryNode]:
         return set()
 
-    def visit_intermediate_node(self, node: jointree.IntermediateJoinNode) -> set[jointree.AuxiliaryNode]:
+    def visit_intermediate_node(self, node: IntermediateJoinNode) -> set[AuxiliaryNode]:
         return node.left_child.accept_visitor(self) | node.right_child.accept_visitor(self)
 
-    def visit_auxiliary_node(self, node: jointree.AuxiliaryNode) -> set[jointree.AuxiliaryNode]:
+    def visit_auxiliary_node(self, node: AuxiliaryNode) -> set[AuxiliaryNode]:
         return {node} | node.input_node.accept_visitor(self)
 
 
@@ -1592,9 +1600,9 @@ class PostgresHintService(HintService):
     backend = property(_get_backend, _set_backend, doc="The hinting backend in use.")
 
     def generate_hints(self, query: qal.SqlQuery,
-                       join_order: Optional[jointree.LogicalJoinTree | jointree.PhysicalQueryPlan] = None,
-                       physical_operators: Optional[physops.PhysicalOperatorAssignment] = None,
-                       plan_parameters: Optional[planparams.PlanParameterization] = None) -> qal.SqlQuery:
+                       join_order: Optional[LogicalJoinTree | PhysicalQueryPlan] = None,
+                       physical_operators: Optional[PhysicalOperatorAssignment] = None,
+                       plan_parameters: Optional[PlanParameterization] = None) -> qal.SqlQuery:
         self._assert_active_backend()
         adapted_query = query
         if adapted_query.explain and not isinstance(adapted_query.explain, PostgresExplainClause):
@@ -1610,17 +1618,17 @@ class PostgresHintService(HintService):
         hint_parts = hint_parts if hint_parts else HintParts.empty()
 
         physical_operators = (join_order.physical_operators()
-                              if not physical_operators and isinstance(join_order, jointree.PhysicalQueryPlan)
+                              if not physical_operators and isinstance(join_order, PhysicalQueryPlan)
                               else physical_operators)
         plan_parameters = (join_order.plan_parameters()
-                           if not plan_parameters and isinstance(join_order, jointree.PhysicalQueryPlan)
+                           if not plan_parameters and isinstance(join_order, PhysicalQueryPlan)
                            else plan_parameters)
 
         if physical_operators:
             operator_hints = self._generate_pg_operator_hints(physical_operators)
             hint_parts = hint_parts.merge_with(operator_hints)
 
-        if isinstance(join_order, jointree.PhysicalQueryPlan):
+        if isinstance(join_order, PhysicalQueryPlan):
             intermediate_hints = self._generate_pg_intermediate_hints(join_order)
             hint_parts = hint_parts.merge_with(intermediate_hints)
 
@@ -1640,7 +1648,7 @@ class PostgresHintService(HintService):
             query = qal.transform.replace_clause(query, PostgresLimitClause(query.limit_clause))
         return qal.format_quick(query)
 
-    def supports_hint(self, hint: physops.PhysicalOperator | planparams.HintType) -> bool:
+    def supports_hint(self, hint: PhysicalOperator | HintType) -> bool:
         self._assert_active_backend()
         return hint in PostgresJoinHints | PostgresScanHints | PostgresPlanHints
 
@@ -1744,15 +1752,15 @@ class PostgresHintService(HintService):
         # If we reach this point, we have to deactivate GeQO
         return True
 
-    def _generate_leading_hint_content(self, join_tree_node: jointree.AbstractJoinTreeNode,
-                                       operator_assignment: Optional[physops.PhysicalOperatorAssignment] = None) -> str:
+    def _generate_leading_hint_content(self, join_tree_node: AbstractJoinTreeNode,
+                                       operator_assignment: Optional[PhysicalOperatorAssignment] = None) -> str:
         """Builds a substring of the ``Leading`` hint to enforce the join order for a specific part of the join tree.
 
         Parameters
         ----------
-        join_tree_node : jointree.AbstractJoinTreeNode
+        join_tree_node : AbstractJoinTreeNode
             Subtree of the join order for which the hint should be generated
-        operator_assignment : Optional[physops.PhysicalOperatorAssignment], optional
+        operator_assignment : Optional[PhysicalOperatorAssignment], optional
             Operators that allow a smarter assignment of join directions. This is necessary due to pecularities of the
             ``Leading`` hint. See reference below.
 
@@ -1796,11 +1804,11 @@ class PostgresHintService(HintService):
 
         .. pg_hint_plan Leading hint: https://github.com/ossc-db/pg_hint_plan/blob/master/docs/hint_list.md
         """
-        if isinstance(join_tree_node, jointree.BaseTableNode):
+        if isinstance(join_tree_node, BaseTableNode):
             return join_tree_node.table.identifier()
-        if isinstance(join_tree_node, jointree.AuxiliaryNode):
+        if isinstance(join_tree_node, AuxiliaryNode):
             return self._generate_leading_hint_content(join_tree_node.input_node, operator_assignment)
-        if not isinstance(join_tree_node, jointree.IntermediateJoinNode):
+        if not isinstance(join_tree_node, IntermediateJoinNode):
             raise ValueError(f"Unknown join tree node: {join_tree_node}")
 
         # for Postgres, the inner relation of a Hash join is the one that gets the hash table and the outer relation is
@@ -1809,17 +1817,17 @@ class PostgresHintService(HintService):
         # for all other joins
 
         has_directional_information = (
-            isinstance(join_tree_node.annotation, jointree.PhysicalJoinMetadata)
-            and isinstance(join_tree_node.annotation.operator, physops.DirectionalJoinOperatorAssignment)
+            isinstance(join_tree_node.annotation, PhysicalJoinMetadata)
+            and isinstance(join_tree_node.annotation.operator, DirectionalJoinOperatorAssignment)
         )
         if has_directional_information:
-            annotation: physops.DirectionalJoinOperatorAssignment = join_tree_node.annotation.operator
+            annotation: DirectionalJoinOperatorAssignment = join_tree_node.annotation.operator
             inner_tables = annotation.inner
             inner_child = (join_tree_node.left_child if join_tree_node.left_child.tables() == inner_tables
                            else join_tree_node.right_child)
             outer_child = (join_tree_node.left_child if inner_child == join_tree_node.right_child
                            else join_tree_node.right_child)
-            inner_child, outer_child = ((outer_child, inner_child) if annotation.operator == physops.JoinOperators.HashJoin
+            inner_child, outer_child = ((outer_child, inner_child) if annotation.operator == JoinOperators.HashJoin
                                         else (inner_child, outer_child))
         else:
             left, right = join_tree_node.left_child, join_tree_node.right_child
@@ -1841,8 +1849,8 @@ class PostgresHintService(HintService):
         return f"({outer_hint} {inner_hint})"
 
     def _generate_pg_join_order_hint(self, query: qal.SqlQuery,
-                                     join_order: jointree.LogicalJoinTree | jointree.PhysicalQueryPlan,
-                                     operator_assignment: Optional[physops.PhysicalOperatorAssignment] = None
+                                     join_order: LogicalJoinTree | PhysicalQueryPlan,
+                                     operator_assignment: Optional[PhysicalOperatorAssignment] = None
                                      ) -> tuple[qal.SqlQuery, Optional[HintParts]]:
         """Builds the entire ``Leading`` hint to enforce the join order for a specific query.
 
@@ -1860,9 +1868,9 @@ class PostgresHintService(HintService):
             already. Strictly speaking, this parameter is not even necessary for the hint generation part. However, it is
             still included to retain the ability to quickly switch to a query transformation-based join order enforcement
             at a later point in time.
-        join_order : jointree.LogicalJoinTree | jointree.PhysicalQueryPlan
+        join_order : LogicalJoinTree | PhysicalQueryPlan
             The desired join order
-        operator_assignment : Optional[physops.PhysicalOperatorAssignment], optional
+        operator_assignment : Optional[PhysicalOperatorAssignment], optional
             The operators that should be used to perform the actual joins. This is necessary to generate the correct join
             order (as outlined above)
 
@@ -1889,7 +1897,7 @@ class PostgresHintService(HintService):
         hints = HintParts([], [leading_hint])
         return query, hints
 
-    def _generate_pg_operator_hints(self, physical_operators: physops.PhysicalOperatorAssignment) -> HintParts:
+    def _generate_pg_operator_hints(self, physical_operators: PhysicalOperatorAssignment) -> HintParts:
         """Builds the necessary operator-level hints and global settings to enforce a specific operator assignment.
 
         ..TODO: documentation is slightly outdated, update to reflect new pg_lab backend!
@@ -1902,7 +1910,7 @@ class PostgresHintService(HintService):
 
         Parameters
         ----------
-        physical_operators : physops.PhysicalOperatorAssignment
+        physical_operators : PhysicalOperatorAssignment
             The operator settings in question
 
         Returns
@@ -1936,7 +1944,7 @@ class PostgresHintService(HintService):
 
         return HintParts(settings, hints)
 
-    def _generate_pg_parameter_hints(self, plan_parameters: planparams.PlanParameterization) -> HintParts:
+    def _generate_pg_parameter_hints(self, plan_parameters: PlanParameterization) -> HintParts:
         """Builds the necessary operator-level hints and global settings to communicate plan parameters to the optimizer.
 
         ..TODO: documentation is slightly outdated, update to reflect new pg_lab backend!
@@ -1951,7 +1959,7 @@ class PostgresHintService(HintService):
 
         Parameters
         ----------
-        plan_parameters : planparams.PlanParameterization
+        plan_parameters : PlanParameterization
             The parameters in question
 
         Returns
@@ -1995,7 +2003,7 @@ class PostgresHintService(HintService):
 
         return HintParts(settings, hints)
 
-    def _generate_pg_intermediate_hints(self, query_plan: jointree.PhysicalQueryPlan) -> HintParts:
+    def _generate_pg_intermediate_hints(self, query_plan: PhysicalQueryPlan) -> HintParts:
         """Generates hints for auxiliary nodes in the query plan.
 
         This includes nodes that are neither scans nor joins, such as Memoize and Materialize. Notice that such hints are
@@ -2003,7 +2011,7 @@ class PostgresHintService(HintService):
 
         Parameters
         ----------
-        query_plan : jointree.PhysicalQueryPlan
+        query_plan : PhysicalQueryPlan
             The plan to encode
 
         Returns
@@ -2480,15 +2488,15 @@ class TimeoutQueryExecutor:
         return self.execute_query(query, timeout)
 
 
-PostgresExplainJoinNodes = {"Nested Loop": physops.JoinOperators.NestedLoopJoin,
-                            "Hash Join": physops.JoinOperators.HashJoin,
-                            "Merge Join": physops.JoinOperators.SortMergeJoin}
+PostgresExplainJoinNodes = {"Nested Loop": JoinOperators.NestedLoopJoin,
+                            "Hash Join": JoinOperators.HashJoin,
+                            "Merge Join": JoinOperators.SortMergeJoin}
 """A mapping from Postgres EXPLAIN node names to the corresponding join operators."""
 
-PostgresExplainScanNodes = {"Seq Scan": physops.ScanOperators.SequentialScan,
-                            "Index Scan": physops.ScanOperators.IndexScan,
-                            "Index Only Scan": physops.ScanOperators.IndexOnlyScan,
-                            "Bitmap Heap Scan": physops.ScanOperators.BitmapScan}
+PostgresExplainScanNodes = {"Seq Scan": ScanOperators.SequentialScan,
+                            "Index Scan": ScanOperators.IndexScan,
+                            "Index Only Scan": ScanOperators.IndexOnlyScan,
+                            "Bitmap Heap Scan": ScanOperators.BitmapScan}
 """A mapping from Postgres EXPLAIN node names to the corresponding scan operators."""
 
 

@@ -8,10 +8,9 @@ from datetime import datetime
 
 import pandas as pd
 
-from postbound import qal
+from postbound import qal, optimizer
 from postbound.db import postgres
 from postbound.experiments import workloads
-from postbound.optimizer import planparams
 from postbound.util import jsonize
 
 
@@ -30,9 +29,9 @@ def parse_tables_list(tables: str) -> set[qal.TableReference]:
     return {qal.TableReference(tab["full_name"], tab.get("alias")) for tab in jsonized}
 
 
-def true_cardinalities(label: str) -> planparams.PlanParameterization:
+def true_cardinalities(label: str) -> optimizer.PlanParameterization:
     relevant_queries = card_df[card_df["label"] == label]
-    plan_params = planparams.PlanParameterization()
+    plan_params = optimizer.PlanParameterization()
     for __, row in relevant_queries.iterrows():
         plan_params.add_cardinality_hint(row["tables"], row["cardinality"])
     return plan_params

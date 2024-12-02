@@ -10,14 +10,13 @@ import abc
 from typing import Optional, Protocol
 
 
-from .. import db
-from ..qal import SqlQuery, TableReference
-from .jointree import LogicalJoinTree, PhysicalQueryPlan
-from . import validation
-from .validation import OptimizationPreCheck
-from .physops import PhysicalOperatorAssignment
-from .planparams import PlanParameterization
-from ..util import jsondict, StateError
+from .optimizer import validation
+from .optimizer.jointree import LogicalJoinTree, PhysicalQueryPlan
+from .optimizer.validation import OptimizationPreCheck
+from .optimizer._hints import PhysicalOperatorAssignment, PlanParameterization
+from . import db
+from .qal import SqlQuery, TableReference
+from .util import jsondict, StateError
 
 
 class OptimizationPipeline(abc.ABC):

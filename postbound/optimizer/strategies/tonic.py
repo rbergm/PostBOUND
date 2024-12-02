@@ -15,8 +15,10 @@ import random
 from collections.abc import Iterable, Sequence
 from typing import Any, Optional
 
-from .. import jointree, physops
-from .._pipelines import PhysicalOperatorSelection
+from .. import jointree
+from .._hints import PhysicalOperatorAssignment, JoinOperatorAssignment
+from ..._core import JoinOperators
+from ..._pipelines import PhysicalOperatorSelection
 from ... import db, qal, util
 from ...qal import parser as query_parser
 from ...qal import TableReference, ColumnReference
@@ -301,7 +303,7 @@ class QepsNode:
 
     Attributes
     ----------
-    operator_costs : dict[physops.JoinOperators, float]
+    operator_costs : dict[JoinOperators, float]
         The learned costs of different physical join operators to perform the join of the current path with the identifier
         relation.
     child_nodes : dict[QepsIdentifier, QepsNode]
@@ -317,7 +319,7 @@ class QepsNode:
                  identifier: Optional[QepsIdentifier] = None, parent: Optional[QepsNode] = None) -> None:
         self.filter_aware = filter_aware
         self.gamma = gamma
-        self.operator_costs: dict[physops.JoinOperators, float] = collections.defaultdict(float)
+        self.operator_costs: dict[JoinOperators, float] = collections.defaultdict(float)
         self.child_nodes = util.dicts.DynamicDefaultDict(self._init_qeps)
         self._subquery_root: Optional[QepsNode] = None  # only used for subquery nodes
         self._parent = parent
@@ -378,7 +380,7 @@ class QepsNode:
         return frozenset(util.set_union(qeps_id.tables for qeps_id in self.path()))
 
     def recommend_operators(self, query: qal.SqlQuery, join_order: Sequence[jointree.IntermediateJoinNode],
-                            current_assignment: physops.PhysicalOperatorAssignment, *,
+                            current_assignment: PhysicalOperatorAssignment, *,
                             _skip_first_table: bool = False) -> None:
         """Inserts the operator with the minimum cost into an operator assignment.
 
@@ -395,7 +397,7 @@ class QepsNode:
         join_order : Sequence[jointree.IntermediateJoinNode]
             A path to navigate the QEP-S tree. The recommendation logic consumes the next join and supplies all future joins to
             the applicable child node.
-        current_assignment : physops.PhysicalOperatorAssignment
+        current_assignment : PhysicalOperatorAssignment
             Operators that have already been recommended. This structure is successively inflated with repeated recommendation
             calls.
         _skip_first_table : bool, optional
@@ -408,7 +410,7 @@ class QepsNode:
         next_join, *remaining_joins = join_order
         recommendation = self.current_recommendation()
         if recommendation:
-            current_assignment.set_join_operator(physops.JoinOperatorAssignment(recommendation, self.tables()))
+            current_assignment.set_join_operator(JoinOperatorAssignment(recommendation, self.tables()))
 
         if next_join.is_bushy_join():
             _, subquery_child = next_join.children_by_depth()
@@ -512,8 +514,8 @@ class QepsNode:
         qeps_child_node.integrate_costs(query, remaining_nodes)
 
     def detect_unknown_costs(self, query: qal.SqlQuery, join_order: Sequence[jointree.IntermediateJoinNode],
-                             allowed_operators: frozenset[physops.JoinOperators],
-                             unknown_ops: dict[frozenset[TableReference], frozenset[physops.JoinOperators]],
+                             allowed_operators: frozenset[JoinOperators],
+                             unknown_ops: dict[frozenset[TableReference], frozenset[JoinOperators]],
                              _skip_first_table: bool = False) -> None:
         """Collects all joins in the QEP-S that do not have cost information for all possible operators.
 
@@ -526,10 +528,10 @@ class QepsNode:
             The query describing the filter predicates to navigate the QEP-S
         join_order : Sequence[jointree.IntermediateJoinNode]
             The join order to navigate the QEP-S
-        allowed_operators : frozenset[physops.JoinOperators]
+        allowed_operators : frozenset[JoinOperators]
             Operators for which cost information should exist. If the node does not have a cost information for any of the
             operators, this is an unknown cost
-        unknown_ops : dict[frozenset[TableReference], frozenset[physops.JoinOperators]]
+        unknown_ops : dict[frozenset[TableReference], frozenset[JoinOperators]]
             The unknown operators that have been detected so far
         _skip_first_table : bool, optional
             Internal parameter that should only be set by the QEP-S implementation. This parameter is required to correctly
@@ -573,22 +575,22 @@ class QepsNode:
         qeps_child_node = self.child_nodes[qeps_child_id]
         qeps_child_node.detect_unknown_costs(query, remaining_joins, allowed_operators, unknown_ops)
 
-    def current_recommendation(self) -> Optional[physops.JoinOperators]:
+    def current_recommendation(self) -> Optional[JoinOperators]:
         """Provides the operator with the minimum cost.
 
         Returns
         -------
-        Optional[physops.JoinOperators]
+        Optional[JoinOperators]
             The best operator, or ``None`` if not enough information exists to make a good decision.
         """
         return util.argmin(self.operator_costs) if len(self.operator_costs) > 1 else None
 
-    def update_costs(self, operator: physops.JoinOperators, cost: float) -> None:
+    def update_costs(self, operator: JoinOperators, cost: float) -> None:
         """Updates the cost of a specific operator for this node.
 
         Parameters
         ----------
-        operator : physops.JoinOperators
+        operator : JoinOperators
             The operator whose costs should be updated.
         cost : float
             The new cost information.
@@ -765,7 +767,7 @@ class QueryExecutionPlanSynopsis:
         self.root = root
 
     def recommend_operators(self, query: qal.SqlQuery,
-                            join_order: jointree.JoinTree) -> physops.PhysicalOperatorAssignment:
+                            join_order: jointree.JoinTree) -> PhysicalOperatorAssignment:
         """Provides the optimal operators according to the current QEP-S for a specific join order.
 
         Parameters
@@ -777,11 +779,11 @@ class QueryExecutionPlanSynopsis:
 
         Returns
         -------
-        physops.PhysicalOperatorAssignment
+        PhysicalOperatorAssignment
             The best operators as learned by the QEP-S
         """
         current_assignment = (join_order.physical_operators() if isinstance(join_order, jointree.PhysicalQueryPlan)
-                              else physops.PhysicalOperatorAssignment())
+                              else PhysicalOperatorAssignment())
         self.root.recommend_operators(query, _iterate_join_tree(join_order.root), current_assignment)
         return current_assignment
 
@@ -799,8 +801,8 @@ class QueryExecutionPlanSynopsis:
         self.root.integrate_costs(query, _iterate_query_plan(query_plan.simplify()))
 
     def detect_unknown_costs(self, query: qal.SqlQuery, join_order: jointree.JoinTree,
-                             allowed_operators: set[physops.JoinOperators]
-                             ) -> dict[frozenset[TableReference], frozenset[physops.JoinOperators]]:
+                             allowed_operators: set[JoinOperators]
+                             ) -> dict[frozenset[TableReference], frozenset[JoinOperators]]:
         """Collects all joins in the QEP-S that do not have cost information for all possible operators.
 
         Parameters
@@ -809,13 +811,13 @@ class QueryExecutionPlanSynopsis:
             The query describing the filter predicates to navigate the QEP-S
         join_order : Sequence[jointree.IntermediateJoinNode]
             The join order to navigate the QEP-S
-        allowed_operators : frozenset[physops.JoinOperators]
+        allowed_operators : frozenset[JoinOperators]
             Operators for which cost information should exist. If the node does not have a cost information for any of the
             operators, this is an unknown cost
 
         Returns
         -------
-        dict[frozenset[TableReference], frozenset[physops.JoinOperators]]
+        dict[frozenset[TableReference], frozenset[JoinOperators]]
             A mapping from join to the unknown operators at that join. If a join is not contained in the mapping, it is either
             not contained in the `join_order`, or it has cost information for all operators.
         """
@@ -905,7 +907,7 @@ def _load_qeps_from_json(json_data: dict, qeps_id: Optional[QepsIdentifier], par
     """
     node = QepsNode(filter_aware, gamma, identifier=qeps_id, parent=parent)
 
-    cost_info = {physops.JoinOperators(operator_str): cost for operator_str, cost in json_data.get("costs", {}).items()}
+    cost_info = {JoinOperators(operator_str): cost for operator_str, cost in json_data.get("costs", {}).items()}
     subquery = (_load_qeps_from_json(json_data["subquery"], None, None, filter_aware, gamma)
                 if "subquery" in json_data else None)
     children: dict[QepsIdentifier, QepsNode] = {}
@@ -970,7 +972,7 @@ def _obtain_accurate_cost_estimate(query: qal.SqlQuery, database: db.Database) -
 
 
 def _generate_all_cost_estimates(query: qal.SqlQuery, join_order: jointree.JoinTree,
-                                 available_operators: dict[frozenset[TableReference], frozenset[physops.JoinOperators]],
+                                 available_operators: dict[frozenset[TableReference], frozenset[JoinOperators]],
                                  database: db.Database) -> Iterable[db.QueryExecutionPlan]:
     """Provides all cost estimates based on plans with specific operator combinations.
 
@@ -984,7 +986,7 @@ def _generate_all_cost_estimates(query: qal.SqlQuery, join_order: jointree.JoinT
         The query for which the cost estimates should be generated
     join_order : jointree.JoinTree
         The join order to use
-    available_operators : dict[frozenset[TableReference], frozenset[physops.JoinOperators]]
+    available_operators : dict[frozenset[TableReference], frozenset[JoinOperators]]
         A mapping from joins to allowed operators. All possible combinations will be explored.
     database : db.Database
         The database to use for the query execution and cost estimation.
@@ -998,16 +1000,16 @@ def _generate_all_cost_estimates(query: qal.SqlQuery, join_order: jointree.JoinT
     joins, operators = list(available_operators.keys()), list(available_operators.values())
     for current_operator_selection in itertools.product(*operators):
         current_join_pairs = zip(joins, current_operator_selection)
-        current_assignment = physops.PhysicalOperatorAssignment()
+        current_assignment = PhysicalOperatorAssignment()
         for join, operator in current_join_pairs:
-            current_assignment.set_join_operator(physops.JoinOperatorAssignment(operator, join))
+            current_assignment.set_join_operator(JoinOperatorAssignment(operator, join))
         optimized_query = database.hinting().generate_hints(query, join_order, current_assignment)
         plans.append(_obtain_accurate_cost_estimate(optimized_query, database))
     return plans
 
 
 def _sample_cost_estimates(query: qal.SqlQuery, join_order: jointree.JoinTree,
-                           available_operators: dict[frozenset[TableReference], frozenset[physops.JoinOperators]],
+                           available_operators: dict[frozenset[TableReference], frozenset[JoinOperators]],
                            n_samples: int, database: db.Database) -> Iterable[db.QueryExecutionPlan]:
     """Generates cost estimates based on sampled plans with specific operator combinations.
 
@@ -1023,7 +1025,7 @@ def _sample_cost_estimates(query: qal.SqlQuery, join_order: jointree.JoinTree,
         The query for which the cost estimates should be generated
     join_order : jointree.JoinTree
         The join order to use
-    available_operators : dict[frozenset[TableReference], frozenset[physops.JoinOperators]]
+    available_operators : dict[frozenset[TableReference], frozenset[JoinOperators]]
         A mapping from joins to allowed operators. The actual operator assignments will be sampled from this mapping.
     n_samples : int
         The number of samples to generate. If there are less unique plans than samples requested, only the unique plans are
@@ -1044,10 +1046,10 @@ def _sample_cost_estimates(query: qal.SqlQuery, join_order: jointree.JoinTree,
     max_tries = 3 * n_samples
     while len(plans) < n_samples and n_tries < max_tries:
         n_tries += 1
-        current_assignment = physops.PhysicalOperatorAssignment()
+        current_assignment = PhysicalOperatorAssignment()
         for join, operators in available_operators.items():
             selected_operator = random.choice(list(operators))
-            current_assignment.set_join_operator(physops.JoinOperatorAssignment(selected_operator, join))
+            current_assignment.set_join_operator(JoinOperatorAssignment(selected_operator, join))
         current_hash = hash(current_assignment)
         if current_hash in sampled_assignments:
             continue
@@ -1162,7 +1164,7 @@ class TonicOperatorSelection(PhysicalOperatorSelection):
         self.integrate_cost(hinted_query)
 
     def explore_costs(self, query: qal.SqlQuery, join_order: Optional[jointree.JoinTree] = None, *,
-                      allowed_operators: Optional[Iterable[physops.JoinOperators]] = None,
+                      allowed_operators: Optional[Iterable[JoinOperators]] = None,
                       max_combinations: Optional[int] = None) -> None:
         """Generates cost information along a specific path in the QEP-S.
 
@@ -1180,7 +1182,7 @@ class TonicOperatorSelection(PhysicalOperatorSelection):
         join_order : Optional[jointree.JoinTree], optional
             The QEP-S path along which the cost should be generated. Defaults to ``None``, in which case the join order of the
             native query optimizer of the database system is used.
-        allowed_operators : Optional[Iterable[physops.JoinOperators]], optional
+        allowed_operators : Optional[Iterable[JoinOperators]], optional
             The operators for which cost information should be generated. If a QEP-S node does not have a cost information for
             one of the operators, it is generated. If the node already has a cost information for the operator, this
             information is left as-is. Defaults to all join operators.
@@ -1190,8 +1192,8 @@ class TonicOperatorSelection(PhysicalOperatorSelection):
         """
         join_order = join_order if join_order is not None else self._obtain_native_join_order(query)
 
-        allowed_operators = set(allowed_operators) if allowed_operators else set(physops.JoinOperators)
-        supported_operators = {join_op for join_op in physops.JoinOperators if self._db.hinting().supports_hint(join_op)}
+        allowed_operators = set(allowed_operators) if allowed_operators else set(JoinOperators)
+        supported_operators = {join_op for join_op in JoinOperators if self._db.hinting().supports_hint(join_op)}
         allowed_operators = frozenset(allowed_operators & supported_operators)
 
         unknown_costs = {intermediate.tables(): allowed_operators for intermediate in join_order.join_sequence()}
@@ -1209,7 +1211,7 @@ class TonicOperatorSelection(PhysicalOperatorSelection):
 
     def select_physical_operators(self, query: qal.SqlQuery,
                                   join_order: Optional[jointree.LogicalJoinTree | jointree.PhysicalQueryPlan]
-                                  ) -> physops.PhysicalOperatorAssignment:
+                                  ) -> PhysicalOperatorAssignment:
         if not join_order or join_order.is_empty():
             join_order = self._obtain_native_join_order(query)
         return self.qeps.recommend_operators(query, join_order)

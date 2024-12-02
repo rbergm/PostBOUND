@@ -8,10 +8,10 @@ from typing import Literal, Optional
 import graphviz as gv
 import networkx as nx
 
-from postbound.optimizer import joingraph, jointree
 from . import trees as tree_viz
 from .. import db, qal, util
 from ..qal import relalg, TableReference
+from ..optimizer import jointree, joingraph
 
 
 def _join_tree_labels(node: jointree.AbstractJoinTreeNode) -> tuple[str, dict]:

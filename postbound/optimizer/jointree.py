@@ -32,8 +32,14 @@ from typing import Generic, Literal, Optional, Union
 
 import Levenshtein
 
-from . import physops, planparams
-from .. import db, qal, util
+from ._hints import (
+    PhysicalOperator,
+    PhysicalOperatorAssignment, ScanOperatorAssignment, JoinOperatorAssignment, DirectionalJoinOperatorAssignment,
+    PlanParameterization,
+    read_operator_json
+)
+from .. import qal, util
+from .._core import QueryExecutionPlan
 from ..qal import parser, TableReference, ColumnReference
 from ..util import jsondict, StateError
 from ..util.typing import Lazy, LazyVal
@@ -179,7 +185,7 @@ class PhysicalJoinMetadata(JoinMetadata):
     cost : float, optional
         An estimation of how expensive computing the current node is. If such a value is not available, the default value of
         *NaN* can be used.
-    join_info : Optional[physops.JoinOperatorAssignment], optional
+    join_info : Optional[JoinOperatorAssignment], optional
         A description of the join operator that should be used for the join. If this is not known, the default value of
         *None* can be used. Notice however, that the entire purpose of the query execution plan is in having
         precisely this information. Therefore, cases were the `join_info` actually is *None* should be rare. If they
@@ -187,19 +193,19 @@ class PhysicalJoinMetadata(JoinMetadata):
     """
     def __init__(self, predicate: Optional[qal.AbstractPredicate] = None, *,
                  cardinality: float = math.nan, cost: float = math.nan,
-                 join_info: Optional[physops.JoinOperatorAssignment] = None) -> None:
+                 join_info: Optional[JoinOperatorAssignment] = None) -> None:
         super().__init__(predicate, cardinality=cardinality)
         self._operator_assignment = join_info
         self._cost = cost
         self._hash_val = hash((predicate, cardinality, cost, join_info))
 
     @property
-    def operator(self) -> Optional[physops.JoinOperatorAssignment]:
+    def operator(self) -> Optional[JoinOperatorAssignment]:
         """Get the physical operator that should be used to execute the join.
 
         Returns
         -------
-        Optional[physops.JoinOperatorAssignment]
+        Optional[JoinOperatorAssignment]
             The operator or ``None`` if it is unknown. Such situations should be quite rare however.
         """
         return self._operator_assignment
@@ -344,7 +350,7 @@ class PhysicalBaseTableMetadata(BaseTableMetadata):
     cost : float, optional
         An estimation of how expensive computing the current node is. If such a value is not available, the default value of
         *NaN* can be used.
-    scan_info : Optional[physops.ScanOperatorAssignment], optional
+    scan_info : Optional[ScanOperatorAssignment], optional
         A description of the scan operator that should be used for the base table. If this is not known, the default
         value of *None* can be used. Notice however, that the entire purpose of the query execution plan is in having
         precisely this information. Therefore, cases were the `scan_info` actually is *None* should be rare. If they
@@ -353,19 +359,19 @@ class PhysicalBaseTableMetadata(BaseTableMetadata):
 
     def __init__(self, filter_predicate: Optional[qal.AbstractPredicate], *,
                  cardinality: float = math.nan, cost: float = math.nan,
-                 scan_info: Optional[physops.ScanOperatorAssignment] = None) -> None:
+                 scan_info: Optional[ScanOperatorAssignment] = None) -> None:
         super().__init__(filter_predicate, cardinality=cardinality)
         self._operator_assignment = scan_info
         self._cost = cost
         self._hash_val = hash((filter_predicate, cardinality, cost, scan_info))
 
     @property
-    def operator(self) -> Optional[physops.ScanOperatorAssignment]:
+    def operator(self) -> Optional[ScanOperatorAssignment]:
         """Get the physical operator that should be used to execute the scan.
 
         Returns
         -------
-        Optional[physops.ScanOperatorAssignment]
+        Optional[ScanOperatorAssignment]
             The operator or ``None`` if it is unknown. Such situations should be quite rare however.
         """
         return self._operator_assignment
@@ -526,7 +532,7 @@ def _read_metadata_json(json_data: dict, base_table: bool, *, include_estimates:
     if base_table:
         filter_predicate = parser.load_predicate_json(json_data["predicate"]) if "predicate" in json_data else None
         if "operator" in json_data:
-            scan_assignment = physops.read_operator_json(json_data["operator"])
+            scan_assignment = read_operator_json(json_data["operator"])
             cost = json_data.get("cost", math.nan) if include_estimates else math.nan
             return PhysicalBaseTableMetadata(filter_predicate, cardinality=cardinality, cost=cost,
                                              scan_info=scan_assignment)
@@ -534,7 +540,7 @@ def _read_metadata_json(json_data: dict, base_table: bool, *, include_estimates:
     else:
         join_predicate = parser.load_predicate_json(json_data["predicate"]) if "predicate" in json_data else None
         if "operator" in json_data:
-            join_assignment = physops.read_operator_json(json_data["operator"])
+            join_assignment = read_operator_json(json_data["operator"])
             cost = json_data.get("cost", math.nan) if include_estimates else math.nan
             return PhysicalJoinMetadata(join_predicate, cardinality=cardinality, cost=cost, join_info=join_assignment)
         return LogicalJoinMetadata(join_predicate, cardinality=cardinality)
@@ -2237,7 +2243,7 @@ class LogicalJoinTree(JoinTree[LogicalJoinMetadata, LogicalBaseTableMetadata]):
         return current_join_tree
 
     @staticmethod
-    def load_from_query_plan(query_plan: db.QueryExecutionPlan,
+    def load_from_query_plan(query_plan: QueryExecutionPlan,
                              query: Optional[qal.SqlQuery] = None) -> LogicalJoinTree:
         """Creates a join tree from a query plan.
 
@@ -2248,7 +2254,7 @@ class LogicalJoinTree(JoinTree[LogicalJoinMetadata, LogicalBaseTableMetadata]):
 
         Parameters
         ----------
-        query_plan : db.QueryExecutionPlan
+        query_plan : QueryExecutionPlan
             The query plan that was emitted by the optimizer of a database system. The plan will be used in two
             different ways: the join order will be used to generate the join tree itself. Furthermore, the cardinality
             estimates will be used as annotations for the nodes in the join tree.
@@ -2393,7 +2399,7 @@ class PhysicalQueryPlan(JoinTree[PhysicalJoinMetadata, PhysicalBaseTableMetadata
     root : Optional[AbstractJoinTreeNode[PhysicalJoinMetadata, PhysicalBaseTableMetadata]], optional
         The root node of the tree structure that should be maintained by this join tree. Can be ``None``, in which
         case the join tree remains empty.
-    global_operator_settings : Optional[physops.PhysicalOperatorAssignment], optional
+    global_operator_settings : Optional[PhysicalOperatorAssignment], optional
         Settings that apply to the join tree as a whole, rather than to individual joins or scans. Defaults to ``None``
         which indicates that there are no such settings. If the assignment contain per-operator choices, these are
         simply ignored.
@@ -2451,7 +2457,7 @@ class PhysicalQueryPlan(JoinTree[PhysicalJoinMetadata, PhysicalBaseTableMetadata
         return PhysicalQueryPlan(join_node)
 
     @staticmethod
-    def load_from_query_plan(query_plan: db.QueryExecutionPlan, query: Optional[qal.SqlQuery] = None, *,
+    def load_from_query_plan(query_plan: QueryExecutionPlan, query: Optional[qal.SqlQuery] = None, *,
                              operators_only: bool = False, include_auxiliary: bool = True) -> PhysicalQueryPlan:
         """Creates a join tree from a query plan.
 
@@ -2462,7 +2468,7 @@ class PhysicalQueryPlan(JoinTree[PhysicalJoinMetadata, PhysicalBaseTableMetadata
 
         Parameters
         ----------
-        query_plan : db.QueryExecutionPlan
+        query_plan : QueryExecutionPlan
             The query plan that was emitted by the optimizer of a database system. The plan will be used in two
             different ways: the join order will be used to generate the join tree itself. Furthermore, the physical
             operators, cardinality estimates, etc. will be used as annotations for the nodes in the join tree.
@@ -2497,14 +2503,13 @@ class PhysicalQueryPlan(JoinTree[PhysicalJoinMetadata, PhysicalBaseTableMetadata
 
             filter_predicate = query.predicates().filters_for(table) if query else None
             if operators_only:
-                scan_info = physops.ScanOperatorAssignment(query_plan.physical_operator, table)
+                scan_info = ScanOperatorAssignment(query_plan.physical_operator, table)
                 cardinality = math.nan
                 cost = math.nan
             else:
                 cardinality = query_plan.true_cardinality if query_plan.is_analyze() else query_plan.estimated_cardinality
                 cost = query_plan.cost
-                scan_info = (physops.ScanOperatorAssignment(query_plan.physical_operator, table,
-                                                            query_plan.parallel_workers)
+                scan_info = (ScanOperatorAssignment(query_plan.physical_operator, table, query_plan.parallel_workers)
                              if query_plan.physical_operator else None)
 
             table_annotation = PhysicalBaseTableMetadata(filter_predicate, cardinality=cardinality, cost=cost,
@@ -2523,15 +2528,15 @@ class PhysicalQueryPlan(JoinTree[PhysicalJoinMetadata, PhysicalBaseTableMetadata
             join_predicate = (query.predicates().joins_between(outer_tree.tables(), inner_tree.tables())
                               if query else None)
             if operators_only:
-                join_info = physops.DirectionalJoinOperatorAssignment(query_plan.physical_operator,
-                                                                      outer=outer_child.tables(), inner=inner_child.tables())
+                join_info = DirectionalJoinOperatorAssignment(query_plan.physical_operator,
+                                                              outer=outer_child.tables(), inner=inner_child.tables())
                 cardinality = math.nan
                 cost = math.nan
             else:
-                join_info = (physops.DirectionalJoinOperatorAssignment(query_plan.physical_operator,
-                                                                       outer=outer_child.tables(),
-                                                                       inner=inner_child.tables(),
-                                                                       parallel_workers=query_plan.parallel_workers)
+                join_info = (DirectionalJoinOperatorAssignment(query_plan.physical_operator,
+                                                               outer=outer_child.tables(),
+                                                               inner=inner_child.tables(),
+                                                               parallel_workers=query_plan.parallel_workers)
                              if query_plan.physical_operator else None)
                 cardinality = query_plan.true_cardinality if query_plan.is_analyze() else query_plan.estimated_cardinality
                 cost = query_plan.cost
@@ -2558,18 +2563,18 @@ class PhysicalQueryPlan(JoinTree[PhysicalJoinMetadata, PhysicalBaseTableMetadata
 
     @staticmethod
     def load_from_logical_order(logical_order: LogicalJoinTree,
-                                operators: Optional[physops.PhysicalOperatorAssignment] = None,
-                                metadata: Optional[planparams.PlanParameterization] = None) -> PhysicalQueryPlan:
+                                operators: Optional[PhysicalOperatorAssignment] = None,
+                                metadata: Optional[PlanParameterization] = None) -> PhysicalQueryPlan:
         """Expands a logical join order to a full physical plan.
 
         Parameters
         ----------
         logical_order : LogicalJoinTree
             The logical join order to use. This defines the basic structure of the physical plan.
-        operators : Optional[physops.PhysicalOperatorAssignment], optional
+        operators : Optional[PhysicalOperatorAssignment], optional
             Information about the scan and join operators to use. If there are no associated operators for parts of the join
             order, no operators will be added for that part.
-        metadata : Optional[planparams.PlanParameterization], optional
+        metadata : Optional[PlanParameterization], optional
             Information about the cardinalities of different operators. Parallelization information is ignored, since this
             should already be supplied by the operator hints. If there is no cardinality hint for parts of the join order
             contained in the metadata, the cardinality from the `logical_order` will be re-used. Otherwise, that cardinality
@@ -2618,10 +2623,10 @@ class PhysicalQueryPlan(JoinTree[PhysicalJoinMetadata, PhysicalBaseTableMetadata
 
     def __init__(self: PhysicalQueryPlan,
                  root: Optional[AbstractJoinTreeNode[PhysicalJoinMetadata, PhysicalBaseTableMetadata]] = None, *,
-                 global_operator_settings: Optional[physops.PhysicalOperatorAssignment] = None) -> None:
+                 global_operator_settings: Optional[PhysicalOperatorAssignment] = None) -> None:
         super().__init__(root)
         self._global_settings = (global_operator_settings.global_settings_only() if global_operator_settings
-                                 else physops.PhysicalOperatorAssignment())
+                                 else PhysicalOperatorAssignment())
 
     @property
     def cardinality(self) -> float:
@@ -2652,7 +2657,7 @@ class PhysicalQueryPlan(JoinTree[PhysicalJoinMetadata, PhysicalBaseTableMetadata
         return self.root.annotation.cost if self.root and self.root.annotation else math.nan
 
     @property
-    def global_settings(self) -> physops.PhysicalOperatorAssignment:
+    def global_settings(self) -> PhysicalOperatorAssignment:
         """Get the global settings of the query plan.
 
         Global settings are settings that apply to the plan as a whole, rather than just to individual operators. For
@@ -2660,18 +2665,18 @@ class PhysicalQueryPlan(JoinTree[PhysicalJoinMetadata, PhysicalBaseTableMetadata
 
         Returns
         -------
-        physops.PhysicalOperatorAssignment
+        PhysicalOperatorAssignment
             The global settings. Although the assignment could contain per-operator settings as well, these are not
             set.
         """
         return self._global_settings
 
-    def physical_operators(self) -> physops.PhysicalOperatorAssignment:
+    def physical_operators(self) -> PhysicalOperatorAssignment:
         """Provides the physical operator assignment that is induced by this query plan.
 
         Returns
         -------
-        physops.PhysicalOperatorAssignment
+        PhysicalOperatorAssignment
             An assignment of all scans and joins in the join tree, if the respective nodes contain assigned operators.
         """
         assignment = self._global_settings.clone()
@@ -2688,15 +2693,15 @@ class PhysicalQueryPlan(JoinTree[PhysicalJoinMetadata, PhysicalBaseTableMetadata
 
         return assignment
 
-    def plan_parameters(self) -> planparams.PlanParameterization:
+    def plan_parameters(self) -> PlanParameterization:
         """Provides the plan parameterization that is induced by this query plan.
 
         Returns
         -------
-        planparams.PlanParameterization
+        PlanParameterization
             An assignment of all parameters for all nodes in the join tree, if they are parameterized properly.
         """
-        parameters = planparams.PlanParameterization()
+        parameters = PlanParameterization()
 
         for base_table in self.table_sequence():
             if math.isnan(base_table.cardinality):
@@ -3119,11 +3124,11 @@ class JointreeChangeEntry:
         other one and vice-versa. *physical-op* means that two structurally identical nodes (i.e. same join or base table)
         differ in the assigned physical operator. *card-est* indicates that two structurally identifcal nodes (i.e. same join
         or base table) differ in the estimated cardinality, while *cost-est* does the same, just for the estimated cost.
-    left_state : frozenset[TableReference] | physops.PhysicalOperator | float
+    left_state : frozenset[TableReference] | PhysicalOperator | float
         Depending on the `change_type` this attribute describes the left tree. For example, for different tree structures,
         these are the tables in the left subtree, for different physical operators, this is the operator assigned to the node
         in the left tree and so on. For different join directions, this is the entire join node
-    right_state : frozenset[TableReference] | physops.PhysicalOperator | float
+    right_state : frozenset[TableReference] | PhysicalOperator | float
         Equivalent attribute to `left_state`, just for the right tree.
     context : Optional[frozenset[TableReference]], optional
         For different physical operators or cardinality estimates, this describes the intermediate that is different. This
@@ -3131,8 +3136,8 @@ class JointreeChangeEntry:
     """
 
     change_type: Literal["tree-structure", "join-direction", "physical-op", "card-est", "cost-est"]
-    left_state: frozenset[TableReference] | physops.PhysicalOperator | float
-    right_state: frozenset[TableReference] | physops.PhysicalOperator | float
+    left_state: frozenset[TableReference] | PhysicalOperator | float
+    right_state: frozenset[TableReference] | PhysicalOperator | float
     context: Optional[frozenset[TableReference]] = None
 
     def inspect(self) -> str:
@@ -3236,7 +3241,7 @@ def _extract_cost_from_annotation(node: AbstractJoinTreeNode | None) -> float:
     return math.nan
 
 
-def _extract_operator_from_annotation(node: AbstractJoinTreeNode | None) -> Optional[physops.PhysicalOperator]:
+def _extract_operator_from_annotation(node: AbstractJoinTreeNode | None) -> Optional[PhysicalOperator]:
     """Provides the physical operator of a join tree node if there is one.
 
     Parameters

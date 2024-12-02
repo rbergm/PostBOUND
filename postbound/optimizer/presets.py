@@ -6,15 +6,15 @@ from __future__ import annotations
 
 from typing import Literal, Optional
 
-from postbound.qal import parser
-from ._pipelines import (
+from .policies import cardinalities
+from .strategies import ues, native
+from .._pipelines import (
     OptimizationSettings,
     JoinOrderOptimization, PhysicalOperatorSelection,
     OptimizationPreCheck
 )
-from .policies import cardinalities
-from .strategies import ues, native
 from .. import db
+from ..qal import parser
 
 
 def apply_standard_system_options(database: Optional[db.Database] = None) -> None:

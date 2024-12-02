@@ -13,10 +13,10 @@ import warnings
 from typing import Optional
 
 import postbound as pb
-from postbound import db, qal, util
+from postbound import db, qal, optimizer, util
 from postbound.db import postgres
 from postbound.experiments import workloads
-from postbound.optimizer import jointree, physops, planparams
+from postbound.optimizer import jointree
 
 warnings.simplefilter("ignore")
 
@@ -25,18 +25,18 @@ class JitteringCardinalityEstimator(pb.ParameterGeneration):
     # The entire estimation algorithm is implemented in this class. It satisfies the interface of the corresponding
     # optimization stage.
 
-    def __init__(self, optimizer: db.OptimizerInterface) -> None:
+    def __init__(self, native_optimizer: db.OptimizerInterface) -> None:
         super().__init__()
-        self.optimizer = optimizer
+        self.native_optimizer = native_optimizer
 
     def generate_plan_parameters(self, query: qal.SqlQuery,
                                  join_order: Optional[jointree.LogicalJoinTree | jointree.PhysicalQueryPlan],
-                                 operator_assignment: Optional[physops.PhysicalOperatorAssignment]
-                                 ) -> planparams.PlanParameterization:
+                                 operator_assignment: Optional[optimizer.PhysicalOperatorAssignment]
+                                 ) -> optimizer.PlanParameterization:
         # This is the most important method that handles the actual cardinality estimation
 
         # We store our cardinalities in this object
-        cardinalities = planparams.PlanParameterization()
+        cardinalities = optimizer.PlanParameterization()
 
         # Now, we need to iterate over all potential intermediate results of the query to generate an estimate for all of them
         # This is a drawback of the two-stage optimization approach used in PostBOUND: the actual physical database system has
@@ -57,7 +57,7 @@ class JitteringCardinalityEstimator(pb.ParameterGeneration):
             # estimate of the specialized query to obtain the cardinality estimate for the intermediate result.
             query_fragment = qal.transform.extract_query_fragment(query, join)
             query_fragment = qal.transform.as_star_query(query_fragment)
-            native_estimate = self.optimizer.cardinality_estimate(query_fragment)
+            native_estimate = self.native_optimizer.cardinality_estimate(query_fragment)
 
             # Apply the distortion to the estimated cardinality
             estimate_devitation = random.random()

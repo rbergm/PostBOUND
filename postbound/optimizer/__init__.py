@@ -35,3 +35,44 @@ implementation of optimization algorithms easier. These include:
 - interfaces for policies that can be used to parameterize actual optimization algorithms, e.g. to inject different cardinality
   estimation strategies. These are contained in the `policies` package
 """
+
+from . import jointree, policies
+from ._hints import (
+  ScanOperators,
+  JoinOperators,
+  PhysicalOperator,
+  ScanOperatorAssignment,
+  JoinOperatorAssignment,
+  DirectionalJoinOperatorAssignment,
+  read_operator_json,
+  PhysicalOperatorAssignment,
+  PlanParameterization,
+  HintType
+)
+from .jointree import (
+  JoinTreeVisitor,
+  PhysicalJoinMetadata, PhysicalBaseTableMetadata, PhysicalPlanMetadata,
+  PhysicalQueryPlan,
+  read_from_json
+)
+
+__all__ = [
+  "jointree",
+  "policies",
+  "ScanOperators",
+  "JoinOperators",
+  "PhysicalOperator",
+  "ScanOperatorAssignment",
+  "JoinOperatorAssignment",
+  "DirectionalJoinOperatorAssignment",
+  "read_operator_json",
+  "PhysicalOperatorAssignment",
+  "PlanParameterization",
+  "HintType",
+  "JoinTreeVisitor",
+  "PhysicalJoinMetadata",
+  "PhysicalBaseTableMetadata",
+  "PhysicalPlanMetadata",
+  "PhysicalQueryPlan",
+  "read_from_json"
+]

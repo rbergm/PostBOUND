@@ -1292,7 +1292,9 @@ def parse_query(query: str, *, bind_columns: bool | None = None,
     SqlQuery
         The parsed SQL query.
     """
-    from ..db import DatabasePool
+    # NOTE: this documentation is a 1:1 copy of qal.parse_query. Both should be kept in sync.
+
+    from ..db import DatabasePool  # local import to prevent circular imports
 
     bind_columns = bind_columns if bind_columns is not None else auto_bind_columns
     db_schema = (db_schema if db_schema or not bind_columns

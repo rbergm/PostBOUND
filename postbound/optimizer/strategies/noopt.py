@@ -3,8 +3,9 @@ from __future__ import annotations
 
 from typing import Optional
 
-from .. import jointree, physops, planparams
-from .._pipelines import JoinOrderOptimization, PhysicalOperatorSelection, ParameterGeneration
+from .. import jointree
+from .._hints import PhysicalOperatorAssignment, PlanParameterization
+from ..._pipelines import JoinOrderOptimization, PhysicalOperatorSelection, ParameterGeneration
 from ... import qal
 
 
@@ -26,8 +27,8 @@ class EmptyPhysicalOperatorSelection(PhysicalOperatorSelection):
 
     def select_physical_operators(self, query: qal.SqlQuery,
                                   join_order: Optional[jointree.LogicalJoinTree | jointree.PhysicalQueryPlan]
-                                  ) -> physops.PhysicalOperatorAssignment:
-        return physops.PhysicalOperatorAssignment()
+                                  ) -> PhysicalOperatorAssignment:
+        return PhysicalOperatorAssignment()
 
     def describe(self) -> dict:
         return {"name": "no_selection"}
@@ -38,8 +39,8 @@ class EmptyParameterization(ParameterGeneration):
 
     def generate_plan_parameters(self, query: qal.SqlQuery,
                                  join_order: Optional[jointree.LogicalJoinTree | jointree.PhysicalQueryPlan],
-                                 operator_assignment: Optional[physops.PhysicalOperatorAssignment]
-                                 ) -> Optional[planparams.PlanParameterization]:
+                                 operator_assignment: Optional[PhysicalOperatorAssignment]
+                                 ) -> Optional[PlanParameterization]:
         return None
 
     def describe(self) -> dict:

@@ -18,8 +18,9 @@ from typing import Literal, Optional
 
 import pandas as pd
 
-from .. import joingraph, jointree, physops, validation, planparams
-from .._pipelines import ParameterGeneration, CardinalityEstimator
+from .. import joingraph, jointree, validation
+from .._hints import PhysicalOperatorAssignment, PlanParameterization
+from ..._pipelines import ParameterGeneration, CardinalityEstimator
 from ... import db, qal, util
 from ...qal import parser, TableReference
 from ...experiments import workloads
@@ -112,7 +113,7 @@ class CardinalityHintsGenerator(ParameterGeneration, CardinalityEstimator, abc.A
                 continue
             yield frozenset(candidate_join)
 
-    def estimate_cardinalities(self, query: qal.SqlQuery) -> planparams.PlanParameterization:
+    def estimate_cardinalities(self, query: qal.SqlQuery) -> PlanParameterization:
         """Produces all cardinality estimates for a specific query.
 
         The default implementation of this method delegates the actual estimation to the `calculate_estimate` method. It is
@@ -125,11 +126,11 @@ class CardinalityHintsGenerator(ParameterGeneration, CardinalityEstimator, abc.A
 
         Returns
         ------
-        planparams.PlanParameterization
+        PlanParameterization
             A parameterization containing cardinality hints for all intermediates. Other attributes of the parameterization are
             not modified.
         """
-        parameterization = planparams.PlanParameterization()
+        parameterization = PlanParameterization()
         for join in self.generate_intermediates(query):
             estimate = self.calculate_estimate(query, join)
             if estimate is not None:
@@ -138,12 +139,12 @@ class CardinalityHintsGenerator(ParameterGeneration, CardinalityEstimator, abc.A
 
     def generate_plan_parameters(self, query: qal.SqlQuery,
                                  join_order: Optional[jointree.LogicalJoinTree | jointree.PhysicalQueryPlan],
-                                 operator_assignment: Optional[physops.PhysicalOperatorAssignment]
-                                 ) -> planparams.PlanParameterization:
+                                 operator_assignment: Optional[PhysicalOperatorAssignment]
+                                 ) -> PlanParameterization:
         if join_order is None:
             return self.estimate_cardinalities(query)
 
-        parameterization = planparams.PlanParameterization()
+        parameterization = PlanParameterization()
         for base_table in join_order.table_sequence():
             estimate = self.calculate_estimate(query, base_table.tables())
             if estimate is not None:

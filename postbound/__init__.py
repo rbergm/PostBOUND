@@ -56,7 +56,7 @@ information about the selected optimization strategies. Depending on the specifi
 implemented. Refer to the documentation of the respective pipelines for details.
 """
 
-from .optimizer._pipelines import (
+from ._pipelines import (
   OptimizationPipeline,
   CompleteOptimizationAlgorithm, IntegratedOptimizationPipeline,
   Cost, Cardinality,

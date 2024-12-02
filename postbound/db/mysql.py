@@ -38,7 +38,6 @@ from typing import Any, Optional
 
 import mysql.connector
 
-from postbound.optimizer import jointree, physops, planparams
 from ._db import (
     Cursor,
     Database,
@@ -51,6 +50,7 @@ from ._db import (
     UnsupportedDatabaseFeatureError
 )
 from .. import qal, util
+from .._core import ScanOperators, JoinOperators, PhysicalOperator
 from ..qal import (
     transform,
     TableReference, ColumnReference,
@@ -58,6 +58,13 @@ from ..qal import (
     Explain, Hint,
     SqlQuery,
     UnboundColumnError, VirtualTableError
+)
+from ..optimizer.jointree import (
+    JoinTree, LogicalJoinTree, PhysicalQueryPlan
+)
+from ..optimizer._hints import (
+    HintType,
+    PhysicalOperatorAssignment, PlanParameterization
 )
 from ..util import Version
 
@@ -331,9 +338,9 @@ class MysqlStatisticsInterface(DatabaseStatistics):
         return self._calculate_most_common_values(column, k=k, cache_enabled=True)
 
 
-MysqlJoinHints = {physops.JoinOperators.HashJoin, physops.JoinOperators.NestedLoopJoin}
-MysqlScanHints = {physops.ScanOperators.IndexScan, physops.ScanOperators.SequentialScan}
-MysqlPlanHints = {planparams.HintType.JoinOrderHint, planparams.HintType.OperatorHint}
+MysqlJoinHints = {JoinOperators.HashJoin, JoinOperators.NestedLoopJoin}
+MysqlScanHints = {ScanOperators.IndexScan, ScanOperators.SequentialScan}
+MysqlPlanHints = {HintType.JoinOrderHint, HintType.OperatorHint}
 
 
 class _MysqlExplainClause(Explain):
@@ -373,7 +380,7 @@ def _replace_casts(e: SqlExpression) -> SqlExpression:
     return _MysqlCastExpression(e) if isinstance(e, CastExpression) else e
 
 
-def _generate_join_order_hint(join_order: Optional[jointree.JoinTree]) -> str:
+def _generate_join_order_hint(join_order: Optional[JoinTree]) -> str:
     if not join_order:
         return ""
 
@@ -382,10 +389,10 @@ def _generate_join_order_hint(join_order: Optional[jointree.JoinTree]) -> str:
     return f"  JOIN_ORDER({join_order_text})"
 
 
-def _obtain_physical_operators(join_order: Optional[jointree.LogicalJoinTree | jointree.PhysicalQueryPlan],
-                               physical_operators: Optional[physops.PhysicalOperatorAssignment]
-                               ) -> Optional[physops.PhysicalOperatorAssignment]:
-    if not isinstance(join_order, jointree.PhysicalQueryPlan):
+def _obtain_physical_operators(join_order: Optional[LogicalJoinTree | PhysicalQueryPlan],
+                               physical_operators: Optional[PhysicalOperatorAssignment]
+                               ) -> Optional[PhysicalOperatorAssignment]:
+    if not isinstance(join_order, PhysicalQueryPlan):
         return physical_operators
     if not physical_operators:
         return join_order.physical_operators()
@@ -393,18 +400,18 @@ def _obtain_physical_operators(join_order: Optional[jointree.LogicalJoinTree | j
 
 
 MysqlOptimizerHints = {
-    physops.JoinOperators.NestedLoopJoin: "NO_BNL",
-    physops.JoinOperators.HashJoin: "BNL",
-    physops.ScanOperators.SequentialScan: "NO_INDEX",
-    physops.ScanOperators.IndexScan: "INDEX",
-    physops.ScanOperators.IndexOnlyScan: "INDEX",
-    physops.ScanOperators.BitmapScan: "INDEX_MERGE"
+    JoinOperators.NestedLoopJoin: "NO_BNL",
+    JoinOperators.HashJoin: "BNL",
+    ScanOperators.SequentialScan: "NO_INDEX",
+    ScanOperators.IndexScan: "INDEX",
+    ScanOperators.IndexOnlyScan: "INDEX",
+    ScanOperators.BitmapScan: "INDEX_MERGE"
 }
 """See https://dev.mysql.com/doc/refman/8.0/en/optimizer-hints.html"""
 
 
-def _generate_operator_hints(join_order: Optional[jointree.JoinTree],
-                             physical_operators: Optional[physops.PhysicalOperatorAssignment]) -> str:
+def _generate_operator_hints(join_order: Optional[JoinTree],
+                             physical_operators: Optional[PhysicalOperatorAssignment]) -> str:
     if not physical_operators:
         return ""
     hints = []
@@ -421,7 +428,7 @@ def _generate_operator_hints(join_order: Optional[jointree.JoinTree],
     return "\n".join(hints)
 
 
-MysqlSwitchableOptimizations = {physops.JoinOperators.HashJoin: "block_nested_loop"}
+MysqlSwitchableOptimizations = {JoinOperators.HashJoin: "block_nested_loop"}
 """See https://dev.mysql.com/doc/refman/8.0/en/switchable-optimizations.html"""
 
 
@@ -434,8 +441,8 @@ def _escape_setting(setting) -> str:
     return f"'{setting}'"
 
 
-def _generate_prep_statements(physical_operators: Optional[physops.PhysicalOperatorAssignment],
-                              plan_parameters: Optional[planparams.PlanParameterization]) -> str:
+def _generate_prep_statements(physical_operators: Optional[PhysicalOperatorAssignment],
+                              plan_parameters: Optional[PlanParameterization]) -> str:
     statements = []
     if physical_operators:
         switchable_optimizations = []
@@ -453,10 +460,10 @@ def _generate_prep_statements(physical_operators: Optional[physops.PhysicalOpera
     return "\n".join(statements) if statements else ""
 
 
-def _obtain_plan_parameters(join_order: Optional[jointree.LogicalJoinTree | jointree.PhysicalQueryPlan],
-                            plan_parameters: Optional[planparams.PlanParameterization]
-                            ) -> Optional[planparams.PlanParameterization]:
-    if not isinstance(join_order, jointree.PhysicalQueryPlan):
+def _obtain_plan_parameters(join_order: Optional[LogicalJoinTree | PhysicalQueryPlan],
+                            plan_parameters: Optional[PlanParameterization]
+                            ) -> Optional[PlanParameterization]:
+    if not isinstance(join_order, PhysicalQueryPlan):
         return plan_parameters
     if not plan_parameters:
         return join_order.plan_parameters()
@@ -469,9 +476,9 @@ class MysqlHintService(HintService):
         self._mysql_instance = mysql_instance
 
     def generate_hints(self, query: SqlQuery,
-                       join_order: Optional[jointree.LogicalJoinTree | jointree.PhysicalQueryPlan] = None,
-                       physical_operators: Optional[physops.PhysicalOperatorAssignment] = None,
-                       plan_parameters: Optional[planparams.PlanParameterization] = None) -> SqlQuery:
+                       join_order: Optional[LogicalJoinTree | PhysicalQueryPlan] = None,
+                       physical_operators: Optional[PhysicalOperatorAssignment] = None,
+                       plan_parameters: Optional[PlanParameterization] = None) -> SqlQuery:
         if join_order and not join_order.is_linear():
             raise UnsupportedDatabaseFeatureError(self._mysql_instance,
                                                   "Can only enforce join order for linear join trees for now")
@@ -501,7 +508,7 @@ class MysqlHintService(HintService):
 
         return qal.format_quick(updated_query, inline_hint_block=True)
 
-    def supports_hint(self, hint: physops.PhysicalOperator | planparams.HintType) -> bool:
+    def supports_hint(self, hint: PhysicalOperator | HintType) -> bool:
         return hint in MysqlJoinHints | MysqlScanHints | MysqlPlanHints
 
 
@@ -815,16 +822,16 @@ def parse_mysql_explain_plan(query: Optional[SqlQuery], explain_data: dict) -> M
 
 
 _MysqlExplainScanNodes = {
-    _IdxLookup: physops.ScanOperators.IndexScan,
-    _IdxMerge: physops.ScanOperators.BitmapScan,
-    _TabScan: physops.ScanOperators.SequentialScan
+    _IdxLookup: ScanOperators.IndexScan,
+    _IdxMerge: ScanOperators.BitmapScan,
+    _TabScan: ScanOperators.SequentialScan
 }
 
 
 _MysqlExplainJoinNodes = {
-    "Block Nested Loop": physops.JoinOperators.NestedLoopJoin,
-    "Batched Key Access": physops.JoinOperators.NestedLoopJoin,
-    "Hash Join": physops.JoinOperators.HashJoin
+    "Block Nested Loop": JoinOperators.NestedLoopJoin,
+    "Batched Key Access": JoinOperators.NestedLoopJoin,
+    "Hash Join": JoinOperators.HashJoin
 }
 
 
@@ -837,7 +844,7 @@ def _node_sequence_to_qep(nodes: Sequence[MysqlExplainNode]) -> QueryExecutionPl
         final_table, first_table = nodes
         final_qep = final_table._make_qep_node_for_scan()
         first_qep = first_table._make_qep_node_for_scan()
-        join_operator = _MysqlExplainJoinNodes.get(final_table.join_type, physops.JoinOperators.NestedLoopJoin)
+        join_operator = _MysqlExplainJoinNodes.get(final_table.join_type, JoinOperators.NestedLoopJoin)
         join_node = QueryExecutionPlan(final_table.join_type, True, False,
                                        children=[final_qep, first_qep], inner_child=final_qep,
                                        cost=final_table.join_cost,
@@ -850,7 +857,7 @@ def _node_sequence_to_qep(nodes: Sequence[MysqlExplainNode]) -> QueryExecutionPl
         former_qep = _node_sequence_to_qep(former_tables)
         final_qep = final_table._make_qep_node_for_scan()
 
-        join_operator = _MysqlExplainJoinNodes.get(final_table.join_type, physops.JoinOperators.NestedLoopJoin)
+        join_operator = _MysqlExplainJoinNodes.get(final_table.join_type, JoinOperators.NestedLoopJoin)
         join_node = QueryExecutionPlan(final_table.join_type, True, False,
                                        children=[final_qep, former_qep], inner_child=final_qep,
                                        cost=final_table.join_cost,

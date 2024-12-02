@@ -11,7 +11,9 @@ from typing import Literal, Optional
 
 import networkx as nx
 
-from .. import jointree, physops
+from .. import jointree
+from .._hints import ScanOperatorAssignment, JoinOperatorAssignment, PhysicalOperatorAssignment
+from ..._core import ScanOperators, JoinOperators
 from ... import db, qal
 from ...util import networkx as nx_utils
 
@@ -204,11 +206,11 @@ class ExhaustiveOperatorEnumerator:
 
     Parameters
     ----------
-    scan_operators : Optional[Iterable[physops.ScanOperators]], optional
+    scan_operators : Optional[Iterable[ScanOperators]], optional
         The scan operators that can be used in the query plans. If this is ``None`` or empty, all scans supported by the
         `database` are used. Likewise, if the iterable contains an operator that is not supported by the database, it is
         exlcuded from generation.
-    join_operators : Optional[Iterable[physops.JoinOperators]], optional
+    join_operators : Optional[Iterable[JoinOperators]], optional
         The join operators that can be used in the query plans. If this is ``None`` or empty, all joins supported by the
         `database` are used. Likewise, if the iterable contains an operator that is not supported by the database, it is
         exlcuded from generation.
@@ -229,8 +231,8 @@ class ExhaustiveOperatorEnumerator:
         If both scans and joins are disabled
     """
 
-    def __init__(self, scan_operators: Optional[Iterable[physops.ScanOperators]] = None,
-                 join_operators: Optional[Iterable[physops.JoinOperators]] = None, *,
+    def __init__(self, scan_operators: Optional[Iterable[ScanOperators]] = None,
+                 join_operators: Optional[Iterable[JoinOperators]] = None, *,
                  include_scans: bool = True, include_joins: bool = True,
                  database: Optional[db.Database] = None) -> None:
         if not include_joins and not include_scans:
@@ -238,13 +240,13 @@ class ExhaustiveOperatorEnumerator:
         self._db = database if database is not None else db.DatabasePool.get_instance().current_database()
         self._include_scans = include_scans
         self._include_joins = include_joins
-        allowed_scan_ops = scan_operators if scan_operators else physops.ScanOperators
-        allowed_join_ops = join_operators if join_operators else physops.JoinOperators
+        allowed_scan_ops = scan_operators if scan_operators else ScanOperators
+        allowed_join_ops = join_operators if join_operators else JoinOperators
         self.allowed_scan_ops = frozenset(scan_op for scan_op in allowed_scan_ops if self._db.hinting().supports_hint(scan_op))
         self.allowed_join_ops = frozenset(join_op for join_op in allowed_join_ops if self._db.hinting().supports_hint(join_op))
 
     def all_operator_assignments_for(self, query: qal.SqlQuery, join_order: jointree.JoinTree
-                                     ) -> Generator[physops.PhysicalOperatorAssignment, None, None]:
+                                     ) -> Generator[PhysicalOperatorAssignment, None, None]:
         """Produces a generator for all possible operator assignments of the allowed operators.
 
         The precise structure of the operator assignments depends on the service configuration. Take a look at the class
@@ -259,7 +261,7 @@ class ExhaustiveOperatorEnumerator:
 
         Yields
         ------
-        Generator[physops.PhysicalOperatorAssignment, None, None]
+        Generator[PhysicalOperatorAssignment, None, None]
             A generator producing all possible operator assignments. The assignments will not contain any cost estimates, nor
             will they specify join directions or parallization data.
         """
@@ -275,20 +277,20 @@ class ExhaustiveOperatorEnumerator:
 
         for scan_selection in itertools.product(*scan_ops):
             current_scan_pairs = zip(tables, scan_selection)
-            current_scan_assignment = physops.PhysicalOperatorAssignment()
+            current_scan_assignment = PhysicalOperatorAssignment()
             for table, operator in current_scan_pairs:
-                current_scan_assignment.set_scan_operator(physops.ScanOperatorAssignment(operator, table))
+                current_scan_assignment.set_scan_operator(ScanOperatorAssignment(operator, table))
 
             for join_selection in itertools.product(*join_ops):
                 current_join_pairs = zip(joins, join_selection)
                 current_total_assignment = current_scan_assignment.clone()
                 for join, operator in current_join_pairs:
-                    current_total_assignment.set_join_operator(physops.JoinOperatorAssignment(operator, join))
+                    current_total_assignment.set_join_operator(JoinOperatorAssignment(operator, join))
 
                 yield current_total_assignment
 
     def _all_join_assignments_for(self, query: qal.SqlQuery,
-                                  join_order: jointree.JoinTree) -> Generator[physops.PhysicalOperatorAssignment, None, None]:
+                                  join_order: jointree.JoinTree) -> Generator[PhysicalOperatorAssignment, None, None]:
         """Specialized handler for assignments that only contain join operators.
 
         Parameters
@@ -300,7 +302,7 @@ class ExhaustiveOperatorEnumerator:
 
         Yields
         ------
-        Generator[physops.PhysicalOperatorAssignment, None, None]
+        Generator[PhysicalOperatorAssignment, None, None]
             A generator producing all possible operator assignments. The assignments will not contain any cost estimates, nor
             will they specify join directions or parallization data.
         """
@@ -308,13 +310,13 @@ class ExhaustiveOperatorEnumerator:
         join_ops = [list(self.allowed_join_ops)] * len(joins)
         for join_selection in itertools.product(*join_ops):
             current_join_pairs = zip(joins, join_selection)
-            assignment = physops.PhysicalOperatorAssignment()
+            assignment = PhysicalOperatorAssignment()
             for join, operator in current_join_pairs:
-                assignment.set_join_operator(physops.JoinOperatorAssignment(operator, join))
+                assignment.set_join_operator(JoinOperatorAssignment(operator, join))
             yield assignment
 
     def _all_scan_assignments_for(self, query: qal.SqlQuery,
-                                  join_order: jointree.JoinTree) -> Generator[physops.PhysicalOperatorAssignment, None, None]:
+                                  join_order: jointree.JoinTree) -> Generator[PhysicalOperatorAssignment, None, None]:
         """Specialized handler for assignments that only contain scan operators.
 
         Parameters
@@ -326,16 +328,16 @@ class ExhaustiveOperatorEnumerator:
 
         Yields
         ------
-        Generator[physops.PhysicalOperatorAssignment, None, None]
+        Generator[PhysicalOperatorAssignment, None, None]
             A generator producing all possible operator assignments. The assignments will not contain any cost estimates, nor
             will they specify join directions or parallization data.        """
         tables = list(query.tables())
         scans = [list(self.allowed_scan_ops)] * len(tables)
         for scan_selection in itertools.product(*scans):
             current_scan_pairs = zip(tables, scan_selection)
-            assignment = physops.PhysicalOperatorAssignment()
+            assignment = PhysicalOperatorAssignment()
             for table, operator in current_scan_pairs:
-                assignment.set_scan_operator(physops.ScanOperatorAssignment(operator, table))
+                assignment.set_scan_operator(ScanOperatorAssignment(operator, table))
             yield assignment
 
 
