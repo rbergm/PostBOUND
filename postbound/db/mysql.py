@@ -340,7 +340,7 @@ class MysqlStatisticsInterface(DatabaseStatistics):
 
 MysqlJoinHints = {JoinOperators.HashJoin, JoinOperators.NestedLoopJoin}
 MysqlScanHints = {ScanOperators.IndexScan, ScanOperators.SequentialScan}
-MysqlPlanHints = {HintType.JoinOrderHint, HintType.OperatorHint}
+MysqlPlanHints = {HintType.LinearJoinOrder, HintType.Operator}
 
 
 class _MysqlExplainClause(Explain):

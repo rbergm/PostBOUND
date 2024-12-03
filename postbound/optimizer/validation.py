@@ -8,12 +8,15 @@ The `OptimizationPreCheck` defines the abstract interface that all checks should
 from __future__ import annotations
 
 import abc
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass
+from typing import Optional
 
 import networkx as nx
 
+from ._hints import HintType
 from .. import db, qal, util
+from .._core import PhysicalOperator
 
 ImplicitFromClauseFailure = "NO_IMPLICIT_FROM_CLAUSE"
 EquiJoinFailure = "NON_EQUI_JOIN"
@@ -53,6 +56,21 @@ class PreCheckResult:
             The check result
         """
         return PreCheckResult()
+
+    def with_failure(failure: str | list[str]) -> PreCheckResult:
+        """Generates a check result for a specific failure.
+
+        Parameters
+        ----------
+        failure : str | list[str]
+            The failure message(s)
+
+        Returns
+        -------
+        PreCheckResult
+            The check result
+        """
+        return PreCheckResult(False, failure)
 
     def ensure_all_passed(self, context: qal.SqlQuery | db.Database | None = None) -> None:
         """Raises an error if the check contains any failures.
@@ -434,7 +452,7 @@ class SupportedHintCheck(OptimizationPreCheck):
 
     Parameters
     ----------
-    hints : object
+    hints : HintType | PhysicalOperator | Iterable[HintType | PhysicalOperator]
         The operators and hints that have to be supported by the database system. Can be either a single hint, or an iterable
         of hints.
 
@@ -443,7 +461,7 @@ class SupportedHintCheck(OptimizationPreCheck):
     HintService.supports_hint
     """
 
-    def __init__(self, hints: object) -> None:
+    def __init__(self, hints: HintType | PhysicalOperator | Iterable[HintType | PhysicalOperator]) -> None:
         super().__init__("database-check")
         self._features = util.enlist(hints)
 
@@ -454,6 +472,41 @@ class SupportedHintCheck(OptimizationPreCheck):
 
     def describe(self) -> dict:
         return {"name": "database_operator_support", "features": self._features}
+
+
+class CustomCheck(OptimizationPreCheck):
+    """Check to quickly implement arbitrary one-off checks.
+
+    The custom check somewhat clashes with directly implementing the `OptimizationPreCheck` interface. The latter is generally
+    preferred since it is more readable and easier to understand. However, the custom check can be useful for checks that
+    will not be used in multiple places and are not worth the effort of creating a separate class.
+
+    Parameters
+    ----------
+    name : str, optional
+        The name of the check. It is heavily recommended to supply a descriptive name, even though a default value exists.
+    query_check : Optional[Callable[[qal.SqlQuery], PreCheckResult]], optional
+        Check to apply to each query
+    db_check : Optional[Callable[[db.Database], PreCheckResult]], optional
+        Check to apply to the database
+    """
+
+    def __init__(self, name: str = "custom-check", *,
+                 query_check: Optional[Callable[[qal.SqlQuery], PreCheckResult]] = None,
+                 db_check: Optional[Callable[[db.Database], PreCheckResult]] = None) -> None:
+        super().__init__(name)
+        self._query_check = query_check
+        self._db_check = db_check
+
+    def check_supported_query(self, query: qal.SqlQuery) -> PreCheckResult:
+        if self._query_check is None:
+            return PreCheckResult.with_all_passed()
+        return self._query_check(query)
+
+    def check_supported_database_system(self, database_instance: db.Database) -> PreCheckResult:
+        if self._db_check is None:
+            return PreCheckResult.with_all_passed()
+        return self._db_check(database_instance)
 
 
 class UnsupportedQueryError(RuntimeError):

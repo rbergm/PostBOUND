@@ -20,6 +20,9 @@ of these interfaces are once again abstract and implemented according to the spe
 Take a look at the individual interfaces for further information about their functionality and intended usage.
 """
 
+from __future__ import annotations
+
+from . import postgres, mysql
 from ._db import (
     Cursor,
     Connection,
@@ -40,6 +43,7 @@ from ._db import (
 )
 
 __all__ = [
+    "postgres", "mysql",
     "Cursor",
     "Connection",
     "PrewarmingSupport",
@@ -57,3 +61,18 @@ __all__ = [
     "DatabaseServerError",
     "DatabaseUserError"
 ]
+
+
+def current_database() -> Database:
+    """Provides the current database from the `DatabasePool`.
+
+    Returns
+    -------
+    Database
+        The current database instance. If there is not exactly one database in the pool, a `ValueError` is raised.
+
+    See Also
+    --------
+    DatabasePool.current_database
+    """
+    return DatabasePool.current_database()

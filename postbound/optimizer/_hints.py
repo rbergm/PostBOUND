@@ -732,9 +732,9 @@ class HintType(Enum):
     aspects such as the join order. Furthermore, not all database systems will support all operators. The availability of
     certain hints can be checked on the database system interface and should be handled as part of the optimization pre-checks.
     """
-    JoinOrderHint = "Join order"
-    JoinDirectionHint = "Join direction"
-    JoinSubqueryHint = "Bushy join order"
-    OperatorHint = "Physical operators"
-    ParallelizationHint = "Par. workers"
-    CardinalityHint = "Cardinality"
+    LinearJoinOrder = "Join order"
+    JoinDirection = "Join direction"
+    BushyJoinOrder = "Bushy join order"
+    Operator = "Physical operators"
+    Parallelization = "Par. workers"
+    Cardinality = "Cardinality"

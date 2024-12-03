@@ -1434,9 +1434,9 @@ PostgresScanHints = {ScanOperators.SequentialScan, ScanOperators.IndexScan,
                      ScanOperators.IndexOnlyScan, ScanOperators.BitmapScan}
 """All scan operators that are supported by Postgres."""
 
-PostgresPlanHints = {HintType.CardinalityHint, HintType.ParallelizationHint,
-                     HintType.JoinOrderHint, HintType.JoinSubqueryHint,
-                     HintType.JoinDirectionHint, HintType.OperatorHint}
+PostgresPlanHints = {HintType.Cardinality, HintType.Parallelization,
+                     HintType.LinearJoinOrder, HintType.BushyJoinOrder,
+                     HintType.JoinDirection, HintType.Operator}
 """All non-operator hints supported by Postgres, that can be used to enforce additional optimizer behaviour."""
 
 
