@@ -4,11 +4,11 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "PostBOUND"
-version = "0.7.0"
+version = "0.8.0"
 authors = [{ name = "Rico Bergmann", email = "rico.bergmann1@tu-dresden.de" }]
 description = "PostBOUND is an adaptable framework to implement and evaluate database query optimizers"
 readme = "README.md"
-requires-python = ">=3.9"
+requires-python = ">=3.10"
 classifiers = [
     "Programming Language :: Python :: 3",
     "License :: OSI Approved :: Apache Software License",
@@ -16,26 +16,25 @@ classifiers = [
     "Operating System :: OS Independent",
 ]
 dependencies = [
-    "build==1.2.1",
-    "graphviz==0.20.3",
     "levenshtein==0.25.1",
-    "matplotlib==3.9.0",
     "mo-sql-parsing==10.651.24172",
-    "mysql-connector-python==9.0.0",
     "natsort==8.4.0",
     "networkx==3.3",
     "numpy==2.0.0",
     "pandas==2.2.2",
     "psycopg[binary]==3.2.1",
     "scipy==1.14.0",
-    "setuptools==59.6.0",
     "tomli==2.0.1",
-    "wheel==0.43.0"
 ]
 
 [project.optional-dependencies]
 vis = [
-    "seaborn==0.13.2"
+    "matplotlib==3.9.0",
+    "seaborn==0.13.2",
+    "graphviz==0.20.3",
+]
+mysql = [
+    "mysql-connector-python==9.0.0"
 ]
 
 

@@ -22,7 +22,7 @@ Take a look at the individual interfaces for further information about their fun
 
 from __future__ import annotations
 
-from . import postgres, mysql
+from . import postgres
 from ._db import (
     Cursor,
     Connection,
@@ -43,7 +43,7 @@ from ._db import (
 )
 
 __all__ = [
-    "postgres", "mysql",
+    "postgres",
     "Cursor",
     "Connection",
     "PrewarmingSupport",

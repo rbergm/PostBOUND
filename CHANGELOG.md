@@ -14,12 +14,17 @@ Be carefull when updating and check the changelog!
 
 ---
 
-## 👷 Version 0.7.1 🚧
+## 👷 Version 0.8.0 🚧
 
 ### New features
-- Benchmarking utilities now provide a `timeout` parameter. Notice that timeouts are currently only supported for PostgreSQL.
+- `tools/setup-py-venv.sh` now provides a one-stop-shop to install PostBOUND as an external package into a Python virtual
+  environment
+- Added a `timeout` parameter to benchmarking utilities. Notice that timeouts are currently only supported for PostgreSQL.
 
 ### Updates
+- Refactored and re-organized almost the entire code base. For many use-cases it should now be sufficient to only
+  `import postbound as pb`. The main module provides the most commonly used types directly. Likewise, double imports such as
+  `from postbound.db import db` are no longer necessary.
 - The two-stage optimization pipeline no longer tolerates `PhysicalQueryPlan` instances where a `LogicalJoinTree` is expected.
   This clarifies the interfaces a lot and makes development of novel algorithms more straightforward. To ensure a graceful
   handling of older implementations, the two-stage pipeline transforms physical plans into logical join orders as a safeguard.
