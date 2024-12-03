@@ -7,14 +7,11 @@
 #
 
 import postbound as pb
-from postbound import db, qal, optimizer
-from postbound.db import postgres
 from postbound.optimizer.strategies import native
-from postbound.experiments import workloads
 
 # Setup: we optimize queries from the Join Order Benchmark on a Postgres database
-postgres_db = postgres.connect()
-job_workload = workloads.job()
+postgres_db = pb.db.postgres.connect()
+job_workload = pb.workloads.job()
 
 # Since obtaining native execution plans is a pretty common use-case, there already is a pre-defined strategy to do this.
 # Take a look at the native module for other strategies.
@@ -26,18 +23,18 @@ predef_pipeline.optimization_algorithm = native.NativeOptimizer(postgres_db)
 
 # Nevertheless, native optimization (or parts of it) can still be implemented using only a couple lines of code:
 class OurNativeOptimizer(pb.CompleteOptimizationAlgorithm):
-    def __init__(self, optimizer: db.OptimizerInterface) -> None:
+    def __init__(self, native_optimizer: pb.db.OptimizerInterface) -> None:
         super().__init__()
-        self.optimizer = optimizer
+        self.native_optimizer = native_optimizer
 
-    def optimize_query(self, query: qal.SqlQuery) -> optimizer.PhysicalQueryPlan:
+    def optimize_query(self, query: pb.qal.SqlQuery) -> pb.opt.PhysicalQueryPlan:
         # Obtain the native query exection plan
-        native_plan = self.optimizer.query_plan(query)
+        native_plan = self.native_optimizer.query_plan(query)
 
         # Generate the optimizer information for the plan.
         # Notice the distinction between an execution plan as modelled by the database interface, and the execution plan as
         # used by the optimization strategies
-        execution_plan = optimizer.PhysicalQueryPlan.load_from_query_plan(native_plan)
+        execution_plan = pb.opt.PhysicalQueryPlan.load_from_query_plan(native_plan)
         return execution_plan
 
     def describe(self) -> dict:
@@ -54,10 +51,10 @@ query = job_workload["1a"]
 
 print("Pre-defined strategy:")
 predef_optimization = predef_pipeline.optimize_query(query)
-print(qal.format_quick(predef_optimization))
+print(pb.qal.format_quick(predef_optimization))
 print("--- --- ---")
 
 print("Custom strategy:")
 custom_optimization = custom_pipeline.optimize_query(query)
-print(qal.format_quick(custom_optimization))
+print(pb.qal.format_quick(custom_optimization))
 print("--- --- ---")

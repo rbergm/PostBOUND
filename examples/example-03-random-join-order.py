@@ -23,9 +23,14 @@ class RandomJoinOrderOptimizer(pb.JoinOrderOptimization):
     # The entire join ordering algorithm is implemented in this class. It satisfies the interface of the corresponding
     # optimization stage.
 
-    def __init__(self, database: Optional[db.Database] = None) -> None:
+    def __init__(self, target_db: Optional[db.Database] = None) -> None:
         super().__init__()
-        self.database = database if database is not None else db.DatabasePool.current_database()
+
+        # Strictly speaking, we do not need the target database here, since we are only concerned with linear join orders.
+        # However, we might also develop a more adaptive algorithm that checks which hints are supported by the target
+        # database. If it also supports bushy join orders, we might generate such join orders instead.
+        # Therefore, we store the target database here and demonstrate how we can easily access it using the DatabasePool
+        self.target_db = target_db if target_db is not None else pb.db.current_database()
 
     def optimize_join_order(self, query: qal.SqlQuery) -> jointree.LogicalJoinTree:
         # This is the most important method that handles the actual join order optimization
@@ -61,7 +66,14 @@ class RandomJoinOrderOptimizer(pb.JoinOrderOptimization):
     def pre_check(self) -> validation.OptimizationPreCheck:
         # Our optimizer only works for queries without cross products (there are no join paths between the different
         # subqueries). Therefore, we must require that it is not executed on "bad" queries via a pre-check.
-        return validation.CrossProductPreCheck()
+        query_check = validation.CrossProductPreCheck()
+
+        # Furthermore, we must ensure that the target database supports enforcing linear join orders. This is exactly, what
+        # the SupportedHintCheck does.
+        db_check = validation.SupportedHintCheck(pb.opt.HintType.LinearJoinOrder)
+
+        # No, just combine the individual checks into a single one check
+        return validation.CompoundCheck([query_check, db_check])
 
 
 # Setup: we optimize queries from the Join Order Benchmark on a Postgres database

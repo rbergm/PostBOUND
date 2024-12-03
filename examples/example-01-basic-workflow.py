@@ -4,17 +4,18 @@
 # these concepts in more detail. The example is focused on the UES optimization algorithm.
 #
 # Requirements: a running IMDB instance on Postgres with the connect file being set-up correctly. This can be achieved using
-# the utilities in the root postgres directory.
+# the utilities postgres directory under db-support/
 #
 
 # Step 0: imports
-# this includes the optimization modules, database modules and possibly workload modules
+# The main PostBOUND package provides access to the frequently-used parts of the library. For use-cases that do not fit into
+# standard scenarios, the sub-packages can be imported directly. This also includes parts of the library that are not
+# considered core functionality per se.
 import postbound as pb
 from postbound.optimizer import presets
-from postbound.db import postgres
 
 # Step 1: System setup
-postgres_instance = postgres.connect()
+postgres_instance = pb.db.postgres.connect()
 presets.apply_standard_system_options()
 job_workload = pb.workloads.job()
 
