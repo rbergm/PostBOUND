@@ -68,10 +68,11 @@ from ._pipelines import (
   CompleteOptimizationAlgorithm, IntegratedOptimizationPipeline,
   Cost, Cardinality,
   CardinalityEstimator, CostModel, PlanEnumerator, TextBookOptimizationPipeline,
-  JoinOrderOptimization, PhysicalOperatorSelection, PlanParameterization, TwoStageOptimizationPipeline,
+  JoinOrderOptimization, PhysicalOperatorSelection, ParameterGeneration, TwoStageOptimizationPipeline,
   IncrementalOptimizationStep, IncrementalOptimizationPipeline,
   as_complete_algorithm, OptimizationSettings
 )
+from .qal import relalg
 from .experiments import workloads
 from .experiments.executor import execute_workload, optimize_and_execute_workload
 
@@ -83,8 +84,9 @@ __all__ = [
   "CompleteOptimizationAlgorithm", "IntegratedOptimizationPipeline",
   "Cost", "Cardinality",
   "CardinalityEstimator", "CostModel", "PlanEnumerator", "TextBookOptimizationPipeline",
-  "JoinOrderOptimization", "PhysicalOperatorSelection", "PlanParameterization", "TwoStageOptimizationPipeline",
+  "JoinOrderOptimization", "PhysicalOperatorSelection", "ParameterGeneration", "TwoStageOptimizationPipeline",
   "IncrementalOptimizationStep", "IncrementalOptimizationPipeline",
   "as_complete_algorithm", "OptimizationSettings",
+  "relalg",
   "workloads", "execute_workload", "optimize_and_execute_workload"
 ]
