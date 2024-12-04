@@ -263,7 +263,7 @@ __all__ = [
 
 
 def parse_query(query: str, *, bind_columns: Optional[bool] = None,
-                db_schema: Optional["DBSchema"] = None) -> SqlQuery:  # noqa: F821
+                db_schema: Optional["DBSchema"] = None) -> SqlQuery:  # type: ignore # noqa: F821
     """Parses a query string into a proper `SqlQuery` object.
 
     During parsing, the appropriate type of SQL query (i.e. with implicit, explicit or mixed ``FROM`` clause) will be

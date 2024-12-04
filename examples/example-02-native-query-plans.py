@@ -27,14 +27,14 @@ class OurNativeOptimizer(pb.CompleteOptimizationAlgorithm):
         super().__init__()
         self.native_optimizer = native_optimizer
 
-    def optimize_query(self, query: pb.qal.SqlQuery) -> pb.opt.PhysicalQueryPlan:
+    def optimize_query(self, query: pb.qal.SqlQuery) -> pb.PhysicalQueryPlan:
         # Obtain the native query exection plan
         native_plan = self.native_optimizer.query_plan(query)
 
         # Generate the optimizer information for the plan.
         # Notice the distinction between an execution plan as modelled by the database interface, and the execution plan as
         # used by the optimization strategies
-        execution_plan = pb.opt.PhysicalQueryPlan.load_from_query_plan(native_plan)
+        execution_plan = pb.PhysicalQueryPlan.load_from_query_plan(native_plan)
         return execution_plan
 
     def describe(self) -> dict:

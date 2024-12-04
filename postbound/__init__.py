@@ -72,7 +72,9 @@ from ._pipelines import (
   IncrementalOptimizationStep, IncrementalOptimizationPipeline,
   as_complete_algorithm, OptimizationSettings
 )
-from .qal import relalg
+from .db import Database
+from .qal import relalg, transform, SqlQuery
+from .optimizer import PhysicalQueryPlan
 from .experiments import workloads
 from .experiments.executor import execute_workload, optimize_and_execute_workload
 
@@ -87,6 +89,8 @@ __all__ = [
   "JoinOrderOptimization", "PhysicalOperatorSelection", "ParameterGeneration", "TwoStageOptimizationPipeline",
   "IncrementalOptimizationStep", "IncrementalOptimizationPipeline",
   "as_complete_algorithm", "OptimizationSettings",
-  "relalg",
+  "Database",
+  "relalg", "transform", "SqlQuery",
+  "PhysicalQueryPlan",
   "workloads", "execute_workload", "optimize_and_execute_workload"
 ]

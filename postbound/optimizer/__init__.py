@@ -36,7 +36,7 @@ implementation of optimization algorithms easier. These include:
   estimation strategies. These are contained in the `policies` package
 """
 
-from . import jointree, policies
+from . import joingraph, jointree, policies
 from ._hints import (
   ScanOperators,
   JoinOperators,
@@ -57,6 +57,7 @@ from .jointree import (
 )
 
 __all__ = [
+  "joingraph",
   "jointree",
   "policies",
   "ScanOperators",

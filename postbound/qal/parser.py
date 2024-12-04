@@ -1173,7 +1173,7 @@ class _MospQueryParser:
 
 
 def bind_column_references(query: QueryType, *, with_schema: bool = True,
-                           db_schema: Optional["DatabaseSchema"] = None) -> QueryType:  # noqa: F821
+                           db_schema: Optional["DatabaseSchema"] = None) -> QueryType:  # noqa: F821 # type: ignore
     """Determines the tables that each column belongs to and sets the appropriate references.
 
     This binding of columns to their tables happens in two phases: During the first phase, a *syntactic* binding is performed.
@@ -1262,7 +1262,8 @@ def bind_column_references(query: QueryType, *, with_schema: bool = True,
 
 
 def parse_query(query: str, *, bind_columns: bool | None = None,
-                db_schema: Optional["DatabaseSchema"] = None, _skip_all_binding: bool = False) -> SqlQuery:  # noqa: F821
+                db_schema: Optional["DatabaseSchema"] = None,  # type: ignore # noqa: F821
+                _skip_all_binding: bool = False) -> SqlQuery:
     """Parses a query string into a proper `SqlQuery` object.
 
     During parsing, the appropriate type of SQL query (i.e. with implicit, explicit or mixed ``FROM`` clause) will be

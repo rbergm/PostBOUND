@@ -9,7 +9,7 @@ from typing import Literal, Optional
 
 import networkx as nx
 
-from .. import db, qal, util
+from .. import qal, util
 from ..qal import TableReference, ColumnReference, AbstractPredicate
 
 
@@ -160,7 +160,7 @@ class IndexInfo:
         return IndexInfo(column, "none")
 
     @staticmethod
-    def generate_for(column: ColumnReference, db_schema: db.DatabaseSchema) -> IndexInfo:
+    def generate_for(column: ColumnReference, db_schema: "DatabaseSchema") -> IndexInfo:  # type: ignore # noqa: F821
         """Determines available indexes for a specific column.
 
         Parameters
@@ -383,8 +383,12 @@ class JoinGraph(Mapping[TableReference, TableInfo]):
     additional predicates that were not present in the original query.
     """
 
-    def __init__(self, query: qal.ImplicitSqlQuery, db_schema: Optional[db.DatabaseSchema] = None, *,
+    def __init__(self, query: qal.ImplicitSqlQuery,
+                 db_schema: Optional["DatabaseSchema"] = None, *,  # type: ignore # noqa: F821
                  include_predicate_equivalence_classes: bool = False) -> None:
+
+        from .. import db  # local import to avoid circular dependencies
+
         db_schema = db_schema if db_schema else db.DatabasePool.get_instance().current_database().schema()
         self.query = query
         self._db_schema = db_schema

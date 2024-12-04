@@ -12,7 +12,6 @@ import warnings
 from typing import Optional
 
 import postbound as pb
-from postbound import db, qal
 from postbound.db import postgres
 from postbound.optimizer import jointree, joingraph, validation
 
@@ -23,7 +22,7 @@ class RandomJoinOrderOptimizer(pb.JoinOrderOptimization):
     # The entire join ordering algorithm is implemented in this class. It satisfies the interface of the corresponding
     # optimization stage.
 
-    def __init__(self, target_db: Optional[db.Database] = None) -> None:
+    def __init__(self, target_db: Optional[pb.Database] = None) -> None:
         super().__init__()
 
         # Strictly speaking, we do not need the target database here, since we are only concerned with linear join orders.
@@ -32,7 +31,7 @@ class RandomJoinOrderOptimizer(pb.JoinOrderOptimization):
         # Therefore, we store the target database here and demonstrate how we can easily access it using the DatabasePool
         self.target_db = target_db if target_db is not None else pb.db.current_database()
 
-    def optimize_join_order(self, query: qal.SqlQuery) -> jointree.LogicalJoinTree:
+    def optimize_join_order(self, query: pb.SqlQuery) -> jointree.LogicalJoinTree:
         # This is the most important method that handles the actual join order optimization
 
         # In our optimizer we must maintain two data structures:
