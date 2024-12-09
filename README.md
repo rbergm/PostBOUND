@@ -31,7 +31,8 @@ Almost all of the subdirectories contain further READMEs that explain their purp
 ## Getting started
 
 All package requirements can be installed from the `requirements.txt` file. To use PostBOUND in different projects,
-it can also be build and installed as a local package using pip. See the section below for details.
+it can also be build and installed as a local package using pip. This is generally the recommended way to go and can be
+automated using the `tools/setup-py-venv.sh` script.
 
 In addition to the Python packages, PostBOUND also needs a database connection in order to optimize and execute queries.
 Currently, PostgreSQL and MySQL are supported, with the MySQL features being a bit more limited due to restrictions of
@@ -61,22 +62,15 @@ the Join Order Benchmark[^3] and applies them to a Postgres database instance.
 ## Step 0: imports
 ##
 
-# optimization modules
-from postbound import postbound as pb
+import postbound as pb
 from postbound.optimizer import presets
-
-# database modules
-from postbound.db import postgres
-
-# workload modules
-from postbound.experiments import workloads
 
 ##
 ## Step 1: System setup
 ##
-postgres_instance = postgres.connect()
+postgres_instance = pb.db.postgres.connect()
 presets.apply_standard_system_options()
-job_workload = workloads.job()
+job_workload = pb.workloads.job()
 ues_settings = presets.fetch("ues")
 
 ##
@@ -125,15 +119,6 @@ structured as follows:
 
 The actual optimization pipelines is defined in the `postbound` module at the package root. Depending on the specific
 use-case, different pipelines are available.
-
-
-## Installation as a Python module
-
-PostBOUND provides (work in progress) support for packaging the entire source code into a `wheel` file that can be
-installed using pip.
-
-You can create the archive with the `python3 -m build` command, followed by an invocation of `pip install <wheel file>`
-in the `dist` directory.
 
 
 ---

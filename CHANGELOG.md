@@ -14,12 +14,13 @@ Be carefull when updating and check the changelog!
 
 ---
 
-## 👷 Version 0.8.0 🚧
+## Version 0.8.0
 
 ### New features
 - `tools/setup-py-venv.sh` now provides a one-stop-shop to install PostBOUND as an external package into a Python virtual
   environment
 - Added a `timeout` parameter to benchmarking utilities. Notice that timeouts are currently only supported for PostgreSQL.
+- Added a (WIP) Dockerfile to create a fresh PostBOUND + Postgres setup
 
 ### Updates
 - Refactored and re-organized almost the entire code base. For many use-cases it should now be sufficient to only
