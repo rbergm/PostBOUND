@@ -65,7 +65,7 @@ class OptimizationPipeline(abc.ABC):
     def optimize_query(self, query: SqlQuery) -> SqlQuery:
         """Applies the current pipeline configuration to optimize the input query.
 
-        This process also involges the generation of appropriate optimization information that enforces the selected
+        This process also involves the generation of appropriate optimization information that enforces the selected
         optimization decision when the query is executed on an actual database system.
 
         Parameters
@@ -86,17 +86,17 @@ class OptimizationPipeline(abc.ABC):
             novel cardinality estimation approaches, the optimization info could also be structured such that the
             default cardinality estimates are overwritten.
 
-            Secondly, the way the optimization info is expressed depends on the selected database system. Most systems
-            do not allow direct a direct modification of the query optimizer's implementation. Therefore, PostBOUND
-            takes an indirect approach: it emits system-specific hints that enable corrections for individual optimizer
-            decisions (such as disabling a specific physical operator). For example, PostgreSQL allows to use planner
-            options such as ``SET enable_nestloop = 'off'`` to disable nested loop joins for the all subsequent queries
-            in the current connection. MySQL provides hints like ``BNL(R S)`` to recommend a block-nested loop join or
-            hash join (depending on the MySQL version) to the optimizer for a specific join. These hints are inserted
-            into comment blocks in the final SQL query. Likewise, some systems treat certain SQL keywords differently
-            or provide their own extensions. This also allows to modify the underlying plans. For example, when SQLite
-            encouters a ``CROSS JOIN`` syntax in the ``FROM`` clause, it does not try to optimize the join order and
-            uses the order in which the tables are specified in the relation instead.
+            Furthermore, the way the optimization info is expressed depends on the selected database system. Most systems
+            do not allow a direct modification of the query optimizer's implementation. Therefore, PostBOUND takes an indirect
+            approach: it emits system-specific hints that enable corrections for individual optimizer decisions (such as
+            disabling a specific physical operator). For example, PostgreSQL allows to use planner options such as
+            ``SET enable_nestloop = 'off'`` to disable nested loop joins for the all subsequent queries in the current
+            connection. MySQL provides hints like ``BNL(R S)`` to recommend a block-nested loop join or hash join (depending
+            on the MySQL version) to the optimizer for a specific join. These hints are inserted into comment blocks in the
+            final SQL query. Likewise, some systems treat certain SQL keywords differently or provide their own extensions.
+            This also allows to modify the underlying plans. For example, when SQLite encouters a *CROSS JOIN* syntax in the
+            *FROM* clause, it does not try to optimize the join order and uses the order in which the tables are specified in
+            the relation instead.
 
             Therefore, the resulting query will differ from the original input query in a number of ways. However, the
             produced result sets should still be equivalent. If this is not the case, something went severly wrong
@@ -115,7 +115,7 @@ class OptimizationPipeline(abc.ABC):
 
         .. PostgreSQL query planning options: https://www.postgresql.org/docs/15/runtime-config-query.html
         .. MySQL optimizer hints: https://dev.mysql.com/doc/refman/8.0/en/optimizer-hints.html
-        .. SQLite ``CROSS JOIN`` handling: https://www.sqlite.org/optoverview.html#crossjoin
+        .. SQLite *CROSS JOIN* handling: https://www.sqlite.org/optoverview.html#crossjoin
         """
         execution_plan = self.query_execution_plan(query)
         hinting_service = self.target_database().hinting()
