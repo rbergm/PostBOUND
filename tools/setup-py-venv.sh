@@ -86,7 +86,7 @@ fi
 . $TARGET_DIR/bin/activate
 
 echo ".. Building PostBOUND package"
-pip install build wheel
+pip install build wheel ipython
 python3 -m build
 
 echo ".. Installing PostBOUND package"
