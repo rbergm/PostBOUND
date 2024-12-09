@@ -16,7 +16,7 @@ ARG SETUP_IMDB=false
 ARG SETUP_STATS=false
 ARG SETUP_STACK=false
 ARG OPTIMIZE_PG_CONFIG=false
-ARG PG_DISK_TYPE=
+ARG PG_DISK_TYPE=SSD
 ENV TZ=$TIMEZONE
 ENV USER=$USERNAME
 RUN ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && echo $TZ > /etc/timezone
@@ -36,8 +36,8 @@ RUN git clone --depth 1 --branch=quality/structure-simplification https://github
 WORKDIR /postbound/db-support/postgres
 RUN ./postgres-setup.sh --stop
 RUN if [  "$OPTIMIZE_PG_CONFIG" = "true" ] ; then \
-        python3 postgres-config-generator.py --out pg-conf.sql --disk-type "$PG_DISK_TYPE" postgres-server/data ; \
-        . ./postgres-starte.sh && psql -f pg-conf.sql ; \
+        python3 postgres-config-generator.py --out pg-conf.sql --disk-type "$PG_DISK_TYPE" /postbound/db-support/postgres/postgres-server/data ; \
+        . ./postgres-start.sh && psql -f pg-conf.sql ; \
     fi
 
 # TODO: optionally use pg_lab
