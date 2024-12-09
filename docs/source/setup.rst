@@ -21,7 +21,7 @@ with the IMDB database, the following commands can be used (starting from the ro
 
 .. code-block:: bash
 
-    $ cd postgres
+    $ cd db-support/postgres
 
     # Install a local Postgres server
     $ . ./postgres-setup.sh --stop
@@ -68,11 +68,11 @@ although this step is optional. For example, you can use the following commands:
     $ . pb-venv/bin/activate
 
     # If the PostBOUND source code should be used directly, the requirements have to be installed manually
-    $ cd postbound
-    $ pip install -r requirements.txt
+    (pb-venv) $ pip install -r requirements.txt
 
     # Alternatively, PostBOUND can be installed as a local pip/wheel package
-    $ pip install wheel setuptools
-    $ cd postbound
-    $ python3 -m build
-    $ pip install dist/PostBOUND-<file suffix>.whl
+    (pb-venv) $ pip install build wheel
+    (pb-venv) $ python3 -m build
+    (pb-venv) $ pip install dist/PostBOUND-<file suffix>.whl
+
+This entire process (and more) is automated under ``tools/setup-py-venv.sh``.

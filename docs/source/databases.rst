@@ -14,7 +14,7 @@ physical databases.
 Connecting to databases
 -----------------------
 
-Although most parts of the database interaction are precisely specified, one are that was intentionally left out from the
+Although most parts of the database interaction are precisely specified, one that was intentionally left out from the
 standardization is the connection to the physical databases. This is because there is no universal standard and different
 systems could require vastly different information. Compare for example remote database servers with connection strings
 (Postgres, MySQL, ...) to file-based databases such as SQLite. Therefore, it is up to the specific database systems to provide
@@ -28,11 +28,11 @@ Connections to these systems can be obtained as follows:
 Postgres
     The connect method operates in two different modes: the connect string can be supplied directly as a parameter. However,
     the preferred way of obtaining the connection is to store the connect string in a configuration file. This prevents
-    sensitive connection information from being leaked or visible in the Python history, etc. By default, the connect file is a
-    hidden file called ``.psycopg_connection``. It has to be located in the current working directory when the connection is
-    established. The name of the file can also be customized by the connect method, which allows establishment of connections
-    to different Postgres databases simultaneously. The allowed contents of the connect string are specified by
-    Psycopg 3/Postgres [1]_. See `postbound.db.postgres.connect` for more details on the connection method.
+    sensitive connection information from being leaked or from becoming visible in the Python history, etc. By default, the
+    connect file is a hidden file called ``.psycopg_connection``. It has to be located in the current working directory when
+    the connection is established. The name of the file can also be customized by the connect method, which allows
+    establishment of connections to different Postgres databases simultaneously. The allowed contents of the connect string are
+    specified by Psycopg 3/Postgres [1]_. See `postbound.db.postgres.connect` for more details on the connection method.
 
 MySQL
     The connect method also operates in two modes. However, it requires an explicit connection object instead of a plain text

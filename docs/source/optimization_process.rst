@@ -14,13 +14,13 @@ The first step in every query optimization is to obtain an input query. Since Po
 `workloads` module (which in turn delegates part of the work to the parser).
 
 Once a usable input query exists, it is ready to be optimized. In PostBOUND the actual optimization happens within a
-customizable pipeline. These pipelines are defined in the `postbound` module. Depending on the specific use-case, different
+customizable pipeline. These pipelines are defined in the main module. Depending on the specific use-case, different
 pipelines exist, for example to obtain a query execution plan in one integrated process (join ordering and physical operator
 selection), or to run a multi-stage optimization process (with incremental improvements or join ordering and physical operator
 selection in two separate phases). Once the pipeline that best fits the optimization scenario has been chosen, it has to be
 initialized with actual optimization algorithms. These algorithms take care of pipeline-specific optimization steps, such as
-finding the optimal join order. The `stages` module provides the general interfaces that these algorithms must implement in
-order to be usable by the pipelines.
+finding the optimal join order. The general interfaces for each stage are defined algon with their pipelines in the main
+module.
 
 When an optimization pipeline terminates, the optimization decisions (e.g. cardinality estimates, join order or physical
 operators) are encoded in an abstract format. Therefore, the last step in the optimization process is to ensure that these

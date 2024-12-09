@@ -18,10 +18,9 @@ executed in the *postbound* directory and that the queries themselves are contai
 If this is not the case, the ``workloads_base_dir`` variable should be set to the correct location. The module documentation
 contains more details on this aspect.
 
-The `runner` module builds on top of workloads and optimization pipeline to provide a reproducible and transparent execution
+The `executor` module builds on top of workloads and optimization pipeline to provide a reproducible and transparent execution
 of benchmarks with optimized queries. The different methods provide results as Pandas DataFrames [1]_ to enable an easy
-integration into data analysis tools. The utilities of the `analysis` module can facilitate this even further, especially when
-writing the DataFrames to disk.
+integration into data analysis tools.
 
 
 Visualization

@@ -18,8 +18,8 @@ can concern the join order or the selection of physical operators.
 
 All of these components are described in more detail in this user documentation, as well as in the documentation of the source
 code itself. The entire framework is open source and you are very much welcome to take a look at the actual implementation.
-After all, the source is the single point of truth. If you want to investigate the source code, start with the ``__init__``
-file in the main PostBOUND module.
+After all, the source code is the single point of truth. If you want to investigate the source code, start with the
+``__init__`` file in the main PostBOUND module.
 
 The query optimization process of PostBOUND is summarized in the following figure:
 
@@ -41,22 +41,20 @@ instance.
 
 .. code-block:: python
 
-    from postbound import postbound as pb        # this provides the optimization pipeline
-    from postbound.optimizer import presets      # our optimization algorithms are loaded from this package
+    import postbound as pb                  # most parts of PostBOUND are directly accessible from the main module
+    from postbound.optimizer import presets # this provides utilities to easily load pre-defined optimization strategies
+    from postbound.optimizer.strategies import tonic
 
-    from postbound.db import postgres            # enables easy interaction with the Postgres instance
-    from postbound.experiments import workloads  # contains the Join Order Benchmark specification
-
-    postgres_db = postgres.connect()  # for details see the section on database interaction
-    job = workloads.job()             # load the benchmark
+    postgres_db = pb.db.postgres.connect()  # for details see the section on database interaction
+    job = pb.workloads.job()                # load the benchmark
 
     presets.apply_standard_system_options()  # this handles some common configuration options
     ues_settings = presets.fetch("ues")      # load the optimization strategies
-    tonic_settings = presets.fetch("tonic")
+    tonic_operators = tonic.TonicOperatorSelection.load_model("tonic_model.json")
 
     optimization_pipeline = pb.TwoStageOptimizationPipeline(target_db=postgres_db)  # constructs our pipeline for Postgres
     optimization_pipeline.load_settings(ues_settings)                               # apply our optimization strategies
-    optimization_pipeline.load_settings(tonic_settings)
+    optimization_pipeline.setup_physical_operator_selection(tonic_operators)        # use TONIC for physical operators
     optimization_pipeline.build()                                                   # get ready to optimize
 
     for label, query in job.entries():
@@ -91,7 +89,8 @@ what it *is not* about.
 - PostBOUND is *not* a database system, nor does it replace the optimizer of database systems. Instead, it acts as a wrapper
   around database systems and encodes optimization decisions in query hints. These hints in turn influence the actual optimizer
   of the database system. Nevertheless, hints can be used to specify entire physical query plans consisting of join orders as
-  well as the physical operators.
+  well as the physical operators. This also implies that PostBOUND does not execute queries itself. There is no execution
+  engine in PostBOUND. Query execution happens entirely within the target database.
 
 Documentation overview
 ======================
