@@ -164,7 +164,7 @@ def main() -> None:
     parser.add_argument("db_directory", default="postgres-server/data", nargs="?",
                         help="The Postgres data/ directory containing the database files")
     parser.add_argument("--out", "-o", default="pg-conf.sql", help="The output file for the generated configuration")
-    parser.add_argument("--disk-type", default="", choices=["SSD", "HDD"],
+    parser.add_argument("--disk-type", default="", choices=["", "SSD", "HDD"],
                         help="Whether the configuration should be optimized for SSD or HDD. If not provided, the disk type is "
                         "determined automatically based on the data/ directory.")
 

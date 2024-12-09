@@ -4,7 +4,7 @@ EXPOSE 5432
 
 # Install dependencies
 RUN apt update && apt install -y \
-    build-essential sudo tzdata \
+    build-essential sudo tzdata procps \
     bison flex curl pkg-config libicu-dev libreadline-dev \
     git vim unzip \
     python3 python3-venv python3-pip
@@ -15,6 +15,8 @@ ARG TIMEZONE=UTC
 ARG SETUP_IMDB=false
 ARG SETUP_STATS=false
 ARG SETUP_STACK=false
+ARG OPTIMIZE_PG_CONFIG=false
+ARG PG_DISK_TYPE=
 ENV TZ=$TIMEZONE
 ENV USER=$USERNAME
 RUN ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && echo $TZ > /etc/timezone
@@ -33,7 +35,11 @@ RUN git clone --depth 1 --branch=quality/structure-simplification https://github
 # Setup local Postgres
 WORKDIR /postbound/db-support/postgres
 RUN ./postgres-setup.sh --stop
-# TODO: update the server config
+RUN if [  "$OPTIMIZE_PG_CONFIG" = "true" ] ; then \
+        python3 postgres-config-generator.py --out pg-conf.sql --disk-type "$PG_DISK_TYPE" postgres-server/data ; \
+        . ./postgres-starte.sh && psql -f pg-conf.sql ; \
+    fi
+
 # TODO: optionally use pg_lab
 
 # Install PostBOUND package
@@ -61,5 +67,4 @@ RUN echo "source /postbound/pb-venv/bin/activate" >> /home/$USERNAME/.bashrc
 # Final container config
 WORKDIR /postbound
 VOLUME /postbound/public
-VOLUME /postbound/db-support/postgres/postgres-server/data
 CMD /postbound/db-support/postgres/postgres-start.sh /postbound/db-support/postgres/postgres-server && /bin/bash
