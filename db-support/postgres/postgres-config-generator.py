@@ -50,7 +50,12 @@ def determine_disk_type(disk_file: Optional[str] = None) -> DiskType:
     """
     # based on: https://unix.stackexchange.com/questions/65595/how-to-know-if-a-disk-is-an-ssd-or-an-hdd
     disk_file = determine_disk(os.getcwd()) if disk_file is None else disk_file
-    rotational_info = int(subprocess.check_output(["cat", f"/sys/block/{disk_file}/queue/rotational"], text=True))
+    if not os.path.exists(f"/sys/block/{disk_file}/queue/rotational"):
+        # quick and dirty workaround for Docker, etc. deployments, crop sda1 to sda and try again
+        disk_file = disk_file[:-1]
+
+    path = f"/sys/block/{disk_file}/queue/rotational"
+    rotational_info = int(subprocess.check_output(["cat", path], text=True))
     return "HDD" if rotational_info == 1 else "SSD"
 
 
@@ -63,7 +68,7 @@ class SystemInfo:
     disk_type: DiskType
 
     @staticmethod
-    def load(db_directory: str) -> SystemInfo:
+    def load(db_directory: str, *, disk_type: Optional[DiskType] = None) -> SystemInfo:
         """Automatically determines the properties of the current system.
 
         The db_directory is requrired to determine whether the database is located on an HDD or an SSD.
@@ -71,7 +76,7 @@ class SystemInfo:
         return SystemInfo(
             n_cores=determine_number_of_cores(),
             memory_mb=determine_memory_size_mb(),
-            disk_type=determine_disk_type(determine_disk(db_directory))
+            disk_type=disk_type if disk_type else determine_disk_type(determine_disk(db_directory))
         )
 
     @property
@@ -159,10 +164,13 @@ def main() -> None:
     parser.add_argument("db_directory", default="postgres-server/data", nargs="?",
                         help="The Postgres data/ directory containing the database files")
     parser.add_argument("--out", "-o", default="pg-conf.sql", help="The output file for the generated configuration")
+    parser.add_argument("--disk-type", default="", choices=["SSD", "HDD"],
+                        help="Whether the configuration should be optimized for SSD or HDD. If not provided, the disk type is "
+                        "determined automatically based on the data/ directory.")
 
     args = parser.parse_args()
 
-    system_info = SystemInfo.load(args.db_directory)
+    system_info = SystemInfo.load(args.db_directory, disk_type=args.disk_type.upper())
     pg_config = generate_pg_config(system_info)
     export_pg_config(pg_config, db_directory=args.db_directory, out_path=args.out)
 
