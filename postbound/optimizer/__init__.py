@@ -33,6 +33,8 @@ from .jointree import (
   JoinTreeVisitor,
   PhysicalJoinMetadata, PhysicalBaseTableMetadata, PhysicalPlanMetadata,
   PhysicalQueryPlan,
+  LogicalJoinMetadata, LogicalBaseTableMetadata, LogicalTreeMetadata,
+  LogicalJoinTree,
   read_from_json
 )
 
@@ -55,5 +57,9 @@ __all__ = [
   "PhysicalBaseTableMetadata",
   "PhysicalPlanMetadata",
   "PhysicalQueryPlan",
+  "LogicalJoinMetadata",
+  "LogicalBaseTableMetadata",
+  "LogicalTreeMetadata",
+  "LogicalJoinTree",
   "read_from_json"
 ]

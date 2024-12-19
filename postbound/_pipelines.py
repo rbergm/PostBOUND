@@ -14,7 +14,8 @@ from .optimizer import validation
 from .optimizer.jointree import LogicalJoinTree, PhysicalQueryPlan
 from .optimizer.validation import OptimizationPreCheck
 from .optimizer._hints import PhysicalOperatorAssignment, PlanParameterization
-from . import db
+from . import db, qal
+from ._core import Cost, Cardinality
 from .qal import SqlQuery, TableReference
 from .util import jsondict, StateError
 
@@ -295,13 +296,6 @@ class IntegratedOptimizationPipeline(OptimizationPipeline):
                 "optimization_algorithm": algorithm_description}
 
 
-Cost = float
-"""Type alias for a cost estimate."""
-
-Cardinality = int
-"""Type alias for a cardinality estimate."""
-
-
 class CardinalityEstimator(abc.ABC):
     """The cardinality estimator calculates how many tuples specific operators will produce."""
 
@@ -338,6 +332,28 @@ class CardinalityEstimator(abc.ABC):
         postbound.postbound.OptimizationPipeline.describe
         """
         raise NotImplementedError
+
+    def initialize(self, target_db: db.Database, query: SqlQuery) -> None:
+        """Hook method that is called before the actual optimization process starts.
+
+        This method can be overwritten to set up any necessary data structures, etc. and will be called before each query.
+
+        Parameters
+        ----------
+        target_db : db.Database
+            The database for which the optimized queries should be generated.
+        query : SqlQuery
+            The query to be optimized
+        """
+        pass
+
+    def cleanup() -> None:
+        """Hook method that is called after the optimization process has finished.
+
+        This method can be overwritten to remove any temporary state that was specific to the last query being optimized
+        and should not be shared with later queries.
+        """
+        pass
 
     def pre_check(self) -> OptimizationPreCheck:
         """Provides requirements that input query or database system have to satisfy for the optimizer to work properly.
@@ -392,6 +408,28 @@ class CostModel(abc.ABC):
         postbound.postbound.OptimizationPipeline.describe
         """
         raise NotImplementedError
+
+    def initialize(self, target_db: db.Database, query: SqlQuery) -> None:
+        """Hook method that is called before the actual optimization process starts.
+
+        This method can be overwritten to set up any necessary data structures, etc. and will be called before each query.
+
+        Parameters
+        ----------
+        target_db : db.Database
+            The database for which the optimized queries should be generated.
+        query : SqlQuery
+            The query to be optimized
+        """
+        pass
+
+    def cleanup() -> None:
+        """Hook method that is called after the optimization process has finished.
+
+        This method can be overwritten to remove any temporary state that was specific to the last query being optimized
+        and should not be shared with later queries.
+        """
+        pass
 
     def pre_check(self) -> OptimizationPreCheck:
         """Provides requirements that input query or database system have to satisfy for the optimizer to work properly.
@@ -463,6 +501,53 @@ class PlanEnumerator(abc.ABC):
         return validation.EmptyPreCheck()
 
 
+class DynamicProgrammingEnumerator(PlanEnumerator):
+    # TODO
+    pass
+
+
+class NativeCostModel(CostModel):
+    """Obtains the cost of a query plan by using the cost model of an actual database system."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._target_db: Optional[db.Database] = None
+
+    def estimate_cost(self, query: SqlQuery, plan: PhysicalQueryPlan) -> Cost:
+        hinted_query = self._target_db.hinting().generate_hints(query, plan)
+        return self._target_db.optimizer().cost_estimate(hinted_query)
+
+    def describe(self) -> jsondict:
+        return {"name": "native", "database_system": self._target_db.describe()}
+
+    def initialize(self, target_db: db.Database, query: SqlQuery) -> None:
+        self._target_db = target_db
+
+    def cleanup(self) -> None:
+        self._target_db = None
+
+
+class NativeCardinalityEstimator(CardinalityEstimator):
+    """Obtains the cardinality of a query plan by using the cardinality estimator of an actual database system."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._target_db: Optional[db.Database] = None
+
+    def estimate_cardinality(self, query: SqlQuery, intermediate: frozenset[TableReference]) -> Cardinality:
+        subquery = qal.transform.extract_query_fragment(query, intermediate)
+        return self._target_db.optimizer().cardinality_estimate(subquery)
+
+    def describe(self) -> jsondict:
+        return {"name": "native", "database_system": self._target_db.describe()}
+
+    def initialize(self, target_db: db.Database, query: SqlQuery) -> None:
+        self._target_db = target_db
+
+    def cleanup(self) -> None:
+        self._target_db = None
+
+
 class TextBookOptimizationPipeline(OptimizationPipeline):
     """This pipeline is modelled after the traditional approach to query optimization as used in most real-world systems.
 
@@ -481,9 +566,9 @@ class TextBookOptimizationPipeline(OptimizationPipeline):
 
     def __init__(self, target_db: db.Database) -> None:
         self._target_db = target_db
-        self._card_est: Optional[CardinalityEstimator] = None
-        self._cost_model: Optional[CostModel] = None
-        self._plan_enumerator: Optional[PlanEnumerator] = None
+        self._card_est: CardinalityEstimator = NativeCardinalityEstimator()
+        self._cost_model: CostModel = NativeCostModel()
+        self._plan_enumerator: PlanEnumerator = DynamicProgrammingEnumerator()  # TODO: if Postgres target DB, use PG DP
         self._support_check = validation.EmptyPreCheck()
         self._build = False
 

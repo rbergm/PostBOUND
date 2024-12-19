@@ -14,7 +14,14 @@ Be carefull when updating and check the changelog!
 
 ---
 
-## Version 0.8.0
+## 🚧 Version 0.9.0 👷
+
+### New features
+- Physical query plans now provide information about sorted colums
+
+---
+
+## ➡ Version 0.8.0
 
 ### New features
 - `tools/setup-py-venv.sh` now provides a one-stop-shop to install PostBOUND as an external package into a Python virtual
@@ -39,7 +46,7 @@ Be carefull when updating and check the changelog!
 ---
 
 
-## ➡ Version 0.7.0
+## Version 0.7.0
 
 ### New features
 - Added novel `TextBookOptimizationPipeline` for cardinality estimation + cost model + plan enumerator-style algorithms

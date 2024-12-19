@@ -15,8 +15,13 @@ from typing import Optional
 
 from .._hints import PhysicalOperatorAssignment, PlanParameterization
 from ..jointree import LogicalJoinTree, PhysicalQueryPlan
-from ..._pipelines import JoinOrderOptimization, PhysicalOperatorSelection, ParameterGeneration, CompleteOptimizationAlgorithm
+from ..._pipelines import (
+    JoinOrderOptimization, PhysicalOperatorSelection, ParameterGeneration,
+    CompleteOptimizationAlgorithm,
+    NativeCardinalityEstimator, NativeCostModel
+)
 from ... import db, qal
+from ...util import jsondict
 
 
 class NativeJoinOrderOptimizer(JoinOrderOptimization):
@@ -36,7 +41,7 @@ class NativeJoinOrderOptimizer(JoinOrderOptimization):
         query_plan = self.db_instance.optimizer().query_plan(query)
         return LogicalJoinTree.load_from_query_plan(query_plan, query)
 
-    def describe(self) -> dict:
+    def describe(self) -> jsondict:
         return {"name": "native", "database_system": self.db_instance.describe()}
 
 
@@ -64,7 +69,7 @@ class NativePhysicalOperatorSelection(PhysicalOperatorSelection):
         join_tree = PhysicalQueryPlan.load_from_query_plan(query_plan, query, operators_only=True)
         return join_tree.physical_operators()
 
-    def describe(self) -> dict:
+    def describe(self) -> jsondict:
         return {"name": "native", "database_system": self.db_instance.describe()}
 
 
@@ -92,7 +97,7 @@ class NativePlanParameterization(ParameterGeneration):
         join_tree = PhysicalQueryPlan.load_from_query_plan(query_plan, query)
         return join_tree.plan_parameters()
 
-    def describe(self) -> dict:
+    def describe(self) -> jsondict:
         return {"name": "native", "database_system": self.db_instance.describe()}
 
 
@@ -113,5 +118,12 @@ class NativeOptimizer(CompleteOptimizationAlgorithm):
         query_plan = self.db_instance.optimizer().query_plan(query)
         return PhysicalQueryPlan.load_from_query_plan(query_plan)
 
-    def describe(self) -> dict:
+    def describe(self) -> jsondict:
         return {"name": "native", "database_system": self.db_instance.describe()}
+
+
+__all__ = [
+    "NativeJoinOrderOptimizer", "NativePhysicalOperatorSelection", "NativePlanParameterization",
+    "NativeOptimizer",
+    "NativeCardinalityEstimator", "NativeCostModel"
+]

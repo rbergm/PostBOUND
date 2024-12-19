@@ -33,14 +33,14 @@ from typing import Generic, Literal, Optional, Union
 import Levenshtein
 
 from ._hints import (
-    PhysicalOperator,
+    PhysicalOperator, SortKey,
     PhysicalOperatorAssignment, ScanOperatorAssignment, JoinOperatorAssignment, DirectionalJoinOperatorAssignment,
     PlanParameterization,
     read_operator_json
 )
 from .. import qal, util
-from .._core import QueryExecutionPlan
-from ..qal import parser, TableReference, ColumnReference
+from .._core import Cost, Cardinality, QueryExecutionPlan
+from ..qal import parser, TableReference, ColumnReference, SqlExpression
 from ..util import jsondict, StateError
 from ..util.typing import Lazy, LazyVal
 
@@ -54,16 +54,16 @@ class BaseMetadata(abc.ABC):
 
     Parameters
     ----------
-    cardinality : float, optional
+    cardinality : Cardinality, optional
         An indicator of the number of tuples that are *produced* by the node. If such a value is not available, the
         default value of *NaN* can be used.
     """
 
-    def __init__(self, *, cardinality: float = math.nan) -> None:
+    def __init__(self, *, cardinality: Cardinality = math.nan) -> None:
         self._cardinality = cardinality
 
     @property
-    def cardinality(self) -> float:
+    def cardinality(self) -> Cardinality:
         """Get the cardinality that is produced by the current node.
 
         Depending on the context, this cardinality can be interpreted in different ways, including as a traditional
@@ -72,7 +72,7 @@ class BaseMetadata(abc.ABC):
 
         Returns
         -------
-        float
+        Cardinality
             The estimate. Can be *NaN* to indicate that no value is available.
         """
         return self._cardinality
@@ -92,13 +92,13 @@ class JoinMetadata(BaseMetadata, abc.ABC):
     predicate : Optional[qal.AbstractPredicate], optional
         The join condition that should be used to combine the child relations of the join node. Defaults to *None* if
         no condition is available, or if the join corresponds to a cross-product.
-    cardinality : float, optional
+    cardinality : Cardinality, optional
         An indicator of the number of tuples that are *produced* by the node. If such a value is not available, the
         default value of *NaN* can be used.
     """
 
     def __init__(self, predicate: Optional[qal.AbstractPredicate] = None, *,
-                 cardinality: float = math.nan) -> None:
+                 cardinality: Cardinality = math.nan) -> None:
         super().__init__(cardinality=cardinality)
         self._join_predicate = predicate
 
@@ -138,16 +138,13 @@ class LogicalJoinMetadata(JoinMetadata):
     predicate : Optional[qal.AbstractPredicate], optional
         The join condition that should be used to combine the child relations of the join node. Defaults to *None* if
         no condition is available, or if the join corresponds to a cross-product.
-    cardinality : float, optional
+    cardinality : Cardinality, optional
         An indicator of the number of tuples that are *produced* by the node. If such a value is not available, the
         default value of *NaN* can be used.
-    cost : float, optional
-        An estimation of how expensive computing the current node is. If such a value is not available, the default value of
-        *NaN* can be used.
     """
 
     def __init__(self, predicate: Optional[qal.AbstractPredicate] = None, *,
-                 cardinality: float = math.nan) -> None:
+                 cardinality: Cardinality = math.nan) -> None:
         super().__init__(predicate, cardinality=cardinality)
         self._hash_val = hash((predicate, cardinality))
 
@@ -179,10 +176,10 @@ class PhysicalJoinMetadata(JoinMetadata):
     predicate : Optional[qal.AbstractPredicate], optional
         The join condition that should be used to combine the child relations of the join node. Defaults to *None* if
         no condition is available, or if the join corresponds to a cross-product.
-    cardinality : float, optional
+    cardinality : Cardinality, optional
         An indicator of the number of tuples that are *produced* by the node. If such a value is not available, the
         default value of *NaN* can be used.
-    cost : float, optional
+    cost : Cost, optional
         An estimation of how expensive computing the current node is. If such a value is not available, the default value of
         *NaN* can be used.
     join_info : Optional[JoinOperatorAssignment], optional
@@ -190,14 +187,20 @@ class PhysicalJoinMetadata(JoinMetadata):
         *None* can be used. Notice however, that the entire purpose of the query execution plan is in having
         precisely this information. Therefore, cases were the `join_info` actually is *None* should be rare. If they
         are frequent, an investigation of other representations of the query plan is recommended.
+    sort_keys : Optional[Sequence[SortKey]], optional
+        The order in which the result tuples of the join will be sorted. While many joins do not provide their output in a
+        particular order, e.g., hash join or nested-loop join (at least in the general case), other joins inherently produce
+        sorted output, e.g., merge join. If no sort order is available, *None* or an empty list can be passed.
     """
     def __init__(self, predicate: Optional[qal.AbstractPredicate] = None, *,
-                 cardinality: float = math.nan, cost: float = math.nan,
-                 join_info: Optional[JoinOperatorAssignment] = None) -> None:
+                 cardinality: Cardinality = math.nan, cost: Cost = math.nan,
+                 join_info: Optional[JoinOperatorAssignment] = None,
+                 sort_keys: Optional[Sequence[SortKey]] = None) -> None:
         super().__init__(predicate, cardinality=cardinality)
         self._operator_assignment = join_info
         self._cost = cost
-        self._hash_val = hash((predicate, cardinality, cost, join_info))
+        self._sort_keys = sort_keys if sort_keys is not None else []
+        self._hash_val = hash((predicate, cardinality, cost, join_info, tuple(self._sort_keys)))
 
     @property
     def operator(self) -> Optional[JoinOperatorAssignment]:
@@ -206,12 +209,12 @@ class PhysicalJoinMetadata(JoinMetadata):
         Returns
         -------
         Optional[JoinOperatorAssignment]
-            The operator or ``None`` if it is unknown. Such situations should be quite rare however.
+            The operator or *None* if it is unknown. Such situations should be quite rare however.
         """
         return self._operator_assignment
 
     @property
-    def cost(self) -> float:
+    def cost(self) -> Cost:
         """Get the cost that quantifies the expense of computing the current node.
 
         The cost should include costs for all sub-operations that are necessary to compute the current node. Likewise, the
@@ -219,10 +222,25 @@ class PhysicalJoinMetadata(JoinMetadata):
 
         Returns
         -------
-        float
+        Cost
             The estimate. Can be *NaN* to indicate that no value is available.
         """
         return self._cost
+
+    @property
+    def sort_keys(self) -> Sequence[SortKey]:
+        """Get the sort keys that are used to order the output of the join.
+
+        While many joins do not provide their output in a
+        particular order, e.g., hash join or nested-loop join (at least in the general case), other joins inherently produce
+        sorted output, e.g., merge join.
+
+        Returns
+        -------
+        Sequence[SortKey]
+            The sort keys. Can be an empty list if no sort order is available.
+        """
+        return self._sort_keys
 
     def inspect(self) -> str:
         """Provides the contents of the join node as a natural string.
@@ -244,16 +262,17 @@ class PhysicalJoinMetadata(JoinMetadata):
     def __eq__(self, other: object) -> bool:
         return (isinstance(other, type(self))
                 and self.join_predicate == other.join_predicate
+                and self.operator == other.operator
                 and self.cardinality == other.cardinality
                 and self.cost == other.cost
-                and self.operator == other.operator)
+                and self.sort_keys == other.sort_keys)
 
     def __repr__(self) -> str:
         return str(self)
 
     def __str__(self) -> str:
         s = f"predicate={self.join_predicate}, cardinality={self.cardinality}, "
-        s += f"cost={self.cost}, operator={self.operator.operator}"
+        s += f"cost={self.cost}, operator={self.operator.operator}, order={self.sort_keys}"
         return s
 
 
@@ -267,7 +286,7 @@ class BaseTableMetadata(BaseMetadata, abc.ABC):
     filter_predicate : Optional[qal.AbstractPredicate], optional
         The filter condition that restricts the allowed tuples from the base table. Defaults to *None* if
         no condition is available, or if the base table is not filtered.
-    cardinality : float, optional
+    cardinality : Cardinality, optional
         An indicator of the number of tuples that are *produced* by the node. If such a value is not available, the
         default value of *NaN* can be used.
     """
@@ -283,7 +302,7 @@ class BaseTableMetadata(BaseMetadata, abc.ABC):
         Returns
         -------
         Optional[qal.AbstractPredicate]
-            The predicate or ``None`` if this is either unknown, or if the base table is unfiltered.
+            The predicate or *None* if this is either unknown, or if the base table is unfiltered.
         """
         return self._filter_predicate
 
@@ -313,12 +332,12 @@ class LogicalBaseTableMetadata(BaseTableMetadata):
     filter_predicate : Optional[qal.AbstractPredicate], optional
         The filter condition that restricts the allowed tuples from the base table. Defaults to *None* if
         no condition is available, or if the base table is not filtered.
-    cardinality : float, optional
+    cardinality : Cardinality, optional
         An indicator of the number of tuples that are *produced* by the node. If such a value is not available, the
         default value of *NaN* can be used.
     """
     def __init__(self, filter_predicate: Optional[qal.AbstractPredicate], *,
-                 cardinality: float = math.nan) -> None:
+                 cardinality: Cardinality = math.nan) -> None:
         super().__init__(filter_predicate, cardinality=cardinality)
         self._hash_val = hash((filter_predicate, cardinality))
 
@@ -344,10 +363,10 @@ class PhysicalBaseTableMetadata(BaseTableMetadata):
     filter_predicate : Optional[qal.AbstractPredicate], optional
         The filter condition that restricts the allowed tuples from the base table. Defaults to *None* if
         no condition is available, or if the base table is not filtered.
-    cardinality : float, optional
+    cardinality : Cardinality, optional
         An indicator of the number of tuples that are *produced* by the node. If such a value is not available, the
         default value of *NaN* can be used.
-    cost : float, optional
+    cost : Cost, optional
         An estimation of how expensive computing the current node is. If such a value is not available, the default value of
         *NaN* can be used.
     scan_info : Optional[ScanOperatorAssignment], optional
@@ -355,15 +374,30 @@ class PhysicalBaseTableMetadata(BaseTableMetadata):
         value of *None* can be used. Notice however, that the entire purpose of the query execution plan is in having
         precisely this information. Therefore, cases were the `scan_info` actually is *None* should be rare. If they
         are frequent, an investigation of other representations of the query plan are recommended.
+    sort_keys : Optional[Sequence[SortKey]], optional
+        The order in which the result tuples of the scan will be sorted. While many scans do not provide their output in a
+        particular order, e.g., sequential scan (at least in the general case), other scans inherently produce
+        sorted output, e.g., index scan. If no sort order is available, *None* or an empty list can be passed.
+    index_expression : Optional[SqlExpression], optional
+        For index-based scans, this is the expression that is used to build the index. Think of the values that are used to
+        construct a B-Tree index. For other kinds of scans (including hash-based lookups), this value should be *None*.
     """
 
     def __init__(self, filter_predicate: Optional[qal.AbstractPredicate], *,
-                 cardinality: float = math.nan, cost: float = math.nan,
-                 scan_info: Optional[ScanOperatorAssignment] = None) -> None:
+                 cardinality: Cardinality = math.nan, cost: Cost = math.nan,
+                 scan_info: Optional[ScanOperatorAssignment] = None,
+                 sort_keys: Optional[Sequence[SortKey]] = None,
+                 index_expression: Optional[SqlExpression] = None) -> None:
         super().__init__(filter_predicate, cardinality=cardinality)
         self._operator_assignment = scan_info
         self._cost = cost
-        self._hash_val = hash((filter_predicate, cardinality, cost, scan_info))
+        self._sort_keys = sort_keys if sort_keys is not None else []
+        self._index_expression = index_expression
+        self._hash_val = hash((
+            self._filter_predicate, self._operator_assignment,
+            self._cardinality, self._cost,
+            tuple(self._sort_keys), self._index_expression
+            ))
 
     @property
     def operator(self) -> Optional[ScanOperatorAssignment]:
@@ -372,12 +406,12 @@ class PhysicalBaseTableMetadata(BaseTableMetadata):
         Returns
         -------
         Optional[ScanOperatorAssignment]
-            The operator or ``None`` if it is unknown. Such situations should be quite rare however.
+            The operator or *None* if it is unknown. Such situations should be quite rare however.
         """
         return self._operator_assignment
 
     @property
-    def cost(self) -> float:
+    def cost(self) -> Cost:
         """Get the cost that quantifies the expense of computing the current node.
 
         The cost should include costs for all sub-operations that are necessary to compute the current node. Likewise, the
@@ -385,10 +419,39 @@ class PhysicalBaseTableMetadata(BaseTableMetadata):
 
         Returns
         -------
-        float
+        Cost
             The estimate. Can be *NaN* to indicate that no value is available.
         """
         return self._cost
+
+    @property
+    def sort_keys(self) -> Sequence[SortKey]:
+        """Get the sort keys that are used to order the output of the scan.
+
+        While many scans do not provide their output in a
+        particular order, e.g., sequential scan (at least in the general case), other scans inherently produce
+        sorted output, e.g., index scan.
+
+        Returns
+        -------
+        Sequence[SortKey]
+            The sort keys. Can be an empty list if no sort order is available.
+        """
+        return self._sort_keys
+
+    @property
+    def index_expression(self) -> Optional[SqlExpression]:
+        """Get the expression that is used to build the index for index-based scans.
+
+        Think of the values that are used to construct a B-Tree index. For other kinds of scans (including hash-based lookups),
+        this value should be *None*.
+
+        Returns
+        -------
+        Optional[SqlExpression]
+            The index expression or *None* if the scan is not index-based.
+        """
+        return self._index_expression
 
     def inspect(self) -> str:
         """Provides the contents of the scan node as a natural string.
@@ -410,16 +473,18 @@ class PhysicalBaseTableMetadata(BaseTableMetadata):
     def __eq__(self, other: object) -> bool:
         return (isinstance(other, type(self))
                 and self.filter_predicate == other.filter_predicate
+                and self.operator == other.operator
                 and self.cardinality == other.cardinality
                 and self.cost == other.cost
-                and self.operator == other.operator)
+                and self.sort_keys == other.sort_keys
+                and self.index_expression == other.index_expression)
 
     def __repr__(self) -> str:
         return str(self)
 
     def __str__(self) -> str:
         s = f"predicate={self.filter_predicate}, cardinality={self.cardinality}, "
-        s += f"cost={self.cost}, operator={self.operator.operator}"
+        s += f"cost={self.cost}, operator={self.operator.operator}, order={self.sort_keys}"
         return s
 
 
@@ -528,7 +593,7 @@ def _read_metadata_json(json_data: dict, base_table: bool, *, include_estimates:
         The parsed metadata object. Whether this is a physical metadata object (i.e. containing information about physical
         operators), or a logical metadata object is inferred from the JSON data.
     """
-    cardinality: float = json_data.get("cardinality", math.nan) if include_estimates else math.nan
+    cardinality: Cardinality = json_data.get("cardinality", math.nan) if include_estimates else math.nan
     if base_table:
         filter_predicate = parser.load_predicate_json(json_data["predicate"]) if "predicate" in json_data else None
         if "operator" in json_data:
@@ -612,13 +677,13 @@ class AbstractJoinTreeNode(abc.ABC, Container[TableReference], Generic[JoinMetad
         Returns
         -------
         Optional[JoinMetadataType | BaseTableMetadataType]
-            The annotation if it exists, ``None`` otherwise. For `BaseTableNode` this should be an instance of
+            The annotation if it exists, *None* otherwise. For `BaseTableNode` this should be an instance of
             `BaseTableMetadata` and for `IntermediateJoinNode` this should be an instance of `JoinMetadata`.
         """
         raise NotImplementedError
 
     @property
-    def cardinality(self) -> float:
+    def cardinality(self) -> Cardinality:
         """Get the cardinality that is produced by the current node.
 
         Depending on the context, this cardinality can be interpreted in different ways, including as a traditional
@@ -627,7 +692,7 @@ class AbstractJoinTreeNode(abc.ABC, Container[TableReference], Generic[JoinMetad
 
         Returns
         -------
-        float
+        Cardinality
             The estimate. Can be ``math.nan`` to indicate that no value is available.
         """
         return self.annotation.cardinality if self.annotation else math.nan
@@ -770,7 +835,7 @@ class AbstractJoinTreeNode(abc.ABC, Container[TableReference], Generic[JoinMetad
         Returns
         -------
         Optional[AbstractJoinTreeNode[JoinMetadataType, BaseTableMetadataType]]
-            The deepest node that exactly contains the given tables. If no node contains the tables, ``None`` is
+            The deepest node that exactly contains the given tables. If no node contains the tables, *None* is
             returned.
         """
         raise NotImplementedError
@@ -1010,7 +1075,7 @@ class IntermediateJoinNode(AbstractJoinTreeNode[JoinMetadataType, BaseTableMetad
     right_child : AbstractJoinTreeNode[JoinMetadataType, BaseTableMetadataType]
         The right input relation of the join
     annotation : Optional[JoinMetadataType]
-        Additional metadata that describes the join. If no such information exists, ``None`` can be passed.
+        Additional metadata that describes the join. If no such information exists, *None* can be passed.
     """
 
     def __init__(self, left_child: AbstractJoinTreeNode[JoinMetadataType, BaseTableMetadataType],
@@ -1072,7 +1137,7 @@ class IntermediateJoinNode(AbstractJoinTreeNode[JoinMetadataType, BaseTableMetad
         Returns
         -------
         Optional[JoinMetadataType]
-            The annotation or ``None`` if no extra information exists.
+            The annotation or *None* if no extra information exists.
         """
         return self._annotation
 
@@ -1260,7 +1325,7 @@ class BaseTableNode(AbstractJoinTreeNode[JoinMetadataType, BaseTableMetadataType
     table : TableReference
         The table that is scanned in this node
     annotation : Optional[BaseTableMetadataType]
-        Additional metadata that describes the scan. If no such information exists, ``None`` can be passed.
+        Additional metadata that describes the scan. If no such information exists, *None* can be passed.
     """
 
     def __init__(self, table: TableReference, annotation: Optional[BaseTableMetadataType]):
@@ -1288,7 +1353,7 @@ class BaseTableNode(AbstractJoinTreeNode[JoinMetadataType, BaseTableMetadataType
         Returns
         -------
         Optional[BaseTableMetadataType]
-            The annotation or ``None`` if no extra information exists.
+            The annotation or *None* if no extra information exists.
         """
         return self._annotation
 
@@ -1392,9 +1457,9 @@ class AuxiliaryNode(AbstractJoinTreeNode[JoinMetadataType, BaseTableMetadataType
         The operation to apply to the input node.
     input_node : AbstractJoinTreeNode[JoinMetadataType, BaseTableMetadataType]
         The input node that is processed by the auxiliary node.
-    cardinality : float, optional
+    cardinality : Cardinality, optional
         Cardinality produced by the auxiliary node, defaults to *NaN*.
-    cost : float, optional
+    cost : Cost, optional
         Cost of the auxiliary node, defaults to *NaN*.
     metadata : Optional[dict], optional
         Additional metadata that describes the auxiliary node.
@@ -1402,7 +1467,7 @@ class AuxiliaryNode(AbstractJoinTreeNode[JoinMetadataType, BaseTableMetadataType
 
     @staticmethod
     def memoize(input_node: AbstractJoinTreeNode[JoinMetadataType, BaseTableMetadataType], *,
-                cardinality: float = math.nan, cost: float = math.nan,
+                cardinality: Cardinality = math.nan, cost: Cost = math.nan,
                 metadata: Optional[dict] = None) -> AuxiliaryNode[JoinMetadataType, BaseTableMetadataType]:
         """Creates a new Memoize auxiliary node.
 
@@ -1412,9 +1477,9 @@ class AuxiliaryNode(AbstractJoinTreeNode[JoinMetadataType, BaseTableMetadataType
         ----------
         input_node : AbstractJoinTreeNode[JoinMetadataType, BaseTableMetadataType]
             The node that is being cached.
-        cardinality : float, optional
+        cardinality : Cardinality, optional
             Total cardinality produced by the auxiliary node, defaults to *NaN*.
-        cost : float, optional
+        cost : Cost, optional
             Cost of computing all tuples produced after caching, defaults to *NaN*.
         metadata : Optional[dict], optional
             Additional metadata to describe the memo, e.g. caching strategy.
@@ -1428,7 +1493,7 @@ class AuxiliaryNode(AbstractJoinTreeNode[JoinMetadataType, BaseTableMetadataType
 
     @staticmethod
     def materialize(input_node: AbstractJoinTreeNode[JoinMetadataType, BaseTableMetadataType], *,
-                    cardinality: float = math.nan, cost: float = math.nan,
+                    cardinality: Cardinality = math.nan, cost: Cost = math.nan,
                     metadata: Optional[dict] = None) -> AuxiliaryNode[JoinMetadataType, BaseTableMetadataType]:
         """Creates a new Materialize auxiliary node.
 
@@ -1438,9 +1503,9 @@ class AuxiliaryNode(AbstractJoinTreeNode[JoinMetadataType, BaseTableMetadataType
         ----------
         input_node : AbstractJoinTreeNode[JoinMetadataType, BaseTableMetadataType]
             The node that is being materialized.
-        cardinality : float, optional
+        cardinality : Cardinality, optional
             Total cardinality produced by the auxiliary node, defaults to *NaN*.
-        cost : float, optional
+        cost : Cost, optional
             Cost of computing all tuples produced after materialization, defaults to *NaN*.
         metadata : Optional[dict], optional
             Additional metadata to describe the node.
@@ -1452,8 +1517,38 @@ class AuxiliaryNode(AbstractJoinTreeNode[JoinMetadataType, BaseTableMetadataType
         """
         return AuxiliaryNode("Materialize", input_node, cardinality=cardinality, cost=cost, metadata=metadata)
 
+    @staticmethod
+    def sort(input_node: AbstractJoinTreeNode[JoinMetadataType, BaseTableMetadataType], *,
+             sort_keys: Sequence[SqlExpression],
+             cardinality: Cardinality = math.nan, cost: Cost = math.nan,
+             metadata: Optional[dict] = None) -> AuxiliaryNode[JoinMetadataType, BaseTableMetadataType]:
+        """Creates a new Sort auxiliary node.
+
+        Parameters
+        ----------
+        input_node : AbstractJoinTreeNode[JoinMetadataType, BaseTableMetadataType]
+            The node to sort
+        sort_keys : Sequence[SqlExpression]
+            The expressions to use for sorting
+        cardinality : Cardinality, optional
+            Total cardinality produced by the auxiliary node, defaults to *NaN*.
+        cost : Cost, optional
+            Cost of computing all tuples produced after sorting, defaults to *NaN*.
+        metadata : Optional[dict], optional
+            Additional metadata to describe the node.
+
+        Returns
+        -------
+        AuxiliaryNode[JoinMetadataType, BaseTableMetadataType]
+            The sort node.
+        """
+        metadata = metadata or {}
+        return AuxiliaryNode("Sort", input_node, cardinality=cardinality, cost=cost,
+                             metadata={"sort_keys": sort_keys} | metadata)
+
     def __init__(self, name: str, input_node: AbstractJoinTreeNode[JoinMetadataType, BaseTableMetadataType], *,
-                 cardinality: float = math.nan, cost: float = math.nan, metadata: Optional[dict] = None, **kwargs) -> None:
+                 cardinality: Cardinality = math.nan, cost: Cost = math.nan,
+                 metadata: Optional[dict] = None, **kwargs) -> None:
         self._name = name
         self._input_node = input_node
         self._metadata = {"cardinality": cardinality, "cost": cost} | (metadata or {}) | kwargs
@@ -1479,8 +1574,53 @@ class AuxiliaryNode(AbstractJoinTreeNode[JoinMetadataType, BaseTableMetadataType
         return self._metadata
 
     @property
+    def cardinality(self) -> Cardinality:
+        """Get the cardinality produced by the auxiliary node.
+
+        Returns
+        -------
+        Cardinality
+            The cardinality or *NaN* if no such information is available.
+        """
+        return self._metadata.get("cardinality", math.nan)
+
+    @property
+    def cost(self) -> Cost:
+        """Get the cost of the auxiliary node.
+
+        Returns
+        -------
+        Cost
+            The cost or *NaN* if no such information is available.
+        """
+        return self._metadata.get("cost", math.nan)
+
+    @property
+    def sort_keys(self) -> Sequence[SqlExpression]:
+        """Get the sort keys of the auxiliary node.
+
+        Returns
+        -------
+        Sequence[SqlExpression]
+            The expressions used for sorting. If no such information is available, an empty list is returned.
+        """
+        return self._metadata.get("sort_keys", [])
+
+    @property
     def annotation(self) -> Optional[JoinMetadataType | BaseTableMetadataType]:
         return None
+
+    def is_sort(self) -> bool:
+        """Checks, whether this auxiliary node is a sort operation."""
+        return self.name == "Sort"
+
+    def is_materialize(self) -> bool:
+        """Checks, whether this auxiliary node is a materialize operation."""
+        return self.name == "Materialize"
+
+    def is_memoize(self) -> bool:
+        """Checks, whether this auxiliary node is a memoize operation."""
+        return self.name == "Memoize"
 
     def is_join_node(self) -> bool:
         return False
@@ -1590,7 +1730,7 @@ class JoinTree(Container[TableReference], Generic[JoinMetadataType, BaseTableMet
     Parameters
     ----------
     root : Optional[AbstractJoinTreeNode[JoinMetadataType, BaseTableMetadataType]], optional
-        The root node of the tree structure that should be maintained by this join tree. Can be ``None``, in which
+        The root node of the tree structure that should be maintained by this join tree. Can be *None*, in which
         case the join tree remain empty.
 
     Notes
@@ -1623,7 +1763,7 @@ class JoinTree(Container[TableReference], Generic[JoinMetadataType, BaseTableMet
             Handler method to create `JoinMetadata` instances for the intermediate nodes. It receives the annotation
             of the current (intermediate) join tree and the annotation of the next join tree to join via a cross
             product as input and generates the annotation of the intermediate node for the next cross product. By
-            default this is ``None``, which does not create any annotations for the intermediate nodes.
+            default this is *None*, which does not create any annotations for the intermediate nodes.
 
         Returns
         -------
@@ -1663,7 +1803,7 @@ class JoinTree(Container[TableReference], Generic[JoinMetadataType, BaseTableMet
         table : TableReference
             The table that should be scanned
         base_annotation : Optional[BaseTableMetadataType], optional
-            The annotation for the base table. By default ``None`` is supplied, which indicates that there is no
+            The annotation for the base table. By default *None* is supplied, which indicates that there is no
             annotation.
 
         Returns
@@ -1688,7 +1828,7 @@ class JoinTree(Container[TableReference], Generic[JoinMetadataType, BaseTableMet
         right_tree : JoinTreeType
             The right child of the new tree root
         join_annotation : Optional[JoinMetadataType], optional
-            The annotation for the join. By default ``None`` is supplied, which indicates that there is no annotation.
+            The annotation for the join. By default *None* is supplied, which indicates that there is no annotation.
 
         Returns
         -------
@@ -1713,7 +1853,7 @@ class JoinTree(Container[TableReference], Generic[JoinMetadataType, BaseTableMet
         Returns
         -------
         Optional[AbstractJoinTreeNode[JoinMetadataType, BaseTableMetadataType]]
-            The root node if it exists, or ``None`` if the join tree is empty.
+            The root node if it exists, or *None* if the join tree is empty.
         """
         return self._root
 
@@ -1803,7 +1943,7 @@ class JoinTree(Container[TableReference], Generic[JoinMetadataType, BaseTableMet
         Returns
         -------
         Optional[AbstractJoinTreeNode[JoinMetadataType, BaseTableMetadataType]]
-            The root node if exists, or ``None`` if the tree is empty.
+            The root node if exists, or *None* if the tree is empty.
         """
         return self._root
 
@@ -1982,9 +2122,9 @@ class JoinTree(Container[TableReference], Generic[JoinMetadataType, BaseTableMet
         table : TableReference
             The table that should be joined
         base_annotation : Optional[BaseTableMetadataType], optional
-            Additional metadata about the table and its scan. Can be ``None`` if no metadata exists
+            Additional metadata about the table and its scan. Can be *None* if no metadata exists
         join_annotation : Optional[JoinMetadataType], optional
-            Additional metadata about the join. Can be ``None`` if no metadata exists
+            Additional metadata about the join. Can be *None* if no metadata exists
         insert_left : bool, optional
             Whether the table should be inserted as the left child of the new root node. Defaults to ``False`` which
             inserts it to the right. By chaining `join_with_base_table` method calls and keeping the default parameter
@@ -2024,7 +2164,7 @@ class JoinTree(Container[TableReference], Generic[JoinMetadataType, BaseTableMet
         subtree : JoinTreeType
             The subtree to join
         annotation : Optional[JoinMetadataType], optional
-            Additional metadata about the new join. Can be ``None`` if no metadata exists.
+            Additional metadata about the new join. Can be *None* if no metadata exists.
         insert_left : bool, optional
             Whether the subtree should be inserted as the left child of the new root node. Defaults to ``False`` which
             inserts it to the right.
@@ -2127,7 +2267,7 @@ class LogicalJoinTree(JoinTree[LogicalJoinMetadata, LogicalBaseTableMetadata]):
     Parameters
     ----------
     root : Optional[AbstractJoinTreeNode[LogicalJoinMetadata, LogicalBaseTableMetadata]], optional
-            The root node of the tree structure that should be maintained by this join tree. Can be ``None``, in which
+            The root node of the tree structure that should be maintained by this join tree. Can be *None*, in which
             case the join tree remain empty.
     """
 
@@ -2316,7 +2456,7 @@ def logical_join_tree_annotation_merger(first_annotation: Optional[LogicalTreeMe
     Since logical join annotations are only composed of a join predicate and a cardinality, this task is quite simple:
 
     - If both annotations specify a join predicate, those predicates are combined in a conjunction. Otherwise valid
-      predicates are retained or ``None`` is used.
+      predicates are retained or *None* is used.
     - The cardinality of the merged annotation is derived from the product of the cardinalities of the source
       cardinalities. This implies that as soon as one of the cardinalities is NaN, the entire cardinality becomes NaN
 
@@ -2397,10 +2537,10 @@ class PhysicalQueryPlan(JoinTree[PhysicalJoinMetadata, PhysicalBaseTableMetadata
     Parameters
     ----------
     root : Optional[AbstractJoinTreeNode[PhysicalJoinMetadata, PhysicalBaseTableMetadata]], optional
-        The root node of the tree structure that should be maintained by this join tree. Can be ``None``, in which
+        The root node of the tree structure that should be maintained by this join tree. Can be *None*, in which
         case the join tree remains empty.
     global_operator_settings : Optional[PhysicalOperatorAssignment], optional
-        Settings that apply to the join tree as a whole, rather than to individual joins or scans. Defaults to ``None``
+        Settings that apply to the join tree as a whole, rather than to individual joins or scans. Defaults to *None*
         which indicates that there are no such settings. If the assignment contain per-operator choices, these are
         simply ignored.
     """
@@ -2629,7 +2769,7 @@ class PhysicalQueryPlan(JoinTree[PhysicalJoinMetadata, PhysicalBaseTableMetadata
                                  else PhysicalOperatorAssignment())
 
     @property
-    def cardinality(self) -> float:
+    def cardinality(self) -> Cardinality:
         """Get the total cardinality of the plan.
 
         Depending on the context, this cardinality can be interpreted in different ways, including as a traditional cardinality
@@ -2637,7 +2777,7 @@ class PhysicalQueryPlan(JoinTree[PhysicalJoinMetadata, PhysicalBaseTableMetadata
 
         Returns
         -------
-        float
+        Cardinality
             The estimate. Can be *NaN* to indicate that no value is available.
         """
         return self.root.annotation.cardinality if self.root and self.root.annotation else math.nan
@@ -2833,7 +2973,7 @@ def physical_join_tree_annotation_merger(first_annotation: Optional[PhysicalPlan
     `logical_join_tree_annotation_merger`):
 
     - If both annotations specify a join predicate, those predicates are combined in a conjunction. Otherwise valid
-      predicates are retained or ``None`` is used.
+      predicates are retained or *None* is used.
     - The cardinality of the merged annotation is derived from the product of the cardinalities of the source
       cardinalities. This implies that as soon as one of the cardinalities is NaN, the entire cardinality becomes NaN
 
@@ -3204,7 +3344,7 @@ def _extract_card_from_annotation(node: AbstractJoinTreeNode | None) -> float:
 
     Returns
     -------
-    float
+    Cardinality
         The node's cardinality. Can be *NaN* if either the node is undefined or does not contain an annotated cardinality.
     """
     if node is None:
@@ -3251,7 +3391,7 @@ def _extract_operator_from_annotation(node: AbstractJoinTreeNode | None) -> Opti
 
     Returns
     -------
-    float
+    Cardinality
         The node's operator. Can be *None* if either the node is undefined or does not contain an annotated cardinality.
     """
     if node is None:

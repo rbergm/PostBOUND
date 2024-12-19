@@ -12,6 +12,13 @@ from . import util
 from .util.errors import StateError
 
 
+Cost = float
+"""Type alias for a cost estimate."""
+
+Cardinality = int
+"""Type alias for a cardinality estimate."""
+
+
 class ScanOperators(Enum):
     """The scan operators supported by PostBOUND.
 
