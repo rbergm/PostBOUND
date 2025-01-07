@@ -20,7 +20,7 @@ import pandas as pd
 
 from .. import joingraph, jointree, validation
 from .._hints import PhysicalOperatorAssignment, PlanParameterization
-from ..._pipelines import ParameterGeneration, CardinalityEstimator
+from ..._stages import ParameterGeneration, CardinalityEstimator
 from ... import db, qal, util
 from ...qal import parser, TableReference
 from ...experiments import workloads

@@ -5,7 +5,7 @@ from typing import Optional
 
 from .._hints import PhysicalOperatorAssignment
 from ..jointree import LogicalJoinTree
-from ..._pipelines import PhysicalOperatorSelection
+from ..._stages import PhysicalOperatorSelection
 from ... import qal
 from ...experiments import workloads
 

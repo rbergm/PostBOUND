@@ -102,14 +102,21 @@ from . import (
   experiments,
   util
 )
+from ._core import Cost, Cardinality, TableReference
 from ._pipelines import (
   OptimizationPipeline,
-  CompleteOptimizationAlgorithm, IntegratedOptimizationPipeline,
-  Cost, Cardinality,
-  CardinalityEstimator, CostModel, PlanEnumerator, TextBookOptimizationPipeline,
-  JoinOrderOptimization, PhysicalOperatorSelection, ParameterGeneration, TwoStageOptimizationPipeline,
-  IncrementalOptimizationStep, IncrementalOptimizationPipeline,
-  as_complete_algorithm, OptimizationSettings
+  IntegratedOptimizationPipeline,
+  TextBookOptimizationPipeline,
+  TwoStageOptimizationPipeline,
+  IncrementalOptimizationPipeline,
+  OptimizationSettings
+)
+from ._stages import (
+  CompleteOptimizationAlgorithm,
+  CardinalityEstimator, CostModel, PlanEnumerator,
+  JoinOrderOptimization, PhysicalOperatorSelection, ParameterGeneration,
+  IncrementalOptimizationStep,
+  as_complete_algorithm
 )
 from .db import Database
 from .qal import relalg, transform, SqlQuery
@@ -123,7 +130,7 @@ __all__ = [
   "db", "opt", "qal", "experiments", "util",
   "OptimizationPipeline",
   "CompleteOptimizationAlgorithm", "IntegratedOptimizationPipeline",
-  "Cost", "Cardinality",
+  "Cost", "Cardinality", "TableReference",
   "CardinalityEstimator", "CostModel", "PlanEnumerator", "TextBookOptimizationPipeline",
   "JoinOrderOptimization", "PhysicalOperatorSelection", "ParameterGeneration", "TwoStageOptimizationPipeline",
   "IncrementalOptimizationStep", "IncrementalOptimizationPipeline",

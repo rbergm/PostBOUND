@@ -18,7 +18,7 @@ from typing import Any, Optional
 from .. import jointree
 from .._hints import PhysicalOperatorAssignment, JoinOperatorAssignment
 from ..._core import JoinOperators
-from ..._pipelines import PhysicalOperatorSelection
+from ..._stages import PhysicalOperatorSelection
 from ... import db, qal, util
 from ...qal import parser as query_parser
 from ...qal import TableReference, ColumnReference

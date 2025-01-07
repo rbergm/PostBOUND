@@ -5,7 +5,7 @@ from typing import Optional
 
 from .. import jointree
 from .._hints import PhysicalOperatorAssignment, PlanParameterization
-from ..._pipelines import JoinOrderOptimization, PhysicalOperatorSelection, ParameterGeneration
+from ..._stages import JoinOrderOptimization, PhysicalOperatorSelection, ParameterGeneration
 from ... import qal
 
 

@@ -39,7 +39,7 @@ from .. import joingraph, jointree, validation
 from .._hints import PhysicalOperatorAssignment
 from ..policies import cardinalities as cardpol, jointree as treepol
 from ..._core import JoinOperators
-from ..._pipelines import JoinOrderOptimization, PhysicalOperatorSelection, JoinOrderOptimizationError
+from ..._stages import JoinOrderOptimization, PhysicalOperatorSelection, JoinOrderOptimizationError
 from ... import db, qal, util
 from ...qal import TableReference, ColumnReference
 

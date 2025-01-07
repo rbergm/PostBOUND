@@ -10,7 +10,7 @@ import networkx as nx
 from .. import jointree, validation
 from .._hints import PhysicalOperatorAssignment, JoinOperatorAssignment, ScanOperatorAssignment
 from ..._core import JoinOperators, ScanOperators, PhysicalOperator
-from ..._pipelines import JoinOrderOptimization, PhysicalOperatorSelection, CompleteOptimizationAlgorithm
+from ..._stages import JoinOrderOptimization, PhysicalOperatorSelection, CompleteOptimizationAlgorithm
 from ... import db, qal
 from ...qal import TableReference
 from ...util import networkx as nx_utils

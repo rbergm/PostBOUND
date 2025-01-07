@@ -15,13 +15,56 @@ from typing import Optional
 
 from .._hints import PhysicalOperatorAssignment, PlanParameterization
 from ..jointree import LogicalJoinTree, PhysicalQueryPlan
-from ..._pipelines import (
+from ..._core import Cost, Cardinality, TableReference
+from ..._stages import (
+    CostModel, CardinalityEstimator,
     JoinOrderOptimization, PhysicalOperatorSelection, ParameterGeneration,
-    CompleteOptimizationAlgorithm,
-    NativeCardinalityEstimator, NativeCostModel
+    CompleteOptimizationAlgorithm
 )
 from ... import db, qal
 from ...util import jsondict
+
+
+class NativeCostModel(CostModel):
+    """Obtains the cost of a query plan by using the cost model of an actual database system."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._target_db: Optional[db.Database] = None
+
+    def estimate_cost(self, query: qal.SqlQuery, plan: PhysicalQueryPlan) -> Cost:
+        hinted_query = self._target_db.hinting().generate_hints(query, plan)
+        return self._target_db.optimizer().cost_estimate(hinted_query)
+
+    def describe(self) -> jsondict:
+        return {"name": "native", "database_system": self._target_db.describe()}
+
+    def initialize(self, target_db: db.Database, query: qal.SqlQuery) -> None:
+        self._target_db = target_db
+
+    def cleanup(self) -> None:
+        self._target_db = None
+
+
+class NativeCardinalityEstimator(CardinalityEstimator):
+    """Obtains the cardinality of a query plan by using the cardinality estimator of an actual database system."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._target_db: Optional[db.Database] = None
+
+    def estimate_cardinality(self, query: qal.SqlQuery, intermediate: frozenset[TableReference]) -> Cardinality:
+        subquery = qal.transform.extract_query_fragment(query, intermediate)
+        return self._target_db.optimizer().cardinality_estimate(subquery)
+
+    def describe(self) -> jsondict:
+        return {"name": "native", "database_system": self._target_db.describe()}
+
+    def initialize(self, target_db: db.Database, query: qal.SqlQuery) -> None:
+        self._target_db = target_db
+
+    def cleanup(self) -> None:
+        self._target_db = None
 
 
 class NativeJoinOrderOptimizer(JoinOrderOptimization):
@@ -120,10 +163,3 @@ class NativeOptimizer(CompleteOptimizationAlgorithm):
 
     def describe(self) -> jsondict:
         return {"name": "native", "database_system": self.db_instance.describe()}
-
-
-__all__ = [
-    "NativeJoinOrderOptimizer", "NativePhysicalOperatorSelection", "NativePlanParameterization",
-    "NativeOptimizer",
-    "NativeCardinalityEstimator", "NativeCostModel"
-]
