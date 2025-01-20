@@ -30,7 +30,8 @@ Almost all of the subdirectories contain further READMEs that explain their purp
 
 ## Getting started
 
-[!TIP] PostBOUND can also as an all-in-one Docker container. See [Dockerfile](#Dockerfile) for details.
+> [!TIP]
+> PostBOUND can also as an all-in-one Docker container. See [Dockerfile](#Dockerfile) for details.
 
 All package requirements can be installed from the `requirements.txt` file. To use PostBOUND in different projects,
 it can also be build and installed as a local package using pip. This is generally the recommended way to go and can be
@@ -125,7 +126,8 @@ use-case, different pipelines are available.
 
 ## Dockerfile
 
-[!CAUTION] The Dockerfile is currently under active development and not fully functional at this point.
+> [!CAUTION]
+> The Dockerfile is currently under active development and not fully functional at this point.
 
 TODO
 
