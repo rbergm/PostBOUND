@@ -30,6 +30,8 @@ Almost all of the subdirectories contain further READMEs that explain their purp
 
 ## Getting started
 
+[!TIP] PostBOUND can also as an all-in-one Docker container. See [Dockerfile](#Dockerfile) for details.
+
 All package requirements can be installed from the `requirements.txt` file. To use PostBOUND in different projects,
 it can also be build and installed as a local package using pip. This is generally the recommended way to go and can be
 automated using the `tools/setup-py-venv.sh` script.
@@ -120,6 +122,47 @@ structured as follows:
 The actual optimization pipelines is defined in the `postbound` module at the package root. Depending on the specific
 use-case, different pipelines are available.
 
+
+## Dockerfile
+
+[!CAUTION] The Dockerfile is currently under active development and not fully functional at this point.
+
+TODO
+
+Allowed build arguments (`--build-arg`) include:
+
+| Argument | Allowed values | Description |
+|----------|----------------|-------------|
+| `TIMEZONE` | Any valid timezone identifier, defaults to `UTC` | Timezone of the Docker container (and hence the Postgres server). It is probably best to just use the value of `cat /etc/timezone` |
+| `USERNAME` | Any valid UNIX username, defaults to `postbound`. | The username within the Docker container. This will also be the Postgres user. |
+| `SETUP_IMDB` | `true` or `false` (default) | Whether an [IMDB](https://doi.org/10.14778/2850583.2850594) instance should be created as part of the Postgres setup. |
+| `SETUP_STATS` | `true` or `false` (default) | Whether a [Stats](https://doi.org/10.14778/3503585.3503586) instance should be created as part of the Postgres setup. |
+| `SETUP_STACK` | `true` or `false` (default) | Whether a [Stack](https://doi.org/10.1145/3448016.3452838) instance should be created as part of the Postgres setup. |
+| `OPTIMIZE_PG_CONFIG` |  `true` or `false` (default) | Whether the Postgres configuration parameters should be automatically set based on your hardware platform. Rules are based on [PGTune](https://pgtune.leopard.in.ua/) by [le0pard](https://github.com/le0pard). |
+| `PG_DISK_TYPE` | `SSD` (default) or `HDD` | In case the Postgres server is automatically configured (see `OPTIMIZE_PG_CONFIG`) this indicates the kind of storage for the actual database. In turn, this influences the relative cost of sequential access and index-based access for the query optimizer.
+| `USE_PGLAB` | `true` or `false` (default) | Whether to initialize a [pg_lab](https://github.com/rbergm/pg_lab) server instead of a normal Postgres server. pg_lab provides advanced hinting capabilities and offers additional extension points for the query optimizer. |
+
+The PostBOUND source code is located at `/postbound`. If [pg_lab](https://github.com/rbergm/pg_lab) is being used, the corresponding files are located at `/pg_lab`.
+The container automatically exposes the Postgres port 5432 and provides a volume mountpoint at `/postbound/public`.
+
+Example setup:
+
+```bash
+$ docker build \
+    --build-arg TIMEZONE=$(cat /etc/timezone) \
+    --build-arg USE_PGLAB=true \
+    --build-arg OPTIMIZE_PG_CONFIG=true \
+    --build-arg SETUP_STATS=true \
+    -t postbound \
+    .
+$ docker run -dt \
+    --shm-size 4G \
+    --name postbound \
+    --volume $PWD/postbound-docker:/postbound/public \
+    --expose 5432 \
+    postbound
+
+```
 
 ---
 
