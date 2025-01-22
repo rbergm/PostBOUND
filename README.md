@@ -11,24 +11,7 @@ algorithm on a specific benchmark. Those utilities are mostly focused on setting
 systems and loading commonly used databases and benchmarks for them.
 
 
-## Overview
-
-The repository is structured as follows. The `postbound` directory contains the actual source code, all other folders are
-concerned with "supporting" aspects (which are important nevertheless.).
-Almost all of the subdirectories contain further READMEs that explain their purpose and structure in more detail.
-
-| Folder        | Description |
-| ------------- | ----------- |
-| `postbound`   | Contains the source code of the PostBOUND framework |
-| `docs`        | contains the high-level documentation as well as infrastructure to export the source code documentation |
-| `examples`    | contains general examples for typical usage scenarios. These should be run from the root directory, e.g. as `python3 -m examples.example-01-basic-workflow` |
-| `tests`       | contains the unit tests and integration tests for the framework implementatino. These should also be run from the root directory, e.g. as `python3 -m unittest tests` |
-| `db-support`  | Contains utilities to setup instances of the respective database systems and contain system-specific scripts to import popular benchmarks for them |
-| `workloads`   | Contains the raw SQL queries of some popular benchmarks |
-| `tools`       | Provides different other utilities that are not directly concerned with specific database systems, but rather with common problems encoutered when benchmarking query optimizers |
-
-
-## Getting started
+## Getting Started
 
 > [!TIP]
 > PostBOUND can also as an all-in-one Docker container. See [Dockerfile](#Dockerfile) for details.
@@ -106,7 +89,24 @@ database setup utilities that are shipped with PostBOUND also contain scripts th
 for the system. These files than only need to be moved to the correct location.
 
 
-## Package structure
+## Repo Structure
+
+The repository is structured as follows. The `postbound` directory contains the actual source code, all other folders are
+concerned with "supporting" aspects (which are important nevertheless.).
+Almost all of the subdirectories contain further READMEs that explain their purpose and structure in more detail.
+
+| Folder        | Description |
+| ------------- | ----------- |
+| `postbound`   | Contains the source code of the PostBOUND framework |
+| `docs`        | contains the high-level documentation as well as infrastructure to export the source code documentation |
+| `examples`    | contains general examples for typical usage scenarios. These should be run from the root directory, e.g. as `python3 -m examples.example-01-basic-workflow` |
+| `tests`       | contains the unit tests and integration tests for the framework implementatino. These should also be run from the root directory, e.g. as `python3 -m unittest tests` |
+| `db-support`  | Contains utilities to setup instances of the respective database systems and contain system-specific scripts to import popular benchmarks for them |
+| `workloads`   | Contains the raw SQL queries of some popular benchmarks |
+| `tools`       | Provides different other utilities that are not directly concerned with specific database systems, but rather with common problems encoutered when benchmarking query optimizers |
+
+
+## Package Structure
 
 The `postbound` directory contains the actual source code of the framework. On a high-level, the PostBOUND framework is
 structured as follows:
@@ -126,12 +126,14 @@ use-case, different pipelines are available.
 
 ## Dockerfile
 
-> [!CAUTION]
-> The Dockerfile is currently under active development and not fully functional at this point.
+You can install your own PostBOUND library along with a local Postgres instance using the Dockerfile. See an example below.
+Depending on your specific use case, databases for different workloads can be imported. The image can also directly run an
+instance of [pg_lab](https://github.com/rbergm/pg_lab) instead of vanilla Postgres. pg_lab provides advanced hinting support
+(e.g. for materialization or cardinality hints for base tables) and offers additional extension points for the query optimizer
+(e.g. hooks for the different cost functions).
 
-TODO
-
-Allowed build arguments (`--build-arg`) include:
+The Dockerfile can be considered a blueprint of the target system design for PostBOUND, i.e. including a local database server.
+You can adjust the build process with the following arguments:
 
 | Argument | Allowed values | Description |
 |----------|----------------|-------------|
@@ -142,10 +144,11 @@ Allowed build arguments (`--build-arg`) include:
 | `SETUP_STACK` | `true` or `false` (default) | Whether a [Stack](https://doi.org/10.1145/3448016.3452838) instance should be created as part of the Postgres setup. |
 | `OPTIMIZE_PG_CONFIG` |  `true` or `false` (default) | Whether the Postgres configuration parameters should be automatically set based on your hardware platform. Rules are based on [PGTune](https://pgtune.leopard.in.ua/) by [le0pard](https://github.com/le0pard). |
 | `PG_DISK_TYPE` | `SSD` (default) or `HDD` | In case the Postgres server is automatically configured (see `OPTIMIZE_PG_CONFIG`) this indicates the kind of storage for the actual database. In turn, this influences the relative cost of sequential access and index-based access for the query optimizer.
-| `USE_PGLAB` | `true` or `false` (default) | Whether to initialize a [pg_lab](https://github.com/rbergm/pg_lab) server instead of a normal Postgres server. pg_lab provides advanced hinting capabilities and offers additional extension points for the query optimizer. |
+| `USE_PGLAB` | `true` or `false` (default) | Whether to initialize a pg_lab server instead of a normal Postgres server. pg_lab provides advanced hinting capabilities and offers additional extension points for the query optimizer. |
 
 The PostBOUND source code is located at `/postbound`. If [pg_lab](https://github.com/rbergm/pg_lab) is being used, the corresponding files are located at `/pg_lab`.
-The container automatically exposes the Postgres port 5432 and provides a volume mountpoint at `/postbound/public`.
+The container automatically exposes the Postgres port 5432 and provides a volume mountpoint at `/postbound/public`. This
+mountpoint can be used to easily get experiment scripts into the container and to export results back out again.
 
 Example setup:
 
@@ -163,7 +166,7 @@ $ docker run -dt \
     --volume $PWD/postbound-docker:/postbound/public \
     --expose 5432 \
     postbound
-
+$ docker exec -it postbound /bin/bash
 ```
 
 ---

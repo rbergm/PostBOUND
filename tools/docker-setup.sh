@@ -29,6 +29,10 @@ if [ "$SETUP_STATS" = "true" ] ; then
 fi
 if [ "$SETUP_STACK" = "true" ] ; then
     ./workload-stack-setup.sh
+    cd /postbound/workloads/Stack-Queries
+    ./setup.sh
+
+    cd /postbound/db-support/postgres
 fi
 
 # User config

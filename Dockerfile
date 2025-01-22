@@ -6,7 +6,7 @@ EXPOSE 5432
 RUN apt update && apt install -y \
     build-essential sudo tzdata procps \
     bison flex curl pkg-config libicu-dev libreadline-dev cmake \
-    git vim unzip default-jre \
+    git vim unzip zstd default-jre \
     python3 python3-venv python3-pip
 
 # Configure some general settings

@@ -18,6 +18,8 @@ Be carefull when updating and check the changelog!
 
 ### New features
 - Physical query plans now provide information about sorted colums
+- Created a Dockerfile with first-class support. It allows to easily install a local version of PostBOUND complete with a
+  ready-to-go Postgres instance.
 
 ---
 
