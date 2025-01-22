@@ -10,18 +10,21 @@ CORES=$(($(nproc --all) / 2))
 FORCE_CREATION="false"
 SKIP_EXTENSIONS="false"
 SKIP_VACUUM="false"
+CLEANUP="false"
 
 show_help() {
     RET=$1
     echo "Usage: $0 <options>"
     echo "Allowed options:"
     echo -e "-d | --dir <directory>\tspecifies the directory to store/load the Stack data files, defaults to '../stack_data'"
+    echo -e "-f | --force\t\tdelete existing instance of the database if necessary"
     echo -e "-t | --target <db name>\tname of the Stack database, defaults to 'stack'"
     echo -e "-j | --jobs <count>\tconfigure the number of worker processes to load the database. Defaults to 1/2 of CPU cores"
-    echo -e "-f | --force\t\tdelete existing instance of the database if necessary"
-    echo -e "--pg-conn\t\t<connection> connection string to the PostgreSQL server (server, port, user) if required, e.g. '-h localhost -U admin'"
+    echo -e "--pg-conn <connection>\tconnection string to the PostgreSQL server (server, port, user) if required, e.g. '-h localhost -U admin'"
+    echo -e "--no-fkeys\t\tdoes not load foreign key indexes to the database (includes both foreign key constraints as well as the actual indexes)"
     echo -e "--no-ext\t\tdoes not install any extensions"
     echo -e "--no-vacuum\t\tdoes not run VACUUM ANALYZE after the import"
+    echo -e "--cleanup\t\tremove the data files after import"
     exit $RET
 }
 
@@ -68,6 +71,10 @@ while [ $# -gt 0 ] ; do
             ;;
         --no-vacuum)
             SKIP_VACUUM="true"
+            shift
+            ;;
+        --cleanup)
+            CLEANUP="true"
             shift
             ;;
         --help)
@@ -120,6 +127,11 @@ if [ $SKIP_VACUUM == "false" ] ; then
     psql $PG_CONN $DB_NAME -c "VACUUM ANALYZE;"
 else
     echo ".. Skipping vacuuming"
+fi
+
+if [ $CLEANUP == "true" ] ; then
+    echo ".. Removing data files"
+    rm -rf $TARGET_DIR
 fi
 
 echo ".. Done"

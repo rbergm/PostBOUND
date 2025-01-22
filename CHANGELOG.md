@@ -31,6 +31,8 @@ Be carefull when updating and check the changelog!
 - Created a Dockerfile with first-class support. It allows to easily install a local version of PostBOUND complete with a
   ready-to-go Postgres instance.
 - Physical query plans now provide information about sorted colums
+- Added `--cleanup` switches to all workload setup scripts. These remove the input data files once the database has been
+  created.
 
 ### WIP
 - Baseline for dynamic programming plan enumerator. This is not yet complete and trying to initialize a corresponding class

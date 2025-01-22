@@ -22,15 +22,15 @@ cd /postbound && tools/setup-py-venv.sh --venv /postbound/pb-venv
 # Setup databases
 cd /postbound/db-support/postgres
 if [ "$SETUP_IMDB" = "true" ] ; then
-        ./workload-job-setup.sh
+        ./workload-job-setup.sh --cleanup
         ./postgres-psycopg-setup.sh imdb job
 fi
 if [ "$SETUP_STATS" = "true" ] ; then
-    ./workload-stats-setup.sh
+    ./workload-stats-setup.sh --cleanup
     ./postgres-psycopg-setup.sh stats stats
 fi
 if [ "$SETUP_STACK" = "true" ] ; then
-    ./workload-stack-setup.sh
+    ./workload-stack-setup.sh --cleanup
     ./postgres-psycopg-setup.sh stack stack
 
     cd /postbound/workloads/Stack-Queries

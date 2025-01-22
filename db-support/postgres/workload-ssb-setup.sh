@@ -9,6 +9,7 @@ TARGET_DIR="../ssb_data"
 PG_CONN="-U $USER"
 SKIP_EXTENSIONS="false"
 SKIP_VACUUM="false"
+CLEANUP="false"
 SF=10
 
 attempt_pg_ext_install() {
@@ -25,13 +26,15 @@ show_help() {
     RET=$1
     echo "Usage: $0 <options>"
     echo "Allowed options:"
-    echo -e "-d | --dir\t\t<directory> specifies the directory to store/load the stats data files, defaults to '../ssb_data'"
+    echo -e "-d | --dir <directory>\tspecifies the directory to store/load the SSB data files, defaults to '../ssb_data'"
     echo -e "-s | --scale-factor\t<scale factor> specifies the scale factor to use (defaults to 10)"
     echo -e "-f | --force\t\tdelete existing instance of the database if necessary"
-    echo -e "-t | --target\t\t<db name> name of the ssb database, defaults to 'ssb'"
-    echo -e "--pg-conn\t\t<connection> connection string to the PostgreSQL server (server, port, user) if required, e.g. '-h localhost -U admin'"
+    echo -e "-t | --target <db name>\tname of the SSB database, defaults to 'ssb'"
+    echo -e "--pg-conn <connection>\tconnection string to the PostgreSQL server (server, port, user) if required, e.g. '-h localhost -U admin'"
+    echo -e "--no-fkeys\t\tdoes not load foreign key indexes to the database (includes both foreign key constraints as well as the actual indexes)"
     echo -e "--no-ext\t\tdoes not install any extensions"
     echo -e "--no-vacuum\t\tdoes not run VACUUM ANALYZE after the import"
+    echo -e "--cleanup\t\tremove the data files after import"
     exit $RET
 }
 
@@ -67,6 +70,10 @@ while [ $# -gt 0 ] ; do
             ;;
         --no-vacuum)
             SKIP_VACUUM="true"
+            shift
+            ;;
+        --cleanup)
+            CLEANUP="true"
             shift
             ;;
         --help)
@@ -142,6 +149,11 @@ if [ $SKIP_VACUUM == "false" ] ; then
     psql $PG_CONN $DB_NAME -c "VACUUM ANALYZE;"
 else
     echo ".. Skipping vacuuming"
+fi
+
+if [ $CLEANUP == "true" ] ; then
+    echo ".. Removing data files"
+    rm -rf "$TARGET_DIR/ssb_data_$SF"
 fi
 
 echo ".. Done"
