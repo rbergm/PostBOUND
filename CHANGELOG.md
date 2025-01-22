@@ -14,16 +14,31 @@ Be carefull when updating and check the changelog!
 
 ---
 
-## 🚧 Version 0.9.0 👷
+## 🚧 Version 0.10.0 👷
 
 ### New features
-- Physical query plans now provide information about sorted colums
-- Created a Dockerfile with first-class support. It allows to easily install a local version of PostBOUND complete with a
-  ready-to-go Postgres instance.
+- Initializing a `TextbookOptimizationPipeline` without a custom enumerator will now auto-select a dynamic programming-based
+  enumerator. If the target database is Postgres, the Postgres implementation of the algorithm will be used.
 
 ---
 
-## ➡ Version 0.8.0
+
+## ➡ Version 0.9.0
+
+**The Docker release**
+
+### New features
+- Created a Dockerfile with first-class support. It allows to easily install a local version of PostBOUND complete with a
+  ready-to-go Postgres instance.
+- Physical query plans now provide information about sorted colums
+
+### WIP
+- Baseline for dynamic programming plan enumerator. This is not yet complete and trying to initialize a corresponding class
+  raises an error for now. The enumerator will probably be ready to go for v0.10.0
+
+---
+
+## Version 0.8.0
 
 ### New features
 - `tools/setup-py-venv.sh` now provides a one-stop-shop to install PostBOUND as an external package into a Python virtual

@@ -17,6 +17,9 @@ class DynamicProgrammingEnumerator(PlanEnumerator):
     def __init__(self, *, supported_scan_ops: Optional[set[ScanOperators]] = None,
                  supported_join_ops: Optional[set[JoinOperators]] = None,
                  target_db: Optional[db.Database] = None) -> None:
+        raise NotImplementedError("The DynamicProgrammingEnumerator is not yet functional. "
+                                  "Please use your own enumerator for now.")
+
         target_db = target_db if target_db is not None else db.DatabasePool.get_instance().current_database()
 
         supported_scan_ops = supported_scan_ops if supported_scan_ops is not None else set(ScanOperators)
@@ -90,6 +93,9 @@ class PostgresDynProg(PlanEnumerator):
                  supported_join_ops: Optional[set[JoinOperators]] = None,
                  enable_materialize: bool = True, enable_memoize: bool = True, enable_sort: bool = True,
                  target_db: Optional[db.Database] = None) -> None:
+        raise NotImplementedError("The Postgres-style dynamic programming is not yet functional. "
+                                  "Please use your own enumerator for now.")
+
         target_db = target_db if target_db is not None else db.DatabasePool.get_instance().current_database()
 
         supported_scan_ops = supported_scan_ops if supported_scan_ops is not None else PostgresScanHints
