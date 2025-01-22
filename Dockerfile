@@ -12,6 +12,7 @@ RUN apt update && apt install -y \
 # Configure some general settings
 ARG USERNAME=postbound
 ENV USERNAME=$USERNAME
+ENV USER=$USERNAME
 
 ARG TIMEZONE=UTC
 ENV TZ=$TIMEZONE
@@ -35,13 +36,13 @@ ENV USE_PGLAB=$USE_PGLAB
 # Create a new user
 WORKDIR /postbound
 WORKDIR /pg_lab
-RUN useradd -ms /bin/bash $USERNAME
-RUN chown -R $USERNAME:$USERNAME /postbound
-RUN chown -R $USERNAME:$USERNAME /pg_lab
-RUN chmod 755 /postbound
-RUN chmod 755 /pg_lab
-RUN echo "$USERNAME:$USERNAME" | chpasswd
-RUN usermod -aG sudo $USERNAME
+RUN useradd -ms /bin/bash $USERNAME ; \
+    chown -R $USERNAME:$USERNAME /postbound ; \
+    chown -R $USERNAME:$USERNAME /pg_lab ; \
+    chmod 755 /postbound ; \
+    chmod 755 /pg_lab ; \
+    echo "$USERNAME:$USERNAME" | chpasswd ; \
+    usermod -aG sudo $USERNAME
 USER $USERNAME
 
 # PostBOUND and database setup

@@ -43,7 +43,7 @@ echo "source /postbound/pb-venv/bin/activate" >> /home/$USERNAME/.bashrc
 
 
 # Teardown
-if [ "$USE_PGLAB" = "true" ] ; the
+if [ "$USE_PGLAB" = "true" ] ; then
     cd /pg_lab
 else
     cd /postbound/db-support/postgres
