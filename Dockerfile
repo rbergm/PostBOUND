@@ -11,16 +11,26 @@ RUN apt update && apt install -y \
 
 # Configure some general settings
 ARG USERNAME=postbound
+ENV USERNAME=$USERNAME
+
 ARG TIMEZONE=UTC
-ARG SETUP_IMDB=false
-ARG SETUP_STATS=false
-ARG SETUP_STACK=false
-ARG OPTIMIZE_PG_CONFIG=false
-ARG PG_DISK_TYPE=SSD
-ARG USE_PGLAB=false
 ENV TZ=$TIMEZONE
-ENV USER=$USERNAME
 RUN ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && echo $TZ > /etc/timezone
+
+ARG SETUP_IMDB=false
+ENV SETUP_IMDB=$SETUP_IMDB
+ARG SETUP_STATS=false
+ENV SETUP_STATS=$SETUP_STATS
+ARG SETUP_STACK=false
+ENV SETUP_STACK=$SETUP_STACK
+
+ARG OPTIMIZE_PG_CONFIG=false
+ENV OPTIMIZE_PG_CONFIG=$OPTIMIZE_PG_CONFIG
+ARG PG_DISK_TYPE=SSD
+ENV PG_DISK_TYPE=$PG_DISK_TYPE
+
+ARG USE_PGLAB=false
+ENV USE_PGLAB=$USE_PGLAB
 
 # Create a new user
 WORKDIR /postbound
@@ -34,63 +44,11 @@ RUN echo "$USERNAME:$USERNAME" | chpasswd
 RUN usermod -aG sudo $USERNAME
 USER $USERNAME
 
+# PostBOUND and database setup
 RUN git clone --depth 1 --branch=main https://github.com/rbergm/PostBOUND /postbound
-
-# Setup local Postgres or pg_lab
-RUN if [ "$USE_PGLAB" = "true" ] ; then \
-        git clone --depth 1 --branch=main https://github.com/rbergm/pg_lab /pg_lab ; \
-        cd /pg_lab && ./postgres-setup.sh --remote-password "" --stop && . ./postgres-start.sh ; \
-    else \
-        cd /postbound/db-support/postgres && ./postgres-setup.sh --remote-password "" --stop && . ./postgres-start.sh ; \
-    fi ; \
-    cd /postbound/db-support/postgres ; \
-    if [ "$OPTIMIZE_PG_CONFIG" = "true" ] ; then \
-        python3 postgres-config-generator.py --out pg-conf.sql --disk-type "$PG_DISK_TYPE" "$PGDATA" ; \
-        psql -f pg-conf.sql ; \
-    fi ; \
-    if [ "$USE_PGLAB" = "true" ] ; then \
-        cd /pg_lab && . ./postgres-stop.sh ; \
-    else \
-        . ./postgres-stop.sh ; \
-    fi
-
-# Install PostBOUND package
-RUN cd /postbound && tools/setup-py-venv.sh --venv /postbound/pb-venv
-
-# Setup databases
-RUN if [ "$USE_PGLAB" = "true" ] ; then \
-        cd /pg_lab && . ./postgres-start.sh ; \
-    else \
-        cd /postbound/db-support/postgres && . ./postgres-start.sh ; \
-    fi ; \
-    cd /postbound/db-support/postgres ; \
-    if [ "$SETUP_IMDB" = "true" ] ; then \
-         ./workload-job-setup.sh ; \
-    fi ; \
-    if [ "$SETUP_STATS" = "true" ] ; then \
-        ./workload-stats-setup.sh ; \
-    fi ; \
-    if [ "$SETUP_STACK" = "true" ] ; then \
-        ./workload-stack-setup.sh ; \
-    fi ; \
-    if [ "$USE_PGLAB" = "true" ] ; then \
-        cd /pg_lab && . ./postgres-stop.sh ; \
-    else \
-        cd /postbound/db-support/postgres && . ./postgres-stop.sh ; \
-    fi
-
-
-# User config
-RUN if [ "$USE_PGLAB" = "true" ] ; then \
-        echo "cd /pg_lab/" >> /home/$USERNAME/.bashrc ; \
-    else \
-        echo "cd /postbound/db-support/postgres/" >> /home/$USERNAME/.bashrc ; \
-    fi ; \
-    echo "source ./postgres-load-env.sh" >> /home/$USERNAME/.bashrc ; \
-    echo "cd /postbound" >> /home/$USERNAME/.bashrc ; \
-    echo "source /postbound/pb-venv/bin/activate" >> /home/$USERNAME/.bashrc
+RUN /bin/bash /postbound/tools/docker-setup.sh
 
 # Final container config
 WORKDIR /postbound
 VOLUME /postbound/public
-CMD /postbound/db-support/postgres/postgres-start.sh /postbound/db-support/postgres/postgres-server && /bin/bash
+CMD ["/postbound/tools/docker-entrypoint.sh"]
