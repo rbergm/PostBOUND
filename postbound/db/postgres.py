@@ -955,6 +955,18 @@ class PostgresSchemaInterface(DatabaseSchema):
         result_set = self._db.cursor().fetchone()
         return result_set[0]
 
+    def is_nullable(self, column: ColumnReference) -> bool:
+        if not column.table:
+            raise UnboundColumnError(column)
+        if column.table.virtual:
+            raise VirtualTableError(column.table)
+        query_tempalte = textwrap.dedent("""
+            SELECT is_nullable = 'YES' FROM information_schema.columns
+            WHERE table_name = '{tab}' AND column_name = '{col}'""".format(tab=column.table.full_name, col=column.name))
+        self._db.cursor().execute(query_tempalte)
+        result_set = self._db.cursor().fetchone()
+        return result_set[0]
+
     def _fetch_columns(self, table: TableReference) -> list[str]:
         """Retrieves all physical columns for a given table from the PG metadata catalogs.
 

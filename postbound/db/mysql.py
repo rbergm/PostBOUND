@@ -286,6 +286,17 @@ class MysqlSchemaInterface(DatabaseSchema):
         result_set = self._db.cursor().fetchone()
         return str(result_set[0])
 
+    def is_nullable(self, column) -> bool:
+        if not column.table:
+            raise UnboundColumnError(column)
+        if column.table.virtual:
+            raise VirtualTableError(column.table)
+        query_template = ("SELECT is_nullable FROM information_schema.columns "
+                          "WHERE table_name = %s AND column_name = %s")
+        self._db.cursor().execute(query_template, (column.table.full_name, column.name))
+        result_set = self._db.cursor().fetchone()
+        return result_set[0] == "YES"
+
     def _fetch_columns(self, table: TableReference) -> list[str]:
         query_template = "SELECT column_name FROM information_schema.columns WHERE table_name = %s"
         self._db.cursor().execute(query_template, (table.full_name,))

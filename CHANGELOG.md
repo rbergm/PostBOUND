@@ -19,6 +19,7 @@ Be carefull when updating and check the changelog!
 ### New features
 - Initializing a `TextbookOptimizationPipeline` without a custom enumerator will now auto-select a dynamic programming-based
   enumerator. If the target database is Postgres, the Postgres implementation of the algorithm will be used.
+- Added a `is_nullable(<column>)` method to the `DatabaseSchema`
 
 ---
 

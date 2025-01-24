@@ -697,6 +697,29 @@ class DatabaseSchema(abc.ABC):
         """
         raise NotImplementedError
 
+    @abc.abstractmethod
+    def is_nullable(self, column: ColumnReference) -> bool:
+        """Checks, whether a specific column may contain NULL values.
+
+        Parameters
+        ----------
+        column : ColumnReference
+            The column to check
+
+        Returns
+        -------
+        bool
+            Whether the column may contain NULL values
+
+        Raises
+        ------
+        postbound.qal.UnboundColumnError
+            If the column is not associated with any table
+        postbound.qal.VirtualTableError
+            If the table associated with the column is a virtual table (e.g. subquery or CTE)
+        """
+        raise NotImplementedError
+
     def __repr__(self) -> str:
         return str(self)
 
