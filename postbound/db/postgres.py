@@ -2578,6 +2578,8 @@ class PostgresExplainNode:
     temp_blocks_written : float, default NaN
         For ``EXPLAIN ANALYZE`` blocks with ``BUFFERS`` enabled, this is the number of short-term data structures (e.g. hash
         tables, sorts) that where written by this node, including writes of all its child nodes.
+    plan_width : float, default NaN
+        The average width of the tuples that are produced by this node.
     children : list[PostgresExplainNode]
         All child / input nodes for the current node
     """
@@ -2609,6 +2611,7 @@ class PostgresExplainNode:
         self.shared_blocks_cached = explain_data.get("Shared Hit Blocks", math.nan)
         self.temp_blocks_read = explain_data.get("Temp Read Blocks", math.nan)
         self.temp_blocks_written = explain_data.get("Temp Written Blocks", math.nan)
+        self.plan_width = explain_data.get("Plan Width", math.nan)
 
         self.children = [PostgresExplainNode(child) for child in explain_data.get("Plans", [])]
 
@@ -2861,6 +2864,11 @@ class PostgresExplainPlan:
         self.execution_time: float = self.explain_data.get("Execution Time", math.nan) / 1000
         self.query_plan = PostgresExplainNode(self.explain_data["Plan"])
         self._normalized_plan = self.query_plan.as_query_execution_plan()
+
+    @property
+    def root(self) -> PostgresExplainNode:
+        """Gets the root node of the actual query plan."""
+        return self.query_plan
 
     def is_analyze(self) -> bool:
         """Checks, whether this ``EXPLAIN`` plan is an ``EXPLAIN ANALYZE`` plan or a pure ``EXPLAIN`` plan.

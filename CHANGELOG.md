@@ -34,6 +34,10 @@ Be carefull when updating and check the changelog!
 - Added `--cleanup` switches to all workload setup scripts. These remove the input data files once the database has been
   created.
 
+### Updates
+- Added a `.root` property to Postgres query plans to retrieve the root plan node more expressively
+- Postgres query plans now also store the plan width of the individual operators (avg. width of tuples produced by the operator)
+
 ### WIP
 - Baseline for dynamic programming plan enumerator. This is not yet complete and trying to initialize a corresponding class
   raises an error for now. The enumerator will probably be ready to go for v0.10.0
