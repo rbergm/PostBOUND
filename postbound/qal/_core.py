@@ -4449,6 +4449,7 @@ class TableSource(abc.ABC):
         """
         raise NotImplementedError
 
+    @abc.abstractmethod
     def predicates(self) -> QueryPredicates | None:
         """Provides all predicates that are contained in the source.
 
@@ -4616,6 +4617,67 @@ class SubqueryTableSource(TableSource):
     def __str__(self) -> str:
         query_str = self._subquery_expression.query.stringify(trailing_delimiter=False)
         return f"({query_str}) AS {self._target_name}"
+
+
+ValuesList = Iterable[tuple[StaticValueExpression, ...]]
+
+
+class ValuesTableSource(TableSource):
+    def __init__(self, values: ValuesList, *, alias: str, columns: Iterable[str]) -> None:
+        self._values = tuple(values)
+        self._table = TableReference.create_virtual(alias)
+        self._columns = tuple(ColumnReference(column, self._table) for column in columns)
+        self._hash_val = hash((self._table, self._columns, tuple(values)))
+
+    @property
+    def rows(self) -> ValuesList:
+        return self._values
+
+    @property
+    def table(self) -> TableReference:
+        return self._table
+
+    @property
+    def cols(self) -> Sequence[ColumnReference]:
+        return self._columns
+
+    def tables(self) -> set[TableReference]:
+        return {self._table}
+
+    def columns(self) -> set[ColumnReference]:
+        return set(self._columns)
+
+    def iterexpressions(self) -> Iterable[SqlExpression]:
+        return util.flatten(row for row in self._values)
+
+    def itercolumns(self) -> Iterable[ColumnReference]:
+        return self._columns
+
+    def predicates(self) -> QueryPredicates | None:
+        return None
+
+    def __hash__(self) -> int:
+        return self._hash_val
+
+    def __eq__(self, other: object) -> bool:
+        return (isinstance(other, type(self))
+                and self._table == other._table
+                and self._columns == other._columns
+                and self._values == other._values)
+
+    def __repr__(self) -> str:
+        return str(self)
+
+    def __str__(self) -> str:
+        vals = []
+        for row in self._values:
+            current_str = ", ".join(str(val) for val in row)
+            vals.append(f"({current_str})")
+
+        complete_vals_str = ", ".join(vals)
+        cols = ", ".join(col.name for col in self._columns)
+
+        return f"VALUES ({complete_vals_str}) AS {self._table} ({cols})"
 
 
 class JoinType(enum.Enum):
