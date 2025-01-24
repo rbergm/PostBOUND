@@ -21,7 +21,7 @@ from ._core import (
     AbstractPredicate, BinaryPredicate, InPredicate, BetweenPredicate, UnaryPredicate, CompoundPredicate,
     BaseProjection, TableSource, DirectTableSource, SubqueryTableSource, JoinTableSource, WithQuery, OrderByExpression,
     BaseClause, Select, From, ImplicitFromClause, ExplicitFromClause, Where, GroupBy, Having, OrderBy,
-    Limit, CommonTableExpression, Explain, Hint,
+    Limit, CommonTableExpression, UnionClause, IntersectClause, ExceptClause, Explain, Hint,
     SqlQuery, ImplicitSqlQuery, ExplicitSqlQuery, MixedSqlQuery,
     build_query, determine_join_equivalence_classes, generate_predicates_for_equivalence_classes
 )
@@ -273,9 +273,28 @@ def extract_query_fragment(source_query: ImplicitSqlQuery,
     else:
         orderby_clause = None
 
+    if source_query.union_with:
+        union_fragment = extract_query_fragment(source_query.union_with, referenced_tables)
+    else:
+        union_fragment = None
+    if source_query.union_with_all:
+        union_all_fragment = extract_query_fragment(source_query.union_with_all, referenced_tables)
+    else:
+        union_all_fragment = None
+    if source_query.intersect_with:
+        intersect_fragment = extract_query_fragment(source_query.intersect_with, referenced_tables)
+    else:
+        intersect_fragment = None
+    if source_query.except_from:
+        except_fragment = extract_query_fragment(source_query.except_from, referenced_tables)
+    else:
+        except_fragment = None
+
     return ImplicitSqlQuery(select_clause=select_clause, from_clause=from_clause, where_clause=where_clause,
                             groupby_clause=groupby_clause, having_clause=having_clause,
                             orderby_clause=orderby_clause, limit_clause=source_query.limit_clause,
+                            union_with=union_fragment, union_with_all=union_all_fragment,
+                            intersect_with=intersect_fragment, except_from=except_fragment,
                             cte_clause=cte_clause)
 
 
@@ -680,11 +699,29 @@ def replace_clause(query: QueryType, replacements: BaseClause | Iterable[BaseCla
     QueryType
         An updated query where the matching `replacements` clauses are used in place of the clause instances that were
         originally present in the query
+
+    Warnings
+    --------
+    It is not possible to replace **UNION**, **INTERSECT**, or **EXCEPT** clauses. If any of these are present in the query,
+    a `ValueError` is raised.
+
+    Raises
+    ------
+    ValueError
+        If any of the replacements are for **UNION**, **INTERSECT**, or **EXCEPT**. These cannot be replaced since the clauses
+        are not actually stored in the query object itself.
     """
     available_replacements: set[BaseClause] = set(util.enlist(replacements))
 
+    if any(isinstance(replacement, (UnionClause, IntersectClause, ExceptClause)) for replacement in available_replacements):
+        raise ValueError("Cannot replace UNION, INTERSECT, or EXCEPT clauses")
+
     replaced_clauses: list[BaseClause] = []
     for current_clause in query.clauses():
+        if not available_replacements:
+            # if all available replacements have already been used, we can stop
+            break
+
         final_clause = current_clause
         for replacement_clause in available_replacements:
             if isinstance(replacement_clause, type(current_clause)):
@@ -854,6 +891,15 @@ def _replace_expressions_in_clause(clause: Optional[ClauseType],
         return OrderBy(replaced_cols)
     elif isinstance(clause, Limit):
         return clause
+    elif isinstance(clause, UnionClause):
+        replaced_query = replace_expressions(clause.query, replacement)
+        return UnionClause(replaced_query, union_all=clause.union_all)
+    elif isinstance(clause, IntersectClause):
+        replaced_query = replace_expressions(clause.query, replacement)
+        return IntersectClause(replaced_query)
+    elif isinstance(clause, ExceptClause):
+        replaced_query = replace_expressions(clause.query, replacement)
+        return ExceptClause(replaced_query)
     else:
         raise ValueError("Unknown clause: " + str(clause))
 
@@ -963,7 +1009,27 @@ def replace_predicate(query: ImplicitSqlQuery, predicate_to_replace: AbstractPre
     else:
         replaced_having = None
 
-    return replace_clause(query, [clause for clause in (replaced_where, replaced_having) if clause])
+    if query.union_with:
+        replaced_union = replace_predicate(query.union_with, predicate_to_replace, new_predicate)
+    else:
+        replaced_union = None
+    if query.union_with_all:
+        replaced_union_all = replace_predicate(query.union_with_all, predicate_to_replace, new_predicate)
+    else:
+        replaced_union_all = None
+    if query.intersect_with:
+        replaced_intersect = replace_predicate(query.intersect_with, predicate_to_replace, new_predicate)
+    else:
+        replaced_intersect = None
+    if query.except_from:
+        replaced_except = replace_predicate(query.except_from, predicate_to_replace, new_predicate)
+    else:
+        replaced_except = None
+
+    candidate_clauses = [replaced_where, replaced_having,
+                         replaced_union, replaced_union_all,
+                         replaced_intersect, replaced_except]
+    return replace_clause(query, [clause for clause in candidate_clauses if clause])
 
 
 def rename_columns_in_query(query: QueryType,
@@ -995,24 +1061,34 @@ def rename_columns_in_query(query: QueryType,
     renamed_groupby = rename_columns_in_clause(query.groupby_clause, available_renamings)
     renamed_having = rename_columns_in_clause(query.having_clause, available_renamings)
     renamed_orderby = rename_columns_in_clause(query.orderby_clause, available_renamings)
+    renamed_union = rename_columns_in_query(query.union_with, available_renamings) if query.union_with else None
+    renamed_union_all = rename_columns_in_query(query.union_with_all, available_renamings) if query.union_with_all else None
+    renamed_intersect = rename_columns_in_query(query.intersect_with, available_renamings) if query.intersect_with else None
+    renamed_except = rename_columns_in_query(query.except_from, available_renamings) if query.except_from else None
 
     if isinstance(query, ImplicitSqlQuery):
         return ImplicitSqlQuery(select_clause=renamed_select, from_clause=renamed_from, where_clause=renamed_where,
                                 groupby_clause=renamed_groupby, having_clause=renamed_having,
                                 orderby_clause=renamed_orderby, limit_clause=query.limit_clause,
                                 cte_clause=renamed_cte,
+                                union_with=renamed_union, union_with_all=renamed_union_all,
+                                intersect_with=renamed_intersect, except_from=renamed_except,
                                 hints=query.hints, explain_clause=query.explain)
     elif isinstance(query, ExplicitSqlQuery):
         return ExplicitSqlQuery(select_clause=renamed_select, from_clause=renamed_from, where_clause=renamed_where,
                                 groupby_clause=renamed_groupby, having_clause=renamed_having,
                                 orderby_clause=renamed_orderby, limit_clause=query.limit_clause,
                                 cte_clause=renamed_cte,
+                                union_with=renamed_union, union_with_all=renamed_union_all,
+                                intersect_with=renamed_intersect, except_from=renamed_except,
                                 hints=query.hints, explain_clause=query.explain)
     elif isinstance(query, MixedSqlQuery):
         return MixedSqlQuery(select_clause=renamed_select, from_clause=renamed_from, where_clause=renamed_where,
                              groupby_clause=renamed_groupby, having_clause=renamed_having,
                              orderby_clause=renamed_orderby, limit_clause=query.limit_clause,
                              cte_clause=renamed_cte,
+                             union_with=renamed_union, union_with_all=renamed_union_all,
+                             intersect_with=renamed_intersect, except_from=renamed_except,
                              hints=query.hints, explain_clause=query.explain)
     else:
         raise TypeError("Unknown query type: " + str(query))
@@ -1250,6 +1326,15 @@ def rename_columns_in_clause(clause: Optional[ClauseType],
         return OrderBy(renamed_cols)
     elif isinstance(clause, Limit):
         return clause
+    elif isinstance(clause, UnionClause):
+        renamed_query = rename_columns_in_query(clause.query, available_renamings)
+        return UnionClause(renamed_query, union_all=clause.union_all)
+    elif isinstance(clause, IntersectClause):
+        renamed_query = rename_columns_in_query(clause.query, available_renamings)
+        return IntersectClause(renamed_query)
+    elif isinstance(clause, ExceptClause):
+        renamed_query = rename_columns_in_query(clause.query, available_renamings)
+        return ExceptClause(renamed_query)
     else:
         raise ValueError("Unknown clause: " + str(clause))
 

@@ -10,7 +10,7 @@ from ._core import (
     SqlExpression, SubqueryExpression, CaseExpression, Limit, CommonTableExpression,
     CompoundOperators,
     ImplicitFromClause, ExplicitFromClause,
-    Select, Hint, Where,
+    Select, Hint, Where, UnionClause, IntersectClause, ExceptClause,
     SelectType,
     AbstractPredicate, CompoundPredicate,
     SqlQuery
@@ -299,6 +299,69 @@ def _quick_format_limit(limit_clause: Limit) -> list[str]:
     pass
 
 
+def _quick_format_union(union_clause: UnionClause) -> list[str]:
+    """Quick and dirty formatting logic for ``UNION`` clauses.
+
+    This function just puts each part of the union query on a separate line.
+
+    Parameters
+    ----------
+    union_clause : UnionClause
+        The clause to format
+
+    Returns
+    -------
+    list[str]
+        The pretty-printed parts of the clause, indented as necessary.
+    """
+    prefix = [" UNION ALL"] if union_clause.is_union_all() else [" UNION"]
+    formatted_query = format_quick(union_clause.query, trailing_semicolon=False)
+    lines = formatted_query.split("\n")
+    return prefix + lines
+
+
+def _quick_format_intersect(intersect_clause: IntersectClause) -> list[str]:
+    """Quick and dirty formatting logic for ``INTERSECT`` clauses.
+
+    This function just puts each part of the intersect query on a separate line.
+
+    Parameters
+    ----------
+    intersect_clause : IntersectClause
+        The clause to format
+
+    Returns
+    -------
+    list[str]
+        The pretty-printed parts of the clause, indented as necessary.
+    """
+    prefix = [" INTERSECT"]
+    formatted_query = format_quick(intersect_clause.query, trailing_semicolon=False)
+    lines = formatted_query.split("\n")
+    return prefix + lines
+
+
+def _quick_format_except(except_clause: ExceptClause) -> list[str]:
+    """Quick and dirty formatting logic for ``EXCEPT`` clauses.
+
+    This function just puts each part of the except query on a separate line.
+
+    Parameters
+    ----------
+    except_clause : ExceptClause
+        The clause to format
+
+    Returns
+    -------
+    list[str]
+        The pretty-printed parts of the clause, indented as necessary.
+    """
+    prefix = [" EXCEPT"]
+    formatted_query = format_quick(except_clause.query, trailing_semicolon=False)
+    lines = formatted_query.split("\n")
+    return prefix + lines
+
+
 def _subquery_replacement(expression: SqlExpression, *, inline_hints: bool,
                           indentation: int) -> SqlExpression:
     """Handler method for `transform.replace_expressions` to apply our custom `FormattingSubqueryExpression`.
@@ -388,6 +451,9 @@ def format_quick(query: SqlQuery, *, inline_hint_block: bool = False, trailing_s
     if query.limit_clause is not None:
         query = transform.replace_clause(query, FormattingLimitClause(query.limit_clause))
 
+    # Note: we cannot replace set operation clauses here, since they don't really exist in the SqlQuery object
+    # instead, we have to handle them in the main loop
+
     if custom_formatter is not None:
         query = custom_formatter(query)
 
@@ -406,6 +472,12 @@ def format_quick(query: SqlQuery, *, inline_hint_block: bool = False, trailing_s
             pretty_query_parts.extend(_quick_format_explicit_from(clause))
         elif isinstance(clause, Where):
             pretty_query_parts.extend(_quick_format_where(clause))
+        elif isinstance(clause, UnionClause):
+            pretty_query_parts.extend(_quick_format_union(clause))
+        elif isinstance(clause, IntersectClause):
+            pretty_query_parts.extend(_quick_format_intersect(clause))
+        elif isinstance(clause, ExceptClause):
+            pretty_query_parts.extend(_quick_format_except(clause))
         else:
             pretty_query_parts.append(str(clause))
 

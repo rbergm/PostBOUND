@@ -2825,7 +2825,12 @@ class _ImplicitRelalgParser:
         self._required_columns: dict[TableReference, set[ColumnReference]] = collections.defaultdict(set)
         self._provided_base_tables: dict[TableReference, RelNode] = provided_base_tables if provided_base_tables else {}
 
-        util.collections.foreach(self._query.columns(), lambda col: self._required_columns[col.table].add(col))
+        query_cols = self._query.columns()
+        if self._query.set_clause():
+            set_clause = self._query.set_clause()
+            query_cols -= set_clause.columns()
+
+        util.collections.foreach(query_cols, lambda col: self._required_columns[col.table].add(col))
 
     def generate_relnode(self) -> RelNode:
         """Produces a relational algebra tree for the current query.
@@ -2848,7 +2853,7 @@ class _ImplicitRelalgParser:
         # TODO: since the implementation of JOIN statements is currently undergoing a major rework, we don't process such
         # statements at all
 
-        util.foreach(self._query.from_clause.items, self._add_table_source)
+        util.collections.foreach(self._query.from_clause.items, self._add_table_source)
 
         if self._query.where_clause:
             self._add_predicate(self._query.where_clause.predicate, eval_phase=EvaluationPhase.BaseTable)
@@ -2866,6 +2871,20 @@ class _ImplicitRelalgParser:
                                                  eval_phase=EvaluationPhase.PostAggregation)
 
         final_fragment = self._add_final_projection(final_fragment)
+
+        if self._query.union_with:
+            union_fragment = _ImplicitRelalgParser(self._query.union_with).generate_relnode()
+            final_fragment = DuplicateElimination(Union(final_fragment, union_fragment))
+        if self._query.union_with_all:
+            union_fragment = _ImplicitRelalgParser(self._query.union_with).generate_relnode()
+            final_fragment = Union(final_fragment, union_fragment)
+        if self._query.intersect_with:
+            intersect_fragment = _ImplicitRelalgParser(self._query.intersect_with).generate_relnode()
+            final_fragment = Intersection(final_fragment, intersect_fragment)
+        if self._query.except_with:
+            except_fragment = _ImplicitRelalgParser(self._query.except_with).generate_relnode()
+            final_fragment = Difference(final_fragment, except_fragment)
+
         return final_fragment
 
     def _resolve(self, table: TableReference) -> RelNode:

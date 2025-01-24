@@ -447,6 +447,21 @@ class DependentSubqueryPreCheck(OptimizationPreCheck):
         return {"name": "no_dependent_subquery"}
 
 
+class SetOperationsPreCheck(OptimizationPreCheck):
+    """Check to assert that a query does not contain any set operations (**UNION**, **EXCEPT**, etc.)."""
+
+    def __init__(self) -> None:
+        super().__init__("no-set-operations")
+
+    def check_supported_query(self, query: qal.SqlQuery) -> PreCheckResult:
+        passed = not query.is_set_query()
+        failure_reason = "" if passed else "SET_OPERATION"
+        return PreCheckResult(passed, failure_reason)
+
+    def describe(self) -> dict:
+        return {"name": "no_set_operations"}
+
+
 class SupportedHintCheck(OptimizationPreCheck):
     """Check to assert that a number of operators are supported by a database system.
 

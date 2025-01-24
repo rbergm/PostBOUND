@@ -39,9 +39,11 @@ from ._core import (
     BaseProjection, WithQuery, DirectTableSource, JoinTableSource, SubqueryTableSource, OrderByExpression,
     SqlQuery, ImplicitSqlQuery, ExplicitSqlQuery, MixedSqlQuery,
     Select, Where, From, GroupBy, Having, OrderBy, Limit, CommonTableExpression, ImplicitFromClause, ExplicitFromClause,
+    UnionClause, IntersectClause, ExceptClause,
     AbstractPredicate, BinaryPredicate, InPredicate, BetweenPredicate, CompoundPredicate, UnaryPredicate,
     SqlExpression, StarExpression, StaticValueExpression, ColumnExpression, SubqueryExpression, CastExpression,
-    MathematicalExpression, FunctionExpression, BooleanExpression, WindowExpression, CaseExpression
+    MathematicalExpression, FunctionExpression, BooleanExpression, WindowExpression, CaseExpression,
+    build_query
 )
 from .transform import QueryType
 from .. import util
@@ -160,6 +162,9 @@ _MospBinaryOperations = {
     "between": LogicalSqlOperators.Between
 }
 """The different kinds of mathematical operators that mo-sql can emit, as well as their mapping to our counterparts."""
+
+_MospSetOperations = {"union", "union_all", "intersect", "except"}
+"""The representation of set operations in mo-sql."""
 
 _MospOperationSql = (_MospCompoundOperations
                      | _MospUnaryOperations
@@ -1000,6 +1005,47 @@ def _parse_limit_clause(mosp_data: dict) -> Limit:
     return Limit(limit=limit, offset=offset)
 
 
+def _parse_set_query(mosp_data: dict) -> SqlQuery:
+    """Parsing logic for set operations (``UNION``, ``INTERSECT``, etc.).
+
+    Parameters
+    ----------
+    mosp_data : dict
+        The encoding of the entire query. The method will extract the set operation and the two queries that are combined by
+        itself.
+
+    Returns
+    -------
+    SqlQuery
+        The parsed query
+
+    Raises
+    ------
+    ValueError
+        If the query does not actually contain a set operation. This has to be checked before calling this method.
+    """
+
+    set_op = util.dicts.key(mosp_data)
+    left_mosp, right_mosp = mosp_data[set_op]
+
+    left_query = _MospQueryParser(left_mosp).parse_query()
+    right_query = _MospQueryParser(right_mosp).parse_query()
+
+    if set_op == "union":
+        set_query = UnionClause(right_query)
+    elif set_op == "union_all":
+        set_query = UnionClause(right_query, union_all=True)
+    elif set_op == "intersect":
+        set_query = IntersectClause(right_query)
+    elif set_op == "except":
+        set_query = ExceptClause(right_query)
+    else:
+        raise ValueError("Unknown set operation: " + set_op)
+
+    original_clauses = list(left_query.clauses())
+    return build_query(original_clauses + [set_query])
+
+
 def _is_implicit_query(mosp_data: dict) -> bool:
     """Checks, if an encoded query defines an `ImplicitFromClause`.
 
@@ -1103,6 +1149,10 @@ class _MospQueryParser:
         else:
             cte_clause = None
             cte_exported_tables = {}
+
+        # check for set operations
+        if any(set_op in self._mosp_data for set_op in _MospSetOperations):
+            return _parse_set_query(self._mosp_data)
 
         if _is_implicit_query(self._mosp_data):
             implicit, explicit = True, False

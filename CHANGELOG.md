@@ -4,7 +4,7 @@ Updates to PostBOUND are typically made according to the following rules:
 
 1. Version numbers are composed of three numbers, following the typical _major.minor.patch_ scheme. However, until version 1.0
    the boundary between minor versions and patches as well as between major and minor versions is somewhat arbitrary.
-2. Minor updates normally should be backwards-compatible and only consist of new functions or parameters with default values.
+2. Minor updates should normally be backwards-compatible and only consist of new functions or parameters with default values.
    The same applies to patches.
 3. The version suffixes indicate stability of the current PostBOUND version. No suffix means well-tested and stable, beta means
    decently tested and stable for the most part. Anything below is prototypical.
@@ -17,9 +17,15 @@ Be carefull when updating and check the changelog!
 ## 🚧 Version 0.10.0 👷
 
 ### New features
+- Added support for set operations to SQL queries
+- Added support explicit `VALUES` in SQL queries
 - Initializing a `TextbookOptimizationPipeline` without a custom enumerator will now auto-select a dynamic programming-based
   enumerator. If the target database is Postgres, the Postgres implementation of the algorithm will be used.
 - Added a `is_nullable(<column>)` method to the `DatabaseSchema`
+
+### Updates
+- Switched to [pglast](https://github.com/lelit/pglast) as the underlying parser for SQL queries. Much better parser
+  performance and larger SQL support.
 
 ---
 

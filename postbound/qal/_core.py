@@ -5372,6 +5372,179 @@ class Limit(BaseClause):
         return ""
 
 
+class UnionClause(BaseClause):
+    """The ``UNION`` or ``UNION ALL`` clause of a query.
+
+    Parameters
+    ----------
+    partner_query : SqlQuery
+        The query whose result set should be combined with the result set of the current query.
+    union_all : bool, optional
+        Whether the ``UNION`` operation should eliminate duplicates or not. Defaults to ``False`` which indicates that
+        duplicates should be eliminated.
+    """
+
+    def __init__(self, partner_query: SqlQuery, *, union_all: bool = False) -> None:
+        self._partner_query = partner_query
+        self._union_all = union_all
+        hash_val = hash((partner_query, union_all))
+        super().__init__(hash_val)
+
+    @property
+    def query(self) -> SqlQuery:
+        """Get the query that is combined with the current query.
+
+        Returns
+        -------
+        SqlQuery
+            The SQL query being "unioned"
+        """
+        return self._partner_query
+
+    @property
+    def union_all(self) -> bool:
+        """Get whether this is a ``UNION`` or ``UNION ALL`` clause.
+
+        Returns
+        -------
+        bool
+            ``True`` if duplicates are eliminated, ``False`` otherwise.
+        """
+        return self._union_all
+
+    def is_union_all(self) -> bool:
+        """Whether this is a ``UNION`` or ``UNION ALL`` clause.
+
+        Returns
+        -------
+        bool
+            ``True`` if duplicates are eliminated, ``False`` otherwise.
+        """
+        return self._union_all
+
+    def tables(self) -> set[TableReference]:
+        return self._partner_query.tables()
+
+    def columns(self) -> set[ColumnReference]:
+        return self._partner_query.columns()
+
+    def iterexpressions(self) -> Iterable[SqlExpression]:
+        return self._partner_query.iterexpressions()
+
+    def itercolumns(self) -> Iterable[ColumnReference]:
+        return self._partner_query.itercolumns()
+
+    def accept_visitor(self, visitor) -> VisitorResult:
+        return visitor.visit_union_clause(self)
+
+    __hash__ = BaseClause.__hash__
+
+    def __eq__(self, other: object) -> bool:
+        return (isinstance(other, type(self))
+                and self._partner_query == other._partner_query
+                and self._union_all == other._union_all)
+
+    def __str__(self) -> str:
+        prefix = "UNION ALL" if self._union_all else "UNION"
+        return f"\n  {prefix}\n{self._partner_query.stringify(trailing_delimiter=False)}"
+
+
+class ExceptClause(BaseClause):
+    """The ``EXCEPT`` clause of a query.
+
+    Parameters
+    ----------
+    partner_query : SqlQuery
+        The query whose result set should be subtracted from the result set of the current query.
+    """
+
+    def __init__(self, partner_query: SqlQuery) -> None:
+        self._partner_query = partner_query
+        super().__init__(hash(partner_query))
+
+    @property
+    def query(self) -> SqlQuery:
+        """Get the query that is subtracted from the current query.
+
+        Returns
+        -------
+        SqlQuery
+            The SQL query being subtracted
+        """
+        return self._partner_query
+
+    def tables(self) -> set[TableReference]:
+        return self._partner_query.tables()
+
+    def columns(self) -> set[ColumnReference]:
+        return self._partner_query.columns()
+
+    def iterexpressions(self) -> Iterable[SqlExpression]:
+        return self._partner_query.iterexpressions()
+
+    def itercolumns(self) -> Iterable[ColumnReference]:
+        return self._partner_query.itercolumns()
+
+    def accept_visitor(self, visitor: ClauseVisitor[VisitorResult]) -> VisitorResult:
+        return visitor.visit_except_clause(self)
+
+    __hash__ = BaseClause.__hash__
+
+    def __eq__(self, other: object) -> bool:
+        return isinstance(other, type(self)) and self._partner_query == other._partner_query
+
+    def __str__(self) -> str:
+        return f"\n  EXCEPT\n{self._partner_query.stringify(trailing_delimiter=False)}"
+
+
+class IntersectClause(BaseClause):
+    """The ``INTERSECT`` clause of a query.
+
+    Parameters
+    ----------
+    partner_query : SqlQuery
+        The query whose result set should be intersected with the result set of the current query.
+    """
+
+    def __init__(self, partner_query: SqlQuery) -> None:
+        self._partner_query = partner_query
+        super().__init__(hash(partner_query))
+
+    @property
+    def query(self) -> SqlQuery:
+        """Get the query that is intersected with the current query.
+
+        Returns
+        -------
+        SqlQuery
+            The SQL query being intersected
+        """
+        return self._partner_query
+
+    def tables(self) -> set[TableReference]:
+        return self._partner_query.tables()
+
+    def columns(self) -> set[ColumnReference]:
+        return self._partner_query.columns()
+
+    def iterexpressions(self) -> Iterable[SqlExpression]:
+        return self._partner_query.iterexpressions()
+
+    def itercolumns(self) -> Iterable[ColumnReference]:
+        return self._partner_query.itercolumns()
+
+    def accept_visitor(self, visitor: ClauseVisitor[VisitorResult]) -> VisitorResult:
+        return visitor.visit_intersect_clause(self)
+
+    __hash__ = BaseClause.__hash__
+
+    def __eq__(self, other: object) -> bool:
+        return isinstance(other, type(self)) and self._partner_query == other._partner_query
+
+    def __str__(self) -> str:
+        return f"\n  INTERSECT\n{self._partner_query.stringify(trailing_delimiter=False)}"
+
+
 class ClauseVisitor(abc.ABC, Generic[VisitorResult]):
     """Basic visitor to operate on arbitrary clause lists.
 
@@ -5423,6 +5596,18 @@ class ClauseVisitor(abc.ABC, Generic[VisitorResult]):
 
     @abc.abstractmethod
     def visit_limit_clause(self, clause: Limit) -> VisitorResult:
+        raise NotImplementedError
+
+    @abc.abstractmethod
+    def visit_union_clause(self, clause: UnionClause) -> VisitorResult:
+        raise NotImplementedError
+
+    @abc.abstractmethod
+    def visit_except_clause(self, clause: ExceptClause) -> VisitorResult:
+        raise NotImplementedError
+
+    @abc.abstractmethod
+    def visit_intersect_clause(self, clause: IntersectClause) -> VisitorResult:
         raise NotImplementedError
 
 
@@ -5552,6 +5737,12 @@ def _collect_subqueries(clause: BaseClause) -> set[SqlQuery]:
                               for expression in having_predicate.iterexpressions())
     elif isinstance(clause, OrderBy):
         return util.set_union(collect_subqueries_in_expression(expression.column) for expression in clause.expressions)
+    elif isinstance(clause, UnionClause):
+        return clause.query.subqueries()
+    elif isinstance(clause, ExceptClause):
+        return clause.query.subqueries()
+    elif isinstance(clause, IntersectClause):
+        return clause.query.subqueries()
     else:
         raise ValueError(f"Unknown clause type: {clause}")
 
@@ -5615,6 +5806,31 @@ def _collect_bound_tables(from_clause: From) -> set[TableReference]:
         return util.set_union(_collect_bound_tables_from_source(src) for src in from_clause.items)
 
 
+def _assert_single_set_operation(union_with: Optional[SqlQuery], union_with_all: Optional[SqlQuery],
+                                 intersect_with: Optional[SqlQuery], except_from: Optional[SqlQuery]) -> None:
+    """Helper method to ensure that only one set operation is specified for a query.
+
+    Parameters
+    ----------
+    union_with : Optional[SqlQuery]
+        The query that should be unioned with this query
+    union_with_all : Optional[SqlQuery]
+        The query that should be unioned with this query using the ``UNION ALL`` operator
+    intersect_with : Optional[SqlQuery]
+        The query that should be intersected with this query
+    except_from : Optional[SqlQuery]
+        The query that should be subtracted from this query
+
+    Raises
+    ------
+    ValueError
+        If more than one set operation is specified
+    """
+    n_set_ops = sum(1 for query in (union_with, union_with_all, intersect_with, except_from) if query)
+    if n_set_ops > 1:
+        raise ValueError("Only one set operation is allowed")
+
+
 FromClauseType = TypeVar("FromClauseType", bound=From)
 
 
@@ -5642,6 +5858,19 @@ class SqlQuery:
     cardinality of subquery results, or the connection between different clauses). This has to be done by the user, or by the
     actual database system.
 
+    Limitations
+    -----------
+
+    While the query abstraction is quite powerful, it is cannot represent the full range of SQL statements. Noteworthy
+    limitations include:
+
+    - no DDL or DML statements. The query abstraction is really only focused on *queries*, i.e. ``SELECT``
+      statements.
+    - set operations cannot be nested, i.e. it is currently not possible to express a query like
+      ``SELECT 1 EXCEPT (SELECT 2 UNION SELECT 3)``.
+    - no recursive CTEs. While CTEs are supported, recursive CTEs are not. While this would be an easy addition, there simply
+      was no need for it so far. If you need recursive CTEs, PRs are always welcome!
+
     Parameters
     ----------
     select_clause : Select
@@ -5662,6 +5891,14 @@ class SqlQuery:
         Defaults to ``None``.
     cte_clause : Optional[CommonTableExpression], optional
         The ``WITH`` part of the query, by default ``None``
+    union_with : Optional[SqlQuery], optional
+        The ``UNION`` part of the query. Defaults to ``None``.
+    union_with_all : Optional[SqlQuery], optional
+        The ``UNION ALL`` part of the query. Defaults to ``None``.
+    intersect_with : Optional[SqlQuery], optional
+        The ``INTERSECT`` part of the query. Defaults to ``None``.
+    except_from : Optional[SqlQuery], optional
+        The ``EXCEPT`` part of the query. Defaults to ``None``.
     hints : Optional[Hint], optional
         The hint block of the query. Hints are not part of standard SQL and follow a completely system-specific syntax. Even
         their placement in within the query varies from system to system and from extension to extension. Defaults to ``None``.
@@ -5669,6 +5906,10 @@ class SqlQuery:
         The ``EXPLAIN`` part of the query. Like hints, this is not part of standard SQL. However, most systems provide
         ``EXPLAIN`` functionality. The specific features and syntax are quite similar, but still system specific. Defaults to
         ``None``.
+
+    Warnings
+    --------
+    See the `Limitations` section for unsupported SQL features.
     """
 
     def __init__(self, *, select_clause: Select,
@@ -5676,7 +5917,11 @@ class SqlQuery:
                  groupby_clause: Optional[GroupBy] = None, having_clause: Optional[Having] = None,
                  orderby_clause: Optional[OrderBy] = None, limit_clause: Optional[Limit] = None,
                  cte_clause: Optional[CommonTableExpression] = None,
+                 union_with: Optional[SqlQuery] = None, union_with_all: Optional[SqlQuery] = None,
+                 intersect_with: Optional[SqlQuery] = None, except_from: Optional[SqlQuery] = None,
                  hints: Optional[Hint] = None, explain: Optional[Explain] = None) -> None:
+        _assert_single_set_operation(union_with, union_with_all, intersect_with, except_from)
+
         self._cte_clause = cte_clause
         self._select_clause = select_clause
         self._from_clause = from_clause
@@ -5685,6 +5930,10 @@ class SqlQuery:
         self._having_clause = having_clause
         self._orderby_clause = orderby_clause
         self._limit_clause = limit_clause
+        self._union_clause = union_with
+        self._union_all_clause = union_with_all
+        self._intersect_clause = intersect_with
+        self._except_clause = except_from
         self._hints = hints
         self._explain = explain
 
@@ -5692,7 +5941,9 @@ class SqlQuery:
                                self._cte_clause,
                                self._select_clause, self._from_clause, self._where_clause,
                                self._groupby_clause, self._having_clause,
-                               self._orderby_clause, self._limit_clause))
+                               self._orderby_clause, self._limit_clause,
+                               self._union_clause, self._union_all_clause,
+                               self._intersect_clause, self._except_clause))
 
     @property
     def cte_clause(self) -> Optional[CommonTableExpression]:
@@ -5784,6 +6035,50 @@ class SqlQuery:
             The ``FETCH FIRST`` clause if it was specified, or ``None`` otherwise.
         """
         return self._limit_clause
+
+    @property
+    def union_with(self) -> Optional[SqlQuery]:
+        """Get the ``UNION`` clause of the query.
+
+        Returns
+        -------
+        Optional[SqlQuery]
+            The ``UNION`` clause if it was specified, or ``None`` otherwise.
+        """
+        return self._union_clause
+
+    @property
+    def union_with_all(self) -> Optional[SqlQuery]:
+        """Get the ``UNION ALL`` clause of the query.
+
+        Returns
+        -------
+        Optional[SqlQuery]
+            The ``UNION ALL`` clause if it was specified, or ``None`` otherwise.
+        """
+        return self._union_all_clause
+
+    @property
+    def intersect_with(self) -> Optional[SqlQuery]:
+        """Get the ``INTERSECT`` clause of the query.
+
+        Returns
+        -------
+        Optional[SqlQuery]
+            The ``INTERSECT`` clause if it was specified, or ``None`` otherwise.
+        """
+        return self._intersect_clause
+
+    @property
+    def except_from(self) -> Optional[SqlQuery]:
+        """Get the ``EXCEPT`` clause of the query.
+
+        Returns
+        -------
+        Optional[SqlQuery]
+            The ``EXCEPT`` clause if it was specified, or ``None`` otherwise.
+        """
+        return self._except_clause
 
     @property
     def hints(self) -> Optional[Hint]:
@@ -5878,7 +6173,8 @@ class SqlQuery:
         relevant_clauses: list[BaseClause] = [self._select_clause,
                                               self._from_clause,
                                               self._where_clause, self._groupby_clause, self._having_clause,
-                                              self._orderby_clause, self._limit_clause]
+                                              self._orderby_clause, self._limit_clause,
+                                              self.set_clause()]
 
         tabs = set()
         tabs |= self.cte_clause.referenced_tables() if self.cte_clause else set()
@@ -5956,8 +6252,28 @@ class SqlQuery:
         all_clauses = [self.hints, self.explain, self.cte_clause,
                        self.select_clause, self.from_clause, self.where_clause,
                        self.groupby_clause, self.having_clause,
-                       self.orderby_clause, self.limit_clause]
+                       self.orderby_clause, self.limit_clause,
+                       self.set_clause()]
         return [clause for clause in all_clauses if clause is not None]
+
+    def set_clause(self) -> Optional[UnionClause | ExceptClause | IntersectClause]:
+        """Provides the set operation clause of the query.
+
+        Returns
+        -------
+        Optional[UnionClause | ExceptClause | IntersectClause]
+            The set operation if one was specified, or ``None`` otherwise.
+        """
+        if self._union_clause:
+            return UnionClause(self._union_clause)
+        elif self._union_all_clause:
+            return UnionClause(self._union_all_clause, is_all=True)
+        elif self._intersect_clause:
+            return IntersectClause(self._intersect_clause)
+        elif self._except_clause:
+            return ExceptClause(self._except_clause)
+        else:
+            return None
 
     def bound_tables(self) -> set[TableReference]:
         """Provides all tables that can be assigned to a physical or virtual table reference in this query.
@@ -5978,7 +6294,8 @@ class SqlQuery:
                                                   for subquery in self.subqueries())
         cte_produced_tables = self.cte_clause.tables() if self.cte_clause else set()
         own_produced_tables = _collect_bound_tables(self.from_clause)
-        return own_produced_tables | subquery_produced_tables | cte_produced_tables
+        set_query_produced_tables = self.set_clause().query.tables() if self.is_set_query() else set()
+        return own_produced_tables | subquery_produced_tables | cte_produced_tables | set_query_produced_tables
 
     def unbound_tables(self) -> set[TableReference]:
         """Provides all tables that are referenced in this query but not bound.
@@ -6045,6 +6362,25 @@ class SqlQuery:
             return False
         target: SqlExpression = util.simplify(self.select_clause.targets).expression
         return isinstance(target, FunctionExpression) and target.is_aggregate() and not self._groupby_clause
+
+    def is_set_query(self) -> bool:
+        """Checks, whether this query is a set query.
+
+        A set query is a query that combines the results of two or more queries into a single result set. This can be done
+        by combining the tuples from both sets using a ``UNION`` clause (which removes duplicates), or a ``UNION ALL`` clause
+        (which retains duplicates). Alternatively, only tuples that are present in both sets can be retained using an
+        ``INTERSECT`` clause. Finally, all tuples from the first result set that are not part of the second result set can be
+        computed using an ``EXCEPT`` clause.
+
+        Notice that only one of the set operators can be used at a time, but the input query of one set operation can itself
+        use another set operation.
+
+        Returns
+        -------
+        bool
+            Whether this query is a set query
+        """
+        return any([self._union_clause, self._union_all_clause, self._intersect_clause, self._except_clause])
 
     def contains_cross_product(self) -> bool:
         """Checks, whether this query has at least one cross product.
@@ -6178,12 +6514,16 @@ class ImplicitSqlQuery(SqlQuery):
                  orderby_clause: Optional[OrderBy] = None,
                  limit_clause: Optional[Limit] = None,
                  cte_clause: Optional[CommonTableExpression] = None,
+                 union_with: Optional[SqlQuery] = None, union_with_all: Optional[SqlQuery] = None,
+                 intersect_with: Optional[SqlQuery] = None, except_from: Optional[SqlQuery] = None,
                  explain_clause: Optional[Explain] = None,
                  hints: Optional[Hint] = None) -> None:
         super().__init__(select_clause=select_clause, from_clause=from_clause, where_clause=where_clause,
                          groupby_clause=groupby_clause, having_clause=having_clause,
                          orderby_clause=orderby_clause, limit_clause=limit_clause,
                          cte_clause=cte_clause,
+                         union_with=union_with, union_with_all=union_with_all,
+                         intersect_with=intersect_with, except_from=except_from,
                          explain=explain_clause, hints=hints)
 
     @property
@@ -6244,12 +6584,18 @@ class ExplicitSqlQuery(SqlQuery):
                  orderby_clause: Optional[OrderBy] = None,
                  limit_clause: Optional[Limit] = None,
                  cte_clause: Optional[CommonTableExpression] = None,
+                 union_with: Optional[SqlQuery] = None,
+                 union_with_all: Optional[SqlQuery] = None,
+                 intersect_with: Optional[SqlQuery] = None,
+                 except_from: Optional[SqlQuery] = None,
                  explain_clause: Optional[Explain] = None,
                  hints: Optional[Hint] = None) -> None:
         super().__init__(select_clause=select_clause, from_clause=from_clause, where_clause=where_clause,
                          groupby_clause=groupby_clause, having_clause=having_clause,
                          orderby_clause=orderby_clause, limit_clause=limit_clause,
                          cte_clause=cte_clause,
+                         union_with=union_with, union_with_all=union_with_all,
+                         intersect_with=intersect_with, except_from=except_from,
                          explain=explain_clause, hints=hints)
 
     @property
@@ -6291,6 +6637,10 @@ class MixedSqlQuery(SqlQuery):
                  orderby_clause: Optional[OrderBy] = None,
                  limit_clause: Optional[Limit] = None,
                  cte_clause: Optional[CommonTableExpression] = None,
+                 union_with: Optional[SqlQuery] = None,
+                 union_with_all: Optional[SqlQuery] = None,
+                 intersect_with: Optional[SqlQuery] = None,
+                 except_from: Optional[SqlQuery] = None,
                  explain_clause: Optional[Explain] = None,
                  hints: Optional[Hint] = None) -> None:
         if isinstance(from_clause, ExplicitFromClause) or isinstance(from_clause, ImplicitFromClause):
@@ -6299,6 +6649,8 @@ class MixedSqlQuery(SqlQuery):
                          groupby_clause=groupby_clause, having_clause=having_clause,
                          orderby_clause=orderby_clause, limit_clause=limit_clause,
                          cte_clause=cte_clause,
+                         union_with=union_with, union_with_all=union_with_all,
+                         intersect_with=intersect_with, except_from=except_from,
                          explain=explain_clause, hints=hints)
 
     def is_implicit(self) -> bool:
@@ -6340,6 +6692,8 @@ def build_query(query_clauses: Iterable[BaseClause]) -> SqlQuery:
     select_clause, from_clause, where_clause = None, None, None
     groupby_clause, having_clause = None, None
     orderby_clause, limit_clause = None, None
+    union_clause, union_all_clause = None, None
+    intersect_clause, except_clause = None, None
     explain_clause, hints_clause = None, None
     for clause in query_clauses:
         if not clause:
@@ -6368,6 +6722,15 @@ def build_query(query_clauses: Iterable[BaseClause]) -> SqlQuery:
             orderby_clause = clause
         elif isinstance(clause, Limit):
             limit_clause = clause
+        elif isinstance(clause, UnionClause):
+            if clause.is_union_all():
+                union_all_clause = clause.query
+            else:
+                union_clause = clause.query
+        elif isinstance(clause, ExceptClause):
+            except_clause = clause
+        elif isinstance(clause, IntersectClause):
+            intersect_clause = clause
         elif isinstance(clause, Explain):
             explain_clause = clause
         elif isinstance(clause, Hint):
@@ -6383,16 +6746,22 @@ def build_query(query_clauses: Iterable[BaseClause]) -> SqlQuery:
                                 groupby_clause=groupby_clause, having_clause=having_clause,
                                 orderby_clause=orderby_clause, limit_clause=limit_clause,
                                 cte_clause=cte_clause,
+                                union_with=union_clause, union_with_all=union_all_clause,
+                                intersect_with=intersect_clause, except_from=except_clause,
                                 hints=hints_clause, explain_clause=explain_clause)
     elif build_explicit_query:
         return ExplicitSqlQuery(select_clause=select_clause, from_clause=from_clause, where_clause=where_clause,
                                 groupby_clause=groupby_clause, having_clause=having_clause,
                                 orderby_clause=orderby_clause, limit_clause=limit_clause,
                                 cte_clause=cte_clause,
+                                union_with=union_clause, union_with_all=union_all_clause,
+                                intersect_with=intersect_clause, except_from=except_clause,
                                 hints=hints_clause, explain_clause=explain_clause)
     else:
         return MixedSqlQuery(select_clause=select_clause, from_clause=from_clause, where_clause=where_clause,
                              groupby_clause=groupby_clause, having_clause=having_clause,
                              orderby_clause=orderby_clause, limit_clause=limit_clause,
                              cte_clause=cte_clause,
+                             union_with=union_clause, union_with_all=union_all_clause,
+                             intersect_with=intersect_clause, except_from=except_clause,
                              hints=hints_clause, explain_clause=explain_clause)

@@ -990,6 +990,7 @@ class UESOperatorSelection(PhysicalOperatorSelection):
 UESOptimizationPreCheck = validation.merge_checks(validation.ImplicitQueryPreCheck(),
                                                   validation.EquiJoinPreCheck(),
                                                   validation.DependentSubqueryPreCheck(),
+                                                  validation.SetOperationsPreCheck(),
                                                   validation.VirtualTablesPreCheck())
 """Check for all query features that UES does (not) support.
 
