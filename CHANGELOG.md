@@ -21,12 +21,19 @@ Be carefull when updating and check the changelog!
 - Added support explicit `VALUES` in SQL queries
 - Initializing a `TextbookOptimizationPipeline` without a custom enumerator will now auto-select a dynamic programming-based
   enumerator. If the target database is Postgres, a Postgres-inspired implementation of the algorithm will be used.
+- Added `LogicalSqlOperators.Is` and `LogicalSqlOperators.IsNot`
 - Added a `is_nullable(<column>)` method to the `DatabaseSchema`
 - Added convenience methods `null()` and `is_null()` to `StaticValueExpression` to work with `NULL` values
+- Added convenience method `InPredicate.subquery()` to create a new `column IN <subquery>` predicate
 
 ### Updates
 - Switched to [pglast](https://github.com/lelit/pglast) as the underlying parser for SQL queries. Much better parser
   performance and larger SQL support.
+
+### ⚠ Breaking changes 💀
+- Removed illegal SQL operator "**MISSING**", which was an artifact of the mo-sql parser output
+- ``IS NULL`` and ``IS NOT NULL`` predicates are no longer represented by `UnaryPredicate` instances, but by `BinaryPredicate`
+  with a *None* static value
 
 ---
 

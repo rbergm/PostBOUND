@@ -218,12 +218,13 @@ class LogicalSqlOperators(enum.Enum):
     ILike = "ILIKE"
     NotILike = "NOT ILIKE"
     In = "IN"
-    Exists = "IS NULL"
-    Missing = "IS NOT NULL"
+    Exists = "EXISTS"
+    Is = "IS"
+    IsNot = "IS NOT"
     Between = "BETWEEN"
 
 
-UnarySqlOperators: frozenset[LogicalSqlOperators] = frozenset({LogicalSqlOperators.Exists, LogicalSqlOperators.Missing})
+UnarySqlOperators = frozenset({LogicalSqlOperators.Exists, LogicalSqlOperators.Is, LogicalSqlOperators.IsNot})
 """The `LogicalSqlOperators` that can be used as unary operators."""
 
 
@@ -719,6 +720,41 @@ class FunctionExpression(SqlExpression):
     --------
     postbound.qal.transform.replace_expressions
     """
+
+    @staticmethod
+    def all_func(subquery: SqlQuery | SubqueryExpression) -> FunctionExpression:
+        """Create a function expression for the ``ALL`` function, as used for subqueries.
+
+        Parameters
+        ----------
+        subquery : SqlQuery | SubqueryExpression
+            The subquery whose result set should be checked. Will be wrapped in a `SubqueryExpression` if necessary.
+
+        Returns
+        -------
+        FunctionExpression
+            The ``ALL`` function expression
+        """
+        subquery = SubqueryExpression(subquery) if not isinstance(subquery, SubqueryExpression) else subquery
+        return FunctionExpression("ALL", (subquery,))
+
+    @staticmethod
+    def any_func(subquery: SqlQuery) -> FunctionExpression:
+        """Create a function expression for the ``ANY`` function, as used for subqueries.
+
+        Parameters
+        ----------
+        subquery : SqlQuery | SubqueryExpression
+            The subquery whose result set should be checked. Will be wrapped in a `SubqueryExpression` if necessary.
+
+        Returns
+        -------
+        FunctionExpression
+            The ``ANY`` function expression
+        """
+        subquery = SubqueryExpression(subquery) if not isinstance(subquery, SubqueryExpression) else subquery
+        return FunctionExpression("ANY", (subquery,))
+
     def __init__(self, function: str, arguments: Optional[Sequence[SqlExpression]] = None, *,
                  distinct: bool = False) -> None:
         if not function:
@@ -780,6 +816,50 @@ class FunctionExpression(SqlExpression):
         """
         return self._function.upper() in AggregateFunctions
 
+    def is_all(self) -> bool:
+        """Checks, whether the function is an ``ALL`` function.
+
+        If this is the case, the `subquery()` method can be used to directly retrieve the subquery being checked.
+
+        Returns
+        -------
+        bool
+            Whether the function is an ``ALL`` function.
+        """
+        return self._function.upper() == "ALL"
+
+    def is_any(self) -> bool:
+        """Checks, whether the function is an ``ANY`` function.
+
+        If this is the case, the `subquery()` method can be used to directly retrieve the subquery being checked.
+
+        Returns
+        -------
+        bool
+            Whether the function is an ``ANY`` function.
+        """
+        return self._function.upper() == "ANY"
+
+    def subquery(self) -> SqlQuery:
+        """Get the subquery that is passed as argument to the function.
+
+        This is only possible if the function is an ``ALL`` or ``ANY`` function. Otherwise, an error is raised.
+
+        Returns
+        -------
+        SqlQuery
+            The subquery
+
+        Raises
+        ------
+        StateError
+            If the function is not an ``ALL`` or ``ANY`` function
+        """
+        if not self.is_all() and not self.is_any():
+            raise StateError("Function is not an ALL or ANY function")
+        subquery: SubqueryExpression = self.arguments[0]
+        return subquery.query
+
     def tables(self) -> set[TableReference]:
         return util.set_union(arg.tables() for arg in self.arguments)
 
@@ -812,7 +892,11 @@ class FunctionExpression(SqlExpression):
     def __str__(self) -> str:
         args_str = ", ".join(str(arg) for arg in self._arguments)
         distinct_str = "DISTINCT " if self._distinct else ""
-        return f"{self._function}({distinct_str}{args_str})"
+        if self.is_all() or self.is_any():
+            parameterization = f" {args_str}"
+        else:
+            parameterization = f"({distinct_str}{args_str})"
+        return self._function + parameterization
 
 
 class SubqueryExpression(SqlExpression):
@@ -2098,6 +2182,26 @@ class InPredicate(BasePredicate):
         WHERE 42 IN (R.c, 40 * S.d)
     """
 
+    @staticmethod
+    def subquery(column: SqlExpression, subquery: SubqueryExpression) -> InPredicate:
+        """Generates an ``IN`` predicate that is based on a subquery.
+
+        Such a predicate is of the form ``R.a IN (SELECT S.b FROM S)``.
+
+        Parameters
+        ----------
+        column : SqlExpression
+            The column that should be checked for being contained by the subquerie's result set.
+        subquery : SubqueryExpression
+            The subquery to produce the allowed values.
+
+        Returns
+        -------
+        InPredicate
+            The predicate
+        """
+        return InPredicate(column, (subquery,))
+
     def __init__(self, column: SqlExpression, values: Sequence[SqlExpression]) -> None:
         if not column or not values:
             raise ValueError("Both column and values must be given")
@@ -2129,6 +2233,16 @@ class InPredicate(BasePredicate):
             The allowed values. This sequence always contains at least one entry.
         """
         return self._values
+
+    def is_subquery_predicate(self) -> bool:
+        """Checks, if this is a subquery-based **IN** predicate, i.e. a predicate of the form ``R.a IN (SELECT S.b FROM S)``.
+
+        Returns
+        -------
+        bool
+            Whether this predicate is based on a subquery
+        """
+        return len(self._values) == 1 and isinstance(self._values[0], SubqueryExpression)
 
     def is_join(self) -> bool:
         column_tables = _collect_column_expression_tables(self.column)
@@ -2165,17 +2279,24 @@ class InPredicate(BasePredicate):
     def accept_visitor(self, visitor: PredicateVisitor[VisitorResult]) -> VisitorResult:
         return visitor.visit_in_predicate(self)
 
+    def _stringify_values(self) -> str:
+        """Converts the allowed values into a valid string representation."""
+        # NOTE: part of this implementation is re-used in the __str__ method for NOT predicates to format NOT IN predicates
+        # appropriately. These methods should be kept in sync.
+        if len(self.values) == 1:
+            value = util.simplify(self.values)
+            vals = str(value) if isinstance(value, SubqueryExpression) else f"({value})"
+        else:
+            vals = "(" + ", ".join(str(val) for val in self.values) + ")"
+        return vals
+
     __hash__ = AbstractPredicate.__hash__
 
     def __eq__(self, other: object) -> bool:
         return isinstance(other, type(self)) and self.column == other.column and set(self.values) == set(other.values)
 
     def __str__(self) -> str:
-        if len(self.values) == 1:
-            value = util.simplify(self.values)
-            vals = str(value) if isinstance(value, SubqueryExpression) else f"({value})"
-        else:
-            vals = "(" + ", ".join(str(val) for val in self.values) + ")"
+        vals = self._stringify_values()
         return f"{self.column} IN {vals}"
 
 
@@ -2202,6 +2323,23 @@ class UnaryPredicate(BasePredicate):
         If the given operation is not a valid unary operator
     """
 
+    @staticmethod
+    def exists(subquery: SqlQuery | SubqueryExpression) -> UnaryPredicate:
+        """Creates an ``EXISTS`` predicate for a subquery.
+
+        Parameters
+        ----------
+        subquery : SqlQuery | SubqueryExpression
+            The subquery. Will be wrapped in a `SubqueryExpression` if it is not already one.
+
+        Returns
+        -------
+        UnaryPredicate
+            The ``EXISTS`` predicate
+        """
+        subquery = subquery if isinstance(subquery, SubqueryExpression) else SubqueryExpression(subquery)
+        return UnaryPredicate(subquery, LogicalSqlOperators.Exists)
+
     def __init__(self, column: SqlExpression, operation: Optional[SqlOperator] = None):
         if not column:
             raise ValueError("Column must be set")
@@ -2220,6 +2358,16 @@ class UnaryPredicate(BasePredicate):
             The expression
         """
         return self._column
+
+    def is_exists(self) -> bool:
+        """Checks, whether this predicate is an ``EXISTS`` predicate.
+
+        Returns
+        -------
+        bool
+            Whether this predicate is an ``EXISTS`` predicate
+        """
+        return self.operation == LogicalSqlOperators.Exists
 
     def is_join(self) -> bool:
         return len(_collect_column_expression_tables(self.column)) > 1
@@ -2249,15 +2397,10 @@ class UnaryPredicate(BasePredicate):
         if not self.operation:
             return str(self.column)
 
-        if isinstance(self.column, SubqueryExpression) and self.operation == LogicalSqlOperators.Exists:
-            return f"EXISTS {self.column}"
-        elif isinstance(self.column, SubqueryExpression) and self.operation == LogicalSqlOperators.Missing:
-            return f"MISSING {self.column}"
-
         if self.operation == LogicalSqlOperators.Exists:
-            return f"{self.column} IS NOT NULL"
-        elif self.operation == LogicalSqlOperators.Missing:
-            return f"{self.column} IS NULL"
+            assert isinstance(self.column, SubqueryExpression)
+            return f"EXISTS {self.column}"
+
         return f"{self.operation.value}{self.column}"
 
 
@@ -2484,6 +2627,11 @@ class CompoundPredicate(AbstractPredicate):
             case _:
                 raise ValueError(f"Unknown operation: '{self.operation}'")
 
+    def _stringify_not(self) -> str:
+        if not isinstance(self.children, InPredicate):
+            return f"NOT {self.children}"
+        return f"{self.children.column} NOT IN {self.children._stringify_values()}"
+
     __hash__ = AbstractPredicate.__hash__
 
     def __eq__(self, other: object) -> bool:
@@ -2494,7 +2642,7 @@ class CompoundPredicate(AbstractPredicate):
 
     def __str__(self) -> str:
         if self.operation == CompoundOperators.Not:
-            return f"NOT {self.children}"
+            return self._stringify_not()
         elif self.operation == CompoundOperators.Or:
             return "(" + " OR ".join(f"({child})" if child.is_compound() else str(child)
                                      for child in self.iterchildren()) + ")"
