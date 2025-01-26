@@ -26,10 +26,13 @@ References
 from __future__ import annotations
 
 import copy
+import json
 import re
+import warnings
 from typing import Any, Optional
 
 import mo_sql_parsing as mosp
+import pglast
 
 from . import transform
 from ._core import (
@@ -1311,6 +1314,264 @@ def bind_column_references(query: QueryType, *, with_schema: bool = True,
     return transform.rename_columns_in_query(partially_bound_query, unbound_renamings)
 
 
+def _mosp_based_query_parser(query: str, *, bind_columns: bool | None = None,
+                             db_schema: Optional["DatabaseSchema"] = None,  # type: ignore # noqa: F821
+                             _skip_all_binding: bool = False) -> SqlQuery:
+    from ..db import DatabasePool  # local import to prevent circular imports
+
+    warnings.warn("mo-sql-based query parsing is deprecated and will be replaced by pglast-based parsing in the near future.",
+                  DeprecationWarning)
+    bind_columns = bind_columns if bind_columns is not None else auto_bind_columns
+    db_schema = (db_schema if db_schema or not bind_columns
+                 else DatabasePool.get_instance().current_database().schema())
+    mosp_data = mosp.parse(query)
+    parsed_query = _MospQueryParser(mosp_data, query).parse_query()
+    if _skip_all_binding:
+        return parsed_query
+    return bind_column_references(parsed_query, with_schema=bind_columns, db_schema=db_schema)
+
+
+def _pglast_parse_colref(pglast_data: dict, *, available_tables: dict[str, TableReference],
+                         resolved_columns: dict[str, ColumnReference],
+                         schema: Optional["DatabaseSchema"]) -> ColumnReference:  # type: ignore # noqa: F821
+    fields = pglast_data["fields"]
+    if len(fields) > 2:
+        raise ParserError("Unknown column reference format: " + str(pglast_data))
+
+    if len(fields) == 2:
+        tab, col = fields
+        tab: str = tab["String"]["sval"]
+        col: str = col["String"]["sval"]
+        parsed_table = available_tables[tab]
+        parsed_column = ColumnReference(col, parsed_table)
+        resolved_columns[col] = parsed_column
+        return parsed_column
+
+    # at this point, we must have a single unbound column parameter
+    col: str = fields[0]["String"]["sval"]
+    if col in resolved_columns:
+        return resolved_columns[col]
+    if not schema:
+        return ColumnReference(col, None)
+
+    try:
+        resolved_table = schema.lookup_column(col, available_tables.values())
+    except ValueError:
+        raise ParserError("Could not resolve column reference: " + col)
+
+    parsed_column = ColumnReference(col, resolved_table)
+    resolved_columns[col] = parsed_column
+    return parsed_column
+
+
+def _pglast_parse_const(pglast_data: dict) -> StaticValueExpression:
+    pglast_data.pop("location", None)
+    valtype = util.dicts.key(pglast_data)
+    match valtype:
+        case "isnull":
+            return StaticValueExpression.null()
+        case "ival":
+            val = pglast_data["ival"]["ival"]
+            return StaticValueExpression(val)
+        case "fval":
+            val = pglast_data["fval"]["fval"]
+            return StaticValueExpression(float(val))
+        case "sval":
+            return StaticValueExpression(pglast_data["sval"]["sval"])
+        case "boolval":
+            val = False if not pglast_data["boolval"]["boolval"] else True
+            return StaticValueExpression(val)
+        case _:
+            raise ParserError("Unknown constant type: " + str(pglast_data))
+
+
+def _pglast_parse_expression(pglast_data: dict, *, available_tables: dict[str, TableReference],
+                             resolved_columns: dict[str, ColumnReference],
+                             schema: Optional["DBSchema"]) -> SqlExpression:  # type: ignore # noqa: F821
+    pglast_data.pop("location", None)
+    expression_key = util.dicts.key(pglast_data)
+
+    match expression_key:
+
+        case "ColumnRef":
+            column = _pglast_parse_colref(pglast_data["ColumnRef"], available_tables=available_tables,
+                                          resolved_columns=resolved_columns, schema=schema)
+            return ColumnExpression(column)
+
+        case "A_Const":
+            return _pglast_parse_const(pglast_data["A_Const"])
+
+        case _:
+            raise ParserError("Unknown expression type: " + str(pglast_data))
+
+
+def _pglast_try_select_star(target: dict) -> Optional[Select]:
+    if "ColumnRef" not in target:
+        return None
+    fields = target["ColumnRef"]["fields"]
+    if len(fields) != 1:
+        # multiple fields are used for qualified column references. This is definitely not a SELECT * query, so exit
+        return None
+    colref = fields[0]
+    return Select.star() if "A_Star" in colref else None
+
+
+def _pglast_parse_select(targetlist: list, *, distinct: bool,
+                         available_tables: dict[str, TableReference],
+                         resolved_columns: dict[str, ColumnReference],
+                         schema: Optional["DBSchema"]) -> Select:  # type: ignore # noqa: F821
+    # first, try for SELECT * queries
+    if len(targetlist) == 1:
+        target = targetlist[0]["ResTarget"]["val"]
+        select_star = _pglast_try_select_star(target)
+
+        if select_star:
+            return select_star
+        # if this is not a SELECT * query, we can continue with the regular parsing
+
+    targets: list[BaseProjection] = []
+    for target in targetlist:
+        expression = _pglast_parse_expression(target["ResTarget"]["val"],
+                                              available_tables=available_tables,
+                                              resolved_columns=resolved_columns, schema=schema)
+        alias = target["ResTarget"].get("name", "")
+        projection = BaseProjection(expression, alias)
+        targets.append(projection)
+
+    return Select(targets, projection_type=SelectType.SelectDistinct if distinct else SelectType.Select)
+
+
+def _pglast_parse_rangevar(rangevar: dict) -> TableReference:
+    name = rangevar["relname"]
+    alias = rangevar["alias"]["aliasname"] if "alias" in rangevar else None
+    return TableReference(name, alias)
+
+
+def _pglast_parse_from(from_clause: list, *,
+                       available_tables: dict[str, TableReference],
+                       resolved_columns: dict[str, ColumnReference],
+                       schema: Optional["DBSchema"]) -> From:  # type: ignore # noqa: F821
+    contains_join = False
+    contains_mixed = False
+    contains_subquery = False
+
+    table_sources = []
+    for entry in from_clause:
+        entry.pop("location", None)
+        entry_type = util.dicts.key(entry)
+
+        match entry_type:
+
+            case "RangeVar":
+                if contains_join:
+                    contains_mixed = True
+                table = _pglast_parse_rangevar(entry["RangeVar"])
+                available_tables[table.identifier()] = table
+                table_sources.append(DirectTableSource(table))
+
+            case _:
+                raise ParserError("Unknow FROM clause entry: " + str(entry))
+
+    if not contains_join and not contains_mixed and not contains_subquery:
+        return ImplicitFromClause(table_sources)
+    if contains_join and not contains_mixed and not contains_subquery:
+        return ExplicitFromClause(table_sources)
+    return From(table_sources)
+
+
+PglastOperatorMap = {
+    "=": LogicalSqlOperators.Equal
+}
+
+
+def _pglast_parse_operator(pglast_data: list) -> LogicalSqlOperators:
+    if len(pglast_data) != 1:
+        raise ParserError("Unknown operator format: " + str(pglast_data))
+    operator = pglast_data[0]
+    if "String" not in operator or "sval" not in operator["String"]:
+        raise ParserError("Unknown operator format: " + str(pglast_data))
+    sval = operator["String"]["sval"]
+    if sval not in PglastOperatorMap:
+        raise ParserError("Operator not yet in target map" + sval)
+    return PglastOperatorMap[sval]
+
+
+def _pglast_parse_predicate(pglast_data: dict, available_tables: dict[str, TableReference],
+                            resolved_columns: dict[str, ColumnReference],
+                            schema: Optional["DBSchema"]) -> AbstractPredicate:  # type: ignore # noqa: F821
+    pglast_data.pop("location", None)
+    expr_key = util.dicts.key(pglast_data)
+    match expr_key:
+
+        case "A_Expr" if pglast_data["A_Expr"]["kind"] == "AEXPR_OP":
+            pglast_data = pglast_data["A_Expr"]
+            operator = _pglast_parse_operator(pglast_data["name"])
+            left = _pglast_parse_expression(pglast_data["lexpr"], available_tables=available_tables,
+                                            resolved_columns=resolved_columns, schema=schema)
+            right = _pglast_parse_expression(pglast_data["rexpr"], available_tables=available_tables,
+                                             resolved_columns=resolved_columns, schema=schema)
+            return BinaryPredicate(operator, left, right)
+
+        case _:
+            raise ParserError("Unknown predicate type: " + str(pglast_data))
+
+
+def _pglast_parse_where(where_clause: dict, *,
+                        available_tables: dict[str, TableReference],
+                        resolved_columns: dict[str, ColumnReference],
+                        schema: Optional["DBSchema"]) -> Optional[Where]:  # type: ignore # noqa: F821
+    predicate = _pglast_parse_predicate(where_clause, available_tables=available_tables,
+                                        resolved_columns=resolved_columns, schema=schema)
+    return Where(predicate)
+
+
+def _pglast_parse_query(pglast_data: dict, *, available_tables: dict[str, TableReference],
+                        schema: Optional["DBSchema"]) -> SqlQuery:  # type: ignore # noqa: F821
+
+    stmts = pglast_data["stmts"]
+    if len(stmts) != 1:
+        raise ValueError("Parser can only support single-statement queries for now")
+    raw_query = stmts[0]["stmt"]
+    if "SelectStmt" not in raw_query:
+        raise ValueError("Cannot parse non-SELECT queries")
+    stmt = raw_query["SelectStmt"]
+
+    clauses = []
+    resolved_columns = {}
+
+    if "fromClause" in stmt:
+        from_clause = _pglast_parse_from(stmt["fromClause"], available_tables=available_tables,
+                                         resolved_columns=resolved_columns, schema=schema)
+        clauses.append(from_clause)
+
+    # Each query is guaranteed to have a SELECT clause, so we can just parse it straight away
+    select_distinct = "distinctClause" in stmt
+    select_clause = _pglast_parse_select(stmt["targetList"], distinct=select_distinct,
+                                         available_tables=available_tables, resolved_columns=resolved_columns, schema=schema)
+    clauses.append(select_clause)
+
+    if "whereClause" in stmt:
+        where_clause = _pglast_parse_where(stmt["whereClause"], available_tables=available_tables,
+                                           resolved_columns=resolved_columns, schema=schema)
+        clauses.append(where_clause)
+
+    return build_query(clauses)
+
+
+def _pglast_based_query_parser(query: str, *, bind_columns: bool | None = None,
+                               db_schema: Optional["DatabaseSchema"] = None) -> SqlQuery:  # type: ignore # noqa: F821
+    warnings.warn("pglast-based query parsing is still experimental and might contain bugs.", FutureWarning)
+
+    if db_schema is None and (bind_columns or (bind_columns is None and auto_bind_columns)):
+        from ..db import DatabasePool  # local import to prevent circular imports
+        db_schema = None if DatabasePool.get_instance().empty() else DatabasePool.get_instance().current_database().schema()
+
+    pglast_data = pglast.parser.parse_sql_json(query)
+    parsed_query = _pglast_parse_query(json.loads(pglast_data), available_tables={}, schema=db_schema)
+
+    return parsed_query
+
+
 def parse_query(query: str, *, bind_columns: bool | None = None,
                 db_schema: Optional["DatabaseSchema"] = None,  # type: ignore # noqa: F821
                 _skip_all_binding: bool = False) -> SqlQuery:
@@ -1344,17 +1605,14 @@ def parse_query(query: str, *, bind_columns: bool | None = None,
         The parsed SQL query.
     """
     # NOTE: this documentation is a 1:1 copy of qal.parse_query. Both should be kept in sync.
+    return _mosp_based_query_parser(query, bind_columns=bind_columns, db_schema=db_schema, _skip_all_binding=_skip_all_binding)
 
-    from ..db import DatabasePool  # local import to prevent circular imports
 
-    bind_columns = bind_columns if bind_columns is not None else auto_bind_columns
-    db_schema = (db_schema if db_schema or not bind_columns
-                 else DatabasePool.get_instance().current_database().schema())
-    mosp_data = mosp.parse(query)
-    parsed_query = _MospQueryParser(mosp_data, query).parse_query()
-    if _skip_all_binding:
-        return parsed_query
-    return bind_column_references(parsed_query, with_schema=bind_columns, db_schema=db_schema)
+class ParserError(RuntimeError):
+    """An error that is raised when parsing fails."""
+
+    def __init__(self, msg: str) -> None:
+        super().__init__(msg)
 
 
 def load_table_json(json_data: dict) -> Optional[TableReference]:

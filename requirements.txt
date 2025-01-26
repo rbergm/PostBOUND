@@ -2,12 +2,12 @@ build==1.2.1
 graphviz==0.20.3
 levenshtein==0.25.1
 matplotlib==3.9.0
-mo-sql-parsing==10.651.24172
 mysql-connector-python==9.0.0
 natsort==8.4.0
 networkx==3.3
 numpy==2.0.0
 pandas==2.2.2
+pglast==7.2
 psycopg[binary]==3.2.1
 scipy==1.14.0
 setuptools==59.6.0

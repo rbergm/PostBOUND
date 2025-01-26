@@ -42,7 +42,8 @@ def key(dictionary: dict[K, V]) -> K:
     `key({'a': 1}) = 'a'`
     """
     if not len(dictionary) == 1:
-        raise ValueError("Dictionary must contain exactly 1 entry, not " + str(len(dictionary)))
+        nvals = len(dictionary)
+        raise ValueError(f"Dictionary must contain exactly 1 entry, not {nvals}: {dictionary}")
     return next(iter(dictionary.keys()))
 
 

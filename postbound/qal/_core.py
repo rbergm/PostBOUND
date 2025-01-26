@@ -355,6 +355,9 @@ class StaticValueExpression(SqlExpression, Generic[T]):
 
     This is one of the leaf expressions that does not contain any further child expressions.
 
+    **NULL** values are represented by **None**, you can use `StaticValueExpression.null()` to create such an expression and
+    `is_null()` to check whether the value is **NULL**.
+
     Parameters
     ----------
     value : T
@@ -366,6 +369,11 @@ class StaticValueExpression(SqlExpression, Generic[T]):
     be represented as a static value expression. The reference to the column ``R.a`` cannot be a static value since its
     values depend on the actual column values. Hence, a `ColumnExpression` is used for it.
     """
+
+    @staticmethod
+    def null() -> StaticValueExpression[None]:
+        """Create a static value expression that represents a **NULL** value."""
+        return StaticValueExpression(None)
 
     def __init__(self, value: T) -> None:
         self._value = value
@@ -381,6 +389,16 @@ class StaticValueExpression(SqlExpression, Generic[T]):
             The value, duh!
         """
         return self._value
+
+    def is_null(self) -> bool:
+        """Checks, whether the value is **NULL**.
+
+        Returns
+        -------
+        bool
+            Whether the value is **NULL**
+        """
+        return self._value is None
 
     def tables(self) -> set[TableReference]:
         return set()

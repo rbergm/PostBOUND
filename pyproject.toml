@@ -17,11 +17,11 @@ classifiers = [
 ]
 dependencies = [
     "levenshtein==0.25.1",
-    "mo-sql-parsing==10.651.24172",
     "natsort==8.4.0",
     "networkx==3.3",
     "numpy==2.0.0",
     "pandas==2.2.2",
+    "pglast==7.2",
     "psycopg[binary]==3.2.1",
     "scipy==1.14.0",
     "tomli==2.0.1",

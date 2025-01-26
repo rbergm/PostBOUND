@@ -20,8 +20,9 @@ Be carefull when updating and check the changelog!
 - Added support for set operations to SQL queries
 - Added support explicit `VALUES` in SQL queries
 - Initializing a `TextbookOptimizationPipeline` without a custom enumerator will now auto-select a dynamic programming-based
-  enumerator. If the target database is Postgres, the Postgres implementation of the algorithm will be used.
+  enumerator. If the target database is Postgres, a Postgres-inspired implementation of the algorithm will be used.
 - Added a `is_nullable(<column>)` method to the `DatabaseSchema`
+- Added convenience methods `null()` and `is_null()` to `StaticValueExpression` to work with `NULL` values
 
 ### Updates
 - Switched to [pglast](https://github.com/lelit/pglast) as the underlying parser for SQL queries. Much better parser
