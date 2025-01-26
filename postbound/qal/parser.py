@@ -428,7 +428,7 @@ def _pglast_parse_query(stmt: dict, *, available_tables: dict[str, TableReferenc
     # - HAVING
     # - ORDER BY
     # - LIMIT
-    # - UNION, INTERSECT, EXCEPT -- refactor SqlQuery implementation to be less bogus
+    # - UNION, INTERSECT, EXCEPT
 
     return build_query(clauses)
 

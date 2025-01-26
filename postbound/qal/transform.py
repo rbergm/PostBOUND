@@ -699,22 +699,8 @@ def replace_clause(query: QueryType, replacements: BaseClause | Iterable[BaseCla
     QueryType
         An updated query where the matching `replacements` clauses are used in place of the clause instances that were
         originally present in the query
-
-    Warnings
-    --------
-    It is not possible to replace **UNION**, **INTERSECT**, or **EXCEPT** clauses. If any of these are present in the query,
-    a `ValueError` is raised.
-
-    Raises
-    ------
-    ValueError
-        If any of the replacements are for **UNION**, **INTERSECT**, or **EXCEPT**. These cannot be replaced since the clauses
-        are not actually stored in the query object itself.
     """
     available_replacements: set[BaseClause] = set(util.enlist(replacements))
-
-    if any(isinstance(replacement, (UnionClause, IntersectClause, ExceptClause)) for replacement in available_replacements):
-        raise ValueError("Cannot replace UNION, INTERSECT, or EXCEPT clauses")
 
     replaced_clauses: list[BaseClause] = []
     for current_clause in query.clauses():
@@ -1010,19 +996,23 @@ def replace_predicate(query: ImplicitSqlQuery, predicate_to_replace: AbstractPre
         replaced_having = None
 
     if query.union_with:
-        replaced_union = replace_predicate(query.union_with, predicate_to_replace, new_predicate)
+        replaced_query = replace_predicate(query.union_with, predicate_to_replace, new_predicate)
+        replaced_union = UnionClause(replaced_query, union_all=False)
     else:
         replaced_union = None
     if query.union_with_all:
-        replaced_union_all = replace_predicate(query.union_with_all, predicate_to_replace, new_predicate)
+        replaced_query = replace_predicate(query.union_with_all, predicate_to_replace, new_predicate)
+        replaced_union_all = UnionClause(replaced_query, union_all=True)
     else:
         replaced_union_all = None
     if query.intersect_with:
-        replaced_intersect = replace_predicate(query.intersect_with, predicate_to_replace, new_predicate)
+        replaced_query = replace_predicate(query.intersect_with, predicate_to_replace, new_predicate)
+        replaced_intersect = IntersectClause(replaced_query)
     else:
         replaced_intersect = None
     if query.except_from:
-        replaced_except = replace_predicate(query.except_from, predicate_to_replace, new_predicate)
+        replaced_query = replace_predicate(query.except_from, predicate_to_replace, new_predicate)
+        replaced_except = ExceptClause(replaced_query)
     else:
         replaced_except = None
 
