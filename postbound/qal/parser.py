@@ -25,13 +25,10 @@ References
 """
 from __future__ import annotations
 
-import copy
 import json
-import re
 import warnings
 from typing import Any, Optional
 
-import mo_sql_parsing as mosp
 import pglast
 
 from . import transform
@@ -48,7 +45,6 @@ from ._core import (
     MathematicalExpression, FunctionExpression, BooleanExpression, WindowExpression, CaseExpression,
     build_query
 )
-from .transform import QueryType
 from .. import util
 
 auto_bind_columns: bool = False
@@ -125,8 +121,32 @@ def _pglast_parse_expression(pglast_data: dict, *, available_tables: dict[str, T
         case "A_Const":
             return _pglast_parse_const(pglast_data["A_Const"])
 
+        # TODO:
+        # - Mathematics
+        # - Function calls
+        # - Subqueries
+        # - Window functions
+        # - CASE expressions
+
         case _:
             raise ParserError("Unknown expression type: " + str(pglast_data))
+
+
+def _pglast_parse_ctes(ctes: list[dict], *, available_tables: dict[str, TableReference],
+                       resolved_columns: dict[str, ColumnReference],
+                       schema: Optional["DBSchema"]) -> CommonTableExpression:  # type: ignore # noqa: F821
+    parsed_ctes: list[CommonTableExpression] = []
+    for pglast_data in ctes:
+        current_cte = pglast_data["CommonTableExpr"]
+        target_table = TableReference.create_virtual(current_cte["ctename"])
+        # TODO: could extract materialization info using "ctematerialized" here
+        cte_query = _pglast_parse_query(current_cte["ctequery"]["SelectStmt"],
+                                        available_tables=available_tables,
+                                        resolved_columns=resolved_columns,
+                                        schema=schema)
+        available_tables[target_table.identifier()] = target_table
+        parsed_ctes.append(WithQuery(cte_query, target_table))
+    return CommonTableExpression(parsed_ctes)
 
 
 def _pglast_try_select_star(target: dict) -> Optional[Select]:
@@ -171,7 +191,7 @@ def _pglast_parse_rangevar(rangevar: dict) -> TableReference:
     return TableReference(name, alias)
 
 
-def _pglast_parse_from(from_clause: list, *,
+def _pglast_parse_from(from_clause: list[dict], *,
                        available_tables: dict[str, TableReference],
                        resolved_columns: dict[str, ColumnReference],
                        schema: Optional["DBSchema"]) -> From:  # type: ignore # noqa: F821
@@ -190,8 +210,21 @@ def _pglast_parse_from(from_clause: list, *,
                 if contains_join:
                     contains_mixed = True
                 table = _pglast_parse_rangevar(entry["RangeVar"])
-                available_tables[table.identifier()] = table
+
+                # If we specified a virtual table in a CTE, we will reference it later in some FROM clause. In this case,
+                # we should not create a new table reference, but rather use the existing one.
+                if table.identifier() in available_tables:
+                    table = available_tables[table.identifier()]
+                else:
+                    available_tables[table.identifier()] = table
+
                 table_sources.append(DirectTableSource(table))
+
+            # TODO:
+            # - JOIN ON
+            # - Subquery
+            # - LATERAL subquery
+            # - VALUES
 
             case _:
                 raise ParserError("Unknow FROM clause entry: " + str(entry))
@@ -369,6 +402,11 @@ def _pglast_parse_query(stmt: dict, *, available_tables: dict[str, TableReferenc
                         schema: Optional["DBSchema"]) -> SqlQuery:  # type: ignore # noqa: F821
     clauses = []
 
+    if "withClause" in stmt:
+        with_clause = _pglast_parse_ctes(stmt["withClause"]["ctes"], available_tables=available_tables,
+                                         resolved_columns=resolved_columns, schema=schema)
+        clauses.append(with_clause)
+
     if "fromClause" in stmt:
         from_clause = _pglast_parse_from(stmt["fromClause"], available_tables=available_tables,
                                          resolved_columns=resolved_columns, schema=schema)
@@ -384,6 +422,13 @@ def _pglast_parse_query(stmt: dict, *, available_tables: dict[str, TableReferenc
         where_clause = _pglast_parse_where(stmt["whereClause"], available_tables=available_tables,
                                            resolved_columns=resolved_columns, schema=schema)
         clauses.append(where_clause)
+
+    # TODO
+    # - GROUP BY
+    # - HAVING
+    # - ORDER BY
+    # - LIMIT
+    # - UNION, INTERSECT, EXCEPT -- refactor SqlQuery implementation to be less bogus
 
     return build_query(clauses)
 
@@ -442,7 +487,7 @@ def parse_query(query: str, *, bind_columns: bool | None = None,
         The parsed SQL query.
     """
     # NOTE: this documentation is a 1:1 copy of qal.parse_query. Both should be kept in sync.
-    return _pglast_based_query_parser(query, bind_columns=bind_columns, db_schema=db_schema, _skip_all_binding=_skip_all_binding)
+    return _pglast_based_query_parser(query, bind_columns=bind_columns, db_schema=db_schema)
 
 
 class ParserError(RuntimeError):

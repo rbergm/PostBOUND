@@ -4080,20 +4080,20 @@ class WithQuery:
     ----------
     query : SqlQuery
         The query that should be used to construct the temporary common table.
-    target_name : str
-        The name under which the table should be made available
+    target_name : str | TableReference
+        The name under which the table should be made available. If a table reference is provided, its identifier will be used.
 
     Raises
     ------
     ValueError
         If the `target_name` is empty
     """
-    def __init__(self, query: SqlQuery, target_name: str) -> None:
+    def __init__(self, query: SqlQuery, target_name: str | TableReference) -> None:
         if not target_name:
             raise ValueError("Target name is required")
         self._query = query
         self._subquery_expression = SubqueryExpression(query)
-        self._target_name = target_name
+        self._target_name = target_name if isinstance(target_name, str) else target_name.identifier()
         self._hash_val = hash((query, target_name))
 
     @property
