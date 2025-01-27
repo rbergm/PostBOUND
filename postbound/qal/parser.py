@@ -394,10 +394,11 @@ def _pglast_parse_expression(pglast_data: dict, *, available_tables: dict[str, T
             return _pglast_parse_case(pglast_data["CaseExpr"], available_tables=available_tables,
                                       resolved_columns=resolved_columns, schema=schema)
 
-        case "Sublink" if pglast_data["SubLink"]["subLinkType"] == "EXPR_SUBLINK":
+        case "SubLink" if pglast_data["SubLink"]["subLinkType"] == "EXPR_SUBLINK":
             subquery = _pglast_parse_query(pglast_data["SubLink"]["subselect"]["SelectStmt"],
-                                           available_tables=available_tables,
-                                           resolved_columns=resolved_columns, schema=schema)
+                                           available_tables=dict(available_tables),
+                                           resolved_columns=dict(resolved_columns),
+                                           schema=schema)
             return SubqueryExpression(subquery)
 
         case _:
@@ -438,7 +439,7 @@ def _pglast_parse_ctes(ctes: list[dict], *, available_tables: dict[str, TableRef
         target_table = TableReference.create_virtual(current_cte["ctename"])
         # TODO: could extract materialization info using "ctematerialized" here
         cte_query = _pglast_parse_query(current_cte["ctequery"]["SelectStmt"],
-                                        available_tables=available_tables,
+                                        available_tables=dict(available_tables),
                                         resolved_columns=local_resolved_cols,
                                         schema=schema)
         available_tables[target_table.identifier()] = target_table
@@ -599,6 +600,11 @@ def _pglast_parse_from_entry(pglast_data: dict, *, available_tables: dict[str, T
             # we should not create a new table reference, but rather use the existing one.
             if table.full_name in available_tables and available_tables[table.full_name].virtual:
                 table = available_tables[table.full_name]
+                return DirectTableSource(table)
+
+            available_tables[table.full_name] = table
+            if table.alias:
+                available_tables[table.alias] = table
 
             return DirectTableSource(table)
 
@@ -648,8 +654,9 @@ def _pglast_parse_from_entry(pglast_data: dict, *, available_tables: dict[str, T
         case "RangeSubselect":
             raw_subquery: dict = pglast_data["RangeSubselect"]
             subquery = _pglast_parse_query(raw_subquery["subquery"]["SelectStmt"],
-                                           available_tables=available_tables,
-                                           resolved_columns=resolved_columns, schema=schema)
+                                           available_tables=dict(available_tables),
+                                           resolved_columns=dict(resolved_columns),
+                                           schema=schema)
 
             if "alias" in raw_subquery:
                 alias: str = raw_subquery["alias"]["aliasname"]
@@ -733,21 +740,16 @@ def _pglast_parse_from(from_clause: list[dict], *,
     From
         The parsed **FROM** clause.
     """
-    contains_any = False
     contains_plain_table = False
     contains_join = False
     contains_mixed = False
     contains_subquery = False
 
-    table_sources = []
+    table_sources: list[TableSource] = []
     for entry in from_clause:
         current_table_source = _pglast_parse_from_entry(entry, available_tables=available_tables,
                                                         resolved_columns=resolved_columns, schema=schema)
         table_sources.append(current_table_source)
-
-        if not contains_any:
-            contains_any = True
-            continue
 
         match current_table_source:
             case DirectTableSource():
@@ -888,8 +890,8 @@ def _pglast_parse_predicate(pglast_data: dict, available_tables: dict[str, Table
             sublink_type = expression["subLinkType"]
 
             subquery = _pglast_parse_query(expression["subselect"]["SelectStmt"],
-                                           available_tables=available_tables,
-                                           resolved_columns=resolved_columns,
+                                           available_tables=dict(available_tables),
+                                           resolved_columns=dict(resolved_columns),
                                            schema=schema)
             if sublink_type == "EXISTS_SUBLINK":
                 return UnaryPredicate.exists(subquery)
@@ -1166,8 +1168,10 @@ def _pglast_parse_setop(pglast_data: dict, *, available_tables: dict[str, TableR
     SetOperationClause
         The parsed set clause
     """
-    subquery = _pglast_parse_query(pglast_data["rarg"], available_tables=available_tables,
-                                   resolved_columns=resolved_columns, schema=schema)
+    subquery = _pglast_parse_query(pglast_data["rarg"],
+                                   available_tables=dict(available_tables),
+                                   resolved_columns=dict(resolved_columns),
+                                   schema=schema)
     setop = pglast_data["op"]
     match setop:
 

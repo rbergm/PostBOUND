@@ -117,7 +117,12 @@ class TableReference:
         self._full_name = full_name if full_name else ""
         self._alias = alias if alias else ""
         self._virtual = virtual
-        self._hash_val = hash((full_name, alias))
+        self._identifier = self._alias if self._alias else self._full_name
+
+        self._normalized_full_name = self._full_name.lower()
+        self._normalized_alias = self._alias.lower()
+        self._nomalized_identifier = self._identifier.lower()
+        self._hash_val = hash((self._normalized_full_name, self._normalized_alias))
 
     @property
     def full_name(self) -> str:
@@ -168,7 +173,7 @@ class TableReference:
         str
             The shorthand
         """
-        return self.alias if self.alias else self.full_name
+        return self._identifier
 
     def drop_alias(self) -> TableReference:
         """Removes the alias from the current table if there is one. Returns the tabel as-is otherwise.
@@ -216,15 +221,15 @@ class TableReference:
     def __lt__(self, other: object) -> bool:
         if not isinstance(other, TableReference):
             return NotImplemented
-        return self.identifier() < other.identifier()
+        return self._nomalized_identifier < other._nomalized_identifier
 
     def __hash__(self) -> int:
         return self._hash_val
 
-    def __eq__(self, __value: object) -> bool:
-        return (isinstance(__value, type(self))
-                and self._full_name == __value._full_name
-                and self._alias == __value._alias)
+    def __eq__(self, other: object) -> bool:
+        return (isinstance(other, type(self))
+                and self._normalized_full_name == other._normalized_full_name
+                and self._normalized_alias == other._normalized_alias)
 
     def __repr__(self) -> str:
         return f"TableReference(full_name='{self.full_name}', alias='{self.alias}', virtual={self.virtual})"

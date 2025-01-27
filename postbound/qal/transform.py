@@ -118,7 +118,7 @@ def explicit_to_implicit(source_query: ExplicitSqlQuery) -> ImplicitSqlQuery:
     """
     original_from_clause: ExplicitFromClause = source_query.from_clause
     additional_predicates = []
-    complete_from_tables: list[TableReference] = [original_from_clause.base_table.table]
+    complete_from_tables: list[TableReference] = []
 
     for joined_table in original_from_clause.joined_tables:
         table_source = joined_table.source

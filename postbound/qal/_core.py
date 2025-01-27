@@ -66,7 +66,8 @@ class ColumnReference:
             raise ValueError("Column name is required")
         self._name = name
         self._table = table
-        self._hash_val = hash((self._name, self._table))
+        self._normalized_name = self.name.lower()
+        self._hash_val = hash((self._normalized_name, self._table))
 
     @property
     def name(self) -> str:
@@ -140,7 +141,7 @@ class ColumnReference:
         if not isinstance(other, ColumnReference):
             return NotImplemented
         if self.table == other.table:
-            return self.name < other.name
+            return self._normalized_name < other._normalized_name
         if not self.table:
             return True
         if not other.table:
@@ -151,7 +152,7 @@ class ColumnReference:
         return self._hash_val
 
     def __eq__(self, other) -> bool:
-        return isinstance(other, type(self)) and self.name == other.name and self.table == other.table
+        return isinstance(other, type(self)) and self._normalized_name == other._normalized_name and self.table == other.table
 
     def __repr__(self) -> str:
         return f"ColumnReference(name='{self.name}', table={repr(self.table)})"
@@ -2183,7 +2184,7 @@ class InPredicate(BasePredicate):
     """
 
     @staticmethod
-    def subquery(column: SqlExpression, subquery: SubqueryExpression) -> InPredicate:
+    def subquery(column: SqlExpression, subquery: SubqueryExpression | SqlQuery) -> InPredicate:
         """Generates an ``IN`` predicate that is based on a subquery.
 
         Such a predicate is of the form ``R.a IN (SELECT S.b FROM S)``.
@@ -2192,7 +2193,7 @@ class InPredicate(BasePredicate):
         ----------
         column : SqlExpression
             The column that should be checked for being contained by the subquerie's result set.
-        subquery : SubqueryExpression
+        subquery : SubqueryExpression | SqlQuery
             The subquery to produce the allowed values.
 
         Returns
@@ -2200,6 +2201,7 @@ class InPredicate(BasePredicate):
         InPredicate
             The predicate
         """
+        subquery = subquery if isinstance(subquery, SubqueryExpression) else SubqueryExpression(subquery)
         return InPredicate(column, (subquery,))
 
     def __init__(self, column: SqlExpression, values: Sequence[SqlExpression]) -> None:
@@ -5014,22 +5016,15 @@ class JoinTableSource(TableSource):
         return str(self)
 
     def __str__(self) -> str:
-        join_str = str(self.join_type)
-        if self.joined_table:
-            nested_join_str = " ".join(str(nested_join) for nested_join in self.joined_table)
-            source_str = f"({self.source} {nested_join_str})"
-        else:
-            source_str = str(self.source)
-        join_prefix = f"{join_str} {source_str}"
-        if self.join_condition:
-            condition_str = (f"({self.join_condition})" if self.join_condition.is_compound()
-                             else str(self.join_condition))
-            return join_prefix + f" ON {condition_str}"
-        else:
-            return join_prefix
+        if self.join_type in AnonymousJoins:
+            return f"{self.source} {self.join_type} {self.joined_table}"
+        return f"{self.source} {self.join_type} {self.joined_table} ON {self.join_condition}"
 
 
-class From(BaseClause):
+TableType = TypeVar("TableType", bound=TableSource)
+
+
+class From(BaseClause, Generic[TableType]):
     """The ``FROM`` clause models which tables should be selected and potentially how they are combined.
 
     A ``FROM`` clause permits arbitrary source items and does not enforce a specific structure or semantic on them.
@@ -5058,7 +5053,7 @@ class From(BaseClause):
         super().__init__(hash(self._items))
 
     @property
-    def items(self) -> Sequence[TableSource]:
+    def items(self) -> Sequence[TableType]:
         """Get the tables that are sourced in the ``FROM`` clause
 
         Returns
@@ -5109,7 +5104,7 @@ class From(BaseClause):
         return fixture + "".join(contents_str)
 
 
-class ImplicitFromClause(From):
+class ImplicitFromClause(From[DirectTableSource]):
     """Represents a special case of ``FROM`` clause that only allows for pure tables to be selected.
 
     Specifically, this means that subqueries or explicit joins using the ``JOIN ON`` syntax are not allowed. Just
@@ -5160,52 +5155,27 @@ class ImplicitFromClause(From):
         return [src.table for src in self.items]
 
 
-class ExplicitFromClause(From):
+class ExplicitFromClause(From[JoinTableSource]):
     """Represents a special kind of ``FROM`` clause that requires all tables to be joined using the ``JOIN ON`` syntax.
-
-    The tables themselves can be either instances of `DirectTableSource`, or `SubqueryTableSource`.
 
     Parameters
     ----------
-    base_table : DirectTableSource | SubqueryTableSource
-        The first table in the ``FROM`` clause. This is the only table that is not part of a ``JOIN ON`` statement.
-    joined_tables : Iterable[JoinTableSource]
-        All tables that should be joined. At least one such table is required.
-
-    Raises
-    ------
-    ValueError
-        If the `joined_tables` are empty.
+    joins : JoinTableSource | Iterable[JoinTableSource]
+        The joins that should be performed
     """
 
-    def __init__(self, base_table: DirectTableSource | SubqueryTableSource, joined_tables: Iterable[JoinTableSource]):
-        super().__init__([base_table] + list(joined_tables))
-        self._base_table = base_table
-        self._joined_tables = tuple(joined_tables)
-        if not self._joined_tables:
-            raise ValueError("At least one joined table expected!")
+    def __init__(self, joins: JoinTableSource | Iterable[JoinTableSource]):
+        super().__init__(joins)
 
-    @property
-    def base_table(self) -> DirectTableSource | SubqueryTableSource:
-        """Get the first table that is part of the FROM clause.
+    def iterpredicates(self) -> Iterable[AbstractPredicate]:
+        """Provides all join conditions that are contained in the ``FROM`` clause.
 
         Returns
         -------
-        DirectTableSource | SubqueryTableSource
-            The table
+        Iterable[AbstractPredicate]
+            The join conditions.
         """
-        return self._base_table
-
-    @property
-    def joined_tables(self) -> Sequence[JoinTableSource]:
-        """Get all tables that are defined in the ``JOIN ON`` syntax.
-
-        Returns
-        -------
-        Sequence[JoinTableSource]
-            The tables in exactly the same sequence in which they were specified
-        """
-        return self._joined_tables
+        return util.flatten(join.predicates() for join in self.items)
 
 
 class Where(BaseClause):
