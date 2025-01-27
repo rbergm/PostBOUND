@@ -722,11 +722,9 @@ def stack(file_encoding: str = "utf-8", *, bind_columns: Optional[bool] = None) 
 
     Notes
     -----
-    Notice that the Stack Benchmark is much much larger than the Join Order Benchmark or the Star Schema Benchmark. Since
-    loading the queries requires parsing them, this will take a long time (probably several minutes).
-
-    Furthermore, the benchmark queries are not put in version control directly, instead they have to be manually loaded. See
-    the documentation of the workload directory for details.
+    Notice that the Stack Benchmark is much much larger than the Join Order Benchmark or the Star Schema Benchmark.
+    Therefore, the benchmark queries are not put in version control directly, instead they have to be manually loaded.
+    See the documentation in the workload directory for details.
 
     References
     ----------

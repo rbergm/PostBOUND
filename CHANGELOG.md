@@ -14,6 +14,13 @@ Be carefull when updating and check the changelog!
 
 ---
 
+## 🚧 Version 0.11.0 👷
+
+### Planned
+- Full dynamic programming support for the `TextbookOptimizationPipeline`, including a Postgres-specific algorithm
+
+---
+
 ## 🚧 Version 0.10.0 👷
 
 ### New features
@@ -34,6 +41,13 @@ Be carefull when updating and check the changelog!
 - Removed illegal SQL operator "**MISSING**", which was an artifact of the mo-sql parser output
 - ``IS NULL`` and ``IS NOT NULL`` predicates are no longer represented by `UnaryPredicate` instances, but by `BinaryPredicate`
   with a *None* static value
+- `JoinTableSource` now allows for nested structures. In fact, such sources require both a source as well as a target table
+  (which might in turn be arbitrary table sources). This is more in line with the SQL standard and was made possible thanks to
+  the transition to the pglast parser.
+
+### WIP
+- Baseline for dynamic programming plan enumerator. This is not yet complete and trying to initialize a corresponding class
+  raises an error for now. The enumerator will probably be ready to go for v0.11.0
 
 ---
 

@@ -999,14 +999,14 @@ class WindowExpression(SqlExpression):
         The expressions used for partitioning the window. Defaults to None.
     ordering : Optional[OrderBy], optional
         The ordering of the window. Defaults to None.
-    filter_condition : Optional[AbstractPredicate], optional
+    filter_condition : Optional[BooleanExpression], optional
         The filter condition for the window. Defaults to None.
     """
 
     def __init__(self, window_function: FunctionExpression, *,
                  partitioning: Optional[Sequence[SqlExpression]] = None,
                  ordering: Optional[OrderBy] = None,
-                 filter_condition: Optional[AbstractPredicate] = None) -> None:
+                 filter_condition: Optional[BooleanExpression] = None) -> None:
         self._window_function = window_function
         self._partitioning = tuple(partitioning) if partitioning else tuple()
         self._ordering = ordering
@@ -1049,7 +1049,7 @@ class WindowExpression(SqlExpression):
         return self._ordering
 
     @property
-    def filter_condition(self) -> Optional[AbstractPredicate]:
+    def filter_condition(self) -> Optional[BooleanExpression]:
         """Get the filter condition for tuples in the current window.
 
         Returns:
@@ -4791,16 +4791,16 @@ ValuesList = Iterable[tuple[StaticValueExpression, ...]]
 class ValuesTableSource(TableSource):
     def __init__(self, values: ValuesList, *, alias: str, columns: Iterable[str]) -> None:
         self._values = tuple(values)
-        self._table = TableReference.create_virtual(alias)
+        self._table = TableReference.create_virtual(alias) if alias else None
         self._columns = tuple(ColumnReference(column, self._table) for column in columns)
-        self._hash_val = hash((self._table, self._columns, tuple(values)))
+        self._hash_val = hash((self._table, self._columns, self._values))
 
     @property
     def rows(self) -> ValuesList:
         return self._values
 
     @property
-    def table(self) -> TableReference:
+    def table(self) -> Optional[TableReference]:
         return self._table
 
     @property
@@ -4853,9 +4853,9 @@ class JoinType(enum.Enum):
     SQL standard.
     """
     InnerJoin = "JOIN"
-    OuterJoin = "OUTER JOIN"
-    LeftJoin = "LEFT JOIN"
-    RightJoin = "RIGHT JOIN"
+    OuterJoin = "FULL OUTER JOIN"
+    LeftJoin = "LEFT OUTER JOIN"
+    RightJoin = "RIGHT OUTER JOIN"
     CrossJoin = "CROSS JOIN"
 
     NaturalInnerJoin = "NATURAL JOIN"
@@ -4870,11 +4870,26 @@ class JoinType(enum.Enum):
         return self.value
 
 
+AnonymousJoins = {JoinType.CrossJoin,
+                  JoinType.NaturalInnerJoin,
+                  JoinType.NaturalOuterJoin,
+                  JoinType.NaturalLeftJoin,
+                  JoinType.NaturalRightJoin}
+"""Anonymous joins are those joins that use the **JOIN** syntax, but do not require a predicate to work.
+
+Examples include **CROSS JOIN** and **NATURAL JOIN**.
+"""
+
+
 class JoinTableSource(TableSource):
     """Models a table that is referenced in a *FROM* clause using the explicit *JOIN* syntax.
 
-    Such a table source consists of two parts: the actual table source that represents the relation being accessed, as
-    well as the condition that is used to join the table source with the other tables.
+    Such a table source consists of three parts:
+
+    1. the left-hand side table source
+    2. the right-hand side table source being joined to the left-hand side
+    3. an (optional) join condition that specifies how the two tables are joined, if the specific join requires such a
+       predicate
 
     Parameters
     ----------
@@ -4885,26 +4900,23 @@ class JoinTableSource(TableSource):
         joins this is a required argument in order to create a valid SQL query (e.g. *LEFT JOIN* or *INNER JOIN*),
         but there are some joins without a condition (e.g. *CROSS JOIN* and *NATURAL JOIN*). It is up to the user
         to determine whether a join condition is required for the join in question or not.
-    joined_tables : Optional[Iterable[JoinTableSource]], optional
+    joined_tables : TableSource
         An optional list of nested join statements, as in *R JOIN (S JOIN T ON a = b) ON c = d*.
     join_type : JoinType, optional
         The specific join that should be performed. Defaults to `JoinType.InnerJoin`.
-
-    Raises
-    ------
-    ValueError
-        If an attempt is made to nest join table sources, i.e. if the `source` is an instance of this class.
     """
 
     def __init__(self, source: TableSource, join_condition: Optional[AbstractPredicate] = None, *,
-                 joined_tables: Optional[Iterable[JoinTableSource]] = None, join_type: JoinType = JoinType.InnerJoin) -> None:
-        if isinstance(source, JoinTableSource):
-            raise ValueError("JOIN statements cannot have another JOIN statement as source")
+                 joined_table: TableSource,
+                 join_type: JoinType = JoinType.InnerJoin) -> None:
+        if join_condition is None and join_type not in AnonymousJoins:
+            pass
+
         self._source = source
-        self._joined_tables = tuple(joined_tables) if joined_tables else tuple()
+        self._joined_table = tuple(joined_table) if joined_table else tuple()
         self._join_condition = join_condition
         self._join_type = join_type if join_condition else JoinType.CrossJoin
-        self._hash_val = hash((self._source, self._joined_tables, self._join_condition, self._join_type))
+        self._hash_val = hash((self._source, self._joined_table, self._join_condition, self._join_type))
 
     @property
     def source(self) -> TableSource:
@@ -4918,7 +4930,7 @@ class JoinTableSource(TableSource):
         return self._source
 
     @property
-    def joined_tables(self) -> Sequence[JoinTableSource]:
+    def joined_table(self) -> Sequence[JoinTableSource]:
         """Get the nested join statements contained in this join.
 
         A nested join is a *JOIN* statement within a *JOIN* statement, as in
@@ -4929,7 +4941,7 @@ class JoinTableSource(TableSource):
         Sequence[JoinTableSource]
             The nested joins, can be empty if there are no such joins.
         """
-        return self._joined_tables
+        return self._joined_table
 
     @property
     def join_condition(self) -> Optional[AbstractPredicate]:
@@ -4957,22 +4969,22 @@ class JoinTableSource(TableSource):
         return self._join_type
 
     def tables(self) -> set[TableReference]:
-        return self._source.tables() | util.set_union(nested_join.tables() for nested_join in self.joined_tables)
+        return self._source.tables() | util.set_union(nested_join.tables() for nested_join in self.joined_table)
 
     def columns(self) -> set[ColumnReference]:
         condition_columns = self._join_condition.columns() if self._join_condition else set()
-        nested_columns = util.set_union(nested_join.columns() for nested_join in self.joined_tables)
+        nested_columns = util.set_union(nested_join.columns() for nested_join in self.joined_table)
         return self._source.columns() | nested_columns | condition_columns
 
     def iterexpressions(self) -> Iterable[SqlExpression]:
         source_expressions = list(self._source.iterexpressions())
-        nested_expressions = util.flatten(nested_join.iterexpressions() for nested_join in self.joined_tables)
+        nested_expressions = util.flatten(nested_join.iterexpressions() for nested_join in self.joined_table)
         condition_expressions = list(self._join_condition.iterexpressions()) if self._join_condition else []
         return source_expressions + nested_expressions + condition_expressions
 
     def itercolumns(self) -> Iterable[ColumnReference]:
         source_columns = list(self._source.itercolumns())
-        nested_columns = util.flatten(nested_join.itercolumns() for nested_join in self.joined_tables)
+        nested_columns = util.flatten(nested_join.itercolumns() for nested_join in self.joined_table)
         condition_columns = list(self._join_condition.itercolumns()) if self._join_condition else []
         return source_columns + nested_columns + condition_columns
 
@@ -4994,7 +5006,7 @@ class JoinTableSource(TableSource):
 
     def __eq__(self, other: object) -> bool:
         return (isinstance(other, type(self)) and self._source == other._source
-                and self._joined_tables == other._joined_tables
+                and self._joined_table == other._joined_table
                 and self._join_condition == other._join_condition
                 and self._join_type == other._join_type)
 
@@ -5003,8 +5015,8 @@ class JoinTableSource(TableSource):
 
     def __str__(self) -> str:
         join_str = str(self.join_type)
-        if self.joined_tables:
-            nested_join_str = " ".join(str(nested_join) for nested_join in self.joined_tables)
+        if self.joined_table:
+            nested_join_str = " ".join(str(nested_join) for nested_join in self.joined_table)
             source_str = f"({self.source} {nested_join_str})"
         else:
             source_str = str(self.source)
@@ -5773,6 +5785,10 @@ class IntersectClause(BaseClause):
         return f"\n  INTERSECT\n{self._partner_query.stringify(trailing_delimiter=False)}"
 
 
+SetOperationClause = Union[UnionClause, ExceptClause, IntersectClause]
+"""Supertype for all possible set operation clauses (**UNION**, **UNION ALL**, **INTERSECT**, **EXCEPT**)."""
+
+
 class ClauseVisitor(abc.ABC, Generic[VisitorResult]):
     """Basic visitor to operate on arbitrary clause lists.
 
@@ -5908,7 +5924,7 @@ def _collect_subqueries_in_table_source(table_source: TableSource) -> set[SqlQue
     elif isinstance(table_source, JoinTableSource):
         source_subqueries = _collect_subqueries_in_table_source(table_source.source)
         nested_subqueries = util.set_union(_collect_subqueries_in_table_source(nested_join)
-                                           for nested_join in table_source.joined_tables)
+                                           for nested_join in table_source.joined_table)
         condition_subqueries = (util.set_union(collect_subqueries_in_expression(cond_expr) for cond_expr
                                                in table_source.join_condition.iterexpressions())
                                 if table_source.join_condition else set())
@@ -6003,7 +6019,7 @@ def _collect_bound_tables_from_source(table_source: TableSource) -> set[TableRef
     elif isinstance(table_source, JoinTableSource):
         direct_tables = _collect_bound_tables_from_source(table_source.source)
         nested_tables = util.set_union(_collect_bound_tables_from_source(nested_join)
-                                       for nested_join in table_source.joined_tables)
+                                       for nested_join in table_source.joined_table)
         return direct_tables | nested_tables
 
 
@@ -6068,6 +6084,52 @@ def _assert_sound_set_operation(union_with: Optional[SqlQuery | UnionClause],
 FromClauseType = TypeVar("FromClauseType", bound=From)
 
 
+def _create_ast(item: SqlQuery | BaseClause | TableSource | AbstractPredicate | SqlExpression, *, indentation: int = 0) -> str:
+    prefix = " " * indentation
+    item_str = type(item).__name__
+    match item:
+        case ColumnExpression():
+            return f"{prefix}+ {item_str} [{item.column}]"
+        case MathematicalExpression() | BooleanExpression() | SubqueryExpression():
+            expressions = [_create_ast(e, indentation=indentation + 2) for e in item.iterchildren()]
+            expression_str = "\n".join(expressions)
+            return f"{prefix}+-{item_str}\n{expression_str}"
+        case SqlExpression():
+            return f"{prefix}+-{item_str} [{item}]"
+        case CompoundPredicate():
+            children = [_create_ast(c, indentation=indentation + 2) for c in item.children]
+            child_str = "\n".join(children)
+            return f"{prefix}+-{item_str}\n{child_str}"
+        case AbstractPredicate():
+            expressions = [_create_ast(e, indentation=indentation + 2) for e in item.iterexpressions()]
+            expression_str = "\n".join(expressions)
+            return f"{prefix}+-{item_str}\n{expression_str}"
+        case Where() | Having():
+            predicate_str = _create_ast(item.predicate, indentation=indentation + 2)
+            return f"{prefix}+-{item_str}\n{predicate_str}"
+        case DirectTableSource():
+            return f"{prefix}+-{item_str} [{item.table}]"
+        case JoinTableSource():
+            source = _create_ast(item.source, indentation=indentation + 2)
+            joins = [_create_ast(j, indentation=indentation + 2) for j in item.joined_table]
+            join_str = "\n".join(joins)
+            return f"{prefix}+-{item_str}\n{source}\n{join_str}"
+        case ValuesTableSource():
+            return f"{prefix}+-{item_str}"
+        case From():
+            tables = [_create_ast(t, indentation=indentation + 2) for t in item.items]
+            table_str = "\n".join(tables)
+            return f"{prefix}+-{item_str}\n{table_str}"
+        case BaseClause():
+            expressions = [_create_ast(e, indentation=indentation + 2) for e in item.iterexpressions()]
+            expression_str = "\n".join(expressions)
+            return f"{prefix}+-{item_str}\n{expression_str}"
+        case SqlQuery():
+            clauses = [_create_ast(c, indentation=indentation + 2) for c in item.clauses()]
+            clause_str = "\n".join(clauses)
+            return f"{prefix}+-{item_str}\n{clause_str}"
+
+
 class SqlQuery:
     """Represents an arbitrary SQL query, providing direct access to the different clauses in the query.
 
@@ -6104,6 +6166,8 @@ class SqlQuery:
       ``SELECT 1 EXCEPT (SELECT 2 UNION SELECT 3)``.
     - no recursive CTEs. While CTEs are supported, recursive CTEs are not. While this would be an easy addition, there simply
       was no need for it so far. If you need recursive CTEs, PRs are always welcome!
+    - no support for GROUPING SETS, including CUBE() and ROLLUP(). Conceptually speaking, these would not be hard to add, but
+      there simply was no need for them so far. If you need them, PRs are always welcome!
 
     Parameters
     ----------
@@ -6683,6 +6747,18 @@ class SqlQuery:
         delim = ";" if trailing_delimiter else ""
         return "".join(_stringify_clause(clause) for clause in self.clauses()).rstrip() + delim
 
+    def ast(self) -> str:
+        """Provides a human-readable representation of the abstract syntax tree for this query.
+
+        The AST is a textual representation of the query that shows the structure of the query in a tree-like manner.
+
+        Returns
+        -------
+        str
+            The abstract syntax tree of this query
+        """
+        return _create_ast(self)
+
     def accept_visitor(self, clause_visitor: ClauseVisitor) -> None:
         """Applies a visitor over all clauses in the current query.
 
@@ -6913,7 +6989,8 @@ def build_query(query_clauses: Iterable[BaseClause]) -> SqlQuery:
     Parameters
     ----------
     query_clauses : Iterable[BaseClause]
-        The clauses that should be used to construct the query
+        The clauses that should be used to construct the query. If any of the clauses are **None**, they will simply be
+        skipped.
 
     Returns
     -------

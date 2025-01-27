@@ -11,22 +11,24 @@ configured system-wide by setting the `auto_bind_columns` variable.
 
 Notes
 -----
-The parsing itself is based on the mo-sql-parsing project that implements a SQL -> JSON/dict conversion (which at
-times is more akin to a tokenization than an actual parsing). Our parser implementation than takes such a JSON
-representation and generates the more verbose structures of the qal. There exists a Jupyter notebook called
-*MoSQLParsingTests* in the *analysis* directory that shows the output emitted by mo-sql-parsing for different SQL query
-features.
+Please beware that SQL parsing is a very challenging undertaking and there might be bugs in some lesser-used features.
+If you encounter any issues, please report them on the GitHub issue tracker.
+We test the parser based on some popular benchmarks, namely JOB and Stats to ensure that result sets from the raw SQL queries
+match result sets from the parsed queries. However, we cannot guarantee that the parser will work for all SQL queries.
+
+The parsing itself is based on the pglast project that implements a SQL -> JSON/dict conversion, based on the actual Postgres
+query parser. Our parser implementation takes such a JSON representation as input and generates the more verbose structures of
+the qal. There exists a Jupyter notebook called *PglastParsingTests* in the *tests* directory that shows the output emitted by
+pglast for different SQL query features.
 
 References
 ----------
 
-.. mo-sql-parsing project: https://github.com/klahnakoski/mo-sql-parsing Thanks a lot for maintaining this fantastic
-   tool and the great support!
+.. pglast project: https://github.com/lelit/pglast Thanks a lot for maintaining this fantastic tool and the great support!
 """
 from __future__ import annotations
 
 import json
-import warnings
 from typing import Optional
 
 import pglast
@@ -35,10 +37,11 @@ from ._core import (
     TableReference, ColumnReference,
     SelectType, JoinType,
     CompoundOperators, MathematicalSqlOperators, LogicalSqlOperators, SqlOperator,
-    BaseProjection, WithQuery, DirectTableSource, JoinTableSource, SubqueryTableSource, OrderByExpression,
-    SqlQuery, ImplicitSqlQuery, ExplicitSqlQuery, MixedSqlQuery,
+    BaseProjection, OrderByExpression,
+    WithQuery, TableSource, DirectTableSource, JoinTableSource, SubqueryTableSource, ValuesList, ValuesTableSource,
+    SqlQuery,
     Select, Where, From, GroupBy, Having, OrderBy, Limit, CommonTableExpression, ImplicitFromClause, ExplicitFromClause,
-    UnionClause, IntersectClause, ExceptClause,
+    UnionClause, IntersectClause, ExceptClause, SetOperationClause,
     AbstractPredicate, BinaryPredicate, InPredicate, BetweenPredicate, CompoundPredicate, UnaryPredicate,
     SqlExpression, StarExpression, StaticValueExpression, ColumnExpression, SubqueryExpression, CastExpression,
     MathematicalExpression, FunctionExpression, BooleanExpression, WindowExpression, CaseExpression,
@@ -51,8 +54,42 @@ auto_bind_columns: bool = False
 
 
 def _pglast_parse_colref(pglast_data: dict, *, available_tables: dict[str, TableReference],
-                         resolved_columns: dict[str, ColumnReference],
+                         resolved_columns: dict[tuple[str, str], ColumnReference],
                          schema: Optional["DatabaseSchema"]) -> ColumnReference:  # type: ignore # noqa: F821
+    """Handler method to parse column references in the query.
+
+    The column will be bound to its table if possible. This binding process uses the following rules:
+
+    - if the columns has already been resolved as part of an earlier parsing step, this column is re-used from the
+      `resolved_columns`
+    - if the column is specified in qualified syntax (i.e. **table.column**), the table is directly inferred from the
+      `available_tables`.
+    - if the column is not qualified, but a `schema` is given, this schema is used together with the candidates from
+      `available_tables` to lookup the appropriate table.
+    - otherwise, the column is left unbound.
+
+    In case the schema-based binding is used, the new column is also stored in the `resolved_columns` cache.
+
+
+    Parameters
+    ----------
+    pglast_data : dict
+        JSON enconding of the column
+    available_tables : dict[str, TableReference]
+        The candidate tables for all binding purposes. Maps table identifiers (i.e. full names and aliases) to the actual
+        table references.
+    resolved_columns : dict[tuple[str, str], ColumnReference]
+        Columns that have already been bound before. This cache maps **(table, column)** pairs to their respective column
+        representations. If columns do not use a qualified name, the **table** will be an empty string.
+    schema : Optional[DatabaseSchema]
+        The database schema info to use for live binding If this is omitted, no binding is performed and unqualified columns
+        will be left without a table reference :(
+
+    Returns
+    -------
+    ColumnReference
+        The parsed column reference.
+    """
     fields = pglast_data["fields"]
     if len(fields) > 2:
         raise ParserError("Unknown column reference format: " + str(pglast_data))
@@ -63,12 +100,12 @@ def _pglast_parse_colref(pglast_data: dict, *, available_tables: dict[str, Table
         col: str = col["String"]["sval"]
         parsed_table = available_tables[tab]
         parsed_column = ColumnReference(col, parsed_table)
-        resolved_columns[col] = parsed_column
+        resolved_columns[(tab, col)] = parsed_column
         return parsed_column
 
     # at this point, we must have a single unbound column parameter
     col: str = fields[0]["String"]["sval"]
-    if col in resolved_columns:
+    if ("", col) in resolved_columns:
         return resolved_columns[col]
     if not schema:
         return ColumnReference(col, None)
@@ -79,18 +116,30 @@ def _pglast_parse_colref(pglast_data: dict, *, available_tables: dict[str, Table
         raise ParserError("Could not resolve column reference: " + col)
 
     parsed_column = ColumnReference(col, resolved_table)
-    resolved_columns[col] = parsed_column
+    resolved_columns[("", col)] = parsed_column
     return parsed_column
 
 
 def _pglast_parse_const(pglast_data: dict) -> StaticValueExpression:
+    """Handler method to parse constant values in the query.
+
+    Parameters
+    ----------
+    pglast_data : dict
+        JSON enconding of the value. This data is extracted from the pglast data structure.
+
+    Returns
+    -------
+    StaticValueExpression
+        The parsed constant value.
+    """
     pglast_data.pop("location", None)
     valtype = util.dicts.key(pglast_data)
     match valtype:
         case "isnull":
             return StaticValueExpression.null()
         case "ival":
-            val = pglast_data["ival"]["ival"]
+            val = pglast_data["ival"]["ival"] if "ival" in pglast_data["ival"] else 0
             return StaticValueExpression(val)
         case "fval":
             val = pglast_data["fval"]["fval"]
@@ -104,9 +153,121 @@ def _pglast_parse_const(pglast_data: dict) -> StaticValueExpression:
             raise ParserError("Unknown constant type: " + str(pglast_data))
 
 
+_PglastOperatorMap: dict[str, SqlOperator] = {
+    "=": LogicalSqlOperators.Equal,
+    "<": LogicalSqlOperators.Less,
+    "<=": LogicalSqlOperators.LessEqual,
+    ">": LogicalSqlOperators.Greater,
+    ">=": LogicalSqlOperators.GreaterEqual,
+    "<>": LogicalSqlOperators.NotEqual,
+    "!=": LogicalSqlOperators.NotEqual,
+
+    "AND_EXPR": CompoundOperators.And,
+    "OR_EXPR": CompoundOperators.Or,
+    "NOT_EXPR": CompoundOperators.Not,
+
+    "+": MathematicalSqlOperators.Add,
+    "-": MathematicalSqlOperators.Subtract,
+    "*": MathematicalSqlOperators.Multiply,
+    "/": MathematicalSqlOperators.Divide,
+    "%": MathematicalSqlOperators.Modulo
+}
+"""Map from the internal representation of Postgres operators to our standardized QAL operators."""
+
+
+def _pglast_parse_operator(pglast_data: list[dict]) -> SqlOperator:
+    """Handler method to parse operators into our query representation.
+
+    Parameters
+    ----------
+    pglast_data : list[dict]
+        JSON enconding of the operator. This data is extracted from the pglast data structure.
+
+    Returns
+    -------
+    SqlOperator
+        The parsed operator.
+    """
+    if len(pglast_data) != 1:
+        raise ParserError("Unknown operator format: " + str(pglast_data))
+    operator = pglast_data[0]
+    if "String" not in operator or "sval" not in operator["String"]:
+        raise ParserError("Unknown operator format: " + str(pglast_data))
+    sval = operator["String"]["sval"]
+    if sval not in _PglastOperatorMap:
+        raise ParserError("Operator not yet in target map: " + sval)
+    return _PglastOperatorMap[sval]
+
+
+_PglastTypeMap: dict[str, str] = {
+    "bpchar": "char",
+
+    "serial8": "bigserial",
+
+
+    "int4": "integer",
+    "int2": "smallint",
+    "int8": "bigint",
+
+    "float4": "real",
+    "float8": "double",
+
+    "boolean": "bool"
+}
+"""Map from the internal representation of Postgres types to the SQL standard types."""
+
+
+def _pglast_parse_type(pglast_data: dict) -> str:
+    """Handler method to parse type information from explicit type casts
+
+    Parameters
+    ----------
+    pglast_data : dict
+        JSON encoding of the type information.
+
+    Returns
+    -------
+    str
+        The actual type
+    """
+    if "names" not in pglast_data:
+        raise ParserError("Unknown type format: " + str(pglast_data))
+    names = pglast_data["names"]
+    if len(names) > 2:
+        raise ParserError("Unknown type format: " + str(pglast_data))
+    raw_type = names[-1]["String"]["sval"]
+
+    # for user-defined types we use get with the same type as argument
+    return _PglastTypeMap.get(raw_type, raw_type)
+
+
 def _pglast_parse_case(pglast_data: dict, *, available_tables: dict[str, TableReference],
-                       resolved_columns: dict[str, ColumnReference],
-                       schema: Optional["DBSchema"]) -> CaseExpression:  # type: ignore # noqa: F821
+                       resolved_columns: dict[tuple[str, str], ColumnReference],
+                       schema: Optional["DatabaseSchema"]) -> CaseExpression:  # type: ignore # noqa: F821
+    """Handler method to parse **CASE** expressions in a query.
+
+    Parameters
+    ----------
+    pglast_data : dict
+        JSON encoding of the **CASE** expression data. This data is extracted from the pglast data structure.
+    available_tables : dict[str, TableReference]
+        Candidate tables that columns can bind to. This dictionary maps the table identifier to the full table reference.
+        An identifier can either be the full table name, or its alias.
+        Note that this dictionary is modified in-place during the parsing process, especially while parsing CTEs and FROM
+        clause
+    resolved_columns : dict[tuple[str, str], ColumnReference]
+        Columns that have already been bound to their full column reference. This cache maps **(table, column)** pairs to
+        their respective column objects. If columns do not use a qualified name, the **table** will be an empty string.
+        Note that this dictionary is modified in-place during the parsing process while new columns are being discovered.
+    schema : Optional[DatabaseSchema]
+        The database schema to use for live binding of un-qualified column references. If this is omitted, no live binding is
+        performed and some columns may remain
+
+    Returns
+    -------
+    CaseExpression
+        The parsed **CASE** expression.
+    """
     cases: list[tuple[AbstractPredicate, SqlExpression]] = []
     for arg in pglast_data["args"]:
         current_case = _pglast_parse_predicate(arg["CaseWhen"]["expr"], available_tables=available_tables,
@@ -125,8 +286,34 @@ def _pglast_parse_case(pglast_data: dict, *, available_tables: dict[str, TableRe
 
 
 def _pglast_parse_expression(pglast_data: dict, *, available_tables: dict[str, TableReference],
-                             resolved_columns: dict[str, ColumnReference],
-                             schema: Optional["DBSchema"]) -> SqlExpression:  # type: ignore # noqa: F821
+                             resolved_columns: dict[tuple[str, str], ColumnReference],
+                             schema: Optional["DatabaseSchema"]) -> SqlExpression:  # type: ignore # noqa: F821
+    """Handler method to parse arbitrary expressions in the query.
+
+    For some more complex expressions, this method will delegate to tailored parsing methods.
+
+    Parameters
+    ----------
+    pglast_data : dict
+        JSON encoding of the expression data. This data is extracted from the pglast data structure.
+    available_tables : dict[str, TableReference]
+        Candidate tables that columns can bind to. This dictionary maps the table identifier to the full table reference.
+        An identifier can either be the full table name, or its alias.
+        Note that this dictionary is modified in-place during the parsing process, especially while parsing CTEs and FROM
+        clause
+    resolved_columns : dict[tuple[str, str], ColumnReference]
+        Columns that have already been bound to their full column reference. This cache maps **(table, column)** pairs to
+        their respective column objects. If columns do not use a qualified name, the **table** will be an empty string.
+        Note that this dictionary is modified in-place during the parsing process while new columns are being discovered.
+    schema : Optional[DatabaseSchema]
+        The database schema to use for live binding of un-qualified column references. If this is omitted, no live binding is
+        performed and some columns may remain unbound.
+
+    Returns
+    -------
+    SqlExpression
+        The parsed expression.
+    """
     pglast_data.pop("location", None)
     expression_key = util.dicts.key(pglast_data)
 
@@ -147,7 +334,16 @@ def _pglast_parse_expression(pglast_data: dict, *, available_tables: dict[str, T
                                             resolved_columns=resolved_columns, schema=schema)
             right = _pglast_parse_expression(expression["rexpr"], available_tables=available_tables,
                                              resolved_columns=resolved_columns, schema=schema)
+
+            if operation in LogicalSqlOperators:
+                return BooleanExpression(BinaryPredicate(operation, left, right))
+
             return MathematicalExpression(operation, left, right)
+
+        case "BoolExpr":
+            predicate = _pglast_parse_predicate(pglast_data, available_tables=available_tables,
+                                                resolved_columns=resolved_columns, schema=schema)
+            return BooleanExpression(predicate)
 
         case "FuncCall" if "over" not in pglast_data["FuncCall"]:  # normal functions, aggregates and UDFs
             expression: dict = pglast_data["FuncCall"]
@@ -180,12 +376,19 @@ def _pglast_parse_expression(pglast_data: dict, *, available_tables: dict[str, T
                 order = None
 
             if "agg_filter" in expression:
-                filter_expr = _pglast_parse_predicate(expression["agg_filter"], available_tables=available_tables,
-                                                      resolved_columns=resolved_columns, schema=schema)
+                filter_expr = _pglast_parse_expression(expression["agg_filter"], available_tables=available_tables,
+                                                       resolved_columns=resolved_columns, schema=schema)
             else:
                 filter_expr = None
 
             return WindowExpression(funcname, partitioning=partition, ordering=order, filter_condition=filter_expr)
+
+        case "TypeCast":
+            expression: dict = pglast_data["TypeCast"]
+            casted_expression = _pglast_parse_expression(expression["arg"], available_tables=available_tables,
+                                                         resolved_columns=resolved_columns, schema=schema)
+            target_type = _pglast_parse_type(expression["typeName"])
+            return CastExpression(casted_expression, target_type)
 
         case "CaseExpr":
             return _pglast_parse_case(pglast_data["CaseExpr"], available_tables=available_tables,
@@ -202,8 +405,33 @@ def _pglast_parse_expression(pglast_data: dict, *, available_tables: dict[str, T
 
 
 def _pglast_parse_ctes(ctes: list[dict], *, available_tables: dict[str, TableReference],
-                       resolved_columns: dict[str, ColumnReference],
-                       schema: Optional["DBSchema"]) -> CommonTableExpression:  # type: ignore # noqa: F821
+                       resolved_columns: dict[tuple[str, str], ColumnReference],
+                       schema: Optional["DatabaseSchema"]) -> CommonTableExpression:  # type: ignore # noqa: F821
+    """Handler method to parse the **WITH** clause of a query.
+
+    Parameters
+    ----------
+    ctes : list[dict]
+        JSON enconding of the CTEs, as extracted from the pglast data structure.
+    available_tables : dict[str, TableReference]
+        Candidate tables that columns can bind to. This dictionary maps the table identifier to the full table reference.
+        An identifier can either be the full table name, or its alias.
+        Note that this dictionary is modified in-place as part of this method, in order to save the CTEs targets.
+    resolved_columns : dict[tuple[str, str], ColumnReference]
+        Columns that have already been bound to their full column reference. This cache maps **(table, column)** pairs to
+        their respective column objects. If columns do not use a qualified name, the **table** will be an empty string.
+        This dictionary is not actually used in this method, but it is provided nonetheless to ensure a consistent API for
+        all clause parsers.
+    schema : Optional[DatabaseSchema]
+        The database schema to use for live binding of un-qualified column references. If this is omitted, no live binding is
+        performed and some columns may remain unbound.
+
+    Returns
+    -------
+    CommonTableExpression
+        The parsed CTEs.
+    """
+    local_resolved_cols: dict[str, ColumnReference] = {}
     parsed_ctes: list[CommonTableExpression] = []
     for pglast_data in ctes:
         current_cte = pglast_data["CommonTableExpr"]
@@ -211,7 +439,7 @@ def _pglast_parse_ctes(ctes: list[dict], *, available_tables: dict[str, TableRef
         # TODO: could extract materialization info using "ctematerialized" here
         cte_query = _pglast_parse_query(current_cte["ctequery"]["SelectStmt"],
                                         available_tables=available_tables,
-                                        resolved_columns=resolved_columns,
+                                        resolved_columns=local_resolved_cols,
                                         schema=schema)
         available_tables[target_table.identifier()] = target_table
         parsed_ctes.append(WithQuery(cte_query, target_table))
@@ -219,6 +447,20 @@ def _pglast_parse_ctes(ctes: list[dict], *, available_tables: dict[str, TableRef
 
 
 def _pglast_try_select_star(target: dict) -> Optional[Select]:
+    """Attempts to generate a **SELECT(*)** representation for a **SELECT** clause.
+
+    If the query is not actually a **SELECT(*)** query, this method will return **None**.
+
+    Parameters
+    ----------
+    target : dict
+        JSON encoding of the target entry in the **SELECT** clause. This data is extracted from the pglast data structure
+
+    Returns
+    -------
+    Optional[Select]
+        The parsed **SELECT(*)** clause, or **None** if this is not a **SELECT(*)** query.
+    """
     if "ColumnRef" not in target:
         return None
     fields = target["ColumnRef"]["fields"]
@@ -229,10 +471,40 @@ def _pglast_try_select_star(target: dict) -> Optional[Select]:
     return Select.star() if "A_Star" in colref else None
 
 
-def _pglast_parse_select(targetlist: list, *, distinct: bool,
+def _pglast_parse_select(targetlist: list[dict], *, distinct: bool,
                          available_tables: dict[str, TableReference],
-                         resolved_columns: dict[str, ColumnReference],
-                         schema: Optional["DBSchema"]) -> Select:  # type: ignore # noqa: F821
+                         resolved_columns: dict[tuple[str, str], ColumnReference],
+                         schema: Optional["DatabaseSchema"]) -> Select:  # type: ignore # noqa: F821
+    """Handler method to parse the **SELECT** clause of a query.
+
+    This is the only parsing handler that will always be called when parsing a query, since all queries must at least have a
+    **SELECT** clause.
+
+    Parameters
+    ----------
+    targetlist : list[dict]
+        JSON encoding of the different projections used in the **SELECT** clause. This data is extracted from the pglast data
+        structure.
+    distinct : bool
+        Whether this is a **SELECT DISTINCT** query.
+    available_tables : dict[str, TableReference]
+        Candidate tables that columns can bind to. This dictionary maps the table identifier to the full table reference.
+        An identifier can either be the full table name, or its alias.
+        Note that this dictionary is modified in-place during the parsing process, especially while parsing CTEs and FROM
+        clause
+    resolved_columns : dict[tuple[str, str], ColumnReference]
+        Columns that have already been bound to their full column reference. This cache maps **(table, column)** pairs to
+        their respective column objects. If columns do not use a qualified name, the **table** will be an empty string.
+        Note that this dictionary is modified in-place during the parsing process while new columns are being discovered.
+    schema : Optional[DatabaseSchema]
+        The database schema to use for live binding of un-qualified column references. If this is omitted, no live binding is
+        performed and some columns may remain unbound.
+
+    Returns
+    -------
+    Select
+        The parsed **SELECT** clause
+    """
     # first, try for SELECT * queries
     if len(targetlist) == 1:
         target = targetlist[0]["ResTarget"]["val"]
@@ -255,48 +527,241 @@ def _pglast_parse_select(targetlist: list, *, distinct: bool,
 
 
 def _pglast_parse_rangevar(rangevar: dict) -> TableReference:
+    """Handler method to extract the `TableReference` from a **RangeVar** entry in the **FROM** clause.
+
+    Parameters
+    ----------
+    rangevar : dict
+        JSON encoding of the range variable, as extracted from the pglast data structure.
+
+    Returns
+    -------
+    TableReference
+        The parsed table reference.
+    """
     name = rangevar["relname"]
     alias = rangevar["alias"]["aliasname"] if "alias" in rangevar else None
     return TableReference(name, alias)
 
 
+def _pglast_is_values_list(pglast_data: dict) -> bool:
+    """Checks, whether a pglast subquery representation refers to an actual subquery or a **VALUES** list.
+
+    Parameters
+    ----------
+    pglast_data : dict
+        JSON encoding of the subquery data
+
+    Returns
+    -------
+    bool
+        **True** if the subquery encodes a **VALUES** list, **False** otherwise.
+    """
+    query = pglast_data["subquery"]["SelectStmt"]
+    return "valuesLists" in query
+
+
+def _pglast_parse_from_entry(pglast_data: dict, *, available_tables: dict[str, TableReference],
+                             resolved_columns: dict[tuple[str, str], ColumnReference],
+                             schema: Optional["DatabaseSchema"]) -> TableSource:  # type: ignore # noqa: F821
+    """Handler method to parse individual entries in the **FROM** clause.
+
+    Parameters
+    ----------
+    pglast_data : dict
+        JSON enconding of the current entry in the **FROM** clause. This data is extracted from the pglast data structure.
+    available_tables : dict[str, TableReference]
+        Candidate tables that columns can bind to. This dictionary maps the table identifier to the full table reference.
+        An identifier can either be the full table name, or its alias.
+        Note that this dictionary is modified in-place as part of this method.
+    resolved_columns : dict[tuple[str, str], ColumnReference]
+        Columns that have already been bound to their full column reference. This cache maps **(table, column)** pairs to
+        their respective column objects. If columns do not use a qualified name, the **table** will be an empty string.
+        Note that this dictionary is modified in-place as part of this method.
+    schema : Optional[DatabaseSchema]
+        The database schema to use for live binding of un-qualified column references. If this is omitted, no live binding is
+        performed and some columns may remain unbound.
+
+    Returns
+    -------
+    TableSource
+        The parsed table source.
+    """
+    pglast_data.pop("location", None)
+    entry_type = util.dicts.key(pglast_data)
+
+    match entry_type:
+
+        case "RangeVar":
+            table = _pglast_parse_rangevar(pglast_data["RangeVar"])
+
+            # If we specified a virtual table in a CTE, we will reference it later in some FROM clause. In this case,
+            # we should not create a new table reference, but rather use the existing one.
+            if table.full_name in available_tables and available_tables[table.full_name].virtual:
+                table = available_tables[table.full_name]
+
+            return DirectTableSource(table)
+
+        case "JoinExpr":
+            join_expr: dict = pglast_data["JoinExpr"]
+            match join_expr["jointype"]:
+                case "JOIN_INNER" if "quals" in join_expr:
+                    join_type = JoinType.InnerJoin
+                case "JOIN_INNER" if "quals" not in join_expr:
+                    join_type = JoinType.CrossJoin
+                case "JOIN_LEFT":
+                    join_type = JoinType.LeftJoin
+                case "JOIN_RIGHT":
+                    join_type = JoinType.RightJoin
+                case "JOIN_OUTER":
+                    join_type = JoinType.OuterJoin
+                case "JOIN_FULL":
+                    join_type = JoinType.OuterJoin
+                case _:
+                    raise ParserError("Unknown join type: " + join_expr["jointype"])
+
+            left = _pglast_parse_from_entry(join_expr["larg"], available_tables=available_tables,
+                                            resolved_columns=resolved_columns, schema=schema)
+            right = _pglast_parse_from_entry(join_expr["rarg"], available_tables=available_tables,
+                                             resolved_columns=resolved_columns, schema=schema)
+            if join_type == JoinType.CrossJoin:
+                return JoinTableSource(left, join_condition=None, joined_table=[right], join_type=join_type)
+
+            join_condition = _pglast_parse_predicate(join_expr["quals"], available_tables=available_tables,
+                                                     resolved_columns=resolved_columns, schema=schema)
+
+            # we do not need to store new tables in available_tables here, since this is already handled by the recursion.
+            return JoinTableSource(left, join_condition=join_condition, joined_table=[right], join_type=join_type)
+
+        case "RangeSubselect" if _pglast_is_values_list(pglast_data["RangeSubselect"]):
+            values_list = _pglast_parse_values(pglast_data["RangeSubselect"])
+            target_identifier = values_list.table.identifier() if values_list.table else ""
+            if target_identifier:
+                available_tables[values_list.table.identifier()] = values_list.table
+
+            for target_column in values_list.cols:
+                col_key = (target_identifier, target_column)
+                resolved_columns[col_key] = ColumnReference(target_column, values_list.table)
+
+            return values_list
+
+        case "RangeSubselect":
+            raw_subquery: dict = pglast_data["RangeSubselect"]
+            subquery = _pglast_parse_query(raw_subquery["subquery"]["SelectStmt"],
+                                           available_tables=available_tables,
+                                           resolved_columns=resolved_columns, schema=schema)
+
+            if "alias" in raw_subquery:
+                alias: str = raw_subquery["alias"]["aliasname"]
+            else:
+                alias = ""
+
+            # TODO: should add LATERAL check here
+
+            subquery_source = SubqueryTableSource(subquery, alias=alias)
+            if subquery_source.target_table:
+                available_tables[subquery_source.target_table.identifier()] = subquery_source.target_table
+            return subquery_source
+
+        case _:
+            raise ParserError("Unknow FROM clause entry: " + str(pglast_data))
+
+
+def _pglast_parse_values(pglast_data: dict) -> ValuesTableSource:
+    """Handler method to parse explicit **VALUES** lists in the **FROM** clause.
+
+    Parameters
+    ----------
+    pglast_data : dict
+        JSON encoding of the actual **VALUES** list. This data is extracted from the pglast data structure and should be akin
+        to a subquery.
+
+    Returns
+    -------
+    ValuesTableSource
+        The parsed **VALUES** list.
+    """
+
+    raw_values: list[dict] = pglast_data["subquery"]["SelectStmt"]["valuesLists"]
+
+    values: ValuesList = []
+    for row in raw_values:
+        raw_items = row["List"]["items"]
+        parsed_items = [_pglast_parse_expression(item, available_tables={}, resolved_columns={}, schema=None)
+                        for item in raw_items]
+        values.append(tuple(parsed_items))
+
+    if "alias" not in pglast_data:
+        return ValuesTableSource(values, alias="", columns=[])
+
+    raw_alias = pglast_data["alias"]
+    alias = raw_alias["aliasname"]
+    if "colnames" not in raw_alias:
+        return ValuesTableSource(values, alias=alias, columns=[])
+
+    colnames = []
+    for raw_colname in raw_alias["colnames"]:
+        colnames.append(raw_colname["String"]["sval"])
+    return ValuesTableSource(values, alias=alias, columns=colnames)
+
+
 def _pglast_parse_from(from_clause: list[dict], *,
                        available_tables: dict[str, TableReference],
-                       resolved_columns: dict[str, ColumnReference],
-                       schema: Optional["DBSchema"]) -> From:  # type: ignore # noqa: F821
+                       resolved_columns: dict[tuple[str, str], ColumnReference],
+                       schema: Optional["DatabaseSchema"]) -> From:  # type: ignore # noqa: F821
+    """Handler method to parse the **FROM** clause of a query.
+
+    Parameters
+    ----------
+    from_clause : list[dict]
+        The JSON representation of the **FROM** clause, as extracted from the pglast data structure.
+    available_tables : dict[str, TableReference]
+        Candidate tables that columns can bind to. This dictionary maps the table identifier to the full table reference.
+        An identifier can either be the full table name, or its alias.
+        Note that this dictionary is modified in-place during the parsing process, especially while parsing CTEs and FROM
+        clause.
+    resolved_columns : dict[tuple[str, str], ColumnReference]
+        Columns that have already been bound to their full column reference. This cache maps **(table, column)** pairs to
+        their respective column objects. If columns do not use a qualified name, the **table** will be an empty string.
+        Note that this dictionary is modified in-place during the parsing process while new columns are being discovered.
+    schema : Optional[DatabaseSchema]
+        The database schema to use for live binding of un-qualified column references. If this is omitted, no live binding is
+        performed and some columns may remain unbound.
+
+    Returns
+    -------
+    From
+        The parsed **FROM** clause.
+    """
+    contains_any = False
+    contains_plain_table = False
     contains_join = False
     contains_mixed = False
     contains_subquery = False
 
     table_sources = []
     for entry in from_clause:
-        entry.pop("location", None)
-        entry_type = util.dicts.key(entry)
+        current_table_source = _pglast_parse_from_entry(entry, available_tables=available_tables,
+                                                        resolved_columns=resolved_columns, schema=schema)
+        table_sources.append(current_table_source)
 
-        match entry_type:
+        if not contains_any:
+            contains_any = True
+            continue
 
-            case "RangeVar":
+        match current_table_source:
+            case DirectTableSource():
+                contains_plain_table = True
                 if contains_join:
                     contains_mixed = True
-                table = _pglast_parse_rangevar(entry["RangeVar"])
-
-                # If we specified a virtual table in a CTE, we will reference it later in some FROM clause. In this case,
-                # we should not create a new table reference, but rather use the existing one.
-                if table.identifier() in available_tables:
-                    table = available_tables[table.identifier()]
-                else:
-                    available_tables[table.identifier()] = table
-
-                table_sources.append(DirectTableSource(table))
-
-            # TODO:
-            # - JOIN ON
-            # - Subquery
-            # - LATERAL subquery
-            # - VALUES
-
-            case _:
-                raise ParserError("Unknow FROM clause entry: " + str(entry))
+            case JoinTableSource():
+                contains_join = True
+                if contains_plain_table:
+                    contains_mixed = True
+            case SubqueryTableSource():
+                pass  # TODO: how do we treat plain tables with subqueries?
+            case ValuesTableSource():
+                pass  # TODO: how do we treat plain tables with values?
 
     if not contains_join and not contains_mixed and not contains_subquery:
         return ImplicitFromClause(table_sources)
@@ -305,42 +770,37 @@ def _pglast_parse_from(from_clause: list[dict], *,
     return From(table_sources)
 
 
-PglastOperatorMap: dict[str, SqlOperator] = {
-    "=": LogicalSqlOperators.Equal,
-    "<": LogicalSqlOperators.Less,
-    "<=": LogicalSqlOperators.LessEqual,
-    ">": LogicalSqlOperators.Greater,
-    ">=": LogicalSqlOperators.GreaterEqual,
-    "<>": LogicalSqlOperators.NotEqual,
-    "!=": LogicalSqlOperators.NotEqual,
-
-    "AND_EXPR": CompoundOperators.And,
-    "OR_EXPR": CompoundOperators.Or,
-    "NOT_EXPR": CompoundOperators.Not,
-
-    "+": MathematicalSqlOperators.Add,
-    "-": MathematicalSqlOperators.Subtract,
-    "*": MathematicalSqlOperators.Multiply,
-    "/": MathematicalSqlOperators.Divide,
-    "%": MathematicalSqlOperators.Modulo
-}
-
-
-def _pglast_parse_operator(pglast_data: list) -> LogicalSqlOperators:
-    if len(pglast_data) != 1:
-        raise ParserError("Unknown operator format: " + str(pglast_data))
-    operator = pglast_data[0]
-    if "String" not in operator or "sval" not in operator["String"]:
-        raise ParserError("Unknown operator format: " + str(pglast_data))
-    sval = operator["String"]["sval"]
-    if sval not in PglastOperatorMap:
-        raise ParserError("Operator not yet in target map: " + sval)
-    return PglastOperatorMap[sval]
-
-
 def _pglast_parse_predicate(pglast_data: dict, available_tables: dict[str, TableReference],
-                            resolved_columns: dict[str, ColumnReference],
-                            schema: Optional["DBSchema"]) -> AbstractPredicate:  # type: ignore # noqa: F821
+                            resolved_columns: dict[tuple[str, str], ColumnReference],
+                            schema: Optional["DatabaseSchema"]) -> AbstractPredicate:  # type: ignore # noqa: F821
+    """Handler method to parse arbitrary predicates in the **WHERE** or **HAVING** clause.
+
+    Note that in other places where logical expressions can be used, e.g. for aggregate filtering, `BooleanExpression`s are
+    used instead. This is to prevent surprising results in analysis that simply collect all predicates of a query to infer
+    join graphs, etc.
+
+    Parameters
+    ----------
+    pglast_data : dict
+        JSON encoding of the predicate data. This data is extracted from the pglast data structure.
+    available_tables : dict[str, TableReference]
+        Candidate tables that columns can bind to. This dictionary maps the table identifier to the full table reference.
+        An identifier can either be the full table name, or its alias.
+        Note that this dictionary is modified in-place during the parsing process, especially while parsing CTEs and FROM
+        clause.
+    resolved_columns : dict[tuple[str, str], ColumnReference]
+        Columns that have already been bound to their full column reference. This cache maps **(table, column)** pairs to
+        their respective column objects. If columns do not use a qualified name, the **table** will be an empty string.
+        Note that this dictionary is modified in-place during the parsing process while new columns are being discovered.
+    schema : Optional[DatabaseSchema]
+        The database schema to use for live binding of un-qualified column references. If this is omitted, no live binding is
+        performed and some columns may remain unbound.
+
+    Returns
+    -------
+    AbstractPredicate
+        The parsed predicate.
+    """
     pglast_data.pop("location", None)
     expr_key = util.dicts.key(pglast_data)
     match expr_key:
@@ -354,7 +814,7 @@ def _pglast_parse_predicate(pglast_data: dict, available_tables: dict[str, Table
                                              resolved_columns=resolved_columns, schema=schema)
             return BinaryPredicate(operator, left, right)
 
-        case "A_Expr" if pglast_data["A_Expr"]["kind"] == "AXPR_LIKE":
+        case "A_Expr" if pglast_data["A_Expr"]["kind"] == "AEXPR_LIKE":
             expression = pglast_data["A_Expr"]
             operator = (LogicalSqlOperators.Like if expression["name"][0]["String"]["sval"] == "~~"
                         else LogicalSqlOperators.NotLike)
@@ -406,7 +866,7 @@ def _pglast_parse_predicate(pglast_data: dict, available_tables: dict[str, Table
 
         case "BoolExpr":
             expression = pglast_data["BoolExpr"]
-            operator = PglastOperatorMap[expression["boolop"]]
+            operator = _PglastOperatorMap[expression["boolop"]]
             children = [_pglast_parse_predicate(child,
                                                 available_tables=available_tables,
                                                 resolved_columns=resolved_columns,
@@ -443,11 +903,11 @@ def _pglast_parse_predicate(pglast_data: dict, available_tables: dict[str, Table
                 return InPredicate.subquery(testexpr, subquery)
 
             if sublink_type == "ANY_SUBLINK":
-                operator = PglastOperatorMap[expression["operName"]]
+                operator = _PglastOperatorMap[expression["operName"]]
                 subquery_expression = FunctionExpression.any_func(subquery)
                 return BinaryPredicate(operator, testexpr, subquery_expression)
             elif sublink_type == "ALL_SUBLINK":
-                operator = PglastOperatorMap[expression["operName"]]
+                operator = _PglastOperatorMap[expression["operName"]]
                 subquery_expression = FunctionExpression.all_func(subquery)
                 return BinaryPredicate(operator, testexpr, subquery_expression)
             else:
@@ -459,29 +919,326 @@ def _pglast_parse_predicate(pglast_data: dict, available_tables: dict[str, Table
 
 def _pglast_parse_where(where_clause: dict, *,
                         available_tables: dict[str, TableReference],
-                        resolved_columns: dict[str, ColumnReference],
-                        schema: Optional["DBSchema"]) -> Optional[Where]:  # type: ignore # noqa: F821
+                        resolved_columns: dict[tuple[str, str], ColumnReference],
+                        schema: Optional["DatabaseSchema"]) -> Where:  # type: ignore # noqa: F821
+    """Handler method to parse the **WHERE** clause of a query.
+
+    Parameters
+    ----------
+    where_clause : dict
+        The JSON representation of the **WHERE** clause, as extracted from the pglast data structure.
+    available_tables : dict[str, TableReference]
+        Candidate tables that columns can bind to. This dictionary maps the table identifier to the full table reference.
+        An identifier can either be the full table name, or its alias.
+        Note that this dictionary is modified in-place during the parsing process, especially while parsing CTEs and FROM
+        clause
+    resolved_columns : dict[tuple[str, str], ColumnReference]
+        Columns that have already been bound to their full column reference. This cache maps **(table, column)** pairs to
+        their respective column objects. If columns do not use a qualified name, the **table** will be an empty string.
+        Note that this dictionary is modified in-place during the parsing process while new columns are being discovered.
+    schema : Optional[DatabaseSchema]
+        The database schema to use for live binding of un-qualified column references. If this is omitted, no live binding is
+        performed and some columns may remain unbound.
+
+    Returns
+    -------
+    Where
+        The parsed **WHERE** clause.
+    """
     predicate = _pglast_parse_predicate(where_clause, available_tables=available_tables,
                                         resolved_columns=resolved_columns, schema=schema)
     return Where(predicate)
 
 
-def _pglast_parse_orderby(order_clause: dict, *,
+def _pglast_parse_groupby(groupby_clause: list[dict], *,
                           available_tables: dict[str, TableReference],
-                          resolved_columns: dict[str, ColumnReference],
-                          schema: Optional["DBSchema"]) -> list[OrderByExpression]:  # type: ignore # noqa: F821
-    raise NotImplementedError("ORDER BY parsing is not yet implemented")
+                          resolved_columns: dict[tuple[str, str], ColumnReference],
+                          schema: Optional["DatabaseSchema"]) -> GroupBy:  # type: ignore # noqa: F821
+    """Handler method to parse the **GROUP BY** clause of a query.
+
+    Parameters
+    ----------
+    groupby_clause : list[dict]
+        The JSON representation of the **GROUP BY** clause, as extracted from the pglast data structure
+    available_tables : dict[str, TableReference]
+        Candidate tables that columns can bind to. This dictionary maps the table identifier to the full table reference.
+        An identifier can either be the full table name, or its alias.
+        Note that this dictionary is modified in-place during the parsing process, especially while parsing CTEs and FROM
+        clause.
+    resolved_columns : dict[tuple[str, str], ColumnReference]
+        Columns that have already been bound to their full column reference. This cache maps **(table, column)** pairs to
+        their respective column objects. If columns do not use a qualified name, the **table** will be an empty string.
+        Note that this dictionary is modified in-place during the parsing process while new columns are being discovered.
+    schema : Optional[DatabaseSchema]
+        The database schema to use for live binding of un-qualified column references. If this is omitted, no live binding is
+        performed and some columns may remain unbound.
+
+    Returns
+    -------
+    GroupBy
+        The parsed **GROUP BY** clause.
+    """
+    groupings: list[SqlExpression] = []
+
+    for item in groupby_clause:
+        if "GroupingSet" in item:
+            raise NotImplementedError("Grouping sets are not yet supported")
+        group_expression = _pglast_parse_expression(item, available_tables=available_tables,
+                                                    resolved_columns=resolved_columns, schema=schema)
+        groupings.append(group_expression)
+
+    return GroupBy(groupings)
+
+
+def _pglast_parse_having(having_clause: dict, *,
+                         available_tables: dict[str, TableReference],
+                         resolved_columns: dict[tuple[str, str], ColumnReference],
+                         schema: Optional["DatabaseSchema"]) -> Having:  # type: ignore # noqa: F821
+    """Handler method to parse the **HAVING** clause of a query.
+
+    Parameters
+    ----------
+    having_clause : dict
+        The JSON representation of the **HAVING** clause, as extracted from the pglast data structure.
+    available_tables : dict[str, TableReference]
+        Candidate tables that columns can bind to. This dictionary maps the table identifier to the full table reference.
+        An identifier can either be the full table name, or its alias.
+        Note that this dictionary is modified in-place during the parsing process, especially while parsing CTEs and FROM
+        clause.
+    resolved_columns : dict[tuple[str, str], ColumnReference]
+        Columns that have already been bound to their full column reference. This cache maps **(table, column)** pairs to
+        their respective column objects. If columns do not use a qualified name, the **table** will be an empty string.
+        Note that this dictionary is modified in-place during the parsing process while new columns are being discovered.
+    schema : Optional[DatabaseSchema]
+        The database schema to use for live binding of un-qualified column references. If this is omitted, no live binding is
+        performed and some columns may remain unbound.
+
+    Returns
+    -------
+    Having
+        The parsed **HAVING** clause.
+    """
+    predicate = _pglast_parse_predicate(having_clause, available_tables=available_tables,
+                                        resolved_columns=resolved_columns, schema=schema)
+    return Having(predicate)
+
+
+def _pglast_parse_orderby(order_clause: list[dict], *,
+                          available_tables: dict[str, TableReference],
+                          resolved_columns: dict[tuple[str, str], ColumnReference],
+                          schema: Optional["DatabaseSchema"]) -> OrderBy:  # type: ignore # noqa: F821
+    """Handler method to parse the **ORDER BY** clause of a query.
+
+    Parameters
+    ----------
+    order_clause : list[dict]
+        The JSON representation of the **ORDER BY** clause, as extracted from the pglast data structure.
+    available_tables : dict[str, TableReference]
+        Candidate tables that columns can bind to. This dictionary maps the table identifier to the full table reference.
+        An identifier can either be the full table name, or its alias.
+        Note that this dictionary is modified in-place during the parsing process, especially while parsing CTEs and FROM
+        clause.
+    resolved_columns : dict[tuple[str, str], ColumnReference]
+        Columns that have already been bound to their full column reference. This cache maps **(table, column)** pairs to
+        their respective column objects. If columns do not use a qualified name, the **table** will be an empty string.
+        Note that this dictionary is modified in-place during the parsing process while new columns are being discovered.
+    schema : Optional[DatabaseSchema]
+        The database schema to use for live binding of un-qualified column references. If this is omitted, no live binding is
+        performed and some columns may remain unbound.
+
+    Returns
+    -------
+    OrderBy
+        The parsed **ORDER BY** clause.
+    """
+    orderings: list[OrderByExpression] = []
+
+    for item in order_clause:
+        expression = item["SortBy"]
+        sort_key = _pglast_parse_expression(expression["node"], available_tables=available_tables,
+                                            resolved_columns=resolved_columns, schema=schema)
+
+        match expression["sortby_dir"]:
+            case "SORTBY_ASC":
+                sort_ascending = True
+            case "SORTBY_DESC":
+                sort_ascending = False
+            case "SORTBY_DEFAULT":
+                sort_ascending = None
+            case _:
+                raise ParserError("Unknown sort direction: " + expression["sortby_dir"])
+
+        match expression["sortby_nulls"]:
+            case "SORTBY_NULLS_FIRST":
+                put_nulls_first = True
+            case "SORTBY_NULLS_LAST":
+                put_nulls_first = False
+            case "SORTBY_NULLS_DEFAULT":
+                put_nulls_first = None
+            case _:
+                raise ParserError("Unknown nulls placement: " + expression["sortby_nulls"])
+
+        order_expression = OrderByExpression(sort_key, ascending=sort_ascending, nulls_first=put_nulls_first)
+        orderings.append(order_expression)
+
+    return OrderBy(orderings)
+
+
+def _pglast_parse_limit(pglast_data: dict, *, available_tables: dict[str, TableReference],
+                        resolved_columns: dict[tuple[str, str], ColumnReference],
+                        schema: Optional["DatabaseSchema"]) -> Optional[Limit]:  # type: ignore # noqa: F821
+    """Handler method to parse LIMIT and OFFSET clauses.
+
+    This method assumes that the given query actually contains **LIMIT** or **OFFSET** clauses and will fail otherwise.
+
+    Parameters
+    ----------
+    pglast_data : dict
+        JSON encoding of the entire query. The method takes care of accessing the appropriate keys by itself, no preparation
+        of the ``SelectStmt`` is necessary.
+    available_tables : dict[str, TableReference]
+        Candidate tables that columns can bind to. This dictionary maps the table identifier to the full table reference.
+        An identifier can either be the full table name, or its alias.
+        Note that this dictionary is modified in-place during the parsing process, especially while parsing CTEs and FROM
+        clause. This is just provided to have a uniform interface for all parsing methods and not required for parsing of
+        limits.
+    resolved_columns : dict[tuple[str, str], ColumnReference]
+        Columns that have already been bound to their full column reference. This cache maps **(table, column)** pairs to
+        their respective column objects. If columns do not use a qualified name, the **table** will be an empty string.
+        Note that this dictionary is modified in-place during the parsing process while new columns are being discovered.
+        This is just provided to have a uniform interface for all parsing methods and not required for parsing of limits.
+    schema : Optional[DatabaseSchema]
+        The database schema to use for live binding of un-qualified column references. If this is omitted, no live binding is
+        performed and some columns may remain unbound. This is just provided to have a uniform interface for all parsing
+        methods and not required for parsing of limits.
+
+    Returns
+    -------
+    Limit
+        The limit clause. Can be ``None`` if no meaningful limit nor a meaningful offset is specified.
+    """
+    raw_limit: Optional[dict] = pglast_data.get("limitCount", None)
+    raw_offset: Optional[dict] = pglast_data.get("limitOffset", None)
+    if raw_limit is None and raw_offset is None:
+        return None
+
+    if raw_limit is not None:
+        # for LIMIT ALL there is no second ival, but instead an "isnull" member that is set to true
+        raw_limit = raw_limit["A_Const"]["ival"]
+        nrows: int | None = raw_limit["ival"] if "ival" in raw_limit else None
+    else:
+        nrows = None
+    if raw_offset is not None:
+        offset: int = raw_offset["A_Const"]["ival"]["ival"]
+    else:
+        offset = None
+
+    return Limit(limit=nrows, offset=offset)
+
+
+def _pglast_parse_setop(pglast_data: dict, *, available_tables: dict[str, TableReference],
+                        resolved_columns: dict[tuple[str, str], ColumnReference],
+                        schema: Optional["DatabaseSchema"]) -> SetOperationClause:  # type: ignore # noqa: F821
+    """Handler method to parse set operations.
+
+    This method assumes that the given query is indeed a set operation and will fail otherwise.
+
+    Parameters
+    ----------
+    pglast_data : dict
+        JSON encoding of the entire query. The method takes care of accessing the appropriate keys by itself, no preparation
+        of the ``SelectStmt`` is necessary.
+    available_tables : dict[str, TableReference]
+        Candidate tables that columns can bind to. This dictionary maps the table identifier to the full table reference.
+        An identifier can either be the full table name, or its alias.
+        Note that this dictionary is modified in-place during the parsing process, especially while parsing CTEs and FROM
+        clause.
+    resolved_columns : dict[tuple[str, str], ColumnReference]
+        Columns that have already been bound to their full column reference. This cache maps **(table, column)** pairs to
+        their respective column objects. If columns do not use a qualified name, the **table** will be an empty string.
+        Note that this dictionary is modified in-place during the parsing process while new columns are being discovered.
+    schema : Optional[DatabaseSchema]
+        The database schema to use for live binding of un-qualified column references. If this is omitted, no live binding is
+        performed and some columns may remain unbound.
+
+    Returns
+    -------
+    SetOperationClause
+        The parsed set clause
+    """
+    subquery = _pglast_parse_query(pglast_data["rarg"], available_tables=available_tables,
+                                   resolved_columns=resolved_columns, schema=schema)
+    setop = pglast_data["op"]
+    match setop:
+
+        case "SETOP_UNION":
+            union_all = "all" in pglast_data
+            return UnionClause(subquery, union_all=union_all)
+
+        case "SETOP_INTERSECT":
+            return IntersectClause(subquery)
+
+        case "SETOP_EXCEPT":
+            return ExceptClause(subquery)
+
+        case _:
+            raise ParserError("Unknown set operation: " + setop)
 
 
 def _pglast_parse_query(stmt: dict, *, available_tables: dict[str, TableReference],
-                        resolved_columns: dict[str, ColumnReference],
-                        schema: Optional["DBSchema"]) -> SqlQuery:  # type: ignore # noqa: F821
+                        resolved_columns: dict[tuple[str, str], ColumnReference],
+                        schema: Optional["DatabaseSchema"]) -> SqlQuery:  # type: ignore # noqa: F821
+    """Main entry point into the parsing logic.
+
+    This function takes a single SQL SELECT query and provides the corresponding `SqlQuery` object.
+    While parsing the different expressions, columns are automatically bound to their tables if they use qualified names.
+    Otherwise, they are inferred from the database schema if one is given. If no schema is provided, the column will be
+    left unbound.
+
+    To keep track of tables that columns can bind themselves to, the `available_tables` dictionary is used. See the parameter
+    documentation for more details.
+    Likewise, the `resolved_columns` act as a cache for columns that have already been bound once. This is useful to prevent
+    redundant lookups in the schema.
+
+    Parameters
+    ----------
+    stmt : dict
+        The JSON representation of the query. This should be the contents of the ``SelectStmt`` key in the JSON dictionary.
+    available_tables : dict[str, TableReference]
+        Candidate tables that columns can bind to. This dictionary maps the table identifier to the full table reference.
+        An identifier can either be the full table name, or its alias.
+        Note that this dictionary is modified in-place during the parsing process, especially while parsing CTEs and FROM
+        clause.
+    resolved_columns : dict[tuple[str, str], ColumnReference]
+        Columns that have already been bound to their full column reference. This cache maps **(table, column)** pairs to
+        their respective column objects. If columns do not use a qualified name, the **table** will be an empty string.
+        Note that this dictionary is modified in-place during the parsing process while new columns are being discovered.
+    schema : Optional[DatabaseSchema]
+        The database schema to use for live binding of un-qualified column references. If this is omitted, no live binding is
+        performed and some columns may remain unbound.
+
+    Returns
+    -------
+    SqlQuery
+        The parsed query
+    """
     clauses = []
 
     if "withClause" in stmt:
         with_clause = _pglast_parse_ctes(stmt["withClause"]["ctes"], available_tables=available_tables,
                                          resolved_columns=resolved_columns, schema=schema)
         clauses.append(with_clause)
+
+    # we need to deal with set operations early on in order to unnest them appropriately
+    if stmt["op"] != "SETOP_NONE":
+        setop_clause = _pglast_parse_setop(stmt, available_tables=available_tables,
+                                           resolved_columns=resolved_columns, schema=schema)
+        clauses.append(setop_clause)
+        stmt = stmt["larg"]
+
+        if stmt["op"] != "SETOP_NONE":
+            # make sure that our new top-level query is not another set operation, we cannot represent those
+            raise NotImplementedError("Nested set operations are not yet supported")
 
     if "fromClause" in stmt:
         from_clause = _pglast_parse_from(stmt["fromClause"], available_tables=available_tables,
@@ -499,35 +1256,27 @@ def _pglast_parse_query(stmt: dict, *, available_tables: dict[str, TableReferenc
                                            resolved_columns=resolved_columns, schema=schema)
         clauses.append(where_clause)
 
-    # TODO
-    # - GROUP BY
-    # - HAVING
-    # - ORDER BY
-    # - LIMIT
-    # - UNION, INTERSECT, EXCEPT
+    if "groupClause" in stmt:
+        group_clause = _pglast_parse_groupby(stmt["groupClause"], available_tables=available_tables,
+                                             resolved_columns=resolved_columns, schema=schema)
+        clauses.append(group_clause)
+
+    if "havingClause" in stmt:
+        having_clause = _pglast_parse_having(stmt["havingClause"], available_tables=available_tables,
+                                             resolved_columns=resolved_columns, schema=schema)
+        clauses.append(having_clause)
+
+    if "sortClause" in stmt:
+        order_clause = _pglast_parse_orderby(stmt["sortClause"], available_tables=available_tables,
+                                             resolved_columns=resolved_columns, schema=schema)
+        clauses.append(order_clause)
+
+    if stmt["limitOption"] == "LIMIT_OPTION_COUNT":
+        limit_clause = _pglast_parse_limit(stmt, available_tables=available_tables,
+                                           resolved_columns=resolved_columns, schema=schema)
+        clauses.append(limit_clause)
 
     return build_query(clauses)
-
-
-def _pglast_based_query_parser(query: str, *, bind_columns: bool | None = None,
-                               db_schema: Optional["DatabaseSchema"] = None) -> SqlQuery:  # type: ignore # noqa: F821
-    warnings.warn("pglast-based query parsing is still experimental and might contain bugs.", FutureWarning)
-
-    if db_schema is None and (bind_columns or (bind_columns is None and auto_bind_columns)):
-        from ..db import DatabasePool  # local import to prevent circular imports
-        db_schema = None if DatabasePool.get_instance().empty() else DatabasePool.get_instance().current_database().schema()
-
-    pglast_data = json.loads(pglast.parser.parse_sql_json(query))
-    stmts = pglast_data["stmts"]
-    if len(stmts) != 1:
-        raise ValueError("Parser can only support single-statement queries for now")
-    raw_query = stmts[0]["stmt"]
-    if "SelectStmt" not in raw_query:
-        raise ValueError("Cannot parse non-SELECT queries")
-    stmt = raw_query["SelectStmt"]
-
-    parsed_query = _pglast_parse_query(stmt, available_tables={}, resolved_columns={}, schema=db_schema)
-    return parsed_query
 
 
 def parse_query(query: str, *, bind_columns: bool | None = None,
@@ -563,7 +1312,25 @@ def parse_query(query: str, *, bind_columns: bool | None = None,
         The parsed SQL query.
     """
     # NOTE: this documentation is a 1:1 copy of qal.parse_query. Both should be kept in sync.
-    return _pglast_based_query_parser(query, bind_columns=bind_columns, db_schema=db_schema)
+    if db_schema is None and (bind_columns or (bind_columns is None and auto_bind_columns)):
+        from ..db import DatabasePool  # local import to prevent circular imports
+        db_schema = None if DatabasePool.get_instance().empty() else DatabasePool.get_instance().current_database().schema()
+
+    pglast_data = json.loads(pglast.parser.parse_sql_json(query))
+    stmts = pglast_data["stmts"]
+
+    # TODO: if there are preceeding configuration options (e.g. SET enable_seqscan = off;), we could handle them here and
+    # provide a initialized hint block to the novel query
+
+    if len(stmts) != 1:
+        raise ValueError("Parser can only support single-statement queries for now")
+    raw_query = stmts[0]["stmt"]
+    if "SelectStmt" not in raw_query:
+        raise ValueError("Cannot parse non-SELECT queries")
+    stmt = raw_query["SelectStmt"]
+
+    parsed_query = _pglast_parse_query(stmt, available_tables={}, resolved_columns={}, schema=db_schema)
+    return parsed_query
 
 
 class ParserError(RuntimeError):
