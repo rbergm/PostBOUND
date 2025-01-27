@@ -27,11 +27,10 @@ from __future__ import annotations
 
 import json
 import warnings
-from typing import Any, Optional
+from typing import Optional
 
 import pglast
 
-from . import transform
 from ._core import (
     TableReference, ColumnReference,
     SelectType, JoinType,
@@ -105,6 +104,26 @@ def _pglast_parse_const(pglast_data: dict) -> StaticValueExpression:
             raise ParserError("Unknown constant type: " + str(pglast_data))
 
 
+def _pglast_parse_case(pglast_data: dict, *, available_tables: dict[str, TableReference],
+                       resolved_columns: dict[str, ColumnReference],
+                       schema: Optional["DBSchema"]) -> CaseExpression:  # type: ignore # noqa: F821
+    cases: list[tuple[AbstractPredicate, SqlExpression]] = []
+    for arg in pglast_data["args"]:
+        current_case = _pglast_parse_predicate(arg["CaseWhen"]["expr"], available_tables=available_tables,
+                                               resolved_columns=resolved_columns, schema=schema)
+        current_result = _pglast_parse_expression(arg["CaseWhen"]["result"], available_tables=available_tables,
+                                                  resolved_columns=resolved_columns, schema=schema)
+        cases.append((current_case, current_result))
+
+    if "defresult" in pglast_data:
+        default_result = _pglast_parse_expression(pglast_data["defresult"], available_tables=available_tables,
+                                                  resolved_columns=resolved_columns, schema=schema)
+    else:
+        default_result = None
+
+    return CaseExpression(cases, else_expr=default_result)
+
+
 def _pglast_parse_expression(pglast_data: dict, *, available_tables: dict[str, TableReference],
                              resolved_columns: dict[str, ColumnReference],
                              schema: Optional["DBSchema"]) -> SqlExpression:  # type: ignore # noqa: F821
@@ -121,12 +140,62 @@ def _pglast_parse_expression(pglast_data: dict, *, available_tables: dict[str, T
         case "A_Const":
             return _pglast_parse_const(pglast_data["A_Const"])
 
-        # TODO:
-        # - Mathematics
-        # - Function calls
-        # - Subqueries
-        # - Window functions
-        # - CASE expressions
+        case "A_Expr" if pglast_data["A_Expr"]["kind"] == "AEXPR_OP":
+            expression = pglast_data["A_Expr"]
+            operation = _pglast_parse_operator(expression["name"])
+            left = _pglast_parse_expression(expression["lexpr"], available_tables=available_tables,
+                                            resolved_columns=resolved_columns, schema=schema)
+            right = _pglast_parse_expression(expression["rexpr"], available_tables=available_tables,
+                                             resolved_columns=resolved_columns, schema=schema)
+            return MathematicalExpression(operation, left, right)
+
+        case "FuncCall" if "over" not in pglast_data["FuncCall"]:  # normal functions, aggregates and UDFs
+            expression: dict = pglast_data["FuncCall"]
+            funcname = expression["funcname"][0]["String"]["sval"]
+            distinct = expression.get("agg_distinct", False)
+            if expression.get("agg_star", False):
+                return FunctionExpression(funcname, [StarExpression()], distinct=distinct)
+
+            args = [_pglast_parse_expression(arg, available_tables=available_tables,
+                                             resolved_columns=resolved_columns, schema=schema)
+                    for arg in expression["args"]]
+            return FunctionExpression(funcname, args, distinct=distinct)
+
+        case "FuncCall" if "over" in pglast_data["FuncCall"]:  # window functions
+            expression: dict = pglast_data["FuncCall"]
+            funcname = expression["funcname"][0]["String"]["sval"]
+            window_spec = expression["over"]
+
+            if "partitionClause" in window_spec:
+                partition = [_pglast_parse_expression(partition, available_tables=available_tables,
+                                                      resolved_columns=resolved_columns, schema=schema)
+                             for partition in window_spec["partitionClause"]]
+            else:
+                partition = None
+
+            if "orderClause" in window_spec:
+                order = _pglast_parse_orderby(window_spec["orderClause"], available_tables=available_tables,
+                                              resolved_columns=resolved_columns, schema=schema)
+            else:
+                order = None
+
+            if "agg_filter" in expression:
+                filter_expr = _pglast_parse_predicate(expression["agg_filter"], available_tables=available_tables,
+                                                      resolved_columns=resolved_columns, schema=schema)
+            else:
+                filter_expr = None
+
+            return WindowExpression(funcname, partitioning=partition, ordering=order, filter_condition=filter_expr)
+
+        case "CaseExpr":
+            return _pglast_parse_case(pglast_data["CaseExpr"], available_tables=available_tables,
+                                      resolved_columns=resolved_columns, schema=schema)
+
+        case "Sublink" if pglast_data["SubLink"]["subLinkType"] == "EXPR_SUBLINK":
+            subquery = _pglast_parse_query(pglast_data["SubLink"]["subselect"]["SelectStmt"],
+                                           available_tables=available_tables,
+                                           resolved_columns=resolved_columns, schema=schema)
+            return SubqueryExpression(subquery)
 
         case _:
             raise ParserError("Unknown expression type: " + str(pglast_data))
@@ -395,6 +464,13 @@ def _pglast_parse_where(where_clause: dict, *,
     predicate = _pglast_parse_predicate(where_clause, available_tables=available_tables,
                                         resolved_columns=resolved_columns, schema=schema)
     return Where(predicate)
+
+
+def _pglast_parse_orderby(order_clause: dict, *,
+                          available_tables: dict[str, TableReference],
+                          resolved_columns: dict[str, ColumnReference],
+                          schema: Optional["DBSchema"]) -> list[OrderByExpression]:  # type: ignore # noqa: F821
+    raise NotImplementedError("ORDER BY parsing is not yet implemented")
 
 
 def _pglast_parse_query(stmt: dict, *, available_tables: dict[str, TableReference],
