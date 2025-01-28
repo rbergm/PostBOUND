@@ -124,6 +124,8 @@ class TableReference:
         self._nomalized_identifier = self._identifier.lower()
         self._hash_val = hash((self._normalized_full_name, self._normalized_alias))
 
+    __match_args__ = ("full_name", "alias")
+
     @property
     def full_name(self) -> str:
         """Get the full name of this table. If empty, alias is guaranteed to be set.

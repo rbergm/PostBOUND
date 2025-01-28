@@ -69,6 +69,8 @@ class ColumnReference:
         self._normalized_name = self._name.lower()
         self._hash_val = hash((self._normalized_name, self._table))
 
+    __match_args__ = ("name", "table")
+
     @property
     def name(self) -> str:
         """Get the name of this column. This is guaranteed to be set and will never be empty
@@ -381,6 +383,8 @@ class StaticValueExpression(SqlExpression, Generic[T]):
         self._value = value
         super().__init__(hash(value))
 
+    __match_args__ = ('value',)
+
     @property
     def value(self) -> T:
         """Get the value.
@@ -455,6 +459,8 @@ class CastExpression(SqlExpression):
 
         hash_val = hash((self._casted_expression, self._target_type))
         super().__init__(hash_val)
+
+    __match_args__ = ('casted_expression', 'target_type')
 
     @property
     def casted_expression(self) -> SqlExpression:
@@ -546,6 +552,8 @@ class MathematicalExpression(SqlExpression):
 
         hash_val = hash((self._operator, self._first_arg, self._second_arg))
         super().__init__(hash_val)
+
+    __match_args__ = ('operator', 'first_arg', 'second_arg')
 
     @property
     def operator(self) -> SqlOperator:
@@ -649,6 +657,8 @@ class ColumnExpression(SqlExpression):
             raise ValueError("Column cannot be none")
         self._column = column
         super().__init__(hash(self._column))
+
+    __match_args__ = ('column',)
 
     @property
     def column(self) -> ColumnReference:
@@ -766,6 +776,8 @@ class FunctionExpression(SqlExpression):
 
         hash_val = hash((self._function, self._distinct, self._arguments))
         super().__init__(hash_val)
+
+    __match_args__ = ('function', 'arguments')
 
     @property
     def function(self) -> str:
@@ -923,6 +935,8 @@ class SubqueryExpression(SqlExpression):
         self._query = subquery
         super().__init__(hash(subquery))
 
+    __match_args__ = ('query',)
+
     @property
     def query(self) -> SqlQuery:
         """The (sub)query that is wrapped by this expression.
@@ -1015,6 +1029,8 @@ class WindowExpression(SqlExpression):
 
         hash_val = hash((self._window_function, self._partitioning, self._ordering, self._filter_condition))
         super().__init__(hash_val)
+
+    __match_args__ = ('window_function', 'partitioning', 'ordering')
 
     @property
     def window_function(self) -> FunctionExpression:
@@ -1124,6 +1140,8 @@ class CaseExpression(SqlExpression):
         hash_val = hash((self._cases, self._else_expr))
         super().__init__(hash_val)
 
+    __match_args__ = ('cases', 'else_expr')
+
     @property
     def cases(self) -> Sequence[tuple[AbstractPredicate, SqlExpression]]:
         """Get the different cases.
@@ -1194,6 +1212,8 @@ class BooleanExpression(SqlExpression):
         self._predicate = predicate
         hash_val = hash(predicate)
         super().__init__(hash_val)
+
+    __match_args__ = ('predicate',)
 
     @property
     def predicate(self) -> AbstractPredicate:
@@ -1951,6 +1971,8 @@ class BinaryPredicate(BasePredicate):
         hash_val = hash((operation, first_argument, second_argument))
         super().__init__(operation, hash_val=hash_val)
 
+    __match_args__ = ('operation', 'first_argument', 'second_argument')
+
     @property
     def first_argument(self) -> SqlExpression:
         """Get the first argument of the predicate.
@@ -2062,6 +2084,8 @@ class BetweenPredicate(BasePredicate):
 
         hash_val = hash((LogicalSqlOperators.Between, self._column, self._interval_start, self._interval_end))
         super().__init__(LogicalSqlOperators.Between, hash_val=hash_val)
+
+    __match_args__ = ('column', 'interval_start', 'interval_end')
 
     @property
     def column(self) -> SqlExpression:
@@ -2214,6 +2238,8 @@ class InPredicate(BasePredicate):
         hash_val = hash((LogicalSqlOperators.In, self._column, self._values))
         super().__init__(LogicalSqlOperators.In, hash_val=hash_val)
 
+    __match_args__ = ('column', 'values')
+
     @property
     def column(self) -> SqlExpression:
         """Get the expression that is tested (``R.a`` in ``SELECT * FROM R WHERE R.a IN (1, 2, 3)``).
@@ -2349,6 +2375,8 @@ class UnaryPredicate(BasePredicate):
             raise ValueError(f"Not an allowed unary operator: {operation}")
         self._column = column
         super().__init__(operation, hash_val=hash((operation, column)))
+
+    __match_args__ = ('column')
 
     @property
     def column(self) -> SqlExpression:
@@ -2557,6 +2585,8 @@ class CompoundPredicate(AbstractPredicate):
         self._operation = operation
         self._children = tuple(util.enlist(children))
         super().__init__(hash((self._operation, self._children)))
+
+    __match_args__ = ('operation', 'children')
 
     @property
     def operation(self) -> CompoundOperators:
@@ -3889,6 +3919,8 @@ class Hint(BaseClause):
         hash_val = hash((preparatory_statements, query_hints))
         super().__init__(hash_val)
 
+    __match_args__ = ("preparatory_statements", "query_hints")
+
     @property
     def preparatory_statements(self) -> str:
         """Get the string of preparatory statements. Can be empty.
@@ -4014,6 +4046,8 @@ class Explain(BaseClause):
 
         hash_val = hash((analyze, target_format))
         super().__init__(hash_val)
+
+    __match_args__ = ("analyze",)
 
     @property
     def analyze(self) -> bool:
@@ -4222,6 +4256,8 @@ class CommonTableExpression(BaseClause):
         if not self._with_queries:
             raise ValueError("With queries cannnot be empty")
         super().__init__(hash(self._with_queries))
+
+    __match_args__ = ("queries",)
 
     @property
     def queries(self) -> Sequence[WithQuery]:
@@ -4485,6 +4521,8 @@ class Select(BaseClause):
 
         hash_val = hash((self._projection_type, self._targets))
         super().__init__(hash_val)
+
+    __match_args = ("targets", "projection_type")
 
     @property
     def targets(self) -> Sequence[BaseProjection]:
@@ -4827,10 +4865,26 @@ class SubqueryTableSource(TableSource):
 
 
 ValuesList = Iterable[tuple[StaticValueExpression, ...]]
+"""Represents a nested list of rows. As an invariant, all tuples in the list should have the same length."""
 
 
 class ValuesTableSource(TableSource):
-    def __init__(self, values: ValuesList, *, alias: str, columns: Iterable[str]) -> None:
+    """Represents a virtual table that is constructed from a literal list of values.
+
+    Parameters
+    ----------
+    values : ValuesList
+        The available table rows.
+    alias : str, optional
+        The name under which the virtual table can be accessed in the actual query. If this is empty, an anonymous table is
+        created.
+    columns : Iterable[str]
+        The names of the columns that are available in the virtual table. The length of this list must match the length
+        of the tuples in the `values` list. Alternatively, an empty list can be provided, in which case the columns will
+        be named automatically.
+    """
+
+    def __init__(self, values: ValuesList, *, alias: str = "", columns: Iterable[str]) -> None:
         self._values = tuple(values)
         self._table = TableReference.create_virtual(alias) if alias else None
         self._columns = tuple(ColumnReference(column, self._table) for column in columns)
@@ -4838,14 +4892,46 @@ class ValuesTableSource(TableSource):
 
     @property
     def rows(self) -> ValuesList:
+        """Get the rows that are available in the virtual table.
+
+        Returns
+        -------
+        ValuesList
+            The rows
+        """
         return self._values
 
     @property
     def table(self) -> Optional[TableReference]:
+        """Get the name under which the virtual table can be accessed in the actual query.
+
+        Returns
+        -------
+        Optional[TableReference]
+            The table. Can be **None** for an anonymous table.
+        """
         return self._table
 
     @property
+    def alias(self) -> str:
+        """Get the name under which the virtual table can be accessed in the actual query.
+
+        Returns
+        -------
+        str
+            The name. Can be empty for an anonymous table.
+        """
+        return self._table.alias if self._table else ""
+
+    @property
     def cols(self) -> Sequence[ColumnReference]:
+        """Get the columns that are available in the virtual table.
+
+        Returns
+        -------
+        Sequence[ColumnReference]
+            The columns. Can be empty if the columns are not named explicitly.
+        """
         return self._columns
 
     def tables(self) -> set[TableReference]:
@@ -4911,12 +4997,12 @@ class JoinType(enum.Enum):
         return self.value
 
 
-AnonymousJoins = {JoinType.CrossJoin,
-                  JoinType.NaturalInnerJoin,
-                  JoinType.NaturalOuterJoin,
-                  JoinType.NaturalLeftJoin,
-                  JoinType.NaturalRightJoin}
-"""Anonymous joins are those joins that use the **JOIN** syntax, but do not require a predicate to work.
+AutoJoins = {JoinType.CrossJoin,
+             JoinType.NaturalInnerJoin,
+             JoinType.NaturalOuterJoin,
+             JoinType.NaturalLeftJoin,
+             JoinType.NaturalRightJoin}
+"""Automatic joins are those joins that use the **JOIN** syntax, but do not require a predicate to work.
 
 Examples include **CROSS JOIN** and **NATURAL JOIN**.
 """
@@ -4949,7 +5035,7 @@ class JoinTableSource(TableSource):
     def __init__(self, left: TableSource, right: TableSource, *,
                  join_condition: Optional[AbstractPredicate] = None,
                  join_type: JoinType = JoinType.InnerJoin) -> None:
-        if join_condition is None and join_type not in AnonymousJoins:
+        if join_condition is None and join_type not in AutoJoins:
             raise ValueError("Join condition is required for this join type: " + str(join_type))
 
         self._left = left
@@ -5105,7 +5191,7 @@ class JoinTableSource(TableSource):
         return str(self)
 
     def __str__(self) -> str:
-        if self.join_type in AnonymousJoins:
+        if self.join_type in AutoJoins:
             return f"{self.source} {self.join_type} {self.joined_table}"
         return f"{self.source} {self.join_type} {self.joined_table} ON {self.join_condition}"
 
@@ -5140,6 +5226,8 @@ class From(BaseClause, Generic[TableType]):
             raise ValueError("At least one source is required")
         self._items: tuple[TableSource] = tuple(items)
         super().__init__(hash(self._items))
+
+    __match_args_ = ("items",)
 
     @property
     def items(self) -> Sequence[TableType]:
@@ -5309,6 +5397,8 @@ class Where(BaseClause):
         self._predicate = predicate
         super().__init__(hash(predicate))
 
+    __match_args__ = ("predicate",)
+
     @property
     def predicate(self) -> AbstractPredicate:
         """Get the root predicate that contains all filters and joins in the ``WHERE`` clause.
@@ -5371,6 +5461,8 @@ class GroupBy(BaseClause):
 
         hash_val = hash((self._group_columns, self._distinct))
         super().__init__(hash_val)
+
+    __match_args__ = ("group_columns",)
 
     @property
     def group_columns(self) -> Sequence[SqlExpression]:
@@ -5439,6 +5531,8 @@ class Having(BaseClause):
             raise ValueError("Condition must be set")
         self._condition = condition
         super().__init__(hash(condition))
+
+    __match_args__ = ("condition",)
 
     @property
     def condition(self) -> AbstractPredicate:
@@ -5579,6 +5673,8 @@ class OrderBy(BaseClause):
         self._expressions = tuple(expressions)
         super().__init__(hash(self._expressions))
 
+    __match_args__ = ("expressions",)
+
     @property
     def expressions(self) -> Sequence[OrderByExpression]:
         """Get the expressions that form this ``ORDER BY`` clause.
@@ -5643,6 +5739,8 @@ class Limit(BaseClause):
 
         hash_val = hash((self._limit, self._offset))
         super().__init__(hash_val)
+
+    __match_args__ = ("limit", "offset")
 
     @property
     def limit(self) -> Optional[int]:
@@ -5712,6 +5810,8 @@ class UnionClause(BaseClause):
         self._union_all = union_all
         hash_val = hash((partner_query, union_all))
         super().__init__(hash_val)
+
+    __match_args__ = ("partner_query", "union_all")
 
     @property
     def query(self) -> SqlQuery:
@@ -5785,6 +5885,8 @@ class ExceptClause(BaseClause):
         self._partner_query = partner_query
         super().__init__(hash(partner_query))
 
+    __match_args__ = ("partner_query",)
+
     @property
     def query(self) -> SqlQuery:
         """Get the query that is subtracted from the current query.
@@ -5832,6 +5934,8 @@ class IntersectClause(BaseClause):
     def __init__(self, partner_query: SqlQuery) -> None:
         self._partner_query = partner_query
         super().__init__(hash(partner_query))
+
+    __match_args__ = ("partner_query",)
 
     @property
     def query(self) -> SqlQuery:
