@@ -124,7 +124,7 @@ class TableReference:
         self._nomalized_identifier = self._identifier.lower()
         self._hash_val = hash((self._normalized_full_name, self._normalized_alias))
 
-    __match_args__ = ("full_name", "alias")
+    __match_args__ = ("full_name", "alias", "virtual")
 
     @property
     def full_name(self) -> str:

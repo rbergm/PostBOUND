@@ -383,7 +383,7 @@ class StaticValueExpression(SqlExpression, Generic[T]):
         self._value = value
         super().__init__(hash(value))
 
-    __match_args__ = ('value',)
+    __match_args__ = ("value",)
 
     @property
     def value(self) -> T:
@@ -460,7 +460,7 @@ class CastExpression(SqlExpression):
         hash_val = hash((self._casted_expression, self._target_type))
         super().__init__(hash_val)
 
-    __match_args__ = ('casted_expression', 'target_type')
+    __match_args__ = ("casted_expression", "target_type")
 
     @property
     def casted_expression(self) -> SqlExpression:
@@ -553,7 +553,7 @@ class MathematicalExpression(SqlExpression):
         hash_val = hash((self._operator, self._first_arg, self._second_arg))
         super().__init__(hash_val)
 
-    __match_args__ = ('operator', 'first_arg', 'second_arg')
+    __match_args__ = ("operator", "first_arg", "second_arg")
 
     @property
     def operator(self) -> SqlOperator:
@@ -658,7 +658,7 @@ class ColumnExpression(SqlExpression):
         self._column = column
         super().__init__(hash(self._column))
 
-    __match_args__ = ('column',)
+    __match_args__ = ("column",)
 
     @property
     def column(self) -> ColumnReference:
@@ -777,7 +777,7 @@ class FunctionExpression(SqlExpression):
         hash_val = hash((self._function, self._distinct, self._arguments))
         super().__init__(hash_val)
 
-    __match_args__ = ('function', 'arguments')
+    __match_args__ = ("function", "arguments", "distinct")
 
     @property
     def function(self) -> str:
@@ -935,7 +935,7 @@ class SubqueryExpression(SqlExpression):
         self._query = subquery
         super().__init__(hash(subquery))
 
-    __match_args__ = ('query',)
+    __match_args__ = ("query",)
 
     @property
     def query(self) -> SqlQuery:
@@ -1030,7 +1030,7 @@ class WindowExpression(SqlExpression):
         hash_val = hash((self._window_function, self._partitioning, self._ordering, self._filter_condition))
         super().__init__(hash_val)
 
-    __match_args__ = ('window_function', 'partitioning', 'ordering')
+    __match_args__ = ("window_function", "partitioning", "ordering", "filter_condition")
 
     @property
     def window_function(self) -> FunctionExpression:
@@ -1140,7 +1140,7 @@ class CaseExpression(SqlExpression):
         hash_val = hash((self._cases, self._else_expr))
         super().__init__(hash_val)
 
-    __match_args__ = ('cases', 'else_expr')
+    __match_args__ = ("cases", "else_expr")
 
     @property
     def cases(self) -> Sequence[tuple[AbstractPredicate, SqlExpression]]:
@@ -1213,7 +1213,7 @@ class BooleanExpression(SqlExpression):
         hash_val = hash(predicate)
         super().__init__(hash_val)
 
-    __match_args__ = ('predicate',)
+    __match_args__ = ("predicate",)
 
     @property
     def predicate(self) -> AbstractPredicate:
@@ -1971,7 +1971,7 @@ class BinaryPredicate(BasePredicate):
         hash_val = hash((operation, first_argument, second_argument))
         super().__init__(operation, hash_val=hash_val)
 
-    __match_args__ = ('operation', 'first_argument', 'second_argument')
+    __match_args__ = ("operation", "first_argument", "second_argument")
 
     @property
     def first_argument(self) -> SqlExpression:
@@ -2085,7 +2085,7 @@ class BetweenPredicate(BasePredicate):
         hash_val = hash((LogicalSqlOperators.Between, self._column, self._interval_start, self._interval_end))
         super().__init__(LogicalSqlOperators.Between, hash_val=hash_val)
 
-    __match_args__ = ('column', 'interval_start', 'interval_end')
+    __match_args__ = ("column", "interval_start", "interval_end")
 
     @property
     def column(self) -> SqlExpression:
@@ -2238,7 +2238,7 @@ class InPredicate(BasePredicate):
         hash_val = hash((LogicalSqlOperators.In, self._column, self._values))
         super().__init__(LogicalSqlOperators.In, hash_val=hash_val)
 
-    __match_args__ = ('column', 'values')
+    __match_args__ = ("column", "values")
 
     @property
     def column(self) -> SqlExpression:
@@ -2376,7 +2376,7 @@ class UnaryPredicate(BasePredicate):
         self._column = column
         super().__init__(operation, hash_val=hash((operation, column)))
 
-    __match_args__ = ('column')
+    __match_args__ = ("column", "operation")
 
     @property
     def column(self) -> SqlExpression:
@@ -2586,7 +2586,7 @@ class CompoundPredicate(AbstractPredicate):
         self._children = tuple(util.enlist(children))
         super().__init__(hash((self._operation, self._children)))
 
-    __match_args__ = ('operation', 'children')
+    __match_args__ = ("operation", "children")
 
     @property
     def operation(self) -> CompoundOperators:
@@ -4047,7 +4047,7 @@ class Explain(BaseClause):
         hash_val = hash((analyze, target_format))
         super().__init__(hash_val)
 
-    __match_args__ = ("analyze",)
+    __match_args__ = ("analyze", "target_format")
 
     @property
     def analyze(self) -> bool:
@@ -4705,6 +4705,8 @@ class DirectTableSource(TableSource):
     def __init__(self, table: TableReference) -> None:
         self._table = table
 
+    __match_args__ = ("table",)
+
     @property
     def table(self) -> TableReference:
         """Get the table that is sourced.
@@ -4773,6 +4775,8 @@ class SubqueryTableSource(TableSource):
         self._target_name = target_name
         self._lateral = lateral
         self._hash_val = hash((self._subquery_expression, self._target_name, self._lateral))
+
+    __match_args__ = ("query", "target_name", "lateral")
 
     @property
     def query(self) -> SqlQuery:
@@ -4889,6 +4893,8 @@ class ValuesTableSource(TableSource):
         self._table = TableReference.create_virtual(alias) if alias else None
         self._columns = tuple(ColumnReference(column, self._table) for column in columns)
         self._hash_val = hash((self._table, self._columns, self._values))
+
+    __match_args__ = ("values", "alias", "columns")
 
     @property
     def rows(self) -> ValuesList:
@@ -5043,6 +5049,8 @@ class JoinTableSource(TableSource):
         self._join_condition = join_condition
         self._join_type = join_type if join_condition else JoinType.CrossJoin
         self._hash_val = hash((self._left, self._right, self._join_condition, self._join_type))
+
+    __match_args__ = ("left", "right", "join_condition", "join_type")
 
     @property
     def left(self) -> TableSource:
@@ -5462,7 +5470,7 @@ class GroupBy(BaseClause):
         hash_val = hash((self._group_columns, self._distinct))
         super().__init__(hash_val)
 
-    __match_args__ = ("group_columns",)
+    __match_args__ = ("group_columns", "distinct")
 
     @property
     def group_columns(self) -> Sequence[SqlExpression]:
