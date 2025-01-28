@@ -9,7 +9,8 @@ from . import transform
 from ._core import (
     SqlExpression, SubqueryExpression, CaseExpression, Limit, CommonTableExpression,
     CompoundOperators,
-    ImplicitFromClause, ExplicitFromClause,
+    From, ImplicitFromClause, ExplicitFromClause,
+    TableSource, DirectTableSource, JoinTableSource, SubqueryTableSource, ValuesTableSource,
     Select, Hint, Where, UnionClause, IntersectClause, ExceptClause,
     SelectType,
     AbstractPredicate, CompoundPredicate,
@@ -216,6 +217,74 @@ def _quick_format_implicit_from(from_clause: ImplicitFromClause) -> list[str]:
         return [f"FROM {tables_str}"]
 
 
+def _quick_format_tablesource(table_source: TableSource) -> list[str]:
+    """Quick and dirty formatting logic for table sources.
+
+    Parameters
+    ----------
+    table_source : TableSource
+        The table source to format
+
+    Returns
+    -------
+    list[str]
+        The pretty-printed parts of the table source, indented as necessary.
+    """
+
+    prefix = " " * FormatIndentDepth
+    match table_source:
+        case DirectTableSource() | ValuesTableSource():
+            return [str(table_source)]
+
+        case SubqueryTableSource():
+            elems: list[str] = ["("]
+            subquery_elems = format_quick(table_source.query, trailing_semicolon=False).split("\n")
+            subquery_elems = [((" " * FormatIndentDepth) + str(child)) for child in subquery_elems]
+            elems.extend(subquery_elems)
+            elems.append(")")
+            if table_source.target_name:
+                elems[-1] += f" AS {table_source.target_name}"
+            return elems
+
+        case JoinTableSource():
+            if isinstance(table_source.left, DirectTableSource) and isinstance(table_source.right, DirectTableSource):
+                # case R JOIN S ON ...
+                elems = [str(table_source.left), f"{prefix}{table_source.join_type} {table_source.right}"]
+                if table_source.join_condition:
+                    elems[-1] += f" ON {table_source.join_condition}"
+                return elems
+
+            if isinstance(table_source.left, JoinTableSource) and isinstance(table_source.right, DirectTableSource):
+                # case R JOIN S ON ... JOIN T ON ...
+                elems = _quick_format_tablesource(table_source.left)
+                join_condition = f" ON {table_source.join_condition}" if table_source.join_condition else ""
+                elems.append(f"{prefix}{table_source.join_type} {table_source.right}{join_condition}")
+                return elems
+
+            if isinstance(table_source.left, DirectTableSource) and isinstance(table_source.right, JoinTableSource):
+                elems = [str(table_source.left)]
+                right_children = _quick_format_tablesource(table_source.right)
+                right_children[0] = f"{table_source.join_type} ({right_children[0]}"
+                right_children[1:] = [((" " * FormatIndentDepth) + str(child)) for child in right_children[1:]]
+                elems += right_children
+                elems.append(")")
+                if table_source.join_condition:
+                    elems[-1] += f" ON {table_source.join_condition}"
+                return elems
+
+            elems: list[str] = []
+            elems += _quick_format_tablesource(table_source.left)
+            elems.append(f"{table_source.join_type}")
+            elems += _quick_format_tablesource(table_source.right)
+            if table_source.join_condition:
+                elems[-1] += f" ON {table_source.join_condition}"
+            elems = [((" " * FormatIndentDepth) + str(child)) for child in elems]
+            return elems
+
+        case _:
+            raise ValueError("Unsupported table source type: " + str(table_source))
+
+
 def _quick_format_explicit_from(from_clause: ExplicitFromClause) -> list[str]:
     """Quick and dirty formatting logic for explicit ``FROM`` clauses.
 
@@ -231,9 +300,32 @@ def _quick_format_explicit_from(from_clause: ExplicitFromClause) -> list[str]:
     list[str]
         The pretty-printed parts of the clause, indented as necessary.
     """
-    pretty_base = [f"FROM {from_clause.base_table}"]
-    pretty_joins = [((" " * FormatIndentDepth) + str(join)) for join in from_clause.joined_tables]
-    return pretty_base + pretty_joins
+    items = _quick_format_tablesource(from_clause.root)
+    items[0] = f"FROM {items[0]}"
+    return items
+
+
+def _quick_format_general_from(from_clause: From) -> list[str]:
+    """Quick and dirty formatting logic for general ``FROM`` clauses.
+
+    This function just puts each part of the ``FROM`` clause on a separate line.
+
+    Parameters
+    ----------
+    from_clause : From
+        The clause to format
+
+    Returns
+    -------
+    list[str]
+        The pretty-printed parts of the clause, indented as necessary.
+    """
+    elems: list[str] = ["FROM"]
+    for table_source in from_clause.items:
+        current_elems = _quick_format_tablesource(table_source)
+        current_elems = [((" " * FormatIndentDepth) + str(child)) for child in current_elems]
+        elems += current_elems
+    return current_elems
 
 
 def _quick_format_predicate(predicate: AbstractPredicate) -> list[str]:
@@ -462,24 +554,27 @@ def format_quick(query: SqlQuery, *, inline_hint_block: bool = False, trailing_s
             inlined_hint_block = clause
             continue
 
-        if isinstance(clause, CommonTableExpression):
-            pretty_query_parts.extend(_quick_format_cte(clause))
-        elif isinstance(clause, Select):
-            pretty_query_parts.extend(_quick_format_select(clause, inlined_hint_block=inlined_hint_block))
-        elif isinstance(clause, ImplicitFromClause):
-            pretty_query_parts.extend(_quick_format_implicit_from(clause))
-        elif isinstance(clause, ExplicitFromClause):
-            pretty_query_parts.extend(_quick_format_explicit_from(clause))
-        elif isinstance(clause, Where):
-            pretty_query_parts.extend(_quick_format_where(clause))
-        elif isinstance(clause, UnionClause):
-            pretty_query_parts.extend(_quick_format_union(clause))
-        elif isinstance(clause, IntersectClause):
-            pretty_query_parts.extend(_quick_format_intersect(clause))
-        elif isinstance(clause, ExceptClause):
-            pretty_query_parts.extend(_quick_format_except(clause))
-        else:
-            pretty_query_parts.append(str(clause))
+        match clause:
+            case CommonTableExpression():
+                pretty_query_parts.extend(_quick_format_cte(clause))
+            case Select():
+                pretty_query_parts.extend(_quick_format_select(clause, inlined_hint_block=inlined_hint_block))
+            case ImplicitFromClause():
+                pretty_query_parts.extend(_quick_format_implicit_from(clause))
+            case ExplicitFromClause():
+                pretty_query_parts.extend(_quick_format_explicit_from(clause))
+            case From():
+                pretty_query_parts.extend(_quick_format_general_from(clause))
+            case Where():
+                pretty_query_parts.extend(_quick_format_where(clause))
+            case UnionClause():
+                pretty_query_parts.extend(_quick_format_union(clause))
+            case IntersectClause():
+                pretty_query_parts.extend(_quick_format_intersect(clause))
+            case ExceptClause():
+                pretty_query_parts.extend(_quick_format_except(clause))
+            case _:
+                pretty_query_parts.append(str(clause))
 
     if trailing_semicolon:
         pretty_query_parts[-1] += ";"

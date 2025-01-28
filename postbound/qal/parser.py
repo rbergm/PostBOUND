@@ -98,7 +98,9 @@ def _pglast_parse_colref(pglast_data: dict, *, available_tables: dict[str, Table
         tab, col = fields
         tab: str = tab["String"]["sval"]
         col: str = col["String"]["sval"]
-        parsed_table = available_tables[tab]
+        parsed_table = available_tables.get(tab, None)
+        if not parsed_table:
+            raise ParserError("Table not found: " + tab)
         parsed_column = ColumnReference(col, parsed_table)
         resolved_columns[(tab, col)] = parsed_column
         return parsed_column
@@ -631,7 +633,7 @@ def _pglast_parse_from_entry(pglast_data: dict, *, available_tables: dict[str, T
             right = _pglast_parse_from_entry(join_expr["rarg"], available_tables=available_tables,
                                              resolved_columns=resolved_columns, schema=schema)
             if join_type == JoinType.CrossJoin:
-                return JoinTableSource(left, join_condition=None, joined_table=[right], join_type=join_type)
+                return JoinTableSource(left, right, join_type=JoinType.CrossJoin)
 
             join_condition = _pglast_parse_predicate(join_expr["quals"], available_tables=available_tables,
                                                      resolved_columns=resolved_columns, schema=schema)
@@ -646,8 +648,8 @@ def _pglast_parse_from_entry(pglast_data: dict, *, available_tables: dict[str, T
                 available_tables[values_list.table.identifier()] = values_list.table
 
             for target_column in values_list.cols:
-                col_key = (target_identifier, target_column)
-                resolved_columns[col_key] = ColumnReference(target_column, values_list.table)
+                col_key = (target_identifier, target_column.name)
+                resolved_columns[col_key] = target_column
 
             return values_list
 
@@ -665,7 +667,7 @@ def _pglast_parse_from_entry(pglast_data: dict, *, available_tables: dict[str, T
 
             # TODO: should add LATERAL check here
 
-            subquery_source = SubqueryTableSource(subquery, alias=alias)
+            subquery_source = SubqueryTableSource(subquery, target_name=alias)
             if subquery_source.target_table:
                 available_tables[subquery_source.target_table.identifier()] = subquery_source.target_table
             return subquery_source
@@ -742,8 +744,7 @@ def _pglast_parse_from(from_clause: list[dict], *,
     """
     contains_plain_table = False
     contains_join = False
-    contains_mixed = False
-    contains_subquery = False
+    contains_mixed = False  # plain tables and explicit JOINs, subqueries or VALUES
 
     table_sources: list[TableSource] = []
     for entry in from_clause:
@@ -761,14 +762,15 @@ def _pglast_parse_from(from_clause: list[dict], *,
                 if contains_plain_table:
                     contains_mixed = True
             case SubqueryTableSource():
-                pass  # TODO: how do we treat plain tables with subqueries?
+                contains_mixed = True
             case ValuesTableSource():
-                pass  # TODO: how do we treat plain tables with values?
+                contains_mixed = True
 
-    if not contains_join and not contains_mixed and not contains_subquery:
+    if not contains_join and not contains_mixed:
         return ImplicitFromClause(table_sources)
-    if contains_join and not contains_mixed and not contains_subquery:
+    if contains_join and not contains_mixed:
         return ExplicitFromClause(table_sources)
+
     return From(table_sources)
 
 
@@ -884,6 +886,11 @@ def _pglast_parse_predicate(pglast_data: dict, available_tables: dict[str, Table
                                                 schema=schema)
             operation = LogicalSqlOperators.Is if expression["nulltesttype"] == "IS_NULL" else LogicalSqlOperators.IsNot
             return BinaryPredicate(operation, testexpr, StaticValueExpression.null())
+
+        case "FuncCall":
+            expression = _pglast_parse_expression(pglast_data, available_tables=available_tables,
+                                                  resolved_columns=resolved_columns, schema=schema)
+            return UnaryPredicate(expression)
 
         case "SubLink":
             expression = pglast_data["SubLink"]

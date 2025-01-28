@@ -66,7 +66,7 @@ class ColumnReference:
             raise ValueError("Column name is required")
         self._name = name
         self._table = table
-        self._normalized_name = self.name.lower()
+        self._normalized_name = self._name.lower()
         self._hash_val = hash((self._normalized_name, self._table))
 
     @property
@@ -4845,7 +4845,7 @@ class ValuesTableSource(TableSource):
         complete_vals_str = ", ".join(vals)
         cols = ", ".join(col.name for col in self._columns)
 
-        return f"VALUES ({complete_vals_str}) AS {self._table} ({cols})"
+        return f"(VALUES {complete_vals_str}) AS {self._table} ({cols})"
 
 
 class JoinType(enum.Enum):
@@ -5145,12 +5145,10 @@ class From(BaseClause, Generic[TableType]):
         fixture = "FROM "
         contents_str = []
         for src in self._items:
-            if isinstance(src, JoinTableSource):
-                contents_str.append(" " + str(src))
-            elif contents_str:
+            if contents_str:
                 contents_str.append(", " + str(src))
-            else:
-                contents_str.append(str(src))
+                continue
+            contents_str.append(str(src))
         return fixture + "".join(contents_str)
 
 
@@ -6156,10 +6154,9 @@ def _create_ast(item: SqlQuery | BaseClause | TableSource | AbstractPredicate | 
         case DirectTableSource():
             return f"{prefix}+-{item_str} [{item.table}]"
         case JoinTableSource():
-            source = _create_ast(item.source, indentation=indentation + 2)
-            joins = [_create_ast(j, indentation=indentation + 2) for j in item.joined_table]
-            join_str = "\n".join(joins)
-            return f"{prefix}+-{item_str}\n{source}\n{join_str}"
+            left_str = _create_ast(item.left, indentation=indentation + 2)
+            right_str = _create_ast(item.right, indentation=indentation + 2)
+            return f"{prefix}+-{item_str}\n{left_str}\n{right_str}"
         case ValuesTableSource():
             return f"{prefix}+-{item_str}"
         case From():

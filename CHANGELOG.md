@@ -38,6 +38,9 @@ Be carefull when updating and check the changelog!
   performance and larger SQL support.
 
 ### ⚠ Breaking changes 💀
+- Identities of `TableReference` and `ColumnReference` objects are now based on their lowercase representations. This is a
+  necessary change caused by the migration to pglast, since Postgres does not retain the original casing of identifiers after
+  parsing.
 - Removed illegal SQL operator "**MISSING**", which was an artifact of the mo-sql parser output
 - ``IS NULL`` and ``IS NOT NULL`` predicates are no longer represented by `UnaryPredicate` instances, but by `BinaryPredicate`
   with a *None* static value
