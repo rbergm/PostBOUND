@@ -637,7 +637,7 @@ def _pglast_parse_from_entry(pglast_data: dict, *, available_tables: dict[str, T
                                                      resolved_columns=resolved_columns, schema=schema)
 
             # we do not need to store new tables in available_tables here, since this is already handled by the recursion.
-            return JoinTableSource(left, join_condition=join_condition, joined_table=[right], join_type=join_type)
+            return JoinTableSource(left, right, join_condition=join_condition, join_type=join_type)
 
         case "RangeSubselect" if _pglast_is_values_list(pglast_data["RangeSubselect"]):
             values_list = _pglast_parse_values(pglast_data["RangeSubselect"])

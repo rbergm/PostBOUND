@@ -4895,55 +4895,82 @@ class JoinTableSource(TableSource):
 
     Parameters
     ----------
-    source : TableSource
-        The actual table being sourced
+    left : TableSource
+        The left-hand side of the join
+    right : TableSource
+        The right-hand side of the join
     join_condition : Optional[AbstractPredicate], optional
         The predicate that is used to join the specified table with the other tables of the *FROM* clause. For most
         joins this is a required argument in order to create a valid SQL query (e.g. *LEFT JOIN* or *INNER JOIN*),
-        but there are some joins without a condition (e.g. *CROSS JOIN* and *NATURAL JOIN*). It is up to the user
-        to determine whether a join condition is required for the join in question or not.
-    joined_tables : TableSource
-        An optional list of nested join statements, as in *R JOIN (S JOIN T ON a = b) ON c = d*.
+        but there are some joins without a condition (e.g. *CROSS JOIN* and *NATURAL JOIN*).
     join_type : JoinType, optional
         The specific join that should be performed. Defaults to `JoinType.InnerJoin`.
     """
 
-    def __init__(self, source: TableSource, join_condition: Optional[AbstractPredicate] = None, *,
-                 joined_table: TableSource,
+    def __init__(self, left: TableSource, right: TableSource, *,
+                 join_condition: Optional[AbstractPredicate] = None,
                  join_type: JoinType = JoinType.InnerJoin) -> None:
         if join_condition is None and join_type not in AnonymousJoins:
-            pass
+            raise ValueError("Join condition is required for this join type: " + str(join_type))
 
-        self._source = source
-        self._joined_table = tuple(joined_table) if joined_table else tuple()
+        self._left = left
+        self._right = right
         self._join_condition = join_condition
         self._join_type = join_type if join_condition else JoinType.CrossJoin
-        self._hash_val = hash((self._source, self._joined_table, self._join_condition, self._join_type))
+        self._hash_val = hash((self._left, self._right, self._join_condition, self._join_type))
+
+    @property
+    def left(self) -> TableSource:
+        """Get the left-hand side of the join.
+
+        Returns
+        -------
+        TableSource
+            The join partner. Can be anything from a plain base table, to a subquery, to another join.
+        """
+        return self._left
+
+    @property
+    def right(self) -> TableSource:
+        """Get the right-hand side of the join.
+
+        Returns
+        -------
+        TableSource
+            The join partner. Can be anything from a plain base table, to a subquery, to another join.
+        """
+        return self._right
 
     @property
     def source(self) -> TableSource:
         """Get the actual table being joined. This can be a proper table or a subquery.
+
+        .. deprecated:: 0.10.0
+            Use `left` instead. This is an artifact of the old mosql-based query representation
 
         Returns
         -------
         TableSource
             The table
         """
-        return self._source
+        return self._left
 
     @property
-    def joined_table(self) -> Sequence[JoinTableSource]:
+    def joined_table(self) -> JoinTableSource:
         """Get the nested join statements contained in this join.
+
+        .. deprecated:: 0.10.0
+            Use `right` instead. This is an artifact of the old mosql-based query representation
 
         A nested join is a *JOIN* statement within a *JOIN* statement, as in
         ``SELECT * FROM R JOIN (S JOIN T ON a = b) ON a = c``.
 
         Returns
         -------
-        Sequence[JoinTableSource]
+        JoinTableSource
             The nested joins, can be empty if there are no such joins.
         """
-        return self._joined_table
+        return self._right
 
     @property
     def join_condition(self) -> Optional[AbstractPredicate]:
@@ -4970,45 +4997,68 @@ class JoinTableSource(TableSource):
         """
         return self._join_type
 
+    def base_table(self) -> TableReference:
+        """Provide the table that is farthest to the left in the join chain.
+
+        For subqueries or **VALUES** clauses, this will return the alias of the expression, i.e. the name of the virtual table
+        that is created for the subquery or **VALUES** clause.
+
+        Returns
+        -------
+        TableReference
+            The table
+        """
+        match self._left:
+            case DirectTableSource():
+                return self._left.table
+            case JoinTableSource():
+                return self._left.base_table()
+            case SubqueryTableSource():
+                return self._left.target_table
+            case ValuesTableSource():
+                return self._left.table
+            case _:
+                raise TypeError("Unknown table source type: " + str(type(self._left)))
+
     def tables(self) -> set[TableReference]:
-        return self._source.tables() | util.set_union(nested_join.tables() for nested_join in self.joined_table)
+        return self._left.tables() | self._right.tables()
 
     def columns(self) -> set[ColumnReference]:
         condition_columns = self._join_condition.columns() if self._join_condition else set()
-        nested_columns = util.set_union(nested_join.columns() for nested_join in self.joined_table)
-        return self._source.columns() | nested_columns | condition_columns
+        return self._left.columns() | self._right.columns() | condition_columns
 
     def iterexpressions(self) -> Iterable[SqlExpression]:
-        source_expressions = list(self._source.iterexpressions())
-        nested_expressions = util.flatten(nested_join.iterexpressions() for nested_join in self.joined_table)
+        left_expressions = list(self._left.iterexpressions())
+        right_expressions = list(self._right.iterexpressions())
         condition_expressions = list(self._join_condition.iterexpressions()) if self._join_condition else []
-        return source_expressions + nested_expressions + condition_expressions
+        return left_expressions + right_expressions + condition_expressions
 
     def itercolumns(self) -> Iterable[ColumnReference]:
-        source_columns = list(self._source.itercolumns())
-        nested_columns = util.flatten(nested_join.itercolumns() for nested_join in self.joined_table)
+        left_columns = list(self._left.itercolumns())
+        right_columns = list(self._right.itercolumns())
         condition_columns = list(self._join_condition.itercolumns()) if self._join_condition else []
-        return source_columns + nested_columns + condition_columns
+        return left_columns + right_columns + condition_columns
 
-    def predicates(self) -> QueryPredicates | None:
-        source_predicates = self._source.predicates()
-        condition_predicates = QueryPredicates(self._join_condition) if self._join_condition else None
+    def predicates(self) -> Optional[QueryPredicates]:
+        all_predicates: list[AbstractPredicate] = []
 
-        if source_predicates and condition_predicates:
-            return source_predicates.and_(condition_predicates)
-        elif source_predicates:
-            return source_predicates
-        elif condition_predicates:
-            return condition_predicates
-        else:
-            return None
+        left_predicates = self._left.predicates()
+        if left_predicates:
+            all_predicates.append(left_predicates.root)
+        right_predicates = self._right.predicates()
+        if right_predicates:
+            all_predicates.append(right_predicates.root)
+        if self._join_condition:
+            all_predicates.append(self._join_condition)
+
+        return QueryPredicates(CompoundPredicate.create_and(all_predicates)) if all_predicates else None
 
     def __hash__(self) -> int:
         return self._hash_val
 
     def __eq__(self, other: object) -> bool:
-        return (isinstance(other, type(self)) and self._source == other._source
-                and self._joined_table == other._joined_table
+        return (isinstance(other, type(self)) and self._left == other._left
+                and self._right == other._right
                 and self._join_condition == other._join_condition
                 and self._join_type == other._join_type)
 
@@ -5075,10 +5125,10 @@ class From(BaseClause, Generic[TableType]):
     def itercolumns(self) -> Iterable[ColumnReference]:
         return util.flatten(src.itercolumns() for src in self._items)
 
-    def predicates(self) -> QueryPredicates:
+    def predicates(self) -> Optional[QueryPredicates]:
         source_predicates = [src.predicates() for src in self._items]
         if not any(source_predicates):
-            return QueryPredicates.empty_predicate()
+            return None
         actual_predicates = [src_pred.root for src_pred in source_predicates if src_pred]
         merged_predicate = CompoundPredicate.create_and(actual_predicates)
         return QueryPredicates(merged_predicate)
@@ -5164,8 +5214,34 @@ class ExplicitFromClause(From[JoinTableSource]):
         The joins that should be performed
     """
 
-    def __init__(self, joins: JoinTableSource | Iterable[JoinTableSource]):
+    def __init__(self, joins: JoinTableSource | Iterable[JoinTableSource]) -> None:
+        if isinstance(joins, Iterable) and len(joins) != 1:
+            raise ValueError("Explicit FROM clauses can only contain a single join")
         super().__init__(joins)
+
+    @property
+    def root(self) -> JoinTableSource:
+        """Get the root join of the ``FROM`` clause.
+
+        Returns
+        -------
+        JoinTableSource
+            The root join
+        """
+        return self.items[0]
+
+    def base_table(self) -> TableReference:
+        """Get the table that is farthest to the left in the join chain.
+
+        For subqueries or **VALUES** clauses, this will return the alias of the expression, i.e. the name of the virtual table
+        that is created for the subquery or **VALUES** clause.
+
+        Returns
+        -------
+        TableReference
+            The table
+        """
+        return self.root.base_table()
 
     def iterpredicates(self) -> Iterable[AbstractPredicate]:
         """Provides all join conditions that are contained in the ``FROM`` clause.

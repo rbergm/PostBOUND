@@ -4,6 +4,19 @@ Since queries are designed as immutable data objects, these transformations oper
 
 The tools differ in their granularity, ranging from utilities that swap out individual expressions and predicates, to tools
 that change the entire structure of the query.
+
+Some important transformations include:
+
+- `flatten_and_predicate`: Simplifies the predicate structure by moving all nested ``AND`` predicates to their parent ``AND``
+- `extract_query_fragment`: Extracts parts of an original query based on a subset of its tables (i.e. induced join graph and
+  filter predicates)
+- `add_ec_predicates`: Expands a querie's **WHERE** clause to include all join predicates that are implied by other (equi-)
+  joins
+- `as_count_star_query` and `as_explain_analyze` change the query to be executed as **COUNT(*)** or **EXPLAIN ANALYZE**
+  respectively
+
+In addition to these frequently-used transformations, there are also lots of utilities that add, remove, or modify specific
+parts of queries, such as individual clauses or expressions.
 """
 from __future__ import annotations
 
@@ -18,8 +31,9 @@ from ._core import (
     SqlExpression, ColumnExpression, StaticValueExpression, MathematicalExpression, CastExpression, FunctionExpression,
     SubqueryExpression, StarExpression,
     WindowExpression, CaseExpression, BooleanExpression,
-    AbstractPredicate, BinaryPredicate, InPredicate, BetweenPredicate, UnaryPredicate, CompoundPredicate,
-    BaseProjection, TableSource, DirectTableSource, SubqueryTableSource, JoinTableSource, WithQuery, OrderByExpression,
+    AbstractPredicate, BinaryPredicate, InPredicate, BetweenPredicate, UnaryPredicate, CompoundPredicate, JoinType,
+    BaseProjection, TableSource, DirectTableSource, SubqueryTableSource, JoinTableSource, ValuesTableSource, WithQuery,
+    OrderByExpression,
     BaseClause, Select, From, ImplicitFromClause, ExplicitFromClause, Where, GroupBy, Having, OrderBy,
     Limit, CommonTableExpression, UnionClause, IntersectClause, ExceptClause, Explain, Hint,
     SqlQuery, ImplicitSqlQuery, ExplicitSqlQuery, MixedSqlQuery,
@@ -116,16 +130,24 @@ def explicit_to_implicit(source_query: ExplicitSqlQuery) -> ImplicitSqlQuery:
     ValueError
         If the `source_query` contains subquery table sources
     """
-    original_from_clause: ExplicitFromClause = source_query.from_clause
-    additional_predicates = []
+    additional_predicates: list[AbstractPredicate] = []
     complete_from_tables: list[TableReference] = []
+    join_working_set: list[TableSource] = list(source_query.from_clause.items)
 
-    for joined_table in original_from_clause.joined_tables:
-        table_source = joined_table.source
-        if not isinstance(table_source, DirectTableSource):
-            raise ValueError("Transforming joined subqueries to implicit table references is not support yet")
-        complete_from_tables.append(table_source.table)
-        additional_predicates.append(joined_table.join_condition)
+    while join_working_set:
+        current_table_source = join_working_set.pop()
+
+        match current_table_source:
+            case DirectTableSource():
+                complete_from_tables.append(current_table_source.table)
+            case SubqueryTableSource():
+                raise ValueError("Transforming subqueries to implicit table references is not supported yet")
+            case JoinTableSource() if current_table_source.join_type == JoinType.InnerJoin:
+                join_working_set.append(current_table_source.left)
+                join_working_set.append(current_table_source.right)
+                additional_predicates.append(current_table_source.join_condition)
+            case _:
+                raise ValueError("Unsupported table source type: " + str(type(current_table_source)))
 
     final_from_clause = ImplicitFromClause.create_for(complete_from_tables)
 
@@ -801,22 +823,27 @@ def _replace_expression_in_table_source(table_source: Optional[TableSource],
     """
     if table_source is None:
         return None
-    if isinstance(table_source, DirectTableSource):
-        return table_source
-    elif isinstance(table_source, SubqueryTableSource):
-        replaced_subquery = replacement(table_source.expression)
-        assert isinstance(replaced_subquery, SubqueryExpression)
-        replaced_subquery = replace_expressions(replaced_subquery.query, replacement)
-        return SubqueryTableSource(replaced_subquery, table_source.target_name)
-    elif isinstance(table_source, JoinTableSource):
-        replaced_source = _replace_expression_in_table_source(table_source.source, replacement)
-        replaced_nested_sources = [_replace_expression_in_table_source(nested_join, replacement)
-                                   for nested_join in table_source.joined_table]
-        replaced_condition = _replace_expression_in_predicate(table_source.join_condition, replacement)
-        return JoinTableSource(replaced_source, replaced_condition, joined_table=replaced_nested_sources,
-                               join_type=table_source.join_type)
-    else:
-        raise TypeError("Unknown table source type: " + str(table_source))
+
+    match table_source:
+        case DirectTableSource():
+            # no expressions in a plain table reference, we are done here
+            return table_source
+        case SubqueryTableSource():
+            replaced_subquery = replacement(table_source.expression)
+            assert isinstance(replaced_subquery, SubqueryExpression)
+            replaced_subquery = replace_expressions(replaced_subquery.query, replacement)
+            return SubqueryTableSource(replaced_subquery, table_source.target_name)
+        case JoinTableSource():
+            replaced_left = _replace_expression_in_table_source(table_source.left, replacement)
+            replaced_right = _replace_expression_in_table_source(table_source.right, replacement)
+            replaced_condition = _replace_expression_in_predicate(table_source.join_condition, replacement)
+            return JoinTableSource(replaced_left, replaced_right, join_condition=replaced_condition,
+                                   join_type=table_source.join_type)
+        case ValuesTableSource():
+            replaced_values = [tuple([replacement(val) for val in row]) for row in table_source.rows]
+            return ValuesTableSource(replaced_values, alias=table_source.table.identifier(), columns=table_source.cols)
+        case _:
+            raise TypeError("Unknown table source type: " + str(table_source))
 
 
 def _replace_expressions_in_clause(clause: Optional[ClauseType],
@@ -859,8 +886,8 @@ def _replace_expressions_in_clause(clause: Optional[ClauseType],
     elif isinstance(clause, ImplicitFromClause):
         return clause
     elif isinstance(clause, ExplicitFromClause):
-        replaced_joins = [_replace_expression_in_table_source(join, replacement) for join in clause.joined_tables]
-        return ExplicitFromClause(clause.base_table, replaced_joins)
+        replaced_joins = [_replace_expression_in_table_source(join, replacement) for join in clause.items]
+        return ExplicitFromClause(replaced_joins)
     elif isinstance(clause, From):
         replaced_contents = [_replace_expression_in_table_source(target, replacement) for target in clause.items]
         return From(replaced_contents)
@@ -1240,20 +1267,41 @@ def _rename_columns_in_table_source(table_source: TableSource,
     """
     if table_source is None:
         return None
-    if isinstance(table_source, DirectTableSource):
-        return table_source
-    elif isinstance(table_source, SubqueryTableSource):
-        renamed_subquery = rename_columns_in_query(table_source.query, available_renamings)
-        return SubqueryTableSource(renamed_subquery, table_source.target_name)
-    elif isinstance(table_source, JoinTableSource):
-        renamed_source = _rename_columns_in_table_source(table_source.source, available_renamings)
-        renamed_nested_joins = [_rename_columns_in_table_source(nested_join, available_renamings)
-                                for nested_join in table_source.joined_table]
-        renamed_condition = rename_columns_in_predicate(table_source.join_condition, available_renamings)
-        return JoinTableSource(renamed_source, renamed_condition, joined_table=renamed_nested_joins,
-                               join_type=table_source.join_type)
-    else:
-        raise TypeError("Unknown table source type: " + str(table_source))
+
+    match table_source:
+        case DirectTableSource():
+            # no columns in a plain table reference, we are done here
+            return table_source
+        case SubqueryTableSource():
+            renamed_subquery = rename_columns_in_query(table_source.query, available_renamings)
+            return SubqueryTableSource(renamed_subquery, table_source.target_name)
+        case JoinTableSource():
+            renamed_left = _rename_columns_in_table_source(table_source.left, available_renamings)
+            renamed_right = _rename_columns_in_table_source(table_source.right, available_renamings)
+            renamed_condition = rename_columns_in_predicate(table_source.join_condition, available_renamings)
+            return JoinTableSource(renamed_left, renamed_right, join_condition=renamed_condition,
+                                   join_type=table_source.join_type)
+        case ValuesTableSource():
+            if not any(col.belongs_to(table_source.table) for col in available_renamings):
+                return table_source
+
+            for current_col, target_col in available_renamings.items():
+                if not current_col.belongs_to(table_source.table):
+                    continue
+                if current_col.table != target_col.table:
+                    raise ValueError("Cannot rename columns in a VALUES table source to a different table")
+
+                # if we found a column that should be renamed, we need to replace the whole column specification
+                # this process might be repeated multiple times, if multiple appropriate renamings exist
+                current_col_spec = table_source.cols
+                new_col_spec = [(col if col.name != current_col.name else target_col.name)
+                                for col in current_col_spec]
+                table_source = ValuesTableSource(table_source.rows, alias=table_source.table.identifier(),
+                                                 columns=new_col_spec)
+            return table_source
+
+        case _:
+            raise TypeError("Unknown table source type: " + str(table_source))
 
 
 def rename_columns_in_clause(clause: Optional[ClauseType],
@@ -1296,8 +1344,8 @@ def rename_columns_in_clause(clause: Optional[ClauseType],
     elif isinstance(clause, ImplicitFromClause):
         return clause
     elif isinstance(clause, ExplicitFromClause):
-        renamed_joins = [_rename_columns_in_table_source(join, available_renamings) for join in clause.joined_tables]
-        return ExplicitFromClause(clause.base_table, renamed_joins)
+        renamed_joins = [_rename_columns_in_table_source(join, available_renamings) for join in clause.items]
+        return ExplicitFromClause(renamed_joins)
     elif isinstance(clause, From):
         renamed_sources = [_rename_columns_in_table_source(table_source, available_renamings)
                            for table_source in clause.items]
