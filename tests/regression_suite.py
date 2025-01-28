@@ -86,7 +86,7 @@ class DatabaseTestCase(unittest.TestCase, abc.ABC):
 
         Ordering can be accounted for by the `ordered` argument. By default, result sets are assumed to be unordered.
         """
-        if type(first_set) is type(second_set):
+        if type(first_set) is not type(second_set):
             error_msg = "Result sets have different types: "
             first_set_str = _stringify_result_set(first_set)
             second_set_str = _stringify_result_set(second_set)
