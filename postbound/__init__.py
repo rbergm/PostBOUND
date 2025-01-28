@@ -124,7 +124,7 @@ from .optimizer import validation, PhysicalQueryPlan
 from .experiments import workloads
 from .experiments.executor import execute_workload, optimize_and_execute_workload
 
-__version__ = "0.9.0"
+__version__ = "0.10.0"
 
 __all__ = [
   "db", "opt", "qal", "experiments", "util",

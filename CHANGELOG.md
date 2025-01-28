@@ -21,7 +21,7 @@ Be carefull when updating and check the changelog!
 
 ---
 
-## 🚧 Version 0.10.0 👷
+## ➡ Version 0.10.0
 
 ### New features
 - Added support for set operations to SQL queries
@@ -59,7 +59,7 @@ Be carefull when updating and check the changelog!
 ---
 
 
-## ➡ Version 0.9.0
+## Version 0.9.0
 
 **The Docker release**
 
