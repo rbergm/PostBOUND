@@ -32,6 +32,8 @@ Be carefull when updating and check the changelog!
 - Added a `is_nullable(<column>)` method to the `DatabaseSchema`
 - Added convenience methods `null()` and `is_null()` to `StaticValueExpression` to work with `NULL` values
 - Added convenience method `InPredicate.subquery()` to create a new `column IN <subquery>` predicate
+- Added optional materialization info to common table expressions
+- Added support for lateral subqueries
 
 ### Updates
 - Switched to [pglast](https://github.com/lelit/pglast) as the underlying parser for SQL queries. Much better parser

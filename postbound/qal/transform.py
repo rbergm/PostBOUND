@@ -435,7 +435,7 @@ def move_into_subquery(query: SqlQuery, tables: Iterable[TableReference], subque
     subquery = build_query(clause for clause in subquery_clauses if clause)
     subquery_table_source = SubqueryTableSource(subquery, subquery_name)
 
-    updated_from_sources = [table_source for table_source in query.from_clause.contents
+    updated_from_sources = [table_source for table_source in query.from_clause.items
                             if not table_source.tables() < tables]
     update_from_clause = ImplicitFromClause.create_for(updated_from_sources + [subquery_table_source])
     updated_predicate = query.where_clause.predicate if query.where_clause else None
@@ -832,7 +832,7 @@ def _replace_expression_in_table_source(table_source: Optional[TableSource],
             replaced_subquery = replacement(table_source.expression)
             assert isinstance(replaced_subquery, SubqueryExpression)
             replaced_subquery = replace_expressions(replaced_subquery.query, replacement)
-            return SubqueryTableSource(replaced_subquery, table_source.target_name)
+            return SubqueryTableSource(replaced_subquery, table_source.target_name, lateral=table_source.lateral)
         case JoinTableSource():
             replaced_left = _replace_expression_in_table_source(table_source.left, replacement)
             replaced_right = _replace_expression_in_table_source(table_source.right, replacement)
@@ -876,7 +876,8 @@ def _replace_expressions_in_clause(clause: Optional[ClauseType],
     if isinstance(clause, Hint) or isinstance(clause, Explain):
         return clause
     if isinstance(clause, CommonTableExpression):
-        replaced_queries = [WithQuery(replace_expressions(cte.query, replacement), cte.target_name)
+        replaced_queries = [WithQuery(replace_expressions(cte.query, replacement),
+                                      cte.target_name, materialized=cte.materialized)
                             for cte in clause.queries]
         return CommonTableExpression(replaced_queries)
     if isinstance(clause, Select):
@@ -1274,7 +1275,7 @@ def _rename_columns_in_table_source(table_source: TableSource,
             return table_source
         case SubqueryTableSource():
             renamed_subquery = rename_columns_in_query(table_source.query, available_renamings)
-            return SubqueryTableSource(renamed_subquery, table_source.target_name)
+            return SubqueryTableSource(renamed_subquery, table_source.target_name, lateral=table_source.lateral)
         case JoinTableSource():
             renamed_left = _rename_columns_in_table_source(table_source.left, available_renamings)
             renamed_right = _rename_columns_in_table_source(table_source.right, available_renamings)
@@ -1333,7 +1334,8 @@ def rename_columns_in_clause(clause: Optional[ClauseType],
     if isinstance(clause, Hint) or isinstance(clause, Explain):
         return clause
     if isinstance(clause, CommonTableExpression):
-        renamed_ctes = [WithQuery(rename_columns_in_query(cte.query, available_renamings), cte.target_name)
+        renamed_ctes = [WithQuery(rename_columns_in_query(cte.query, available_renamings),
+                                  cte.target_name, materialized=cte.materialized)
                         for cte in clause.queries]
         return CommonTableExpression(renamed_ctes)
     if isinstance(clause, Select):

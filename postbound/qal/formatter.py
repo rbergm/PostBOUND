@@ -140,9 +140,12 @@ def _quick_format_cte(cte_clause: CommonTableExpression) -> list[str]:
 
     first_cte, *remaining_ctes = cte_clause.queries
     first_content = _increase_indentation(format_quick(first_cte.query, trailing_semicolon=False))
-    formatted_parts: list[str] = [f"WITH {first_cte.target_name} AS (", first_content]
+    mat_info = "" if first_cte.materialized is None else ("MATERIALIZED " if first_cte.materialized else "NOT MATERIALIZED ")
+    formatted_parts: list[str] = [f"WITH {first_cte.target_name} AS {mat_info}(", first_content]
     for next_cte in remaining_ctes:
-        current_header = f"), {next_cte.target_name} AS ("
+        mat_info = "" if next_cte.materialized is None else ("MATERIALIZED " if first_cte.materialized
+                                                             else "NOT MATERIALIZED ")
+        current_header = f"), {next_cte.target_name} AS {mat_info}("
         cte_content = _increase_indentation(format_quick(next_cte.query, trailing_semicolon=False))
 
         formatted_parts.append(current_header)
@@ -237,7 +240,7 @@ def _quick_format_tablesource(table_source: TableSource) -> list[str]:
             return [str(table_source)]
 
         case SubqueryTableSource():
-            elems: list[str] = ["("]
+            elems: list[str] = ["LATERAL ("] if table_source.lateral else ["("]
             subquery_elems = format_quick(table_source.query, trailing_semicolon=False).split("\n")
             subquery_elems = [((" " * FormatIndentDepth) + str(child)) for child in subquery_elems]
             elems.extend(subquery_elems)

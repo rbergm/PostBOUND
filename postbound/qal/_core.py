@@ -4084,18 +4084,24 @@ class WithQuery:
         The query that should be used to construct the temporary common table.
     target_name : str | TableReference
         The name under which the table should be made available. If a table reference is provided, its identifier will be used.
+    materialized : Optional[bool], optional
+        Whether the query should be materialized or not. If this is not supported or not known, this can be set to ``None``
+        (the default). Since materialization is not part of the SQL standard, we do not include it in the WITH querie's
+        identity.
+
 
     Raises
     ------
     ValueError
         If the `target_name` is empty
     """
-    def __init__(self, query: SqlQuery, target_name: str | TableReference) -> None:
+    def __init__(self, query: SqlQuery, target_name: str | TableReference, *, materialized: Optional[bool] = None) -> None:
         if not target_name:
             raise ValueError("Target name is required")
         self._query = query
         self._subquery_expression = SubqueryExpression(query)
         self._target_name = target_name if isinstance(target_name, str) else target_name.identifier()
+        self._materialized = materialized
         self._hash_val = hash((query, target_name))
 
     @property
@@ -4145,6 +4151,21 @@ class WithQuery:
         """
         return TableReference.create_virtual(self.target_name)
 
+    @property
+    def materialized(self) -> Optional[bool]:
+        """Get whether this is materialized WITH query or not.
+
+        If materialization is unknown or not supported, **None** can be used. Therefore, this property should always be checked
+        against **None** before checking the actual truth value.
+        Since materialization is not part of the SQL standard, we do not include it in the WITH querie's identity.
+
+        Returns
+        -------
+        Optional[bool]
+            The materialization status
+        """
+        return self._materialized
+
     def tables(self) -> set[TableReference]:
         return self._query.tables()
 
@@ -4170,7 +4191,11 @@ class WithQuery:
 
     def __str__(self) -> str:
         query_str = self._query.stringify(trailing_delimiter=False)
-        return f"{self._target_name} AS ({query_str})"
+        if self._materialized is None:
+            mat_info = ""
+        else:
+            mat_info = "MATERIALIZED " if self._materialized else "NOT MATERIALIZED "
+        return f"{self._target_name} AS {mat_info}({query_str})"
 
 
 class CommonTableExpression(BaseClause):
@@ -4693,8 +4718,10 @@ class SubqueryTableSource(TableSource):
     ----------
     query : SqlQuery | SubqueryExpression
         The query that is sourced as a subquery
-    target_name : str
-        The name under which the subquery should be made available
+    target_name : str, optional
+        The name under which the subquery should be made available. Can empty for an anonymous subquery.
+    lateral : bool, optional
+        Whether the subquery should be executed as a lateral join. Defaults to ``False``.
 
     Raises
     ------
@@ -4702,13 +4729,12 @@ class SubqueryTableSource(TableSource):
         If the `target_name` is empty
     """
 
-    def __init__(self, query: SqlQuery | SubqueryExpression, target_name: str) -> None:
-        if not target_name:
-            raise ValueError("Target name for subquery source is required")
+    def __init__(self, query: SqlQuery | SubqueryExpression, target_name: str = "", *, lateral: bool = False) -> None:
         self._subquery_expression = (query if isinstance(query, SubqueryExpression)
                                      else SubqueryExpression(query))
         self._target_name = target_name
-        self._hash_val = hash((self._subquery_expression, self._target_name))
+        self._lateral = lateral
+        self._hash_val = hash((self._subquery_expression, self._target_name, self._lateral))
 
     @property
     def query(self) -> SqlQuery:
@@ -4728,12 +4754,12 @@ class SubqueryTableSource(TableSource):
         Returns
         -------
         str
-            The name. This will never be empty.
+            The name. Can be empty for an anonymous subquery.
         """
         return self._target_name
 
     @property
-    def target_table(self) -> TableReference:
+    def target_table(self) -> Optional[TableReference]:
         """Get the name under which the virtual table can be accessed in the actual query.
 
         The only difference to `target_name` this return type: this property provides the name as a proper table
@@ -4741,10 +4767,10 @@ class SubqueryTableSource(TableSource):
 
         Returns
         -------
-        TableReference
-            The table. This will always be a virtual table
+        Optional[TableReference]
+            The table. This will always be a virtual table. Can be **None** for an anonymous subquery.
         """
-        return TableReference.create_virtual(self._target_name)
+        return TableReference.create_virtual(self._target_name) if self.target_name else None
 
     @property
     def expression(self) -> SubqueryExpression:
@@ -4756,6 +4782,17 @@ class SubqueryTableSource(TableSource):
             The subquery.
         """
         return self._subquery_expression
+
+    @property
+    def lateral(self) -> bool:
+        """Get, whether this is a lateral join.
+
+        Returns
+        -------
+        bool
+            Whether this is a lateral join
+        """
+        return self._lateral
 
     def tables(self) -> set[TableReference]:
         return self._subquery_expression.tables() | {self.target_table}
@@ -4783,8 +4820,10 @@ class SubqueryTableSource(TableSource):
         return str(self._subquery_expression)
 
     def __str__(self) -> str:
+        lateral_str = "LATERAL " if self._lateral else ""
         query_str = self._subquery_expression.query.stringify(trailing_delimiter=False)
-        return f"({query_str}) AS {self._target_name}"
+        target_str = f" AS {self._target_name}" if self._target_name else ""
+        return f"{lateral_str}({query_str}){target_str}"
 
 
 ValuesList = Iterable[tuple[StaticValueExpression, ...]]

@@ -437,15 +437,26 @@ def _pglast_parse_ctes(ctes: list[dict], *, available_tables: dict[str, TableRef
     local_resolved_cols: dict[str, ColumnReference] = {}
     parsed_ctes: list[CommonTableExpression] = []
     for pglast_data in ctes:
-        current_cte = pglast_data["CommonTableExpr"]
+        current_cte: dict = pglast_data["CommonTableExpr"]
         target_table = TableReference.create_virtual(current_cte["ctename"])
-        # TODO: could extract materialization info using "ctematerialized" here
+
         cte_query = _pglast_parse_query(current_cte["ctequery"]["SelectStmt"],
                                         available_tables=dict(available_tables),
                                         resolved_columns=local_resolved_cols,
                                         schema=schema)
         available_tables[target_table.identifier()] = target_table
-        parsed_ctes.append(WithQuery(cte_query, target_table))
+
+        match current_cte.get("ctematerialized", "CTEMaterializeDefault"):
+            case "CTEMaterializeDefault":
+                force_materialization = None
+            case "CTEMaterializeAlways":
+                force_materialization = True
+            case "CTEMaterializeNever":
+                force_materialization = False
+
+        parsed_cte = WithQuery(cte_query, target_table, materialized=force_materialization)
+        parsed_ctes.append(parsed_cte)
+
     return CommonTableExpression(parsed_ctes)
 
 
@@ -665,10 +676,10 @@ def _pglast_parse_from_entry(pglast_data: dict, *, available_tables: dict[str, T
             else:
                 alias = ""
 
-            # TODO: should add LATERAL check here
+            is_lateral = raw_subquery.get("lateral", False)
 
-            subquery_source = SubqueryTableSource(subquery, target_name=alias)
-            if subquery_source.target_table:
+            subquery_source = SubqueryTableSource(subquery, target_name=alias, lateral=is_lateral)
+            if subquery_source.target_name:
                 available_tables[subquery_source.target_table.identifier()] = subquery_source.target_table
             return subquery_source
 
