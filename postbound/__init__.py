@@ -119,7 +119,7 @@ from ._stages import (
   as_complete_algorithm
 )
 from .db import Database
-from .qal import relalg, transform, SqlQuery
+from .qal import relalg, transform, SqlQuery, ColumnReference, parse_query
 from .optimizer import validation, PhysicalQueryPlan
 from .experiments import workloads
 from .experiments.executor import execute_workload, optimize_and_execute_workload
@@ -136,7 +136,7 @@ __all__ = [
   "IncrementalOptimizationStep", "IncrementalOptimizationPipeline",
   "as_complete_algorithm", "OptimizationSettings",
   "Database",
-  "relalg", "transform", "SqlQuery",
+  "relalg", "transform", "SqlQuery", "ColumnReference", "parse_query",
   "validation", "PhysicalQueryPlan",
   "workloads", "execute_workload", "optimize_and_execute_workload"
 ]
