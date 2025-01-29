@@ -395,7 +395,7 @@ class EquiJoinPreCheck(OptimizationPreCheck):
         """
         if not isinstance(predicate, qal.BinaryPredicate) or len(predicate.columns()) != 2:
             return False
-        if predicate.operation != qal.LogicalSqlOperators.Equal:
+        if predicate.operation != qal.LogicalOperator.Equal:
             return False
 
         if self._allow_nesting:
@@ -419,7 +419,7 @@ class EquiJoinPreCheck(OptimizationPreCheck):
         """
         if not self._allow_conjunctions:
             return False
-        elif predicate.operation != qal.CompoundOperators.And:
+        elif predicate.operation != qal.CompoundOperator.And:
             return False
         return all(self._perform_predicate_check(child_pred) for child_pred in predicate.children)
 

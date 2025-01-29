@@ -27,7 +27,7 @@ from typing import Optional
 
 from ._core import (
     TableReference, ColumnReference,
-    CompoundOperators,
+    CompoundOperator,
     SqlExpression, ColumnExpression, StaticValueExpression, MathematicalExpression, CastExpression, FunctionExpression,
     SubqueryExpression, StarExpression,
     WindowExpression, CaseExpression, BooleanExpression,
@@ -88,14 +88,14 @@ def flatten_and_predicate(predicate: AbstractPredicate) -> AbstractPredicate:
     if not isinstance(predicate, CompoundPredicate):
         return predicate
 
-    not_operation = predicate.operation == CompoundOperators.Not
-    or_operation = predicate.operation == CompoundOperators.Or
+    not_operation = predicate.operation == CompoundOperator.Not
+    or_operation = predicate.operation == CompoundOperator.Or
     if not_operation or or_operation:
         return predicate
 
     flattened_children = set()
     for child in predicate.children:
-        if isinstance(child, CompoundPredicate) and child.operation == CompoundOperators.And:
+        if isinstance(child, CompoundPredicate) and child.operation == CompoundOperator.And:
             flattened_child = flatten_and_predicate(child)
             if isinstance(flattened_child, CompoundPredicate):
                 flattened_children |= set(flattened_child.children)
@@ -207,7 +207,7 @@ def _get_predicate_fragment(predicate: AbstractPredicate,
     child_fragments = [fragment for fragment in child_fragments if fragment]
     if not child_fragments:
         return None
-    elif len(child_fragments) == 1 and compound_predicate.operation != CompoundOperators.Not:
+    elif len(child_fragments) == 1 and compound_predicate.operation != CompoundOperator.Not:
         return child_fragments[0]
     else:
         return CompoundPredicate(compound_predicate.operation, child_fragments)
@@ -614,7 +614,7 @@ def remove_predicate(predicate: Optional[AbstractPredicate],
     if not isinstance(predicate, CompoundPredicate):
         return predicate
 
-    if predicate.operation == CompoundOperators.Not:
+    if predicate.operation == CompoundOperator.Not:
         updated_child = remove_predicate(predicate.children, predicate_to_remove)
         return CompoundPredicate.create_not(updated_child) if updated_child else None
 
@@ -787,7 +787,7 @@ def _replace_expression_in_predicate(predicate: Optional[PredicateType],
     elif isinstance(predicate, UnaryPredicate):
         return UnaryPredicate(replacement(predicate.column), predicate.operation)
     elif isinstance(predicate, CompoundPredicate):
-        if predicate.operation == CompoundOperators.Not:
+        if predicate.operation == CompoundOperator.Not:
             renamed_children = [_replace_expression_in_predicate(predicate.children, replacement)]
         else:
             renamed_children = [_replace_expression_in_predicate(child, replacement) for child in predicate.children]
@@ -967,7 +967,7 @@ def _perform_predicate_replacement(current_predicate: AbstractPredicate,
         return new_predicate
 
     if isinstance(current_predicate, CompoundPredicate):
-        if current_predicate.operation == CompoundOperators.Not:
+        if current_predicate.operation == CompoundOperator.Not:
             replaced_children = [_perform_predicate_replacement(current_predicate.children,
                                                                 target_predicate, new_predicate)]
         else:
@@ -1235,7 +1235,7 @@ def rename_columns_in_predicate(predicate: Optional[AbstractPredicate],
         return UnaryPredicate(rename_columns_in_expression(predicate.column, available_renamings), predicate.operation)
     elif isinstance(predicate, CompoundPredicate):
         renamed_children = ([rename_columns_in_predicate(predicate.children, available_renamings)]
-                            if predicate.operation == CompoundOperators.Not
+                            if predicate.operation == CompoundOperator.Not
                             else [rename_columns_in_predicate(child, available_renamings)
                                   for child in predicate.children])
         return CompoundPredicate(predicate.operation, renamed_children)

@@ -36,7 +36,7 @@ import pglast
 from ._core import (
     ColumnReference,
     SelectType, JoinType,
-    CompoundOperators, MathematicalSqlOperators, LogicalSqlOperators, SqlOperator,
+    CompoundOperator, MathOperator, LogicalOperator, SqlOperator,
     BaseProjection, OrderByExpression,
     WithQuery, TableSource, DirectTableSource, JoinTableSource, SubqueryTableSource, ValuesList, ValuesTableSource,
     SqlQuery,
@@ -192,23 +192,23 @@ def _pglast_parse_const(pglast_data: dict) -> StaticValueExpression:
 
 
 _PglastOperatorMap: dict[str, SqlOperator] = {
-    "=": LogicalSqlOperators.Equal,
-    "<": LogicalSqlOperators.Less,
-    "<=": LogicalSqlOperators.LessEqual,
-    ">": LogicalSqlOperators.Greater,
-    ">=": LogicalSqlOperators.GreaterEqual,
-    "<>": LogicalSqlOperators.NotEqual,
-    "!=": LogicalSqlOperators.NotEqual,
+    "=": LogicalOperator.Equal,
+    "<": LogicalOperator.Less,
+    "<=": LogicalOperator.LessEqual,
+    ">": LogicalOperator.Greater,
+    ">=": LogicalOperator.GreaterEqual,
+    "<>": LogicalOperator.NotEqual,
+    "!=": LogicalOperator.NotEqual,
 
-    "AND_EXPR": CompoundOperators.And,
-    "OR_EXPR": CompoundOperators.Or,
-    "NOT_EXPR": CompoundOperators.Not,
+    "AND_EXPR": CompoundOperator.And,
+    "OR_EXPR": CompoundOperator.Or,
+    "NOT_EXPR": CompoundOperator.Not,
 
-    "+": MathematicalSqlOperators.Add,
-    "-": MathematicalSqlOperators.Subtract,
-    "*": MathematicalSqlOperators.Multiply,
-    "/": MathematicalSqlOperators.Divide,
-    "%": MathematicalSqlOperators.Modulo
+    "+": MathOperator.Add,
+    "-": MathOperator.Subtract,
+    "*": MathOperator.Multiply,
+    "/": MathOperator.Divide,
+    "%": MathOperator.Modulo
 }
 """Map from the internal representation of Postgres operators to our standardized QAL operators."""
 
@@ -373,7 +373,7 @@ def _pglast_parse_expression(pglast_data: dict, *, available_tables: dict[str, T
             right = _pglast_parse_expression(expression["rexpr"], available_tables=available_tables,
                                              resolved_columns=resolved_columns, schema=schema)
 
-            if operation in LogicalSqlOperators:
+            if operation in LogicalOperator:
                 return BooleanExpression(BinaryPredicate(operation, left, right))
 
             return MathematicalExpression(operation, left, right)
@@ -873,8 +873,8 @@ def _pglast_parse_predicate(pglast_data: dict, available_tables: dict[str, Table
 
         case "A_Expr" if pglast_data["A_Expr"]["kind"] == "AEXPR_LIKE":
             expression = pglast_data["A_Expr"]
-            operator = (LogicalSqlOperators.Like if expression["name"][0]["String"]["sval"] == "~~"
-                        else LogicalSqlOperators.NotLike)
+            operator = (LogicalOperator.Like if expression["name"][0]["String"]["sval"] == "~~"
+                        else LogicalOperator.NotLike)
             left = _pglast_parse_expression(expression["lexpr"], available_tables=available_tables,
                                             resolved_columns=resolved_columns, schema=schema)
             right = _pglast_parse_expression(expression["rexpr"], available_tables=available_tables,
@@ -883,8 +883,8 @@ def _pglast_parse_predicate(pglast_data: dict, available_tables: dict[str, Table
 
         case "A_Expr" if pglast_data["A_Expr"]["kind"] == "AEXPR_ILIKE":
             expression = pglast_data["A_Expr"]
-            operator = (LogicalSqlOperators.ILike if expression["name"][0]["String"]["sval"] == "~~*"
-                        else LogicalSqlOperators.NotILike)
+            operator = (LogicalOperator.ILike if expression["name"][0]["String"]["sval"] == "~~*"
+                        else LogicalOperator.NotILike)
             left = _pglast_parse_expression(expression["lexpr"], available_tables=available_tables,
                                             resolved_columns=resolved_columns, schema=schema)
             right = _pglast_parse_expression(expression["rexpr"], available_tables=available_tables,
@@ -937,7 +937,7 @@ def _pglast_parse_predicate(pglast_data: dict, available_tables: dict[str, Table
                                                 available_tables=available_tables,
                                                 resolved_columns=resolved_columns,
                                                 schema=schema)
-            operation = LogicalSqlOperators.Is if expression["nulltesttype"] == "IS_NULL" else LogicalSqlOperators.IsNot
+            operation = LogicalOperator.Is if expression["nulltesttype"] == "IS_NULL" else LogicalOperator.IsNot
             return BinaryPredicate(operation, testexpr, StaticValueExpression.null())
 
         case "FuncCall":

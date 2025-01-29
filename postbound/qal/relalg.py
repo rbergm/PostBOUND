@@ -45,7 +45,7 @@ from typing import Optional
 from . import transform
 from ._core import (
     TableReference, ColumnReference,
-    LogicalSqlOperators, CompoundOperators,
+    LogicalOperator, CompoundOperator,
     SqlExpression, ColumnExpression, StaticValueExpression, MathematicalExpression, CastExpression, FunctionExpression,
     SubqueryExpression, StarExpression,
     WindowExpression, CaseExpression, BooleanExpression,
@@ -2764,7 +2764,7 @@ def _filter_eval_phase(predicate: AbstractPredicate,
     if eval_phase < expected_eval_phase:
         return None
 
-    if isinstance(predicate, CompoundPredicate) and predicate.operation == CompoundOperators.And:
+    if isinstance(predicate, CompoundPredicate) and predicate.operation == CompoundOperator.And:
         child_predicates = [child for child in predicate.children
                             if _determine_predicate_phase(child) == expected_eval_phase]
         return CompoundPredicate.create_and(child_predicates) if child_predicates else None
@@ -3128,7 +3128,7 @@ class _ImplicitRelalgParser:
             final_fragment = Selection(final_fragment, predicate)
             return final_fragment
         elif isinstance(predicate, UnaryPredicate):
-            subquery_target = ("semijoin" if predicate.operation == LogicalSqlOperators.Exists
+            subquery_target = ("semijoin" if predicate.operation == LogicalOperator.Exists
                                else "antijoin")
             return self._add_expression(predicate.column, input_node=final_fragment, subquery_target=subquery_target)
 
@@ -3189,7 +3189,7 @@ class _ImplicitRelalgParser:
         if not isinstance(predicate, CompoundPredicate):
             raise ValueError(f"Unknown predicate type: '{predicate}'")
         match predicate.operation:
-            case CompoundOperators.And | CompoundOperators.Or:
+            case CompoundOperator.And | CompoundOperator.Or:
                 regular_predicates: list[AbstractPredicate] = []
                 subquery_predicates: list[AbstractPredicate] = []
                 for child_pred in predicate.iterchildren():
@@ -3202,13 +3202,13 @@ class _ImplicitRelalgParser:
                     final_fragment = self._ensure_predicate_applicability(simplified_composite, final_fragment)
                     final_fragment = Selection(final_fragment, simplified_composite)
                 for subquery_pred in subquery_predicates:
-                    if predicate.operation == CompoundOperators.And:
+                    if predicate.operation == CompoundOperator.And:
                         final_fragment = self._convert_predicate(subquery_pred, input_node=final_fragment)
                         continue
                     subquery_branch = self._convert_predicate(subquery_pred, input_node=input_node)
                     final_fragment = Union(final_fragment, subquery_branch)
                 return final_fragment
-            case CompoundOperators.Not:
+            case CompoundOperator.Not:
                 if not predicate.children.accept_visitor(contains_subqueries):
                     final_fragment = self._ensure_predicate_applicability(predicate, final_fragment)
                     final_fragment = Selection(final_fragment, predicate)
@@ -3285,7 +3285,7 @@ class _ImplicitRelalgParser:
             raise ValueError(f"Unsupported join predicate '{predicate}'. Perhaps this should be a post-join filter?")
 
         match predicate.operation:
-            case CompoundOperators.And | CompoundOperators.Or:
+            case CompoundOperator.And | CompoundOperator.Or:
                 regular_predicates: list[AbstractPredicate] = []
                 subquery_predicates: list[AbstractPredicate] = []
                 for child_pred in predicate.children:
@@ -3302,7 +3302,7 @@ class _ImplicitRelalgParser:
                 for subquery_pred in subquery_predicates:
                     final_fragment = self._convert_predicate(subquery_pred, input_node=final_fragment)
                 return final_fragment
-            case CompoundOperators.Not:
+            case CompoundOperator.Not:
                 pass
             case _:
                 raise ValueError(f"Unknown operation for composite predicate '{predicate}'")
@@ -3396,7 +3396,7 @@ class _ImplicitRelalgParser:
 
         if not isinstance(pred, CompoundPredicate):
             return {_BaseTableLookup()(pred): pred}
-        if pred.operation != CompoundOperators.And:
+        if pred.operation != CompoundOperator.And:
             return {_BaseTableLookup()(pred): pred}
 
         raw_predicate_components: dict[TableReference, set[AbstractPredicate]] = collections.defaultdict(set)
@@ -3415,7 +3415,7 @@ class _ImplicitRelalgParser:
         """
         if not predicate.is_join():
             raise ValueError(f"Not a join predicate: '{predicate}'")
-        if isinstance(predicate, CompoundPredicate) and predicate.operation == CompoundOperators.And:
+        if isinstance(predicate, CompoundPredicate) and predicate.operation == CompoundOperator.And:
             return set(predicate.children)
         return {predicate}
 

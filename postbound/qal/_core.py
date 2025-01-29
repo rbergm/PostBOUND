@@ -196,7 +196,7 @@ class VirtualTableError(StateError):
         self.table = table
 
 
-class MathematicalSqlOperators(enum.Enum):
+class MathOperator(enum.Enum):
     """The supported mathematical operators."""
     Add = "+"
     Subtract = "-"
@@ -206,7 +206,7 @@ class MathematicalSqlOperators(enum.Enum):
     Negate = "-"
 
 
-class LogicalSqlOperators(enum.Enum):
+class LogicalOperator(enum.Enum):
     """The supported unary and binary operators.
 
     Notice that the predicates which make heavy use of these operators are specified in the `predicates` module.
@@ -228,11 +228,11 @@ class LogicalSqlOperators(enum.Enum):
     Between = "BETWEEN"
 
 
-UnarySqlOperators = frozenset({LogicalSqlOperators.Exists, LogicalSqlOperators.Is, LogicalSqlOperators.IsNot})
+UnarySqlOperators = frozenset({LogicalOperator.Exists, LogicalOperator.Is, LogicalOperator.IsNot})
 """The `LogicalSqlOperators` that can be used as unary operators."""
 
 
-class CompoundOperators(enum.Enum):
+class CompoundOperator(enum.Enum):
     """The supported compound operators.
 
     Notice that predicates which make heavy use of these operators are specified in the `predicates` module.
@@ -242,7 +242,7 @@ class CompoundOperators(enum.Enum):
     Not = "NOT"
 
 
-SqlOperator = Union[MathematicalSqlOperators, LogicalSqlOperators, CompoundOperators]
+SqlOperator = Union[MathOperator, LogicalOperator, CompoundOperator]
 """Captures all different kinds of operators in one type."""
 
 
@@ -517,19 +517,12 @@ class MathematicalExpression(SqlExpression):
     The formula is based on an arbitrary expression, an operator and potentially a number of additional
     expressions/arguments.
 
-    The precise representation of mathematical expressions is not tightly standardized by PostBOUND and there will be
-    multiple ways to represent the same expression.
-
-    For example, the expression ``R.a + S.b + 42`` could be modeled as a single expression object with ``R.a`` as first
-    argument and the sequence ``S.b, 42`` as second arguments. At the same time, the mathematical expression can also
-    be used to represent logical expressions such as ``R.a < 42`` or ``S.b IN (1, 2, 3)``. However, this should be used
-    sparingly since logical expressions can be considered as predicates which are handled in the dedicated `predicates`
-    module. Moving logical expressions into a mathematical expression object can break correct functionality in that
-    module (e.g. determining joins and filters in a query).
+    If it is necessary to represent boolean expressions outside of the **WHERE** and **HAVING** clauses, a `BooleanExpression`
+    should be used instead of a mathematical expression.
 
     Parameters
     ----------
-    operator : SqlOperator
+    operator : MathOperator
         The operator that is used to combine the arguments.
     first_argument : SqlExpression
         The first argument. For unary expressions, this can also be the only argument
@@ -538,7 +531,7 @@ class MathematicalExpression(SqlExpression):
         Defaults to ``None`` to accomodate for unary expressions.
     """
 
-    def __init__(self, operator: SqlOperator, first_argument: SqlExpression,
+    def __init__(self, operator: MathOperator, first_argument: SqlExpression,
                  second_argument: SqlExpression | Sequence[SqlExpression] | None = None) -> None:
         if not operator or not first_argument:
             raise ValueError("Operator and first argument are required!")
@@ -557,12 +550,12 @@ class MathematicalExpression(SqlExpression):
     __match_args__ = ("operator", "first_arg", "second_arg")
 
     @property
-    def operator(self) -> SqlOperator:
+    def operator(self) -> MathOperator:
         """Get the operation to combine the input value(s).
 
         Returns
         -------
-        SqlOperator
+        MathOperator
             The operator
         """
         return self._operator
@@ -633,7 +626,7 @@ class MathematicalExpression(SqlExpression):
 
     def __str__(self) -> str:
         operator_str = self.operator.value
-        if self.operator == MathematicalSqlOperators.Negate:
+        if self.operator == MathOperator.Negate:
             return f"{operator_str}{self.first_arg}"
         if isinstance(self.second_arg, tuple):
             all_args = [self.first_arg] + list(self.second_arg)
@@ -1991,7 +1984,7 @@ class BinaryPredicate(BasePredicate):
     @staticmethod
     def equal(first_argument: SqlExpression, second_argument: SqlExpression) -> BinaryPredicate:
         """Generates an equality predicate between two arguments."""
-        return BinaryPredicate(LogicalSqlOperators.Equal, first_argument, second_argument)
+        return BinaryPredicate(LogicalOperator.Equal, first_argument, second_argument)
 
     def __init__(self, operation: SqlOperator, first_argument: SqlExpression,
                  second_argument: SqlExpression) -> None:
@@ -2114,8 +2107,8 @@ class BetweenPredicate(BasePredicate):
         self._interval = interval
         self._interval_start, self._interval_end = self._interval
 
-        hash_val = hash((LogicalSqlOperators.Between, self._column, self._interval_start, self._interval_end))
-        super().__init__(LogicalSqlOperators.Between, hash_val=hash_val)
+        hash_val = hash((LogicalOperator.Between, self._column, self._interval_start, self._interval_end))
+        super().__init__(LogicalOperator.Between, hash_val=hash_val)
 
     __match_args__ = ("column", "interval_start", "interval_end")
 
@@ -2267,8 +2260,8 @@ class InPredicate(BasePredicate):
             raise ValueError("No empty value allowed")
         self._column = column
         self._values = tuple(values)
-        hash_val = hash((LogicalSqlOperators.In, self._column, self._values))
-        super().__init__(LogicalSqlOperators.In, hash_val=hash_val)
+        hash_val = hash((LogicalOperator.In, self._column, self._values))
+        super().__init__(LogicalOperator.In, hash_val=hash_val)
 
     __match_args__ = ("column", "values")
 
@@ -2398,7 +2391,7 @@ class UnaryPredicate(BasePredicate):
             The ``EXISTS`` predicate
         """
         subquery = subquery if isinstance(subquery, SubqueryExpression) else SubqueryExpression(subquery)
-        return UnaryPredicate(subquery, LogicalSqlOperators.Exists)
+        return UnaryPredicate(subquery, LogicalOperator.Exists)
 
     def __init__(self, column: SqlExpression, operation: Optional[SqlOperator] = None):
         if not column:
@@ -2429,7 +2422,7 @@ class UnaryPredicate(BasePredicate):
         bool
             Whether this predicate is an ``EXISTS`` predicate
         """
-        return self.operation == LogicalSqlOperators.Exists
+        return self.operation == LogicalOperator.Exists
 
     def is_join(self) -> bool:
         return len(_collect_column_expression_tables(self.column)) > 1
@@ -2459,7 +2452,7 @@ class UnaryPredicate(BasePredicate):
         if not self.operation:
             return str(self.column)
 
-        if self.operation == LogicalSqlOperators.Exists:
+        if self.operation == LogicalOperator.Exists:
             assert isinstance(self.column, SubqueryExpression)
             return f"EXISTS {self.column}"
 
@@ -2489,7 +2482,7 @@ class CompoundPredicate(AbstractPredicate):
     """
 
     @staticmethod
-    def create(operation: CompoundOperators, parts: Collection[AbstractPredicate]) -> AbstractPredicate:
+    def create(operation: CompoundOperator, parts: Collection[AbstractPredicate]) -> AbstractPredicate:
         """Creates an arbitrary compound predicate for a number of child predicates.
 
         If just a single child predicate is provided, but the operation requires multiple children, that child is returned
@@ -2514,15 +2507,15 @@ class CompoundPredicate(AbstractPredicate):
             If a negation predicate should be created but a number child predicates unequal to one are supplied. Likewise, if
             a conjunction or disjunction is requested, but no child predicates are supplied.
         """
-        if operation == CompoundOperators.Not and len(parts) != 1:
+        if operation == CompoundOperator.Not and len(parts) != 1:
             raise ValueError(f"Can only create negations for exactly one predicate but received: '{parts}'")
-        elif operation != CompoundOperators.Not and not parts:
+        elif operation != CompoundOperator.Not and not parts:
             raise ValueError("Conjunctions/disjunctions require at least one predicate")
 
         match operation:
-            case CompoundOperators.Not:
+            case CompoundOperator.Not:
                 return CompoundPredicate.create_not(parts[0])
-            case CompoundOperators.And | CompoundOperators.Or:
+            case CompoundOperator.And | CompoundOperator.Or:
                 if len(parts) == 1:
                     return parts[0]
                 return CompoundPredicate(operation, parts)
@@ -2557,7 +2550,7 @@ class CompoundPredicate(AbstractPredicate):
             raise ValueError("No predicates supplied.")
         if len(parts) == 1:
             return parts[0]
-        return CompoundPredicate(CompoundOperators.And, parts)
+        return CompoundPredicate(CompoundOperator.And, parts)
 
     @staticmethod
     def create_not(predicate: AbstractPredicate) -> CompoundPredicate:
@@ -2574,7 +2567,7 @@ class CompoundPredicate(AbstractPredicate):
             The negated predicate. No logic checks or simplifications are performed. For example, it is possible to negate a
             negation and this will still be represented in the predicate hierarchy.
         """
-        return CompoundPredicate(CompoundOperators.Not, predicate)
+        return CompoundPredicate(CompoundOperator.Not, predicate)
 
     @staticmethod
     def create_or(parts: Collection[AbstractPredicate]) -> AbstractPredicate:
@@ -2604,15 +2597,15 @@ class CompoundPredicate(AbstractPredicate):
             raise ValueError("No predicates supplied.")
         if len(parts) == 1:
             return parts[0]
-        return CompoundPredicate(CompoundOperators.Or, parts)
+        return CompoundPredicate(CompoundOperator.Or, parts)
 
-    def __init__(self, operation: CompoundOperators,
+    def __init__(self, operation: CompoundOperator,
                  children: AbstractPredicate | Sequence[AbstractPredicate]) -> None:
         if not operation or not children:
             raise ValueError("Operation and children must be set")
-        if operation == CompoundOperators.Not and len(util.enlist(children)) > 1:
+        if operation == CompoundOperator.Not and len(util.enlist(children)) > 1:
             raise ValueError("NOT predicates can only have one child predicate")
-        if operation != CompoundOperators.Not and len(util.enlist(children)) < 2:
+        if operation != CompoundOperator.Not and len(util.enlist(children)) < 2:
             raise ValueError("AND/OR predicates require at least two child predicates.")
         self._operation = operation
         self._children = tuple(util.enlist(children))
@@ -2621,7 +2614,7 @@ class CompoundPredicate(AbstractPredicate):
     __match_args__ = ("operation", "children")
 
     @property
-    def operation(self) -> CompoundOperators:
+    def operation(self) -> CompoundOperator:
         """Get the operation used to combine the individual evaluations of the child predicates.
 
         Returns
@@ -2644,7 +2637,7 @@ class CompoundPredicate(AbstractPredicate):
             The sequence of child predicates for ``AND`` and ``OR`` predicates, or the negated predicate for ``NOT``
             predicates.
         """
-        return self._children[0] if self.operation == CompoundOperators.Not else self._children
+        return self._children[0] if self.operation == CompoundOperator.Not else self._children
 
     def is_compound(self) -> bool:
         return True
@@ -2682,11 +2675,11 @@ class CompoundPredicate(AbstractPredicate):
 
     def accept_visitor(self, visitor: PredicateVisitor[VisitorResult]) -> VisitorResult:
         match self.operation:
-            case CompoundOperators.Not:
+            case CompoundOperator.Not:
                 return visitor.visit_not_predicate(self, self.children)
-            case CompoundOperators.And:
+            case CompoundOperator.And:
                 return visitor.visit_and_predicate(self, self.children)
-            case CompoundOperators.Or:
+            case CompoundOperator.Or:
                 return visitor.visit_or_predicate(self, self.children)
             case _:
                 raise ValueError(f"Unknown operation: '{self.operation}'")
@@ -2705,12 +2698,12 @@ class CompoundPredicate(AbstractPredicate):
         return super().__repr__()
 
     def __str__(self) -> str:
-        if self.operation == CompoundOperators.Not:
+        if self.operation == CompoundOperator.Not:
             return self._stringify_not()
-        elif self.operation == CompoundOperators.Or:
+        elif self.operation == CompoundOperator.Or:
             return "(" + " OR ".join(f"({child})" if child.is_compound() else str(child)
                                      for child in self.iterchildren()) + ")"
-        elif self.operation == CompoundOperators.And:
+        elif self.operation == CompoundOperator.And:
             return " AND ".join(str(child) for child in self.children)
         else:
             raise ValueError(f"Unknown operation: '{self.operation}'")
@@ -2762,7 +2755,7 @@ class PredicateVisitor(abc.ABC, Generic[VisitorResult]):
         raise NotImplementedError
 
 
-def as_predicate(column: ColumnReference, operation: LogicalSqlOperators,
+def as_predicate(column: ColumnReference, operation: LogicalOperator,
                  *arguments) -> BasePredicate:
     """Utility method to quickly construct instances of base predicates.
 
@@ -2798,13 +2791,13 @@ def as_predicate(column: ColumnReference, operation: LogicalSqlOperators,
     """
     column = ColumnExpression(column)
 
-    if operation == LogicalSqlOperators.Between:
+    if operation == LogicalOperator.Between:
         if len(arguments) == 1:
             lower, upper = arguments[0]
         else:
             lower, upper, *__ = arguments
         return BetweenPredicate(column, (as_expression(lower), as_expression(upper)))
-    elif operation == LogicalSqlOperators.In:
+    elif operation == LogicalOperator.In:
         arguments = util.flatten(arguments)
         return InPredicate(column, [as_expression(value) for value in arguments])
     elif len(arguments) != 1:
@@ -2834,7 +2827,7 @@ def determine_join_equivalence_classes(predicates: Iterable[BinaryPredicate]) ->
     """
     join_predicates = {pred for pred in predicates
                        if isinstance(pred, BinaryPredicate) and pred.is_join()
-                       and pred.operation == LogicalSqlOperators.Equal}
+                       and pred.operation == LogicalOperator.Equal}
 
     equivalence_graph = nx.Graph()
     for predicate in join_predicates:
@@ -2877,7 +2870,7 @@ def generate_predicates_for_equivalence_classes(equivalence_classes: set[frozens
     equivalence_predicates: set[BinaryPredicate] = set()
     for equivalence_class in equivalence_classes:
         for first_col, second_col in util.collections.pairs(equivalence_class):
-            equivalence_predicates.add(as_predicate(first_col, LogicalSqlOperators.Equal, second_col))
+            equivalence_predicates.add(as_predicate(first_col, LogicalOperator.Equal, second_col))
     return equivalence_predicates
 
 
@@ -2904,7 +2897,7 @@ def _unwrap_expression(expression: ColumnExpression | StaticValueExpression) -> 
         raise ValueError("Cannot unwrap expression " + str(expression))
 
 
-UnwrappedFilter = tuple[ColumnReference, LogicalSqlOperators, object]
+UnwrappedFilter = tuple[ColumnReference, LogicalOperator, object]
 """Type that captures the main components of a filter predicate."""
 
 
@@ -2946,14 +2939,14 @@ def _attempt_filter_unwrap(predicate: AbstractPredicate) -> Optional[UnwrappedFi
             column = _unwrap_expression(predicate.column)
             start = _unwrap_expression(predicate.interval_start)
             end = _unwrap_expression(predicate.interval_end)
-            return column, LogicalSqlOperators.Between, (start, end)
+            return column, LogicalOperator.Between, (start, end)
         except ValueError:
             return None
     elif isinstance(predicate, InPredicate):
         try:
             column = _unwrap_expression(predicate.column)
             values = [_unwrap_expression(val) for val in predicate.values]
-            return column, LogicalSqlOperators.In, tuple(values)
+            return column, LogicalOperator.In, tuple(values)
         except ValueError:
             return None
     else:
@@ -3085,7 +3078,7 @@ class SimplifiedFilterView(AbstractPredicate):
         return self._column
 
     @property
-    def operation(self) -> LogicalSqlOperators:
+    def operation(self) -> LogicalOperator:
         """Get the SQL operation that is used for the filter (e.g. ``IN`` or ``<>``).
 
         Returns
@@ -3188,18 +3181,18 @@ def _collect_filter_predicates(predicate: AbstractPredicate) -> set[AbstractPred
     if isinstance(predicate, BasePredicate):
         return {predicate} if predicate.is_filter() else set()
     elif isinstance(predicate, CompoundPredicate):
-        if predicate.operation == CompoundOperators.Or:
+        if predicate.operation == CompoundOperator.Or:
             or_filter_children = [child_pred for child_pred in predicate.children if child_pred.is_filter()]
             if len(or_filter_children) < 2:
                 return set(or_filter_children)
-            or_filters = CompoundPredicate(CompoundOperators.Or, or_filter_children)
+            or_filters = CompoundPredicate(CompoundOperator.Or, or_filter_children)
             return {or_filters}
-        elif predicate.operation == CompoundOperators.Not:
+        elif predicate.operation == CompoundOperator.Not:
             not_filter_children = predicate.children if predicate.children.is_filter() else None
             if not not_filter_children:
                 return set()
             return {predicate}
-        elif predicate.operation == CompoundOperators.And:
+        elif predicate.operation == CompoundOperator.And:
             return util.set_union([_collect_filter_predicates(child) for child in predicate.children])
         else:
             raise ValueError(f"Unknown operation: '{predicate.operation}'")
@@ -3244,18 +3237,18 @@ def _collect_join_predicates(predicate: AbstractPredicate) -> set[AbstractPredic
     if isinstance(predicate, BasePredicate):
         return {predicate} if predicate.is_join() else set()
     elif isinstance(predicate, CompoundPredicate):
-        if predicate.operation == CompoundOperators.Or:
+        if predicate.operation == CompoundOperator.Or:
             or_join_children = [child_pred for child_pred in predicate.children if child_pred.is_join()]
             if len(or_join_children) < 2:
                 return set(or_join_children)
-            or_joins = CompoundPredicate(CompoundOperators.Or, or_join_children)
+            or_joins = CompoundPredicate(CompoundOperator.Or, or_join_children)
             return {or_joins}
-        elif predicate.operation == CompoundOperators.Not:
+        elif predicate.operation == CompoundOperator.Not:
             not_join_children = predicate.children if predicate.children.is_join() else None
             if not not_join_children:
                 return set()
             return {predicate}
-        elif predicate.operation == CompoundOperators.And:
+        elif predicate.operation == CompoundOperator.And:
             return util.set_union([_collect_join_predicates(child) for child in predicate.children])
         else:
             raise ValueError(f"Unknown operation: '{predicate.operation}'")

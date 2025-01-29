@@ -217,7 +217,7 @@ class PredicateTests(unittest.TestCase):
         parsed = pb.parse_query(query)
         root_predicate = parsed.where_clause.predicate
         self.assertTrue(isinstance(root_predicate, pb.qal.CompoundPredicate))
-        self.assertTrue(root_predicate.operation == pb.qal.CompoundOperators.Or,
+        self.assertTrue(root_predicate.operation == pb.qal.CompoundOperator.Or,
                         "OR predicate should come first")
 
 

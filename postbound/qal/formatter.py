@@ -8,7 +8,7 @@ from typing import Optional
 from . import transform
 from ._core import (
     SqlExpression, SubqueryExpression, CaseExpression, Limit, CommonTableExpression,
-    CompoundOperators,
+    CompoundOperator,
     From, ImplicitFromClause, ExplicitFromClause,
     TableSource, DirectTableSource, JoinTableSource, SubqueryTableSource, ValuesTableSource,
     Select, Hint, Where, UnionClause, IntersectClause, ExceptClause,
@@ -349,7 +349,7 @@ def _quick_format_predicate(predicate: AbstractPredicate) -> list[str]:
     if not isinstance(predicate, CompoundPredicate):
         return [str(predicate)]
     compound_pred: CompoundPredicate = predicate
-    if compound_pred.operation == CompoundOperators.And:
+    if compound_pred.operation == CompoundOperator.And:
         first_child, *remaining_children = compound_pred.children
         return [str(first_child)] + ["AND " + str(child) for child in remaining_children]
     return [str(compound_pred)]

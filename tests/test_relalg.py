@@ -45,17 +45,17 @@ class RelalgParserTests(unittest.TestCase):
         col_s_a = ColumnReference("a", tab_s)
         col_s_b = ColumnReference("b", tab_s)
         scan_s = relalg.Relation(TableReference("S"), [col_s_a, col_s_b])
-        select_s = relalg.Selection(scan_s, qal.as_predicate(col_s_a, qal.LogicalSqlOperators.Equal, 42))
+        select_s = relalg.Selection(scan_s, qal.as_predicate(col_s_a, qal.LogicalOperator.Equal, 42))
 
         tab_r = TableReference("R")
         col_r_a = ColumnReference("a", tab_r)
         scan_r = relalg.Relation(TableReference("R"), [col_r_a])
 
         join_node = relalg.ThetaJoin(select_s, scan_r,
-                                     qal.as_predicate(col_s_b, qal.LogicalSqlOperators.Equal, col_r_a))
+                                     qal.as_predicate(col_s_b, qal.LogicalOperator.Equal, col_r_a))
 
         additional_selection = relalg.Selection(select_s,
-                                                qal.as_predicate(col_s_b, qal.LogicalSqlOperators.Equal, 24))
+                                                qal.as_predicate(col_s_b, qal.LogicalOperator.Equal, 24))
         new_root = join_node.mutate(left_input=additional_selection).root()
 
         self.assertNotEqual(join_node, new_root)
@@ -71,8 +71,8 @@ class RelalgParserTests(unittest.TestCase):
         col_r_a = ColumnReference("a", tab_r)
         scan_r = relalg.Relation(TableReference("R"), [col_r_a])
 
-        selection_a = relalg.Selection(scan_r, qal.as_predicate(col_r_a, qal.LogicalSqlOperators.Less, 42))
-        selection_b = relalg.Selection(scan_r, qal.as_predicate(col_r_a, qal.LogicalSqlOperators.Greater, 24))
+        selection_a = relalg.Selection(scan_r, qal.as_predicate(col_r_a, qal.LogicalOperator.Less, 42))
+        selection_b = relalg.Selection(scan_r, qal.as_predicate(col_r_a, qal.LogicalOperator.Greater, 24))
         union_node = relalg.Union(selection_a, selection_b)
 
         additional_projection = relalg.Projection(selection_b, [col_r_a])
@@ -91,7 +91,7 @@ class RelalgParserTests(unittest.TestCase):
         tab_s = TableReference("S")
         col_r_a = ColumnReference("a", tab_r)
         col_s_a = ColumnReference("a", tab_s)
-        join_pred = qal.as_predicate(col_r_a, qal.LogicalSqlOperators.Equal, col_s_a)
+        join_pred = qal.as_predicate(col_r_a, qal.LogicalOperator.Equal, col_s_a)
 
         # Our old relalg tree: Projection(Select(CrossProduct(R, S)))
         scan_r = relalg.Relation(tab_r, [col_r_a])
@@ -115,7 +115,7 @@ class RelalgParserTests(unittest.TestCase):
         tab_s = TableReference("S")
         col_r_a = ColumnReference("a", tab_r)
         col_s_a = ColumnReference("a", tab_s)
-        filter_pred = qal.as_predicate(col_r_a, qal.LogicalSqlOperators.Less, 42)
+        filter_pred = qal.as_predicate(col_r_a, qal.LogicalOperator.Less, 42)
 
         # Our old relalg tree: Select(CrossProduct(R, S))
         scan_r = relalg.Relation(tab_r, [col_r_a])
@@ -149,9 +149,9 @@ class RelalgParserTests(unittest.TestCase):
 
         # Original structure: Selection1(Projection1(Selection2(R)))
         scan_r = relalg.Relation(tab_r, [col_r_a, col_r_b])
-        selection = relalg.Selection(scan_r, qal.as_predicate(col_r_a, qal.LogicalSqlOperators.Less, 42))
+        selection = relalg.Selection(scan_r, qal.as_predicate(col_r_a, qal.LogicalOperator.Less, 42))
         projection = relalg.Projection(selection, [col_r_a])
-        old_root = relalg.Selection(projection, qal.as_predicate(col_r_a, qal.LogicalSqlOperators.Greater, 24))
+        old_root = relalg.Selection(projection, qal.as_predicate(col_r_a, qal.LogicalOperator.Greater, 24))
 
         # Updated structure: Selection1(Projection1(Projection2(Selection2(R)))
         additional_projection = relalg.Projection(selection, [col_r_a, col_r_b])
@@ -177,7 +177,7 @@ class RelalgParserTests(unittest.TestCase):
     def test_no_upwards_modification(self):
         tab_r = TableReference("R")
         col_r_a = ColumnReference("a", tab_r)
-        filter_pred = qal.as_predicate(col_r_a, qal.LogicalSqlOperators.Greater, 24)
+        filter_pred = qal.as_predicate(col_r_a, qal.LogicalOperator.Greater, 24)
 
         # Original structure: Projection(R)
         original_relation = relalg.Relation(tab_r, [col_r_a])
@@ -195,8 +195,8 @@ class RelalgParserTests(unittest.TestCase):
         col_r_a = ColumnReference("a", tab_r)
         tab_s = TableReference("S")
         col_s_a = ColumnReference("a", tab_s)
-        le_join_pred = qal.as_predicate(col_r_a, qal.LogicalSqlOperators.LessEqual, col_s_a)
-        lt_join_pred = qal.as_predicate(col_r_a, qal.LogicalSqlOperators.Less, col_s_a)
+        le_join_pred = qal.as_predicate(col_r_a, qal.LogicalOperator.LessEqual, col_s_a)
+        lt_join_pred = qal.as_predicate(col_r_a, qal.LogicalOperator.Less, col_s_a)
 
         # Original structure: ThetaJoin(R, Projection(ThetaJoin(R, S))
         scan_r = relalg.Relation(tab_r, [col_r_a])
