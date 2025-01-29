@@ -34,7 +34,7 @@ from typing import Optional
 import pglast
 
 from ._core import (
-    TableReference, ColumnReference,
+    ColumnReference,
     SelectType, JoinType,
     CompoundOperators, MathematicalSqlOperators, LogicalSqlOperators, SqlOperator,
     BaseProjection, OrderByExpression,
@@ -47,10 +47,39 @@ from ._core import (
     MathematicalExpression, FunctionExpression, BooleanExpression, WindowExpression, CaseExpression,
     build_query
 )
+from .._core import TableReference, normalize
 from .. import util
 
 auto_bind_columns: bool = False
 """Indicates whether the parser should use the database catalog to obtain column bindings."""
+
+
+def _pglast_create_bounded_colref(tab: str, col: str, available_tables: dict[str, TableReference],
+                                  resolved_columns: dict[tuple[str, str], ColumnReference]) -> ColumnReference:
+    """Creates a new reference to a column with known binding info.
+
+    Parameters
+    ----------
+    tab : str
+        The table to which to bind
+    col : str
+        The column to bind
+    available_tables : dict[str, TableReference]
+        Candidates for the binding table
+    resolved_columns : dict[tuple[str, str], ColumnReference]
+        Already resolved columns
+
+    Returns
+    -------
+    ColumnReference
+        The new column reference
+    """
+    parsed_table = available_tables.get(normalize(tab), None)
+    if not parsed_table:
+        raise ParserError("Table not found: " + tab)
+    parsed_column = ColumnReference(col, parsed_table)
+    resolved_columns[(tab, col)] = parsed_column
+    return parsed_column
 
 
 def _pglast_parse_colref(pglast_data: dict, *, available_tables: dict[str, TableReference],
@@ -98,15 +127,22 @@ def _pglast_parse_colref(pglast_data: dict, *, available_tables: dict[str, Table
         tab, col = fields
         tab: str = tab["String"]["sval"]
         col: str = col["String"]["sval"]
-        parsed_table = available_tables.get(tab, None)
-        if not parsed_table:
-            raise ParserError("Table not found: " + tab)
-        parsed_column = ColumnReference(col, parsed_table)
-        resolved_columns[(tab, col)] = parsed_column
-        return parsed_column
+        return _pglast_create_bounded_colref(tab, col, available_tables, resolved_columns)
 
-    # at this point, we must have a single unbound column parameter
+    # at this point, we must have a single column parameter. It could be unbounded, or - if quoted - bounded
     col: str = fields[0]["String"]["sval"]
+
+    # first, check for quoted and qualified identifiers, such as "Sales.Price"
+    if "." in col:
+        tab, col = col.split(".")
+
+        # we need to manually normalize here, because Postgres does not normalize quoted identifiers by default
+        # however, this does not apply to the table, because this was already normalized as part of the CTE/FROM clause parsing
+        col = normalize(col)
+
+        return _pglast_create_bounded_colref(tab, col, available_tables, resolved_columns)
+
+    # now, we know for certain that the identifier is unqualified
     if ("", col) in resolved_columns:
         return resolved_columns[col]
     if not schema:
@@ -351,13 +387,19 @@ def _pglast_parse_expression(pglast_data: dict, *, available_tables: dict[str, T
             expression: dict = pglast_data["FuncCall"]
             funcname = expression["funcname"][0]["String"]["sval"]
             distinct = expression.get("agg_distinct", False)
+            if expression.get("agg_filter", False):
+                filter_expr = _pglast_parse_predicate(expression["agg_filter"], available_tables=available_tables,
+                                                      resolved_columns=resolved_columns, schema=schema)
+            else:
+                filter_expr = None
+
             if expression.get("agg_star", False):
-                return FunctionExpression(funcname, [StarExpression()], distinct=distinct)
+                return FunctionExpression(funcname, [StarExpression()], distinct=distinct, filter_by=filter_expr)
 
             args = [_pglast_parse_expression(arg, available_tables=available_tables,
                                              resolved_columns=resolved_columns, schema=schema)
                     for arg in expression["args"]]
-            return FunctionExpression(funcname, args, distinct=distinct)
+            return FunctionExpression(funcname, args, distinct=distinct, filter_by=filter_expr)
 
         case "FuncCall" if "over" in pglast_data["FuncCall"]:  # window functions
             expression: dict = pglast_data["FuncCall"]
@@ -934,7 +976,9 @@ def _pglast_parse_predicate(pglast_data: dict, available_tables: dict[str, Table
                 raise NotImplementedError("Subquery handling is not yet implemented")
 
         case _:
-            raise ParserError("Unknown predicate type: " + str(pglast_data))
+            expression = _pglast_parse_expression(pglast_data, available_tables=available_tables,
+                                                  resolved_columns=resolved_columns, schema=schema)
+            return UnaryPredicate(expression)
 
 
 def _pglast_parse_where(where_clause: dict, *,

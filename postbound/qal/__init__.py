@@ -105,7 +105,6 @@ from typing import Optional
 from . import relalg, transform
 from ._core import (
     VisitorResult,
-    TableReference,
     ColumnReference,
     UnboundColumnError,
     VirtualTableError,
@@ -184,11 +183,11 @@ from ._core import (
     build_query
 )
 from .formatter import format_quick
+from .._core import (TableReference, quote, normalize)
 
 
 __all__ = [
     "VisitorResult",
-    "TableReference",
     "ColumnReference",
     "UnboundColumnError",
     "VirtualTableError",
@@ -268,6 +267,9 @@ __all__ = [
     "relalg",
     "transform",
     "format_quick",
+    "TableReference",
+    "quote",
+    "normalize",
     "parse_query"
 ]
 

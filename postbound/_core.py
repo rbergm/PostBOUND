@@ -4,6 +4,7 @@ from __future__ import annotations
 import collections
 import math
 import numbers
+import re
 import warnings
 from enum import Enum
 from typing import Callable, Iterable, Literal, Optional, Sequence, Union
@@ -60,6 +61,68 @@ PhysicalOperator = Union[ScanOperators, JoinOperators]
 
 These can differ from the operators that are actually available in the selected target database system.
 """
+
+_IdentifierPattern = re.compile(r"^[a-zA-Z_][a-zA-Z0-9_\$]*$")
+"""Regular expression to check for valid identifiers.
+
+References
+----------
+- Postgres documentation on identifiers: https://www.postgresql.org/docs/current/sql-syntax-lexical.html#SQL-SYNTAX-IDENTIFIERS
+- Regex tester: https://regex101.com/r/TtrNQg/1
+"""
+
+SqlKeywords = frozenset({
+    "ALL", "AND", "ANY", "ARRAY", "AS", "ASC", "ASYMMETRIC", "BINARY", "BOTH", "CASE", "CAST", "CHECK", "COLLATE",
+    "COLUMN", "CONSTRAINT", "CREATE", "CROSS", "CURRENT_CATALOG", "CURRENT_DATE", "CURRENT_ROLE", "CURRENT_SCHEMA",
+    "CURRENT_TIME", "CURRENT_TIMESTAMP", "CURRENT_USER", "DEFAULT", "DEFERRABLE", "DESC", "DISTINCT", "DO", "ELSE",
+    "END", "EXCEPT", "FALSE", "FETCH", "FOR", "FOREIGN", "FROM", "FULL", "GRANT", "GROUP", "HAVING", "ILIKE", "IN",
+    "INITIALLY", "INNER", "INTERSECT", "INTO", "IS", "JOIN", "LATERAL", "LEADING", "LEFT", "LIKE", "LIMIT", "LOCALTIME",
+    "LOCALTIMESTAMP", "NATURAL", "NOT", "NULL", "OFFSET", "ON", "ONLY", "OR", "ORDER", "OUTER", "OVERLAPS", "PLACING",
+    "PRIMARY", "REFERENCES", "RETURNING", "RIGHT", "SELECT", "SESSION_USER", "SIMILAR", "SOME", "SYMMETRIC", "TABLE",
+    "THEN", "TO", "TRAILING", "TRUE", "UNION", "UNIQUE", "USER", "USING", "VARIADIC", "VERBOSE", "WHEN", "WHERE",
+    "WINDOW", "WITH"
+})
+"""An (probably incomplete) list of reserved SQL keywords that must be quoted before being used as identifiers."""
+
+
+def quote(identifier: str) -> str:
+    """Quotes an identifier if necessary.
+
+    Valid identifiers can be used as-is, e.g. ``title`` or ``movie_id``. Invalid identifiers will be wrapped in quotes, such as
+    ``"movie title"`` or ``"movie-id"``.
+
+    Parameters
+    ----------
+    identifier : str
+        The identifier to quote. Note that empty strings are treated as valid identifiers.
+
+    Returns
+    -------
+    str
+        The identifier, potentially wrapped in quotes.
+    """
+    if not identifier:
+        return ""
+    valid_identifier = _IdentifierPattern.fullmatch(identifier) and identifier.upper() not in SqlKeywords
+    return identifier if valid_identifier else f'"{identifier}"'
+
+
+def normalize(identifier: str) -> str:
+    """Generates a normalized version of an identifier.
+
+    Normalization is based on the Postgres rules of performing all comparisons in a case-insensitive manner.
+
+    Parameters
+    ----------
+    identifier : str
+        The identifier to normalize. Notice that empty strings can be normalized as well (without doing anything).
+
+    Returns
+    -------
+    str
+        The normalized identifier
+    """
+    return identifier.lower()
 
 
 class TableReference:
@@ -119,10 +182,19 @@ class TableReference:
         self._virtual = virtual
         self._identifier = self._alias if self._alias else self._full_name
 
-        self._normalized_full_name = self._full_name.lower()
-        self._normalized_alias = self._alias.lower()
-        self._nomalized_identifier = self._identifier.lower()
+        self._normalized_full_name = normalize(self._full_name)
+        self._normalized_alias = normalize(self._alias)
+        self._nomalized_identifier = normalize(self._identifier)
         self._hash_val = hash((self._normalized_full_name, self._normalized_alias))
+
+        if self._full_name and self._alias:
+            self._sql_repr = f"{quote(self._full_name)} AS {quote(self._alias)}"
+        elif self._alias:
+            self._sql_repr = quote(self._alias)
+        elif self._full_name:
+            self._sql_repr = quote(self._full_name)
+        else:
+            raise ValueError("Full name or alias required")
 
     __match_args__ = ("full_name", "alias", "virtual")
 
@@ -237,14 +309,7 @@ class TableReference:
         return f"TableReference(full_name='{self.full_name}', alias='{self.alias}', virtual={self.virtual})"
 
     def __str__(self) -> str:
-        if self.full_name and self.alias:
-            return f"{self.full_name} AS {self.alias}"
-        elif self.alias:
-            return self.alias
-        elif self.full_name:
-            return self.full_name
-        else:
-            return "[UNKNOWN TABLE]"
+        return self._sql_repr
 
 
 class QueryExecutionPlan:

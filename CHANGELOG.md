@@ -34,12 +34,14 @@ Be carefull when updating and check the changelog!
 - Added convenience method `InPredicate.subquery()` to create a new `column IN <subquery>` predicate
 - Added optional materialization info to common table expressions
 - Added support for lateral subqueries
+- Added support for `FILTER` in aggregate functions
 - Introduced `__match_args__` for most building blocks of the query abstraction. This allows for much more convenient usage in
   `match` expressions.
 
 ### Updates
 - Switched to [pglast](https://github.com/lelit/pglast) as the underlying parser for SQL queries. Much better parser
   performance and larger SQL support.
+- References to tables and columns now automatically apply quoting if necessary
 
 ### ⚠ Breaking changes 💀
 - Identities of `TableReference` and `ColumnReference` objects are now based on their lowercase representations. This is a

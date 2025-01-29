@@ -13,7 +13,7 @@ from typing import Generic, Literal, Optional, Type, TypeVar, Union
 import networkx as nx
 
 from .. import util
-from .._core import TableReference
+from .._core import TableReference, quote, normalize
 from ..util import StateError
 
 T = TypeVar("T")
@@ -66,8 +66,13 @@ class ColumnReference:
             raise ValueError("Column name is required")
         self._name = name
         self._table = table
-        self._normalized_name = self._name.lower()
+        self._normalized_name = normalize(self._name)
         self._hash_val = hash((self._normalized_name, self._table))
+
+        if self._table:
+            self._sql_repr = f"{quote(self._table.identifier())}.{quote(self._name)}"
+        else:
+            self._sql_repr = quote(self._name)
 
     __match_args__ = ("name", "table")
 
@@ -160,11 +165,7 @@ class ColumnReference:
         return f"ColumnReference(name='{self.name}', table={repr(self.table)})"
 
     def __str__(self) -> str:
-        if self.table and self.table.alias:
-            return f"{self.table.alias}.{self.name}"
-        elif self.table and self.table.full_name:
-            return f"{self.table.full_name}.{self.name}"
-        return self.name
+        return self._sql_repr
 
 
 class UnboundColumnError(StateError):
@@ -697,8 +698,17 @@ class ColumnExpression(SqlExpression):
         return str(self.column)
 
 
-AggregateFunctions = {"COUNT", "SUM", "MIN", "MAX", "AVG"}
-"""All aggregate functions specified in standard SQL."""
+AggregateFunctions = {
+    # SQL standard aggregates
+    "COUNT", "SUM", "MIN", "MAX", "AVG", "EVERY", "CORR", "STDDEV",
+
+    # Postgres additions
+    "ANY_VALUE", "ARRAY_AGG",
+    "BIT_AND", "BIT_OR", "BIT_XOR",
+    "BOOL_AND", "BOOL_OR", "BOOL_XOR",
+    "STRING_AGG", "JSON_AGG", "XML_AGG"
+}
+"""All aggregate functions specified in standard SQL and Postgres."""
 
 
 class FunctionExpression(SqlExpression):
@@ -767,14 +777,18 @@ class FunctionExpression(SqlExpression):
         return FunctionExpression("ANY", (subquery,))
 
     def __init__(self, function: str, arguments: Optional[Sequence[SqlExpression]] = None, *,
-                 distinct: bool = False) -> None:
+                 distinct: bool = False, filter_by: Optional[AbstractPredicate] = None) -> None:
         if not function:
             raise ValueError("Function is required")
+        if function.upper() not in AggregateFunctions and (distinct or filter_by):
+            raise ValueError("DISTINCT keyword or FILTER expressions are only valid for aggregate functions")
+
         self._function = function.upper()
         self._arguments: tuple[SqlExpression] = () if arguments is None else tuple(arguments)
         self._distinct = distinct
+        self._filter_expr = filter_by
 
-        hash_val = hash((self._function, self._distinct, self._arguments))
+        hash_val = hash((self._function, self._distinct, self._arguments, self._filter_expr))
         super().__init__(hash_val)
 
     __match_args__ = ("function", "arguments", "distinct")
@@ -816,6 +830,19 @@ class FunctionExpression(SqlExpression):
             Whether a duplicate elimination has to be performed on the function arguments
         """
         return self._distinct
+
+    @property
+    def filter_where(self) -> Optional[AbstractPredicate]:
+        """Get the filter expression for an aggregate function.
+
+        Filters restrict the values that are actually included in the aggregate.
+
+        Returns
+        -------
+        Optional[AbstractPredicate]
+            The filter expression or ``None`` if no filter is applied (or the function is not an aggregate).
+        """
+        return self._filter_expr
 
     def is_aggregate(self) -> bool:
         """Checks, whether the function is a well-known SQL aggregation function.
@@ -874,18 +901,24 @@ class FunctionExpression(SqlExpression):
         return subquery.query
 
     def tables(self) -> set[TableReference]:
-        return util.set_union(arg.tables() for arg in self.arguments)
+        args_tables = util.set_union(arg.tables() for arg in self.arguments)
+        filter_tables = self._filter_expr.tables() if self._filter_expr else set()
+        return args_tables | filter_tables
 
     def columns(self) -> set[ColumnReference]:
         all_columns = set()
         for arg in self.arguments:
             all_columns |= arg.columns()
+        if self._filter_expr:
+            all_columns |= self._filter_expr.columns()
         return all_columns
 
     def itercolumns(self) -> Iterable[ColumnReference]:
         all_columns = []
         for arg in self.arguments:
             all_columns.extend(arg.itercolumns())
+        if self._filter_expr:
+            all_columns.extend(self._filter_expr.itercolumns())
         return all_columns
 
     def iterchildren(self) -> Iterable[SqlExpression]:
@@ -900,16 +933,15 @@ class FunctionExpression(SqlExpression):
         return (isinstance(other, type(self))
                 and self.function == other.function
                 and self.arguments == other.arguments
-                and self.distinct == other.distinct)
+                and self.distinct == other.distinct
+                and self.filter_where == other.filter_where)
 
     def __str__(self) -> str:
         args_str = ", ".join(str(arg) for arg in self._arguments)
         distinct_str = "DISTINCT " if self._distinct else ""
-        if self.is_all() or self.is_any():
-            parameterization = f" {args_str}"
-        else:
-            parameterization = f"({distinct_str}{args_str})"
-        return self._function + parameterization
+        parameterization = f" {args_str}" if self.is_all() or self.is_any() else f"({distinct_str}{args_str})"
+        filter_str = f" FILTER (WHERE {self._filter_expr})" if self._filter_expr else ""
+        return f"{self._function}{parameterization}{filter_str}"
 
 
 class SubqueryExpression(SqlExpression):
