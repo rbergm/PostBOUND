@@ -804,7 +804,10 @@ def _pglast_parse_from_entry(pglast_data: dict, *, available_tables: dict[str, T
             # If we specified a virtual table in a CTE, we will reference it later in some FROM clause. In this case,
             # we should not create a new table reference, but rather use the existing one.
             # But, if we alias the virtual table, we still need a new reference
-            if table.full_name in available_tables and not table.alias and available_tables[table.full_name].virtual:
+            similar_table = available_tables.get(normalize(table.full_name), None)
+            if similar_table and similar_table.virtual and not table.alias:
+                return DirectTableSource(similar_table)
+            if similar_table and similar_table.virtual and table.alias:
                 table = table.make_virtual()
                 # TODO: should we also update the mapping of the full_name here?
                 available_tables[normalize(table.alias)] = table
