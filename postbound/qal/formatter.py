@@ -9,6 +9,7 @@ from . import transform
 from ._core import (
     SqlExpression, SubqueryExpression, CaseExpression, Limit, CommonTableExpression,
     CompoundOperator,
+    ValuesWithQuery,
     From, ImplicitFromClause, ExplicitFromClause,
     TableSource, DirectTableSource, JoinTableSource, SubqueryTableSource, ValuesTableSource,
     Select, Hint, Where, UnionClause, IntersectClause, ExceptClause,
@@ -133,8 +134,15 @@ def _quick_format_cte(cte_clause: CommonTableExpression) -> list[str]:
     """
     if len(cte_clause.queries) == 1:
         cte_query = cte_clause.queries[0]
-        cte_header = f"WITH {cte_query.target_name} AS ("
-        cte_content = _increase_indentation(format_quick(cte_query.query, trailing_semicolon=False))
+        if isinstance(cte_query, ValuesWithQuery):
+            cte_header = "WITH "
+            cte_content = str(cte_query)
+        else:
+            mat_info = "" if cte_query.materialized is None else ("MATERIALIZED " if cte_query.materialized
+                                                                  else "NOT MATERIALIZED ")
+            cte_header = f"WITH {cte_query.target_name} AS {mat_info}("
+            cte_content = format_quick(cte_query.query, trailing_semicolon=False)
+        cte_content = _increase_indentation(cte_content)
         cte_footer = ")"
         return [cte_header, cte_content, cte_footer]
 
@@ -328,7 +336,7 @@ def _quick_format_general_from(from_clause: From) -> list[str]:
         current_elems = _quick_format_tablesource(table_source)
         current_elems = [((" " * FormatIndentDepth) + str(child)) for child in current_elems]
         elems += current_elems
-    return current_elems
+    return elems
 
 
 def _quick_format_predicate(predicate: AbstractPredicate) -> list[str]:

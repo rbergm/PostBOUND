@@ -38,7 +38,8 @@ from ._core import (
     SelectType, JoinType,
     CompoundOperator, MathOperator, LogicalOperator, SqlOperator, SetOperator,
     BaseProjection, OrderByExpression,
-    WithQuery, TableSource, DirectTableSource, JoinTableSource, SubqueryTableSource, ValuesList, ValuesTableSource,
+    WithQuery, TableSource, DirectTableSource, JoinTableSource, SubqueryTableSource,
+    ValuesList, ValuesTableSource, ValuesWithQuery,
     SqlQuery, SetQuery, SelectStatement,
     Select, Where, From, GroupBy, Having, OrderBy, Limit, CommonTableExpression, ImplicitFromClause, ExplicitFromClause,
     AbstractPredicate, BinaryPredicate, InPredicate, BetweenPredicate, CompoundPredicate, UnaryPredicate,
@@ -564,6 +565,33 @@ def _pglast_parse_expression(pglast_data: dict, *, available_tables: dict[str, T
             raise ParserError("Unknown expression type: " + str(pglast_data))
 
 
+def _pglast_parse_values_cte(pglast_data: dict) -> tuple[ValuesList, list[str]]:
+    """Handler method to parse a CTE with a **VALUES** expressions.
+
+    Parameters
+    ----------
+    pglast_data : dict
+        JSON encoding of the CTE data. This data is extracted from the pglast data structure.
+
+    Returns
+    -------
+    tuple[ValuesList, list[str]]
+        The parsed **VALUES** expression and the column names.
+    """
+    values: ValuesList = []
+    for row in pglast_data["ctequery"]["SelectStmt"]["valuesLists"]:
+        raw_items = row["List"]["items"]
+        parsed_items = [_pglast_parse_expression(item, available_tables={}, resolved_columns={}, schema=None)
+                        for item in raw_items]
+        values.append(tuple(parsed_items))
+
+    colnames: list[str] = []
+    for raw_colname in pglast_data.get("aliascolnames", []):
+        colnames.append(raw_colname["String"]["sval"])
+
+    return values, colnames
+
+
 def _pglast_parse_ctes(ctes: list[dict], *, available_tables: dict[str, TableReference],
                        resolved_columns: dict[tuple[str, str], ColumnReference],
                        schema: Optional["DatabaseSchema"]) -> CommonTableExpression:  # type: ignore # noqa: F821
@@ -596,11 +624,6 @@ def _pglast_parse_ctes(ctes: list[dict], *, available_tables: dict[str, TableRef
     for pglast_data in ctes:
         current_cte: dict = pglast_data["CommonTableExpr"]
         target_table = TableReference.create_virtual(current_cte["ctename"])
-
-        cte_query = _pglast_parse_query(current_cte["ctequery"]["SelectStmt"],
-                                        available_tables=dict(available_tables),
-                                        resolved_columns=local_resolved_cols,
-                                        schema=schema)
         available_tables[normalize(target_table.identifier())] = target_table
 
         match current_cte.get("ctematerialized", "CTEMaterializeDefault"):
@@ -611,7 +634,19 @@ def _pglast_parse_ctes(ctes: list[dict], *, available_tables: dict[str, TableRef
             case "CTEMaterializeNever":
                 force_materialization = False
 
-        parsed_cte = WithQuery(cte_query, target_table, materialized=force_materialization)
+        query_data = current_cte["ctequery"]["SelectStmt"]
+        if "targetList" not in query_data and query_data["op"] == "SETOP_NONE":
+            # CTE is a VALUES query
+            values, columns = _pglast_parse_values_cte(current_cte)
+            parsed_cte = ValuesWithQuery(values, target_name=target_table.identifier(),
+                                         columns=columns, materialized=force_materialization)
+        else:
+            cte_query = _pglast_parse_query(current_cte["ctequery"]["SelectStmt"],
+                                            available_tables=dict(available_tables),
+                                            resolved_columns=local_resolved_cols,
+                                            schema=schema)
+            parsed_cte = WithQuery(cte_query, target_table, materialized=force_materialization)
+
         parsed_ctes.append(parsed_cte)
 
     return CommonTableExpression(parsed_ctes)
@@ -768,8 +803,11 @@ def _pglast_parse_from_entry(pglast_data: dict, *, available_tables: dict[str, T
 
             # If we specified a virtual table in a CTE, we will reference it later in some FROM clause. In this case,
             # we should not create a new table reference, but rather use the existing one.
-            if table.full_name in available_tables and available_tables[table.full_name].virtual:
-                table = available_tables[table.full_name]
+            # But, if we alias the virtual table, we still need a new reference
+            if table.full_name in available_tables and not table.alias and available_tables[table.full_name].virtual:
+                table = table.make_virtual()
+                # TODO: should we also update the mapping of the full_name here?
+                available_tables[normalize(table.alias)] = table
                 return DirectTableSource(table)
 
             available_tables[normalize(table.full_name)] = table
@@ -823,17 +861,18 @@ def _pglast_parse_from_entry(pglast_data: dict, *, available_tables: dict[str, T
 
         case "RangeSubselect":
             raw_subquery: dict = pglast_data["RangeSubselect"]
+            is_lateral = raw_subquery.get("lateral", False)
+            local_available_tables = dict(available_tables) if is_lateral else {}
+            local_resolved_cols = dict(resolved_columns) if is_lateral else {}
             subquery = _pglast_parse_query(raw_subquery["subquery"]["SelectStmt"],
-                                           available_tables=dict(available_tables),
-                                           resolved_columns=dict(resolved_columns),
+                                           available_tables=local_available_tables,
+                                           resolved_columns=local_resolved_cols,
                                            schema=schema)
 
             if "alias" in raw_subquery:
                 alias: str = raw_subquery["alias"]["aliasname"]
             else:
                 alias = ""
-
-            is_lateral = raw_subquery.get("lateral", False)
 
             subquery_source = SubqueryTableSource(subquery, target_name=alias, lateral=is_lateral)
             if subquery_source.target_name:
@@ -1346,15 +1385,20 @@ def _pglast_parse_setop(pglast_data: dict, *, available_tables: dict[str, TableR
         The parsed set clause
     """
     if "withClause" in pglast_data:
-        with_clause = _pglast_parse_ctes(pglast_data["withClause"]["ctes"], available_tables=available_tables,
+        with_clause = _pglast_parse_ctes(pglast_data["withClause"]["ctes"],
+                                         available_tables=available_tables,
                                          resolved_columns=resolved_columns, schema=schema)
     else:
         with_clause = None
 
-    left_query = _pglast_parse_query(pglast_data["larg"], available_tables=available_tables,
-                                     resolved_columns=resolved_columns, schema=schema)
-    right_query = _pglast_parse_query(pglast_data["rarg"], available_tables=available_tables,
-                                      resolved_columns=resolved_columns, schema=schema)
+    left_query = _pglast_parse_query(pglast_data["larg"],
+                                     available_tables=dict(available_tables),
+                                     resolved_columns=dict(resolved_columns),
+                                     schema=schema)
+    right_query = _pglast_parse_query(pglast_data["rarg"],
+                                      available_tables=dict(available_tables),
+                                      resolved_columns=dict(resolved_columns),
+                                      schema=schema)
 
     match pglast_data["op"]:
         case "SETOP_UNION":

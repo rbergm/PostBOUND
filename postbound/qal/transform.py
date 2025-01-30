@@ -32,8 +32,8 @@ from ._core import (
     SubqueryExpression, StarExpression,
     WindowExpression, CaseExpression, BooleanExpression,
     AbstractPredicate, BinaryPredicate, InPredicate, BetweenPredicate, UnaryPredicate, CompoundPredicate, JoinType,
-    BaseProjection, TableSource, DirectTableSource, SubqueryTableSource, JoinTableSource, ValuesTableSource, WithQuery,
-    OrderByExpression,
+    BaseProjection, TableSource, DirectTableSource, SubqueryTableSource, JoinTableSource, ValuesTableSource,
+    WithQuery, ValuesWithQuery, OrderByExpression,
     BaseClause, Select, From, ImplicitFromClause, ExplicitFromClause, Where, GroupBy, Having, OrderBy,
     Limit, CommonTableExpression, UnionClause, IntersectClause, ExceptClause, Explain, Hint,
     SqlQuery, ImplicitSqlQuery, ExplicitSqlQuery, MixedSqlQuery, SetQuery, SelectStatement,
@@ -878,12 +878,23 @@ def _replace_expressions_in_clause(clause: Optional[ClauseType],
 
     if isinstance(clause, Hint) or isinstance(clause, Explain):
         return clause
-    if isinstance(clause, CommonTableExpression):
-        replaced_queries = [WithQuery(replace_expressions(cte.query, replacement),
-                                      cte.target_name, materialized=cte.materialized)
-                            for cte in clause.queries]
+    elif isinstance(clause, CommonTableExpression):
+        replaced_queries: list[WithQuery] = []
+
+        for cte in clause.queries:
+            if isinstance(cte, ValuesWithQuery):
+                replaced_values = [tuple([replacement(val) for val in row]) for row in cte.rows]
+                replaced_cte = ValuesWithQuery(replaced_values, target_name=cte.target_table, columns=cte.cols,
+                                               materialized=cte.materialized)
+                replaced_queries.append(replaced_cte)
+                continue
+
+            replaced_cte = WithQuery(replace_expressions(cte.query, replacement), cte.target_table,
+                                     materialized=cte.materialized)
+            replaced_queries.append(replaced_cte)
+
         return CommonTableExpression(replaced_queries)
-    if isinstance(clause, Select):
+    elif isinstance(clause, Select):
         replaced_targets = [BaseProjection(replacement(proj.expression), proj.target_name)
                             for proj in clause.targets]
         return Select(replaced_targets, clause.projection_type)
@@ -1312,9 +1323,34 @@ def rename_columns_in_clause(clause: Optional[ClauseType],
     if isinstance(clause, Hint) or isinstance(clause, Explain):
         return clause
     if isinstance(clause, CommonTableExpression):
-        renamed_ctes = [WithQuery(rename_columns_in_query(cte.query, available_renamings),
-                                  cte.target_name, materialized=cte.materialized)
-                        for cte in clause.queries]
+        renamed_ctes: list[WithQuery] = []
+
+        for cte in clause.queries:
+            if not isinstance(cte, ValuesWithQuery):
+                new_query = rename_columns_in_query(cte.query, available_renamings)
+                renamed_ctes.append(WithQuery(new_query, cte.target_table, materialized=cte.materialized))
+                continue
+
+            if not any(col.belongs_to(cte.target_table) for col in available_renamings):
+                continue
+
+            renamed_cte = cte
+            for current_col, target_col in available_renamings.items():
+                if not current_col.belongs_to(cte.target_table):
+                    continue
+                if current_col.table != target_col.table:
+                    raise ValueError("Cannot rename columns in a VALUES table source to a different table")
+
+                # if we found a column that should be renamed, we need to replace the whole column specification
+                # this process might be repeated multiple times, if multiple appropriate renamings exist
+                current_col_spec = cte.cols
+                new_col_spec = [(col if col.name != current_col.name else target_col.name)
+                                for col in current_col_spec]
+                renamed_cte = ValuesWithQuery(cte.rows, target_name=cte.target_table, columns=new_col_spec,
+                                              materialized=cte.materialized)
+
+            renamed_ctes.append(renamed_cte)
+
         return CommonTableExpression(renamed_ctes)
     if isinstance(clause, Select):
         renamed_targets = [BaseProjection(rename_columns_in_expression(proj.expression, available_renamings),

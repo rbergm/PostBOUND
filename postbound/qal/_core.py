@@ -10,7 +10,7 @@ import numbers
 import warnings
 from collections.abc import Callable, Collection, Iterable, Iterator, Sequence
 from types import NoneType
-from typing import Generic, Literal, Optional, Type, TypeVar, Union
+from typing import Any, Generic, Literal, Optional, Type, TypeVar, Union
 
 import networkx as nx
 
@@ -4416,6 +4416,115 @@ class WithQuery:
         return f"{self._target_name} AS {mat_info}({query_str})"
 
 
+class ValuesWithQuery(WithQuery):
+    """Models a common table expression that is based on a **VALUES** clause, e.g. ``WITH t(a, b) AS (VALUES (1, 2), (3, 4))``.
+
+    Parameters
+    ----------
+    values : ValuesList
+        The values that should be used to construct the CTE.
+    target_name : str | TableReference, optional
+        The name under which the table should be made available. If a table reference is provided, its identifier will be used.
+    columns : Optional[Iterable[str | ColumnReference]], optional
+        The columns that should be used to construct the CTE. If no columns are provided, all columns are anonymous.
+        If columns are provided, they have to match the number of columns in the values list.
+    materialized : Optional[bool], optional
+        Whether the query should be materialized or not. If this is not supported or not known, this can be set to ``None``
+        (the default). Since materialization is not part of the SQL standard, we do not include it in the WITH querie's
+        identity.
+    """
+
+    def __init__(self, values: ValuesList, *, target_name: str | TableReference = "",
+                 columns: Optional[Iterable[str | ColumnReference]] = None,
+                 materialized: Optional[bool] = None) -> None:
+        self._values = values
+        self._materialized = materialized
+
+        if isinstance(target_name, TableReference):
+            self._table = target_name
+        else:
+            self._table = TableReference.create_virtual(target_name) if target_name else None
+
+        parsed_columns: list[ColumnReference] = []
+        for col in columns if columns else []:
+            if isinstance(col, ColumnReference):
+                parsed_columns.append(col.bind_to(self._table))
+                continue
+            parsed_columns.append(ColumnReference(col, self._table))
+        self._columns = tuple(parsed_columns)
+
+        table_source = ValuesTableSource(values, alias=self._table, columns=self._columns)
+        self._query = SqlQuery(
+            select_clause=Select.star(),
+            from_clause=From([table_source]),
+        )
+        super().__init__(self._query, self._table, materialized=materialized)
+
+    @property
+    def rows(self) -> ValuesList:
+        """Get the values that are used to construct the CTE.
+
+        Returns
+        -------
+        ValuesList
+            The values
+        """
+        return self._values
+
+    @property
+    def cols(self) -> Sequence[ColumnReference]:
+        """Get the columns that are used to construct the common table expression.
+
+        Returns
+        -------
+        Sequence[ColumnReference]
+            The columns
+        """
+        return self._columns
+
+    def tables(self) -> set[TableReference]:
+        return set()
+
+    def columns(self) -> set[ColumnReference]:
+        if not self._columns:
+            return set()
+        return {ColumnReference(col, self.target_table) for col in self._columns}
+
+    def iterexpressions(self) -> Iterable[SqlExpression]:
+        return util.flatten(row for row in self._values)
+
+    def itercolumns(self) -> list[ColumnReference]:
+        return [ColumnReference(col, self.target_table) for col in self._columns]
+
+    def __eq__(self, other: object) -> bool:
+        return (isinstance(other, type(self))
+                and self._values == other._values
+                and self._columns == other._columns
+                and self._table == other._table)
+
+    __hash__ = WithQuery.__hash__
+
+    def __repr__(self) -> str:
+        return str(self)
+
+    def __str__(self) -> str:
+        vals: list[str] = []
+        for row in self._values:
+            current_str = ", ".join(str(val) for val in row)
+            vals.append(f"({current_str})")
+        complete_vals_str = ", ".join(vals)
+
+        if self._materialized is None:
+            mat_info = ""
+        else:
+            mat_info = "MATERIALIZED " if self._materialized else "NOT MATERIALIZED "
+
+        cols = ", ".join(col.name for col in self._columns)
+        cols_str = f"({cols})" if cols else ""
+
+        return f"{self._target_name}{cols_str} AS {mat_info}(VALUES {complete_vals_str})"
+
+
 class CommonTableExpression(BaseClause):
     """The ``WITH`` clause of a query, consisting of at least one CTE query.
 
@@ -5072,10 +5181,23 @@ class ValuesTableSource(TableSource):
         be named automatically.
     """
 
-    def __init__(self, values: ValuesList, *, alias: str = "", columns: Iterable[str]) -> None:
+    def __init__(self, values: ValuesList, *, alias: str | TableReference = "",
+                 columns: Optional[Iterable[str | ColumnReference]] = None) -> None:
         self._values = tuple(values)
-        self._table = TableReference.create_virtual(alias) if alias else None
-        self._columns = tuple(ColumnReference(column, self._table) for column in columns)
+
+        if isinstance(alias, TableReference):
+            self._table = alias
+        else:
+            self._table = TableReference.create_virtual(alias) if alias else None
+
+        parsed_columns: list[ColumnReference] = []
+        for col in columns if columns else []:
+            if isinstance(col, ColumnReference):
+                parsed_columns.append(col.bind_to(self._table))
+                continue
+            parsed_columns.append(ColumnReference(col, self._table))
+        self._columns = tuple(parsed_columns)
+
         self._hash_val = hash((self._table, self._columns, self._values))
 
     __match_args__ = ("values", "alias", "columns")
@@ -5159,8 +5281,10 @@ class ValuesTableSource(TableSource):
 
         complete_vals_str = ", ".join(vals)
         cols = ", ".join(col.name for col in self._columns)
+        cols_str = f" ({cols})" if cols else ""
+        tab_str = f" AS {self._table}{cols_str}" if self._table else ""
 
-        return f"(VALUES {complete_vals_str}) AS {self._table} ({cols})"
+        return f"(VALUES {complete_vals_str}){tab_str}"
 
 
 class JoinType(enum.Enum):
@@ -6527,7 +6651,7 @@ def _collect_bound_tables(from_clause: From) -> set[TableReference]:
 FromClauseType = TypeVar("FromClauseType", bound=From)
 
 
-def _create_ast(item: SqlQuery | BaseClause | TableSource | AbstractPredicate | SqlExpression, *, indentation: int = 0) -> str:
+def _create_ast(item: Any, *, indentation: int = 0) -> str:
     """Helper method to generate a pretty representation of the logical internal structure of a query."""
     prefix = " " * indentation
     item_str = type(item).__name__
@@ -6563,10 +6687,19 @@ def _create_ast(item: SqlQuery | BaseClause | TableSource | AbstractPredicate | 
             tables = [_create_ast(t, indentation=indentation + 2) for t in item.items]
             table_str = "\n".join(tables)
             return f"{prefix}+-{item_str}\n{table_str}"
+        case CommonTableExpression():
+            ctes = [_create_ast(c, indentation=indentation + 2) for c in item.queries]
+            cte_str = "\n".join(ctes)
+            return f"{prefix}+-{item_str}\n{cte_str}"
         case BaseClause():
             expressions = [_create_ast(e, indentation=indentation + 2) for e in item.iterexpressions()]
             expression_str = "\n".join(expressions)
             return f"{prefix}+-{item_str}\n{expression_str}"
+        case ValuesWithQuery():
+            return f"{prefix}+-{item_str}"
+        case WithQuery():
+            child_expression = _create_ast(item.query, indentation=indentation + 2)
+            return f"{prefix}+-{item_str}\n{child_expression}"
         case SetQuery():
             subqueries = [_create_ast(q, indentation=indentation + 2) for q in (item.left_query, item.right_query)]
             subquery_str = "\n".join(subqueries)
@@ -6575,6 +6708,8 @@ def _create_ast(item: SqlQuery | BaseClause | TableSource | AbstractPredicate | 
             clauses = [_create_ast(c, indentation=indentation + 2) for c in item.clauses()]
             clause_str = "\n".join(clauses)
             return f"{prefix}+-{item_str}\n{clause_str}"
+        case _:
+            raise ValueError(f"Unknown item type '{type(item)}': {item}")
 
 
 class SqlQuery:

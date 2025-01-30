@@ -289,6 +289,16 @@ class TableReference:
             raise StateError("Cannot add an alias to a table without full name")
         return TableReference(self.full_name, alias, self.virtual)
 
+    def make_virtual(self) -> TableReference:
+        """Creates a new virtual table reference for the same table.
+
+        Returns
+        -------
+        TableReference
+            The updated table reference
+        """
+        return TableReference(self.full_name, self.alias, True)
+
     def __json__(self) -> object:
         return {"full_name": self._full_name, "alias": self._alias}
 
