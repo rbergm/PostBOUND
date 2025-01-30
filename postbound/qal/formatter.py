@@ -14,7 +14,7 @@ from ._core import (
     Select, Hint, Where, UnionClause, IntersectClause, ExceptClause,
     SelectType,
     AbstractPredicate, CompoundPredicate,
-    SqlQuery
+    SqlQuery, SetQuery, SelectStatement
 )
 from ..util.errors import InvariantViolationError
 
@@ -394,69 +394,6 @@ def _quick_format_limit(limit_clause: Limit) -> list[str]:
     pass
 
 
-def _quick_format_union(union_clause: UnionClause) -> list[str]:
-    """Quick and dirty formatting logic for ``UNION`` clauses.
-
-    This function just puts each part of the union query on a separate line.
-
-    Parameters
-    ----------
-    union_clause : UnionClause
-        The clause to format
-
-    Returns
-    -------
-    list[str]
-        The pretty-printed parts of the clause, indented as necessary.
-    """
-    prefix = [" UNION ALL"] if union_clause.is_union_all() else [" UNION"]
-    formatted_query = format_quick(union_clause.query, trailing_semicolon=False)
-    lines = formatted_query.split("\n")
-    return prefix + lines
-
-
-def _quick_format_intersect(intersect_clause: IntersectClause) -> list[str]:
-    """Quick and dirty formatting logic for ``INTERSECT`` clauses.
-
-    This function just puts each part of the intersect query on a separate line.
-
-    Parameters
-    ----------
-    intersect_clause : IntersectClause
-        The clause to format
-
-    Returns
-    -------
-    list[str]
-        The pretty-printed parts of the clause, indented as necessary.
-    """
-    prefix = [" INTERSECT"]
-    formatted_query = format_quick(intersect_clause.query, trailing_semicolon=False)
-    lines = formatted_query.split("\n")
-    return prefix + lines
-
-
-def _quick_format_except(except_clause: ExceptClause) -> list[str]:
-    """Quick and dirty formatting logic for ``EXCEPT`` clauses.
-
-    This function just puts each part of the except query on a separate line.
-
-    Parameters
-    ----------
-    except_clause : ExceptClause
-        The clause to format
-
-    Returns
-    -------
-    list[str]
-        The pretty-printed parts of the clause, indented as necessary.
-    """
-    prefix = [" EXCEPT"]
-    formatted_query = format_quick(except_clause.query, trailing_semicolon=False)
-    lines = formatted_query.split("\n")
-    return prefix + lines
-
-
 def _subquery_replacement(expression: SqlExpression, *, inline_hints: bool,
                           indentation: int) -> SqlExpression:
     """Handler method for `transform.replace_expressions` to apply our custom `FormattingSubqueryExpression`.
@@ -503,7 +440,41 @@ def _case_expression_replacement(expression: SqlExpression, *, indentation: int)
     return FormattingCaseExpression(expression, indentation)
 
 
-def format_quick(query: SqlQuery, *, inline_hint_block: bool = False, trailing_semicolon: bool = True,
+def _quick_format_set_query(query: SetQuery, *, inline_hint_block: bool, trailing_semicolon: bool,
+                            custom_formatter: Optional[Callable[[SqlQuery], SqlQuery]]) -> str:
+    """Quick and dirty formatting logic for set queries.
+
+    Parameters
+    ----------
+    query : SetQuery
+        The query to format
+    inline_hint_block : bool
+        Whether potential hint blocks should be inserted as part of the ``SELECT`` clause rather than before the
+    trailing_semicolon : bool
+        Whether to append a semicolon to the formatted query
+    custom_formatter : Optional[Callable[[SqlQuery], SqlQuery]]
+        A post-processing formatting service to apply to the SQL query after all preparatory steps have been performed,
+        but *before* the actual formatting is started. This can be used to inject custom clause or expression
+        formatting rules that are necessary to adhere to specific SQL syntax deviations for a database system. Defaults
+        to ``None`` which skips this step.
+
+    Returns
+    -------
+    str
+        The pretty-printed parts of the query, indented as necessary.
+    """
+    # while formatting the nested queries, we still need to use rstrip in addition to trailing_semicolon=False in order to
+    # format nested set queries correctly
+    left_query = format_quick(query.left_query, inline_hint_block=inline_hint_block, trailing_semicolon=False,
+                              custom_formatter=custom_formatter).rstrip("; ")
+    right_query = format_quick(query.right_query, inline_hint_block=inline_hint_block,
+                               trailing_semicolon=False, custom_formatter=custom_formatter).rstrip("; ")
+    prefix = " " * FormatIndentDepth
+    suffix = ";" if trailing_semicolon else ""
+    return f"{left_query}\n{prefix}{query.set_operation.value}\n{right_query}{suffix}"
+
+
+def format_quick(query: SelectStatement, *, inline_hint_block: bool = False, trailing_semicolon: bool = True,
                  custom_formatter: Optional[Callable[[SqlQuery], SqlQuery]] = None) -> str:
     """Applies a quick formatting heuristic to structure the given query.
 
@@ -519,7 +490,7 @@ def format_quick(query: SqlQuery, *, inline_hint_block: bool = False, trailing_s
 
     Parameters
     ----------
-    query : SqlQuery
+    query : SelectStatement
         The query to format
     inline_hint_block : bool, optional
         Whether to insert a potential hint block in the ``SELECT`` clause (i.e. *inline* it), or leave it as a
@@ -536,6 +507,10 @@ def format_quick(query: SqlQuery, *, inline_hint_block: bool = False, trailing_s
     str
         A pretty string representation of the query.
     """
+    if isinstance(query, SetQuery):
+        return _quick_format_set_query(query, inline_hint_block=inline_hint_block, trailing_semicolon=trailing_semicolon,
+                                       custom_formatter=custom_formatter)
+
     pretty_query_parts = []
     inlined_hint_block = None
     subquery_update = functools.partial(_subquery_replacement, inline_hints=inline_hint_block,
@@ -570,12 +545,8 @@ def format_quick(query: SqlQuery, *, inline_hint_block: bool = False, trailing_s
                 pretty_query_parts.extend(_quick_format_general_from(clause))
             case Where():
                 pretty_query_parts.extend(_quick_format_where(clause))
-            case UnionClause():
-                pretty_query_parts.extend(_quick_format_union(clause))
-            case IntersectClause():
-                pretty_query_parts.extend(_quick_format_intersect(clause))
-            case ExceptClause():
-                pretty_query_parts.extend(_quick_format_except(clause))
+            case UnionClause() | IntersectClause() | ExceptClause():
+                raise RuntimeError("Set operations should not appear in this context")
             case _:
                 pretty_query_parts.append(str(clause))
 

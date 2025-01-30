@@ -445,7 +445,7 @@ class ParserTests(regression_suite.QueryTestCase):
         parsed = pb.parse_query(query)
         self.assertTrue(parsed.is_set_query(), "Did not recognize UNION query as set operation")
         set_query = pb.parse_query("SELECT * FROM S")
-        self.assertEqual(parsed.union_with, set_query, "Did not parse/set subquery correctly")
+        self.assertEqual(parsed.right_query, set_query, "Did not parse/set subquery correctly")
 
     def test_values_list(self) -> None:
         query = "SELECT * FROM (VALUES (1, 2), (3, 4)) AS t (a, b)"

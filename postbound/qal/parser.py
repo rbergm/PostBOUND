@@ -29,19 +29,18 @@ References
 from __future__ import annotations
 
 import json
-from typing import Optional
+from typing import Optional, overload
 
 import pglast
 
 from ._core import (
     ColumnReference,
     SelectType, JoinType,
-    CompoundOperator, MathOperator, LogicalOperator, SqlOperator,
+    CompoundOperator, MathOperator, LogicalOperator, SqlOperator, SetOperator,
     BaseProjection, OrderByExpression,
     WithQuery, TableSource, DirectTableSource, JoinTableSource, SubqueryTableSource, ValuesList, ValuesTableSource,
-    SqlQuery,
+    SqlQuery, SetQuery, SelectStatement,
     Select, Where, From, GroupBy, Having, OrderBy, Limit, CommonTableExpression, ImplicitFromClause, ExplicitFromClause,
-    UnionClause, IntersectClause, ExceptClause, SetOperationClause,
     AbstractPredicate, BinaryPredicate, InPredicate, BetweenPredicate, CompoundPredicate, UnaryPredicate,
     SqlExpression, StarExpression, StaticValueExpression, ColumnExpression, SubqueryExpression, CastExpression,
     MathematicalExpression, FunctionExpression, BooleanExpression, WindowExpression, CaseExpression, ArrayAccessExpression,
@@ -418,6 +417,11 @@ def _pglast_parse_expression(pglast_data: dict, *, available_tables: dict[str, T
     pglast_data.pop("location", None)
     expression_key = util.dicts.key(pglast_data)
 
+    # When parsing the actual expression, we need to be aware that many expressions can actually be predicates, just not
+    # within the WHERE or HAVING clause. For example, "SELECT a IS NOT NULL FROM foo" is a perfectly valid query.
+    # Therefore, we handle a lot of expression cases by passing the input data back to our predicate parser and let it do the
+    # heavy lifting.
+
     match expression_key:
 
         case "ColumnRef" if _pglast_is_actual_colref(pglast_data["ColumnRef"]):
@@ -444,6 +448,17 @@ def _pglast_parse_expression(pglast_data: dict, *, available_tables: dict[str, T
 
             return MathematicalExpression(operation, left, right)
 
+        case "A_Expr" if pglast_data["A_Expr"]["kind"] in {"AEXPR_LIKE", "AEXPR_ILIKE", "AEXPR_BETWEEN", "AEXPR_IN"}:
+            # we need to parse a predicate in disguise
+            predicate = _pglast_parse_predicate(pglast_data, available_tables=available_tables,
+                                                resolved_columns=resolved_columns, schema=schema)
+            return BooleanExpression(predicate)
+
+        case "NullTest":
+            predicate = _pglast_parse_predicate(pglast_data, available_tables=available_tables,
+                                                resolved_columns=resolved_columns, schema=schema)
+            return BooleanExpression(predicate)
+
         case "BoolExpr":
             predicate = _pglast_parse_predicate(pglast_data, available_tables=available_tables,
                                                 resolved_columns=resolved_columns, schema=schema)
@@ -464,7 +479,7 @@ def _pglast_parse_expression(pglast_data: dict, *, available_tables: dict[str, T
 
             args = [_pglast_parse_expression(arg, available_tables=available_tables,
                                              resolved_columns=resolved_columns, schema=schema)
-                    for arg in expression["args"]]
+                    for arg in expression.get("args", [])]
             return FunctionExpression(funcname, args, distinct=distinct, filter_by=filter_expr)
 
         case "FuncCall" if "over" in pglast_data["FuncCall"]:  # window functions
@@ -1293,7 +1308,7 @@ def _pglast_parse_limit(pglast_data: dict, *, available_tables: dict[str, TableR
     else:
         nrows = None
     if raw_offset is not None:
-        offset: int = raw_offset["A_Const"]["ival"]["ival"]
+        offset: int = raw_offset["A_Const"]["ival"].get("ival", 0)
     else:
         offset = None
 
@@ -1302,7 +1317,7 @@ def _pglast_parse_limit(pglast_data: dict, *, available_tables: dict[str, TableR
 
 def _pglast_parse_setop(pglast_data: dict, *, available_tables: dict[str, TableReference],
                         resolved_columns: dict[tuple[str, str], ColumnReference],
-                        schema: Optional["DatabaseSchema"]) -> SetOperationClause:  # type: ignore # noqa: F821
+                        schema: Optional["DatabaseSchema"]) -> SetQuery:  # type: ignore # noqa: F821
     """Handler method to parse set operations.
 
     This method assumes that the given query is indeed a set operation and will fail otherwise.
@@ -1330,30 +1345,46 @@ def _pglast_parse_setop(pglast_data: dict, *, available_tables: dict[str, TableR
     SetOperationClause
         The parsed set clause
     """
-    subquery = _pglast_parse_query(pglast_data["rarg"],
-                                   available_tables=dict(available_tables),
-                                   resolved_columns=dict(resolved_columns),
-                                   schema=schema)
-    setop = pglast_data["op"]
-    match setop:
+    if "withClause" in pglast_data:
+        with_clause = _pglast_parse_ctes(pglast_data["withClause"]["ctes"], available_tables=available_tables,
+                                         resolved_columns=resolved_columns, schema=schema)
+    else:
+        with_clause = None
 
+    left_query = _pglast_parse_query(pglast_data["larg"], available_tables=available_tables,
+                                     resolved_columns=resolved_columns, schema=schema)
+    right_query = _pglast_parse_query(pglast_data["rarg"], available_tables=available_tables,
+                                      resolved_columns=resolved_columns, schema=schema)
+
+    match pglast_data["op"]:
         case "SETOP_UNION":
-            union_all: bool = pglast_data.get("all", False)
-            return UnionClause(subquery, union_all=union_all)
-
+            operator = SetOperator.UnionAll if pglast_data.get("all", False) else SetOperator.Union
         case "SETOP_INTERSECT":
-            return IntersectClause(subquery)
-
+            operator = SetOperator.Intersect
         case "SETOP_EXCEPT":
-            return ExceptClause(subquery)
-
+            operator = SetOperator.Except
         case _:
-            raise ParserError("Unknown set operation: " + setop)
+            raise ParserError("Unknown set operation: " + pglast_data["op"])
+
+    if "sortClause" in pglast_data:
+        order_clause = _pglast_parse_orderby(pglast_data["sortClause"], available_tables=available_tables,
+                                             resolved_columns=resolved_columns, schema=schema)
+    else:
+        order_clause = None
+
+    if pglast_data["limitOption"] == "LIMIT_OPTION_COUNT":
+        limit_clause = _pglast_parse_limit(pglast_data, available_tables=available_tables,
+                                           resolved_columns=resolved_columns, schema=schema)
+    else:
+        limit_clause = None
+
+    return SetQuery(left_query, right_query, set_operation=operator,
+                    cte_clause=with_clause, orderby_clause=order_clause, limit_clause=limit_clause)
 
 
 def _pglast_parse_query(stmt: dict, *, available_tables: dict[str, TableReference],
                         resolved_columns: dict[tuple[str, str], ColumnReference],
-                        schema: Optional["DatabaseSchema"]) -> SqlQuery:  # type: ignore # noqa: F821
+                        schema: Optional["DatabaseSchema"]) -> SelectStatement:  # type: ignore # noqa: F821
     """Main entry point into the parsing logic.
 
     This function takes a single SQL SELECT query and provides the corresponding `SqlQuery` object.
@@ -1385,26 +1416,18 @@ def _pglast_parse_query(stmt: dict, *, available_tables: dict[str, TableReferenc
 
     Returns
     -------
-    SqlQuery
+    SelectStatement
         The parsed query
     """
+    if stmt["op"] != "SETOP_NONE":
+        return _pglast_parse_setop(stmt, available_tables=available_tables, resolved_columns=resolved_columns, schema=schema)
+
     clauses = []
 
     if "withClause" in stmt:
         with_clause = _pglast_parse_ctes(stmt["withClause"]["ctes"], available_tables=available_tables,
                                          resolved_columns=resolved_columns, schema=schema)
         clauses.append(with_clause)
-
-    # we need to deal with set operations early on in order to unnest them appropriately
-    if stmt["op"] != "SETOP_NONE":
-        setop_clause = _pglast_parse_setop(stmt, available_tables=available_tables,
-                                           resolved_columns=resolved_columns, schema=schema)
-        clauses.append(setop_clause)
-        stmt = stmt["larg"]
-
-        if stmt["op"] != "SETOP_NONE":
-            # make sure that our new top-level query is not another set operation, we cannot represent those
-            raise NotImplementedError("Nested set operations are not yet supported")
 
     if "fromClause" in stmt:
         from_clause = _pglast_parse_from(stmt["fromClause"], available_tables=available_tables,
@@ -1445,8 +1468,22 @@ def _pglast_parse_query(stmt: dict, *, available_tables: dict[str, TableReferenc
     return build_query(clauses)
 
 
+@overload
 def parse_query(query: str, *, bind_columns: bool | None = None,
                 db_schema: Optional["DatabaseSchema"] = None) -> SqlQuery:  # type: ignore # noqa: F821
+    ...
+
+
+@overload
+def parse_query(query: str, *, accept_set_query: bool,
+                bind_columns: Optional[bool] = None,
+                db_schema: Optional["DatabaseSchema"] = None) -> SelectStatement:  # type: ignore # noqa: F821
+    ...
+
+
+def parse_query(query: str, *, accept_set_query: bool = False,
+                bind_columns: Optional[bool] = None,
+                db_schema: Optional["DatabaseSchema"] = None) -> SelectStatement:  # type: ignore # noqa: F821
     """Parses a query string into a proper `SqlQuery` object.
 
     During parsing, the appropriate type of SQL query (i.e. with implicit, explicit or mixed ``FROM`` clause) will be
@@ -1495,6 +1532,9 @@ def parse_query(query: str, *, bind_columns: bool | None = None,
     stmt = raw_query["SelectStmt"]
 
     parsed_query = _pglast_parse_query(stmt, available_tables={}, resolved_columns={}, schema=db_schema)
+    if not accept_set_query and isinstance(query, SetQuery):
+        raise ParserError("Input query is a set query")
+
     return parsed_query
 
 

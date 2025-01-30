@@ -180,6 +180,9 @@ from ._core import (
     ImplicitSqlQuery,
     ExplicitSqlQuery,
     MixedSqlQuery,
+    SetQuery,
+    SelectStatement,
+    SqlStatement,
     build_query
 )
 from .formatter import format_quick
@@ -263,6 +266,9 @@ __all__ = [
     "ImplicitSqlQuery",
     "ExplicitSqlQuery",
     "MixedSqlQuery",
+    "SetQuery",
+    "SelectStatement",
+    "SqlStatement",
     "build_query",
     "relalg",
     "transform",
@@ -270,12 +276,13 @@ __all__ = [
     "TableReference",
     "quote",
     "normalize",
-    "parse_query"
+    "parse_query",
+    "parse_full_query"
 ]
 
 
 def parse_query(query: str, *, bind_columns: Optional[bool] = None,
-                db_schema: Optional["DBSchema"] = None) -> SqlQuery:  # type: ignore # noqa: F821
+                db_schema: Optional["DatabaseSchema"] = None) -> SqlQuery:  # type: ignore # noqa: F821
     """Parses a query string into a proper `SqlQuery` object.
 
     During parsing, the appropriate type of SQL query (i.e. with implicit, explicit or mixed ``FROM`` clause) will be
@@ -307,3 +314,15 @@ def parse_query(query: str, *, bind_columns: Optional[bool] = None,
     """
     from .parser import parse_query as parse_worker
     return parse_worker(query, bind_columns=bind_columns, db_schema=db_schema)
+
+
+def parse_full_query(statement: str, *, bind_columns: Optional[bool] = None,
+                     db_schema: Optional["DatabaseSchema"] = None) -> SelectStatement:  # type: ignore # noqa: F821
+    """This method is very similar to `parse_query`, but it also support set queries (i.e. queries with **UNION**, etc.)
+
+    See Also
+    --------
+    parse_query : The simpler version of this method that only supports "plain" queries without set operations.
+    """
+    from .parser import parse_query as parse_worker
+    return parse_worker(statement, bind_columns=bind_columns, db_schema=db_schema, accept_set_query=True)
