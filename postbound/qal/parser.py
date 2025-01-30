@@ -44,7 +44,7 @@ from ._core import (
     UnionClause, IntersectClause, ExceptClause, SetOperationClause,
     AbstractPredicate, BinaryPredicate, InPredicate, BetweenPredicate, CompoundPredicate, UnaryPredicate,
     SqlExpression, StarExpression, StaticValueExpression, ColumnExpression, SubqueryExpression, CastExpression,
-    MathematicalExpression, FunctionExpression, BooleanExpression, WindowExpression, CaseExpression,
+    MathematicalExpression, FunctionExpression, BooleanExpression, WindowExpression, CaseExpression, ArrayAccessExpression,
     build_query
 )
 from .._core import TableReference, normalize
@@ -54,8 +54,36 @@ auto_bind_columns: bool = False
 """Indicates whether the parser should use the database catalog to obtain column bindings."""
 
 
-def _pglast_create_bounded_colref(tab: str, col: str, available_tables: dict[str, TableReference],
-                                  resolved_columns: dict[tuple[str, str], ColumnReference]) -> ColumnReference:
+def _pglast_is_actual_colref(pglast_data: dict) -> bool:
+    """Checks, whether a apparent column reference is actually a column reference and not a star expression in disguise.
+
+    pglast represents both column references such as ``R.a`` or ``a`` as well as star expressions like ``R.*`` as ``ColumnRef``
+    dictionaries, hence we need to make sure we are actually parsing the right thing. This method takes care of distinguishing
+    the two cases.
+
+    Parameters
+    ----------
+    pglast_data : dict
+        JSON encoding of the potential column
+
+    Returns
+    -------
+    bool
+        **True** if this is an actual column reference, **False** if this is a star expression.
+    """
+    fields: list[dict] = pglast_data["fields"]
+    if len(fields) == 1:
+        return "A_Star" not in fields[0]
+    if len(fields) == 2:
+        would_be_col: str = fields[1]
+        return "A_Star" not in would_be_col
+
+    would_be_col: str = fields[0]["String"]["sval"]
+    return not would_be_col.endswith("*")
+
+
+def _pglast_create_bound_colref(tab: str, col: str, available_tables: dict[str, TableReference],
+                                resolved_columns: dict[tuple[str, str], ColumnReference]) -> ColumnReference:
     """Creates a new reference to a column with known binding info.
 
     Parameters
@@ -127,20 +155,20 @@ def _pglast_parse_colref(pglast_data: dict, *, available_tables: dict[str, Table
         tab, col = fields
         tab: str = tab["String"]["sval"]
         col: str = col["String"]["sval"]
-        return _pglast_create_bounded_colref(tab, col, available_tables, resolved_columns)
+        return _pglast_create_bound_colref(tab, col, available_tables, resolved_columns)
 
     # at this point, we must have a single column parameter. It could be unbounded, or - if quoted - bounded
     col: str = fields[0]["String"]["sval"]
 
     # first, check for quoted and qualified identifiers, such as "Sales.Price"
-    if "." in col:
+    if False and "." in col:
         tab, col = col.split(".")
 
         # we need to manually normalize here, because Postgres does not normalize quoted identifiers by default
         # however, this does not apply to the table, because this was already normalized as part of the CTE/FROM clause parsing
         col = normalize(col)
 
-        return _pglast_create_bounded_colref(tab, col, available_tables, resolved_columns)
+        return _pglast_create_bound_colref(tab, col, available_tables, resolved_columns)
 
     # now, we know for certain that the identifier is unqualified
     if ("", col) in resolved_columns:
@@ -156,6 +184,40 @@ def _pglast_parse_colref(pglast_data: dict, *, available_tables: dict[str, Table
     parsed_column = ColumnReference(col, resolved_table)
     resolved_columns[("", col)] = parsed_column
     return parsed_column
+
+
+def _pglast_parse_star(pglast_data: dict, *,
+                       available_tables: dict[str, TableReference]) -> StarExpression:  # type: ignore # noqa: F821
+    """Handler method to parse star expressions that are potentially bounded to a specific table, e.g. ``R.*``.
+
+    Parameters
+    ----------
+    pglast_data : dict
+        JSON enconding of the star expression
+    available_tables : dict[str, TableReference]
+        The candidate tables for all binding purposes. Maps table identifiers (i.e. full names and aliases) to the actual
+        table references.
+
+    Returns
+    -------
+    StarExpression
+        The parsed star expression.
+    """
+    fields = pglast_data["fields"]
+    if len(fields) == 1 and "A_Star" in fields[0]:
+        return StarExpression()
+
+    if len(fields) == 2:
+        tab = fields[0]["String"]["sval"]
+        return StarExpression(from_table=available_tables.get(normalize(tab), None))
+
+    star_reference: str = fields[0]["String"]["sval"]
+    if not star_reference.endswith("*") or "." not in star_reference:
+        raise ParserError("Unknown star reference format: " + str(pglast_data))
+
+    table = star_reference.split(".")[0]
+    parsed_table = available_tables.get(normalize(table), None)
+    return StarExpression(from_table=parsed_table)
 
 
 def _pglast_parse_const(pglast_data: dict) -> StaticValueExpression:
@@ -185,7 +247,7 @@ def _pglast_parse_const(pglast_data: dict) -> StaticValueExpression:
         case "sval":
             return StaticValueExpression(pglast_data["sval"]["sval"])
         case "boolval":
-            val = False if not pglast_data["boolval"]["boolval"] else True
+            val = pglast_data["boolval"].get("boolval", False)
             return StaticValueExpression(val)
         case _:
             raise ParserError("Unknown constant type: " + str(pglast_data))
@@ -208,7 +270,8 @@ _PglastOperatorMap: dict[str, SqlOperator] = {
     "-": MathOperator.Subtract,
     "*": MathOperator.Multiply,
     "/": MathOperator.Divide,
-    "%": MathOperator.Modulo
+    "%": MathOperator.Modulo,
+    "||": MathOperator.Concatenate,
 }
 """Map from the internal representation of Postgres operators to our standardized QAL operators."""
 
@@ -357,10 +420,13 @@ def _pglast_parse_expression(pglast_data: dict, *, available_tables: dict[str, T
 
     match expression_key:
 
-        case "ColumnRef":
+        case "ColumnRef" if _pglast_is_actual_colref(pglast_data["ColumnRef"]):
             column = _pglast_parse_colref(pglast_data["ColumnRef"], available_tables=available_tables,
                                           resolved_columns=resolved_columns, schema=schema)
             return ColumnExpression(column)
+
+        case "ColumnRef" if not _pglast_is_actual_colref(pglast_data["ColumnRef"]):
+            return _pglast_parse_star(pglast_data["ColumnRef"], available_tables=available_tables)
 
         case "A_Const":
             return _pglast_parse_const(pglast_data["A_Const"])
@@ -427,6 +493,13 @@ def _pglast_parse_expression(pglast_data: dict, *, available_tables: dict[str, T
 
             return WindowExpression(funcname, partitioning=partition, ordering=order, filter_condition=filter_expr)
 
+        case "CoalesceExpr":
+            expression = pglast_data["CoalesceExpr"]
+            args = [_pglast_parse_expression(arg, available_tables=available_tables,
+                                             resolved_columns=resolved_columns, schema=schema)
+                    for arg in expression["args"]]
+            return FunctionExpression("coalesce", args)
+
         case "TypeCast":
             expression: dict = pglast_data["TypeCast"]
             casted_expression = _pglast_parse_expression(expression["arg"], available_tables=available_tables,
@@ -444,6 +517,33 @@ def _pglast_parse_expression(pglast_data: dict, *, available_tables: dict[str, T
                                            resolved_columns=dict(resolved_columns),
                                            schema=schema)
             return SubqueryExpression(subquery)
+
+        case "A_Indirection":
+            expression: dict = pglast_data["A_Indirection"]
+            array_expression = _pglast_parse_expression(expression["arg"],
+                                                        available_tables=available_tables,
+                                                        resolved_columns=resolved_columns, schema=schema)
+
+            for index_expression in expression["indirection"]:
+                index_expression: dict = index_expression["A_Indices"]
+
+                if index_expression.get("is_slice", False):
+                    lower = (_pglast_parse_expression(index_expression["lidx"],
+                                                      available_tables=available_tables,
+                                                      resolved_columns=resolved_columns, schema=schema)
+                             if "lidx" in index_expression else None)
+                    upper = (_pglast_parse_expression(index_expression["uidx"],
+                                                      available_tables=available_tables,
+                                                      resolved_columns=resolved_columns, schema=schema)
+                             if "uidx" in index_expression else None)
+                    array_expression = ArrayAccessExpression(array_expression, lower_idx=lower, upper_idx=upper)
+                    continue
+
+                point_index = _pglast_parse_expression(index_expression["uidx"], available_tables=available_tables,
+                                                       resolved_columns=resolved_columns, schema=schema)
+                array_expression = ArrayAccessExpression(array_expression, idx=point_index)
+
+            return array_expression
 
         case _:
             raise ParserError("Unknown expression type: " + str(pglast_data))
@@ -486,7 +586,7 @@ def _pglast_parse_ctes(ctes: list[dict], *, available_tables: dict[str, TableRef
                                         available_tables=dict(available_tables),
                                         resolved_columns=local_resolved_cols,
                                         schema=schema)
-        available_tables[target_table.identifier()] = target_table
+        available_tables[normalize(target_table.identifier())] = target_table
 
         match current_cte.get("ctematerialized", "CTEMaterializeDefault"):
             case "CTEMaterializeDefault":
@@ -657,9 +757,9 @@ def _pglast_parse_from_entry(pglast_data: dict, *, available_tables: dict[str, T
                 table = available_tables[table.full_name]
                 return DirectTableSource(table)
 
-            available_tables[table.full_name] = table
+            available_tables[normalize(table.full_name)] = table
             if table.alias:
-                available_tables[table.alias] = table
+                available_tables[normalize(table.alias)] = table
 
             return DirectTableSource(table)
 
@@ -698,7 +798,7 @@ def _pglast_parse_from_entry(pglast_data: dict, *, available_tables: dict[str, T
             values_list = _pglast_parse_values(pglast_data["RangeSubselect"])
             target_identifier = values_list.table.identifier() if values_list.table else ""
             if target_identifier:
-                available_tables[values_list.table.identifier()] = values_list.table
+                available_tables[normalize(values_list.table.identifier())] = values_list.table
 
             for target_column in values_list.cols:
                 col_key = (target_identifier, target_column.name)
@@ -722,7 +822,7 @@ def _pglast_parse_from_entry(pglast_data: dict, *, available_tables: dict[str, T
 
             subquery_source = SubqueryTableSource(subquery, target_name=alias, lateral=is_lateral)
             if subquery_source.target_name:
-                available_tables[subquery_source.target_table.identifier()] = subquery_source.target_table
+                available_tables[normalize(subquery_source.target_table.identifier())] = subquery_source.target_table
             return subquery_source
 
         case _:
@@ -1238,7 +1338,7 @@ def _pglast_parse_setop(pglast_data: dict, *, available_tables: dict[str, TableR
     match setop:
 
         case "SETOP_UNION":
-            union_all = "all" in pglast_data
+            union_all: bool = pglast_data.get("all", False)
             return UnionClause(subquery, union_all=union_all)
 
         case "SETOP_INTERSECT":
@@ -1346,8 +1446,7 @@ def _pglast_parse_query(stmt: dict, *, available_tables: dict[str, TableReferenc
 
 
 def parse_query(query: str, *, bind_columns: bool | None = None,
-                db_schema: Optional["DatabaseSchema"] = None,  # type: ignore # noqa: F821
-                _skip_all_binding: bool = False) -> SqlQuery:
+                db_schema: Optional["DatabaseSchema"] = None) -> SqlQuery:  # type: ignore # noqa: F821
     """Parses a query string into a proper `SqlQuery` object.
 
     During parsing, the appropriate type of SQL query (i.e. with implicit, explicit or mixed ``FROM`` clause) will be

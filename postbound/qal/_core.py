@@ -204,6 +204,7 @@ class MathOperator(enum.Enum):
     Divide = "/"
     Modulo = "%"
     Negate = "-"
+    Concatenate = "||"
 
 
 class LogicalOperator(enum.Enum):
@@ -937,6 +938,129 @@ class FunctionExpression(SqlExpression):
         return f"{self._function}{parameterization}{filter_str}"
 
 
+class ArrayAccessExpression(FunctionExpression):
+    """Models index-based access to an array column.
+
+    Due to its oftentimes special syntax, this is modeled as a special case of a function expression (using ``ARRAY_GET`` as
+    the function name). The text representation is based on Postgres and should be adapted for other systems during query
+    formatting if necessary.
+
+    Depending on the specific kind of access, different parameters can be set. For simple element access, the `index` attribute
+    is used. For slices, the `lower_index` and `upper_index` attributes are available. It is also possible to only set one
+    boundary to create a half-open slice. Whether the index is 0-based or 1-based is not enforced by PostBOUND and depends
+    on the actual database system.
+
+    Notice that all indexes are represented as expressions rather than simple integers. This allows for "variable" indexes, as
+    in ``SELECT R.a[R.b] FROM R``.
+
+    Parameters
+    ----------
+    array_expr : SqlExpression
+        The array being accessed
+    idx : Optional[SqlExpression], optional
+        For point-based access, the index of the element to access. Defaults to ``None``.
+    lower_idx : Optional[SqlExpression], optional
+        For slice-based access, the lower boundary of the slice. Defaults to ``None``.
+    upper_idx : Optional[SqlExpression], optional
+        For slice-based access, the upper boundary of the slice. Defaults to ``None``.
+    """
+
+    def __init__(self, array_expr: SqlExpression, *, idx: Optional[SqlExpression] = None,
+                 lower_idx: Optional[SqlExpression] = None, upper_idx: Optional[SqlExpression] = None) -> None:
+        if idx is None and lower_idx is None and upper_idx is None:
+            raise ValueError("At least one index has to be specified")
+        if idx is not None and (lower_idx is not None or upper_idx is not None):
+            raise ValueError("Cannot specify both a single index and a slice")
+
+        self._array = array_expr
+        self._idx = idx
+        self._lower_idx = lower_idx
+        self._upper_idx = upper_idx
+        self._hash_val = hash((self._array, self._idx, self._lower_idx, self._upper_idx))
+
+        args = [arg for arg in (array_expr, idx, lower_idx, upper_idx) if arg is not None]
+        super().__init__("ARRAY_GET", args)
+
+    @property
+    def array(self) -> SqlExpression:
+        """Get the array that is being accessed.
+
+        Returns
+        -------
+        SqlExpression
+            The array
+        """
+        return self._array
+
+    @property
+    def index(self) -> Optional[SqlExpression]:
+        """Get the index of the element to access.
+
+        Returns
+        -------
+        Optional[SqlExpression]
+            The index or ``None`` if sliced access is used
+        """
+        return self._idx
+
+    @property
+    def lower_index(self) -> Optional[SqlExpression]:
+        """Get the lower boundary of the slice.
+
+        Returns
+        -------
+        Optional[SqlExpression]
+            The lower boundary or ``None`` if either point-based access is used, or the slice is open at the lower end
+        """
+        return self._lower_idx
+
+    @property
+    def upper_index(self) -> Optional[SqlExpression]:
+        """Get the upper boundary of the slice.
+
+        Returns
+        -------
+        Optional[SqlExpression]
+            The upper boundary or ``None`` if either point-based access is used, or the slice is open at the upper end
+        """
+        return self._upper_idx
+
+    @property
+    def index_slice(self) -> Optional[tuple[Optional[SqlExpression], Optional[SqlExpression]]]:
+        """Get the boundaries of the slice.
+
+        Returns
+        -------
+        Optional[tuple[Optional[SqlExpression], Optional[SqlExpression]]]
+            The slice interval. Any boundaries can be none if the interval is open at that end. If the array access is not
+            sliced, the entire tuple is ``None``.
+        """
+        if self._idx:
+            return None
+        return self._lower_idx, self._upper_idx
+
+    def __eq__(self, other):
+        return (isinstance(other, type(self))
+                and self._array == other._array
+                and self._idx == other._idx
+                and self._lower_idx == other._lower_idx
+                and self._upper_idx == other._upper_idx)
+
+    def __hash__(self):
+        return self._hash_val
+
+    def __str__(self) -> str:
+        if self._idx is not None:
+            index_str = f"[{self._idx}]"
+        elif self._lower_idx is not None and self._upper_idx is not None:
+            index_str = f"[{self._lower_idx}:{self._upper_idx}]"
+        elif self._lower_idx is not None:
+            index_str = f"[{self._lower_idx}:]"
+        else:
+            index_str = f"[:{self._upper_idx}]"
+        return f"{self._array}{index_str}"
+
+
 class SubqueryExpression(SqlExpression):
     """A subquery expression wraps an arbitrary subquery.
 
@@ -999,12 +1123,35 @@ class SubqueryExpression(SqlExpression):
 
 
 class StarExpression(SqlExpression):
-    """A special expression that is only used in ``SELECT`` clauses to select all columns."""
+    """A special expression that is only used in ``SELECT`` clauses to select all columns.
 
-    def __init__(self) -> None:
-        super().__init__(hash("*"))
+    Parameters
+    ----------
+    from_table : Optional[TableReference], optional
+        The table from which to select all columns. Defaults to **None**, in which case all columns of all tables are being
+        selected.
+    """
+
+    def __init__(self, *, from_table: Optional[TableReference] = None) -> None:
+        self._table = from_table
+        super().__init__(hash(("*", self._table)))
+
+    @property
+    def from_table(self) -> Optional[TableReference]:
+        """Get the table from which to select all columns.
+
+        If no such table was selected, all columns of all tables are being selected.
+
+        Returns
+        -------
+        Optional[TableReference]
+            The table, or **None** if all columns are selected
+        """
+        return self._table
 
     def tables(self) -> set[TableReference]:
+        if self._table:
+            return {self._table}
         return set()
 
     def columns(self) -> set[ColumnReference]:
@@ -1022,10 +1169,12 @@ class StarExpression(SqlExpression):
     __hash__ = SqlExpression.__hash__
 
     def __eq__(self, other) -> bool:
-        return isinstance(other, type(self))
+        return isinstance(other, type(self)) and self._table == other._table
 
     def __str__(self) -> str:
-        return "*"
+        if not self._table:
+            return "*"
+        return f"{quote(self._table.identifier())}.*"
 
 
 class WindowExpression(SqlExpression):
