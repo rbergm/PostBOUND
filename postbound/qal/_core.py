@@ -528,7 +528,7 @@ class MathematicalExpression(SqlExpression):
     The formula is based on an arbitrary expression, an operator and potentially a number of additional
     expressions/arguments.
 
-    If it is necessary to represent boolean expressions outside of the **WHERE** and **HAVING** clauses, a `BooleanExpression`
+    If it is necessary to represent boolean expressions outside of the **WHERE** and **HAVING** clauses, a `AbstractPredicate`
     should be used instead of a mathematical expression.
 
     Parameters
@@ -1198,14 +1198,14 @@ class WindowExpression(SqlExpression):
         The expressions used for partitioning the window. Defaults to None.
     ordering : Optional[OrderBy], optional
         The ordering of the window. Defaults to None.
-    filter_condition : Optional[BooleanExpression], optional
+    filter_condition : Optional[AbstractPredicate], optional
         The filter condition for the window. Defaults to None.
     """
 
     def __init__(self, window_function: FunctionExpression, *,
                  partitioning: Optional[Sequence[SqlExpression]] = None,
                  ordering: Optional[OrderBy] = None,
-                 filter_condition: Optional[BooleanExpression] = None) -> None:
+                 filter_condition: Optional[AbstractPredicate] = None) -> None:
         self._window_function = window_function
         self._partitioning = tuple(partitioning) if partitioning else tuple()
         self._ordering = ordering
@@ -1250,7 +1250,7 @@ class WindowExpression(SqlExpression):
         return self._ordering
 
     @property
-    def filter_condition(self) -> Optional[BooleanExpression]:
+    def filter_condition(self) -> Optional[AbstractPredicate]:
         """Get the filter condition for tuples in the current window.
 
         Returns:
@@ -1379,61 +1379,6 @@ class CaseExpression(SqlExpression):
         return f"CASE {cases_str}{else_str} END"
 
 
-class BooleanExpression(SqlExpression):
-    """Represents a boolean expression in SQL.
-
-    Notice that this expression does not function as a replacement or alternative to the `predicates` module. Instead, boolean
-    expressions appear in situations where other (non-predicate) clauses require a boolean expression. For example, when using
-    a user-defined function in the ``SELECT`` clause, such as in ``SELECT my_udf(R.a > 42) FROM R``.
-
-    Parameters
-    ----------
-    predicate : AbstractPredicate
-        The predicate to wrap.
-    """
-
-    def __init__(self, predicate: AbstractPredicate) -> None:
-        self._predicate = predicate
-        hash_val = hash(predicate)
-        super().__init__(hash_val)
-
-    __match_args__ = ("predicate",)
-
-    @property
-    def predicate(self) -> AbstractPredicate:
-        """Get the predicate that is wrapped by this expression.
-
-        Returns
-        -------
-        AbstractPredicate
-            The predicate
-        """
-        return self._predicate
-
-    def tables(self) -> set[TableReference]:
-        return self._predicate.tables()
-
-    def columns(self) -> set[ColumnReference]:
-        return self._predicate.columns()
-
-    def itercolumns(self) -> Iterable[ColumnReference]:
-        return self._predicate.itercolumns()
-
-    def iterchildren(self) -> Iterable[SqlExpression]:
-        return self._predicate.iterexpressions()
-
-    def accept_visitor(self, visitor: SqlExpressionVisitor[VisitorResult]) -> VisitorResult:
-        return visitor.visit_boolean_expr(self)
-
-    __hash__ = SqlExpression.__hash__
-
-    def __eq__(self, other: object) -> bool:
-        return isinstance(other, type(self)) and self.predicate == other.predicate
-
-    def __str__(self) -> str:
-        return str(self.predicate)
-
-
 class SqlExpressionVisitor(abc.ABC, Generic[VisitorResult]):
     """Basic visitor to operator on arbitrary expression trees.
 
@@ -1483,10 +1428,6 @@ class SqlExpressionVisitor(abc.ABC, Generic[VisitorResult]):
     def visit_case_expr(self, expr: CaseExpression) -> VisitorResult:
         raise NotImplementedError
 
-    @abc.abstractmethod
-    def visit_boolean_expr(self, expr: BooleanExpression) -> VisitorResult:
-        return expr.predicate.accept_visitor(self)
-
 
 class ExpressionCollector(SqlExpressionVisitor[set[SqlExpression]]):
     """Utility to traverse an arbitrarily deep expression hierarchy in order to collect specific expressions.
@@ -1530,9 +1471,6 @@ class ExpressionCollector(SqlExpressionVisitor[set[SqlExpression]]):
         return self._check_match(expression)
 
     def visit_case_expr(self, expression: CaseExpression) -> set[SqlExpression]:
-        return self._check_match(expression)
-
-    def visit_boolean_expr(self, expression: BooleanExpression) -> set[SqlExpression]:
         return self._check_match(expression)
 
     def _check_match(self, expression: SqlExpression) -> set[SqlExpression]:
@@ -1743,7 +1681,7 @@ def _generate_join_pairs(first_columns: Iterable[ColumnReference], second_column
             in itertools.product(first_columns, second_columns) if first_col.table != second_col.table}
 
 
-class AbstractPredicate(abc.ABC):
+class AbstractPredicate(SqlExpression, abc.ABC):
     """Base class for all predicates.
 
     Predicates constitute the central building block for ``WHERE`` and ``HAVING`` clauses and model the join conditions in
@@ -1766,7 +1704,7 @@ class AbstractPredicate(abc.ABC):
     """
 
     def __init__(self, hash_val: int) -> None:
-        self._hash_val = hash_val
+        super().__init__(hash_val)
 
     @abc.abstractmethod
     def is_compound(self) -> bool:
@@ -1897,6 +1835,9 @@ class AbstractPredicate(abc.ABC):
             The expressions
         """
         raise NotImplementedError
+
+    def iterchildren(self) -> Iterable[SqlExpression]:
+        return self.iterexpressions()
 
     def contains_table(self, table: TableReference) -> bool:
         """Checks, whether this predicate filters or joins a column of a specific table.
@@ -6658,7 +6599,7 @@ def _create_ast(item: Any, *, indentation: int = 0) -> str:
     match item:
         case ColumnExpression():
             return f"{prefix}+ {item_str} [{item.column}]"
-        case MathematicalExpression() | BooleanExpression() | SubqueryExpression():
+        case MathematicalExpression() | SubqueryExpression():
             expressions = [_create_ast(e, indentation=indentation + 2) for e in item.iterchildren()]
             expression_str = "\n".join(expressions)
             return f"{prefix}+-{item_str}\n{expression_str}"

@@ -48,7 +48,7 @@ from ._core import (
     LogicalOperator, CompoundOperator,
     SqlExpression, ColumnExpression, StaticValueExpression, MathematicalExpression, CastExpression, FunctionExpression,
     SubqueryExpression, StarExpression,
-    WindowExpression, CaseExpression, BooleanExpression,
+    WindowExpression, CaseExpression,
     AbstractPredicate, BinaryPredicate, InPredicate, BetweenPredicate, UnaryPredicate, CompoundPredicate,
     TableSource, DirectTableSource, SubqueryTableSource, JoinTableSource,
     SqlQuery, ImplicitSqlQuery,
@@ -2516,9 +2516,6 @@ class _SubqueryDetector(SqlExpressionVisitor[_SubquerySet], PredicateVisitor[_Su
     def visit_case_expr(self, expression: CaseExpression) -> _SubquerySet:
         return self._traverse_nested_expressions(expression)
 
-    def visit_boolean_expr(self, expression: BooleanExpression) -> _SubquerySet:
-        return self._traverse_nested_expressions(expression)
-
     def _traverse_predicate_expressions(self, predicate: AbstractPredicate) -> _SubquerySet:
         """Handler to collect subqueries from predicates."""
         return functools.reduce(operator.add, [expression.accept_visitor(self) for expression in predicate.iterexpressions()])
@@ -2609,10 +2606,6 @@ class _BaseTableLookup(SqlExpressionVisitor[Optional[TableReference]], Predicate
 
     def visit_case_expr(self, expression: CaseExpression) -> Optional[TableReference]:
         # base tables can only appear in predicates and we only support case expressions in SELECT statements
-        return None
-
-    def visit_boolean_expr(self, expression: BooleanExpression) -> Optional[TableReference]:
-        # base tables can only appear in predicates and boolean expressions are only part of SELECT statements
         return None
 
     def _fetch_valid_base_tables(self, base_tables: set[TableReference | None], *,
@@ -3362,7 +3355,7 @@ class _ImplicitRelalgParser:
                         return SemiJoin(input_node, subquery_root, in_predicate)
             case CastExpression() | FunctionExpression() | MathematicalExpression():
                 return self._ensure_expression_applicability(expression, input_node)
-            case WindowExpression() | CaseExpression() | BooleanExpression():
+            case WindowExpression() | CaseExpression():
                 return self._ensure_expression_applicability(expression, input_node)
             case _:
                 raise ValueError(f"Did not expect expression '{expression}'")

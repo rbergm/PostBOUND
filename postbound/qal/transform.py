@@ -30,7 +30,7 @@ from ._core import (
     CompoundOperator,
     SqlExpression, ColumnExpression, StaticValueExpression, MathematicalExpression, CastExpression, FunctionExpression,
     SubqueryExpression, StarExpression,
-    WindowExpression, CaseExpression, BooleanExpression,
+    WindowExpression, CaseExpression,
     AbstractPredicate, BinaryPredicate, InPredicate, BetweenPredicate, UnaryPredicate, CompoundPredicate, JoinType,
     BaseProjection, TableSource, DirectTableSource, SubqueryTableSource, JoinTableSource, ValuesTableSource,
     WithQuery, ValuesWithQuery, OrderByExpression,
@@ -1163,8 +1163,6 @@ def rename_columns_in_expression(expression: Optional[SqlExpression],
         renamed_else = (rename_columns_in_expression(expression.else_expression, available_renamings)
                         if expression.else_expression else None)
         return CaseExpression(renamed_cases, else_expr=renamed_else)
-    elif isinstance(expression, BooleanExpression):
-        return BooleanExpression(rename_columns_in_predicate(expression.predicate, available_renamings))
     else:
         raise ValueError("Unknown expression type: " + str(expression))
 

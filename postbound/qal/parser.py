@@ -44,7 +44,7 @@ from ._core import (
     Select, Where, From, GroupBy, Having, OrderBy, Limit, CommonTableExpression, ImplicitFromClause, ExplicitFromClause,
     AbstractPredicate, BinaryPredicate, InPredicate, BetweenPredicate, CompoundPredicate, UnaryPredicate,
     SqlExpression, StarExpression, StaticValueExpression, ColumnExpression, SubqueryExpression, CastExpression,
-    MathematicalExpression, FunctionExpression, BooleanExpression, WindowExpression, CaseExpression, ArrayAccessExpression,
+    MathematicalExpression, FunctionExpression, WindowExpression, CaseExpression, ArrayAccessExpression,
     build_query
 )
 from .._core import TableReference, normalize
@@ -445,7 +445,7 @@ def _pglast_parse_expression(pglast_data: dict, *, available_tables: dict[str, T
                                              resolved_columns=resolved_columns, schema=schema)
 
             if operation in LogicalOperator:
-                return BooleanExpression(BinaryPredicate(operation, left, right))
+                return BinaryPredicate(operation, left, right)
 
             return MathematicalExpression(operation, left, right)
 
@@ -453,17 +453,17 @@ def _pglast_parse_expression(pglast_data: dict, *, available_tables: dict[str, T
             # we need to parse a predicate in disguise
             predicate = _pglast_parse_predicate(pglast_data, available_tables=available_tables,
                                                 resolved_columns=resolved_columns, schema=schema)
-            return BooleanExpression(predicate)
+            return predicate
 
         case "NullTest":
             predicate = _pglast_parse_predicate(pglast_data, available_tables=available_tables,
                                                 resolved_columns=resolved_columns, schema=schema)
-            return BooleanExpression(predicate)
+            return predicate
 
         case "BoolExpr":
             predicate = _pglast_parse_predicate(pglast_data, available_tables=available_tables,
                                                 resolved_columns=resolved_columns, schema=schema)
-            return BooleanExpression(predicate)
+            return predicate
 
         case "FuncCall" if "over" not in pglast_data["FuncCall"]:  # normal functions, aggregates and UDFs
             expression: dict = pglast_data["FuncCall"]
@@ -988,10 +988,6 @@ def _pglast_parse_predicate(pglast_data: dict, available_tables: dict[str, Table
                             resolved_columns: dict[tuple[str, str], ColumnReference],
                             schema: Optional["DatabaseSchema"]) -> AbstractPredicate:  # type: ignore # noqa: F821
     """Handler method to parse arbitrary predicates in the **WHERE** or **HAVING** clause.
-
-    Note that in other places where logical expressions can be used, e.g. for aggregate filtering, `BooleanExpression`s are
-    used instead. This is to prevent surprising results in analysis that simply collect all predicates of a query to infer
-    join graphs, etc.
 
     Parameters
     ----------
