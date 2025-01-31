@@ -7,6 +7,7 @@ TARGET_DIR=pb-venv/
 EXTRAS=""
 MINIMAL_EXTRAS=""
 ALL_EXTRAS="[mysql,vis]"
+BUILD_DOC="true"
 
 show_help() {
   RET=$1
@@ -23,6 +24,8 @@ show_help() {
   echo -e "\tOptional extras to install with PostBOUND. These are specified as a comma-separated list."
   echo -e "\tSupported extras are: 'mysql' for installing the MySQL backend and 'vis' for using the visualization utilities."
   echo -e "\tFurthermore, 'all' can be used to install all available extras and 'minimal' only installs the core package."
+  echo -e "--skip-doc"
+  echo -e "\tDon't build the documentation."
   exit $RET
 }
 
@@ -52,6 +55,10 @@ while [ $# -gt 0 ] ; do
           ;;
       esac
       shift
+      shift
+      ;;
+    --skip-doc)
+      BUILD_DOC="false"
       shift
       ;;
     --help)
@@ -92,6 +99,19 @@ python3 -m build
 echo ".. Installing PostBOUND package"
 LATEST_WHEEL=$(ls dist/*.whl | sort -V | tail -n 1)
 pip install "$LATEST_WHEEL$EXTRAS"
+
+if [ "$BUILD_DOC" == "true" ] ; then
+  echo ".. Building documentation"
+  cd $WD/docs
+  pip install -r requirements.txt
+  sphinx-apidoc --force \
+                --ext-autodoc \
+                --maxdepth 4 \
+                --module-first \
+                -o source/generated \
+                ../postbound
+  make html
+fi
 
 echo ".. Done. Activate venv as '. $TARGET_DIR/bin/activate'"
 cd "$WD"
