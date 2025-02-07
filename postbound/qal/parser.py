@@ -33,7 +33,7 @@ from typing import Optional, overload
 
 import pglast
 
-from ._core import (
+from ._qal import (
     ColumnReference,
     SelectType, JoinType,
     CompoundOperator, MathOperator, LogicalOperator, SqlOperator, SetOperator,

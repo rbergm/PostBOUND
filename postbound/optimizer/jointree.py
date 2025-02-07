@@ -33,13 +33,14 @@ from typing import Generic, Literal, Optional, Union
 import Levenshtein
 
 from ._hints import (
-    PhysicalOperator, SortKey,
+    PhysicalOperator,
     PhysicalOperatorAssignment, ScanOperatorAssignment, JoinOperatorAssignment, DirectionalJoinOperatorAssignment,
     PlanParameterization,
     read_operator_json
 )
 from .. import qal, util
 from .._core import Cost, Cardinality, QueryExecutionPlan
+from .._qep import SortKey
 from ..qal import parser, TableReference, ColumnReference, SqlExpression
 from ..util import jsondict, StateError
 from ..util.typing import Lazy, LazyVal

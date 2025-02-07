@@ -43,7 +43,7 @@ from collections.abc import Generator, Iterable, Sequence
 from typing import Optional
 
 from . import transform
-from ._core import (
+from ._qal import (
     TableReference, ColumnReference,
     LogicalOperator, CompoundOperator,
     SqlExpression, ColumnExpression, StaticValueExpression, MathematicalExpression, CastExpression, FunctionExpression,

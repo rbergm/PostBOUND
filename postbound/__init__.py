@@ -102,7 +102,7 @@ from . import (
   experiments,
   util
 )
-from ._core import Cost, Cardinality, TableReference
+from ._core import Cost, Cardinality, TableReference, ColumnReference
 from ._pipelines import (
   OptimizationPipeline,
   IntegratedOptimizationPipeline,
@@ -119,7 +119,7 @@ from ._stages import (
   as_complete_algorithm
 )
 from .db import Database
-from .qal import relalg, transform, SqlQuery, ColumnReference, parse_query
+from .qal import relalg, transform, SqlQuery, parse_query
 from .optimizer import validation, PhysicalQueryPlan
 from .experiments import workloads
 from .experiments.executor import execute_workload, optimize_and_execute_workload

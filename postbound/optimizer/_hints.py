@@ -3,13 +3,12 @@ from __future__ import annotations
 
 import math
 from collections.abc import Collection, Iterable
-from dataclasses import dataclass
 from enum import Enum
 from typing import Any, overload
 
 from .. import util
 from .._core import ScanOperators, JoinOperators, PhysicalOperator
-from ..qal import parser, TableReference, SqlExpression
+from ..qal import parser, TableReference
 from ..util import jsondict
 
 
@@ -740,46 +739,3 @@ class HintType(Enum):
     Operator = "Physical operators"
     Parallelization = "Par. workers"
     Cardinality = "Cardinality"
-
-
-@dataclass(frozen=True)
-class SortKey:
-    """Sort keys describe how the tuples in a relation are sorted.
-
-    Attributes
-    ----------
-    column : SqlExpression
-        The column that is used to sort the tuples. This will usually be a column reference, but can also be a more complex
-        expression.
-    ascending : bool
-        Whether the sorting is ascending or descending. Defaults to ascending.
-    """
-
-    column: SqlExpression
-    ascending: bool = True
-
-    @staticmethod
-    def of(column: SqlExpression, ascending: bool = True) -> SortKey:
-        """Creates a new sort key.
-
-        This is just a more expressive alias for the constructor.
-
-        Parameters
-        ----------
-        column : SqlExpression
-            The column that is used to sort the tuples. This will usually be a column reference, but can also be a more complex
-            expression.
-        ascending : bool, optional
-            Whether the sorting is ascending or descending. Defaults to ascending.
-
-        Returns
-        -------
-        SortKey
-            The sort key
-        """
-        return SortKey(column, ascending)
-
-    def __str__(self):
-        if self.ascending:
-            return str(self.column)
-        return f"{self.column} DESC"

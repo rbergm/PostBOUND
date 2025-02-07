@@ -103,11 +103,7 @@ from __future__ import annotations
 from typing import Optional
 
 from . import relalg, transform
-from ._core import (
-    VisitorResult,
-    ColumnReference,
-    UnboundColumnError,
-    VirtualTableError,
+from ._qal import (
     MathOperator,
     LogicalOperator,
     UnarySqlOperators,
@@ -185,14 +181,10 @@ from ._core import (
     build_query
 )
 from .formatter import format_quick
-from .._core import (TableReference, quote, normalize)
+from .._core import TableReference, ColumnReference, UnboundColumnError, VirtualTableError, quote, normalize
 
 
 __all__ = [
-    "VisitorResult",
-    "ColumnReference",
-    "UnboundColumnError",
-    "VirtualTableError",
     "MathOperator",
     "LogicalOperator",
     "UnarySqlOperators",
@@ -272,6 +264,9 @@ __all__ = [
     "transform",
     "format_quick",
     "TableReference",
+    "ColumnReference",
+    "UnboundColumnError",
+    "VirtualTableError",
     "quote",
     "normalize",
     "parse_query",
