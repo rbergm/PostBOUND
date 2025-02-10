@@ -24,8 +24,11 @@ VisitorResult = TypeVar("VisitorResult")
 Cost = float
 """Type alias for a cost estimate."""
 
-Cardinality = int
-"""Type alias for a cardinality estimate."""
+Cardinality = float
+"""Type alias for a cardinality estimate.
+
+We use floats instead of ints to for cardinalities to represent missing values as NaN as well as infinite cardinalities.
+"""
 
 
 class ScanOperators(Enum):
