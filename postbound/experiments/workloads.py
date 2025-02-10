@@ -48,7 +48,7 @@ import pandas as pd
 
 from .. import db, qal, util
 
-workloads_base_dir = "workloads"
+workloads_base_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "workloads"))
 """Indicates the PostBOUND directory that contains all natively supported workloads.
 
 Can be changed to match the project-specific file layout.
@@ -656,9 +656,11 @@ def job(file_encoding: str = "utf-8") -> Workload[str]:
 
     .. Viktor Leis et al.: "How Good Are Query Optimizers, Really?" (Proc. VLDB Endow. 9, 3 (2015))
     """
-    job_workload = Workload.read(f"{workloads_base_dir}/JOB-Queries", name="JOB", file_encoding=file_encoding,
+    job_dir = os.path.join(workloads_base_dir, "JOB-Queries")
+    # JOB only uses aliases column references, so no need for explicit binding
+    job_workload = Workload.read(job_dir, name="JOB", file_encoding=file_encoding,
                                  bind_columns=False)
-    _assert_workload_loaded(job_workload, f"{workloads_base_dir}/JOB-Queries")
+    _assert_workload_loaded(job_workload, job_dir)
     return job_workload
 
 
@@ -690,13 +692,32 @@ def ssb(file_encoding: str = "utf-8", *, bind_columns: Optional[bool] = None) ->
     .. Patrick E. O'Neil et al.: "The Star Schema Benchmark and Augmented Fact Table Indexing." (TPCTC'2009)
     """
     bind_columns = bind_columns if bind_columns is not None else not db.DatabasePool.get_instance().empty()
-    ssb_workload = Workload.read(f"{workloads_base_dir}/SSB-Queries", name="SSB", file_encoding=file_encoding,
+    ssb_dir = os.path.join(workloads_base_dir, "SSB-Queries")
+    ssb_workload = Workload.read(ssb_dir, name="SSB", file_encoding=file_encoding,
                                  bind_columns=bind_columns)
     _assert_workload_loaded(ssb_workload, f"{workloads_base_dir}/SSB-Queries")
     return ssb_workload
 
 
-def stack(file_encoding: str = "utf-8", *, bind_columns: Optional[bool] = None) -> Workload[str]:
+def _fetch_stack_queries(path: str) -> None:
+    """Utility method to load the Stack queries if they are not available.
+
+    Parameters
+    ----------
+    path : str
+        The path to the Stack-Queries directory
+    """
+    current_path = os.getcwd()
+    os.chdir(os.path.join(workloads_base_dir, "Stack-Queries"))
+    if "q1" in os.listdir():
+        os.chdir(current_path)
+        return
+
+    os.system("./setup.sh")
+    os.chdir(current_path)
+
+
+def stack(file_encoding: str = "utf-8", *, bind_columns: Optional[bool] = None, fetch: bool = True) -> Workload[str]:
     """Reads the Stack Benchmark, as shipped with the PostBOUND repository.
 
     Queries will be read from the Stack directory relative to `workloads_base_dir`. The expected layout is:
@@ -709,6 +730,11 @@ def stack(file_encoding: str = "utf-8", *, bind_columns: Optional[bool] = None) 
     ----------
     file_encoding : str, optional
         The encoding of the query files, by default UTF-8.
+    bind_columns : Optional[bool], optional
+        Whether to bind columns in the queries. If omitted, this is determined based on the current database connection.
+    fetch : bool, optional
+        Whether the workload queries should be fetched if they are not loaded already. This requires a working internet
+        connection.
 
     Returns
     -------
@@ -724,7 +750,8 @@ def stack(file_encoding: str = "utf-8", *, bind_columns: Optional[bool] = None) 
     -----
     Notice that the Stack Benchmark is much much larger than the Join Order Benchmark or the Star Schema Benchmark.
     Therefore, the benchmark queries are not put in version control directly, instead they have to be manually loaded.
-    See the documentation in the workload directory for details.
+    You can use the `fetch` parameter to load the queries automatically, if it appears that they are not available.
+    See the documentation in the workload directory for details on the loading logic.
 
     References
     ----------
@@ -732,9 +759,13 @@ def stack(file_encoding: str = "utf-8", *, bind_columns: Optional[bool] = None) 
     .. Ryan Marcus et al.: "Bao: Making Learned Query Optimization Practical." (SIGMOD'2021)
     """
     bind_columns = bind_columns if bind_columns is not None else not db.DatabasePool.get_instance().empty()
-    stack_workload = read_workload(f"{workloads_base_dir}/Stack-Queries", "Stack", recurse_subdirectories=True,
+    stack_dir = os.path.join(workloads_base_dir, "Stack-Queries")
+    if fetch:
+        _fetch_stack_queries(stack_dir)
+
+    stack_workload = read_workload(stack_dir, "Stack", recurse_subdirectories=True,
                                    file_encoding=file_encoding, bind_columns=bind_columns)
-    _assert_workload_loaded(stack_workload, f"{workloads_base_dir}/Stack-Queries")
+    _assert_workload_loaded(stack_workload, stack_dir)
     return stack_workload
 
 
@@ -766,7 +797,8 @@ def stats(file_encoding: str = "utf-8") -> Workload[str]:
 
     .. Yuxing Han et al.: Cardinality Estimation in DBMS: A Comprehensive Benchmark Evaluation (Proc. VLDB Endow. 15, 4 (2022))
     """
-    stats_workload = Workload.read(f"{workloads_base_dir}/Stats-CEB/queries", name="Stats", file_encoding=file_encoding,
+    stats_dir = os.path.join(workloads_base_dir, "Stats-CEB", "queries")
+    stats_workload = Workload.read(stats_dir, name="Stats", file_encoding=file_encoding,
                                    bind_columns=False)
-    _assert_workload_loaded(stats_workload, f"{workloads_base_dir}/Stats-CEB/queries")
+    _assert_workload_loaded(stats_workload, stats_dir)
     return stats_workload

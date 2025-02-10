@@ -14,14 +14,33 @@ Be carefull when updating and check the changelog!
 
 ---
 
-## 🚧 Version 0.11.0 👷
+## 🚧 Version 0.12.0 👷
 
 ### Planned
 - Full dynamic programming support for the `TextbookOptimizationPipeline`, including a Postgres-specific algorithm
 
 ---
 
-## ➡ Version 0.10.0
+
+## ➡ Version 0.11.0
+
+### New features
+- Added a `fetch` parameter to `workloads.stack()` which automatically loads the stack queries, if they do not exist
+- `SimplifiedFilterView` now tolerates cast expressions since they only modify the data type and not the actual values (and
+  PostBOUND does not care about the values anyway).
+
+### Updates
+- The `workloads_base_dir` now uses an absolute path based on the location of the workloads module. This should circumvent
+  problems with PostBOUND installations as a module.
+
+### Fixes
+- Fixed usage of system-specific path separators in `workloads.py` module (looking at you, Windows..)
+- Fixed errors being raised during `SimplifiedFilterView.can_wrap` checks
+
+---
+
+
+## Version 0.10.1
 
 ### New features
 - Added support for set operations to SQL queries
