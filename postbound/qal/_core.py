@@ -2974,7 +2974,7 @@ def generate_predicates_for_equivalence_classes(equivalence_classes: set[frozens
     return equivalence_predicates
 
 
-def _unwrap_expression(expression: ColumnExpression | StaticValueExpression) -> ColumnReference | object:
+def _unwrap_expression(expression: SqlExpression) -> ColumnReference | object:
     """Provides the column of a `ColumnExpression` or the value of a `StaticValueExpression`.
 
     This is a utility method to gain quick access to the values in simple predicates.
@@ -2989,19 +2989,22 @@ def _unwrap_expression(expression: ColumnExpression | StaticValueExpression) -> 
     ColumnReference | object
         The column or value contained in the expression.
     """
-    if isinstance(expression, StaticValueExpression):
-        return expression.value
-    elif isinstance(expression, ColumnExpression):
-        return expression.column
-    else:
-        raise ValueError("Cannot unwrap expression " + str(expression))
+    match expression:
+        case StaticValueExpression(val):
+            return val
+        case ColumnExpression(col):
+            return col
+        case CastExpression(castee, _):
+            return _unwrap_expression(castee)
+        case _:
+            raise ValueError("Cannot unwrap expression " + str(expression))
 
 
 UnwrappedFilter = tuple[ColumnReference, LogicalOperator, object]
 """Type that captures the main components of a filter predicate."""
 
 
-def _attempt_filter_unwrap(predicate: AbstractPredicate) -> Optional[UnwrappedFilter]:
+def _attempt_filter_unwrap(predicate: AbstractPredicate) -> UnwrappedFilter:
     """Extracts the main components of a simple filter predicate to make them more directly accessible.
 
     This is a preparatory step in order to create instances of `SimplifiedFilterView`. Therefore, it only works for predicates
@@ -3024,33 +3027,27 @@ def _attempt_filter_unwrap(predicate: AbstractPredicate) -> Optional[UnwrappedFi
         If `predicate` is not a base predicate
     """
     if not predicate.is_filter() or not predicate.is_base():
-        return None
+        raise ValueError("Only base filter predicates can be unwrapped, not " + str(predicate))
 
-    if isinstance(predicate, BinaryPredicate):
-        try:
-            left, right = _unwrap_expression(predicate.first_argument), _unwrap_expression(predicate.second_argument)
-            operation = predicate.operation
+    match predicate:
+
+        case BinaryPredicate(op, lhs, rhs):
+            left, right = _unwrap_expression(lhs), _unwrap_expression(rhs)
             left, right = (left, right) if isinstance(left, ColumnReference) else (right, left)
-            return left, operation, right
-        except ValueError:
-            return None
-    elif isinstance(predicate, BetweenPredicate):
-        try:
-            column = _unwrap_expression(predicate.column)
-            start = _unwrap_expression(predicate.interval_start)
-            end = _unwrap_expression(predicate.interval_end)
-            return column, LogicalOperator.Between, (start, end)
-        except ValueError:
-            return None
-    elif isinstance(predicate, InPredicate):
-        try:
-            column = _unwrap_expression(predicate.column)
-            values = [_unwrap_expression(val) for val in predicate.values]
-            return column, LogicalOperator.In, tuple(values)
-        except ValueError:
-            return None
-    else:
-        raise ValueError("Unknown predicate type: " + str(predicate))
+            return left, op, right
+
+        case BetweenPredicate(lhs, lower, upper):
+            lhs = _unwrap_expression(lhs)
+            lower, upper = _unwrap_expression(lower), _unwrap_expression(upper)
+            return lhs, LogicalOperator.Between, (lower, upper)
+
+        case InPredicate(lhs, values):
+            lhs = _unwrap_expression(lhs)
+            values = [_unwrap_expression(val) for val in values]
+            return lhs, LogicalOperator.In, tuple(values)
+
+        case _:
+            raise ValueError("Unknown predicate type: " + str(predicate))
 
 
 class SimplifiedFilterView(AbstractPredicate):
@@ -3062,9 +3059,10 @@ class SimplifiedFilterView(AbstractPredicate):
     column instances.
 
     Note that not all base predicates can be represented as a simplified view. In order for the view to work, both the
-    column as well as the filter values cannot be modified by other expressions such as casts or mathematical
-    expressions. As a rule of thumb, a filter has to be of the form ``<column reference> <operator> <static values>`` in order
-    for the representation to work.
+    column as well as the filter values cannot be modified by other expressions such as function calls or mathematical
+    expressions. However, cast expressions are tolerated and will simply be dropped. As a rule of thumb, if an expression
+    modifies a value (such as a function call), this cannot be unwrapped. Therefore, a filter approximately has to be of the
+    form ``<column reference> <operator> <static values>`` in order for the representation to work.
 
     The static methods `wrap`, `can_wrap` and `wrap_all` can serve as high-level access points into the view. The components
     of the view are accessible via properties.
@@ -3127,7 +3125,14 @@ class SimplifiedFilterView(AbstractPredicate):
         bool
             Whether a representation as a simplified view is possible.
         """
-        return _attempt_filter_unwrap(predicate) is not None
+        try:
+            _attempt_filter_unwrap(predicate)
+            return True
+        except ValueError:
+            return False
+        except Exception as e:
+            warnings.warn("Unexpected error during filter unwrapping: " + str(e), RuntimeWarning)
+            return False
 
     @staticmethod
     def wrap_all(predicates: Iterable[AbstractPredicate]) -> Sequence[SimplifiedFilterView]:

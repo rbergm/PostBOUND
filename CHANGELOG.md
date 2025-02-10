@@ -37,11 +37,16 @@ Be carefull when updating and check the changelog!
 - Added support for `FILTER` in aggregate functions
 - Introduced `__match_args__` for most building blocks of the query abstraction. This allows for much more convenient usage in
   `match` expressions.
+- `SimplifiedFilterView` now tolerates cast expressions since they only modify the data type and not the actual values (and
+  PostBOUND does not care about the values anyway).
 
 ### Updates
 - Switched to [pglast](https://github.com/lelit/pglast) as the underlying parser for SQL queries. Much better parser
   performance and larger SQL support.
 - References to tables and columns now automatically apply quoting if necessary
+
+### Fixes
+- Fixed errors being raised during `SimplifiedFilterView.can_wrap` checks
 
 ### ⚠ Breaking changes 💀
 - Identities of `TableReference` and `ColumnReference` objects are now based on their lowercase representations. This is a
