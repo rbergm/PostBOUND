@@ -120,12 +120,18 @@ class PlanParams:
         return self._params
 
     def __getattribute__(self, name: str) -> Any:
-        if hasattr(self, name):
-            return object.__getattribute__(self, name)
         params = object.__getattribute__(self, "_params")
+        if name == "_params":
+            return params
         if name in params:
             return params[name]
         raise AttributeError(f"PlanParams object has no attribute '{name}'")
+
+    def __setattr__(self, name, value) -> None:
+        if name == "_params":
+            return object.__setattr__(self, name, value)
+        params = object.__getattribute__(self, "_params")
+        params[name] = value
 
     def __getitem__(self, key: str) -> Any:
         return self._params[key]
@@ -162,14 +168,24 @@ class PlanEstimates:
         return self._params
 
     def __getattribute__(self, name: str) -> Any:
-        if hasattr(self, name):
-            return object.__getattribute__(self, name)
-        if name in self._params:
-            return self._params[name]
+        params = object.__getattribute__(self, "_params")
+        if name == "_params":
+            return params
+        if name in params:
+            return params[name]
         raise AttributeError(f"PlanEstimates object has no attribute '{name}'")
+
+    def __setattr__(self, name, value) -> None:
+        if name == "_params":
+            return object.__setattr__(self, name, value)
+        params = object.__getattribute__(self, "_params")
+        params[name] = value
 
     def __getitem__(self, key: str) -> Any:
         return self._params[key]
+
+    def __setitem__(self, key: str, value: Any) -> None:
+        self._params[key] = value
 
 
 class PlanMeasures:
@@ -212,14 +228,24 @@ class PlanMeasures:
         return self._params
 
     def __getattribute__(self, name: str) -> Any:
-        if hasattr(self, name):
-            return object.__getattribute__(self, name)
-        if name in self._params:
-            return self._params[name]
+        params = object.__getattribute__(self, "_params")
+        if name == "_params":
+            return params
+        if name in params:
+            return params[name]
         raise AttributeError(f"PlanMeasures object has no attribute '{name}'")
+
+    def __setattr__(self, name, value) -> None:
+        if name == "_params":
+            return object.__setattr__(self, name, value)
+        params = object.__getattribute__(self, "_params")
+        params[name] = value
 
     def __getitem__(self, key: str) -> Any:
         return self._params[key]
+
+    def __setitem__(self, key: str, value: Any) -> None:
+        self._params[key] = value
 
     def __bool__(self) -> bool:
         return any(not math.isnan(v) if isinstance(v, float) else (v is not None) for v in self._params.values())
@@ -366,10 +392,10 @@ class QueryPlan:
         return self._subplan
 
     def is_join(self) -> bool:
-        return self._operator in JoinOperators
+        return self._operator is not None and self._operator in JoinOperators
 
     def is_scan(self) -> bool:
-        return self._operator in ScanOperators
+        return self._operator is not None and self._operator in ScanOperators
 
     def is_analyze(self) -> bool:
         return bool(self._measures)
@@ -568,25 +594,26 @@ _starting_indentation = 0
 
 def _default_explain(plan: QueryPlan, *, padding: str) -> str:
     components: list[str] = []
+    metadata_indent = "      " if padding else "  "
 
     estimated_card = round(plan.estimated_cardinality, 3)
     estimated_cost = round(plan.estimated_cost, 3)
-    components.append(f"{padding}   Estimated Cardinality={estimated_card}, Estimated Cost={estimated_cost}")
+    components.append(f"{padding}{metadata_indent}Estimated Cardinality={estimated_card}, Estimated Cost={estimated_cost}")
 
     if plan.is_analyze():
         actual_card = round(plan.actual_cardinality, 3)
         exec_time = round(plan.execution_time, 3)
-        components.append(f"{padding}   Actual Cardinality={actual_card}, Actual Time={exec_time}s")
+        components.append(f"{padding}{metadata_indent}Actual Cardinality={actual_card}, Actual Time={exec_time}s")
 
     measures = plan.measures
     if measures.cache_hits is not None or measures.cache_misses is not None:
         cache_hits = measures.cache_hits if measures.cache_hits is not None else math.nan
         cache_misses = measures.cache_misses if measures.cache_misses is not None else math.nan
-        components.append(f"{padding}   Cache Hits={cache_hits}, Cache Misses={cache_misses}")
+        components.append(f"{padding}{metadata_indent}Cache Hits={cache_hits}, Cache Misses={cache_misses}")
 
     params = plan.params
     if params.parallel_workers is not None:
-        components.append(f"{padding}   Parallel Workers={params.parallel_workers}")
+        components.append(f"{padding}{metadata_indent}Parallel Workers={params.parallel_workers}")
 
     path_props: list[str] = []
     if params.index:
@@ -595,7 +622,7 @@ def _default_explain(plan: QueryPlan, *, padding: str) -> str:
         sort_keys = ", ".join(str(key) for key in params.sort_keys)
         path_props.append(f"Sort Keys={sort_keys}")
     if path_props:
-        components.append(f"{padding}   {', '.join(path_props)}")
+        components.append(f"{padding}{metadata_indent}{', '.join(path_props)}")
 
     return "\n".join(components)
 
@@ -617,13 +644,13 @@ def _custom_explain(plan: QueryPlan, *, fields: list[str], padding: str) -> str:
     return explain_data
 
 
-def _explainify(plan: QueryPlan, *, fields: list[str], indentation: int = _starting_indentation) -> str:
-    padding = " " * indentation
-    prefix = f"{padding}<- " if padding else ""
+def _explainify(plan: QueryPlan, *, fields: list[str], level: int = _starting_indentation) -> str:
+    padding = "" if not level else "  " + "      " * (level-1)
+    prefix = f"{padding}->  " if padding else ""
 
     header = f"{plan.node_type}({plan.base_table})" if plan.is_scan() else plan.node_type
     explain_data = _custom_explain(plan, fields=fields, padding=padding) if fields else _default_explain(plan, padding=padding)
-    child_explains = "\n".join(f"{_explainify(child, fields=fields, indentation=indentation + 2)}" for child in plan.children)
+    child_explains = "\n".join(f"{_explainify(child, fields=fields, level=level + 1)}" for child in plan.children)
 
     if not child_explains:
         return f"{prefix}{header}\n{explain_data}"
@@ -631,10 +658,11 @@ def _explainify(plan: QueryPlan, *, fields: list[str], indentation: int = _start
 
 
 def _astify(plan: QueryPlan, *, indentation: int = _starting_indentation) -> str:
-    prefix = " " * indentation
+    padding = " " * indentation
+    prefix = f"{padding}->  " if padding else ""
     if plan.is_scan():
-        item_str = f"{prefix}<- {plan.node_type}({plan.base_table})"
+        item_str = f"{prefix}{plan.node_type}({plan.base_table})"
     else:
-        item_str = f"{prefix}<- {plan.node_type}"
+        item_str = f"{prefix}{plan.node_type}"
     child_str = "\n".join(_astify(child, indentation=indentation + 2) for child in plan.children)
-    return f"{item_str}\n{child_str}"
+    return f"{item_str}\n{child_str}" if child_str else item_str

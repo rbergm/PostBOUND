@@ -2775,7 +2775,6 @@ class PostgresExplainNode:
 
         table = self.parse_table()
         subplan_name = self.subplan_name or self.cte_name
-        par_workers = self.parallel_workers + 1  # in Postgres the control worker also processes input
         true_card = self.true_cardinality * self.loops
 
         if self.is_scan():
@@ -2786,12 +2785,15 @@ class PostgresExplainNode:
             operator = None
 
         sort_keys = self._parse_sort_keys() if self.sort_keys else self._infer_sorting_from_children()
+        shared_hits = None if math.isnan(self.shared_blocks_cached) else self.shared_blocks_cached
+        shared_misses = None if math.isnan(self.shared_blocks_read) else self.shared_blocks_read
+        par_workers = None if math.isnan(self.parallel_workers) else self.parallel_workers
 
         return QueryPlan(self.node_type, base_table=table, operator=operator, children=child_nodes,
                          parallel_workers=par_workers, index=self.index_name, sort_keys=sort_keys,
                          estimated_cost=self.cost, estimated_cardinality=self.cardinality_estimate,
                          actual_cardinality=true_card, execution_time=self.execution_time,
-                         cache_hits=self.shared_blocks_cached, cache_misses=self.shared_blocks_read,
+                         cache_hits=shared_hits, cache_misses=shared_misses,
                          subplan_root=subplan_child, subplan_name=subplan_name)
 
     def inspect(self, *, _indentation: int = 0) -> str:
