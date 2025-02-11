@@ -5,7 +5,8 @@ from __future__ import annotations
 from typing import Optional, Any
 
 
-from .. import db, qal, optimizer, util
+from .. import db, qal, util
+from .._qep import QueryPlan
 
 
 def possible_plans_bound(query: qal.SqlQuery, *,
@@ -45,7 +46,7 @@ def possible_plans_bound(query: qal.SqlQuery, *,
     return join_orders * joins * scans
 
 
-def actual_plan_cost(query: qal.SqlQuery, analyze_plan: db.QueryExecutionPlan, *,
+def actual_plan_cost(query: qal.SqlQuery, analyze_plan: QueryPlan, *,
                      database: Optional[db.Database] = None) -> float:
     """Utility to compute the true cost of a query plan based on the actual cardinalities.
 
@@ -53,7 +54,7 @@ def actual_plan_cost(query: qal.SqlQuery, analyze_plan: db.QueryExecutionPlan, *
     ----------
     query : qal.SqlQuery
         The query to analyze
-    analyze_plan : db.QueryExecutionPlan
+    analyze_plan : QueryPlan
         The executed query which also contains the true cardinalities
     database : Optional[db.Database], optional
         The database providing the cost model. If omitted, the database is inferred from the database pool.
@@ -63,9 +64,10 @@ def actual_plan_cost(query: qal.SqlQuery, analyze_plan: db.QueryExecutionPlan, *
     float
         _description_
     """
+    if not analyze_plan.is_analyze():
+        raise ValueError("The provided plan is not an ANALYZE plan")
     database = database if database is not None else db.DatabasePool().get_instance()
-    physical_plan = optimizer.PhysicalQueryPlan.load_from_query_plan(analyze_plan, query)
-    hinted_query = database.hinting().generate_hints(query, physical_plan)
+    hinted_query = database.hinting().generate_hints(query, analyze_plan.as_optimized_plan())
     return database.optimizer().cost_estimate(hinted_query)
 
 

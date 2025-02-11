@@ -3,9 +3,9 @@ from __future__ import annotations
 import math
 from typing import Optional
 
-from ..jointree import PhysicalQueryPlan
 from ... import db
 from ..._core import (TableReference, ScanOperators, JoinOperators)
+from ..._qep import QueryPlan
 from ..._stages import (PlanEnumerator, CostModel, CardinalityEstimator)
 from ...qal import SqlQuery
 from ...db.postgres import (PostgresScanHints, PostgresJoinHints)
@@ -37,7 +37,7 @@ class DynamicProgrammingEnumerator(PlanEnumerator):
         cost_model.initialize(self._target_db, query)
         cardinality_estimator.initialize(self._target_db, query)
 
-        dp_table: dict[frozenset[TableReference], PhysicalQueryPlan] = {}
+        dp_table: dict[frozenset[TableReference], QueryPlan] = {}
         self._determine_base_access_paths(dp_table, query, cost_model=cost_model, cardinality_estimator=cardinality_estimator)
 
         cost_model.cleanup()
@@ -52,7 +52,7 @@ class DynamicProgrammingEnumerator(PlanEnumerator):
             "database_system": self._target_db.describe()
         }
 
-    def _determine_base_access_paths(self, dp_table: dict[frozenset[TableReference], PhysicalQueryPlan], query: SqlQuery, *,
+    def _determine_base_access_paths(self, dp_table: dict[frozenset[TableReference], QueryPlan], query: SqlQuery, *,
                                      cost_model: CostModel, cardinality_estimator: CardinalityEstimator) -> None:
         for table in query.tables():
             cheapest_cost = math.inf

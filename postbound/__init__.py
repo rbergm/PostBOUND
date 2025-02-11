@@ -118,9 +118,10 @@ from ._stages import (
   IncrementalOptimizationStep,
   as_complete_algorithm
 )
+from ._qep import QueryPlan
 from .db import Database
 from .qal import relalg, transform, SqlQuery, parse_query
-from .optimizer import validation, PhysicalQueryPlan
+from .optimizer import validation
 from .experiments import workloads
 from .experiments.executor import execute_workload, optimize_and_execute_workload
 
@@ -137,6 +138,7 @@ __all__ = [
   "as_complete_algorithm", "OptimizationSettings",
   "Database",
   "relalg", "transform", "SqlQuery", "ColumnReference", "parse_query",
-  "validation", "PhysicalQueryPlan",
+  "QueryPlan",
+  "validation",
   "workloads", "execute_workload", "optimize_and_execute_workload"
 ]

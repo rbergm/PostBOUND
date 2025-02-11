@@ -16,7 +16,7 @@ import networkx as nx
 
 from .. import util
 from .._core import TableReference, ColumnReference, quote, T, VisitorResult
-from ..util import StateError
+from ..util import StateError, jsondict
 
 
 class MathOperator(enum.Enum):
@@ -171,6 +171,9 @@ class SqlExpression(abc.ABC):
             The visitor
         """
         raise NotImplementedError
+
+    def __json__(self) -> jsondict:
+        return {"node_type": "expression", "tables": self.tables(), "expression": str(self)}
 
     def __hash__(self) -> int:
         return self._hash_val

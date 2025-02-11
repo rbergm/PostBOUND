@@ -18,6 +18,7 @@ from typing import Any, Optional
 from .. import jointree
 from .._hints import PhysicalOperatorAssignment, JoinOperatorAssignment
 from ..._core import JoinOperators
+from ..._qep import QueryPlan
 from ..._stages import PhysicalOperatorSelection
 from ... import db, qal, util
 from ...qal import parser as query_parser
@@ -28,7 +29,7 @@ from ...qal import TableReference, ColumnReference
 # More specifically, this documentation should describe the strategies to integrate subquery nodes, and the QEP-S traversal
 
 
-def _left_query_plan_child(node: db.QueryExecutionPlan) -> db.QueryExecutionPlan:
+def _left_query_plan_child(node: QueryPlan) -> QueryPlan:
     """Infers the left child node for a query execution plan.
 
     Since query execution plans do not carry a notion of directional children directly, this method applies the following rule:
@@ -37,12 +38,12 @@ def _left_query_plan_child(node: db.QueryExecutionPlan) -> db.QueryExecutionPlan
 
     Parameters
     ----------
-    node : db.QueryExecutionPlan
+    node : QueryPlan
         The execution plan node for which the children should be found
 
     Returns
     -------
-    db.QueryExecutionPlan
+    QueryPlan
         The child node
 
     Raises
@@ -50,10 +51,10 @@ def _left_query_plan_child(node: db.QueryExecutionPlan) -> db.QueryExecutionPlan
     IndexError
         If the node does not contain any children.
     """
-    return node.outer_child if node.outer_child else node.children[0]
+    return node.outer_child
 
 
-def _right_query_plan_child(node: db.QueryExecutionPlan) -> db.QueryExecutionPlan:
+def _right_query_plan_child(node: QueryPlan) -> QueryPlan:
     """Infers the right child node for a query execution plan.
 
     Since query execution plans do not carry a notion of directional children directly, this method applies the following rule:
@@ -61,12 +62,12 @@ def _right_query_plan_child(node: db.QueryExecutionPlan) -> db.QueryExecutionPla
 
     Parameters
     ----------
-    node : db.QueryExecutionPlan
+    node : QueryPlan
         The execution plan node for which the children should be found
 
     Returns
     -------
-    db.QueryExecutionPlan
+    QueryPlan
         The child node
 
     Raises
@@ -74,27 +75,27 @@ def _right_query_plan_child(node: db.QueryExecutionPlan) -> db.QueryExecutionPla
     IndexError
         If the node contains less than two children.
     """
-    return node.inner_child if node.inner_child else node.children[1]
+    return node.inner_child
 
 
-def _iterate_query_plan(current_node: db.QueryExecutionPlan) -> Sequence[db.QueryExecutionPlan]:
+def _iterate_query_plan(current_node: QueryPlan) -> Sequence[QueryPlan]:
     """Provides all joins along the deepest join path in the query plan.
 
     Parameters
     ----------
-    current_node : db.QueryExecutionPlan
+    current_node : QueryPlan
         The node from which the iteration should start
 
     Returns
     -------
-    Sequence[db.QueryExecutionPlan]
+    Sequence[QueryPlan]
         The join nodes along the deepest path, starting with the deepest nodes.
     """
-    if current_node.is_scan:
+    if current_node.is_scan():
         return []
-    if not current_node.is_join:
-        assert len(current_node.children) == 1
-        return _iterate_query_plan(current_node.children[0])
+    if not current_node.is_join():
+        assert current_node.input_node is not None
+        return _iterate_query_plan(current_node.input_node)
     left_child, right_child = _left_query_plan_child(current_node), _right_query_plan_child(current_node)
     left_child, right_child = ((right_child, left_child) if right_child.plan_depth() < left_child.plan_depth()
                                else (left_child, right_child))
@@ -442,7 +443,7 @@ class QepsNode:
         qeps_child_node = self.child_nodes[qeps_child_id]
         qeps_child_node.recommend_operators(query, remaining_joins, current_assignment)
 
-    def integrate_costs(self, query: qal.SqlQuery, query_plan: Sequence[db.QueryExecutionPlan], *,
+    def integrate_costs(self, query: qal.SqlQuery, query_plan: Sequence[QueryPlan], *,
                         _skip_first_table: bool = False) -> None:
         """Updates the internal cost model with the costs of the execution plan nodes.
 
@@ -454,7 +455,7 @@ class QepsNode:
         query : qal.SqlQuery
             The query which is used to determine new costs. This parameter is necessary to infer the applicable filter
             predicates for base tables.
-        query_plan : Sequence[db.QueryExecutionPlan]
+        query_plan : Sequence[QueryPlan]
             A sequence of join nodes that provide the updated cost information. The update logic consumes the costs of the
             first join and delegates all further updates to the next child node. This requires all plan nodes to contain cost
             information as well as information about the physical join operators.
@@ -488,7 +489,7 @@ class QepsNode:
                                          else (first_child, second_child))
             qeps_subquery_id = QepsIdentifier(first_child.tables())
             qeps_subquery_node = self.child_nodes[qeps_subquery_id]
-            qeps_subquery_node.update_costs(next_node.physical_operator, next_node.cost)
+            qeps_subquery_node.update_costs(next_node.operator, next_node.estimated_cost)
             qeps_subquery_node.subquery_root.integrate_costs(query, _iterate_query_plan(first_child))
             qeps_subquery_node.integrate_costs(query, remaining_nodes)
             return
@@ -510,7 +511,7 @@ class QepsNode:
         child_table = child_node.fetch_base_table()
         qeps_child_id = self._make_identifier(query, child_table)
         qeps_child_node = self.child_nodes[qeps_child_id]
-        qeps_child_node.update_costs(next_node.physical_operator, next_node.cost)
+        qeps_child_node.update_costs(next_node.operator, next_node.estimated_cost)
         qeps_child_node.integrate_costs(query, remaining_nodes)
 
     def detect_unknown_costs(self, query: qal.SqlQuery, join_order: Sequence[jointree.IntermediateJoinNode],
@@ -787,18 +788,18 @@ class QueryExecutionPlanSynopsis:
         self.root.recommend_operators(query, _iterate_join_tree(join_order.root), current_assignment)
         return current_assignment
 
-    def integrate_costs(self, query: qal.SqlQuery, query_plan: db.QueryExecutionPlan) -> None:
+    def integrate_costs(self, query: qal.SqlQuery, query_plan: QueryPlan) -> None:
         """Updates the cost information of the QEP-S with the costs from the query plan.
 
         Parameters
         ----------
         query : qal.SqlQuery
             The query correponding to the execution plan
-        query_plan : db.QueryExecutionPlan
+        query_plan : QueryPlan
             An execution plan providing the operators and their costs. This information is used for the QEP-S traversal as well
             as the actual update.
         """
-        self.root.integrate_costs(query, _iterate_query_plan(query_plan.simplify()))
+        self.root.integrate_costs(query, _iterate_query_plan(query_plan))
 
     def detect_unknown_costs(self, query: qal.SqlQuery, join_order: jointree.JoinTree,
                              allowed_operators: set[JoinOperators]
@@ -947,7 +948,7 @@ def make_qeps(path: Iterable[TableReference], root: Optional[QepsNode] = None, *
     return root
 
 
-def _obtain_accurate_cost_estimate(query: qal.SqlQuery, database: db.Database) -> db.QueryExecutionPlan:
+def _obtain_accurate_cost_estimate(query: qal.SqlQuery, database: db.Database) -> QueryPlan:
     """Determines the cost information for a query based on the actual cardinalities of the execution plan.
 
     This simulates a cost model with perfect input data.
@@ -962,7 +963,7 @@ def _obtain_accurate_cost_estimate(query: qal.SqlQuery, database: db.Database) -
 
     Returns
     -------
-    db.QueryExecutionPlan
+    QueryPlan
         The execution plan with cost information
     """
     analyze_plan = database.optimizer().analyze_plan(query)
@@ -973,7 +974,7 @@ def _obtain_accurate_cost_estimate(query: qal.SqlQuery, database: db.Database) -
 
 def _generate_all_cost_estimates(query: qal.SqlQuery, join_order: jointree.JoinTree,
                                  available_operators: dict[frozenset[TableReference], frozenset[JoinOperators]],
-                                 database: db.Database) -> Iterable[db.QueryExecutionPlan]:
+                                 database: db.Database) -> Iterable[QueryPlan]:
     """Provides all cost estimates based on plans with specific operator combinations.
 
     The cost estimates are based on the true cardinalities of all intermediate results, i.e. the method first determines the
@@ -993,7 +994,7 @@ def _generate_all_cost_estimates(query: qal.SqlQuery, join_order: jointree.JoinT
 
     Returns
     -------
-    Iterable[db.QueryExecutionPlan]
+    Iterable[QueryPlan]
         All query plans with the actual costs.
     """
     plans = []
@@ -1010,7 +1011,7 @@ def _generate_all_cost_estimates(query: qal.SqlQuery, join_order: jointree.JoinT
 
 def _sample_cost_estimates(query: qal.SqlQuery, join_order: jointree.JoinTree,
                            available_operators: dict[frozenset[TableReference], frozenset[JoinOperators]],
-                           n_samples: int, database: db.Database) -> Iterable[db.QueryExecutionPlan]:
+                           n_samples: int, database: db.Database) -> Iterable[QueryPlan]:
     """Generates cost estimates based on sampled plans with specific operator combinations.
 
     The samples are generated based on random operator selections.
@@ -1037,7 +1038,7 @@ def _sample_cost_estimates(query: qal.SqlQuery, join_order: jointree.JoinTree,
 
     Returns
     -------
-    Iterable[db.QueryExecutionPlan]
+    Iterable[QueryPlan]
         Query plans with the actual costs
     """
     plans = []
@@ -1103,7 +1104,7 @@ class TonicOperatorSelection(PhysicalOperatorSelection):
         TonicOperatorSelection
             The TONIC model
         """
-        json_data = None
+        json_data: dict = {}
         with open(filename, "r", encoding=encoding) as json_file:
             json_data = json.load(json_file)
 
@@ -1124,7 +1125,7 @@ class TonicOperatorSelection(PhysicalOperatorSelection):
         self.qeps = QueryExecutionPlanSynopsis.create(filter_aware, gamma)
         self._db = database if database else db.DatabasePool.get_instance().current_database()
 
-    def integrate_cost(self, query: qal.SqlQuery, query_plan: Optional[db.QueryExecutionPlan] = None) -> None:
+    def integrate_cost(self, query: qal.SqlQuery, query_plan: Optional[QueryPlan] = None) -> None:
         """Uses cost information from a query plan to update the QEP-S costs.
 
         Notice that the costs stored in the query plan do not need to correspond to native costs. Instead, the costs can be
@@ -1134,7 +1135,7 @@ class TonicOperatorSelection(PhysicalOperatorSelection):
         ----------
         query : qal.SqlQuery
             The query for which the query plan was created.
-        query_plan : Optional[db.QueryExecutionPlan], optional
+        query_plan : Optional[QueryPlan], optional
             The query plan which contains the cost information. If this parameter is omitted, the native optimizer of the
             `database` will be queried to obtain the costs of the input query. Notice that is enables the integration of costs
             for arbitrary query plans by setting the hint block of the query.

@@ -43,7 +43,6 @@ from ._db import (
     Database,
     DatabaseSchema,
     DatabaseStatistics,
-    QueryExecutionPlan,
     OptimizerInterface,
     HintService,
     DatabasePool,
@@ -51,6 +50,7 @@ from ._db import (
 )
 from .. import qal, util
 from .._core import ScanOperators, JoinOperators, PhysicalOperator
+from .._qep import QueryPlan
 from ..qal import (
     transform,
     TableReference, ColumnReference,
@@ -527,7 +527,7 @@ class MysqlOptimizer(OptimizerInterface):
     def __init__(self, mysql_instance: MysqlInterface) -> None:
         self._mysql_instance = mysql_instance
 
-    def query_plan(self, query: SqlQuery | str) -> QueryExecutionPlan:
+    def query_plan(self, query: SqlQuery | str) -> QueryPlan:
         if isinstance(query, SqlQuery):
             prepared_query = self._mysql_instance._prepare_query_execution(query, drop_explain=True)
             query_for_plan = query
@@ -538,8 +538,8 @@ class MysqlOptimizer(OptimizerInterface):
         query_plan = parse_mysql_explain_plan(query_for_plan, raw_query_plan)
         return query_plan.as_query_execution_plan()
 
-    def analyze_plan(self, query: SqlQuery) -> QueryExecutionPlan:
-        raise NotImplementedError
+    def analyze_plan(self, query: SqlQuery) -> QueryPlan:
+        raise NotImplementedError("MySQL interface does not support ANALYZE plans yet")
 
     def cardinality_estimate(self, query: SqlQuery | str) -> int:
         return self.query_plan(query).estimated_cardinality
@@ -846,7 +846,7 @@ _MysqlExplainJoinNodes = {
 }
 
 
-def _node_sequence_to_qep(nodes: Sequence[MysqlExplainNode]) -> QueryExecutionPlan:
+def _node_sequence_to_qep(nodes: Sequence[MysqlExplainNode]) -> QueryPlan:
     assert nodes
     if len(nodes) == 1:
         return nodes[0]._make_qep_node_for_scan()
@@ -856,11 +856,10 @@ def _node_sequence_to_qep(nodes: Sequence[MysqlExplainNode]) -> QueryExecutionPl
         final_qep = final_table._make_qep_node_for_scan()
         first_qep = first_table._make_qep_node_for_scan()
         join_operator = _MysqlExplainJoinNodes.get(final_table.join_type, JoinOperators.NestedLoopJoin)
-        join_node = QueryExecutionPlan(final_table.join_type, True, False,
-                                       children=[final_qep, first_qep], inner_child=final_qep,
-                                       cost=final_table.join_cost,
-                                       estimated_cardinality=final_table.join_cardinality_estimate,
-                                       physical_operator=join_operator)
+        join_node = QueryPlan(final_table.join_type, operator=join_operator,
+                              children=[first_qep, final_qep],
+                              estimated_cost=final_table.join_cost,
+                              estimated_cardinality=final_table.join_cardinality_estimate)
         return join_node
 
     if len(nodes) > 2:
@@ -869,11 +868,10 @@ def _node_sequence_to_qep(nodes: Sequence[MysqlExplainNode]) -> QueryExecutionPl
         final_qep = final_table._make_qep_node_for_scan()
 
         join_operator = _MysqlExplainJoinNodes.get(final_table.join_type, JoinOperators.NestedLoopJoin)
-        join_node = QueryExecutionPlan(final_table.join_type, True, False,
-                                       children=[final_qep, former_qep], inner_child=final_qep,
-                                       cost=final_table.join_cost,
-                                       estimated_cardinality=final_table.join_cardinality_estimate,
-                                       physical_operator=join_operator)
+        join_node = QueryPlan(final_table.join_type, operator=join_operator,
+                              children=[former_qep, final_qep],
+                              estimated_cost=final_table.join_cost,
+                              estimated_cardinality=final_table.join_cardinality_estimate)
         return join_node
 
 
@@ -895,11 +893,11 @@ class MysqlExplainNode:
         self.join_cardinality_estimate = join_cardinality_estimate
         self.subquery = subquery_node
 
-    def as_query_execution_plan(self) -> QueryExecutionPlan:
+    def as_query_execution_plan(self) -> QueryPlan:
         if self.node_type is not None:
             subquery_plan = [self.subquery.as_query_execution_plan()] if self.subquery is not None else []
-            own_node = QueryExecutionPlan(self.node_type, False, False, table=self.table, children=subquery_plan,
-                                          cost=self.join_cost, estimated_cardinality=self.join_cardinality_estimate)
+            own_node = QueryPlan(self.node_type, base_table=self.table, children=subquery_plan,
+                                 estimated_cost=self.join_cost, estimated_cardinality=self.join_cardinality_estimate)
             return own_node
 
         if not self.next_node:
@@ -927,10 +925,9 @@ class MysqlExplainNode:
             return [self]
         return self.next_node._collect_node_sequence() + [self]
 
-    def _make_qep_node_for_scan(self) -> QueryExecutionPlan:
-        return QueryExecutionPlan(self.scan_type, False, True, table=self.table, cost=self.scan_cost,
-                                  estimated_cardinality=self.scan_cardinality_estimate,
-                                  physical_operator=_MysqlExplainScanNodes.get(self.scan_type))
+    def _make_qep_node_for_scan(self) -> QueryPlan:
+        return QueryPlan(self.scan_type, base_table=self.table, operator=_MysqlExplainScanNodes.get(self.scan_type),
+                         estimated_cost=self.scan_cost, estimated_cardinality=self.scan_cardinality_estimate)
 
     def _join_str(self) -> str:
         if self.node_type is not None:
@@ -971,7 +968,7 @@ class MysqlExplainPlan:
         self.root = root
         self.total_cost = total_cost
 
-    def as_query_execution_plan(self) -> QueryExecutionPlan:
+    def as_query_execution_plan(self) -> QueryPlan:
         return self.root.as_query_execution_plan()
 
     def inspect(self) -> str:

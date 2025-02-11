@@ -311,7 +311,7 @@ class TableReference:
         return TableReference(self.full_name, self.alias, True)
 
     def __json__(self) -> object:
-        return {"full_name": self._full_name, "alias": self._alias}
+        return {"full_name": self._full_name, "alias": self._alias, "virtual": self._virtual}
 
     def __lt__(self, other: object) -> bool:
         if not isinstance(other, TableReference):
@@ -608,6 +608,9 @@ class QueryExecutionPlan:
                  inner_child: Optional[QueryExecutionPlan] = None,
                  subplan_input: Optional[QueryExecutionPlan] = None, is_subplan_root: bool = False,
                  subplan_name: str = "") -> None:
+        warnings.warn("QueryExecutionPlan is deprecated and will be removed in a future version. "
+                      "Use the new QueryPlan instead.", FutureWarning)
+
         self.node_type = node_type
         self.physical_operator = physical_operator
         self.is_join = is_join

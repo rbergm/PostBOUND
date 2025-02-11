@@ -53,6 +53,9 @@ class SortKey:
         """
         return SortKey(column, ascending)
 
+    def __json__(self) -> jsondict:
+        return {"column": self.column, "ascending": self.ascending}
+
     def __str__(self):
         if self.ascending:
             return str(self.column)
@@ -113,11 +116,15 @@ class PlanParams:
             return default
         return value
 
+    def __json__(self) -> jsondict:
+        return self._params
+
     def __getattribute__(self, name: str) -> Any:
         if hasattr(self, name):
             return object.__getattribute__(self, name)
-        if name in self._params:
-            return self._params[name]
+        params = object.__getattribute__(self, "_params")
+        if name in params:
+            return params[name]
         raise AttributeError(f"PlanParams object has no attribute '{name}'")
 
     def __getitem__(self, key: str) -> Any:
@@ -150,6 +157,9 @@ class PlanEstimates:
         if isinstance(value, float) and math.isnan(value):
             return default
         return value
+
+    def __json__(self) -> jsondict:
+        return self._params
 
     def __getattribute__(self, name: str) -> Any:
         if hasattr(self, name):
@@ -198,6 +208,9 @@ class PlanMeasures:
             return default
         return value
 
+    def __json__(self) -> jsondict:
+        return self._params
+
     def __getattribute__(self, name: str) -> Any:
         if hasattr(self, name):
             return object.__getattribute__(self, name)
@@ -221,6 +234,9 @@ class Subplan:
         target_table = TableReference.create_virtual(self.target_name)
         return self.root.tables() | {target_table}
 
+    def __json__(self) -> jsondict:
+        return {"root": self.root, "target_name": self.target_name}
+
 
 class QueryPlan:
     def __init__(self, node_type: str, *, operator: Optional[PhysicalOperator] = None,
@@ -233,6 +249,7 @@ class QueryPlan:
                  estimated_cardinality: Cardinality = math.nan, estimated_cost: Cost = math.nan,
                  actual_cardinality: Cardinality = math.nan, execution_time: float = math.nan,
                  cache_hits: Optional[int] = None, cache_misses: Optional[int] = None,
+                 subplan_root: Optional[QueryPlan] = None, subplan_target_name: str = "",
                  **kwargs) -> None:
         if not node_type:
             raise ValueError("Node type must be provided")
@@ -256,12 +273,24 @@ class QueryPlan:
             measures = PlanMeasures(execution_time=execution_time, cardinality=actual_cardinality,
                                     cache_hits=cache_hits, cache_misses=cache_misses)
 
+        if subplan is not None and (subplan_root is not None or subplan_target_name):
+            raise ValueError("Subplan and individual subplan components cannot be provided at the same time")
+        if subplan is None and (subplan_root is not None or subplan_target_name):
+            subplan = Subplan(subplan_root, subplan_target_name)
+
         if len(children) > 2:
             raise ValueError("Query plan nodes can have at most two children")
 
         self._node_type = node_type
         self._operator = operator
-        self._input_node = input_node
+
+        if input_node is not None:
+            self._input_node = input_node
+        elif children is not None and len(children) == 1:
+            self._input_node = children[0]
+        else:
+            self._input_node = None
+
         self._children = tuple(children) if children else ()
         self._plan_params = plan_params
         self._estimates = estimates
@@ -385,6 +414,9 @@ class QueryPlan:
             return False
         return all(child.is_scan_branch() for child in self.children)
 
+    def plan_depth(self) -> int:
+        return 1 + max((child.plan_depth() for child in self.children), default=0)
+
     def fetch_base_table(self) -> Optional[TableReference]:
         if self.is_scan():
             return self.base_table
@@ -458,6 +490,26 @@ class QueryPlan:
         smaller = min(self.estimated_cardinality, self.actual_cardinality) + 1
         return larger / smaller
 
+    def with_estimates(self, *, cardinality: Cardinality = math.nan, cost: Cost = math.nan,
+                       keep_measures: bool = False) -> QueryPlan:
+        updated_estimates = PlanEstimates(cardinality=cardinality, cost=cost)
+        updated_measures = self._measures if keep_measures else None
+        return QueryPlan(self.node_type, operator=self.operator, input_node=self.input_node, children=self.children,
+                         plan_params=self.params, estimates=updated_estimates, measures=updated_measures,
+                         subplan=self.subplan)
+
+    def as_optimized_plan(self) -> QueryPlan:
+        if self.actual_cardinality:
+            updated_estimates = PlanEstimates(cardinality=self.actual_cardinality, cost=self.estimated_cost)
+            updated_measures = None
+        else:
+            updated_estimates = self._estimates
+            updated_measures = None
+
+        return QueryPlan(self.node_type, operator=self.operator, input_node=self.input_node, children=self.children,
+                         plan_params=self.params, estimates=updated_estimates, measures=updated_measures,
+                         subplan=self.subplan)
+
     def inspect(self, *, fields: Optional[Iterable[str]] = None) -> str:
         fields = [] if fields is None else list(fields)
         return _explainify(self, fields=fields)
@@ -481,13 +533,24 @@ class QueryPlan:
         return _astify(self)
 
     def __json__(self) -> jsondict:
-        pass
+        return {
+            "node_type": self.node_type,
+            "input_node": self.input_node,
+            "children": self.children,
+            "plan_params": self._params,
+            "estimates": self._estimates,
+            "measures": self._measures,
+            "subplan": self._subplan
+        }
 
     def __eq__(self, other: object) -> bool:
-        pass
+        return (isinstance(other, type(self))
+                and self._node_type == other._node_type
+                and self.base_table == other.base_table
+                and self._children == other._children)
 
     def __hash__(self) -> int:
-        pass
+        return hash((self.node_type, self.base_table, self._children))
 
     def __repr__(self) -> str:
         return str(self)

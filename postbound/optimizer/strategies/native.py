@@ -14,8 +14,9 @@ from __future__ import annotations
 from typing import Optional
 
 from .._hints import PhysicalOperatorAssignment, PlanParameterization
-from ..jointree import LogicalJoinTree, PhysicalQueryPlan
+from ..jointree import LogicalJoinTree
 from ..._core import Cost, Cardinality, TableReference
+from ..._qep import QueryPlan
 from ..._stages import (
     CostModel, CardinalityEstimator,
     JoinOrderOptimization, PhysicalOperatorSelection, ParameterGeneration,
@@ -32,8 +33,8 @@ class NativeCostModel(CostModel):
         super().__init__()
         self._target_db: Optional[db.Database] = None
 
-    def estimate_cost(self, query: qal.SqlQuery, plan: PhysicalQueryPlan) -> Cost:
-        hinted_query = self._target_db.hinting().generate_hints(query, plan)
+    def estimate_cost(self, query: qal.SqlQuery, plan: QueryPlan) -> Cost:
+        hinted_query = self._target_db.hinting().generate_hints(query, plan.as_optimized_plan())
         return self._target_db.optimizer().cost_estimate(hinted_query)
 
     def describe(self) -> jsondict:

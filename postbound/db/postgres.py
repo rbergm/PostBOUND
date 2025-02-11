@@ -42,7 +42,8 @@ from ._db import (
     UnsupportedDatabaseFeatureError
 )
 from .. import qal, util
-from .._core import JoinOperators, ScanOperators, PhysicalOperator, QueryExecutionPlan
+from .._core import JoinOperators, ScanOperators, PhysicalOperator
+from .._qep import QueryPlan, SortKey
 from ..qal import (
     TableReference, ColumnReference,
     UnboundColumnError, VirtualTableError,
@@ -1612,7 +1613,7 @@ class PostgresHintService(HintService):
     backend = property(_get_backend, _set_backend, doc="The hinting backend in use.")
 
     def generate_hints(self, query: qal.SqlQuery,
-                       join_order: Optional[LogicalJoinTree | PhysicalQueryPlan] = None,
+                       join_order: Optional[LogicalJoinTree | QueryPlan] = None,
                        physical_operators: Optional[PhysicalOperatorAssignment] = None,
                        plan_parameters: Optional[PlanParameterization] = None) -> qal.SqlQuery:
         self._assert_active_backend()
@@ -2099,7 +2100,7 @@ class PostgresOptimizer(OptimizerInterface):
     def __init__(self, postgres_instance: PostgresInterface) -> None:
         self._pg_instance = postgres_instance
 
-    def query_plan(self, query: qal.SqlQuery | str) -> QueryExecutionPlan:
+    def query_plan(self, query: qal.SqlQuery | str) -> QueryPlan:
         self._pg_instance._current_geqo_state = self._pg_instance._obtain_geqo_state()
         if isinstance(query, qal.SqlQuery):
             query, deactivated_geqo = self._pg_instance._prepare_query_execution(query, drop_explain=True)
@@ -2111,7 +2112,7 @@ class PostgresOptimizer(OptimizerInterface):
             self._pg_instance._restore_geqo_state()
         return query_plan.as_query_execution_plan()
 
-    def analyze_plan(self, query: qal.SqlQuery) -> QueryExecutionPlan:
+    def analyze_plan(self, query: qal.SqlQuery) -> QueryPlan:
         self._pg_instance._current_geqo_state = self._pg_instance._obtain_geqo_state()
         query, deactivated_geqo = self._pg_instance._prepare_query_execution(qal.transform.as_explain_analyze(query))
         self._pg_instance.cursor().execute(query)
@@ -2578,6 +2579,9 @@ class PostgresExplainNode:
         For parallel operators in ``EXPLAIN ANALYZE`` plans, this is the actual number of worker processes that were started.
         Notice that in total there is one additional worker. This process takes care of spawning the other workers and
         managing them, but can also take part in the input processing.
+    sort_keys : list[str]
+        The columns that are used to sort the tuples that are produced by this node. This is most important for sort nodes,
+        but can also be present on other nodes.
     shared_blocks_read : float, default NaN
         For ``EXPLAIN ANALYZE`` plans with ``BUFFERS`` enabled, this is the number of blocks/pages that where retrieved from
         disk while executing this node, including the reads of all its child nodes.
@@ -2618,6 +2622,7 @@ class PostgresExplainNode:
 
         self.parent_relationship = explain_data.get("Parent Relationship", None)
         self.parallel_workers = explain_data.get("Workers Launched", math.nan)
+        self.sort_keys = explain_data.get("Sort Key", [])
 
         self.shared_blocks_read = explain_data.get("Shared Read Blocks", math.nan)
         self.shared_blocks_cached = explain_data.get("Shared Hit Blocks", math.nan)
@@ -2727,8 +2732,8 @@ class PostgresExplainNode:
         alias = self.relation_alias if self.relation_alias is not None and self.relation_alias != self.relation_name else ""
         return TableReference(self.relation_name, alias)
 
-    def as_query_execution_plan(self) -> QueryExecutionPlan:
-        """Transforms the postgres-specific plan to a standardized `QueryExecutionPlan` instance.
+    def as_query_execution_plan(self) -> QueryPlan:
+        """Transforms the postgres-specific plan to a standardized `QueryPlan` instance.
 
         Notice that this transformation is lossy since not all information from the Postgres plan can be represented in query
         execution plan instances. Furthermore, this transformation can be problematic for complicated queries that use
@@ -2739,7 +2744,7 @@ class PostgresExplainNode:
 
         Returns
         -------
-        db.QueryExecutionPlan
+        QueryPlan
             The equivalent query execution plan for this node
 
         Raises
@@ -2747,17 +2752,14 @@ class PostgresExplainNode:
         ValueError
             If the node contains more than two children.
         """
-        found_hash_join = self.node_type == "Hash Join"
         child_nodes = []
         inner_child, outer_child, subplan_child = None, None, None
         for child in self.children:
             parent_rel = child.parent_relationship
             qep_child = child.as_query_execution_plan()
-            found_inner = (parent_rel == "Inner" and not found_hash_join) or (parent_rel == "Outer" and found_hash_join)
-            found_outer = (parent_rel == "Outer" and not found_hash_join) or (parent_rel == "Inner" and found_hash_join)
-            if found_inner:
+            if parent_rel == "Inner":
                 inner_child = qep_child
-            elif found_outer:
+            elif parent_rel == "Outer":
                 outer_child = qep_child
             elif parent_rel == "SubPlan" or parent_rel == "InitPlan":
                 subplan_child = qep_child
@@ -2772,26 +2774,25 @@ class PostgresExplainNode:
             child = (inner_child,)
 
         table = self.parse_table()
-        is_scan = self.is_scan()
-        is_join = self.is_join()
         subplan_name = self.subplan_name or self.cte_name
         par_workers = self.parallel_workers + 1  # in Postgres the control worker also processes input
         true_card = self.true_cardinality * self.loops
 
-        if is_scan:
+        if self.is_scan():
             operator = PostgresExplainScanNodes.get(self.node_type, None)
-        elif is_join:
+        elif self.is_join():
             operator = PostgresExplainJoinNodes.get(self.node_type, None)
         else:
             operator = None
 
-        return QueryExecutionPlan(self.node_type, is_join=is_join, is_scan=is_scan, table=table,
-                                  children=child_nodes, parallel_workers=par_workers,
-                                  cost=self.cost, estimated_cardinality=self.cardinality_estimate,
-                                  true_cardinality=true_card, execution_time=self.execution_time,
-                                  cached_pages=self.shared_blocks_cached, scanned_pages=self.shared_blocks_read,
-                                  physical_operator=operator, inner_child=inner_child,
-                                  subplan_input=subplan_child, subplan_name=subplan_name)
+        sort_keys = self._parse_sort_keys() if self.sort_keys else self._infer_sorting_from_children()
+
+        return QueryPlan(self.node_type, base_table=table, operator=operator, children=child_nodes,
+                         parallel_workers=par_workers, index=self.index_name, sort_keys=sort_keys,
+                         estimated_cost=self.cost, estimated_cardinality=self.cardinality_estimate,
+                         actual_cardinality=true_card, execution_time=self.execution_time,
+                         cache_hits=self.shared_blocks_cached, cache_misses=self.shared_blocks_read,
+                         subplan_root=subplan_child, subplan_name=subplan_name)
 
     def inspect(self, *, _indentation: int = 0) -> str:
         """Provides a pretty string representation of the ``EXPLAIN`` sub-plan that can be printed.
@@ -2818,6 +2819,16 @@ class PostgresExplainNode:
         own_inspection += [prefix + str(self)]
         child_inspections = [child.inspect(_indentation=_indentation+2) for child in self.inner_outer_children()]
         return "\n".join(own_inspection + child_inspections)
+
+    def _infer_sorting_from_children(self) -> list[SortKey]:
+        # TODO: Postgres is a cruel mistress. Even if output is sorted, it might not be marked as such.
+        # For example, in index scans, this is implictly encoded in the index condition, somethimes even nested in other
+        # expressions. We first need a reliable way to parse the expressions into a PostBOUND-compatible format.
+        # See _parse_sort_keys for a start.
+        return None
+
+    def _parse_sort_keys(self) -> list[SortKey]:
+        return None
 
     def __hash__(self) -> int:
         return self._hash_val
@@ -2897,14 +2908,14 @@ class PostgresExplainPlan:
         """
         return self.query_plan.is_analyze()
 
-    def as_query_execution_plan(self) -> QueryExecutionPlan:
+    def as_query_execution_plan(self) -> QueryPlan:
         """Provides the actual explain plan as a normalized query execution plan instance
 
         For notes on pecularities of this method, take a look at the *See Also* section
 
         Returns
         -------
-        db.QueryExecutionPlan
+        QueryPlan
             The query execution plan
 
         See Also

@@ -7,7 +7,6 @@ More specifically, this includes
 - an interface to obtain different table-level and column-level statistics (the `DatabaseStatistics` interface)
 - an interface to modify queries such that optimization decisions are respected during the actual query execution (the
   `HintService` interface)
-- a simple model to represent query plans of the database systems (the `QueryExecutionPlan` class)
 - an interface to access information of the native optimizer of the database system (the `OptimizerInterface` class)
 - a utility to easily obtain database connections (the `DatabasePool` singleton class).
 
@@ -26,10 +25,9 @@ import warnings
 from collections.abc import Iterable, Sequence
 from typing import Any, Optional
 
-from .. import optimizer as opt, util
-from .._core import QueryExecutionPlan
+from .. import util
+from .._qep import QueryPlan
 from ..qal import TableReference, ColumnReference, SqlQuery, VirtualTableError, UnboundColumnError
-from ..qal import parser
 from ..optimizer import (
     PhysicalQueryPlan,
     PhysicalOperator,
@@ -1276,39 +1274,6 @@ class HintService(abc.ABC):
         raise NotImplementedError
 
 
-def read_query_plan_json(json_data: dict) -> QueryExecutionPlan:
-    """Reconstructs a query execution plan from its JSON representation.
-
-    If the JSON data is somehow malformed, arbitrary errors can be raised.
-
-    Parameters
-    ----------
-    json_data : dict
-        The JSON data
-
-    Returns
-    -------
-    QueryExecutionPlan
-        The corresponding plan
-    """
-    json_data = dict(json_data)
-
-    json_data["children"] = [read_query_plan_json(child_data) for child_data in json_data["children"]]
-    json_data["inner_child"] = (read_query_plan_json(json_data["inner_child"])
-                                if json_data["inner_child"] is not None else None)
-    del json_data["outer_child"]
-
-    table = json_data["table"]
-    if table is not None:
-        json_data["table"] = parser.load_table_json(json_data["table"])
-
-    operator: str = json_data["physical_operator"]
-    if operator is not None:
-        json_data["physical_operator"] = opt.read_operator_json(operator)
-
-    return QueryExecutionPlan(**json_data)
-
-
 class OptimizerInterface(abc.ABC):
     """Provides high-level access to internal optimizer-related data for the database system.
 
@@ -1316,7 +1281,7 @@ class OptimizerInterface(abc.ABC):
     support all of this functions.
     """
     @abc.abstractmethod
-    def query_plan(self, query: SqlQuery | str) -> QueryExecutionPlan:
+    def query_plan(self, query: SqlQuery | str) -> QueryPlan:
         """Obtains the query execution plan for a specific query.
 
         This respects all hints that potentially influence the optimization process.
@@ -1328,7 +1293,7 @@ class OptimizerInterface(abc.ABC):
 
         Returns
         -------
-        QueryExecutionPlan
+        QueryPlan
             The corresponding execution plan. This will never be an ``ANALYZE`` plan, but contain as much meaningful
             information as can be derived for the specific database system (e.g. regarding cardinality and cost
             estimates)
@@ -1336,7 +1301,7 @@ class OptimizerInterface(abc.ABC):
         raise NotImplementedError
 
     @abc.abstractmethod
-    def analyze_plan(self, query: SqlQuery) -> QueryExecutionPlan:
+    def analyze_plan(self, query: SqlQuery) -> QueryPlan:
         """Executes a specific query and provides the query execution plan supplemented with runtime information.
 
         This respects all hints that potentially influence the optimization process.
@@ -1348,7 +1313,7 @@ class OptimizerInterface(abc.ABC):
 
         Returns
         -------
-        QueryExecutionPlan
+        QueryPlan
             The corresponding execution plan. This plan will be an ``ANALYZE`` plan and contain all information that
             can be derived for the specific database system (e.g. cardinality estimates as well as true cardinality
             counts)

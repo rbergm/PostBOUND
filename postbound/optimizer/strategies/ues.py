@@ -973,11 +973,7 @@ class UESOperatorSelection(PhysicalOperatorSelection):
 
     def select_physical_operators(self, query: qal.SqlQuery,
                                   join_order: Optional[jointree.LogicalJoinTree]) -> PhysicalOperatorAssignment:
-        if isinstance(join_order, jointree.PhysicalQueryPlan):
-            assignment = join_order.physical_operators().clone()
-        else:
-            assignment = PhysicalOperatorAssignment()
-
+        assignment = PhysicalOperatorAssignment()
         if self.database.hinting().supports_hint(JoinOperators.NestedLoopJoin):
             assignment.set_operator_enabled_globally(JoinOperators.NestedLoopJoin, False,
                                                      overwrite_fine_grained_selection=True)
