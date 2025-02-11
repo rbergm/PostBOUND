@@ -45,13 +45,13 @@ from typing import Optional
 from . import transform
 from ._core import (
     TableReference, ColumnReference,
-    LogicalOperator, CompoundOperator,
+    LogicalOperator, CompoundOperator, SetOperator,
     SqlExpression, ColumnExpression, StaticValueExpression, MathematicalExpression, CastExpression, FunctionExpression,
-    SubqueryExpression, StarExpression,
+    SubqueryExpression, StarExpression, OrderByExpression,
     WindowExpression, CaseExpression,
     AbstractPredicate, BinaryPredicate, InPredicate, BetweenPredicate, UnaryPredicate, CompoundPredicate,
     TableSource, DirectTableSource, SubqueryTableSource, JoinTableSource,
-    SqlQuery, ImplicitSqlQuery,
+    SqlQuery, ImplicitSqlQuery, SetQuery, SelectStatement,
     SqlExpressionVisitor, PredicateVisitor, ExpressionCollector
 )
 from .. import util
@@ -2818,12 +2818,9 @@ class _ImplicitRelalgParser:
         self._required_columns: dict[TableReference, set[ColumnReference]] = collections.defaultdict(set)
         self._provided_base_tables: dict[TableReference, RelNode] = provided_base_tables if provided_base_tables else {}
 
-        query_cols = self._query.columns()
-        if self._query.set_clause():
-            set_clause = self._query.set_clause()
-            query_cols -= set_clause.columns()
-
-        util.collections.foreach(query_cols, lambda col: self._required_columns[col.table].add(col))
+        if query:
+            query_cols = self._query.columns()
+            util.collections.foreach(query_cols, lambda col: self._required_columns[col.table].add(col))
 
     def generate_relnode(self) -> RelNode:
         """Produces a relational algebra tree for the current query.
@@ -2833,6 +2830,9 @@ class _ImplicitRelalgParser:
         RelNode
             Root node of the algebraic expression
         """
+        if isinstance(self._query, SetQuery):
+            return self._parse_set_query(self._query)
+
         # TODO: robustness: query without FROM clause
 
         if self._query.cte_clause:
@@ -2863,20 +2863,62 @@ class _ImplicitRelalgParser:
             final_fragment = self._add_predicate(self._query.having_clause.condition, input_node=final_fragment,
                                                  eval_phase=EvaluationPhase.PostAggregation)
 
-        final_fragment = self._add_final_projection(final_fragment)
+        if self._query.orderby_clause:
+            final_fragment = self._add_ordering(self._query.orderby_clause.expressions, input_node=final_fragment)
 
-        if self._query.union_with:
-            union_fragment = _ImplicitRelalgParser(self._query.union_with).generate_relnode()
-            final_fragment = DuplicateElimination(Union(final_fragment, union_fragment))
-        if self._query.union_with_all:
-            union_fragment = _ImplicitRelalgParser(self._query.union_with).generate_relnode()
-            final_fragment = Union(final_fragment, union_fragment)
-        if self._query.intersect_with:
-            intersect_fragment = _ImplicitRelalgParser(self._query.intersect_with).generate_relnode()
-            final_fragment = Intersection(final_fragment, intersect_fragment)
-        if self._query.except_with:
-            except_fragment = _ImplicitRelalgParser(self._query.except_with).generate_relnode()
-            final_fragment = Difference(final_fragment, except_fragment)
+        final_fragment = self._add_final_projection(final_fragment)
+        return final_fragment
+
+    def _update_query(self, query: SelectStatement) -> None:
+        self._query = query
+        query_cols = self._query.columns()
+        util.collections.foreach(query_cols, lambda col: self._required_columns[col.table].add(col))
+
+    def _parse_set_query(self, query: SetQuery) -> RelNode:
+        """Handler method to translate a set query into a relational algebra fragment.
+
+        Parameters
+        ----------
+        query : SetQuery
+            _description_
+
+        Returns
+        -------
+        RelNode
+            _description_
+
+        Raises
+        ------
+        ValueError
+            _description_
+        """
+        parser = _ImplicitRelalgParser(None)
+
+        if query.cte_clause:
+            for cte in query.cte_clause.queries:
+                parser._update_query(cte.query)
+                parser.generate_relnode()  # we don't care about the result, we just want to add the CTE to the base tables
+
+        parser._update_query(query.left_query)
+        left_relalg = parser.generate_relnode()
+        parser._update_query(query.right_query)
+        right_relalg = parser.generate_relnode()
+
+        match query.set_operation:
+            case SetOperator.Union:
+                final_fragment = Union(left_relalg, right_relalg)
+                final_fragment = DuplicateElimination(final_fragment)
+            case SetOperator.UnionAll:
+                final_fragment = Union(left_relalg, right_relalg)
+            case SetOperator.Intersect:
+                final_fragment = Intersection(left_relalg, right_relalg)
+            case SetOperator.Except:
+                final_fragment = Difference(left_relalg, right_relalg)
+            case _:
+                raise ValueError(f"Unknown set operation: '{query.set_operation}'")
+
+        if query.orderby_clause:
+            final_fragment = self._add_ordering(query.orderby_clause.expressions, input_node=final_fragment)
 
         return final_fragment
 
@@ -3025,6 +3067,17 @@ class _ImplicitRelalgParser:
         final_node = (Map(input_node, _generate_expression_mapping_dict(missing_expressions)) if missing_expressions
                       else input_node)
         return Projection(final_node, [target.expression for target in self._query.select_clause.targets])
+
+    def _add_ordering(self, ordering: Sequence[OrderByExpression], *, input_node: RelNode) -> RelNode:
+        sorting: list[tuple[SqlExpression, SortDirection]] = []
+        final_fragment = input_node
+
+        for order in ordering:
+            final_fragment = self._add_expression(order.column, input_node=final_fragment)
+            sorting.append((order.column, "asc" if order.ascending else "desc"))
+
+        final_fragment = Sort(final_fragment, sorting)
+        return final_fragment
 
     def _add_predicate(self, predicate: AbstractPredicate, *, input_node: Optional[RelNode] = None,
                        eval_phase: EvaluationPhase = EvaluationPhase.BaseTable) -> RelNode:
@@ -3182,6 +3235,7 @@ class _ImplicitRelalgParser:
         if not isinstance(predicate, CompoundPredicate):
             raise ValueError(f"Unknown predicate type: '{predicate}'")
         match predicate.operation:
+
             case CompoundOperator.And | CompoundOperator.Or:
                 regular_predicates: list[AbstractPredicate] = []
                 subquery_predicates: list[AbstractPredicate] = []
@@ -3201,6 +3255,7 @@ class _ImplicitRelalgParser:
                     subquery_branch = self._convert_predicate(subquery_pred, input_node=input_node)
                     final_fragment = Union(final_fragment, subquery_branch)
                 return final_fragment
+
             case CompoundOperator.Not:
                 if not predicate.children.accept_visitor(contains_subqueries):
                     final_fragment = self._ensure_predicate_applicability(predicate, final_fragment)
@@ -3209,6 +3264,7 @@ class _ImplicitRelalgParser:
                 subquery_branch = self._convert_predicate(predicate.children, input_node=input_node)
                 final_fragment = Difference(final_fragment, subquery_branch)
                 return final_fragment
+
             case _:
                 raise ValueError(f"Unknown operation for composite predicate '{predicate}'")
 
@@ -3278,6 +3334,7 @@ class _ImplicitRelalgParser:
             raise ValueError(f"Unsupported join predicate '{predicate}'. Perhaps this should be a post-join filter?")
 
         match predicate.operation:
+
             case CompoundOperator.And | CompoundOperator.Or:
                 regular_predicates: list[AbstractPredicate] = []
                 subquery_predicates: list[AbstractPredicate] = []
@@ -3295,8 +3352,10 @@ class _ImplicitRelalgParser:
                 for subquery_pred in subquery_predicates:
                     final_fragment = self._convert_predicate(subquery_pred, input_node=final_fragment)
                 return final_fragment
+
             case CompoundOperator.Not:
                 pass
+
             case _:
                 raise ValueError(f"Unknown operation for composite predicate '{predicate}'")
 
