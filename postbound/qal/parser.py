@@ -592,14 +592,14 @@ def _pglast_parse_values_cte(pglast_data: dict) -> tuple[ValuesList, list[str]]:
     return values, colnames
 
 
-def _pglast_parse_ctes(ctes: list[dict], *, available_tables: dict[str, TableReference],
+def _pglast_parse_ctes(json_data: dict, *, available_tables: dict[str, TableReference],
                        resolved_columns: dict[tuple[str, str], ColumnReference],
                        schema: Optional["DatabaseSchema"]) -> CommonTableExpression:  # type: ignore # noqa: F821
     """Handler method to parse the **WITH** clause of a query.
 
     Parameters
     ----------
-    ctes : list[dict]
+    json_data : dict
         JSON enconding of the CTEs, as extracted from the pglast data structure.
     available_tables : dict[str, TableReference]
         Candidate tables that columns can bind to. This dictionary maps the table identifier to the full table reference.
@@ -621,7 +621,7 @@ def _pglast_parse_ctes(ctes: list[dict], *, available_tables: dict[str, TableRef
     """
     local_resolved_cols: dict[str, ColumnReference] = {}
     parsed_ctes: list[CommonTableExpression] = []
-    for pglast_data in ctes:
+    for pglast_data in json_data["ctes"]:
         current_cte: dict = pglast_data["CommonTableExpr"]
         target_table = TableReference.create_virtual(current_cte["ctename"])
         available_tables[normalize(target_table.identifier())] = target_table
@@ -649,7 +649,9 @@ def _pglast_parse_ctes(ctes: list[dict], *, available_tables: dict[str, TableRef
 
         parsed_ctes.append(parsed_cte)
 
-    return CommonTableExpression(parsed_ctes)
+    recursive = json_data.get("recursive", False)
+
+    return CommonTableExpression(parsed_ctes, recursive=recursive)
 
 
 def _pglast_try_select_star(target: dict) -> Optional[Select]:
@@ -1384,7 +1386,7 @@ def _pglast_parse_setop(pglast_data: dict, *, available_tables: dict[str, TableR
         The parsed set clause
     """
     if "withClause" in pglast_data:
-        with_clause = _pglast_parse_ctes(pglast_data["withClause"]["ctes"],
+        with_clause = _pglast_parse_ctes(pglast_data["withClause"],
                                          available_tables=available_tables,
                                          resolved_columns=resolved_columns, schema=schema)
     else:
@@ -1468,7 +1470,7 @@ def _pglast_parse_query(stmt: dict, *, available_tables: dict[str, TableReferenc
     clauses = []
 
     if "withClause" in stmt:
-        with_clause = _pglast_parse_ctes(stmt["withClause"]["ctes"], available_tables=available_tables,
+        with_clause = _pglast_parse_ctes(stmt["withClause"], available_tables=available_tables,
                                          resolved_columns=resolved_columns, schema=schema)
         clauses.append(with_clause)
 

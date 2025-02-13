@@ -4262,6 +4262,9 @@ class WithQuery:
     def __init__(self, query: SqlQuery, target_name: str | TableReference, *, materialized: Optional[bool] = None) -> None:
         if not target_name:
             raise ValueError("Target name is required")
+
+        # TODO: model output column names -- e.g. WITH t(n) AS (SELECT 1)
+
         self._query = query
         self._subquery_expression = SubqueryExpression(query)
         self._target_name = target_name if isinstance(target_name, str) else target_name.identifier()
@@ -4478,6 +4481,8 @@ class CommonTableExpression(BaseClause):
     ----------
     with_queries : Iterable[WithQuery]
         The common table expressions that form the WITH clause.
+    recursive : bool, optional
+        Whether the WITH clause is recursive or not. Defaults to ``False``.
 
     Raises
     ------
@@ -4490,11 +4495,13 @@ class CommonTableExpression(BaseClause):
     The `referenced_tables()` method does not include the CTE aliases. Likewise, the `aliases()` method provides all the
     aliases, but not the tables that are referenced within the CTEs.
     """
-    def __init__(self, with_queries: Iterable[WithQuery]):
+    def __init__(self, with_queries: Iterable[WithQuery], *, recursive: bool = False):
         self._with_queries = tuple(with_queries)
         if not self._with_queries:
             raise ValueError("With queries cannnot be empty")
-        super().__init__(hash(self._with_queries))
+        self._recursive = recursive
+        hash_val = hash((self._with_queries, self._recursive))
+        super().__init__(hash_val)
 
     __match_args__ = ("queries",)
 
@@ -4508,6 +4515,17 @@ class CommonTableExpression(BaseClause):
             The CTEs in the order in which they were originally specified.
         """
         return self._with_queries
+
+    @property
+    def recursive(self) -> bool:
+        """Check whether the WITH clause is recursive or not.
+
+        Returns
+        -------
+        bool
+            Whether the WITH clause is recursive
+        """
+        return self._recursive
 
     def tables(self) -> set[TableReference]:
         all_tables: set[TableReference] = set()
@@ -4550,11 +4568,14 @@ class CommonTableExpression(BaseClause):
     __hash__ = BaseClause.__hash__
 
     def __eq__(self, other: object) -> bool:
-        return isinstance(other, type(self)) and self._with_queries == other._with_queries
+        return (isinstance(other, type(self))
+                and self._with_queries == other._with_queries
+                and self._recursive == other._recursive)
 
     def __str__(self) -> str:
         query_str = ", ".join(str(with_query) for with_query in self._with_queries)
-        return "WITH " + query_str
+        recursive_str = " RECURSIVE" if self._recursive else ""
+        return f"WITH{recursive_str} {query_str}"
 
 
 class BaseProjection:
@@ -5531,14 +5552,8 @@ class From(BaseClause, Generic[TableType]):
         return isinstance(other, type(self)) and self._items == other._items
 
     def __str__(self) -> str:
-        fixture = "FROM "
-        contents_str = []
-        for src in self._items:
-            if contents_str:
-                contents_str.append(", " + str(src))
-                continue
-            contents_str.append(str(src))
-        return fixture + "".join(contents_str)
+        items_str = ", ".join(str(entry) for entry in self._items)
+        return f"FROM {items_str}"
 
 
 class ImplicitFromClause(From[DirectTableSource]):

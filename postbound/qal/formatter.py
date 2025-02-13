@@ -132,6 +132,8 @@ def _quick_format_cte(cte_clause: CommonTableExpression) -> list[str]:
     list[str]
         The pretty-printed parts of the CTE, indented as necessary.
     """
+    recursive_info = "RECURSIVE " if cte_clause.recursive else ""
+
     if len(cte_clause.queries) == 1:
         cte_query = cte_clause.queries[0]
         if isinstance(cte_query, ValuesWithQuery):
@@ -140,7 +142,7 @@ def _quick_format_cte(cte_clause: CommonTableExpression) -> list[str]:
         else:
             mat_info = "" if cte_query.materialized is None else ("MATERIALIZED " if cte_query.materialized
                                                                   else "NOT MATERIALIZED ")
-            cte_header = f"WITH {cte_query.target_name} AS {mat_info}("
+            cte_header = f"WITH {recursive_info}{cte_query.target_name} AS {mat_info}("
             cte_content = format_quick(cte_query.query, trailing_semicolon=False)
         cte_content = _increase_indentation(cte_content)
         cte_footer = ")"
@@ -149,7 +151,7 @@ def _quick_format_cte(cte_clause: CommonTableExpression) -> list[str]:
     first_cte, *remaining_ctes = cte_clause.queries
     first_content = _increase_indentation(format_quick(first_cte.query, trailing_semicolon=False))
     mat_info = "" if first_cte.materialized is None else ("MATERIALIZED " if first_cte.materialized else "NOT MATERIALIZED ")
-    formatted_parts: list[str] = [f"WITH {first_cte.target_name} AS {mat_info}(", first_content]
+    formatted_parts: list[str] = [f"WITH{recursive_info} {first_cte.target_name} AS {mat_info}(", first_content]
     for next_cte in remaining_ctes:
         mat_info = "" if next_cte.materialized is None else ("MATERIALIZED " if first_cte.materialized
                                                              else "NOT MATERIALIZED ")
@@ -335,7 +337,9 @@ def _quick_format_general_from(from_clause: From) -> list[str]:
     for table_source in from_clause.items:
         current_elems = _quick_format_tablesource(table_source)
         current_elems = [((" " * FormatIndentDepth) + str(child)) for child in current_elems]
+        current_elems[-1] += ","
         elems += current_elems
+    elems[-1] = elems[-1].removesuffix(",")
     return elems
 
 

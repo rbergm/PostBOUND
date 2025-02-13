@@ -264,7 +264,7 @@ def extract_query_fragment(source_query: SelectQueryType,
     cte_fragment = ([with_query for with_query
                      in source_query.cte_clause.queries if with_query.target_table in referenced_tables]
                     if source_query.cte_clause else [])
-    cte_clause = CommonTableExpression(cte_fragment) if cte_fragment else None
+    cte_clause = CommonTableExpression(cte_fragment, recursive=source_query.cte_clause.recursive) if cte_fragment else None
 
     if source_query.orderby_clause:
         order_fragment = [order for order in source_query.orderby_clause.expressions
@@ -893,7 +893,7 @@ def _replace_expressions_in_clause(clause: Optional[ClauseType],
                                      materialized=cte.materialized)
             replaced_queries.append(replaced_cte)
 
-        return CommonTableExpression(replaced_queries)
+        return CommonTableExpression(replaced_queries, recursive=clause.recursive)
     elif isinstance(clause, Select):
         replaced_targets = [BaseProjection(replacement(proj.expression), proj.target_name)
                             for proj in clause.targets]
@@ -1349,7 +1349,7 @@ def rename_columns_in_clause(clause: Optional[ClauseType],
 
             renamed_ctes.append(renamed_cte)
 
-        return CommonTableExpression(renamed_ctes)
+        return CommonTableExpression(renamed_ctes, recursive=clause.recursive)
     if isinstance(clause, Select):
         renamed_targets = [BaseProjection(rename_columns_in_expression(proj.expression, available_renamings),
                                           proj.target_name)

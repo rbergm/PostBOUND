@@ -19,6 +19,10 @@ Be carefull when updating and check the changelog!
 ### Planned
 - Full dynamic programming support for the `TextbookOptimizationPipeline`, including a Postgres-specific algorithm
 
+### New features
+- Added support for recursive CTEs
+
+
 ### Updates
 - Translating a query into relational algebra now retains ordering information and works for general set queries
 
