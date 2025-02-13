@@ -114,6 +114,8 @@ Almost all of the subdirectories contain further READMEs that explain their purp
 The `postbound` directory contains the actual source code of the framework. On a high-level, the PostBOUND framework is
 structured as follows:
 
+![Overview of the major PostBOUND packages](docs/figures/postbound-package-overview.png)
+
 | Package       | Description |
 |---------------|-------------|
 | `optimizer`   | provides the different optimization strategies, interfaces and some pre-defined algorithms |
