@@ -21,3 +21,16 @@ documentation in `postgres.py` for details.
 
 The `util` directory contains a collection of stored procedures for different introspection methods.
 
+## Dependencies
+
+To create a custom Postgres build, a number of packages have to be available on your system. Since packages names, etc. are
+not standardized across distributions, we sadly cannot simply list them here. Consult the
+[official PG documentation](https://www.postgresql.org/docs/current/install-requirements.html) for more details.
+On Ubuntu-based systems, the requirements can be installed like so:
+
+```sh
+sudo apt install -y \
+    build-essential \
+    bison flex curl pkg-config libicu-dev libreadline-dev libssl-dev \
+    git unzip zstd
+```

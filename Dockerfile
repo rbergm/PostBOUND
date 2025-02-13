@@ -5,7 +5,7 @@ EXPOSE 5432
 # Install dependencies
 RUN apt update && apt install -y \
     build-essential sudo tzdata procps \
-    bison flex curl pkg-config libicu-dev libreadline-dev cmake \
+    bison flex curl pkg-config libicu-dev libreadline-dev libssl-dev cmake \
     git vim unzip zstd default-jre \
     python3 python3-venv python3-pip
 

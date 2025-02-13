@@ -103,7 +103,7 @@ echo ".. Downloading pg_hint_plan extension"
 curl -L https://github.com/ossc-db/pg_hint_plan/archive/refs/tags/$PG_HINT_PLAN_VERSION.tar.gz -o contrib/pg_hint_plan.tar.gz
 
 echo ".. Building Postgres $PG_VER_PRETTY"
-./configure --prefix=$PG_TARGET_DIR/build
+./configure --prefix=$PG_TARGET_DIR/build --with-openssl
 make clean && make -j $MAKE_CORES && make install
 export PATH="$PG_TARGET_DIR/build/bin:$PATH"
 export LD_LIBRARY_PATH="$PG_TARGET_DIR/build/lib:$LD_LIBRARY_PATH"
