@@ -397,6 +397,9 @@ class QueryPlan:
     def is_scan(self) -> bool:
         return self._operator is not None and self._operator in ScanOperators
 
+    def is_auxiliary(self) -> bool:
+        return not self.is_join() and not self.is_scan()
+
     def is_analyze(self) -> bool:
         return bool(self._measures)
 
@@ -563,7 +566,7 @@ class QueryPlan:
             "node_type": self.node_type,
             "input_node": self.input_node,
             "children": self.children,
-            "plan_params": self._params,
+            "plan_params": self._plan_params,
             "estimates": self._estimates,
             "measures": self._measures,
             "subplan": self._subplan
