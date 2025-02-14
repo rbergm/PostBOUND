@@ -13,7 +13,7 @@ import networkx as nx
 
 from .. import jointree
 from .._hints import ScanOperatorAssignment, JoinOperatorAssignment, PhysicalOperatorAssignment
-from ..._core import ScanOperators, JoinOperators
+from ..._core import ScanOperator, JoinOperator
 from ... import db, qal
 from ...util import networkx as nx_utils
 
@@ -231,8 +231,8 @@ class ExhaustiveOperatorEnumerator:
         If both scans and joins are disabled
     """
 
-    def __init__(self, scan_operators: Optional[Iterable[ScanOperators]] = None,
-                 join_operators: Optional[Iterable[JoinOperators]] = None, *,
+    def __init__(self, scan_operators: Optional[Iterable[ScanOperator]] = None,
+                 join_operators: Optional[Iterable[JoinOperator]] = None, *,
                  include_scans: bool = True, include_joins: bool = True,
                  database: Optional[db.Database] = None) -> None:
         if not include_joins and not include_scans:
@@ -240,8 +240,8 @@ class ExhaustiveOperatorEnumerator:
         self._db = database if database is not None else db.DatabasePool.get_instance().current_database()
         self._include_scans = include_scans
         self._include_joins = include_joins
-        allowed_scan_ops = scan_operators if scan_operators else ScanOperators
-        allowed_join_ops = join_operators if join_operators else JoinOperators
+        allowed_scan_ops = scan_operators if scan_operators else ScanOperator
+        allowed_join_ops = join_operators if join_operators else JoinOperator
         self.allowed_scan_ops = frozenset(scan_op for scan_op in allowed_scan_ops if self._db.hinting().supports_hint(scan_op))
         self.allowed_join_ops = frozenset(join_op for join_op in allowed_join_ops if self._db.hinting().supports_hint(join_op))
 

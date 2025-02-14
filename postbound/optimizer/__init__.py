@@ -18,8 +18,8 @@ module and the `strategies` package.
 
 from . import joingraph, jointree, policies
 from ._hints import (
-  ScanOperators,
-  JoinOperators,
+  ScanOperator,
+  JoinOperator,
   PhysicalOperator,
   ScanOperatorAssignment,
   JoinOperatorAssignment,
@@ -42,8 +42,8 @@ __all__ = [
   "joingraph",
   "jointree",
   "policies",
-  "ScanOperators",
-  "JoinOperators",
+  "ScanOperator",
+  "JoinOperator",
   "PhysicalOperator",
   "ScanOperatorAssignment",
   "JoinOperatorAssignment",

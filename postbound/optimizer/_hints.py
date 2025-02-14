@@ -7,7 +7,7 @@ from enum import Enum
 from typing import Any, overload
 
 from .. import util
-from .._core import ScanOperators, JoinOperators, PhysicalOperator
+from .._core import ScanOperator, JoinOperator, PhysicalOperator
 from ..qal import parser, TableReference
 from ..util import jsondict
 
@@ -25,14 +25,14 @@ class ScanOperatorAssignment:
         The number of parallel processes that should be used to execute the scan. Can be set to 1 to indicate sequential
         operation. Defaults to NaN to indicate that no choice has been made.
     """
-    def __init__(self, operator: ScanOperators, table: TableReference, parallel_workers: float | int = math.nan) -> None:
+    def __init__(self, operator: ScanOperator, table: TableReference, parallel_workers: float | int = math.nan) -> None:
         self._operator = operator
         self._table = table
         self._parallel_workers = parallel_workers
         self._hash_val = hash((self._operator, self._table, self._parallel_workers))
 
     @property
-    def operator(self) -> ScanOperators:
+    def operator(self) -> ScanOperator:
         """Get the assigned operator.
 
         Returns
@@ -122,7 +122,7 @@ class JoinOperatorAssignment:
         If `join` contains less than 2 tables
     """
 
-    def __init__(self, operator: JoinOperators, join: Collection[TableReference], *,
+    def __init__(self, operator: JoinOperator, join: Collection[TableReference], *,
                  parallel_workers: float | int = math.nan) -> None:
         if len(join) < 2:
             raise ValueError("At least 2 join tables must be given")
@@ -133,7 +133,7 @@ class JoinOperatorAssignment:
         self._hash_val = hash((self._operator, self._join, self._parallel_workers))
 
     @property
-    def operator(self) -> JoinOperators:
+    def operator(self) -> JoinOperator:
         """Get the operator that was selected for the join
 
         Returns
@@ -248,7 +248,7 @@ class DirectionalJoinOperatorAssignment(JoinOperatorAssignment):
     ValueError
         If either `inner` or `outer` is empty.
     """
-    def __init__(self, operator: JoinOperators, inner: Collection[TableReference],
+    def __init__(self, operator: JoinOperator, inner: Collection[TableReference],
                  outer: Collection[TableReference], *, parallel_workers: float | int = math.nan) -> None:
         if not inner or not outer:
             raise ValueError("Both inner and outer relations must be given")
@@ -295,7 +295,7 @@ class DirectionalJoinOperatorAssignment(JoinOperatorAssignment):
 
 
 @overload
-def read_operator_json(json_data: str) -> ScanOperators | JoinOperators:
+def read_operator_json(json_data: str) -> ScanOperator | JoinOperator:
     """Reconstructs a physical operator from its JSON representation.
 
     Parameters
@@ -350,10 +350,10 @@ def read_operator_json(json_data: dict | str) -> PhysicalOperator | ScanOperator
         If the JSON dictionary does not contain a valid assignment
     """
     if isinstance(json_data, str):
-        if json_data in {op.value for op in ScanOperators}:
-            return ScanOperators(json_data)
-        elif json_data in {op.value for op in JoinOperators}:
-            return JoinOperators(json_data)
+        if json_data in {op.value for op in ScanOperator}:
+            return ScanOperator(json_data)
+        elif json_data in {op.value for op in JoinOperator}:
+            return JoinOperator(json_data)
         else:
             raise ValueError(f"Unknown physical operator: '{json_data}'")
 
@@ -361,13 +361,13 @@ def read_operator_json(json_data: dict | str) -> PhysicalOperator | ScanOperator
 
     if "table" in json_data:
         parsed_table = parser.load_table_json(json_data["table"])
-        scan_operator = ScanOperators(json_data["operator"])
+        scan_operator = ScanOperator(json_data["operator"])
         return ScanOperatorAssignment(scan_operator, parsed_table, parallel_workers)
     elif "join" not in json_data and not ("inner" in json_data and "outer" in json_data):
         raise ValueError(f"Malformed operator JSON: either 'table' or 'join' must be given: '{json_data}'")
 
     directional = json_data["directional"]
-    join_operator = JoinOperators(json_data["operator"])
+    join_operator = JoinOperator(json_data["operator"])
     if directional:
         inner = [parser.load_table_json(tab) for tab in json_data["inner"]]
         outer = [parser.load_table_json(tab) for tab in json_data["outer"]]
@@ -413,7 +413,7 @@ class PhysicalOperatorAssignment:
     """
 
     def __init__(self) -> None:
-        self.global_settings: dict[ScanOperators | JoinOperators, bool] = {}
+        self.global_settings: dict[ScanOperator | JoinOperator, bool] = {}
         self.join_operators: dict[frozenset[TableReference], JoinOperatorAssignment] = {}
         self.scan_operators: dict[TableReference, ScanOperatorAssignment] = {}
 
@@ -435,11 +435,11 @@ class PhysicalOperatorAssignment:
             The enabled scan and join operators. If no global setting is available for an operator `include_by_default`
             determines the appropriate action.
         """
-        enabled_scan_ops = [scan_op for scan_op in ScanOperators if self.global_settings.get(scan_op, include_by_default)]
-        enabled_join_ops = [join_op for join_op in JoinOperators if self.global_settings.get(join_op, include_by_default)]
+        enabled_scan_ops = [scan_op for scan_op in ScanOperator if self.global_settings.get(scan_op, include_by_default)]
+        enabled_join_ops = [join_op for join_op in JoinOperator if self.global_settings.get(join_op, include_by_default)]
         return frozenset(enabled_scan_ops + enabled_join_ops)
 
-    def set_operator_enabled_globally(self, operator: ScanOperators | JoinOperators, enabled: bool, *,
+    def set_operator_enabled_globally(self, operator: ScanOperator | JoinOperator, enabled: bool, *,
                                       overwrite_fine_grained_selection: bool = False) -> None:
         """Enables or disables an operator for all joins/scans in the query.
 
@@ -463,10 +463,10 @@ class PhysicalOperatorAssignment:
 
         # at this point we know that we should disable a scan or join operator that was potentially set for
         # individual joins or tables
-        if isinstance(operator, ScanOperators):
+        if isinstance(operator, ScanOperator):
             self.scan_operators = {table: current_setting for table, current_setting in self.scan_operators.items()
                                    if current_setting != operator}
-        elif isinstance(operator, JoinOperators):
+        elif isinstance(operator, JoinOperator):
             self.join_operators = {join: current_setting for join, current_setting in self.join_operators.items()
                                    if current_setting != operator}
 
@@ -551,9 +551,9 @@ class PhysicalOperatorAssignment:
     def __bool__(self) -> bool:
         return bool(self.global_settings) or bool(self.join_operators) or bool(self.scan_operators)
 
-    def __getitem__(self, item: TableReference | Iterable[TableReference] | ScanOperators | JoinOperators
+    def __getitem__(self, item: TableReference | Iterable[TableReference] | ScanOperator | JoinOperator
                     ) -> ScanOperatorAssignment | JoinOperatorAssignment | bool | None:
-        if isinstance(item, ScanOperators) or isinstance(item, JoinOperators):
+        if isinstance(item, ScanOperator) or isinstance(item, JoinOperator):
             return self.global_settings.get(item, None)
         elif isinstance(item, TableReference):
             return self.scan_operators.get(item, None)

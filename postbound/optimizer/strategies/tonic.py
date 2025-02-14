@@ -17,7 +17,7 @@ from typing import Any, Optional
 
 from .. import jointree
 from .._hints import PhysicalOperatorAssignment, JoinOperatorAssignment
-from ..._core import JoinOperators
+from ..._core import JoinOperator
 from ..._qep import QueryPlan
 from ..._stages import PhysicalOperatorSelection
 from ... import db, qal, util
@@ -320,7 +320,7 @@ class QepsNode:
                  identifier: Optional[QepsIdentifier] = None, parent: Optional[QepsNode] = None) -> None:
         self.filter_aware = filter_aware
         self.gamma = gamma
-        self.operator_costs: dict[JoinOperators, float] = collections.defaultdict(float)
+        self.operator_costs: dict[JoinOperator, float] = collections.defaultdict(float)
         self.child_nodes = util.dicts.DynamicDefaultDict(self._init_qeps)
         self._subquery_root: Optional[QepsNode] = None  # only used for subquery nodes
         self._parent = parent
@@ -515,8 +515,8 @@ class QepsNode:
         qeps_child_node.integrate_costs(query, remaining_nodes)
 
     def detect_unknown_costs(self, query: qal.SqlQuery, join_order: Sequence[jointree.IntermediateJoinNode],
-                             allowed_operators: frozenset[JoinOperators],
-                             unknown_ops: dict[frozenset[TableReference], frozenset[JoinOperators]],
+                             allowed_operators: frozenset[JoinOperator],
+                             unknown_ops: dict[frozenset[TableReference], frozenset[JoinOperator]],
                              _skip_first_table: bool = False) -> None:
         """Collects all joins in the QEP-S that do not have cost information for all possible operators.
 
@@ -576,7 +576,7 @@ class QepsNode:
         qeps_child_node = self.child_nodes[qeps_child_id]
         qeps_child_node.detect_unknown_costs(query, remaining_joins, allowed_operators, unknown_ops)
 
-    def current_recommendation(self) -> Optional[JoinOperators]:
+    def current_recommendation(self) -> Optional[JoinOperator]:
         """Provides the operator with the minimum cost.
 
         Returns
@@ -586,7 +586,7 @@ class QepsNode:
         """
         return util.argmin(self.operator_costs) if len(self.operator_costs) > 1 else None
 
-    def update_costs(self, operator: JoinOperators, cost: float) -> None:
+    def update_costs(self, operator: JoinOperator, cost: float) -> None:
         """Updates the cost of a specific operator for this node.
 
         Parameters
@@ -802,8 +802,8 @@ class QueryExecutionPlanSynopsis:
         self.root.integrate_costs(query, _iterate_query_plan(query_plan))
 
     def detect_unknown_costs(self, query: qal.SqlQuery, join_order: jointree.JoinTree,
-                             allowed_operators: set[JoinOperators]
-                             ) -> dict[frozenset[TableReference], frozenset[JoinOperators]]:
+                             allowed_operators: set[JoinOperator]
+                             ) -> dict[frozenset[TableReference], frozenset[JoinOperator]]:
         """Collects all joins in the QEP-S that do not have cost information for all possible operators.
 
         Parameters
@@ -908,7 +908,7 @@ def _load_qeps_from_json(json_data: dict, qeps_id: Optional[QepsIdentifier], par
     """
     node = QepsNode(filter_aware, gamma, identifier=qeps_id, parent=parent)
 
-    cost_info = {JoinOperators(operator_str): cost for operator_str, cost in json_data.get("costs", {}).items()}
+    cost_info = {JoinOperator(operator_str): cost for operator_str, cost in json_data.get("costs", {}).items()}
     subquery = (_load_qeps_from_json(json_data["subquery"], None, None, filter_aware, gamma)
                 if "subquery" in json_data else None)
     children: dict[QepsIdentifier, QepsNode] = {}
@@ -973,7 +973,7 @@ def _obtain_accurate_cost_estimate(query: qal.SqlQuery, database: db.Database) -
 
 
 def _generate_all_cost_estimates(query: qal.SqlQuery, join_order: jointree.JoinTree,
-                                 available_operators: dict[frozenset[TableReference], frozenset[JoinOperators]],
+                                 available_operators: dict[frozenset[TableReference], frozenset[JoinOperator]],
                                  database: db.Database) -> Iterable[QueryPlan]:
     """Provides all cost estimates based on plans with specific operator combinations.
 
@@ -1010,7 +1010,7 @@ def _generate_all_cost_estimates(query: qal.SqlQuery, join_order: jointree.JoinT
 
 
 def _sample_cost_estimates(query: qal.SqlQuery, join_order: jointree.JoinTree,
-                           available_operators: dict[frozenset[TableReference], frozenset[JoinOperators]],
+                           available_operators: dict[frozenset[TableReference], frozenset[JoinOperator]],
                            n_samples: int, database: db.Database) -> Iterable[QueryPlan]:
     """Generates cost estimates based on sampled plans with specific operator combinations.
 
@@ -1165,7 +1165,7 @@ class TonicOperatorSelection(PhysicalOperatorSelection):
         self.integrate_cost(hinted_query)
 
     def explore_costs(self, query: qal.SqlQuery, join_order: Optional[jointree.JoinTree] = None, *,
-                      allowed_operators: Optional[Iterable[JoinOperators]] = None,
+                      allowed_operators: Optional[Iterable[JoinOperator]] = None,
                       max_combinations: Optional[int] = None) -> None:
         """Generates cost information along a specific path in the QEP-S.
 
@@ -1193,8 +1193,8 @@ class TonicOperatorSelection(PhysicalOperatorSelection):
         """
         join_order = join_order if join_order is not None else self._obtain_native_join_order(query)
 
-        allowed_operators = set(allowed_operators) if allowed_operators else set(JoinOperators)
-        supported_operators = {join_op for join_op in JoinOperators if self._db.hinting().supports_hint(join_op)}
+        allowed_operators = set(allowed_operators) if allowed_operators else set(JoinOperator)
+        supported_operators = {join_op for join_op in JoinOperator if self._db.hinting().supports_hint(join_op)}
         allowed_operators = frozenset(allowed_operators & supported_operators)
 
         unknown_costs = {intermediate.tables(): allowed_operators for intermediate in join_order.join_sequence()}

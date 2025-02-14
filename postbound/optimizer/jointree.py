@@ -28,7 +28,7 @@ import functools
 import math
 import typing
 from collections.abc import Callable, Collection, Container, Iterable, Sequence
-from typing import Generic, Literal, Optional, Union
+from typing import Generic, Literal, Optional, Union, TypeAlias
 
 import Levenshtein
 
@@ -39,9 +39,9 @@ from ._hints import (
     read_operator_json
 )
 from .. import qal, util
-from .._core import Cost, Cardinality, QueryExecutionPlan
-from .._qep import SortKey
-from ..qal import parser, TableReference, ColumnReference, SqlExpression
+from .._core import Cost, Cardinality, QueryExecutionPlan, ScanOperator, JoinOperator
+from .._qep import SortKey, JoinDirection, QueryPlan
+from ..qal import parser, TableReference, SqlQuery
 from ..util import jsondict, StateError
 from ..util.typing import Lazy, LazyVal
 
@@ -265,6 +265,25 @@ class JoinTree(Container[TableReference], Generic[AnnotationType]):
 
         return None
 
+    def update_annotation(self, new_annotation: AnnotationType) -> JoinTree[AnnotationType]:
+        if self.is_empty():
+            raise StateError("Cannot update annotation of an empty join tree.")
+        return JoinTree(table=self._table, outer=self._outer, inner=self._inner, annotation=new_annotation)
+
+    def join_with(self, partner: JoinTree[AnnotationType] | TableReference, *, annotation: Optional[AnnotationType] = None,
+                  partner_annotation: AnnotationType | None = None,
+                  partner_direction: JoinDirection = "inner") -> JoinTree[AnnotationType]:
+        if self.is_empty():
+            return self._init_empty_join_tree(partner, annotation=partner_annotation)
+
+        if isinstance(partner, JoinTree) and partner_annotation is not None:
+            partner = partner.update_annotation(partner_annotation)
+        elif isinstance(partner, TableReference):
+            partner = JoinTree.scan(partner, annotation=partner_annotation)
+
+        outer, inner = self, partner if partner_direction == "inner" else partner, self
+        return JoinTree.join(outer, inner, annotation=annotation)
+
     def inspect(self) -> str:
         return _inspectify(self)
 
@@ -274,6 +293,15 @@ class JoinTree(Container[TableReference], Generic[AnnotationType]):
         if self.is_scan():
             return [self]
         return [self] + self._outer.iternodes() + self._inner.iternodes()
+
+    def _init_empty_join_tree(self, partner: JoinTree[AnnotationType] | TableReference, *,
+                              annotation: Optional[AnnotationType] = None) -> JoinTree[AnnotationType]:
+        if isinstance(partner, TableReference):
+            return JoinTree.scan(partner, annotation=annotation)
+
+        if annotation is not None:
+            partner = partner.update_annotation(annotation)
+        return partner
 
     def __json__(self) -> jsondict:
         if self.is_scan():
@@ -301,7 +329,22 @@ class JoinTree(Container[TableReference], Generic[AnnotationType]):
         return f"({self._outer} ⋈ {self._inner})"
 
 
-LogicalJoinTree = JoinTree[Cardinality]
+LogicalJoinTree: TypeAlias = JoinTree[Cardinality]
+
+
+def to_query_plan(join_tree: LogicalJoinTree, *, query: Optional[SqlQuery],
+                  physical_ops: Optional[PhysicalOperatorAssignment] = None,
+                  plan_params: Optional[PlanParameterization] = None,
+                  scan_op: Optional[ScanOperator] = None, join_op: Optional[JoinOperator] = None) -> QueryPlan:
+    pass
+
+
+def from_query_plan(plan: QueryPlan) -> LogicalJoinTree:
+    pass
+
+
+def read_json(json_data: dict) -> LogicalJoinTree:
+    pass
 
 
 def _inspectify(join_tree: JoinTree[AnnotationType], *, indentation: int = 0) -> str:

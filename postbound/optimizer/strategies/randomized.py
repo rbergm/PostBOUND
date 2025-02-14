@@ -9,7 +9,7 @@ import networkx as nx
 
 from .. import jointree, validation
 from .._hints import PhysicalOperatorAssignment, JoinOperatorAssignment, ScanOperatorAssignment
-from ..._core import JoinOperators, ScanOperators, PhysicalOperator
+from ..._core import JoinOperator, ScanOperator, PhysicalOperator
 from ..._stages import JoinOrderOptimization, PhysicalOperatorSelection, CompleteOptimizationAlgorithm
 from ... import db, qal
 from ...qal import TableReference
@@ -313,8 +313,8 @@ class RandomOperatorGenerator:
         If both scans and joins are disabled
     """
 
-    def __init__(self, scan_operators: Optional[Iterable[ScanOperators]] = None,
-                 join_operators: Optional[Iterable[JoinOperators]] = None, *,
+    def __init__(self, scan_operators: Optional[Iterable[ScanOperator]] = None,
+                 join_operators: Optional[Iterable[JoinOperator]] = None, *,
                  include_scans: bool = True, include_joins: bool = True,
                  eliminate_duplicates: bool = False, database: Optional[db.Database] = None) -> None:
         if not include_joins and not include_scans:
@@ -323,8 +323,8 @@ class RandomOperatorGenerator:
         self._eliminate_duplicates = eliminate_duplicates
         self._include_scans = include_scans
         self._include_joins = include_joins
-        allowed_scan_ops = scan_operators if scan_operators else ScanOperators
-        allowed_join_ops = join_operators if join_operators else JoinOperators
+        allowed_scan_ops = scan_operators if scan_operators else ScanOperator
+        allowed_join_ops = join_operators if join_operators else JoinOperator
         self.allowed_scan_ops = frozenset(scan_op for scan_op in allowed_scan_ops if self._db.hinting().supports_hint(scan_op))
         self.allowed_join_ops = frozenset(join_op for join_op in allowed_join_ops if self._db.hinting().supports_hint(join_op))
 

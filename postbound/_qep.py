@@ -8,12 +8,12 @@ from numbers import Number
 from typing import Any, Literal, Optional
 
 from . import util
-from ._core import Cardinality, Cost, ScanOperators, JoinOperators, PhysicalOperator, TableReference, ColumnReference
+from ._core import Cardinality, Cost, ScanOperator, JoinOperator, PhysicalOperator, TableReference, ColumnReference
 from .qal import SqlExpression, AbstractPredicate
 from .util import jsondict
 
 
-TraversalDirection = Literal["inner", "outer"]
+JoinDirection = Literal["inner", "outer"]
 
 
 @dataclass(frozen=True)
@@ -392,10 +392,10 @@ class QueryPlan:
         return self._subplan
 
     def is_join(self) -> bool:
-        return self._operator is not None and self._operator in JoinOperators
+        return self._operator is not None and self._operator in JoinOperator
 
     def is_scan(self) -> bool:
-        return self._operator is not None and self._operator in ScanOperators
+        return self._operator is not None and self._operator in ScanOperator
 
     def is_auxiliary(self) -> bool:
         return not self.is_join() and not self.is_scan()
@@ -487,7 +487,7 @@ class QueryPlan:
         return None
 
     def find_first_node(self, predicate: Callable[[QueryPlan], bool], *args,
-                        direction: TraversalDirection = "outer", **kwargs) -> Optional[QueryPlan]:
+                        direction: JoinDirection = "outer", **kwargs) -> Optional[QueryPlan]:
         if predicate(self, *args, **kwargs):
             return self
         if self.is_scan():

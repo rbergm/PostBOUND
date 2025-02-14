@@ -42,7 +42,7 @@ from ._db import (
     UnsupportedDatabaseFeatureError
 )
 from .. import qal, util
-from .._core import JoinOperators, ScanOperators, PhysicalOperator
+from .._core import JoinOperator, ScanOperator, PhysicalOperator
 from .._qep import QueryPlan, SortKey
 from ..qal import (
     TableReference, ColumnReference,
@@ -1301,7 +1301,7 @@ def _is_hash_join(join_tree_node: IntermediateJoinNode,
     if operator_assignment is not None:
         selected_operator: Optional[JoinOperatorAssignment] = operator_assignment[join_tree_node.tables()]
         if selected_operator is not None:
-            return selected_operator.operator == JoinOperators.HashJoin
+            return selected_operator.operator == JoinOperator.HashJoin
 
         # We do not need to check the global hash join setting b/c it is overwritten by the per-join setting
         # if we would not have a per-join setting, but a global setting the decision is the same in all cases:
@@ -1311,35 +1311,35 @@ def _is_hash_join(join_tree_node: IntermediateJoinNode,
         # The only special case is if the hash join is the only globally enabled join operator and there is no per-join
         # assignment. In this case, the join has to be a hash join. This condition is checked below
         global_join_ops = {op for op in operator_assignment.get_globally_enabled_operators()
-                           if isinstance(op, JoinOperators)}
-        return len(global_join_ops) == 1 and JoinOperators.HashJoin in global_join_ops
+                           if isinstance(op, JoinOperator)}
+        return len(global_join_ops) == 1 and JoinOperator.HashJoin in global_join_ops
 
     if not isinstance(join_tree_node.annotation, PhysicalJoinMetadata):
         return False
 
     return (join_tree_node.annotation.operator is not None
-            and join_tree_node.annotation.operator.operator == JoinOperators.HashJoin)
+            and join_tree_node.annotation.operator.operator == JoinOperator.HashJoin)
 
 
 PostgresOptimizerSettings = {
-    JoinOperators.NestedLoopJoin: "enable_nestloop",
-    JoinOperators.HashJoin: "enable_hashjoin",
-    JoinOperators.SortMergeJoin: "enable_mergejoin",
-    ScanOperators.SequentialScan: "enable_seqscan",
-    ScanOperators.IndexScan: "enable_indexscan",
-    ScanOperators.IndexOnlyScan: "enable_indexonlyscan",
-    ScanOperators.BitmapScan: "enable_bitmapscan"
+    JoinOperator.NestedLoopJoin: "enable_nestloop",
+    JoinOperator.HashJoin: "enable_hashjoin",
+    JoinOperator.SortMergeJoin: "enable_mergejoin",
+    ScanOperator.SequentialScan: "enable_seqscan",
+    ScanOperator.IndexScan: "enable_indexscan",
+    ScanOperator.IndexOnlyScan: "enable_indexonlyscan",
+    ScanOperator.BitmapScan: "enable_bitmapscan"
 }
 """All (session-global) optimizer settings that modify the allowed physical operators."""
 
 PGHintPlanOptimizerHints = {
-    JoinOperators.NestedLoopJoin: "NestLoop",
-    JoinOperators.HashJoin: "HashJoin",
-    JoinOperators.SortMergeJoin: "MergeJoin",
-    ScanOperators.SequentialScan: "SeqScan",
-    ScanOperators.IndexScan: "IndexOnlyScan",
-    ScanOperators.IndexOnlyScan: "IndexOnlyScan",
-    ScanOperators.BitmapScan: "BitmapScan"
+    JoinOperator.NestedLoopJoin: "NestLoop",
+    JoinOperator.HashJoin: "HashJoin",
+    JoinOperator.SortMergeJoin: "MergeJoin",
+    ScanOperator.SequentialScan: "SeqScan",
+    ScanOperator.IndexScan: "IndexOnlyScan",
+    ScanOperator.IndexOnlyScan: "IndexOnlyScan",
+    ScanOperator.BitmapScan: "BitmapScan"
 }
 """All physical operators that can be enforced by pg_hint_plan.
 
@@ -1352,13 +1352,13 @@ References
 """
 
 PGLabOptimizerHints = {
-    JoinOperators.NestedLoopJoin: "NestLoop",
-    JoinOperators.HashJoin: "HashJoin",
-    JoinOperators.SortMergeJoin: "MergeJoin",
-    ScanOperators.SequentialScan: "SeqScan",
-    ScanOperators.IndexScan: "IdxScan",
-    ScanOperators.IndexOnlyScan: "IdxScan",
-    ScanOperators.BitmapScan: "IdxScan"
+    JoinOperator.NestedLoopJoin: "NestLoop",
+    JoinOperator.HashJoin: "HashJoin",
+    JoinOperator.SortMergeJoin: "MergeJoin",
+    ScanOperator.SequentialScan: "SeqScan",
+    ScanOperator.IndexScan: "IdxScan",
+    ScanOperator.IndexOnlyScan: "IdxScan",
+    ScanOperator.BitmapScan: "IdxScan"
 }
 """All physical operators that can be enforced by pg_lab.
 
@@ -1440,11 +1440,11 @@ def _apply_hint_block_to_query(query: qal.SqlQuery, hint_block: Optional[qal.Hin
     return qal.transform.add_clause(query, hint_block) if hint_block else query
 
 
-PostgresJoinHints = {JoinOperators.NestedLoopJoin, JoinOperators.HashJoin, JoinOperators.SortMergeJoin}
+PostgresJoinHints = {JoinOperator.NestedLoopJoin, JoinOperator.HashJoin, JoinOperator.SortMergeJoin}
 """All join operators that are supported by Postgres."""
 
-PostgresScanHints = {ScanOperators.SequentialScan, ScanOperators.IndexScan,
-                     ScanOperators.IndexOnlyScan, ScanOperators.BitmapScan}
+PostgresScanHints = {ScanOperator.SequentialScan, ScanOperator.IndexScan,
+                     ScanOperator.IndexOnlyScan, ScanOperator.BitmapScan}
 """All scan operators that are supported by Postgres."""
 
 PostgresPlanHints = {HintType.Cardinality, HintType.Parallelization,
@@ -1840,7 +1840,7 @@ class PostgresHintService(HintService):
                            else join_tree_node.right_child)
             outer_child = (join_tree_node.left_child if inner_child == join_tree_node.right_child
                            else join_tree_node.right_child)
-            inner_child, outer_child = ((outer_child, inner_child) if annotation.operator == JoinOperators.HashJoin
+            inner_child, outer_child = ((outer_child, inner_child) if annotation.operator == JoinOperator.HashJoin
                                         else (inner_child, outer_child))
         else:
             left, right = join_tree_node.left_child, join_tree_node.right_child
@@ -2501,15 +2501,15 @@ class TimeoutQueryExecutor:
         return self.execute_query(query, timeout)
 
 
-PostgresExplainJoinNodes = {"Nested Loop": JoinOperators.NestedLoopJoin,
-                            "Hash Join": JoinOperators.HashJoin,
-                            "Merge Join": JoinOperators.SortMergeJoin}
+PostgresExplainJoinNodes = {"Nested Loop": JoinOperator.NestedLoopJoin,
+                            "Hash Join": JoinOperator.HashJoin,
+                            "Merge Join": JoinOperator.SortMergeJoin}
 """A mapping from Postgres EXPLAIN node names to the corresponding join operators."""
 
-PostgresExplainScanNodes = {"Seq Scan": ScanOperators.SequentialScan,
-                            "Index Scan": ScanOperators.IndexScan,
-                            "Index Only Scan": ScanOperators.IndexOnlyScan,
-                            "Bitmap Heap Scan": ScanOperators.BitmapScan}
+PostgresExplainScanNodes = {"Seq Scan": ScanOperator.SequentialScan,
+                            "Index Scan": ScanOperator.IndexScan,
+                            "Index Only Scan": ScanOperator.IndexOnlyScan,
+                            "Bitmap Heap Scan": ScanOperator.BitmapScan}
 """A mapping from Postgres EXPLAIN node names to the corresponding scan operators."""
 
 

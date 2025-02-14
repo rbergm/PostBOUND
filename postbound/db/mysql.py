@@ -49,7 +49,7 @@ from ._db import (
     UnsupportedDatabaseFeatureError
 )
 from .. import qal, util
-from .._core import ScanOperators, JoinOperators, PhysicalOperator
+from .._core import ScanOperator, JoinOperator, PhysicalOperator
 from .._qep import QueryPlan
 from ..qal import (
     transform,
@@ -349,8 +349,8 @@ class MysqlStatisticsInterface(DatabaseStatistics):
         return self._calculate_most_common_values(column, k=k, cache_enabled=True)
 
 
-MysqlJoinHints = {JoinOperators.HashJoin, JoinOperators.NestedLoopJoin}
-MysqlScanHints = {ScanOperators.IndexScan, ScanOperators.SequentialScan}
+MysqlJoinHints = {JoinOperator.HashJoin, JoinOperator.NestedLoopJoin}
+MysqlScanHints = {ScanOperator.IndexScan, ScanOperator.SequentialScan}
 MysqlPlanHints = {HintType.LinearJoinOrder, HintType.Operator}
 
 
@@ -411,12 +411,12 @@ def _obtain_physical_operators(join_order: Optional[LogicalJoinTree | PhysicalQu
 
 
 MysqlOptimizerHints = {
-    JoinOperators.NestedLoopJoin: "NO_BNL",
-    JoinOperators.HashJoin: "BNL",
-    ScanOperators.SequentialScan: "NO_INDEX",
-    ScanOperators.IndexScan: "INDEX",
-    ScanOperators.IndexOnlyScan: "INDEX",
-    ScanOperators.BitmapScan: "INDEX_MERGE"
+    JoinOperator.NestedLoopJoin: "NO_BNL",
+    JoinOperator.HashJoin: "BNL",
+    ScanOperator.SequentialScan: "NO_INDEX",
+    ScanOperator.IndexScan: "INDEX",
+    ScanOperator.IndexOnlyScan: "INDEX",
+    ScanOperator.BitmapScan: "INDEX_MERGE"
 }
 """See https://dev.mysql.com/doc/refman/8.0/en/optimizer-hints.html"""
 
@@ -439,7 +439,7 @@ def _generate_operator_hints(join_order: Optional[JoinTree],
     return "\n".join(hints)
 
 
-MysqlSwitchableOptimizations = {JoinOperators.HashJoin: "block_nested_loop"}
+MysqlSwitchableOptimizations = {JoinOperator.HashJoin: "block_nested_loop"}
 """See https://dev.mysql.com/doc/refman/8.0/en/switchable-optimizations.html"""
 
 
@@ -833,16 +833,16 @@ def parse_mysql_explain_plan(query: Optional[SqlQuery], explain_data: dict) -> M
 
 
 _MysqlExplainScanNodes = {
-    _IdxLookup: ScanOperators.IndexScan,
-    _IdxMerge: ScanOperators.BitmapScan,
-    _TabScan: ScanOperators.SequentialScan
+    _IdxLookup: ScanOperator.IndexScan,
+    _IdxMerge: ScanOperator.BitmapScan,
+    _TabScan: ScanOperator.SequentialScan
 }
 
 
 _MysqlExplainJoinNodes = {
-    "Block Nested Loop": JoinOperators.NestedLoopJoin,
-    "Batched Key Access": JoinOperators.NestedLoopJoin,
-    "Hash Join": JoinOperators.HashJoin
+    "Block Nested Loop": JoinOperator.NestedLoopJoin,
+    "Batched Key Access": JoinOperator.NestedLoopJoin,
+    "Hash Join": JoinOperator.HashJoin
 }
 
 
@@ -855,7 +855,7 @@ def _node_sequence_to_qep(nodes: Sequence[MysqlExplainNode]) -> QueryPlan:
         final_table, first_table = nodes
         final_qep = final_table._make_qep_node_for_scan()
         first_qep = first_table._make_qep_node_for_scan()
-        join_operator = _MysqlExplainJoinNodes.get(final_table.join_type, JoinOperators.NestedLoopJoin)
+        join_operator = _MysqlExplainJoinNodes.get(final_table.join_type, JoinOperator.NestedLoopJoin)
         join_node = QueryPlan(final_table.join_type, operator=join_operator,
                               children=[first_qep, final_qep],
                               estimated_cost=final_table.join_cost,
@@ -867,7 +867,7 @@ def _node_sequence_to_qep(nodes: Sequence[MysqlExplainNode]) -> QueryPlan:
         former_qep = _node_sequence_to_qep(former_tables)
         final_qep = final_table._make_qep_node_for_scan()
 
-        join_operator = _MysqlExplainJoinNodes.get(final_table.join_type, JoinOperators.NestedLoopJoin)
+        join_operator = _MysqlExplainJoinNodes.get(final_table.join_type, JoinOperator.NestedLoopJoin)
         join_node = QueryPlan(final_table.join_type, operator=join_operator,
                               children=[former_qep, final_qep],
                               estimated_cost=final_table.join_cost,

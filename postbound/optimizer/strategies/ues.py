@@ -38,7 +38,7 @@ import numpy as np
 from .. import joingraph, jointree, validation
 from .._hints import PhysicalOperatorAssignment
 from ..policies import cardinalities as cardpol, jointree as treepol
-from ..._core import JoinOperators
+from ..._core import JoinOperator
 from ..._stages import JoinOrderOptimization, PhysicalOperatorSelection, JoinOrderOptimizationError
 from ... import db, qal, util
 from ...qal import TableReference, ColumnReference
@@ -974,8 +974,8 @@ class UESOperatorSelection(PhysicalOperatorSelection):
     def select_physical_operators(self, query: qal.SqlQuery,
                                   join_order: Optional[jointree.LogicalJoinTree]) -> PhysicalOperatorAssignment:
         assignment = PhysicalOperatorAssignment()
-        if self.database.hinting().supports_hint(JoinOperators.NestedLoopJoin):
-            assignment.set_operator_enabled_globally(JoinOperators.NestedLoopJoin, False,
+        if self.database.hinting().supports_hint(JoinOperator.NestedLoopJoin):
+            assignment.set_operator_enabled_globally(JoinOperator.NestedLoopJoin, False,
                                                      overwrite_fine_grained_selection=True)
         return assignment
 

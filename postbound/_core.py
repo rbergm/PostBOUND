@@ -31,7 +31,7 @@ We use floats instead of ints to for cardinalities to represent missing values a
 """
 
 
-class ScanOperators(Enum):
+class ScanOperator(Enum):
     """The scan operators supported by PostBOUND.
 
     These can differ from the scan operators that are actually available in the selected target database system. The individual
@@ -49,7 +49,7 @@ class ScanOperators(Enum):
         return self.value < other.value
 
 
-class JoinOperators(Enum):
+class JoinOperator(Enum):
     """The join operators supported by PostBOUND.
 
     These can differ from the join operators that are actually available in the selected target database system. The individual
@@ -67,7 +67,7 @@ class JoinOperators(Enum):
         return self.value < other.value
 
 
-PhysicalOperator = Union[ScanOperators, JoinOperators]
+PhysicalOperator = Union[ScanOperator, JoinOperator]
 """Supertype to model all physical operators supported by PostBOUND.
 
 These can differ from the operators that are actually available in the selected target database system.
@@ -615,9 +615,9 @@ class QueryExecutionPlan:
         self.physical_operator = physical_operator
         self.is_join = is_join
         self.is_scan = is_scan
-        if is_scan and not isinstance(physical_operator, ScanOperators):
+        if is_scan and not isinstance(physical_operator, ScanOperator):
             warnings.warn("Supplied operator is scan operator but node is created as non-scan node")
-        if is_join and not isinstance(physical_operator, JoinOperators):
+        if is_join and not isinstance(physical_operator, JoinOperator):
             warnings.warn("Supplied operator is join operator but node is created as non-join node")
 
         self.parallel_workers = parallel_workers

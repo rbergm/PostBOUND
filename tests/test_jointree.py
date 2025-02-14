@@ -22,11 +22,11 @@ class JoinTreeLoadingTests(unittest.TestCase):
         title = qal.TableReference("title")
         movie_info = qal.TableReference("movie_info")
         t_explain_plan = db.QueryExecutionPlan(node_type="Seq Scan", is_join=False, is_scan=True, children=[],
-                                               table=title, physical_operator=optimizer.ScanOperators.SequentialScan)
+                                               table=title, physical_operator=optimizer.ScanOperator.SequentialScan)
         mi_explain_plan = db.QueryExecutionPlan(node_type="Seq Scan", is_join=False, is_scan=True, children=[],
-                                                table=movie_info, physical_operator=optimizer.ScanOperators.IndexScan)
+                                                table=movie_info, physical_operator=optimizer.ScanOperator.IndexScan)
         explain_plan = db.QueryExecutionPlan(node_type="Nested Loop", is_join=True, is_scan=False,
-                                             physical_operator=optimizer.JoinOperators.NestedLoopJoin,
+                                             physical_operator=optimizer.JoinOperator.NestedLoopJoin,
                                              children=[t_explain_plan, mi_explain_plan], inner_child=mi_explain_plan)
 
         phys_plan = jointree.PhysicalQueryPlan.load_from_query_plan(explain_plan)
