@@ -14,7 +14,7 @@ from typing import Optional
 
 import postbound as pb
 from postbound import db, qal, optimizer, util
-from postbound.optimizer import jointree
+from postbound.optimizer import _jointree
 
 warnings.simplefilter("ignore")
 
@@ -28,7 +28,7 @@ class JitteringCardinalityEstimator(pb.ParameterGeneration):
         self.native_optimizer = native_optimizer
 
     def generate_plan_parameters(self, query: qal.SqlQuery,
-                                 join_order: Optional[jointree.LogicalJoinTree | jointree.PhysicalQueryPlan],
+                                 join_order: Optional[_jointree.LogicalJoinTree | _jointree.PhysicalQueryPlan],
                                  operator_assignment: Optional[optimizer.PhysicalOperatorAssignment]
                                  ) -> optimizer.PlanParameterization:
         # This is the most important method that handles the actual cardinality estimation

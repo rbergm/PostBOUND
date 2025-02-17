@@ -59,12 +59,11 @@ from ..qal import (
     SqlQuery,
     UnboundColumnError, VirtualTableError
 )
-from ..optimizer.jointree import (
-    JoinTree, LogicalJoinTree, PhysicalQueryPlan
-)
+from ..optimizer._jointree import JoinTree, jointree_from_plan, parameters_from_plan
 from ..optimizer._hints import (
     HintType,
-    PhysicalOperatorAssignment, PlanParameterization
+    PhysicalOperatorAssignment, PlanParameterization,
+    operators_from_plan
 )
 from ..util import Version
 
@@ -395,19 +394,8 @@ def _generate_join_order_hint(join_order: Optional[JoinTree]) -> str:
     if not join_order:
         return ""
 
-    linearized_join_order = [base_table_node.table for base_table_node in join_order.table_sequence()]
-    join_order_text = ", ".join(table.identifier() for table in linearized_join_order)
+    join_order_text = ", ".join(table.identifier() for table in join_order.itertables())
     return f"  JOIN_ORDER({join_order_text})"
-
-
-def _obtain_physical_operators(join_order: Optional[LogicalJoinTree | PhysicalQueryPlan],
-                               physical_operators: Optional[PhysicalOperatorAssignment]
-                               ) -> Optional[PhysicalOperatorAssignment]:
-    if not isinstance(join_order, PhysicalQueryPlan):
-        return physical_operators
-    if not physical_operators:
-        return join_order.physical_operators()
-    return join_order.physical_operators().merge_with(physical_operators)
 
 
 MysqlOptimizerHints = {
@@ -421,8 +409,7 @@ MysqlOptimizerHints = {
 """See https://dev.mysql.com/doc/refman/8.0/en/optimizer-hints.html"""
 
 
-def _generate_operator_hints(join_order: Optional[JoinTree],
-                             physical_operators: Optional[PhysicalOperatorAssignment]) -> str:
+def _generate_operator_hints(physical_operators: Optional[PhysicalOperatorAssignment]) -> str:
     if not physical_operators:
         return ""
     hints = []
@@ -471,33 +458,26 @@ def _generate_prep_statements(physical_operators: Optional[PhysicalOperatorAssig
     return "\n".join(statements) if statements else ""
 
 
-def _obtain_plan_parameters(join_order: Optional[LogicalJoinTree | PhysicalQueryPlan],
-                            plan_parameters: Optional[PlanParameterization]
-                            ) -> Optional[PlanParameterization]:
-    if not isinstance(join_order, PhysicalQueryPlan):
-        return plan_parameters
-    if not plan_parameters:
-        return join_order.plan_parameters()
-    return join_order.plan_parameters().merge_with(plan_parameters)
-
-
 class MysqlHintService(HintService):
     def __init__(self, mysql_instance: MysqlInterface) -> None:
         super().__init__()
         self._mysql_instance = mysql_instance
 
-    def generate_hints(self, query: SqlQuery,
-                       join_order: Optional[LogicalJoinTree | PhysicalQueryPlan] = None,
+    def generate_hints(self, query: SqlQuery, plan: Optional[QueryPlan] = None, *,
+                       join_order: Optional[JoinTree] = None,
                        physical_operators: Optional[PhysicalOperatorAssignment] = None,
                        plan_parameters: Optional[PlanParameterization] = None) -> SqlQuery:
         if join_order and not join_order.is_linear():
             raise UnsupportedDatabaseFeatureError(self._mysql_instance,
                                                   "Can only enforce join order for linear join trees for now")
 
+        if plan is not None:
+            join_order = jointree_from_plan(plan)
+            physical_operators = operators_from_plan(plan)
+            plan_parameters = parameters_from_plan(plan)
+
         join_order_hint = _generate_join_order_hint(join_order)
-        physical_operators = _obtain_physical_operators(join_order, physical_operators)
-        plan_parameters = _obtain_plan_parameters(join_order, plan_parameters)
-        operator_hint = _generate_operator_hints(join_order, physical_operators)
+        operator_hint = _generate_operator_hints(physical_operators)
         prep_statements = _generate_prep_statements(physical_operators, plan_parameters)
 
         if not join_order_hint and not operator_hint:

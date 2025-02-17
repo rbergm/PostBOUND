@@ -15,7 +15,7 @@ import random
 from collections.abc import Iterable, Sequence
 from typing import Any, Optional
 
-from .. import jointree
+from .._jointree import JoinTree, jointree_from_plan
 from .._hints import PhysicalOperatorAssignment, JoinOperatorAssignment
 from ..._core import JoinOperator
 from ..._qep import QueryPlan
@@ -102,12 +102,12 @@ def _iterate_query_plan(current_node: QueryPlan) -> Sequence[QueryPlan]:
     return list(_iterate_query_plan(right_child)) + [current_node]
 
 
-def _iterate_join_tree(current_node: jointree.AbstractJoinTreeNode) -> Sequence[jointree.IntermediateJoinNode]:
+def _iterate_join_tree(current_node: JoinTree) -> Sequence[JoinTree]:
     """Provides all joins along the deepest join path in the join tree.
 
     Parameters
     ----------
-    current_node : jointree.AbstractJoinTreeNode
+    current_node : JoinTree
         The node from which the iteration should start
 
     Returns
@@ -115,11 +115,11 @@ def _iterate_join_tree(current_node: jointree.AbstractJoinTreeNode) -> Sequence[
     Sequence[jointree.IntermediateJoinNode]
         The joins along the deepest path, starting with the deepest nodes.
     """
-    if isinstance(current_node, jointree.BaseTableNode):
+    if current_node.is_scan():
         return []
-    assert isinstance(current_node, jointree.IntermediateJoinNode)
-    left_child, right_child = current_node.left_child, current_node.right_child
-    left_child, right_child = ((right_child, left_child) if right_child.tree_depth() < left_child.tree_depth()
+    assert current_node.is_join()
+    left_child, right_child = current_node.outer_child, current_node.inner_child
+    left_child, right_child = ((right_child, left_child) if right_child.plan_depth() < left_child.plan_depth()
                                else (left_child, right_child))
     return list(_iterate_join_tree(right_child)) + [current_node]
 
@@ -380,7 +380,7 @@ class QepsNode:
         """
         return frozenset(util.set_union(qeps_id.tables for qeps_id in self.path()))
 
-    def recommend_operators(self, query: qal.SqlQuery, join_order: Sequence[jointree.IntermediateJoinNode],
+    def recommend_operators(self, query: qal.SqlQuery, join_order: Sequence[JoinTree],
                             current_assignment: PhysicalOperatorAssignment, *,
                             _skip_first_table: bool = False) -> None:
         """Inserts the operator with the minimum cost into an operator assignment.
@@ -395,7 +395,7 @@ class QepsNode:
         query : qal.SqlQuery
             The query for which operators should be recommended. This parameter is necessary to infer the applicable filter
             predicates for base tables.
-        join_order : Sequence[jointree.IntermediateJoinNode]
+        join_order : Sequence[JoinTree]
             A path to navigate the QEP-S tree. The recommendation logic consumes the next join and supplies all future joins to
             the applicable child node.
         current_assignment : PhysicalOperatorAssignment
@@ -413,8 +413,9 @@ class QepsNode:
         if recommendation:
             current_assignment.set_join_operator(JoinOperatorAssignment(recommendation, self.tables()))
 
-        if next_join.is_bushy_join():
-            _, subquery_child = next_join.children_by_depth()
+        if next_join.is_bushy():
+            subquery_child = (next_join.outer_child if next_join.outer_child.plan_depth() >= next_join.inner_child.plan_depth()
+                              else next_join.inner_child)
             qeps_subquery_id = QepsIdentifier(subquery_child.tables())
             qeps_subquery_node = self.child_nodes[qeps_subquery_id]
             qeps_subquery_node.subquery_root.recommend_operators(query, _iterate_join_tree(subquery_child),
@@ -423,7 +424,7 @@ class QepsNode:
             return
 
         if next_join.is_base_join():
-            first_table, second_table = next_join.left_child.table, next_join.right_child.table
+            first_table, second_table = next_join.outer_child.base_table, next_join.inner_child.base_table
             first_table, second_table = ((second_table, first_table) if second_table < first_table
                                          else (first_table, second_table))
 
@@ -436,8 +437,8 @@ class QepsNode:
                 next_table = second_table
         else:
             # join between intermediate (our current QEP-S path) and a base table (next node in our QEP-S path)
-            next_table = (next_join.left_child.table if next_join.left_child.is_base_table_node()
-                          else next_join.right_child.table)
+            next_table = (next_join.inner_child.base_table if next_join.inner_child.is_scan()
+                          else next_join.inner_child.outer_child.base_table)
 
         qeps_child_id = self._make_identifier(query, next_table)
         qeps_child_node = self.child_nodes[qeps_child_id]
@@ -483,7 +484,7 @@ class QepsNode:
             self.integrate_costs(query, remaining_nodes)
 
         first_child, second_child = _left_query_plan_child(next_node), _right_query_plan_child(next_node)
-        if next_node.is_bushy_join():
+        if next_node.is_bushy():
             first_child, second_child = ((second_child, first_child)
                                          if second_child.plan_depth() < first_child.plan_depth()
                                          else (first_child, second_child))
@@ -514,7 +515,7 @@ class QepsNode:
         qeps_child_node.update_costs(next_node.operator, next_node.estimated_cost)
         qeps_child_node.integrate_costs(query, remaining_nodes)
 
-    def detect_unknown_costs(self, query: qal.SqlQuery, join_order: Sequence[jointree.IntermediateJoinNode],
+    def detect_unknown_costs(self, query: qal.SqlQuery, join_order: Sequence[JoinTree],
                              allowed_operators: frozenset[JoinOperator],
                              unknown_ops: dict[frozenset[TableReference], frozenset[JoinOperator]],
                              _skip_first_table: bool = False) -> None:
@@ -527,7 +528,7 @@ class QepsNode:
         ----------
         query : qal.SqlQuery
             The query describing the filter predicates to navigate the QEP-S
-        join_order : Sequence[jointree.IntermediateJoinNode]
+        join_order : Sequence[JoinTree]
             The join order to navigate the QEP-S
         allowed_operators : frozenset[JoinOperators]
             Operators for which cost information should exist. If the node does not have a cost information for any of the
@@ -546,8 +547,9 @@ class QepsNode:
             unknown_ops[_tables_in_qeps_path(self.path())] = own_unknown_ops
 
         next_join, *remaining_joins = join_order
-        if next_join.is_bushy_join():
-            main_child, subquery_child = next_join.children_by_depth()
+        if next_join.is_bushy():
+            subquery_child = (next_join.outer_child if next_join.outer_child.plan_depth() >= next_join.inner_child.plan_depth()
+                              else next_join.inner_child)
             qeps_subquery_id = QepsIdentifier(subquery_child.tables())
             qeps_subquery_node = self.child_nodes[qeps_subquery_id]
             qeps_subquery_node.subquery_root.detect_unknown_costs(query, _iterate_join_tree(subquery_child), allowed_operators,
@@ -556,7 +558,7 @@ class QepsNode:
             return
 
         if next_join.is_base_join():
-            first_table, second_table = next_join.left_child.table, next_join.right_child.table
+            first_table, second_table = next_join.outer_child.base_table, next_join.inner_child.base_table
             first_table, second_table = ((second_table, first_table) if second_table < first_table
                                          else (first_table, second_table))
 
@@ -569,8 +571,8 @@ class QepsNode:
                 next_table = second_table
         else:
             # join between intermediate (our current QEP-S path) and a base table (next node in our QEP-S path)
-            next_table = (next_join.left_child.table if next_join.left_child.is_base_table_node()
-                          else next_join.right_child.table)
+            next_table = (next_join.inner_child.base_table if next_join.inner_child.is_scan()
+                          else next_join.outer_child.base_table)
 
         qeps_child_id = self._make_identifier(query, next_table)
         qeps_child_node = self.child_nodes[qeps_child_id]
@@ -767,8 +769,7 @@ class QueryExecutionPlanSynopsis:
     def __init__(self, root: QepsNode) -> None:
         self.root = root
 
-    def recommend_operators(self, query: qal.SqlQuery,
-                            join_order: jointree.JoinTree) -> PhysicalOperatorAssignment:
+    def recommend_operators(self, query: qal.SqlQuery, join_order: JoinTree) -> PhysicalOperatorAssignment:
         """Provides the optimal operators according to the current QEP-S for a specific join order.
 
         Parameters
@@ -783,9 +784,8 @@ class QueryExecutionPlanSynopsis:
         PhysicalOperatorAssignment
             The best operators as learned by the QEP-S
         """
-        current_assignment = (join_order.physical_operators() if isinstance(join_order, jointree.PhysicalQueryPlan)
-                              else PhysicalOperatorAssignment())
-        self.root.recommend_operators(query, _iterate_join_tree(join_order.root), current_assignment)
+        current_assignment = PhysicalOperatorAssignment()
+        self.root.recommend_operators(query, _iterate_join_tree(join_order), current_assignment)
         return current_assignment
 
     def integrate_costs(self, query: qal.SqlQuery, query_plan: QueryPlan) -> None:
@@ -801,16 +801,15 @@ class QueryExecutionPlanSynopsis:
         """
         self.root.integrate_costs(query, _iterate_query_plan(query_plan))
 
-    def detect_unknown_costs(self, query: qal.SqlQuery, join_order: jointree.JoinTree,
-                             allowed_operators: set[JoinOperator]
-                             ) -> dict[frozenset[TableReference], frozenset[JoinOperator]]:
+    def detect_unknown_costs(self, query: qal.SqlQuery, join_order: JoinTree,
+                             allowed_operators: set[JoinOperator]) -> dict[frozenset[TableReference], frozenset[JoinOperator]]:
         """Collects all joins in the QEP-S that do not have cost information for all possible operators.
 
         Parameters
         ----------
         query : qal.SqlQuery
             The query describing the filter predicates to navigate the QEP-S
-        join_order : Sequence[jointree.IntermediateJoinNode]
+        join_order : Sequence[JoinTree]
             The join order to navigate the QEP-S
         allowed_operators : frozenset[JoinOperators]
             Operators for which cost information should exist. If the node does not have a cost information for any of the
@@ -822,8 +821,8 @@ class QueryExecutionPlanSynopsis:
             A mapping from join to the unknown operators at that join. If a join is not contained in the mapping, it is either
             not contained in the `join_order`, or it has cost information for all operators.
         """
-        unknown_costs = {}
-        self.root.detect_unknown_costs(query, _iterate_join_tree(join_order.root), allowed_operators, unknown_costs)
+        unknown_costs: dict[frozenset[TableReference], frozenset[JoinOperator]] = {}
+        self.root.detect_unknown_costs(query, _iterate_join_tree(join_order), allowed_operators, unknown_costs)
         return unknown_costs
 
     def reset(self) -> None:
@@ -966,13 +965,12 @@ def _obtain_accurate_cost_estimate(query: qal.SqlQuery, database: db.Database) -
     QueryPlan
         The execution plan with cost information
     """
-    analyze_plan = database.optimizer().analyze_plan(query)
-    physical_qep = jointree.PhysicalQueryPlan.load_from_query_plan(analyze_plan, query)
-    query_with_true_hints = database.hinting().generate_hints(query, physical_qep)
+    query_plan = database.optimizer().analyze_plan(query)
+    query_with_true_hints = database.hinting().generate_hints(query, query_plan.as_optimized_plan())
     return database.optimizer().query_plan(query_with_true_hints)
 
 
-def _generate_all_cost_estimates(query: qal.SqlQuery, join_order: jointree.JoinTree,
+def _generate_all_cost_estimates(query: qal.SqlQuery, join_order: JoinTree,
                                  available_operators: dict[frozenset[TableReference], frozenset[JoinOperator]],
                                  database: db.Database) -> Iterable[QueryPlan]:
     """Provides all cost estimates based on plans with specific operator combinations.
@@ -985,7 +983,7 @@ def _generate_all_cost_estimates(query: qal.SqlQuery, join_order: jointree.JoinT
     ----------
     query : qal.SqlQuery
         The query for which the cost estimates should be generated
-    join_order : jointree.JoinTree
+    join_order : JoinTree
         The join order to use
     available_operators : dict[frozenset[TableReference], frozenset[JoinOperators]]
         A mapping from joins to allowed operators. All possible combinations will be explored.
@@ -1004,12 +1002,13 @@ def _generate_all_cost_estimates(query: qal.SqlQuery, join_order: jointree.JoinT
         current_assignment = PhysicalOperatorAssignment()
         for join, operator in current_join_pairs:
             current_assignment.set_join_operator(JoinOperatorAssignment(operator, join))
-        optimized_query = database.hinting().generate_hints(query, join_order, current_assignment)
+        optimized_query = database.hinting().generate_hints(query, join_order=join_order,
+                                                            physical_operators=current_assignment)
         plans.append(_obtain_accurate_cost_estimate(optimized_query, database))
     return plans
 
 
-def _sample_cost_estimates(query: qal.SqlQuery, join_order: jointree.JoinTree,
+def _sample_cost_estimates(query: qal.SqlQuery, join_order: JoinTree,
                            available_operators: dict[frozenset[TableReference], frozenset[JoinOperator]],
                            n_samples: int, database: db.Database) -> Iterable[QueryPlan]:
     """Generates cost estimates based on sampled plans with specific operator combinations.
@@ -1041,7 +1040,7 @@ def _sample_cost_estimates(query: qal.SqlQuery, join_order: jointree.JoinTree,
     Iterable[QueryPlan]
         Query plans with the actual costs
     """
-    plans = []
+    plans: list[QueryPlan] = []
     sampled_assignments = set()
     n_tries = 0
     max_tries = 3 * n_samples
@@ -1056,7 +1055,8 @@ def _sample_cost_estimates(query: qal.SqlQuery, join_order: jointree.JoinTree,
             continue
         else:
             sampled_assignments.add(current_hash)
-        optimized_query = database.hinting().generate_hints(query, join_order, current_assignment)
+        optimized_query = database.hinting().generate_hints(query, join_order=join_order,
+                                                            physical_operators=current_assignment)
         plans.append(_obtain_accurate_cost_estimate(optimized_query, database))
     return plans
 
@@ -1159,12 +1159,11 @@ class TonicOperatorSelection(PhysicalOperatorSelection):
         query : qal.SqlQuery
             The query to obtain the cost for
         """
-        analyze_plan = self._db.optimizer().analyze_plan(query)
-        physical_qep = jointree.PhysicalQueryPlan.load_from_query_plan(analyze_plan, query)
-        hinted_query = self._db.hinting().generate_hints(query, physical_qep)
+        query_plan = self._db.optimizer().analyze_plan(query)
+        hinted_query = self._db.hinting().generate_hints(query, query_plan.as_optimized_plan())
         self.integrate_cost(hinted_query)
 
-    def explore_costs(self, query: qal.SqlQuery, join_order: Optional[jointree.JoinTree] = None, *,
+    def explore_costs(self, query: qal.SqlQuery, join_order: Optional[JoinTree] = None, *,
                       allowed_operators: Optional[Iterable[JoinOperator]] = None,
                       max_combinations: Optional[int] = None) -> None:
         """Generates cost information along a specific path in the QEP-S.
@@ -1180,7 +1179,7 @@ class TonicOperatorSelection(PhysicalOperatorSelection):
         ----------
         query : qal.SqlQuery
             The query to obtain the cost for
-        join_order : Optional[jointree.JoinTree], optional
+        join_order : Optional[JoinTree], optional
             The QEP-S path along which the cost should be generated. Defaults to ``None``, in which case the join order of the
             native query optimizer of the database system is used.
         allowed_operators : Optional[Iterable[JoinOperators]], optional
@@ -1197,7 +1196,7 @@ class TonicOperatorSelection(PhysicalOperatorSelection):
         supported_operators = {join_op for join_op in JoinOperator if self._db.hinting().supports_hint(join_op)}
         allowed_operators = frozenset(allowed_operators & supported_operators)
 
-        unknown_costs = {intermediate.tables(): allowed_operators for intermediate in join_order.join_sequence()}
+        unknown_costs = {intermediate.tables(): allowed_operators for intermediate in join_order.iterjoins()}
         total_unknown_combinations = math.prod([len(unknown_ops) for unknown_ops in unknown_costs.values()])
 
         query_plans = (_sample_cost_estimates(query, join_order, unknown_costs, max_combinations, self._db)
@@ -1210,8 +1209,7 @@ class TonicOperatorSelection(PhysicalOperatorSelection):
         """Generates a brand new QEP-S."""
         self.qeps.reset()
 
-    def select_physical_operators(self, query: qal.SqlQuery,
-                                  join_order: Optional[jointree.LogicalJoinTree]) -> PhysicalOperatorAssignment:
+    def select_physical_operators(self, query: qal.SqlQuery, join_order: Optional[JoinTree]) -> PhysicalOperatorAssignment:
         if not join_order or join_order.is_empty():
             join_order = self._obtain_native_join_order(query)
         return self.qeps.recommend_operators(query, join_order)
@@ -1219,7 +1217,7 @@ class TonicOperatorSelection(PhysicalOperatorSelection):
     def describe(self) -> dict:
         return {"name": "tonic", "filter_aware": self.filter_aware, "gamma": self.gamma}
 
-    def _obtain_native_join_order(self, query: qal.SqlQuery) -> jointree.LogicalJoinTree:
+    def _obtain_native_join_order(self, query: qal.SqlQuery) -> JoinTree:
         """Generates the join order for a specific query based on the native database optimizer.
 
         Parameters
@@ -1229,11 +1227,11 @@ class TonicOperatorSelection(PhysicalOperatorSelection):
 
         Returns
         -------
-        jointree.LogicalJoinTree
+        JoinTree
             The join order the database system would use
         """
         native_plan = self._db.optimizer().query_plan(query)
-        return jointree.LogicalJoinTree.load_from_query_plan(native_plan, query)
+        return jointree_from_plan(native_plan)
 
     def __json__(self) -> Any:
         return self.qeps

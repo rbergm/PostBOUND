@@ -3,7 +3,7 @@ from __future__ import annotations
 import dataclasses
 from typing import Optional
 
-from postbound.optimizer import joingraph, jointree
+from postbound.optimizer import _jointree, joingraph
 from .. import db, qal
 
 
@@ -13,15 +13,11 @@ class ManualJoinOrderSelection:
     join_order: tuple[qal.TableReference]
     database: db.Database
 
-    def join_tree(self) -> jointree.LogicalJoinTree:
+    def join_tree(self) -> _jointree.LogicalJoinTree:
         base_table, *joined_tables = self.join_order
-        predicates = self.query.predicates()
-        base_annotation = jointree.LogicalBaseTableMetadata(predicates.filters_for(base_table))
-        join_tree = jointree.LogicalJoinTree.for_base_table(base_table, base_annotation)
+        join_tree: _jointree.JoinTree[None] = _jointree.JoinTree.scan(base_table)
         for joined_table in joined_tables:
-            table_annotation = jointree.LogicalBaseTableMetadata(predicates.filters_for(joined_table))
-            join_annotation = jointree.LogicalJoinMetadata(predicates.joins_between(join_tree.tables(), joined_table))
-            join_tree = join_tree.join_with_base_table(joined_table, table_annotation, join_annotation)
+            join_tree = join_tree.join_with(joined_table)
         return join_tree
 
     def final_query(self) -> qal.SqlQuery:

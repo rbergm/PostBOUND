@@ -8,7 +8,7 @@ import unittest
 
 from postbound import db, qal, optimizer
 from postbound.db import postgres
-from postbound.optimizer import jointree
+from postbound.optimizer import _jointree
 
 from tests import regression_suite
 
@@ -29,12 +29,12 @@ class JoinTreeLoadingTests(unittest.TestCase):
                                              physical_operator=optimizer.JoinOperator.NestedLoopJoin,
                                              children=[t_explain_plan, mi_explain_plan], inner_child=mi_explain_plan)
 
-        phys_plan = jointree.PhysicalQueryPlan.load_from_query_plan(explain_plan)
+        phys_plan = _jointree.PhysicalQueryPlan.load_from_query_plan(explain_plan)
 
-        self.assertIsInstance(phys_plan.root, jointree.IntermediateJoinNode)
+        self.assertIsInstance(phys_plan.root, _jointree.IntermediateJoinNode)
         left_child, right_child = phys_plan.root.left_child, phys_plan.root.right_child
-        self.assertIsInstance(left_child, jointree.BaseTableNode)
-        self.assertIsInstance(right_child, jointree.BaseTableNode)
+        self.assertIsInstance(left_child, _jointree.BaseTableNode)
+        self.assertIsInstance(right_child, _jointree.BaseTableNode)
         self.assertEqual(left_child.table, title)
         self.assertEqual(right_child.table, movie_info)
 
@@ -53,11 +53,11 @@ class JoinTreeLoadingTests(unittest.TestCase):
         mc = qal.TableReference("movie_companies", "mc")
         mi = qal.TableReference("movie_info", "mi")
 
-        join_order = jointree.LogicalJoinTree.load_from_list([t, mc, mi])
-        annotated_query = pg_db.hinting().generate_hints(query, join_order)
+        join_order = _jointree.LogicalJoinTree.load_from_list([t, mc, mi])
+        annotated_query = pg_db.hinting().generate_hints(query, join_order=join_order)
         explain_plan = pg_db.optimizer().query_plan(annotated_query)
 
-        reconstructed_join_order = jointree.LogicalJoinTree.load_from_query_plan(explain_plan)
+        reconstructed_join_order = _jointree.LogicalJoinTree.load_from_query_plan(explain_plan)
 
         self.assertEqual(join_order, reconstructed_join_order)
 

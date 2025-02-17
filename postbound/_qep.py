@@ -116,6 +116,9 @@ class PlanParams:
             return default
         return value
 
+    def items(self) -> Iterable[tuple[str, Any]]:
+        return self._params.items()
+
     def __json__(self) -> jsondict:
         return self._params
 
@@ -163,6 +166,9 @@ class PlanEstimates:
         if isinstance(value, float) and math.isnan(value):
             return default
         return value
+
+    def items(self) -> Iterable[tuple[str, Any]]:
+        return self._params.items()
 
     def __json__(self) -> jsondict:
         return self._params
@@ -224,6 +230,9 @@ class PlanMeasures:
             return default
         return value
 
+    def items(self) -> Iterable[tuple[str, Any]]:
+        return self._params.items()
+
     def __json__(self) -> jsondict:
         return self._params
 
@@ -265,7 +274,7 @@ class Subplan:
 
 
 class QueryPlan:
-    def __init__(self, node_type: str, *, operator: Optional[PhysicalOperator] = None,
+    def __init__(self, node_type: str | PhysicalOperator, *, operator: Optional[PhysicalOperator] = None,
                  input_node: Optional[QueryPlan] = None, children: Optional[Iterable[QueryPlan]] = None,
                  plan_params: Optional[PlanParams] = None, subplan: Optional[Subplan] = None,
                  estimates: Optional[PlanEstimates] = None, measures: Optional[PlanMeasures] = None,
@@ -306,6 +315,10 @@ class QueryPlan:
 
         if len(children) > 2:
             raise ValueError("Query plan nodes can have at most two children")
+
+        if isinstance(node_type, PhysicalOperator):
+            operator = node_type
+            node_type = operator.name
 
         self._node_type = node_type
         self._operator = operator

@@ -29,12 +29,11 @@ from .. import util
 from .._qep import QueryPlan
 from ..qal import TableReference, ColumnReference, SqlQuery, VirtualTableError, UnboundColumnError
 from ..optimizer import (
-    PhysicalQueryPlan,
     PhysicalOperator,
     PhysicalOperatorAssignment, PlanParameterization,
     HintType
 )
-from ..optimizer.jointree import LogicalJoinTree
+from ..optimizer._jointree import JoinTree
 
 
 class Cursor(typing.Protocol):
@@ -1180,8 +1179,8 @@ class HintService(abc.ABC):
     """
 
     @abc.abstractmethod
-    def generate_hints(self, query: SqlQuery,
-                       join_order: Optional[LogicalJoinTree | PhysicalQueryPlan] = None,
+    def generate_hints(self, query: SqlQuery, plan: Optional[QueryPlan] = None, *,
+                       join_order: Optional[JoinTree] = None,
                        physical_operators: Optional[PhysicalOperatorAssignment] = None,
                        plan_parameters: Optional[PlanParameterization] = None) -> SqlQuery:
         """Transforms the input query such that the given optimization decisions are respected during query execution.
@@ -1199,14 +1198,15 @@ class HintService(abc.ABC):
         ----------
         query : SqlQuery
             The query that should be transformed
-        join_order : Optional[LogicalJoinTree  |  PhysicalQueryPlan], optional
-            The sequence in which individual joins should be executed. If this is a `PhysicalQueryPlan` and all other
-            optimization parameters are ``None``, this essentially enforces the given query plan.
+        plan : Optional[QueryPlan], optional
+            The query execution plan. If this is given, all other parameters should be ``None``. This essentially
+            enforces the given query plan.
+        join_order : Optional[JoinTree], optional
+            The sequence in which individual joins should be executed.
         physical_operators : Optional[PhysicalOperatorAssignment], optional
             The physical operators that should be used for the query execution. In addition to selecting specific
             operators for specific joins or scans, this can also include disabling certain operators for the entire
-            query. If a `join_order` is also given and includes physical operators, these should be ignored and only
-            the `physical_operators` should be used.
+            query.
         plan_parameters : Optional[PlanParameterization], optional
             Additional parameters and metadata for the native optimizer of the database system. Probably the most
             important use-case of these parameters is the supply of cardinality estimates for different joins and

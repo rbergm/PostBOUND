@@ -122,8 +122,9 @@ from ._qep import QueryPlan
 from .db import Database
 from .qal import relalg, transform, SqlQuery, parse_query
 from .optimizer import validation
-from .experiments import workloads
+from .experiments import analysis, workloads
 from .experiments.executor import execute_workload, optimize_and_execute_workload
+from .db import postgres
 
 __version__ = "0.11.0"
 
@@ -136,9 +137,9 @@ __all__ = [
   "JoinOrderOptimization", "PhysicalOperatorSelection", "ParameterGeneration", "TwoStageOptimizationPipeline",
   "IncrementalOptimizationStep", "IncrementalOptimizationPipeline",
   "as_complete_algorithm", "OptimizationSettings",
-  "Database",
+  "Database", "postgres",
   "relalg", "transform", "SqlQuery", "ColumnReference", "parse_query",
   "QueryPlan",
   "validation",
-  "workloads", "execute_workload", "optimize_and_execute_workload"
+  "analysis", "workloads", "execute_workload", "optimize_and_execute_workload"
 ]

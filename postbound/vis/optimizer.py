@@ -11,10 +11,10 @@ import networkx as nx
 from . import trees as tree_viz
 from .. import db, qal, util
 from ..qal import relalg, TableReference
-from ..optimizer import jointree, joingraph
+from ..optimizer import _jointree, joingraph
 
 
-def _join_tree_labels(node: jointree.AbstractJoinTreeNode) -> tuple[str, dict]:
+def _join_tree_labels(node: _jointree.AbstractJoinTreeNode) -> tuple[str, dict]:
     if node.is_join_node():
         base_text = "⋈"
         base_style = {"style": "bold"}
@@ -32,7 +32,7 @@ def _join_tree_labels(node: jointree.AbstractJoinTreeNode) -> tuple[str, dict]:
     return base_text, base_style
 
 
-def _join_tree_traversal(node: jointree.AbstractJoinTreeNode) -> Sequence[jointree.AbstractJoinTreeNode]:
+def _join_tree_traversal(node: _jointree.AbstractJoinTreeNode) -> Sequence[_jointree.AbstractJoinTreeNode]:
     if node.is_base_table_node():
         return ()
     elif node.is_auxiliary_node():
@@ -41,7 +41,7 @@ def _join_tree_traversal(node: jointree.AbstractJoinTreeNode) -> Sequence[jointr
     return node.children
 
 
-def plot_join_tree(join_tree: jointree.JoinTree) -> gv.Graph:
+def plot_join_tree(join_tree: _jointree.JoinTree) -> gv.Graph:
     if not join_tree:
         return gv.Graph()
     return tree_viz.plot_tree(join_tree.root, _join_tree_labels, _join_tree_traversal)

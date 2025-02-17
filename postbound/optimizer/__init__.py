@@ -16,7 +16,7 @@ plans and basic hinting support. All other modules need to be imported explicitl
 module and the `strategies` package.
 """
 
-from . import joingraph, jointree, policies
+from . import _jointree, joingraph, policies
 from ._hints import (
   ScanOperator,
   JoinOperator,
@@ -27,20 +27,22 @@ from ._hints import (
   read_operator_json,
   PhysicalOperatorAssignment,
   PlanParameterization,
+  operators_from_plan, read_operator_assignment_json, read_plan_params_json,
+  update_plan,
   HintType
 )
-from .jointree import (
-  JoinTreeVisitor,
-  PhysicalJoinMetadata, PhysicalBaseTableMetadata, PhysicalPlanMetadata,
-  PhysicalQueryPlan,
-  LogicalJoinMetadata, LogicalBaseTableMetadata, LogicalTreeMetadata,
+from ._jointree import (
+  JoinTree,
   LogicalJoinTree,
-  read_from_json
+  jointree_from_plan,
+  parameters_from_plan,
+  read_jointree_json,
+  to_query_plan
 )
 
 __all__ = [
   "joingraph",
-  "jointree",
+  "_jointree",
   "policies",
   "ScanOperator",
   "JoinOperator",
@@ -51,15 +53,15 @@ __all__ = [
   "read_operator_json",
   "PhysicalOperatorAssignment",
   "PlanParameterization",
+  "operators_from_plan",
+  "parameters_from_plan",
+  "read_operator_assignment_json",
+  "read_plan_params_json",
+  "update_plan",
   "HintType",
-  "JoinTreeVisitor",
-  "PhysicalJoinMetadata",
-  "PhysicalBaseTableMetadata",
-  "PhysicalPlanMetadata",
-  "PhysicalQueryPlan",
-  "LogicalJoinMetadata",
-  "LogicalBaseTableMetadata",
-  "LogicalTreeMetadata",
+  "JoinTree",
   "LogicalJoinTree",
-  "read_from_json"
+  "jointree_from_plan",
+  "read_jointree_json",
+  "to_query_plan"
 ]

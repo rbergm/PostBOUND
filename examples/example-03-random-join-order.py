@@ -13,7 +13,7 @@ from typing import Optional
 
 import postbound as pb
 from postbound.db import postgres
-from postbound.optimizer import jointree, joingraph, validation
+from postbound.optimizer import _jointree, joingraph, validation
 
 warnings.simplefilter("ignore")
 
@@ -31,14 +31,14 @@ class RandomJoinOrderOptimizer(pb.JoinOrderOptimization):
         # Therefore, we store the target database here and demonstrate how we can easily access it using the DatabasePool
         self.target_db = target_db if target_db is not None else pb.db.current_database()
 
-    def optimize_join_order(self, query: pb.SqlQuery) -> jointree.LogicalJoinTree:
+    def optimize_join_order(self, query: pb.SqlQuery) -> _jointree.LogicalJoinTree:
         # This is the most important method that handles the actual join order optimization
 
         # In our optimizer we must maintain two data structures:
         # The join graph stores which tables have already been joined and which joins are available next
         # The join tree stores the join order that we have constructed so far
         join_graph = joingraph.JoinGraph(query)
-        join_tree = jointree.LogicalJoinTree()
+        join_tree = _jointree.LogicalJoinTree()
 
         # Our algorithm simply joins one table after another, until all tables have inserted into the join order
         while join_graph.contains_free_tables():

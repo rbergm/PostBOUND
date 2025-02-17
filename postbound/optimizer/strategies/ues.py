@@ -35,7 +35,8 @@ from typing import Generic, Optional
 import numpy as np
 
 
-from .. import joingraph, jointree, validation
+from .. import joingraph, validation
+from .._jointree import JoinTree, LogicalJoinTree
 from .._hints import PhysicalOperatorAssignment
 from ..policies import cardinalities as cardpol, jointree as treepol
 from ..._core import JoinOperator
@@ -90,7 +91,7 @@ class StatisticsContainer(abc.ABC, Generic[StatsType]):
 
     def __init__(self) -> None:
         self.base_table_estimates: dict[TableReference, int] = {}
-        self.upper_bounds: dict[TableReference | jointree.LogicalJoinTree, int] = {}
+        self.upper_bounds: dict[TableReference | LogicalJoinTree, int] = {}
         self.attribute_frequencies: dict[ColumnReference, StatsType] = {}
         self.query: Optional[qal.SqlQuery] = None
 
@@ -111,7 +112,7 @@ class StatisticsContainer(abc.ABC, Generic[StatsType]):
         self._inflate_base_table_estimates(base_table_estimator)
         self._inflate_attribute_frequencies()
 
-    def join_bounds(self) -> dict[jointree.LogicalJoinTree, int]:
+    def join_bounds(self) -> dict[LogicalJoinTree, int]:
         """Provides the cardinality estimates of all join trees that are currently stored in the container.
 
         Returns
@@ -120,9 +121,9 @@ class StatisticsContainer(abc.ABC, Generic[StatsType]):
             The bounds for all intermediate results
         """
         return {join_tree: bound for join_tree, bound in self.upper_bounds.items()
-                if isinstance(join_tree, jointree.LogicalJoinTree)}
+                if isinstance(join_tree, JoinTree)}
 
-    def trigger_frequency_update(self, join_tree: jointree.LogicalJoinTree, joined_table: TableReference,
+    def trigger_frequency_update(self, join_tree: LogicalJoinTree, joined_table: TableReference,
                                  join_condition: qal.AbstractPredicate) -> None:
         """Updates the `attribute_frequencies` according to a new n:m join.
 
@@ -152,8 +153,12 @@ class StatisticsContainer(abc.ABC, Generic[StatsType]):
             the join. These columns have to be updated in a different way compared to other columns in the intermediate result.
         """
         partner_columns = join_condition.join_partners_of(joined_table)
-        third_party_columns = set(col for col in join_tree.join_columns()
-                                  if col.table != joined_table and col not in partner_columns)
+
+        third_party_columns: set[ColumnReference] = set()
+        for joined_table in join_tree.tables():
+            join_preds = self.query.predicates().joins_for(joined_table)
+            join_pred = qal.CompoundPredicate.create_and(join_preds)
+            third_party_columns |= {col for col in join_pred.columns() if col not in partner_columns}
 
         for col1, col2 in join_condition.join_partners():
             joined_column, partner_column = (col1, col2) if col1.table == joined_table else (col2, col1)
@@ -527,7 +532,7 @@ class UESJoinOrderOptimizer(JoinOrderOptimization):
         self._pull_eager_pk_tables = pull_eager_pk_tables
         self._logging_enabled = verbose
 
-    def optimize_join_order(self, query: qal.SqlQuery) -> Optional[jointree.LogicalJoinTree]:
+    def optimize_join_order(self, query: qal.SqlQuery) -> Optional[LogicalJoinTree]:
         if not isinstance(query, qal.ImplicitSqlQuery):
             raise ValueError("UES optimization only works for implicit queries for now")
         if len(query.tables()) < 2:
@@ -547,7 +552,7 @@ class UESJoinOrderOptimizer(JoinOrderOptimization):
             final_join_tree = self._binary_join_optimization(query, join_graph)
         elif join_graph.contains_cross_products():
             # cross-product query is reduced to multiple independent optimization passes
-            optimized_components = []
+            optimized_components: list[LogicalJoinTree] = []
             for component in join_graph.join_components():
                 # FIXME: join components might consist of single tables!
                 optimized_component = self._clone().optimize_join_order(component.query)
@@ -556,10 +561,11 @@ class UESJoinOrderOptimizer(JoinOrderOptimization):
                 optimized_components.append(optimized_component)
 
             # insert cross-products such that the smaller partitions are joined first
-            sorted(optimized_components, key=operator.attrgetter("upper_bound"))
-            merger = jointree.logical_join_tree_annotation_merger
-            final_join_tree = jointree.LogicalJoinTree.cross_product_of(*optimized_components,
-                                                                        annotation_supplier=merger)
+            sorted(optimized_components, key=operator.attrgetter("annotation"))
+            final_join_tree, *remaining_joins = optimized_components
+            for remaining_join in remaining_joins:
+                output_cardinality = final_join_tree.annotation * remaining_join.annotation
+                final_join_tree = final_join_tree.join_with(remaining_join, annotation=output_cardinality)
         elif join_graph.contains_free_n_m_joins():
             final_join_tree = self._default_ues_optimizer(query, join_graph)
         else:
@@ -586,7 +592,7 @@ class UESJoinOrderOptimizer(JoinOrderOptimization):
         specified_checks.append(UESOptimizationPreCheck)
         return validation.merge_checks(specified_checks)
 
-    def _default_ues_optimizer(self, query: qal.SqlQuery, join_graph: joingraph.JoinGraph) -> jointree.LogicalJoinTree:
+    def _default_ues_optimizer(self, query: qal.SqlQuery, join_graph: joingraph.JoinGraph) -> LogicalJoinTree:
         """Implementation of our take on the UES algorithm for queries with n:m joins.
 
         Parameters
@@ -598,7 +604,7 @@ class UESJoinOrderOptimizer(JoinOrderOptimization):
 
         Returns
         -------
-        jointree.LogicalJoinTree
+        LogicalJoinTree
             The resulting join tree
 
         Raises
@@ -608,7 +614,7 @@ class UESJoinOrderOptimizer(JoinOrderOptimization):
             the user.
         """
         self._log_information("Using default UES optimizer")
-        join_tree = jointree.LogicalJoinTree()
+        join_tree = LogicalJoinTree()
 
         while join_graph.contains_free_n_m_joins():
 
@@ -629,9 +635,7 @@ class UESJoinOrderOptimizer(JoinOrderOptimization):
             self._log_information(".. Current bounds: " + util.dicts.stringify(self.stats_container.upper_bounds))
 
             if join_tree.is_empty():
-                filter_pred = query.predicates().filters_for(lowest_bound_table)
-                annotation = jointree.LogicalBaseTableMetadata(filter_pred, cardinality=lowest_bound)
-                join_tree = jointree.LogicalJoinTree.for_base_table(lowest_bound_table, annotation)
+                join_tree = LogicalJoinTree.scan(lowest_bound_table, annotation=lowest_bound)
                 join_graph.mark_joined(lowest_bound_table)
                 self.stats_container.upper_bounds[join_tree] = lowest_bound
                 pk_joins = join_graph.available_deep_pk_join_paths_for(lowest_bound_table,
@@ -639,12 +643,10 @@ class UESJoinOrderOptimizer(JoinOrderOptimization):
                 for pk_join in pk_joins:
                     target_table = pk_join.target_table
                     base_cardinality = self.stats_container.base_table_estimates[target_table]
-                    filter_pred = query.predicates().filters_for(target_table)
                     join_bound = self.join_estimation.estimate_for(pk_join.join_condition, join_graph)
                     join_graph.mark_joined(target_table, pk_join.join_condition)
-                    base_annotation = jointree.LogicalBaseTableMetadata(filter_pred, cardinality=base_cardinality)
-                    join_annotation = jointree.LogicalJoinMetadata(pk_join.join_condition, cardinality=join_bound)
-                    join_tree = join_tree.join_with_base_table(pk_join.target_table, base_annotation, join_annotation)
+                    join_tree = join_tree.join_with(pk_join.target_table, annotation=join_bound,
+                                                    partner_annotation=base_cardinality)
                 self._log_optimization_progress("Initial table selection", lowest_bound_table, pk_joins)
                 continue
 
@@ -665,23 +667,21 @@ class UESJoinOrderOptimizer(JoinOrderOptimization):
             candidate_table = selected_candidate.target_table
             all_pk_joins = (join_graph.available_deep_pk_join_paths_for(candidate_table) if self._pull_eager_pk_tables
                             else join_graph.available_pk_fk_joins_for(candidate_table))
-            candidate_filters = query.predicates().filters_for(candidate_table)
             candidate_base_cardinality = self.stats_container.base_table_estimates[candidate_table]
-            join_annotation = jointree.LogicalJoinMetadata(selected_candidate.join_condition, cardinality=lowest_bound)
-            base_annotation = jointree.LogicalBaseTableMetadata(candidate_filters, cardinality=candidate_base_cardinality)
             self._log_optimization_progress("n:m join", candidate_table, all_pk_joins,
                                             join_condition=selected_candidate.join_condition,
                                             subquery_join=create_subquery)
             if create_subquery:
-                subquery_tree = jointree.LogicalJoinTree.for_base_table(candidate_table, base_annotation)
+                subquery_tree = JoinTree.scan(candidate_table, annotation=candidate_base_cardinality)
                 join_graph.mark_joined(candidate_table)
                 subquery_tree = self._insert_pk_joins(query, all_pk_joins, subquery_tree, join_graph)
 
-                join_tree = join_tree.join_with_subtree(subquery_tree, join_annotation)
+                join_tree = join_tree.join_with(subquery_tree, annotation=lowest_bound)
                 self.stats_container.upper_bounds[join_tree] = lowest_bound
-            else:
 
-                join_tree = join_tree.join_with_base_table(candidate_table, base_annotation, join_annotation)
+            else:
+                join_tree = join_tree.join_with(candidate_table, annotation=lowest_bound,
+                                                partner_annotation=candidate_base_cardinality)
                 join_graph.mark_joined(candidate_table, selected_candidate.join_condition)
                 self.stats_container.upper_bounds[join_tree] = lowest_bound
                 join_tree = self._insert_pk_joins(query, all_pk_joins, join_tree, join_graph)
@@ -693,8 +693,7 @@ class UESJoinOrderOptimizer(JoinOrderOptimization):
             raise AssertionError("Join graph still has free tables remaining!")
         return join_tree
 
-    def _binary_join_optimization(self, query: qal.ImplicitSqlQuery,
-                                  join_graph: joingraph.JoinGraph) -> jointree.LogicalJoinTree:
+    def _binary_join_optimization(self, query: qal.ImplicitSqlQuery, join_graph: joingraph.JoinGraph) -> LogicalJoinTree:
         """Specialized optimization algorithm for queries with just a single join.
 
         The algorithm can still be meaningful to determine the inner and outer relation for the only join that has to be
@@ -711,7 +710,7 @@ class UESJoinOrderOptimizer(JoinOrderOptimization):
 
         Returns
         -------
-        jointree.LogicalJoinTree
+        LogicalJoinTree
             The resulting join tree
         """
         table1, table2 = query.tables()
@@ -722,21 +721,14 @@ class UESJoinOrderOptimizer(JoinOrderOptimization):
         large_card = self.stats_container.base_table_estimates[large_table]
         small_card = self.stats_container.base_table_estimates[small_table]
 
-        large_filter = query.predicates().filters_for(large_table)
-        small_filter = query.predicates().filters_for(small_table)
-
         join_predicate = query.predicates().joins_between(large_table, small_table)
         join_bound = self.join_estimation.estimate_for(join_predicate, join_graph)
 
-        base_annotation = jointree.LogicalBaseTableMetadata(large_filter, cardinality=large_card)
-        join_tree = jointree.LogicalJoinTree.for_base_table(large_table, base_annotation)
-        partner_annotation = jointree.LogicalBaseTableMetadata(small_filter, cardinality=small_card)
-        join_annotation = jointree.LogicalJoinMetadata(join_predicate, cardinality=join_bound)
-        join_tree = join_tree.join_with_base_table(small_table, partner_annotation, join_annotation, insert_left=True)
+        join_tree = LogicalJoinTree.scan(large_table, annotation=large_card)
+        join_tree = join_tree.join_with(small_table, annotation=join_bound, partner_annotation=small_card)
         return join_tree
 
-    def _star_query_optimizer(self, query: qal.ImplicitSqlQuery,
-                              join_graph: joingraph.JoinGraph) -> jointree.LogicalJoinTree:
+    def _star_query_optimizer(self, query: qal.ImplicitSqlQuery, join_graph: joingraph.JoinGraph) -> LogicalJoinTree:
         """Join ordering algorithm for star queries (i.e. queries which only consist of primary key/foreign key joins).
 
         The algorithm is inspired by UES and always tries to insert the table next that guarantees the smallest upper bound.
@@ -750,7 +742,7 @@ class UESJoinOrderOptimizer(JoinOrderOptimization):
 
         Returns
         -------
-        jointree.LogicalJoinTree
+        LogicalJoinTree
             The resulting join tree
         """
         self._log_information("Using star query optimizer")
@@ -764,10 +756,8 @@ class UESJoinOrderOptimizer(JoinOrderOptimization):
                 lowest_bound_join = candidate_join
 
         start_table = lowest_bound_join.start_table
-        start_filters = query.predicates().filters_for(start_table)
         start_card = self.stats_container.base_table_estimates[start_table]
-        start_annotation = jointree.LogicalBaseTableMetadata(start_filters, cardinality=start_card)
-        join_tree = jointree.LogicalJoinTree.for_base_table(start_table, start_annotation)
+        join_tree = LogicalJoinTree.scan(start_table, annotation=start_card)
         join_graph.mark_joined(start_table)
         join_tree = self._apply_pk_fk_join(query, lowest_bound_join, join_bound=lowest_bound, join_graph=join_graph,
                                            current_join_tree=join_tree)
@@ -814,7 +804,7 @@ class UESJoinOrderOptimizer(JoinOrderOptimization):
 
     def _apply_pk_fk_join(self, query: qal.SqlQuery, pk_fk_join: joingraph.JoinPath, *,
                           join_bound: int, join_graph: joingraph.JoinGraph,
-                          current_join_tree: jointree.LogicalJoinTree) -> jointree.LogicalJoinTree:
+                          current_join_tree: LogicalJoinTree) -> LogicalJoinTree:
         """Includes a specific pk/fk join into a join tree, taking care of all necessary updates.
 
         Parameters
@@ -827,27 +817,24 @@ class UESJoinOrderOptimizer(JoinOrderOptimization):
             The calculated upper bound of the join
         join_graph : joingraph.JoinGraph
             The join graph of the query. This structure is mutated as part of the update
-        current_join_tree : jointree.LogicalJoinTree
+        current_join_tree : LogicalJoinTree
             The join order that has been determined so far
 
         Returns
         -------
-        jointree.LogicalJoinTree
+        LogicalJoinTree
             An updated join tree that includes the given join as the last (i.e. top-most) join.
         """
         target_table = pk_fk_join.target_table
-        target_filters = query.predicates().filters_for(target_table)
         target_cardinality = self.stats_container.base_table_estimates[target_table]
-        base_annotation = jointree.LogicalBaseTableMetadata(target_filters, cardinality=target_cardinality)
-        join_annotation = jointree.LogicalJoinMetadata(pk_fk_join.join_condition, cardinality=join_bound)
-        updated_join_tree = current_join_tree.join_with_base_table(target_table, base_annotation, join_annotation)
+        updated_join_tree = current_join_tree.join_with(target_table, annotation=join_bound,
+                                                        partner_annotation=target_cardinality)
         join_graph.mark_joined(target_table, pk_fk_join.join_condition)
         self.stats_container.upper_bounds[updated_join_tree] = join_bound
         return updated_join_tree
 
     def _insert_pk_joins(self, query: qal.SqlQuery, pk_joins: Iterable[joingraph.JoinPath],
-                         join_tree: jointree.LogicalJoinTree,
-                         join_graph: joingraph.JoinGraph) -> jointree.LogicalJoinTree:
+                         join_tree: LogicalJoinTree, join_graph: joingraph.JoinGraph) -> LogicalJoinTree:
         """Generalization of `_apply_pk_fk_join` to multiple join paths.
 
         Parameters
@@ -872,12 +859,9 @@ class UESJoinOrderOptimizer(JoinOrderOptimization):
             pk_table = pk_join.target_table
             if not join_graph.is_free_table(pk_table):
                 continue
-            pk_filters = query.predicates().filters_for(pk_table)
             pk_join_bound = self.join_estimation.estimate_for(pk_join.join_condition, join_graph)
             pk_base_cardinality = self.stats_container.base_table_estimates[pk_table]
-            base_annotation = jointree.LogicalBaseTableMetadata(pk_filters, cardinality=pk_base_cardinality)
-            join_annotation = jointree.LogicalJoinMetadata(pk_join.join_condition, cardinality=pk_join_bound)
-            join_tree = join_tree.join_with_base_table(pk_table, base_annotation, join_annotation)
+            join_tree = join_tree.join_with(pk_table, annotation=pk_join_bound, partner_annotation=pk_base_cardinality)
             join_graph.mark_joined(pk_table, pk_join.join_condition)
             self.stats_container.upper_bounds[join_tree] = pk_join_bound
         return join_tree
@@ -972,7 +956,7 @@ class UESOperatorSelection(PhysicalOperatorSelection):
         self.database = database
 
     def select_physical_operators(self, query: qal.SqlQuery,
-                                  join_order: Optional[jointree.LogicalJoinTree]) -> PhysicalOperatorAssignment:
+                                  join_order: Optional[JoinTree]) -> PhysicalOperatorAssignment:
         assignment = PhysicalOperatorAssignment()
         if self.database.hinting().supports_hint(JoinOperator.NestedLoopJoin):
             assignment.set_operator_enabled_globally(JoinOperator.NestedLoopJoin, False,

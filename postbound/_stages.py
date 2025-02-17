@@ -6,7 +6,7 @@ from typing import Optional
 
 
 from .optimizer import validation
-from .optimizer.jointree import LogicalJoinTree
+from .optimizer._jointree import JoinTree
 from .optimizer.validation import OptimizationPreCheck
 from .optimizer._hints import PhysicalOperatorAssignment, PlanParameterization
 from . import db
@@ -276,7 +276,7 @@ class JoinOrderOptimization(abc.ABC):
     """
 
     @abc.abstractmethod
-    def optimize_join_order(self, query: SqlQuery) -> Optional[LogicalJoinTree]:
+    def optimize_join_order(self, query: SqlQuery) -> Optional[JoinTree]:
         """Performs the actual join ordering process.
 
         The join tree can be further annotated with an initial operator assignment, if that is an inherent part of
@@ -356,14 +356,14 @@ class PhysicalOperatorSelection(abc.ABC):
     """
 
     @abc.abstractmethod
-    def select_physical_operators(self, query: SqlQuery, join_order: Optional[LogicalJoinTree]) -> PhysicalOperatorAssignment:
+    def select_physical_operators(self, query: SqlQuery, join_order: Optional[JoinTree]) -> PhysicalOperatorAssignment:
         """Performs the operator assignment.
 
         Parameters
         ----------
         query : SqlQuery
             The query to optimize
-        join_order : Optional[LogicalJoinTree]
+        join_order : Optional[JoinTree]
             The selected join order of the query
 
         Returns
@@ -421,7 +421,7 @@ class ParameterGeneration(abc.ABC):
     """
 
     @abc.abstractmethod
-    def generate_plan_parameters(self, query: SqlQuery, join_order: Optional[LogicalJoinTree],
+    def generate_plan_parameters(self, query: SqlQuery, join_order: Optional[JoinTree],
                                  operator_assignment: Optional[PhysicalOperatorAssignment]) -> PlanParameterization:
         """Executes the actual parameterization.
 
@@ -429,7 +429,7 @@ class ParameterGeneration(abc.ABC):
         ----------
         query : SqlQuery
             The query to optimize
-        join_order : Optional[LogicalJoinTree]
+        join_order : Optional[JoinTree]
             The selected join order for the query.
         operator_assignment : Optional[PhysicalOperatorAssignment]
             The selected operators for the query
@@ -595,7 +595,9 @@ class _CompleteAlgorithmEmulator(CompleteOptimizationAlgorithm):
                               if self._operator_selection is not None else None)
         plan_params = (self._plan_parameterization.generate_plan_parameters(query, None, None)
                        if self._plan_parameterization is not None else None)
-        hinted_query = self.database.hinting().generate_hints(query, join_order, physical_operators, plan_params)
+        hinted_query = self.database.hinting().generate_hints(query, join_order=join_order,
+                                                              physical_operators=physical_operators,
+                                                              plan_parameters=plan_params)
         query_plan = self.database.optimizer().query_plan(hinted_query)
         return QueryPlan(query_plan, query)
 

@@ -11,15 +11,15 @@ from typing import Literal, Optional
 
 import networkx as nx
 
-from .. import jointree
+from .._jointree import JoinTree, to_query_plan
 from .._hints import ScanOperatorAssignment, JoinOperatorAssignment, PhysicalOperatorAssignment
 from ..._core import ScanOperator, JoinOperator
+from ..._qep import QueryPlan
 from ... import db, qal
 from ...util import networkx as nx_utils
 
 
-def _merge_nodes(query: qal.SqlQuery, start: jointree.LogicalJoinTree | qal.TableReference,
-                 end: jointree.LogicalJoinTree | qal.TableReference) -> jointree.LogicalJoinTree:
+def _merge_nodes(query: qal.SqlQuery, start: JoinTree | qal.TableReference, end: JoinTree | qal.TableReference) -> JoinTree:
     """Provides a join tree that combines two specific trees or tables.
 
     This is a shortcut method to merge arbitrary tables or trees without having to check whether a table-based or tree-based
@@ -27,28 +27,23 @@ def _merge_nodes(query: qal.SqlQuery, start: jointree.LogicalJoinTree | qal.Tabl
 
     Parameters
     ----------
-    start : jointree.LogicalJoinTree | qal.TableReference
+    start : JoinTree | qal.TableReference
         The first tree to merge. If this is a base table, it will be treated as a join tree of just a scan of that table.
-    end : jointree.LogicalJoinTree | qal.TableReference
+    end : Jointree | qal.TableReference
         The second tree to merge. If this is a base table, it will be treated as a join tree of just a scan of that table.
 
     Returns
     -------
-    jointree.LogicalJoinTree
-        A join tree combining the input trees. The `start` node will be the left node of the tree and the `end` node will be
-        the right node.
+    JoinTree
+        A join tree combining the input trees. The `start` node will be the outer node of the tree and the `end` node will be
+        the inner node.
     """
-    if isinstance(start, qal.TableReference):
-        start_annotation = jointree.LogicalBaseTableMetadata(query.predicates().filters_for(start))
-        start = jointree.LogicalJoinTree.for_base_table(start, start_annotation)
-    if isinstance(end, qal.TableReference):
-        end_annotation = jointree.LogicalBaseTableMetadata(query.predicates().filters_for(end))
-        end = jointree.LogicalJoinTree.for_base_table(end, end_annotation)
-    join_annotation = jointree.LogicalJoinMetadata(query.predicates().joins_between(start.tables(), end.tables()))
-    return start.join_with_subtree(end, join_annotation)
+    start = JoinTree.scan(start) if isinstance(start, qal.TableReference) else start
+    end = JoinTree.scan(end) if isinstance(end, qal.TableReference) else end
+    return JoinTree.join(start, end)
 
 
-def _enumerate_join_graph(query: qal.SqlQuery, join_graph: nx.Graph) -> Generator[jointree.JoinTree]:
+def _enumerate_join_graph(query: qal.SqlQuery, join_graph: nx.Graph) -> Generator[JoinTree, None, None]:
     """Provides all possible join trees based on a join graph.
 
     Parameters
@@ -59,7 +54,7 @@ def _enumerate_join_graph(query: qal.SqlQuery, join_graph: nx.Graph) -> Generato
 
     Yields
     ------
-    Generator[jointree.JoinTree]
+    Generator[JoinTree]
         A possible join tree of the join graph.
 
     Warnings
@@ -114,7 +109,7 @@ class ExhaustiveJoinOrderEnumerator:
     def __init__(self, tree_structure: Literal["bushy", "left-deep", "right-deep"] = "bushy") -> None:
         self._tree_structure = tree_structure
 
-    def all_join_orders_for(self, query: qal.SqlQuery) -> Generator[jointree.LogicalJoinTree, None, None]:
+    def all_join_orders_for(self, query: qal.SqlQuery) -> Generator[JoinTree, None, None]:
         """Produces a generator for all possible join trees of a query.
 
         Parameters
@@ -124,7 +119,7 @@ class ExhaustiveJoinOrderEnumerator:
 
         Yields
         ------
-        Generator[jointree.LogicalJoinTree]
+        Generator[JoinTree]
             A generator that produces all possible join orders for the input query. The structure of the join orders depends on
             the service configuration. Consult the class-level documentation for details.
 
@@ -146,8 +141,7 @@ class ExhaustiveJoinOrderEnumerator:
             return
         elif len(join_graph.nodes) == 1:
             base_table = list(join_graph.nodes)[0]
-            base_annotation = jointree.LogicalBaseTableMetadata(query.predicates().filters_for(base_table))
-            join_tree = jointree.LogicalJoinTree.for_base_table(base_table, base_annotation)
+            join_tree = JoinTree.scan(base_table)
             yield join_tree
             return
         elif not nx.is_connected(join_graph):
@@ -163,7 +157,7 @@ class ExhaustiveJoinOrderEnumerator:
             join_order_hashes.add(current_hash)
             yield join_order
 
-    def _linear_join_orders(self, query: qal.SqlQuery) -> Generator[jointree.LogicalJoinTree]:
+    def _linear_join_orders(self, query: qal.SqlQuery) -> Generator[JoinTree, None, None]:
         """Handler method to generate left-deep or right-deep join orders.
 
         The specific kind of join order is inferred based on the `_tree_structure` attribute.
@@ -175,23 +169,16 @@ class ExhaustiveJoinOrderEnumerator:
 
         Yields
         ------
-        Generator[jointree.LogicalJoinTree]
+        Generator[JoinTree]
             A generator that produces all possible join orders for the input query.
         """
         join_graph = query.predicates().join_graph()
-        insert_left = self._tree_structure == "left-deep"
+        direction = "inner" if self._tree_structure == "left-deep" else "outer"
 
         for join_path in nx_utils.nx_frontier_walks(join_graph):
-            join_tree = jointree.LogicalJoinTree()
+            join_tree = JoinTree()
             for table in join_path.nodes():
-                base_annotation = jointree.LogicalBaseTableMetadata(query.predicates().filters_for(table))
-                if join_tree.tables():
-                    join_annotation = jointree.LogicalJoinMetadata(query.predicates().joins_between(table, join_tree.tables()))
-                else:
-                    join_annotation = None
-
-                join_tree = join_tree.join_with_base_table(table, base_annotation=base_annotation,
-                                                           join_annotation=join_annotation, insert_left=insert_left)
+                join_tree = join_tree.join_with(table, partner_direction=direction)
 
             yield join_tree
 
@@ -245,8 +232,8 @@ class ExhaustiveOperatorEnumerator:
         self.allowed_scan_ops = frozenset(scan_op for scan_op in allowed_scan_ops if self._db.hinting().supports_hint(scan_op))
         self.allowed_join_ops = frozenset(join_op for join_op in allowed_join_ops if self._db.hinting().supports_hint(join_op))
 
-    def all_operator_assignments_for(self, query: qal.SqlQuery, join_order: jointree.JoinTree
-                                     ) -> Generator[PhysicalOperatorAssignment, None, None]:
+    def all_operator_assignments_for(self, query: qal.SqlQuery,
+                                     join_order: JoinTree) -> Generator[PhysicalOperatorAssignment, None, None]:
         """Produces a generator for all possible operator assignments of the allowed operators.
 
         The precise structure of the operator assignments depends on the service configuration. Take a look at the class
@@ -256,7 +243,7 @@ class ExhaustiveOperatorEnumerator:
         ----------
         query : qal.SqlQuery
             The query to "optimize"
-        join_order : jointree.JoinTree
+        join_order : JoinTree
             The join sequence to use. This contains all required tables to be scanned and joins to be performed.
 
         Yields
@@ -272,7 +259,7 @@ class ExhaustiveOperatorEnumerator:
 
         tables = list(query.tables())
         scan_ops = [list(self.allowed_scan_ops)] * len(tables)
-        joins = [join.tables() for join in join_order.join_sequence()]
+        joins = [join.tables() for join in join_order.iterjoins()]
         join_ops = [list(self.allowed_join_ops)] * len(joins)
 
         for scan_selection in itertools.product(*scan_ops):
@@ -290,7 +277,7 @@ class ExhaustiveOperatorEnumerator:
                 yield current_total_assignment
 
     def _all_join_assignments_for(self, query: qal.SqlQuery,
-                                  join_order: jointree.JoinTree) -> Generator[PhysicalOperatorAssignment, None, None]:
+                                  join_order: JoinTree) -> Generator[PhysicalOperatorAssignment, None, None]:
         """Specialized handler for assignments that only contain join operators.
 
         Parameters
@@ -306,7 +293,7 @@ class ExhaustiveOperatorEnumerator:
             A generator producing all possible operator assignments. The assignments will not contain any cost estimates, nor
             will they specify join directions or parallization data.
         """
-        joins = [join.tables() for join in join_order.join_sequence()]
+        joins = [join.tables() for join in join_order.iterjoins()]
         join_ops = [list(self.allowed_join_ops)] * len(joins)
         for join_selection in itertools.product(*join_ops):
             current_join_pairs = zip(joins, join_selection)
@@ -316,7 +303,7 @@ class ExhaustiveOperatorEnumerator:
             yield assignment
 
     def _all_scan_assignments_for(self, query: qal.SqlQuery,
-                                  join_order: jointree.JoinTree) -> Generator[PhysicalOperatorAssignment, None, None]:
+                                  join_order: JoinTree) -> Generator[PhysicalOperatorAssignment, None, None]:
         """Specialized handler for assignments that only contain scan operators.
 
         Parameters
@@ -370,7 +357,7 @@ class ExhaustivePlanEnumerator:
         self._join_order_generator = ExhaustiveJoinOrderEnumerator(**join_order_args)
         self._operator_generator = ExhaustiveOperatorEnumerator(**operator_args)
 
-    def all_plans_for(self, query: qal.SqlQuery) -> Generator[jointree.PhysicalQueryPlan, None, None]:
+    def all_plans_for(self, query: qal.SqlQuery) -> Generator[QueryPlan, None, None]:
         """Produces a generator for all possible query plans of an input query.
 
         The structure of the provided plans can be restricted by configuring the underlying services. Consult the class-level
@@ -388,4 +375,4 @@ class ExhaustivePlanEnumerator:
         """
         for join_order in self._join_order_generator.all_join_orders_for(query):
             for operator_assignment in self._operator_generator.all_operator_assignments_for(query, join_order):
-                yield jointree.PhysicalQueryPlan.load_from_logical_order(join_order, operator_assignment)
+                yield to_query_plan(join_order, operator_assignment)

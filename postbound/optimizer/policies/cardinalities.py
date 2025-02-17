@@ -18,7 +18,7 @@ from typing import Literal, Optional
 
 import pandas as pd
 
-from .. import joingraph, jointree, validation
+from .. import _jointree, joingraph, validation
 from .._hints import PhysicalOperatorAssignment, PlanParameterization
 from ..._stages import ParameterGeneration, CardinalityEstimator
 from ... import db, qal, util
@@ -137,7 +137,7 @@ class CardinalityHintsGenerator(ParameterGeneration, CardinalityEstimator, abc.A
                 parameterization.add_cardinality_hint(join, estimate)
         return parameterization
 
-    def generate_plan_parameters(self, query: qal.SqlQuery, join_order: Optional[jointree.LogicalJoinTree],
+    def generate_plan_parameters(self, query: qal.SqlQuery, join_order: Optional[_jointree.LogicalJoinTree],
                                  operator_assignment: Optional[PhysicalOperatorAssignment]) -> PlanParameterization:
         if join_order is None:
             return self.estimate_cardinalities(query)

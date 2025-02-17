@@ -21,7 +21,7 @@ import pandas as pd
 from postbound import db, qal
 from postbound.db import postgres
 from postbound.experiments import workloads
-from postbound.optimizer import jointree, physops, planparams
+from postbound.optimizer import _jointree, physops, planparams
 from postbound.optimizer.strategies import enumeration, randomized
 from postbound.util import jsonize
 
@@ -115,7 +115,7 @@ def execute_query_handler(query: qal.SqlQuery, database: db.Database,
 
 
 def generate_all_join_orders(query: qal.SqlQuery, exhaustive_enumerator: enumeration.ExhaustiveJoinOrderEnumerator, *,
-                             config: ExperimentConfig = ExperimentConfig.default()) -> list[jointree.LogicalJoinTree]:
+                             config: ExperimentConfig = ExperimentConfig.default()) -> list[_jointree.LogicalJoinTree]:
     exhaustive_join_order_generator = exhaustive_enumerator.all_join_orders_for(query)
     join_order_plans = []
     for __ in range(config.exhaustive_join_ordering_limit):
@@ -131,7 +131,7 @@ def generate_all_join_orders(query: qal.SqlQuery, exhaustive_enumerator: enumera
 
 
 def generate_random_join_orders(query: qal.SqlQuery, *, config: ExperimentConfig = ExperimentConfig.default()
-                                ) -> list[jointree.LogicalJoinTree]:
+                                ) -> list[_jointree.LogicalJoinTree]:
     random_enumerator = randomized.RandomJoinOrderGenerator()
     join_order_plans = []
     random_plan_hashes = set()
@@ -165,7 +165,7 @@ def generate_random_join_orders(query: qal.SqlQuery, *, config: ExperimentConfig
 class EvaluationResult:
     label: str
     query: qal.SqlQuery
-    join_order: jointree.JoinTree
+    join_order: _jointree.JoinTree
     query_hints: str
     planner_options: str
     query_plan: dict
@@ -191,10 +191,10 @@ def determine_timeout(label: str, total_query_runtime: float, n_executed_plans: 
     return max(timeout, config.minimum_query_timeout)
 
 
-def assert_correct_query_plan(label: str, query: qal.SqlQuery, expected_join_order: jointree.JoinTree,
+def assert_correct_query_plan(label: str, query: qal.SqlQuery, expected_join_order: _jointree.JoinTree,
                               actual_query_plan: dict) -> None:
     parsed_actual_plan = postgres.PostgresExplainPlan(actual_query_plan).as_query_execution_plan()
-    actual_join_order = jointree.LogicalJoinTree.load_from_query_plan(parsed_actual_plan, query)
+    actual_join_order = _jointree.LogicalJoinTree.load_from_query_plan(parsed_actual_plan, query)
     if expected_join_order != actual_join_order:
         logging.error("Join order was not enforced correctly for label %s", label)
 
@@ -202,13 +202,13 @@ def assert_correct_query_plan(label: str, query: qal.SqlQuery, expected_join_ord
 OperatorSelection = tuple[Optional[physops.PhysicalOperatorAssignment], Optional[planparams.PlanParameterization]]
 
 
-def native_operator_selection(join_order: jointree.JoinTree) -> OperatorSelection:
+def native_operator_selection(join_order: _jointree.JoinTree) -> OperatorSelection:
     plan_params = planparams.PlanParameterization()
     plan_params.set_system_settings(geqo="off")
     return None, plan_params
 
 
-def restrict_to_hash_join(join_order: jointree.JoinTree) -> OperatorSelection:
+def restrict_to_hash_join(join_order: _jointree.JoinTree) -> OperatorSelection:
     operator_selection = physops.PhysicalOperatorAssignment()
     operator_selection.set_operator_enabled_globally(physops.JoinOperators.NestedLoopJoin, False)
     operator_selection.set_operator_enabled_globally(physops.JoinOperators.SortMergeJoin, False)
@@ -234,7 +234,7 @@ class TrueCardinalityGenerator:
         self._current_label = label
         self._relevant_queries = self._card_df[self._card_df.label == label].copy()
 
-    def __call__(self, join_order: jointree.JoinTree) -> OperatorSelection:
+    def __call__(self, join_order: _jointree.JoinTree) -> OperatorSelection:
         assert self._relevant_queries is not None
         plan_params = planparams.PlanParameterization()
         for intermediate_join in join_order.join_sequence():
@@ -260,10 +260,10 @@ class TrueCardinalityGenerator:
         return None, plan_params
 
 
-def execute_single_query(label: str, query: qal.SqlQuery, join_order: jointree.LogicalJoinTree, *,
+def execute_single_query(label: str, query: qal.SqlQuery, join_order: _jointree.LogicalJoinTree, *,
                          n_executed_plans: int = 0, total_query_runtime: float = 0,
                          db_instance: db.Database,
-                         operator_generator: Callable[[jointree.JoinTree], OperatorSelection],
+                         operator_generator: Callable[[_jointree.JoinTree], OperatorSelection],
                          config: ExperimentConfig = ExperimentConfig.default()) -> EvaluationResult:
     query_generator = db_instance.hinting()
 
@@ -375,7 +375,7 @@ def evaluate_query(label: str, query: qal.SqlQuery, *, db_instance: postgres.Pos
 
 def prepare_for_export(df: pd.DataFrame) -> pd.DataFrame:
     df = df.copy()
-    df["join_order"] = df["join_order"].apply(jointree.JoinTree.as_list).apply(jsonize.to_json)
+    df["join_order"] = df["join_order"].apply(_jointree.JoinTree.as_list).apply(jsonize.to_json)
     df["query_plan"] = df["query_plan"].apply(jsonize.to_json)
     df["db_config"] = df["db_config"].apply(jsonize.to_json)
     return df
