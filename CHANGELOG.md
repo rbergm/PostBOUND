@@ -16,31 +16,33 @@ Be carefull when updating and check the changelog!
 
 # ➡ Version 0.12.0
 
-### New features
+### 🐣 New features
 - Added a new `QueryPlan` class that combines the old `PhysicalQueryPlan` created by the optimizer modules and the old
   `QueryExecutionPlan` created by the database interfaces.
 
-### ⚠ Breaking changes 💀
+### 💀 Breaking changes
 - The `generate_hints` method for databases now uses some named and some default arguments.
 - Hash joins are now represented with the hash table as the inner probe side and the outer relation being iterated. This is in
   line with Postgres' implementation.
 - Removed the `PhysicalQueryPlan` entirely. Use the unified `QueryPlan` instead
 - Removed the `QueryExecutionPlan` entirely. Use the unified `QueryPlan` instead
 
-### Updates
+### 📰 Updates
 - Moved the `postgres` module to the top of the package, i.e. you can now do `pb.postgres.connect()`
 - Moved the `executor` module to the top of the package, i.e. you can now use `pb.executor.QueryPreparationService`
 - Added JSON support to `PhysicalOperatorAssignment` and `PlanParameterization`
-- Added a convenience method `add` to the `PhysicalOperatorAssignment`. This method figures out what to add where based on the parameters and can be more comfortable to use than `set_scan_operator` and `set_join_operator`
+- Added a convenience method `add` to the `PhysicalOperatorAssignment`. This method figures out what to add where based on the
+  parameters and can be more comfortable to use than `set_scan_operator` and `set_join_operator`
+- Added a convenience method `columns_of` to `SqlQuery` to quickly retrieve all columns that belong to a specific query.
 
-### Fixes
+### 🏥 Fixes
 - Fixed a directory error when creating a SSB database for the first time.
 
 ### 🪲 Known bugs
 - Pre-defined workloads (`workloads.job()`, etc) do not work if installed as a Pip module. This is because the build process
   does not retain the workload directory in the `site_packages`.
 
-### WIP
+### ⏳ WIP
 - Baseline for dynamic programming plan enumerator. This is not yet complete and trying to initialize a corresponding class
   raises an error for now. The enumerator will probably be ready to go for v0.13.0
 
