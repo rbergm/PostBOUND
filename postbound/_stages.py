@@ -598,8 +598,7 @@ class _CompleteAlgorithmEmulator(CompleteOptimizationAlgorithm):
         hinted_query = self.database.hinting().generate_hints(query, join_order=join_order,
                                                               physical_operators=physical_operators,
                                                               plan_parameters=plan_params)
-        query_plan = self.database.optimizer().query_plan(hinted_query)
-        return QueryPlan(query_plan, query)
+        return self.database.optimizer().query_plan(hinted_query)
 
     def describe(self) -> jsondict:
         return self.stage().describe()

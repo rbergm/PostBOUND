@@ -152,13 +152,15 @@ class StatisticsContainer(abc.ABC, Generic[StatsType]):
             The predicate that was used for the join. This is required to determine the columns that were directly involved in
             the join. These columns have to be updated in a different way compared to other columns in the intermediate result.
         """
-        partner_columns = join_condition.join_partners_of(joined_table)
+        partner_tables = join_tree.tables() - {joined_table}
 
         third_party_columns: set[ColumnReference] = set()
-        for joined_table in join_tree.tables():
-            join_preds = self.query.predicates().joins_for(joined_table)
-            join_pred = qal.CompoundPredicate.create_and(join_preds)
-            third_party_columns |= {col for col in join_pred.columns() if col not in partner_columns}
+        for third_party_table in partner_tables:
+            potential_partners = partner_tables - {third_party_table}
+            join_pred = self.query.predicates().joins_between(third_party_table, potential_partners)
+            if not join_pred:
+                continue
+            third_party_columns |= join_pred.columns()
 
         for col1, col2 in join_condition.join_partners():
             joined_column, partner_column = (col1, col2) if col1.table == joined_table else (col2, col1)
@@ -614,7 +616,7 @@ class UESJoinOrderOptimizer(JoinOrderOptimization):
             the user.
         """
         self._log_information("Using default UES optimizer")
-        join_tree = LogicalJoinTree()
+        join_tree = LogicalJoinTree.empty()
 
         while join_graph.contains_free_n_m_joins():
 

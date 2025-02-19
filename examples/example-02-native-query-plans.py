@@ -10,13 +10,13 @@ import postbound as pb
 from postbound.optimizer.strategies import native
 
 # Setup: we optimize queries from the Join Order Benchmark on a Postgres database
-postgres_db = pb.db.postgres.connect()
+postgres_db = pb.postgres.connect()
 job_workload = pb.workloads.job()
 
 # Since obtaining native execution plans is a pretty common use-case, there already is a pre-defined strategy to do this.
 # Take a look at the native module for other strategies.
 # If we were to use a different database in our NativeOptimizer than in our pipeline, we would optimize queries using that
-# database, but execute them on a different system
+# database, but execute them on a different system (e.g. calling NativeOptimizer(db_a) but creating OptimizationPipeline(db_b))
 predef_pipeline = pb.IntegratedOptimizationPipeline(postgres_db)
 predef_pipeline.optimization_algorithm = native.NativeOptimizer(postgres_db)
 
@@ -27,15 +27,10 @@ class OurNativeOptimizer(pb.CompleteOptimizationAlgorithm):
         super().__init__()
         self.native_optimizer = native_optimizer
 
-    def optimize_query(self, query: pb.qal.SqlQuery) -> pb.PhysicalQueryPlan:
+    def optimize_query(self, query: pb.qal.SqlQuery) -> pb.QueryPlan:
         # Obtain the native query exection plan
         native_plan = self.native_optimizer.query_plan(query)
-
-        # Generate the optimizer information for the plan.
-        # Notice the distinction between an execution plan as modelled by the database interface, and the execution plan as
-        # used by the optimization strategies
-        execution_plan = pb.PhysicalQueryPlan.load_from_query_plan(native_plan)
-        return execution_plan
+        return native_plan
 
     def describe(self) -> dict:
         return {"name": "native_plans"}

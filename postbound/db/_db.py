@@ -1194,6 +1194,11 @@ class HintService(abc.ABC):
         has been enforced by PostBOUND's optimization process and the native optimizer of the database system should
         "fill the gaps".
 
+        Implementations of this method are required to adhere to operators for joins and scans as much as possible. However,
+        there is no requirement to represent auxiliary nodes (e.g. sorts) if this is not possible or meaningful for the plan.
+        As a rule of thumb, implementations should rate the integrity of the plan in the database higher than a perfect
+        representation of the input data.
+
         Parameters
         ----------
         query : SqlQuery

@@ -45,8 +45,8 @@ instance.
     from postbound.optimizer import presets # this provides utilities to easily load pre-defined optimization strategies
     from postbound.optimizer.strategies import tonic
 
-    postgres_db = pb.db.postgres.connect()  # for details see the section on database interaction
-    job = pb.workloads.job()                # load the benchmark
+    postgres_db = pb.postgres.connect()  # for details see the section on database interaction
+    job = pb.workloads.job()             # load the benchmark
 
     presets.apply_standard_system_options()  # this handles some common configuration options
     ues_settings = presets.fetch("ues")      # load the optimization strategies

@@ -76,7 +76,7 @@ def actual_plan_cost(query: SqlQuery, analyze_plan: QueryPlan, *, database: Opti
     if not analyze_plan.is_analyze():
         raise ValueError("The provided plan is not an ANALYZE plan")
     database = database if database is not None else DatabasePool().get_instance()
-    hinted_query = database.hinting().generate_hints(query, analyze_plan.as_optimized_plan())
+    hinted_query = database.hinting().generate_hints(query, analyze_plan.with_actual_card())
     return database.optimizer().cost_estimate(hinted_query)
 
 

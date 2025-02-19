@@ -966,7 +966,7 @@ def _obtain_accurate_cost_estimate(query: qal.SqlQuery, database: db.Database) -
         The execution plan with cost information
     """
     query_plan = database.optimizer().analyze_plan(query)
-    query_with_true_hints = database.hinting().generate_hints(query, query_plan.as_optimized_plan())
+    query_with_true_hints = database.hinting().generate_hints(query, query_plan.with_actual_card())
     return database.optimizer().query_plan(query_with_true_hints)
 
 
@@ -1160,7 +1160,7 @@ class TonicOperatorSelection(PhysicalOperatorSelection):
             The query to obtain the cost for
         """
         query_plan = self._db.optimizer().analyze_plan(query)
-        hinted_query = self._db.hinting().generate_hints(query, query_plan.as_optimized_plan())
+        hinted_query = self._db.hinting().generate_hints(query, query_plan.with_actual_card())
         self.integrate_cost(hinted_query)
 
     def explore_costs(self, query: qal.SqlQuery, join_order: Optional[JoinTree] = None, *,

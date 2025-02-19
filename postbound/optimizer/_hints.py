@@ -15,7 +15,7 @@ from ..util import jsondict
 
 
 class ScanOperatorAssignment:
-    """Models the selection of a scan operator to a specific base table.
+    """Models the selection of a scan operator for a specific base table.
 
     Attributes
     -------
@@ -561,6 +561,24 @@ class PhysicalOperatorAssignment:
 
     def get(self, intermediate: TableReference | Iterable[TableReference],
             default: Optional[T] = None) -> Optional[ScanOperatorAssignment | JoinOperatorAssignment | T]:
+        """Retrieves the operator assignment for a specific scan or join.
+
+        This is similar to the **dict.get** method. An important distinction is that we never raise an error if there is no
+        intermediate assigned to the operator. Instead, we return the default value, which is **None** by default.
+
+        Parameters
+        ----------
+        intermediate : TableReference | Iterable[TableReference]
+            The intermediate to retrieve the operator assignment for. For scans, either the scanned table can be given
+            directly, or the table can be wrapped in a singleton iterable.
+        default : Optional[T], optional
+            The default value to return if no assignment is found. Defaults to **None**.
+
+        Returns
+        -------
+        Optional[ScanOperatorAssignment | JoinOperatorAssignment | T]
+            The assignment if it was found or the default value otherwise.
+        """
         if isinstance(intermediate, TableReference):
             return self.scan_operators.get(intermediate, default)
 
@@ -624,7 +642,14 @@ class PhysicalOperatorAssignment:
 
 
 def operators_from_plan(query_plan: QueryPlan) -> PhysicalOperatorAssignment:
+    """Extracts the operator assignment from a whole query plan.
+
+    Notice that this method does not add parallel workers to the assignment, since this is better handled by the
+    parameterization.
+    """
     assignment = PhysicalOperatorAssignment()
+    if not query_plan.operator and query_plan.input_node:
+        return operators_from_plan(query_plan.input_node)
     assignment.add(query_plan.operator, query_plan.tables())
     for child in query_plan.children:
         child_assignment = operators_from_plan(child)
@@ -633,6 +658,18 @@ def operators_from_plan(query_plan: QueryPlan) -> PhysicalOperatorAssignment:
 
 
 def read_operator_assignment_json(json_data: dict | str) -> PhysicalOperatorAssignment:
+    """Loads an operator assignment from its JSON representation.
+
+    Parameters
+    ----------
+    json_data : dict | str
+        Either the JSON dictionary, or a string encoding of the dictionary (which will be parsed by **json.loads**).
+
+    Returns
+    -------
+    PhysicalOperatorAssignment
+        The assignment
+    """
     json_data = json.loads(json_data) if isinstance(json_data, str) else json_data
     assignment = PhysicalOperatorAssignment()
     assignment.global_settings = {ScanOperator(op): enabled for op, enabled in json_data.get("global_settings", {}).items()}
@@ -796,6 +833,18 @@ class PlanParameterization:
 
 
 def read_plan_params_json(json_data: dict | str) -> PlanParameterization:
+    """Loads a plan parameterization from its JSON representation.
+
+    Parameters
+    ----------
+    json_data : dict | str
+        Either the JSON dictionary, or a string encoding of the dictionary (which will be parsed by **json.loads**).
+
+    Returns
+    -------
+    PlanParameterization
+        The plan parameterization
+    """
     json_data = json.loads(json_data) if isinstance(json_data, str) else json_data
     params = PlanParameterization()
     params.cardinality_hints = {frozenset(parser.load_table_json(tab)): card
@@ -807,7 +856,46 @@ def read_plan_params_json(json_data: dict | str) -> PlanParameterization:
 
 def update_plan(query_plan: QueryPlan, *,
                 operators: Optional[PhysicalOperatorAssignment] = None,
-                params: Optional[PlanParameterization] = None) -> QueryPlan:
+                params: Optional[PlanParameterization] = None,
+                simplify: bool = True) -> QueryPlan:
+    """Assigns new operators and/or new estimates to a query plan, leaving the join order intact.
+
+    Notice that this update method is not particularly smart and only operates on a per-node basis. This means that high-level
+    functions that are composed of multiple operators might not be updated properly. For example, Postgres represents a hash
+    join as a combination of a hash operator (which builds the actual hash table) and a follow-up hash join operator (which
+    performs the probing). If the update changes the hash join to a different join, the hash operator will still exist, likely
+    leading to an invalid query plan. To circumvent such problems, the query plan is by default simplified before processing.
+    Simplification removes all auxiliary non-join and non-scan operators, thereby effectively only leaving those nodes with a
+    corresponding operator. But, there is no free lunch and the simplification might also remove some other important
+    operators, such as using hash-based or sort-based aggregation operators. Therefore, simplification can be disabled by
+    setting the `simplify` parameter to **False**.
+
+    Parameters
+    ----------
+    query_plan : QueryPlan
+        The plan to update.
+    operators : Optional[PhysicalOperatorAssignment], optional
+        The new operators to use. This can be a partial assignment, in which case only the operators that are present in the
+        new assignment are used and all others are left unchanged. If this parameter is not given, no operators are updated.
+    params : Optional[PlanParameterization], optional
+        The new parameters to use. This can be a partial assignment, in which case only the cardinalities/parallel workers in
+        the new assignment are used and all others are left unchanged. If this parameter is not given, no parameters are
+        updated.
+    simplify : bool, optional
+        Whether to simplify the query plan before updating it. For a detailed discussion, see the high-level documentatio of
+        this method. Simplifications is enabled by default.
+
+    Returns
+    -------
+    QueryPlan
+        The updated query plan
+
+    See Also
+    --------
+    QueryPlan.simplify
+    """
+    query_plan = query_plan.canonical() if simplify else query_plan
+
     updated_operator = operators.get(query_plan.tables(), query_plan.operator) if operators else query_plan.operator
     updated_card_est = (params.cardinality_hints.get(query_plan.tables(), query_plan.estimated_cardinality) if params
                         else query_plan.estimated_cardinality)
@@ -819,7 +907,8 @@ def update_plan(query_plan: QueryPlan, *,
     updated_children = [update_plan(child, operators=operators, params=params) for child in query_plan.children]
 
     return QueryPlan(query_plan.node_type, operator=updated_operator, children=updated_children,
-                     plan_params=updated_params, estimates=updated_estimates, measures=query_plan.measures)
+                     plan_params=updated_params, estimates=updated_estimates, measures=query_plan.measures,
+                     subplan=query_plan.subplan)
 
 
 class HintType(Enum):

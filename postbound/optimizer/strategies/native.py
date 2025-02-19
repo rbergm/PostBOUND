@@ -34,7 +34,7 @@ class NativeCostModel(CostModel):
         self._target_db: Optional[db.Database] = None
 
     def estimate_cost(self, query: qal.SqlQuery, plan: QueryPlan) -> Cost:
-        hinted_query = self._target_db.hinting().generate_hints(query, plan.as_optimized_plan())
+        hinted_query = self._target_db.hinting().generate_hints(query, plan.with_actual_card())
         return self._target_db.optimizer().cost_estimate(hinted_query)
 
     def describe(self) -> jsondict:

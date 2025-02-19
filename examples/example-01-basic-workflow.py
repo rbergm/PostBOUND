@@ -15,7 +15,7 @@ import postbound as pb
 from postbound.optimizer import presets
 
 # Step 1: System setup
-postgres_instance = pb.db.postgres.connect()
+postgres_instance = pb.postgres.connect()
 presets.apply_standard_system_options()
 job_workload = pb.workloads.job()
 

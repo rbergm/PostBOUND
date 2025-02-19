@@ -6,7 +6,7 @@ import unittest
 
 import psycopg
 
-from postbound import db
+from postbound.optimizer import QueryPlan
 from postbound.db import postgres
 
 
@@ -127,7 +127,7 @@ class QueryTestCase(unittest.TestCase, abc.ABC):
 
 
 class PlanTestCase(unittest.TestCase, abc.ABC):
-    def assertQueryExecutionPlansEqual(self, first_plan: db.QueryExecutionPlan, second_plan: db.QueryExecutionPlan,
+    def assertQueryExecutionPlansEqual(self, first_plan: QueryPlan, second_plan: QueryPlan,
                                        message: str = "", *, _cur_level: int = 0) -> None:
         if first_plan.node_type != second_plan.node_type:
             default_msg = f"Different operators at level {_cur_level}: {first_plan} vs. {second_plan}"

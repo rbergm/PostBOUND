@@ -11,11 +11,10 @@
 import math
 
 import postbound as pb
-from postbound.db import postgres
 from postbound.optimizer.strategies import tonic
 
 # Setup: we optimize queries from the Join Order Benchmark on a Postgres database
-postgres_db = postgres.connect()
+postgres_db = pb.postgres.connect()
 job_workload = pb.workloads.job()
 
 # Obtain a training and test split

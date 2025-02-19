@@ -1719,7 +1719,7 @@ class PostgresHintService(HintService):
         """
         if node.is_scan():
             return node.base_table.identifier()
-        if node.is_join():
+        if not node.is_join():
             raise ValueError(f"Unknown join tree node: {node}")
 
         inner_hint = self._generate_leading_hint_content(node.inner_child)
@@ -1770,7 +1770,7 @@ class PostgresHintService(HintService):
         """
         if len(join_order) < 2:
             return query, None
-        leading_hint = self._generate_leading_hint_content(join_order, operator_assignment)
+        leading_hint = self._generate_leading_hint_content(join_order)
         leading_hint = f"JoinOrder({leading_hint})" if self._backend == "pg_lab" else f"Leading({leading_hint})"
         hints = HintParts([], [leading_hint])
         return query, hints

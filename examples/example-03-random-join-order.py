@@ -12,8 +12,7 @@ import warnings
 from typing import Optional
 
 import postbound as pb
-from postbound.db import postgres
-from postbound.optimizer import _jointree, joingraph, validation
+from postbound.optimizer import joingraph, validation
 
 warnings.simplefilter("ignore")
 
@@ -31,14 +30,14 @@ class RandomJoinOrderOptimizer(pb.JoinOrderOptimization):
         # Therefore, we store the target database here and demonstrate how we can easily access it using the DatabasePool
         self.target_db = target_db if target_db is not None else pb.db.current_database()
 
-    def optimize_join_order(self, query: pb.SqlQuery) -> _jointree.LogicalJoinTree:
+    def optimize_join_order(self, query: pb.SqlQuery) -> pb.opt.LogicalJoinTree:
         # This is the most important method that handles the actual join order optimization
 
         # In our optimizer we must maintain two data structures:
         # The join graph stores which tables have already been joined and which joins are available next
         # The join tree stores the join order that we have constructed so far
         join_graph = joingraph.JoinGraph(query)
-        join_tree = _jointree.LogicalJoinTree()
+        join_tree = pb.opt.LogicalJoinTree.empty()
 
         # Our algorithm simply joins one table after another, until all tables have inserted into the join order
         while join_graph.contains_free_tables():
@@ -54,7 +53,7 @@ class RandomJoinOrderOptimizer(pb.JoinOrderOptimization):
             # Update our data to store the optimization progress.
             # Notice that join trees are immutable, hence a new instance is produced. On the other hand, join graphs can be
             # updated directly
-            join_tree = join_tree.join_with_base_table(next_table)
+            join_tree = join_tree.join_with(next_table)
             join_graph.mark_joined(next_table)
 
         return join_tree
@@ -76,7 +75,7 @@ class RandomJoinOrderOptimizer(pb.JoinOrderOptimization):
 
 
 # Setup: we optimize queries from the Join Order Benchmark on a Postgres database
-postgres_db = postgres.connect()
+postgres_db = pb.postgres.connect()
 job_workload = pb.workloads.job()
 
 # Now let's generate the optimization pipeline with our new optimizer

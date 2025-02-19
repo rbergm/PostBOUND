@@ -6798,6 +6798,25 @@ class SqlQuery:
         """
         return util.set_union(clause.columns() for clause in self.clauses())
 
+    def columns_of(self, table: TableReference) -> set[ColumnReference]:
+        """Provides all columns of a specific table that are referenced at any point in the query.
+
+        Parameters
+        ----------
+        table : TableReference
+            The table to which the columns should belong
+
+        Returns
+        -------
+        set[ColumnReference]
+            All columns of the specified table that are referenced in the query.
+
+        See Also
+        --------
+        columns : Get all columns that are referenced in the query
+        """
+        return {col for col in self.columns() if col.belongs_to(table)}
+
     @functools.cache
     def predicates(self) -> QueryPredicates:
         """Provides all predicates in this query.
