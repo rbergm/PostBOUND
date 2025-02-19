@@ -19,6 +19,7 @@ Be carefull when updating and check the changelog!
 ### 🐣 New features
 - Added a new `QueryPlan` class that combines the old `PhysicalQueryPlan` created by the optimizer modules and the old
   `QueryExecutionPlan` created by the database interfaces.
+  - Added support for recursive CTEs
 
 ### 💀 Breaking changes
 - The `generate_hints` method for databases now uses some named and some default arguments.
@@ -34,6 +35,7 @@ Be carefull when updating and check the changelog!
 - Added a convenience method `add` to the `PhysicalOperatorAssignment`. This method figures out what to add where based on the
   parameters and can be more comfortable to use than `set_scan_operator` and `set_join_operator`
 - Added a convenience method `columns_of` to `SqlQuery` to quickly retrieve all columns that belong to a specific query.
+- Translating a query into relational algebra now retains ordering information and works for general set queries
 
 ### 🏥 Fixes
 - Fixed a directory error when creating a SSB database for the first time.
@@ -50,15 +52,8 @@ Be carefull when updating and check the changelog!
 
 ## 🚧 Version 0.13.0 👷
 
-### Planned
+### ⏳ Planned
 - Full dynamic programming support for the `TextbookOptimizationPipeline`, including a Postgres-specific algorithm
-
-### New features
-- Added support for recursive CTEs
-
-
-### Updates
-- Translating a query into relational algebra now retains ordering information and works for general set queries
 
 ---
 
