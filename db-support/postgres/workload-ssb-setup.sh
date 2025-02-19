@@ -104,9 +104,9 @@ if [ -d "$TARGET_DIR/ssb_data_$SF" ] ; then
     echo ".. Re-using existing SSB input data"
 else
     echo ".. SSB source directory does not exist, re-creating"
+    mkdir -p "$TARGET_DIR/ssb_data_$SF"
     cd $TARGET_DIR
     TARGET_DIR=$(pwd)  # get absolute path -- resolves relative target dirs
-    mkdir -p "$TARGET_DIR/ssb_data_$SF"
 
     if [ ! -d "$TARGET_DIR/ssb-kit" ] ; then
         echo ".. Building SSB utility"

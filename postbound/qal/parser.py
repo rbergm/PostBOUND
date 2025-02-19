@@ -33,7 +33,7 @@ from typing import Optional, overload
 
 import pglast
 
-from ._core import (
+from ._qal import (
     ColumnReference,
     SelectType, JoinType,
     CompoundOperator, MathOperator, LogicalOperator, SqlOperator, SetOperator,
@@ -1605,7 +1605,7 @@ def load_table_json(json_data: dict) -> Optional[TableReference]:
     """
     if not json_data:
         return None
-    return TableReference(json_data.get("full_name", ""), json_data.get("alias", ""))
+    return TableReference(json_data.get("full_name", ""), json_data.get("alias", ""), json_data.get("virtual", False))
 
 
 def load_column_json(json_data: dict) -> Optional[ColumnReference]:
@@ -1624,6 +1624,35 @@ def load_column_json(json_data: dict) -> Optional[ColumnReference]:
     if not json_data:
         return None
     return ColumnReference(json_data.get("column"), load_table_json(json_data.get("table", None)))
+
+
+def load_expression_json(json_data: dict) -> Optional[SqlExpression]:
+    """Re-creates an arbitrary SQL expression from its JSON encoding.
+
+    Parameters
+    ----------
+    json_data : dict
+        The encoded expression
+
+    Returns
+    -------
+    Optional[SqlExpression]
+        The actual expression. If the dictionary is empty or *None*, *None* is returned. Notice that in case of
+        malformed data, errors are raised.
+    """
+    if not json_data:
+        return None
+
+    tables = [load_table_json(table_data) for table_data in json_data.get("tables", [])]
+    expression_str = json_data["expression"]
+    if not tables:
+        emulated_query = f"SELECT {expression_str}"
+    else:
+        from_clause_str = ", ".join(str(tab) for tab in tables)
+        emulated_query = f"SELECT {expression_str} FROM {from_clause_str}"
+
+    parsed_query = parse_query(emulated_query)
+    return parsed_query.select_clause.targets[0].expression
 
 
 def load_predicate_json(json_data: dict) -> Optional[AbstractPredicate]:

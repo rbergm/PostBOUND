@@ -14,7 +14,41 @@ Be carefull when updating and check the changelog!
 
 ---
 
-## 🚧 Version 0.12.0 👷
+# ➡ Version 0.12.0
+
+### 🐣 New features
+- Added a new `QueryPlan` class that combines the old `PhysicalQueryPlan` created by the optimizer modules and the old
+  `QueryExecutionPlan` created by the database interfaces.
+
+### 💀 Breaking changes
+- The `generate_hints` method for databases now uses some named and some default arguments.
+- Hash joins are now represented with the hash table as the inner probe side and the outer relation being iterated. This is in
+  line with Postgres' implementation.
+- Removed the `PhysicalQueryPlan` entirely. Use the unified `QueryPlan` instead
+- Removed the `QueryExecutionPlan` entirely. Use the unified `QueryPlan` instead
+
+### 📰 Updates
+- Moved the `postgres` module to the top of the package, i.e. you can now do `pb.postgres.connect()`
+- Moved the `executor` module to the top of the package, i.e. you can now use `pb.executor.QueryPreparationService`
+- Added JSON support to `PhysicalOperatorAssignment` and `PlanParameterization`
+- Added a convenience method `add` to the `PhysicalOperatorAssignment`. This method figures out what to add where based on the
+  parameters and can be more comfortable to use than `set_scan_operator` and `set_join_operator`
+- Added a convenience method `columns_of` to `SqlQuery` to quickly retrieve all columns that belong to a specific query.
+
+### 🏥 Fixes
+- Fixed a directory error when creating a SSB database for the first time.
+
+### 🪲 Known bugs
+- Pre-defined workloads (`workloads.job()`, etc) do not work if installed as a Pip module. This is because the build process
+  does not retain the workload directory in the `site_packages`.
+
+### ⏳ WIP
+- Baseline for dynamic programming plan enumerator. This is not yet complete and trying to initialize a corresponding class
+  raises an error for now. The enumerator will probably be ready to go for v0.13.0
+
+---
+
+## 🚧 Version 0.13.0 👷
 
 ### Planned
 - Full dynamic programming support for the `TextbookOptimizationPipeline`, including a Postgres-specific algorithm
@@ -29,7 +63,7 @@ Be carefull when updating and check the changelog!
 ---
 
 
-## ➡ Version 0.11.0
+## 🕑 Version 0.11.0
 
 ### New features
 - Added a `fetch` parameter to `workloads.stack()` which automatically loads the stack queries, if they do not exist
@@ -47,7 +81,7 @@ Be carefull when updating and check the changelog!
 ---
 
 
-## Version 0.10.1
+## 🕑 Version 0.10.1
 
 ### New features
 - Added support for set operations to SQL queries
@@ -89,7 +123,7 @@ Be carefull when updating and check the changelog!
 ---
 
 
-## Version 0.9.0
+## 🕑 Version 0.9.0
 
 **The Docker release**
 
@@ -110,7 +144,7 @@ Be carefull when updating and check the changelog!
 
 ---
 
-## Version 0.8.0
+## 🕑 Version 0.8.0
 
 ### New features
 - `tools/setup-py-venv.sh` now provides a one-stop-shop to install PostBOUND as an external package into a Python virtual
@@ -135,7 +169,7 @@ Be carefull when updating and check the changelog!
 ---
 
 
-## Version 0.7.0
+## 🕑 Version 0.7.0
 
 ### New features
 - Added novel `TextBookOptimizationPipeline` for cardinality estimation + cost model + plan enumerator-style algorithms
@@ -148,7 +182,7 @@ Be carefull when updating and check the changelog!
 ---
 
 
-## Version 0.6.2
+## 🕑 Version 0.6.2
 
 ### New features
 - Process utilities now contain a new `raise_if_error()` method when a command could not be executed
@@ -170,7 +204,7 @@ Be carefull when updating and check the changelog!
 ---
 
 
-## Version 0.6.1
+## 🕑 Version 0.6.1
 
 ### New features
 - Introduced a transformation to automatically generate join equivalence classes
@@ -186,7 +220,7 @@ Be carefull when updating and check the changelog!
 ---
 
 
-## Version 0.6.0
+## 🕑 Version 0.6.0
 
 ### New features
 - Introduced a utility to compute the cardinality of star-queries
@@ -200,12 +234,12 @@ Be carefull when updating and check the changelog!
 ---
 
 
-## Version 0.5.0
+## 🕑 Version 0.5.0
 
 ### New features
 - Added support for the [Cardinality Estimation Benchmark](https://www.vldb.org/pvldb/vol14/p2019-negi.pdf)
 
-## Version 0.4.6
+## 🕑 Version 0.4.6
 
 ### New features
 - Added a `plots` module to quickly draw plots from a dataframe in grid structure
@@ -223,7 +257,7 @@ Be carefull when updating and check the changelog!
 ---
 
 
-## Version 0.4.5
+## 🕑 Version 0.4.5
 
 ### Updates
 - `PreComputedCardinalities` can now optionally save cardinalities that were computed as part of the live fallback
@@ -238,7 +272,7 @@ Be carefull when updating and check the changelog!
 ---
 
 
-## Version 0.4.4
+## 🕑 Version 0.4.4
 
 ### Updates
 - Added a `raw` mode to `execute_query` which does not attempt any simplification of the result set
@@ -252,7 +286,7 @@ Be carefull when updating and check the changelog!
 ---
 
 
-## Version 0.4.3
+## 🕑 Version 0.4.3
 
 ### New features
 - `PreComputedCardinalities` now support live computation for missing estimates
@@ -272,7 +306,7 @@ Be carefull when updating and check the changelog!
 ---
 
 
-## Version 0.4.2
+## 🕑 Version 0.4.2
 
 ### New features
 - The `analysis` module now provides a utility to compute the actual plan cost based on the true cardinalities
@@ -290,7 +324,7 @@ Be carefull when updating and check the changelog!
 ---
 
 
-## Version 0.4.1
+## 🕑 Version 0.4.1
 
 ### Updates
 - Plan hashes of physical query plans can now be calculated without cardinalities or predicates
@@ -305,7 +339,7 @@ Be carefull when updating and check the changelog!
 ---
 
 
-## Version 0.4.0
+## 🕑 Version 0.4.0
 
 ### New features
 - Add `mutate` method to all relalg operators to modify their internal state
@@ -326,7 +360,7 @@ Be carefull when updating and check the changelog!
 ---
 
 
-## Version 0.3.1
+## 🕑 Version 0.3.1
 
 ### New features
 - Add `Workload.with_labels` method to retrieve sub-workload based on specific labels
@@ -341,7 +375,7 @@ Be carefull when updating and check the changelog!
 ---
 
 
-## Version 0.3.0
+## 🕑 Version 0.3.0
 
 ### New features
 - Added support for Window functions, boolean expressions in SELECT statements and `CASE` expressions
@@ -356,7 +390,7 @@ Be carefull when updating and check the changelog!
 ---
 
 
-## Version 0.2.1
+## 🕑 Version 0.2.1
 
 ### Fixes
 - Fixed parsing of `SELECT *` queries for newer versions of _mo\_sql\_parsing_
@@ -365,7 +399,7 @@ Be carefull when updating and check the changelog!
 ---
 
 
-## Version 0.2.0
+## 🕑 Version 0.2.0
 
 This is pretty much a new major version, but we are not ready for 1.0 yet and do not want to convey too much stability.
 
@@ -398,7 +432,7 @@ This is pretty much a new major version, but we are not ready for 1.0 yet and do
 ---
 
 
-## Version 0.1.0
+## 🕑 Version 0.1.0
 
 ### New features
 - A utility to generate actual foreign keys for the IMDB has been added to the Postgres tooling. The generation of foreign keys
@@ -430,7 +464,7 @@ This is pretty much a new major version, but we are not ready for 1.0 yet and do
 ---
 
 
-## Version 0.0.2-beta
+## 🕑 Version 0.0.2-beta
 
 - The Postgres interface now tries to be smart about GeQO usage. If a query contains elements that would be overwritten by the
   GeQO optimizer, GeQO is disabled for the current query. Afterwards, the original GeQO configurations is restored. At a later

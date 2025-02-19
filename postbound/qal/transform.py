@@ -25,7 +25,7 @@ import warnings
 from collections.abc import Callable, Iterable
 from typing import Optional
 
-from ._core import (
+from ._qal import (
     TableReference, ColumnReference,
     CompoundOperator,
     SqlExpression, ColumnExpression, StaticValueExpression, MathematicalExpression, CastExpression, FunctionExpression,

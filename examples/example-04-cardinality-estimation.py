@@ -13,8 +13,6 @@ import warnings
 from typing import Optional
 
 import postbound as pb
-from postbound import db, qal, optimizer, util
-from postbound.optimizer import jointree
 
 warnings.simplefilter("ignore")
 
@@ -23,18 +21,17 @@ class JitteringCardinalityEstimator(pb.ParameterGeneration):
     # The entire estimation algorithm is implemented in this class. It satisfies the interface of the corresponding
     # optimization stage.
 
-    def __init__(self, native_optimizer: db.OptimizerInterface) -> None:
+    def __init__(self, native_optimizer: pb.db.OptimizerInterface) -> None:
         super().__init__()
         self.native_optimizer = native_optimizer
 
-    def generate_plan_parameters(self, query: qal.SqlQuery,
-                                 join_order: Optional[jointree.LogicalJoinTree | jointree.PhysicalQueryPlan],
-                                 operator_assignment: Optional[optimizer.PhysicalOperatorAssignment]
-                                 ) -> optimizer.PlanParameterization:
+    def generate_plan_parameters(self, query: pb.SqlQuery, join_order: Optional[pb.opt.LogicalJoinTree],
+                                 operator_assignment: Optional[pb.opt.PhysicalOperatorAssignment]
+                                 ) -> pb.opt.PlanParameterization:
         # This is the most important method that handles the actual cardinality estimation
 
         # We store our cardinalities in this object
-        cardinalities = optimizer.PlanParameterization()
+        cardinalities = pb.opt.PlanParameterization()
 
         # Now, we need to iterate over all potential intermediate results of the query to generate an estimate for all of them
         # This is a drawback of the two-stage optimization approach used in PostBOUND: the actual physical database system has
@@ -44,7 +41,7 @@ class JitteringCardinalityEstimator(pb.ParameterGeneration):
         # In our case, the easiest way to do so is to construct the powerset of all tables in the query. This spans all
         # possible intermediate results.
 
-        for join in util.collections.powerset(query.tables()):
+        for join in pb.util.collections.powerset(query.tables()):
             if not join:
                 # skip the empty set
                 continue
@@ -53,8 +50,8 @@ class JitteringCardinalityEstimator(pb.ParameterGeneration):
             # the query execution of our current intermediate result. This is done by constructing a specialized SQL query that
             # only handles the computation of the intermediate result. Afterwards, we can ask the optimizer for its cardinality
             # estimate of the specialized query to obtain the cardinality estimate for the intermediate result.
-            query_fragment = qal.transform.extract_query_fragment(query, join)
-            query_fragment = qal.transform.as_star_query(query_fragment)
+            query_fragment = pb.qal.transform.extract_query_fragment(query, join)
+            query_fragment = pb.qal.transform.as_star_query(query_fragment)
             native_estimate = self.native_optimizer.cardinality_estimate(query_fragment)
 
             # Apply the distortion to the estimated cardinality
@@ -71,7 +68,7 @@ class JitteringCardinalityEstimator(pb.ParameterGeneration):
 
 
 # Setup: we optimize queries from the Join Order Benchmark on a Postgres database
-postgres_db = pb.db.postgres.connect()
+postgres_db = pb.postgres.connect()
 job_workload = pb.workloads.job()
 
 # Now let's generate the optimization pipeline with our new cardinality estimator

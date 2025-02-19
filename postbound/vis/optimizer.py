@@ -8,43 +8,37 @@ from typing import Literal, Optional
 import graphviz as gv
 import networkx as nx
 
-from . import trees as tree_viz
-from .. import db, qal, util
-from ..qal import relalg, TableReference
-from ..optimizer import jointree, joingraph
+from . import trees
+from .. import db, util
+from ..qal import relalg, transform, SqlQuery
+from ..optimizer import joingraph, JoinTree, LogicalJoinTree
+from .._core import TableReference
+from .._qep import QueryPlan
 
 
-def _join_tree_labels(node: jointree.AbstractJoinTreeNode) -> tuple[str, dict]:
-    if node.is_join_node():
+def _join_tree_labels(node: JoinTree) -> tuple[str, dict]:
+    if node.is_join():
         base_text = "⋈"
         base_style = {"style": "bold"}
-    elif node.is_auxiliary_node():
-        base_text = str(node.name)
-        base_style = {"color": "grey", "style": "dashed"}
     else:
-        assert node.is_base_table_node()
-        base_text = str(node.table)
+        assert node.is_scan()
+        base_text = str(node.base_table)
         base_style = {"color": "grey"}
 
-    if "annotation" in dir(node) and "operator" in dir(node.annotation):
-        base_text += "\n" + node.annotation.operator.operator.value
+    if isinstance(node, LogicalJoinTree):
+        base_text += f"\n Card = {node.cardinality}"
 
     return base_text, base_style
 
 
-def _join_tree_traversal(node: jointree.AbstractJoinTreeNode) -> Sequence[jointree.AbstractJoinTreeNode]:
-    if node.is_base_table_node():
-        return ()
-    elif node.is_auxiliary_node():
-        return (node.input_node,)
-    assert node.is_join_node()
+def _join_tree_traversal(node: JoinTree) -> Sequence[JoinTree]:
     return node.children
 
 
-def plot_join_tree(join_tree: jointree.JoinTree) -> gv.Graph:
+def plot_join_tree(join_tree: JoinTree) -> gv.Graph:
     if not join_tree:
         return gv.Graph()
-    return tree_viz.plot_tree(join_tree.root, _join_tree_labels, _join_tree_traversal)
+    return trees.plot_tree(join_tree, _join_tree_labels, _join_tree_traversal)
 
 
 def _fallback_default_join_edge(graph: gv.Digraph, join_table: TableReference,
@@ -52,7 +46,7 @@ def _fallback_default_join_edge(graph: gv.Digraph, join_table: TableReference,
     graph.edge(str(join_table), str(partner_table), dir="none")
 
 
-def _render_pk_fk_join_edge(graph: gv.Digraph, query: qal.SqlQuery,
+def _render_pk_fk_join_edge(graph: gv.Digraph, query: SqlQuery,
                             join_table: TableReference, partner_table: TableReference) -> None:
     db_schema = db.DatabasePool.get_instance().current_database().schema()
     join_predicate = query.predicates().joins_between(join_table, partner_table)
@@ -72,7 +66,7 @@ def _render_pk_fk_join_edge(graph: gv.Digraph, query: qal.SqlQuery,
         _fallback_default_join_edge(graph, join_table, partner_table)
 
 
-def _plot_join_graph_from_query(query: qal.SqlQuery, table_annotations: Optional[Callable[[TableReference], str]] = None,
+def _plot_join_graph_from_query(query: SqlQuery, table_annotations: Optional[Callable[[TableReference], str]] = None,
                                 include_pk_fk_joins: bool = False) -> gv.Graph:
     if not query.predicates():
         return gv.Graph()
@@ -108,10 +102,10 @@ def _plot_join_graph_directly(join_graph: joingraph.JoinGraph,
     return gv_graph
 
 
-def plot_join_graph(query_or_join_graph: qal.SqlQuery | joingraph.JoinGraph,
+def plot_join_graph(query_or_join_graph: SqlQuery | joingraph.JoinGraph,
                     table_annotations: Optional[Callable[[TableReference], str]] = None, *,
                     include_pk_fk_joins: bool = False, out_path: str = "", out_format: str = "svg") -> gv.Graph | gv.Digraph:
-    if isinstance(query_or_join_graph, qal.SqlQuery):
+    if isinstance(query_or_join_graph, SqlQuery):
         graph = _plot_join_graph_from_query(query_or_join_graph, table_annotations, include_pk_fk_joins)
     elif isinstance(query_or_join_graph, joingraph.JoinGraph):
         graph = _plot_join_graph_directly(query_or_join_graph, table_annotations)
@@ -123,27 +117,27 @@ def plot_join_graph(query_or_join_graph: qal.SqlQuery | joingraph.JoinGraph,
     return graph
 
 
-def estimated_cards(table: TableReference, *, query: qal.SqlQuery, database: Optional[db.Database] = None) -> str:
+def estimated_cards(table: TableReference, *, query: SqlQuery, database: Optional[db.Database] = None) -> str:
     database = database if database is not None else db.DatabasePool.get_instance().current_database()
-    filter_query = qal.transform.extract_query_fragment(query, [table])
-    filter_query = qal.transform.as_star_query(filter_query)
+    filter_query = transform.extract_query_fragment(query, [table])
+    filter_query = transform.as_star_query(filter_query)
     card_est = database.optimizer().cardinality_estimate(filter_query)
     return f"[{card_est} rows estimated]"
 
 
-def annotate_filter_cards(table: TableReference, *, query: qal.SqlQuery,
+def annotate_filter_cards(table: TableReference, *, query: SqlQuery,
                           database: Optional[db.Database] = None) -> str:
     database = database if database is not None else db.DatabasePool.get_instance().current_database()
-    filter_query = qal.transform.extract_query_fragment(query, [table])
-    count_query = qal.transform.as_count_star_query(filter_query)
+    filter_query = transform.extract_query_fragment(query, [table])
+    count_query = transform.as_count_star_query(filter_query)
     card = database.execute_query(count_query, cache_enabled=True)
     return f"[{card} rows]"
 
 
-def annotate_cards(table: TableReference, *, query: qal.SqlQuery, database: Optional[db.Database] = None) -> str:
+def annotate_cards(table: TableReference, *, query: SqlQuery, database: Optional[db.Database] = None) -> str:
     database = database if database is not None else db.DatabasePool.get_instance().current_database()
-    filter_query = qal.transform.extract_query_fragment(query, [table])
-    count_query = qal.transform.as_count_star_query(filter_query)
+    filter_query = transform.extract_query_fragment(query, [table])
+    count_query = transform.as_count_star_query(filter_query)
     filter_card = database.execute_query(count_query, cache_enabled=True)
     total_card = database.statistics().total_rows(table, emulated=True, cache_enabled=True)
     return f"|R| = {total_card} |σ(R)| = {filter_card}"
@@ -155,7 +149,7 @@ def merged_annotation(*annotations) -> Callable[[TableReference], str]:
     return _merger
 
 
-def setup_annotations(*annotations: Literal["estimated-cards", "filter-cards", "true-cards"], query: qal.SqlQuery,
+def setup_annotations(*annotations: Literal["estimated-cards", "filter-cards", "true-cards"], query: SqlQuery,
                       database: Optional[db.Database] = None) -> Callable[[TableReference], str]:
     annotators = []
     for annotator in annotations:
@@ -171,6 +165,71 @@ def setup_annotations(*annotations: Literal["estimated-cards", "filter-cards", "
     if not annotators:
         raise ValueError("No annotator given")
     return merged_annotation(*annotators) if len(annotators) > 1 else annotators[0]
+
+
+def _query_plan_labels(node: QueryPlan, *,
+                       annotation_generator: Optional[Callable[[QueryPlan], str]],
+                       subplan_target: str = "") -> tuple[str, dict]:
+    if node.subplan:
+        label, params = _query_plan_labels(node.subplan.root, annotation_generator=annotation_generator,
+                                           subplan_target=node.subplan.target_name)
+        label = f"<<SubPlan>> {subplan_target}\n{label}"
+        params["style"] = "dashed"
+    elif node.is_join:
+        label, params = node.node_type, {"style": "bold"}
+    elif node.is_scan:
+        label, params = f"<<{node.node_type}>>\n{node.base_table}", {"color": "grey"}
+    else:
+        label, params = node.node_type, {"style": "dashed", "color": "grey"}
+
+    if node.subplan:
+        label = f"{label}\nSubplan: {node.subplan.target_name}"
+
+    annotation = annotation_generator(node) if annotation_generator else ""
+    label = f"{label}\n{annotation}" if annotation else label
+    return label, params
+
+
+def _query_plan_traversal(node: QueryPlan, *, skip_intermediates: bool = False) -> list[QueryPlan]:
+    children = list(node.children)
+    if node.subplan:
+        children.append(node.subplan.root)
+
+    if skip_intermediates:
+        skipped = [_query_plan_traversal(child, skip_intermediates=True) if child.is_auxiliary() else [child]
+                   for child in children]
+        children = util.flatten(skipped)
+    return children
+
+
+def annotate_estimates(node: QueryPlan) -> str:
+    return f"cost={node.estimated_cost} cardinality={node.estimated_cardinality}"
+
+
+def plot_query_plan(plan: QueryPlan,
+                    annotation_generator: Optional[Callable[[QueryPlan], str]] = None, *,
+                    skip_intermediates: bool = False, **kwargs) -> gv.Graph:
+    if not plan:
+        return gv.Graph()
+    return trees.plot_tree(plan, functools.partial(_query_plan_labels, annotation_generator=annotation_generator),
+                           functools.partial(_query_plan_traversal, skip_intermediates=skip_intermediates),
+                           **kwargs)
+
+
+def _explain_analyze_annotations(node: QueryPlan) -> str:
+    card_row = f"[Rows expected={node.estimated_cardinality} actual={node.actual_cardinality}]"
+    exec_time = round(node.execution_time, 4)
+    runtime_row = f"[Exec time={exec_time}s]"
+    return card_row + "\n" + runtime_row
+
+
+def plot_analyze_plan(plan: QueryPlan, *, skip_intermediates: bool = False, **kwargs) -> gv.Graph:
+    if not plan:
+        return gv.Graph()
+    return trees.plot_tree(plan,
+                           functools.partial(_query_plan_labels, annotation_generator=_explain_analyze_annotations),
+                           functools.partial(_query_plan_traversal, skip_intermediates=skip_intermediates),
+                           **kwargs)
 
 
 def _escape_label(text: str) -> str:
@@ -247,7 +306,7 @@ def _relalg_child_traversal(node: relalg.RelNode) -> Sequence[relalg.RelNode]:
 
 
 def plot_relalg(relnode: relalg.RelNode, **kwargs) -> gv.Graph:
-    return tree_viz.plot_tree(relnode, _relalg_node_labels, _relalg_child_traversal,
-                              escape_labels=False, node_id_generator=id,
-                              strict=True,  # gv.Graph arguments
-                              **kwargs)
+    return trees.plot_tree(relnode, _relalg_node_labels, _relalg_child_traversal,
+                           escape_labels=False, node_id_generator=id,
+                           strict=True,  # gv.Graph arguments
+                           **kwargs)

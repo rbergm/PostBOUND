@@ -102,7 +102,7 @@ from . import (
   experiments,
   util
 )
-from ._core import Cost, Cardinality, TableReference
+from ._core import Cost, Cardinality, TableReference, ColumnReference
 from ._pipelines import (
   OptimizationPipeline,
   IntegratedOptimizationPipeline,
@@ -118,13 +118,15 @@ from ._stages import (
   IncrementalOptimizationStep,
   as_complete_algorithm
 )
+from ._qep import QueryPlan
 from .db import Database
-from .qal import relalg, transform, SqlQuery, ColumnReference, parse_query
-from .optimizer import validation, PhysicalQueryPlan
-from .experiments import workloads
+from .qal import relalg, transform, SqlQuery, parse_query
+from .optimizer import validation
+from .experiments import analysis, executor, workloads
 from .experiments.executor import execute_workload, optimize_and_execute_workload
+from .db import postgres
 
-__version__ = "0.11.0"
+__version__ = "0.12.0"
 
 __all__ = [
   "db", "opt", "qal", "experiments", "util",
@@ -135,8 +137,9 @@ __all__ = [
   "JoinOrderOptimization", "PhysicalOperatorSelection", "ParameterGeneration", "TwoStageOptimizationPipeline",
   "IncrementalOptimizationStep", "IncrementalOptimizationPipeline",
   "as_complete_algorithm", "OptimizationSettings",
-  "Database",
+  "Database", "postgres",
   "relalg", "transform", "SqlQuery", "ColumnReference", "parse_query",
-  "validation", "PhysicalQueryPlan",
-  "workloads", "execute_workload", "optimize_and_execute_workload"
+  "QueryPlan",
+  "validation",
+  "analysis", "workloads", "executor", "execute_workload", "optimize_and_execute_workload"
 ]

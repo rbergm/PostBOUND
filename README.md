@@ -1,7 +1,7 @@
 # PostBOUND
 
 ![GitHub License](https://img.shields.io/github/license/rbergm/PostBOUND)
-![Static Badge](https://img.shields.io/badge/version-0.11.0-blue)
+![Static Badge](https://img.shields.io/badge/version-0.12.0-blue)
 
 PostBOUND is a framework for studying query optimization algorithms for (relational) database systems. It provides
 tools to easily implement prototypes of new optimization algorithms and to compare them in a transparent and
@@ -57,7 +57,7 @@ from postbound.optimizer import presets
 ##
 ## Step 1: System setup
 ##
-postgres_instance = pb.db.postgres.connect()
+postgres_instance = pb.postgres.connect()
 presets.apply_standard_system_options()
 job_workload = pb.workloads.job()
 ues_settings = presets.fetch("ues")

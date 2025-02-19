@@ -52,7 +52,7 @@ for label, query in workloads.job().entries():
     print("Now executing query", query)
     pg_db.prewarm_tables(query.tables())
     original_query = query
-    query = pg_db.hinting().generate_hints(query, None, None, true_cardinalities(label))
+    query = pg_db.hinting().generate_hints(query, plan_parameters=true_cardinalities(label))
     query_start = datetime.now()
     pg_db.execute_query(query)
     query_end = datetime.now()

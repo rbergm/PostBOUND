@@ -11,16 +11,16 @@ from typing import Optional, Protocol
 
 
 from .optimizer import validation
-from .optimizer.jointree import PhysicalQueryPlan
 from .optimizer.validation import OptimizationPreCheck
 from .optimizer._hints import PhysicalOperatorAssignment, PlanParameterization
-from . import db
+from .db import Database, DatabasePool
 from ._stages import (
     CompleteOptimizationAlgorithm,
     CardinalityEstimator, CostModel, PlanEnumerator,
     JoinOrderOptimization, PhysicalOperatorSelection, ParameterGeneration,
     IncrementalOptimizationStep
 )
+from ._qep import QueryPlan
 from .qal import SqlQuery
 from .util import StateError
 
@@ -42,7 +42,7 @@ class OptimizationPipeline(abc.ABC):
     """
 
     @abc.abstractmethod
-    def query_execution_plan(self, query: SqlQuery) -> PhysicalQueryPlan:
+    def query_execution_plan(self, query: SqlQuery) -> QueryPlan:
         """Applies the current pipeline configuration to obtain an optimized plan for the input query.
 
         Parameters
@@ -52,7 +52,7 @@ class OptimizationPipeline(abc.ABC):
 
         Returns
         -------
-        PhysicalQueryPlan
+        QueryPlan
             An optimized query execution plan for the input query.
 
             If the optimization strategies only provide partial optimization decisions (e.g. physical operators for a subset of
@@ -128,12 +128,12 @@ class OptimizationPipeline(abc.ABC):
         return hinting_service.generate_hints(query, execution_plan)
 
     @abc.abstractmethod
-    def target_database(self) -> db.Database:
+    def target_database(self) -> Database:
         """Provides the current target database.
 
         Returns
         -------
-        db.Database
+        Database
             The database for which the input queries should be optimized
         """
         raise NotImplementedError
@@ -161,26 +161,26 @@ class IntegratedOptimizationPipeline(OptimizationPipeline):
 
     Parameters
     ----------
-    target_db : Optional[db.Database], optional
+    target_db : Optional[Database], optional
         The database for which the optimized queries should be generated. If this is not given, he default database is
         extracted from the `DatabasePool`.
     """
 
-    def __init__(self, target_db: Optional[db.Database] = None) -> None:
+    def __init__(self, target_db: Optional[Database] = None) -> None:
         self._target_db = (target_db if target_db is not None
-                           else db.DatabasePool.get_instance().current_database())
+                           else DatabasePool.get_instance().current_database())
         self._optimization_algorithm: Optional[CompleteOptimizationAlgorithm] = None
         super().__init__()
 
     @property
-    def target_db(self) -> db.Database:
+    def target_db(self) -> Database:
         """The database for which optimized queries should be generated.
 
         When assigning a new target database, compatibility with the current `optimization_algorithm` will be checked.
 
         Returns
         -------
-        db.Database
+        Database
             The currently selected database system
 
         Raises
@@ -195,7 +195,7 @@ class IntegratedOptimizationPipeline(OptimizationPipeline):
         return self._target_db
 
     @target_db.setter
-    def target_db(self, system: db.Database) -> None:
+    def target_db(self, system: Database) -> None:
         if self._optimization_algorithm is not None:
             pre_check = self._optimization_algorithm.pre_check()
             pre_check.check_supported_database_system(system).ensure_all_passed()
@@ -231,7 +231,7 @@ class IntegratedOptimizationPipeline(OptimizationPipeline):
             pre_check.check_supported_database_system(self._target_db).ensure_all_passed()
         self._optimization_algorithm = algorithm
 
-    def query_execution_plan(self, query: SqlQuery) -> PhysicalQueryPlan:
+    def query_execution_plan(self, query: SqlQuery) -> QueryPlan:
         if self.optimization_algorithm is None:
             raise StateError("No algorithm has been selected")
 
@@ -242,7 +242,7 @@ class IntegratedOptimizationPipeline(OptimizationPipeline):
         physical_qep = self.optimization_algorithm.optimize_query(query)
         return physical_qep
 
-    def target_database(self) -> db.Database:
+    def target_database(self) -> Database:
         return self._target_db
 
     def describe(self) -> dict:
@@ -265,11 +265,11 @@ class TextBookOptimizationPipeline(OptimizationPipeline):
 
     Parameters
     ----------
-    target_db : db.Database
+    target_db : Database
         The database for which the optimized queries should be generated.
     """
 
-    def __init__(self, target_db: db.Database) -> None:
+    def __init__(self, target_db: Database) -> None:
         from .db.postgres import PostgresInterface
         from .optimizer.strategies.dynprog import DynamicProgrammingEnumerator, PostgresDynProg
         from .optimizer.strategies.native import NativeCardinalityEstimator, NativeCostModel
@@ -374,7 +374,7 @@ class TextBookOptimizationPipeline(OptimizationPipeline):
         self._build = True
         return self
 
-    def query_execution_plan(self, query: SqlQuery) -> PhysicalQueryPlan:
+    def query_execution_plan(self, query: SqlQuery) -> QueryPlan:
         if not self._build:
             raise StateError("Pipeline has not been build")
         self._support_check.check_supported_query(query).ensure_all_passed(query)
@@ -420,7 +420,7 @@ class TwoStageOptimizationPipeline(OptimizationPipeline):
 
     Parameters
     ----------
-    target_db : db.Database
+    target_db : Database
         The database for which the optimized queries should be generated.
 
 
@@ -432,7 +432,7 @@ class TwoStageOptimizationPipeline(OptimizationPipeline):
     >>> pipeline.optimize_query(join_order_benchmark["1a"])
     """
 
-    def __init__(self, target_db: db.Database) -> None:
+    def __init__(self, target_db: Database) -> None:
         self._target_db = target_db
         self._pre_check: OptimizationPreCheck | None = validation.EmptyPreCheck()
         self._join_order_enumerator: JoinOrderOptimization | None = None
@@ -441,20 +441,20 @@ class TwoStageOptimizationPipeline(OptimizationPipeline):
         self._build = False
 
     @property
-    def target_db(self) -> db.Database:
+    def target_db(self) -> Database:
         """The database for which optimized queries should be generated.
 
         When assigning a new target database, the pipeline needs to be build again.
 
         Returns
         -------
-        db.Database
+        Database
             The currently selected database system
         """
         return self._target_db
 
     @target_db.setter
-    def target_db(self, new_db: db.Database) -> None:
+    def target_db(self, new_db: Database) -> None:
         self._target_db = new_db
         self._build = False
 
@@ -660,14 +660,12 @@ class TwoStageOptimizationPipeline(OptimizationPipeline):
         self._build = True
         return self
 
-    def target_database(self) -> db.Database:
+    def target_database(self) -> Database:
         return self.target_db
 
-    def query_execution_plan(self, query: SqlQuery) -> PhysicalQueryPlan:
+    def query_execution_plan(self, query: SqlQuery) -> QueryPlan:
         optimized_query = self.optimize_query(query)
-        db_plan = self.target_db.optimizer().query_plan(optimized_query)
-        physical_qep = PhysicalQueryPlan.load_from_query_plan(db_plan, query=query)
-        return physical_qep
+        return self.target_db.optimizer().query_plan(optimized_query)
 
     def optimize_query(self, query: SqlQuery) -> SqlQuery:
         self._assert_is_build()
@@ -675,22 +673,11 @@ class TwoStageOptimizationPipeline(OptimizationPipeline):
         if not supported_query_check.passed:
             raise validation.UnsupportedQueryError(query, supported_query_check.failure_reason)
 
-        if self.join_order_enumerator is None:
-            join_order = None
-        else:
-            join_order = self.join_order_enumerator.optimize_join_order(query)
-
-        if self.physical_operator_selection is None:
-            physical_operators = PhysicalOperatorAssignment()
-        else:
-            join_order = join_order.as_logical_join_tree() if isinstance(join_order, PhysicalQueryPlan) else join_order
-            physical_operators = self.physical_operator_selection.select_physical_operators(query, join_order)
-
-        if self.plan_parameterization is None:
-            plan_parameters = PlanParameterization()
-        else:
-            join_order = join_order.as_logical_join_tree() if isinstance(join_order, PhysicalQueryPlan) else join_order
-            plan_parameters = self._plan_parameterization.generate_plan_parameters(query, join_order, physical_operators)
+        join_order = None if self.join_order_enumerator is None else self.join_order_enumerator.optimize_join_order(query)
+        physical_operators = (PhysicalOperatorAssignment() if self.physical_operator_selection is None
+                              else self.physical_operator_selection.select_physical_operators(query, join_order))
+        plan_parameters = (PlanParameterization() if self.plan_parameterization is None
+                           else self.plan_parameterization.generate_plan_parameters(query, join_order, physical_operators))
 
         return self._target_db.hinting().generate_hints(query, join_order=join_order,
                                                         physical_operators=physical_operators,
@@ -731,24 +718,24 @@ class IncrementalOptimizationPipeline(OptimizationPipeline):
 
     Parameters
     ----------
-    target_db : db.Database
+    target_db : Database
         The database for which the optimized queries should be generated.
     """
 
-    def __init__(self, target_db: db.Database) -> None:
+    def __init__(self, target_db: Database) -> None:
         self._target_db = target_db
         self._initial_plan_generator: Optional[CompleteOptimizationAlgorithm] = None
         self._optimization_steps: list[IncrementalOptimizationStep] = []
 
     @property
-    def target_db(self) -> db.Database:
+    def target_db(self) -> Database:
         """The database for which optimized queries should be generated.
 
         When a new target database is selected, all optimization steps are checked for support of the new database.
 
         Returns
         -------
-        db.Database
+        Database
             _description_
 
         Raises
@@ -759,7 +746,7 @@ class IncrementalOptimizationPipeline(OptimizationPipeline):
         return self._target_db
 
     @target_db.setter
-    def target_db(self, database: db.Database) -> None:
+    def target_db(self, database: Database) -> None:
         self._ensure_pipeline_integrity(database=database)
         self._target_db = database
 
@@ -808,10 +795,10 @@ class IncrementalOptimizationPipeline(OptimizationPipeline):
         self._optimization_steps.append(next_step)
         return self
 
-    def target_database(self) -> db.Database:
+    def target_database(self) -> Database:
         return self.target_db
 
-    def query_execution_plan(self, query: SqlQuery) -> PhysicalQueryPlan:
+    def query_execution_plan(self, query: SqlQuery) -> QueryPlan:
         self._ensure_supported_query(query)
         current_plan = (self.initial_plan_generator.optimize_query(query) if self.initial_plan_generator is not None
                         else self.target_db.optimizer().query_plan(query))
@@ -828,7 +815,7 @@ class IncrementalOptimizationPipeline(OptimizationPipeline):
             "steps": [step.describe() for step in self._optimization_steps]
         }
 
-    def _ensure_pipeline_integrity(self, *, database: Optional[db.Database] = None,
+    def _ensure_pipeline_integrity(self, *, database: Optional[Database] = None,
                                    initial_plan_generator: Optional[CompleteOptimizationAlgorithm] = None,
                                    additional_optimization_step: Optional[IncrementalOptimizationStep] = None,
                                    ) -> None:
@@ -839,7 +826,7 @@ class IncrementalOptimizationPipeline(OptimizationPipeline):
 
         Parameters
         ----------
-        database : Optional[db.Database], optional
+        database : Optional[Database], optional
             The new target database system if it has been updated, by default None
         initial_plan_generator : Optional[CompleteOptimizationAlgorithm], optional
             The new initial plan generator if it has been updated, by default None

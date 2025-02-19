@@ -6,11 +6,12 @@ from typing import Optional
 
 
 from .optimizer import validation
-from .optimizer.jointree import LogicalJoinTree, PhysicalQueryPlan
+from .optimizer._jointree import JoinTree
 from .optimizer.validation import OptimizationPreCheck
 from .optimizer._hints import PhysicalOperatorAssignment, PlanParameterization
 from . import db
 from ._core import Cost, Cardinality
+from ._qep import QueryPlan
 from .qal import SqlQuery, TableReference
 from .util import jsondict
 
@@ -22,7 +23,7 @@ class CompleteOptimizationAlgorithm(abc.ABC):
     """
 
     @abc.abstractmethod
-    def optimize_query(self, query: SqlQuery) -> PhysicalQueryPlan:
+    def optimize_query(self, query: SqlQuery) -> QueryPlan:
         """Constructs the optimized execution plan for an input query.
 
         Parameters
@@ -32,7 +33,7 @@ class CompleteOptimizationAlgorithm(abc.ABC):
 
         Returns
         -------
-        PhysicalQueryPlan
+        QueryPlan
             The optimized query plan
         """
         raise NotImplementedError
@@ -137,7 +138,7 @@ class CostModel(abc.ABC):
     """The cost model estimates how expensive computing a certain query plan is."""
 
     @abc.abstractmethod
-    def estimate_cost(self, query: SqlQuery, plan: PhysicalQueryPlan) -> Cost:
+    def estimate_cost(self, query: SqlQuery, plan: QueryPlan) -> Cost:
         """Computes the cost estimate for a specific plan.
 
         The following conventions are used for the estimation: the root node of the plan will not have any cost set. However,
@@ -151,7 +152,7 @@ class CostModel(abc.ABC):
         ----------
         query : SqlQuery
             The query being optimized
-        plan : PhysicalQueryPlan
+        plan : QueryPlan
             The plan to estimate.
 
         Returns
@@ -214,7 +215,7 @@ class PlanEnumerator(abc.ABC):
 
     @abc.abstractmethod
     def generate_execution_plan(self, query: SqlQuery, *, cost_model: CostModel,
-                                cardinality_estimator: CardinalityEstimator) -> PhysicalQueryPlan:
+                                cardinality_estimator: CardinalityEstimator) -> QueryPlan:
         """Computes the optimal plan to execute the given query.
 
         Parameters
@@ -228,7 +229,7 @@ class PlanEnumerator(abc.ABC):
 
         Returns
         -------
-        PhysicalQueryPlan
+        QueryPlan
             The query plan
 
         Notes
@@ -275,7 +276,7 @@ class JoinOrderOptimization(abc.ABC):
     """
 
     @abc.abstractmethod
-    def optimize_join_order(self, query: SqlQuery) -> Optional[LogicalJoinTree]:
+    def optimize_join_order(self, query: SqlQuery) -> Optional[JoinTree]:
         """Performs the actual join ordering process.
 
         The join tree can be further annotated with an initial operator assignment, if that is an inherent part of
@@ -355,14 +356,14 @@ class PhysicalOperatorSelection(abc.ABC):
     """
 
     @abc.abstractmethod
-    def select_physical_operators(self, query: SqlQuery, join_order: Optional[LogicalJoinTree]) -> PhysicalOperatorAssignment:
+    def select_physical_operators(self, query: SqlQuery, join_order: Optional[JoinTree]) -> PhysicalOperatorAssignment:
         """Performs the operator assignment.
 
         Parameters
         ----------
         query : SqlQuery
             The query to optimize
-        join_order : Optional[LogicalJoinTree]
+        join_order : Optional[JoinTree]
             The selected join order of the query
 
         Returns
@@ -420,7 +421,7 @@ class ParameterGeneration(abc.ABC):
     """
 
     @abc.abstractmethod
-    def generate_plan_parameters(self, query: SqlQuery, join_order: Optional[LogicalJoinTree],
+    def generate_plan_parameters(self, query: SqlQuery, join_order: Optional[JoinTree],
                                  operator_assignment: Optional[PhysicalOperatorAssignment]) -> PlanParameterization:
         """Executes the actual parameterization.
 
@@ -428,7 +429,7 @@ class ParameterGeneration(abc.ABC):
         ----------
         query : SqlQuery
             The query to optimize
-        join_order : Optional[LogicalJoinTree]
+        join_order : Optional[JoinTree]
             The selected join order for the query.
         operator_assignment : Optional[PhysicalOperatorAssignment]
             The selected operators for the query
@@ -492,7 +493,7 @@ class IncrementalOptimizationStep(abc.ABC):
 
     @abc.abstractmethod
     def optimize_query(self, query: SqlQuery,
-                       current_plan: PhysicalQueryPlan) -> PhysicalQueryPlan:
+                       current_plan: QueryPlan) -> QueryPlan:
         """Determines the next query plan.
 
         If no further optimization steps are configured in the pipeline, this is also the final query plan.
@@ -501,13 +502,13 @@ class IncrementalOptimizationStep(abc.ABC):
         ----------
         query : SqlQuery
             The query to optimize
-        current_plan : PhysicalQueryPlan
+        current_plan : QueryPlan
             The execution plan that has so far been built by predecessor strategies. If this step is the first step in the
             optimization pipeline, this might also be a plan from the target database system
 
         Returns
         -------
-        PhysicalQueryPlan
+        QueryPlan
             The optimized plan
         """
         raise NotImplementedError
@@ -587,16 +588,17 @@ class _CompleteAlgorithmEmulator(CompleteOptimizationAlgorithm):
                 else (self._operator_selection if self._operator_selection is not None
                       else self._plan_parameterization))
 
-    def optimize_query(self, query: SqlQuery) -> PhysicalQueryPlan:
+    def optimize_query(self, query: SqlQuery) -> QueryPlan:
         join_order = (self._join_order_optimizer.optimize_join_order(query)
                       if self._join_order_optimizer is not None else None)
         physical_operators = (self._operator_selection.select_physical_operators(query, None)
                               if self._operator_selection is not None else None)
         plan_params = (self._plan_parameterization.generate_plan_parameters(query, None, None)
                        if self._plan_parameterization is not None else None)
-        hinted_query = self.database.hinting().generate_hints(query, join_order, physical_operators, plan_params)
-        query_plan = self.database.optimizer().query_plan(hinted_query)
-        return PhysicalQueryPlan(query_plan, query)
+        hinted_query = self.database.hinting().generate_hints(query, join_order=join_order,
+                                                              physical_operators=physical_operators,
+                                                              plan_parameters=plan_params)
+        return self.database.optimizer().query_plan(hinted_query)
 
     def describe(self) -> jsondict:
         return self.stage().describe()

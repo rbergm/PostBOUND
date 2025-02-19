@@ -3,9 +3,9 @@ from __future__ import annotations
 import math
 from typing import Optional
 
-from ..jointree import PhysicalQueryPlan
 from ... import db
-from ..._core import (TableReference, ScanOperators, JoinOperators)
+from ..._core import (TableReference, ScanOperator, JoinOperator)
+from ..._qep import QueryPlan
 from ..._stages import (PlanEnumerator, CostModel, CardinalityEstimator)
 from ...qal import SqlQuery
 from ...db.postgres import (PostgresScanHints, PostgresJoinHints)
@@ -14,16 +14,16 @@ from ...util import jsondict
 
 class DynamicProgrammingEnumerator(PlanEnumerator):
 
-    def __init__(self, *, supported_scan_ops: Optional[set[ScanOperators]] = None,
-                 supported_join_ops: Optional[set[JoinOperators]] = None,
+    def __init__(self, *, supported_scan_ops: Optional[set[ScanOperator]] = None,
+                 supported_join_ops: Optional[set[JoinOperator]] = None,
                  target_db: Optional[db.Database] = None) -> None:
         raise NotImplementedError("The DynamicProgrammingEnumerator is not yet functional. "
                                   "Please use your own enumerator for now.")
 
         target_db = target_db if target_db is not None else db.DatabasePool.get_instance().current_database()
 
-        supported_scan_ops = supported_scan_ops if supported_scan_ops is not None else set(ScanOperators)
-        supported_join_ops = supported_join_ops if supported_join_ops is not None else set(JoinOperators)
+        supported_scan_ops = supported_scan_ops if supported_scan_ops is not None else set(ScanOperator)
+        supported_join_ops = supported_join_ops if supported_join_ops is not None else set(JoinOperator)
 
         if target_db is not None:
             supported_scan_ops = {op for op in supported_scan_ops if target_db.hinting().supports_hint(op)}
@@ -37,7 +37,7 @@ class DynamicProgrammingEnumerator(PlanEnumerator):
         cost_model.initialize(self._target_db, query)
         cardinality_estimator.initialize(self._target_db, query)
 
-        dp_table: dict[frozenset[TableReference], PhysicalQueryPlan] = {}
+        dp_table: dict[frozenset[TableReference], QueryPlan] = {}
         self._determine_base_access_paths(dp_table, query, cost_model=cost_model, cardinality_estimator=cardinality_estimator)
 
         cost_model.cleanup()
@@ -52,7 +52,7 @@ class DynamicProgrammingEnumerator(PlanEnumerator):
             "database_system": self._target_db.describe()
         }
 
-    def _determine_base_access_paths(self, dp_table: dict[frozenset[TableReference], PhysicalQueryPlan], query: SqlQuery, *,
+    def _determine_base_access_paths(self, dp_table: dict[frozenset[TableReference], QueryPlan], query: SqlQuery, *,
                                      cost_model: CostModel, cardinality_estimator: CardinalityEstimator) -> None:
         for table in query.tables():
             cheapest_cost = math.inf
@@ -89,8 +89,8 @@ class PostgresDynProg(PlanEnumerator):
         _description_, by default None
     """
 
-    def __init__(self, *, supported_scan_ops: Optional[set[ScanOperators]] = None,
-                 supported_join_ops: Optional[set[JoinOperators]] = None,
+    def __init__(self, *, supported_scan_ops: Optional[set[ScanOperator]] = None,
+                 supported_join_ops: Optional[set[JoinOperator]] = None,
                  enable_materialize: bool = True, enable_memoize: bool = True, enable_sort: bool = True,
                  target_db: Optional[db.Database] = None) -> None:
         raise NotImplementedError("The Postgres-style dynamic programming is not yet functional. "

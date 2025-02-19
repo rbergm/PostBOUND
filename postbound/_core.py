@@ -7,20 +7,31 @@ import numbers
 import re
 import warnings
 from enum import Enum
-from typing import Callable, Iterable, Literal, Optional, Sequence, Union
+from typing import Callable, Iterable, Literal, Optional, Sequence, Union, TypeVar
 
 from . import util
 from .util.errors import StateError
 
 
+T = TypeVar("T")
+"""Typed expressions use this generic type variable."""
+
+
+VisitorResult = TypeVar("VisitorResult")
+"""Result of visitor invocations."""
+
+
 Cost = float
 """Type alias for a cost estimate."""
 
-Cardinality = int
-"""Type alias for a cardinality estimate."""
+Cardinality = float
+"""Type alias for a cardinality estimate.
+
+We use floats instead of ints to for cardinalities to represent missing values as NaN as well as infinite cardinalities.
+"""
 
 
-class ScanOperators(Enum):
+class ScanOperator(Enum):
     """The scan operators supported by PostBOUND.
 
     These can differ from the scan operators that are actually available in the selected target database system. The individual
@@ -38,7 +49,7 @@ class ScanOperators(Enum):
         return self.value < other.value
 
 
-class JoinOperators(Enum):
+class JoinOperator(Enum):
     """The join operators supported by PostBOUND.
 
     These can differ from the join operators that are actually available in the selected target database system. The individual
@@ -56,7 +67,7 @@ class JoinOperators(Enum):
         return self.value < other.value
 
 
-PhysicalOperator = Union[ScanOperators, JoinOperators]
+PhysicalOperator = Union[ScanOperator, JoinOperator]
 """Supertype to model all physical operators supported by PostBOUND.
 
 These can differ from the operators that are actually available in the selected target database system.
@@ -300,7 +311,7 @@ class TableReference:
         return TableReference(self.full_name, self.alias, True)
 
     def __json__(self) -> object:
-        return {"full_name": self._full_name, "alias": self._alias}
+        return {"full_name": self._full_name, "alias": self._alias, "virtual": self._virtual}
 
     def __lt__(self, other: object) -> bool:
         if not isinstance(other, TableReference):
@@ -320,6 +331,178 @@ class TableReference:
 
     def __str__(self) -> str:
         return self._sql_repr
+
+
+class ColumnReference:
+    """A column reference represents a specific column of a specific database table.
+
+    This reference always consists of the name of the "physical" column (see below for special cases). In addition,
+    each column can be bound to the table to which it belongs by providing the associated table reference.
+
+    Column references can be sorted lexicographically and are designed as immutable data objects.
+
+    Parameters
+    ----------
+    name : str
+        The name of the column. Cannot be empty.
+    table : Optional[TableReference], optional
+        The table which provides the column. Can be ``None`` if the table is unknown.
+
+    Raises
+    ------
+    ValueError
+        If the name is empty (or ``None``)
+
+    Notes
+    -----
+    A number of special cases arise when dealing with subqueries and common table expressions. The first one is the
+    fact that columns can be bound to virtual tables, e.g. if they are exported by subqueries, etc. In the same vein,
+    columns also do not always need to refer directly to physical columns. Consider the following example query:
+
+    ::
+
+        WITH cte_table AS (SELECT foo.f_id, foo.a + foo.b AS 'sum' FROM foo)
+        SELECT *
+        FROM bar JOIN cte_table ON bar.b_id = cte_table.f_id
+        WHERE cte_table.sum < 42
+
+    In this case, the CTE exports a column ``sum`` that is constructed based on two "actual" columns. Hence, the sum
+    column itself does not have any physical representation but will be modelled as a column reference nevertheless.
+    """
+
+    def __init__(self, name: str, table: Optional[TableReference] = None) -> None:
+        if not name:
+            raise ValueError("Column name is required")
+        self._name = name
+        self._table = table
+        self._normalized_name = normalize(self._name)
+        self._hash_val = hash((self._normalized_name, self._table))
+
+        if self._table:
+            self._sql_repr = f"{quote(self._table.identifier())}.{quote(self._name)}"
+        else:
+            self._sql_repr = quote(self._name)
+
+    __match_args__ = ("name", "table")
+
+    @property
+    def name(self) -> str:
+        """Get the name of this column. This is guaranteed to be set and will never be empty
+
+        Returns
+        -------
+        str
+            The name
+        """
+        return self._name
+
+    @property
+    def table(self) -> Optional[TableReference]:
+        """Get the table to which this column belongs, if specified.
+
+        Returns
+        -------
+        Optional[TableReference]
+            The table or ``None``. The table can be an arbitrary reference, i.e. virtual or physical.
+        """
+        return self._table
+
+    def is_bound(self) -> bool:
+        """Checks, whether this column is bound to a table.
+
+        Returns
+        -------
+        bool
+            Whether a valid table reference is set
+        """
+        return self.table is not None
+
+    def belongs_to(self, table: TableReference) -> bool:
+        """Checks, whether the column is part of the given table.
+
+        This check does not consult the schema of the actual database or the like, it merely matches the given table
+        reference with the `table` attribute of this column.
+
+        Parameters
+        ----------
+        table : TableReference
+            The table to check
+
+        Returns
+        -------
+        bool
+            Whether the table's column is the same as the given one
+        """
+        return table == self.table
+
+    def bind_to(self, table: TableReference) -> ColumnReference:
+        """Binds this column to a new table.
+
+        Parameters
+        ----------
+        table : TableReference
+            The new table
+
+        Returns
+        -------
+        ColumnReference
+            The updated column reference, the original reference is not modified.
+        """
+        return ColumnReference(self.name, table)
+
+    def __json__(self) -> object:
+        return {"name": self._name, "table": self._table}
+
+    def __lt__(self, other: object) -> bool:
+        if not isinstance(other, ColumnReference):
+            return NotImplemented
+        if self.table == other.table:
+            return self._normalized_name < other._normalized_name
+        if not self.table:
+            return True
+        if not other.table:
+            return False
+        return self.table < other.table
+
+    def __hash__(self) -> int:
+        return self._hash_val
+
+    def __eq__(self, other) -> bool:
+        return isinstance(other, type(self)) and self._normalized_name == other._normalized_name and self.table == other.table
+
+    def __repr__(self) -> str:
+        return f"ColumnReference(name='{self.name}', table={repr(self.table)})"
+
+    def __str__(self) -> str:
+        return self._sql_repr
+
+
+class UnboundColumnError(StateError):
+    """Indicates that a column is required to be bound to a table, but the provided column was not.
+
+    Parameters
+    ----------
+    column : ColumnReference
+        The column without the necessary table binding
+    """
+
+    def __init__(self, column: ColumnReference) -> None:
+        super().__init__("Column is not bound to any table: " + str(column))
+        self.column = column
+
+
+class VirtualTableError(StateError):
+    """Indicates that a table is required to correspond to a physical table, but the provided reference was not.
+
+    Parameters
+    ----------
+    table : TableReference
+        The virtual table
+    """
+
+    def __init__(self, table: TableReference) -> None:
+        super().__init__("Table is virtual: " + str(table))
+        self.table = table
 
 
 class QueryExecutionPlan:
@@ -425,13 +608,16 @@ class QueryExecutionPlan:
                  inner_child: Optional[QueryExecutionPlan] = None,
                  subplan_input: Optional[QueryExecutionPlan] = None, is_subplan_root: bool = False,
                  subplan_name: str = "") -> None:
+        warnings.warn("QueryExecutionPlan is deprecated and will be removed in a future version. "
+                      "Use the new QueryPlan instead.", FutureWarning)
+
         self.node_type = node_type
         self.physical_operator = physical_operator
         self.is_join = is_join
         self.is_scan = is_scan
-        if is_scan and not isinstance(physical_operator, ScanOperators):
+        if is_scan and not isinstance(physical_operator, ScanOperator):
             warnings.warn("Supplied operator is scan operator but node is created as non-scan node")
-        if is_join and not isinstance(physical_operator, JoinOperators):
+        if is_join and not isinstance(physical_operator, JoinOperator):
             warnings.warn("Supplied operator is join operator but node is created as non-join node")
 
         self.parallel_workers = parallel_workers

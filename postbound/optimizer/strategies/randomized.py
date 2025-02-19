@@ -7,17 +7,18 @@ from typing import Literal, Optional
 
 import networkx as nx
 
-from .. import jointree, validation
+from .. import validation
+from .._jointree import JoinTree, to_query_plan
 from .._hints import PhysicalOperatorAssignment, JoinOperatorAssignment, ScanOperatorAssignment
-from ..._core import JoinOperators, ScanOperators, PhysicalOperator
+from ..._core import JoinOperator, ScanOperator, PhysicalOperator
+from ..._qep import QueryPlan
 from ..._stages import JoinOrderOptimization, PhysicalOperatorSelection, CompleteOptimizationAlgorithm
 from ... import db, qal
 from ...qal import TableReference
 from ...util import networkx as nx_utils
 
 
-def _merge_nodes(query: qal.SqlQuery, start: jointree.LogicalJoinTree | TableReference,
-                 end: jointree.LogicalJoinTree | TableReference) -> jointree.LogicalJoinTree:
+def _merge_nodes(query: qal.SqlQuery, start: JoinTree | TableReference, end: JoinTree | TableReference) -> JoinTree:
     """Provides a join tree that combines two specific trees or tables.
 
     This is a shortcut method to merge arbitrary tables or trees without having to check whether a table-based or tree-based
@@ -28,29 +29,23 @@ def _merge_nodes(query: qal.SqlQuery, start: jointree.LogicalJoinTree | TableRef
     query : qal.SqlQuery
         The query to which the (partial) join trees belong. This parameter is necessary to generate the correct metadata for
         the join tree
-    start : jointree.LogicalJoinTree | TableReference
+    start : JoinTree | TableReference
         The first tree to merge. If this is a base table, it will be treated as a join tree of just a scan of that table.
-    end : jointree.LogicalJoinTree | TableReference
+    end : JoinTree | TableReference
         The second tree to merge. If this is a base table, it will be treated as a join tree of just a scan of that table.
 
     Returns
     -------
-    jointree.LogicalJoinTree
+    JoinTree
         A join tree combining the input trees. The `start` node will be the left node of the tree and the `end` node will be
         the right node.
     """
-    if isinstance(start, TableReference):
-        start_annotation = jointree.LogicalBaseTableMetadata(query.predicates().filters_for(start))
-        start = jointree.LogicalJoinTree.for_base_table(start, start_annotation)
-    if isinstance(end, TableReference):
-        end_annotation = jointree.LogicalBaseTableMetadata(query.predicates().filters_for(end))
-        end = jointree.LogicalJoinTree.for_base_table(end, end_annotation)
-    join_annotation = jointree.LogicalJoinMetadata(query.predicates().joins_between(start.tables(), end.tables()))
-    return start.join_with_subtree(end, join_annotation)
+    start = JoinTree.scan(start) if isinstance(start, TableReference) else start
+    end = JoinTree.scan(end) if isinstance(end, TableReference) else end
+    return start.join_with(end)
 
 
-def _sample_join_graph(query: qal.SqlQuery, join_graph: nx.Graph, *,
-                       base_table: Optional[TableReference] = None) -> jointree.LogicalJoinTree:
+def _sample_join_graph(query: qal.SqlQuery, join_graph: nx.Graph, *, base_table: Optional[TableReference] = None) -> JoinTree:
     """Generates a random join order for the given join graph.
 
     Parameters
@@ -65,7 +60,7 @@ def _sample_join_graph(query: qal.SqlQuery, join_graph: nx.Graph, *,
 
     Returns
     -------
-    jointree.LogicalJoinTree
+    JoinTree
         A random join order for the given join graph.
 
     Warnings
@@ -97,7 +92,7 @@ def _sample_join_graph(query: qal.SqlQuery, join_graph: nx.Graph, *,
         join_graph = nx.contracted_nodes(join_graph, start_node, target_node, self_loops=False)
         join_graph = nx.relabel_nodes(join_graph, {start_node: join_tree})
 
-    final_node = list(join_graph.nodes)[0]
+    final_node: JoinTree = list(join_graph.nodes)[0]
     return final_node
 
 
@@ -129,7 +124,7 @@ class RandomJoinOrderGenerator:
         self._tree_structure = tree_structure
 
     def random_join_orders_for(self, query: qal.SqlQuery, *,
-                               base_table: Optional[TableReference] = None) -> Generator[jointree.LogicalJoinTree]:
+                               base_table: Optional[TableReference] = None) -> Generator[JoinTree, None, None]:
         """Provides a generator that successively provides join orders at random.
 
         Parameters
@@ -141,7 +136,7 @@ class RandomJoinOrderGenerator:
 
         Yields
         ------
-        Generator[jointree.LogicalJoinTree]
+        Generator[JoinTree, None, None]
             A generator that produces random join orders for the input query. The structure of these join orders depends on the
             service configuration. Consult the class-level documentation for more details. Depeding on the
             `eliminate_duplicates` attribute, the join orders are guaranteed to be unique.
@@ -160,8 +155,7 @@ class RandomJoinOrderGenerator:
             return
         elif len(join_graph.nodes) == 1:
             base_table = list(join_graph.nodes)[0]
-            base_annotation = jointree.LogicalBaseTableMetadata(query.predicates().filters_for(base_table))
-            join_tree = jointree.LogicalJoinTree.for_base_table(base_table, base_annotation)
+            join_tree = JoinTree.scan(base_table)
             while True:
                 yield join_tree
         elif not nx.is_connected(join_graph):
@@ -183,8 +177,7 @@ class RandomJoinOrderGenerator:
             yield current_join_order
 
     def _linear_join_orders(self, query: qal.SqlQuery, join_graph: nx.Graph, *,
-                            base_table: Optional[TableReference] = None
-                            ) -> Generator[jointree.LogicalJoinTree, None, None]:
+                            base_table: Optional[TableReference] = None) -> Generator[JoinTree, None, None]:
         """Handler method to generate left-deep or right-deep join orders.
 
         The specific kind of join orders is inferred based on the `_tree_structure` attribute.
@@ -200,26 +193,19 @@ class RandomJoinOrderGenerator:
 
         Yields
         ------
-        Generator[jointree.LogicalJoinTree, None, None]
+        Generator[JoinTree, None, None]
             A generator that produces all possible join orders for the input query.
         """
-        insert_left = self._tree_structure == "left-deep"
+        direction = "inner" if self._tree_structure == "left-deep" else "outer"
         while True:
             join_path = [node for node in nx_utils.nx_random_walk(join_graph, starting_node=base_table)]
-            join_tree = jointree.LogicalJoinTree()
+            join_tree = JoinTree()
             for table in join_path:
-                base_annotation = jointree.LogicalBaseTableMetadata(query.predicates().filters_for(table))
-                if join_tree.tables():
-                    join_annotation = jointree.LogicalJoinMetadata(query.predicates().joins_between(table, join_tree.tables()))
-                else:
-                    join_annotation = None
-                join_tree = join_tree.join_with_base_table(table, base_annotation=base_annotation,
-                                                           join_annotation=join_annotation, insert_left=insert_left)
+                join_tree = join_tree.join_with(table, partner_direction=direction)
             yield join_tree
 
     def _bushy_join_orders(self, query: qal.SqlQuery, join_graph: nx.Graph, *,
-                           base_table: Optional[TableReference] = None
-                           ) -> Generator[jointree.LogicalJoinTree, None, None]:
+                           base_table: Optional[TableReference] = None) -> Generator[JoinTree, None, None]:
         """Handler method to generate bushy join orders.
 
         Notice that linear join orders are considered a subclass of bushy join trees. Hence, bushy join orders may occasionally
@@ -236,7 +222,7 @@ class RandomJoinOrderGenerator:
 
         Yields
         ------
-        Generator[jointree.LogicalJoinTree, None, None]
+        Generator[JoinTree, None, None]
             A generator that produces all possible join orders for the input query.
         """
         while True:
@@ -264,7 +250,7 @@ class RandomJoinOrderOptimizer(JoinOrderOptimization):
         generator_args = generator_args if generator_args is not None else {}
         self._generator = RandomJoinOrderGenerator(**generator_args)
 
-    def optimize_join_order(self, query: qal.SqlQuery) -> Optional[jointree.LogicalJoinTree]:
+    def optimize_join_order(self, query: qal.SqlQuery) -> Optional[JoinTree]:
         return next(self._generator.random_join_orders_for(query))
 
     def describe(self) -> dict:
@@ -313,8 +299,8 @@ class RandomOperatorGenerator:
         If both scans and joins are disabled
     """
 
-    def __init__(self, scan_operators: Optional[Iterable[ScanOperators]] = None,
-                 join_operators: Optional[Iterable[JoinOperators]] = None, *,
+    def __init__(self, scan_operators: Optional[Iterable[ScanOperator]] = None,
+                 join_operators: Optional[Iterable[JoinOperator]] = None, *,
                  include_scans: bool = True, include_joins: bool = True,
                  eliminate_duplicates: bool = False, database: Optional[db.Database] = None) -> None:
         if not include_joins and not include_scans:
@@ -323,12 +309,12 @@ class RandomOperatorGenerator:
         self._eliminate_duplicates = eliminate_duplicates
         self._include_scans = include_scans
         self._include_joins = include_joins
-        allowed_scan_ops = scan_operators if scan_operators else ScanOperators
-        allowed_join_ops = join_operators if join_operators else JoinOperators
+        allowed_scan_ops = scan_operators if scan_operators else ScanOperator
+        allowed_join_ops = join_operators if join_operators else JoinOperator
         self.allowed_scan_ops = frozenset(scan_op for scan_op in allowed_scan_ops if self._db.hinting().supports_hint(scan_op))
         self.allowed_join_ops = frozenset(join_op for join_op in allowed_join_ops if self._db.hinting().supports_hint(join_op))
 
-    def random_operator_assignments_for(self, query: qal.SqlQuery, join_order: jointree.LogicalJoinTree
+    def random_operator_assignments_for(self, query: qal.SqlQuery, join_order: JoinTree
                                         ) -> Generator[PhysicalOperatorAssignment, None, None]:
         """Produces a generator for random operator assignments of the allowed operators.
 
@@ -356,7 +342,7 @@ class RandomOperatorGenerator:
             current_assignment = PhysicalOperatorAssignment()
 
             if self._include_joins:
-                for join in join_order.join_sequence():
+                for join in join_order.iterjoins():
                     selected_operator = random.choice(allowed_joins)
                     current_assignment.set_join_operator(JoinOperatorAssignment(selected_operator, join.tables()))
 
@@ -406,8 +392,7 @@ class RandomOperatorOptimizer(PhysicalOperatorSelection):
         generator_args = generator_args if generator_args is not None else {}
         self._generator = RandomOperatorGenerator(**generator_args)
 
-    def select_physical_operators(self, query: qal.SqlQuery,
-                                  join_order: Optional[jointree.LogicalJoinTree]) -> PhysicalOperatorAssignment:
+    def select_physical_operators(self, query: qal.SqlQuery, join_order: Optional[JoinTree]) -> PhysicalOperatorAssignment:
         return next(self._generator.random_operator_assignments_for(query, join_order))
 
     def describe(self) -> dict:
@@ -459,7 +444,7 @@ class RandomPlanGenerator:
         self._join_order_generator = RandomJoinOrderGenerator(**join_order_args)
         self._operator_generator = RandomOperatorGenerator(**operator_args)
 
-    def random_plans_for(self, query: qal.SqlQuery) -> Generator[jointree.PhysicalQueryPlan, None, None]:
+    def random_plans_for(self, query: qal.SqlQuery) -> Generator[QueryPlan, None, None]:
         """Produces a generator for random query plans of an input query.
 
         The structure of the provided plans can be restricted by configuring the underlying services. Consult the class-level
@@ -482,9 +467,9 @@ class RandomPlanGenerator:
             operator_generator = self._operator_generator.random_operator_assignments_for(query, join_order)
             physical_operators = next(operator_generator)
 
-            query_plan = jointree.PhysicalQueryPlan.load_from_logical_order(join_order, physical_operators)
+            query_plan = to_query_plan(join_order, physical_operators)
             if self._eliminate_duplicates:
-                current_plan_hash = query_plan.plan_hash()
+                current_plan_hash = hash(query_plan)
                 if current_plan_hash in plan_hashes:
                     continue
                 else:
@@ -527,7 +512,7 @@ class RandomPlanOptimizer(CompleteOptimizationAlgorithm):
         super().__init__()
         self._generator = RandomPlanGenerator(join_order_args=join_order_args, operator_args=operator_args, database=database)
 
-    def optimize_query(self, query: qal.SqlQuery) -> jointree.PhysicalQueryPlan:
+    def optimize_query(self, query: qal.SqlQuery) -> QueryPlan:
         return next(self._generator.random_plans_for(query))
 
     def describe(self) -> dict:

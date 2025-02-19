@@ -43,14 +43,14 @@ from ._db import (
     Database,
     DatabaseSchema,
     DatabaseStatistics,
-    QueryExecutionPlan,
     OptimizerInterface,
     HintService,
     DatabasePool,
     UnsupportedDatabaseFeatureError
 )
 from .. import qal, util
-from .._core import ScanOperators, JoinOperators, PhysicalOperator
+from .._core import ScanOperator, JoinOperator, PhysicalOperator
+from .._qep import QueryPlan
 from ..qal import (
     transform,
     TableReference, ColumnReference,
@@ -59,12 +59,11 @@ from ..qal import (
     SqlQuery,
     UnboundColumnError, VirtualTableError
 )
-from ..optimizer.jointree import (
-    JoinTree, LogicalJoinTree, PhysicalQueryPlan
-)
+from ..optimizer._jointree import JoinTree, jointree_from_plan, parameters_from_plan
 from ..optimizer._hints import (
     HintType,
-    PhysicalOperatorAssignment, PlanParameterization
+    PhysicalOperatorAssignment, PlanParameterization,
+    operators_from_plan
 )
 from ..util import Version
 
@@ -349,8 +348,8 @@ class MysqlStatisticsInterface(DatabaseStatistics):
         return self._calculate_most_common_values(column, k=k, cache_enabled=True)
 
 
-MysqlJoinHints = {JoinOperators.HashJoin, JoinOperators.NestedLoopJoin}
-MysqlScanHints = {ScanOperators.IndexScan, ScanOperators.SequentialScan}
+MysqlJoinHints = {JoinOperator.HashJoin, JoinOperator.NestedLoopJoin}
+MysqlScanHints = {ScanOperator.IndexScan, ScanOperator.SequentialScan}
 MysqlPlanHints = {HintType.LinearJoinOrder, HintType.Operator}
 
 
@@ -395,34 +394,22 @@ def _generate_join_order_hint(join_order: Optional[JoinTree]) -> str:
     if not join_order:
         return ""
 
-    linearized_join_order = [base_table_node.table for base_table_node in join_order.table_sequence()]
-    join_order_text = ", ".join(table.identifier() for table in linearized_join_order)
+    join_order_text = ", ".join(table.identifier() for table in join_order.itertables())
     return f"  JOIN_ORDER({join_order_text})"
 
 
-def _obtain_physical_operators(join_order: Optional[LogicalJoinTree | PhysicalQueryPlan],
-                               physical_operators: Optional[PhysicalOperatorAssignment]
-                               ) -> Optional[PhysicalOperatorAssignment]:
-    if not isinstance(join_order, PhysicalQueryPlan):
-        return physical_operators
-    if not physical_operators:
-        return join_order.physical_operators()
-    return join_order.physical_operators().merge_with(physical_operators)
-
-
 MysqlOptimizerHints = {
-    JoinOperators.NestedLoopJoin: "NO_BNL",
-    JoinOperators.HashJoin: "BNL",
-    ScanOperators.SequentialScan: "NO_INDEX",
-    ScanOperators.IndexScan: "INDEX",
-    ScanOperators.IndexOnlyScan: "INDEX",
-    ScanOperators.BitmapScan: "INDEX_MERGE"
+    JoinOperator.NestedLoopJoin: "NO_BNL",
+    JoinOperator.HashJoin: "BNL",
+    ScanOperator.SequentialScan: "NO_INDEX",
+    ScanOperator.IndexScan: "INDEX",
+    ScanOperator.IndexOnlyScan: "INDEX",
+    ScanOperator.BitmapScan: "INDEX_MERGE"
 }
 """See https://dev.mysql.com/doc/refman/8.0/en/optimizer-hints.html"""
 
 
-def _generate_operator_hints(join_order: Optional[JoinTree],
-                             physical_operators: Optional[PhysicalOperatorAssignment]) -> str:
+def _generate_operator_hints(physical_operators: Optional[PhysicalOperatorAssignment]) -> str:
     if not physical_operators:
         return ""
     hints = []
@@ -439,7 +426,7 @@ def _generate_operator_hints(join_order: Optional[JoinTree],
     return "\n".join(hints)
 
 
-MysqlSwitchableOptimizations = {JoinOperators.HashJoin: "block_nested_loop"}
+MysqlSwitchableOptimizations = {JoinOperator.HashJoin: "block_nested_loop"}
 """See https://dev.mysql.com/doc/refman/8.0/en/switchable-optimizations.html"""
 
 
@@ -471,33 +458,26 @@ def _generate_prep_statements(physical_operators: Optional[PhysicalOperatorAssig
     return "\n".join(statements) if statements else ""
 
 
-def _obtain_plan_parameters(join_order: Optional[LogicalJoinTree | PhysicalQueryPlan],
-                            plan_parameters: Optional[PlanParameterization]
-                            ) -> Optional[PlanParameterization]:
-    if not isinstance(join_order, PhysicalQueryPlan):
-        return plan_parameters
-    if not plan_parameters:
-        return join_order.plan_parameters()
-    return join_order.plan_parameters().merge_with(plan_parameters)
-
-
 class MysqlHintService(HintService):
     def __init__(self, mysql_instance: MysqlInterface) -> None:
         super().__init__()
         self._mysql_instance = mysql_instance
 
-    def generate_hints(self, query: SqlQuery,
-                       join_order: Optional[LogicalJoinTree | PhysicalQueryPlan] = None,
+    def generate_hints(self, query: SqlQuery, plan: Optional[QueryPlan] = None, *,
+                       join_order: Optional[JoinTree] = None,
                        physical_operators: Optional[PhysicalOperatorAssignment] = None,
                        plan_parameters: Optional[PlanParameterization] = None) -> SqlQuery:
         if join_order and not join_order.is_linear():
             raise UnsupportedDatabaseFeatureError(self._mysql_instance,
                                                   "Can only enforce join order for linear join trees for now")
 
+        if plan is not None:
+            join_order = jointree_from_plan(plan)
+            physical_operators = operators_from_plan(plan)
+            plan_parameters = parameters_from_plan(plan)
+
         join_order_hint = _generate_join_order_hint(join_order)
-        physical_operators = _obtain_physical_operators(join_order, physical_operators)
-        plan_parameters = _obtain_plan_parameters(join_order, plan_parameters)
-        operator_hint = _generate_operator_hints(join_order, physical_operators)
+        operator_hint = _generate_operator_hints(physical_operators)
         prep_statements = _generate_prep_statements(physical_operators, plan_parameters)
 
         if not join_order_hint and not operator_hint:
@@ -527,7 +507,7 @@ class MysqlOptimizer(OptimizerInterface):
     def __init__(self, mysql_instance: MysqlInterface) -> None:
         self._mysql_instance = mysql_instance
 
-    def query_plan(self, query: SqlQuery | str) -> QueryExecutionPlan:
+    def query_plan(self, query: SqlQuery | str) -> QueryPlan:
         if isinstance(query, SqlQuery):
             prepared_query = self._mysql_instance._prepare_query_execution(query, drop_explain=True)
             query_for_plan = query
@@ -538,8 +518,8 @@ class MysqlOptimizer(OptimizerInterface):
         query_plan = parse_mysql_explain_plan(query_for_plan, raw_query_plan)
         return query_plan.as_query_execution_plan()
 
-    def analyze_plan(self, query: SqlQuery) -> QueryExecutionPlan:
-        raise NotImplementedError
+    def analyze_plan(self, query: SqlQuery) -> QueryPlan:
+        raise NotImplementedError("MySQL interface does not support ANALYZE plans yet")
 
     def cardinality_estimate(self, query: SqlQuery | str) -> int:
         return self.query_plan(query).estimated_cardinality
@@ -833,20 +813,20 @@ def parse_mysql_explain_plan(query: Optional[SqlQuery], explain_data: dict) -> M
 
 
 _MysqlExplainScanNodes = {
-    _IdxLookup: ScanOperators.IndexScan,
-    _IdxMerge: ScanOperators.BitmapScan,
-    _TabScan: ScanOperators.SequentialScan
+    _IdxLookup: ScanOperator.IndexScan,
+    _IdxMerge: ScanOperator.BitmapScan,
+    _TabScan: ScanOperator.SequentialScan
 }
 
 
 _MysqlExplainJoinNodes = {
-    "Block Nested Loop": JoinOperators.NestedLoopJoin,
-    "Batched Key Access": JoinOperators.NestedLoopJoin,
-    "Hash Join": JoinOperators.HashJoin
+    "Block Nested Loop": JoinOperator.NestedLoopJoin,
+    "Batched Key Access": JoinOperator.NestedLoopJoin,
+    "Hash Join": JoinOperator.HashJoin
 }
 
 
-def _node_sequence_to_qep(nodes: Sequence[MysqlExplainNode]) -> QueryExecutionPlan:
+def _node_sequence_to_qep(nodes: Sequence[MysqlExplainNode]) -> QueryPlan:
     assert nodes
     if len(nodes) == 1:
         return nodes[0]._make_qep_node_for_scan()
@@ -855,12 +835,11 @@ def _node_sequence_to_qep(nodes: Sequence[MysqlExplainNode]) -> QueryExecutionPl
         final_table, first_table = nodes
         final_qep = final_table._make_qep_node_for_scan()
         first_qep = first_table._make_qep_node_for_scan()
-        join_operator = _MysqlExplainJoinNodes.get(final_table.join_type, JoinOperators.NestedLoopJoin)
-        join_node = QueryExecutionPlan(final_table.join_type, True, False,
-                                       children=[final_qep, first_qep], inner_child=final_qep,
-                                       cost=final_table.join_cost,
-                                       estimated_cardinality=final_table.join_cardinality_estimate,
-                                       physical_operator=join_operator)
+        join_operator = _MysqlExplainJoinNodes.get(final_table.join_type, JoinOperator.NestedLoopJoin)
+        join_node = QueryPlan(final_table.join_type, operator=join_operator,
+                              children=[first_qep, final_qep],
+                              estimated_cost=final_table.join_cost,
+                              estimated_cardinality=final_table.join_cardinality_estimate)
         return join_node
 
     if len(nodes) > 2:
@@ -868,12 +847,11 @@ def _node_sequence_to_qep(nodes: Sequence[MysqlExplainNode]) -> QueryExecutionPl
         former_qep = _node_sequence_to_qep(former_tables)
         final_qep = final_table._make_qep_node_for_scan()
 
-        join_operator = _MysqlExplainJoinNodes.get(final_table.join_type, JoinOperators.NestedLoopJoin)
-        join_node = QueryExecutionPlan(final_table.join_type, True, False,
-                                       children=[final_qep, former_qep], inner_child=final_qep,
-                                       cost=final_table.join_cost,
-                                       estimated_cardinality=final_table.join_cardinality_estimate,
-                                       physical_operator=join_operator)
+        join_operator = _MysqlExplainJoinNodes.get(final_table.join_type, JoinOperator.NestedLoopJoin)
+        join_node = QueryPlan(final_table.join_type, operator=join_operator,
+                              children=[former_qep, final_qep],
+                              estimated_cost=final_table.join_cost,
+                              estimated_cardinality=final_table.join_cardinality_estimate)
         return join_node
 
 
@@ -895,11 +873,11 @@ class MysqlExplainNode:
         self.join_cardinality_estimate = join_cardinality_estimate
         self.subquery = subquery_node
 
-    def as_query_execution_plan(self) -> QueryExecutionPlan:
+    def as_query_execution_plan(self) -> QueryPlan:
         if self.node_type is not None:
             subquery_plan = [self.subquery.as_query_execution_plan()] if self.subquery is not None else []
-            own_node = QueryExecutionPlan(self.node_type, False, False, table=self.table, children=subquery_plan,
-                                          cost=self.join_cost, estimated_cardinality=self.join_cardinality_estimate)
+            own_node = QueryPlan(self.node_type, base_table=self.table, children=subquery_plan,
+                                 estimated_cost=self.join_cost, estimated_cardinality=self.join_cardinality_estimate)
             return own_node
 
         if not self.next_node:
@@ -927,10 +905,9 @@ class MysqlExplainNode:
             return [self]
         return self.next_node._collect_node_sequence() + [self]
 
-    def _make_qep_node_for_scan(self) -> QueryExecutionPlan:
-        return QueryExecutionPlan(self.scan_type, False, True, table=self.table, cost=self.scan_cost,
-                                  estimated_cardinality=self.scan_cardinality_estimate,
-                                  physical_operator=_MysqlExplainScanNodes.get(self.scan_type))
+    def _make_qep_node_for_scan(self) -> QueryPlan:
+        return QueryPlan(self.scan_type, base_table=self.table, operator=_MysqlExplainScanNodes.get(self.scan_type),
+                         estimated_cost=self.scan_cost, estimated_cardinality=self.scan_cardinality_estimate)
 
     def _join_str(self) -> str:
         if self.node_type is not None:
@@ -971,7 +948,7 @@ class MysqlExplainPlan:
         self.root = root
         self.total_cost = total_cost
 
-    def as_query_execution_plan(self) -> QueryExecutionPlan:
+    def as_query_execution_plan(self) -> QueryPlan:
         return self.root.as_query_execution_plan()
 
     def inspect(self) -> str:

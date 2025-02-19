@@ -13,9 +13,10 @@ from __future__ import annotations
 
 from typing import Optional
 
-from .._hints import PhysicalOperatorAssignment, PlanParameterization
-from ..jointree import LogicalJoinTree, PhysicalQueryPlan
+from .._hints import PhysicalOperatorAssignment, PlanParameterization, operators_from_plan
+from .._jointree import JoinTree, jointree_from_plan, parameters_from_plan
 from ..._core import Cost, Cardinality, TableReference
+from ..._qep import QueryPlan
 from ..._stages import (
     CostModel, CardinalityEstimator,
     JoinOrderOptimization, PhysicalOperatorSelection, ParameterGeneration,
@@ -32,8 +33,8 @@ class NativeCostModel(CostModel):
         super().__init__()
         self._target_db: Optional[db.Database] = None
 
-    def estimate_cost(self, query: qal.SqlQuery, plan: PhysicalQueryPlan) -> Cost:
-        hinted_query = self._target_db.hinting().generate_hints(query, plan)
+    def estimate_cost(self, query: qal.SqlQuery, plan: QueryPlan) -> Cost:
+        hinted_query = self._target_db.hinting().generate_hints(query, plan.with_actual_card())
         return self._target_db.optimizer().cost_estimate(hinted_query)
 
     def describe(self) -> jsondict:
@@ -80,9 +81,9 @@ class NativeJoinOrderOptimizer(JoinOrderOptimization):
         super().__init__()
         self.db_instance = db_instance
 
-    def optimize_join_order(self, query: qal.SqlQuery) -> Optional[LogicalJoinTree]:
+    def optimize_join_order(self, query: qal.SqlQuery) -> Optional[JoinTree]:
         query_plan = self.db_instance.optimizer().query_plan(query)
-        return LogicalJoinTree.load_from_query_plan(query_plan, query)
+        return jointree_from_plan(query_plan)
 
     def describe(self) -> jsondict:
         return {"name": "native", "database_system": self.db_instance.describe()}
@@ -104,13 +105,11 @@ class NativePhysicalOperatorSelection(PhysicalOperatorSelection):
         super().__init__()
         self.db_instance = db_instance
 
-    def select_physical_operators(self, query: qal.SqlQuery,
-                                  join_order: Optional[LogicalJoinTree]) -> PhysicalOperatorAssignment:
+    def select_physical_operators(self, query: qal.SqlQuery, join_order: Optional[JoinTree]) -> PhysicalOperatorAssignment:
         if join_order:
-            query = self.db_instance.hinting().generate_hints(query, join_order)
+            query = self.db_instance.hinting().generate_hints(query, join_order=join_order)
         query_plan = self.db_instance.optimizer().query_plan(query)
-        join_tree = PhysicalQueryPlan.load_from_query_plan(query_plan, query, operators_only=True)
-        return join_tree.physical_operators()
+        return operators_from_plan(query_plan)
 
     def describe(self) -> jsondict:
         return {"name": "native", "database_system": self.db_instance.describe()}
@@ -132,13 +131,13 @@ class NativePlanParameterization(ParameterGeneration):
         super().__init__()
         self.db_instance = db_instance
 
-    def generate_plan_parameters(self, query: qal.SqlQuery, join_order: Optional[LogicalJoinTree | PhysicalQueryPlan],
+    def generate_plan_parameters(self, query: qal.SqlQuery, join_order: Optional[JoinTree],
                                  operator_assignment: Optional[PhysicalOperatorAssignment]) -> Optional[PlanParameterization]:
         if join_order or operator_assignment:
-            query = self.db_instance.hinting().generate_hints(query, join_order, operator_assignment)
+            query = self.db_instance.hinting().generate_hints(query, join_order=join_order,
+                                                              physical_operators=operator_assignment)
         query_plan = self.db_instance.optimizer().query_plan(query)
-        join_tree = PhysicalQueryPlan.load_from_query_plan(query_plan, query)
-        return join_tree.plan_parameters()
+        parameters_from_plan(query_plan)
 
     def describe(self) -> jsondict:
         return {"name": "native", "database_system": self.db_instance.describe()}
@@ -157,9 +156,8 @@ class NativeOptimizer(CompleteOptimizationAlgorithm):
         super().__init__()
         self.db_instance = db_instance
 
-    def optimize_query(self, query: qal.SqlQuery) -> PhysicalQueryPlan:
-        query_plan = self.db_instance.optimizer().query_plan(query)
-        return PhysicalQueryPlan.load_from_query_plan(query_plan)
+    def optimize_query(self, query: qal.SqlQuery) -> QueryPlan:
+        return self.db_instance.optimizer().query_plan(query)
 
     def describe(self) -> jsondict:
         return {"name": "native", "database_system": self.db_instance.describe()}

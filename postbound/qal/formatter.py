@@ -6,7 +6,7 @@ from collections.abc import Callable
 from typing import Optional
 
 from . import transform
-from ._core import (
+from ._qal import (
     SqlExpression, SubqueryExpression, CaseExpression, Limit, CommonTableExpression,
     CompoundOperator,
     ValuesWithQuery,

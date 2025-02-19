@@ -10,13 +10,11 @@
 #
 
 import postbound as pb
-from postbound.db import postgres
-from postbound.experiments import executor, workloads
 from postbound.optimizer import presets
 
 # Setup: we optimize queries from the Join Order Benchmark on a Postgres database
-postgres_db = postgres.connect()
-job_workload = workloads.job()
+postgres_db = pb.postgres.connect()
+job_workload = pb.workloads.job()
 
 # Configure the optimization pipeline for UES
 ues_settings = presets.fetch("ues")
@@ -25,14 +23,14 @@ ues_pipeline = pb.TwoStageOptimizationPipeline(postgres_db).load_settings(ues_se
 # Execute the benchmarks: each query should be repeated 3 times and each workload should be repeated 3 times as well
 # After each workload repetition, the execution order of all queries should be changed. Finally, all queries should be executed
 # as COUNT(*) queries
-query_preparation = executor.QueryPreparationService(count_star=True)
+query_preparation = pb.executor.QueryPreparationService(count_star=True)
 
 # Benchmark the native workload
-native_results = executor.execute_workload(job_workload, postgres_db,
-                                           workload_repetitions=3, per_query_repetitions=3, shuffled=True,
-                                           query_preparation=query_preparation, include_labels=True)
+native_results = pb.execute_workload(job_workload, postgres_db,
+                                     workload_repetitions=3, per_query_repetitions=3, shuffled=True,
+                                     query_preparation=query_preparation, include_labels=True)
 
 # Benchmark the UES workload
-ues_results = executor.optimize_and_execute_workload(job_workload, ues_pipeline,
-                                                     workload_repetitions=3, per_query_repetitions=3, shuffled=True,
-                                                     query_preparation=query_preparation, include_labels=True)
+ues_results = pb.optimize_and_execute_workload(job_workload, ues_pipeline,
+                                               workload_repetitions=3, per_query_repetitions=3, shuffled=True,
+                                               query_preparation=query_preparation, include_labels=True)

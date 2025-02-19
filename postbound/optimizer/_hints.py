@@ -1,20 +1,21 @@
 
 from __future__ import annotations
 
+import json
 import math
 from collections.abc import Collection, Iterable
-from dataclasses import dataclass
 from enum import Enum
-from typing import Any, overload
+from typing import Any, Optional
 
 from .. import util
-from .._core import ScanOperators, JoinOperators, PhysicalOperator
-from ..qal import parser, TableReference, SqlExpression
+from .._core import ScanOperator, JoinOperator, PhysicalOperator, T
+from .._qep import QueryPlan, PlanParams, PlanEstimates
+from ..qal import parser, TableReference
 from ..util import jsondict
 
 
 class ScanOperatorAssignment:
-    """Models the selection of a scan operator to a specific base table.
+    """Models the selection of a scan operator for a specific base table.
 
     Attributes
     -------
@@ -26,14 +27,16 @@ class ScanOperatorAssignment:
         The number of parallel processes that should be used to execute the scan. Can be set to 1 to indicate sequential
         operation. Defaults to NaN to indicate that no choice has been made.
     """
-    def __init__(self, operator: ScanOperators, table: TableReference, parallel_workers: float | int = math.nan) -> None:
+    def __init__(self, operator: ScanOperator, table: TableReference, parallel_workers: float | int = math.nan) -> None:
         self._operator = operator
         self._table = table
         self._parallel_workers = parallel_workers
         self._hash_val = hash((self._operator, self._table, self._parallel_workers))
 
+    __match_args__ = ("operator", "table", "parallel_workers")
+
     @property
-    def operator(self) -> ScanOperators:
+    def operator(self) -> ScanOperator:
         """Get the assigned operator.
 
         Returns
@@ -123,7 +126,7 @@ class JoinOperatorAssignment:
         If `join` contains less than 2 tables
     """
 
-    def __init__(self, operator: JoinOperators, join: Collection[TableReference], *,
+    def __init__(self, operator: JoinOperator, join: Collection[TableReference], *,
                  parallel_workers: float | int = math.nan) -> None:
         if len(join) < 2:
             raise ValueError("At least 2 join tables must be given")
@@ -133,8 +136,10 @@ class JoinOperatorAssignment:
 
         self._hash_val = hash((self._operator, self._join, self._parallel_workers))
 
+    __match_args__ = ("operator", "join", "parallel_workers")
+
     @property
-    def operator(self) -> JoinOperators:
+    def operator(self) -> JoinOperator:
         """Get the operator that was selected for the join
 
         Returns
@@ -249,13 +254,15 @@ class DirectionalJoinOperatorAssignment(JoinOperatorAssignment):
     ValueError
         If either `inner` or `outer` is empty.
     """
-    def __init__(self, operator: JoinOperators, inner: Collection[TableReference],
+    def __init__(self, operator: JoinOperator, inner: Collection[TableReference],
                  outer: Collection[TableReference], *, parallel_workers: float | int = math.nan) -> None:
         if not inner or not outer:
             raise ValueError("Both inner and outer relations must be given")
         self._inner = frozenset(inner)
         self._outer = frozenset(outer)
         super().__init__(operator, self._inner | self._outer, parallel_workers=parallel_workers)
+
+    __match_args__ = ("operator", "outer", "inner", "parallel_workers")
 
     @property
     def inner(self) -> frozenset[TableReference]:
@@ -295,45 +302,8 @@ class DirectionalJoinOperatorAssignment(JoinOperatorAssignment):
                 and super().__eq__(other))
 
 
-@overload
-def read_operator_json(json_data: str) -> ScanOperators | JoinOperators:
-    """Reconstructs a physical operator from its JSON representation.
-
-    Parameters
-    ----------
-    json_data : str
-        The JSON data
-
-    Returns
-    -------
-    ScanOperators | JoinOperators
-        The corresponding operator
-    """
-    pass
-
-
-@overload
-def read_operator_json(json_data: dict) -> ScanOperatorAssignment | JoinOperatorAssignment:
-    """Reconstructs a physical operator assignment from its JSON representation.
-
-    Parameters
-    ----------
-    json_data : dict
-        The JSON data
-
-    Returns
-    -------
-    ScanOperatorAssignment | JoinOperatorAssignment
-        The parsed assignment. Whether it is a scan or join assignment is inferred from the JSON dictionary.
-    """
-    pass
-
-
 def read_operator_json(json_data: dict | str) -> PhysicalOperator | ScanOperatorAssignment | JoinOperatorAssignment:
     """Reads a physical operator assignment from a JSON dictionary.
-
-    The precise type of return value is determined based on the supplied argument: a string parameter will provide a plain
-    operator whereas each dictionary is assumed to describe an operator assignment.
 
     Parameters
     ----------
@@ -344,31 +314,26 @@ def read_operator_json(json_data: dict | str) -> PhysicalOperator | ScanOperator
     -------
     ScanOperators | JoinOperators | ScanOperatorAssignment | JoinOperatorAssignment
         The parsed assignment. Whether it is a scan or join assignment is inferred from the JSON dictionary.
-
-    Raises
-    ------
-    ValueError
-        If the JSON dictionary does not contain a valid assignment
     """
     if isinstance(json_data, str):
-        if json_data in {op.value for op in ScanOperators}:
-            return ScanOperators(json_data)
-        elif json_data in {op.value for op in JoinOperators}:
-            return JoinOperators(json_data)
+        if json_data in {op.value for op in ScanOperator}:
+            return ScanOperator(json_data)
+        elif json_data in {op.value for op in JoinOperator}:
+            return JoinOperator(json_data)
         else:
-            raise ValueError(f"Unknown physical operator: '{json_data}'")
+            json_data = json.loads(json_data)
 
     parallel_workers = json_data.get("parallel_workers", math.nan)
 
     if "table" in json_data:
         parsed_table = parser.load_table_json(json_data["table"])
-        scan_operator = ScanOperators(json_data["operator"])
+        scan_operator = ScanOperator(json_data["operator"])
         return ScanOperatorAssignment(scan_operator, parsed_table, parallel_workers)
     elif "join" not in json_data and not ("inner" in json_data and "outer" in json_data):
         raise ValueError(f"Malformed operator JSON: either 'table' or 'join' must be given: '{json_data}'")
 
     directional = json_data["directional"]
-    join_operator = JoinOperators(json_data["operator"])
+    join_operator = JoinOperator(json_data["operator"])
     if directional:
         inner = [parser.load_table_json(tab) for tab in json_data["inner"]]
         outer = [parser.load_table_json(tab) for tab in json_data["outer"]]
@@ -414,7 +379,7 @@ class PhysicalOperatorAssignment:
     """
 
     def __init__(self) -> None:
-        self.global_settings: dict[ScanOperators | JoinOperators, bool] = {}
+        self.global_settings: dict[ScanOperator | JoinOperator, bool] = {}
         self.join_operators: dict[frozenset[TableReference], JoinOperatorAssignment] = {}
         self.scan_operators: dict[TableReference, ScanOperatorAssignment] = {}
 
@@ -436,11 +401,11 @@ class PhysicalOperatorAssignment:
             The enabled scan and join operators. If no global setting is available for an operator `include_by_default`
             determines the appropriate action.
         """
-        enabled_scan_ops = [scan_op for scan_op in ScanOperators if self.global_settings.get(scan_op, include_by_default)]
-        enabled_join_ops = [join_op for join_op in JoinOperators if self.global_settings.get(join_op, include_by_default)]
+        enabled_scan_ops = [scan_op for scan_op in ScanOperator if self.global_settings.get(scan_op, include_by_default)]
+        enabled_join_ops = [join_op for join_op in JoinOperator if self.global_settings.get(join_op, include_by_default)]
         return frozenset(enabled_scan_ops + enabled_join_ops)
 
-    def set_operator_enabled_globally(self, operator: ScanOperators | JoinOperators, enabled: bool, *,
+    def set_operator_enabled_globally(self, operator: ScanOperator | JoinOperator, enabled: bool, *,
                                       overwrite_fine_grained_selection: bool = False) -> None:
         """Enables or disables an operator for all joins/scans in the query.
 
@@ -464,14 +429,15 @@ class PhysicalOperatorAssignment:
 
         # at this point we know that we should disable a scan or join operator that was potentially set for
         # individual joins or tables
-        if isinstance(operator, ScanOperators):
+        if isinstance(operator, ScanOperator):
             self.scan_operators = {table: current_setting for table, current_setting in self.scan_operators.items()
                                    if current_setting != operator}
-        elif isinstance(operator, JoinOperators):
+        elif isinstance(operator, JoinOperator):
             self.join_operators = {join: current_setting for join, current_setting in self.join_operators.items()
                                    if current_setting != operator}
 
-    def set_join_operator(self, join_operator: JoinOperatorAssignment) -> None:
+    def set_join_operator(self, join_operator: JoinOperatorAssignment | JoinOperator,
+                          tables: Iterable[TableReference] | None = None) -> None:
         """Enforces a specific join operator for the join that consists of the contained tables.
 
         This overwrites all previous assignments for the same join. Global settings are left unmodified since per-join settings
@@ -479,12 +445,20 @@ class PhysicalOperatorAssignment:
 
         Parameters
         ----------
-        join_operator : JoinOperatorAssignment
-            The join operator
+        join_operator : JoinOperatorAssignment | JoinOperator
+            The join operator. Can be an entire assignment, or just a plain operator. If a plain operator is supplied, the
+            actual tables to join must be provided in the `tables` parameter.
+        tables : Iterable[TableReference], optional
+            The tables to join. This parameter is only used if only a join operator without a proper assignment is supplied in
+            the `join_operator` parameter. Otherwise it is ignored.
         """
+        if isinstance(join_operator, JoinOperator):
+            join_operator = JoinOperatorAssignment(join_operator, tables)
+
         self.join_operators[join_operator.join] = join_operator
 
-    def set_scan_operator(self, scan_operator: ScanOperatorAssignment) -> None:
+    def set_scan_operator(self, scan_operator: ScanOperatorAssignment | ScanOperator,
+                          table: TableReference | Iterable[TableReference] | None = None) -> None:
         """Enforces a specific scan operator for the contained base table.
 
         This overwrites all previous assignments for the same table. Global settings are left unmodified since per-table
@@ -492,10 +466,46 @@ class PhysicalOperatorAssignment:
 
         Parameters
         ----------
-        scan_operator : ScanOperatorAssignment
-            The scan operator
+        scan_operator : ScanOperatorAssignment | ScanOperator
+            The scan operator. Can be an entire assignment, or just a plain operator. If a plain operator is supplied, the
+            actual table to scan must be provided in the `table` parameter.
+        table : TableReference | Iterable[TableReference], optional
+            The table to scan. This parameter is only used if only a scan operator without a proper assignment is supplied in
+            the `scan_operator` parameter. Otherwise it is ignored.
         """
+        if isinstance(scan_operator, ScanOperator):
+            table = util.simplify(table)
+            scan_operator = ScanOperatorAssignment(scan_operator, table)
+
         self.scan_operators[scan_operator.table] = scan_operator
+
+    def add(self, operator: ScanOperatorAssignment | JoinOperatorAssignment | PhysicalOperator,
+            tables: Iterable[TableReference] | None = None) -> None:
+        """Adds an arbitrary operator assignment to the current settings.
+
+        In contrast to the `set_scan_operator` and `set_join_operator` methods, this method figures out the correct assignment
+        type based on the input.
+
+        Parameters
+        ----------
+        operator : ScanOperatorAssignment | JoinOperatorAssignment | PhysicalOperator
+            The operator to use. If this is a complete assignment, it is used as such. Otherwise, the `tables` parameter must
+            contain the tables that are affected by the operator.
+        tables : Iterable[TableReference] | None, optional
+            The tables to join. This parameter is only used if a plain operator is supplied in the `operator` parameter.
+            Otherwise it is ignored.
+        """
+        match operator:
+            case ScanOperator():
+                self.set_scan_operator(operator, tables)
+            case JoinOperator():
+                self.set_join_operator(operator, tables)
+            case ScanOperatorAssignment():
+                self.set_scan_operator(operator)
+            case JoinOperatorAssignment():
+                self.set_join_operator(operator)
+            case _:
+                raise ValueError(f"Unknown operator assignment: {operator}")
 
     def merge_with(self, other_assignment: PhysicalOperatorAssignment) -> PhysicalOperatorAssignment:
         """Combines the current assignment with additional operators.
@@ -549,12 +559,57 @@ class PhysicalOperatorAssignment:
         cloned_assignment.scan_operators = dict(self.scan_operators)
         return cloned_assignment
 
+    def get(self, intermediate: TableReference | Iterable[TableReference],
+            default: Optional[T] = None) -> Optional[ScanOperatorAssignment | JoinOperatorAssignment | T]:
+        """Retrieves the operator assignment for a specific scan or join.
+
+        This is similar to the **dict.get** method. An important distinction is that we never raise an error if there is no
+        intermediate assigned to the operator. Instead, we return the default value, which is **None** by default.
+
+        Parameters
+        ----------
+        intermediate : TableReference | Iterable[TableReference]
+            The intermediate to retrieve the operator assignment for. For scans, either the scanned table can be given
+            directly, or the table can be wrapped in a singleton iterable.
+        default : Optional[T], optional
+            The default value to return if no assignment is found. Defaults to **None**.
+
+        Returns
+        -------
+        Optional[ScanOperatorAssignment | JoinOperatorAssignment | T]
+            The assignment if it was found or the default value otherwise.
+        """
+        if isinstance(intermediate, TableReference):
+            return self.scan_operators.get(intermediate, default)
+
+        intermediate_set = frozenset(intermediate)
+        return (self.scan_operators.get(intermediate) if len(intermediate_set) == 1
+                else self.join_operators.get(intermediate_set, default))
+
+    def __json__(self) -> jsondict:
+        return {
+            "global_settings": self.global_settings,
+            "join_operators": self.join_operators,
+            "scan_operators": self.scan_operators
+        }
+
     def __bool__(self) -> bool:
         return bool(self.global_settings) or bool(self.join_operators) or bool(self.scan_operators)
 
-    def __getitem__(self, item: TableReference | Iterable[TableReference] | ScanOperators | JoinOperators
+    def __iter__(self) -> Iterable[ScanOperatorAssignment | JoinOperatorAssignment]:
+        yield from self.scan_operators.values()
+        yield from self.join_operators.values()
+
+    def __contains__(self, item: TableReference | Iterable[TableReference]) -> bool:
+        if isinstance(item, TableReference):
+            return item in self.scan_operators
+
+        items = frozenset(item)
+        return item in self.scan_operators if len(items) == 1 else items in self.join_operators
+
+    def __getitem__(self, item: TableReference | Iterable[TableReference] | ScanOperator | JoinOperator
                     ) -> ScanOperatorAssignment | JoinOperatorAssignment | bool | None:
-        if isinstance(item, ScanOperators) or isinstance(item, JoinOperators):
+        if isinstance(item, ScanOperator) or isinstance(item, JoinOperator):
             return self.global_settings.get(item, None)
         elif isinstance(item, TableReference):
             return self.scan_operators.get(item, None)
@@ -584,6 +639,50 @@ class PhysicalOperatorAssignment:
         joins_keys = ((join, " ⨝ ".join(tab.identifier() for tab in join.join)) for join in self.join_operators.values())
         joins_str = ", ".join(f"{key}: {join.operator.value}" for join, key in joins_keys)
         return f"global=[{global_str}] scans=[{scans_str}] joins=[{joins_str}]"
+
+
+def operators_from_plan(query_plan: QueryPlan) -> PhysicalOperatorAssignment:
+    """Extracts the operator assignment from a whole query plan.
+
+    Notice that this method does not add parallel workers to the assignment, since this is better handled by the
+    parameterization.
+    """
+    assignment = PhysicalOperatorAssignment()
+    if not query_plan.operator and query_plan.input_node:
+        return operators_from_plan(query_plan.input_node)
+    assignment.add(query_plan.operator, query_plan.tables())
+    for child in query_plan.children:
+        child_assignment = operators_from_plan(child)
+        assignment = assignment.merge_with(child_assignment)
+    return assignment
+
+
+def read_operator_assignment_json(json_data: dict | str) -> PhysicalOperatorAssignment:
+    """Loads an operator assignment from its JSON representation.
+
+    Parameters
+    ----------
+    json_data : dict | str
+        Either the JSON dictionary, or a string encoding of the dictionary (which will be parsed by **json.loads**).
+
+    Returns
+    -------
+    PhysicalOperatorAssignment
+        The assignment
+    """
+    json_data = json.loads(json_data) if isinstance(json_data, str) else json_data
+    assignment = PhysicalOperatorAssignment()
+    assignment.global_settings = {ScanOperator(op): enabled for op, enabled in json_data.get("global_settings", {}).items()}
+
+    for tab, op in json_data.get("scan_operators", {}).items():
+        parsed_table = parser.load_table_json(tab)
+        assignment.scan_operators[parsed_table] = ScanOperatorAssignment(ScanOperator(op), parsed_table)
+
+    for tabs, op in json_data.get("join_operators", {}).items():
+        parsed_tables = frozenset(parser.load_table_json(tab) for tab in tabs)
+        assignment.join_operators[parsed_tables] = JoinOperatorAssignment(JoinOperator(op), parsed_tables)
+
+    return assignment
 
 
 class PlanParameterization:
@@ -719,12 +818,97 @@ class PlanParameterization:
                                                   | other_parameters.system_specific_settings)
         return merged_params
 
+    def __json__(self) -> jsondict:
+        return {
+            "cardinality_hints": self.cardinality_hints,
+            "parallel_worker_hints": self.parallel_worker_hints,
+        }
+
     def __repr__(self) -> str:
         return str(self)
 
     def __str__(self) -> str:
         return (f"PlanParams(cards={self.cardinality_hints}, "
                 f"system specific={self.system_specific_settings}, par workers={self.parallel_worker_hints})")
+
+
+def read_plan_params_json(json_data: dict | str) -> PlanParameterization:
+    """Loads a plan parameterization from its JSON representation.
+
+    Parameters
+    ----------
+    json_data : dict | str
+        Either the JSON dictionary, or a string encoding of the dictionary (which will be parsed by **json.loads**).
+
+    Returns
+    -------
+    PlanParameterization
+        The plan parameterization
+    """
+    json_data = json.loads(json_data) if isinstance(json_data, str) else json_data
+    params = PlanParameterization()
+    params.cardinality_hints = {frozenset(parser.load_table_json(tab)): card
+                                for tab, card in json_data.get("cardinality_hints", {}).items()}
+    params.parallel_worker_hints = {frozenset(parser.load_table_json(tab)): workers
+                                    for tab, workers in json_data.get("parallel_worker_hints", {}).items()}
+    return params
+
+
+def update_plan(query_plan: QueryPlan, *,
+                operators: Optional[PhysicalOperatorAssignment] = None,
+                params: Optional[PlanParameterization] = None,
+                simplify: bool = True) -> QueryPlan:
+    """Assigns new operators and/or new estimates to a query plan, leaving the join order intact.
+
+    Notice that this update method is not particularly smart and only operates on a per-node basis. This means that high-level
+    functions that are composed of multiple operators might not be updated properly. For example, Postgres represents a hash
+    join as a combination of a hash operator (which builds the actual hash table) and a follow-up hash join operator (which
+    performs the probing). If the update changes the hash join to a different join, the hash operator will still exist, likely
+    leading to an invalid query plan. To circumvent such problems, the query plan is by default simplified before processing.
+    Simplification removes all auxiliary non-join and non-scan operators, thereby effectively only leaving those nodes with a
+    corresponding operator. But, there is no free lunch and the simplification might also remove some other important
+    operators, such as using hash-based or sort-based aggregation operators. Therefore, simplification can be disabled by
+    setting the `simplify` parameter to **False**.
+
+    Parameters
+    ----------
+    query_plan : QueryPlan
+        The plan to update.
+    operators : Optional[PhysicalOperatorAssignment], optional
+        The new operators to use. This can be a partial assignment, in which case only the operators that are present in the
+        new assignment are used and all others are left unchanged. If this parameter is not given, no operators are updated.
+    params : Optional[PlanParameterization], optional
+        The new parameters to use. This can be a partial assignment, in which case only the cardinalities/parallel workers in
+        the new assignment are used and all others are left unchanged. If this parameter is not given, no parameters are
+        updated.
+    simplify : bool, optional
+        Whether to simplify the query plan before updating it. For a detailed discussion, see the high-level documentatio of
+        this method. Simplifications is enabled by default.
+
+    Returns
+    -------
+    QueryPlan
+        The updated query plan
+
+    See Also
+    --------
+    QueryPlan.simplify
+    """
+    query_plan = query_plan.canonical() if simplify else query_plan
+
+    updated_operator = operators.get(query_plan.tables(), query_plan.operator) if operators else query_plan.operator
+    updated_card_est = (params.cardinality_hints.get(query_plan.tables(), query_plan.estimated_cardinality) if params
+                        else query_plan.estimated_cardinality)
+    updated_workers = (params.parallel_worker_hints.get(query_plan.tables(), query_plan.params.parallel_workers) if params
+                       else query_plan.params.parallel_workers)
+
+    updated_params = PlanParams(**(query_plan.params.items() | {"parallel_workers": updated_workers}))
+    updated_estimates = PlanEstimates(**(query_plan.estimates.items() | {"estimated_cardinality": updated_card_est}))
+    updated_children = [update_plan(child, operators=operators, params=params) for child in query_plan.children]
+
+    return QueryPlan(query_plan.node_type, operator=updated_operator, children=updated_children,
+                     plan_params=updated_params, estimates=updated_estimates, measures=query_plan.measures,
+                     subplan=query_plan.subplan)
 
 
 class HintType(Enum):
@@ -740,46 +924,3 @@ class HintType(Enum):
     Operator = "Physical operators"
     Parallelization = "Par. workers"
     Cardinality = "Cardinality"
-
-
-@dataclass(frozen=True)
-class SortKey:
-    """Sort keys describe how the tuples in a relation are sorted.
-
-    Attributes
-    ----------
-    column : SqlExpression
-        The column that is used to sort the tuples. This will usually be a column reference, but can also be a more complex
-        expression.
-    ascending : bool
-        Whether the sorting is ascending or descending. Defaults to ascending.
-    """
-
-    column: SqlExpression
-    ascending: bool = True
-
-    @staticmethod
-    def of(column: SqlExpression, ascending: bool = True) -> SortKey:
-        """Creates a new sort key.
-
-        This is just a more expressive alias for the constructor.
-
-        Parameters
-        ----------
-        column : SqlExpression
-            The column that is used to sort the tuples. This will usually be a column reference, but can also be a more complex
-            expression.
-        ascending : bool, optional
-            Whether the sorting is ascending or descending. Defaults to ascending.
-
-        Returns
-        -------
-        SortKey
-            The sort key
-        """
-        return SortKey(column, ascending)
-
-    def __str__(self):
-        if self.ascending:
-            return str(self.column)
-        return f"{self.column} DESC"

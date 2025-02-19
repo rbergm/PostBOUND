@@ -1,5 +1,5 @@
 """Contains utilities to visualize different PostBOUND objects."""
 
-from . import db, fdl, graphs, optimizer, plots, tonic, trees
+from . import fdl, graphs, optimizer as opt, plots, tonic, trees
 
-__all__ = ["db", "fdl", "graphs", "optimizer", "plots", "tonic", "trees"]
+__all__ = ["fdl", "graphs", "opt", "plots", "tonic", "trees"]

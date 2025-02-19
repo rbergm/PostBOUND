@@ -42,20 +42,17 @@ from ._db import (
     UnsupportedDatabaseFeatureError
 )
 from .. import qal, util
-from .._core import JoinOperators, ScanOperators, PhysicalOperator, QueryExecutionPlan
+from .._core import JoinOperator, ScanOperator, PhysicalOperator
+from .._qep import QueryPlan, SortKey
 from ..qal import (
     TableReference, ColumnReference,
     UnboundColumnError, VirtualTableError,
 )
-from ..optimizer.jointree import (
-    AbstractJoinTreeNode, IntermediateJoinNode, AuxiliaryNode, BaseTableNode,
-    PhysicalQueryPlan, LogicalJoinTree,
-    PhysicalJoinMetadata,
-    JoinTreeVisitor,
-)
+from ..optimizer._jointree import JoinTree, jointree_from_plan, parameters_from_plan
 from ..optimizer._hints import (
-    JoinOperatorAssignment, PhysicalOperatorAssignment, DirectionalJoinOperatorAssignment,
-    PlanParameterization, HintType
+    PhysicalOperatorAssignment,
+    PlanParameterization, HintType,
+    operators_from_plan
 )
 from ..util import Version, StateError
 
@@ -1265,80 +1262,25 @@ class HintParts:
         return HintParts(merged_settings, merged_hints)
 
 
-def _is_hash_join(join_tree_node: IntermediateJoinNode,
-                  operator_assignment: Optional[PhysicalOperatorAssignment]) -> bool:
-    """Checks, whether a specific join should be executed as a hash join.
-
-    Parameters
-    ----------
-    join_tree_node : IntermediateJoinNode
-        The join to check. Can contain a `PhysicalJoinMetadata` annotation that describes the join operator. This
-        metadata is checked if no dedicated `operator_assignment` is provided.
-    operator_assignment : Optional[PhysicalOperatorAssignment]
-        The operator assignment. If such an assignment is available, it will take precedence over all eventual
-        operator selections that are part of the `join_tree_node` annotation.
-
-    Returns
-    -------
-    bool
-        Whether the join described by the given node should be executed as a hash join. For base tables or unspecified
-        operator assignments this is ``False``.
-
-    Notes
-    -----
-    This is method is necessary because the pg_hint_plan extension that we use for enforcing the join order does not
-    only enforce the join order, but also the join direction (i.e. inner and outer relations) at the same time. This
-    means that whenever we are concerned with the order in which relations should be joined, we need to decide which
-    of these relations should be the inner and outer relation. While for some joins this does not matter too much
-    (e.g. nested-loop join or sort-merge join), it becomes quite important for others (index nested-loop join and
-    hash join). Sadly, the role of the inner and outer relations is not consistent accross all join types. Whereas for
-    most joins the inner relations is being "probed" in some sense (e.g. index nested-loop join), for hash joins it is
-    exactly the other way around, i.e. the inner relation is put into a hash table and the outer relation is probed
-    against it. As a consequence, we need to swap the roles of the input relations for these joins. The
-    `_is_hash_join` method implements the logic for figuring out whether the is necessary for a specific join.
-    """
-    if operator_assignment is not None:
-        selected_operator: Optional[JoinOperatorAssignment] = operator_assignment[join_tree_node.tables()]
-        if selected_operator is not None:
-            return selected_operator.operator == JoinOperators.HashJoin
-
-        # We do not need to check the global hash join setting b/c it is overwritten by the per-join setting
-        # if we would not have a per-join setting, but a global setting the decision is the same in all cases:
-        # If hash joins are disabled, the result would be False
-        # If hash joins are enabled, this only means that the query optimizer is free to choose the operator, but not
-        # forced to. Therefore, we have to infer that the join is not a hash join and the result is once again False
-        # The only special case is if the hash join is the only globally enabled join operator and there is no per-join
-        # assignment. In this case, the join has to be a hash join. This condition is checked below
-        global_join_ops = {op for op in operator_assignment.get_globally_enabled_operators()
-                           if isinstance(op, JoinOperators)}
-        return len(global_join_ops) == 1 and JoinOperators.HashJoin in global_join_ops
-
-    if not isinstance(join_tree_node.annotation, PhysicalJoinMetadata):
-        return False
-
-    return (join_tree_node.annotation.operator is not None
-            and join_tree_node.annotation.operator.operator == JoinOperators.HashJoin)
-
-
 PostgresOptimizerSettings = {
-    JoinOperators.NestedLoopJoin: "enable_nestloop",
-    JoinOperators.HashJoin: "enable_hashjoin",
-    JoinOperators.SortMergeJoin: "enable_mergejoin",
-    ScanOperators.SequentialScan: "enable_seqscan",
-    ScanOperators.IndexScan: "enable_indexscan",
-    ScanOperators.IndexOnlyScan: "enable_indexonlyscan",
-    ScanOperators.BitmapScan: "enable_bitmapscan"
+    JoinOperator.NestedLoopJoin: "enable_nestloop",
+    JoinOperator.HashJoin: "enable_hashjoin",
+    JoinOperator.SortMergeJoin: "enable_mergejoin",
+    ScanOperator.SequentialScan: "enable_seqscan",
+    ScanOperator.IndexScan: "enable_indexscan",
+    ScanOperator.IndexOnlyScan: "enable_indexonlyscan",
+    ScanOperator.BitmapScan: "enable_bitmapscan"
 }
 """All (session-global) optimizer settings that modify the allowed physical operators."""
 
 PGHintPlanOptimizerHints = {
-    JoinOperators.NestedLoopJoin: "NestLoop",
-    JoinOperators.HashJoin: "HashJoin",
-    JoinOperators.SortMergeJoin: "MergeJoin",
-    ScanOperators.SequentialScan: "SeqScan",
-    ScanOperators.IndexScan: "IndexOnlyScan",
-    ScanOperators.IndexOnlyScan: "IndexOnlyScan",
-    ScanOperators.BitmapScan: "BitmapScan"
+    JoinOperator.NestedLoopJoin: "NestLoop",
+    JoinOperator.HashJoin: "HashJoin",
+    JoinOperator.SortMergeJoin: "MergeJoin",
+    ScanOperator.SequentialScan: "SeqScan",
+    ScanOperator.IndexScan: "IndexOnlyScan",
+    ScanOperator.IndexOnlyScan: "IndexOnlyScan",
+    ScanOperator.BitmapScan: "BitmapScan"
 }
 """All physical operators that can be enforced by pg_hint_plan.
 
@@ -1351,13 +1293,13 @@ References
 """
 
 PGLabOptimizerHints = {
-    JoinOperators.NestedLoopJoin: "NestLoop",
-    JoinOperators.HashJoin: "HashJoin",
-    JoinOperators.SortMergeJoin: "MergeJoin",
-    ScanOperators.SequentialScan: "SeqScan",
-    ScanOperators.IndexScan: "IdxScan",
-    ScanOperators.IndexOnlyScan: "IdxScan",
-    ScanOperators.BitmapScan: "IdxScan"
+    JoinOperator.NestedLoopJoin: "NestLoop",
+    JoinOperator.HashJoin: "HashJoin",
+    JoinOperator.SortMergeJoin: "MergeJoin",
+    ScanOperator.SequentialScan: "SeqScan",
+    ScanOperator.IndexScan: "IdxScan",
+    ScanOperator.IndexOnlyScan: "IdxScan",
+    ScanOperator.BitmapScan: "IdxScan"
 }
 """All physical operators that can be enforced by pg_lab.
 
@@ -1439,11 +1381,11 @@ def _apply_hint_block_to_query(query: qal.SqlQuery, hint_block: Optional[qal.Hin
     return qal.transform.add_clause(query, hint_block) if hint_block else query
 
 
-PostgresJoinHints = {JoinOperators.NestedLoopJoin, JoinOperators.HashJoin, JoinOperators.SortMergeJoin}
+PostgresJoinHints = {JoinOperator.NestedLoopJoin, JoinOperator.HashJoin, JoinOperator.SortMergeJoin}
 """All join operators that are supported by Postgres."""
 
-PostgresScanHints = {ScanOperators.SequentialScan, ScanOperators.IndexScan,
-                     ScanOperators.IndexOnlyScan, ScanOperators.BitmapScan}
+PostgresScanHints = {ScanOperator.SequentialScan, ScanOperator.IndexScan,
+                     ScanOperator.IndexOnlyScan, ScanOperator.BitmapScan}
 """All scan operators that are supported by Postgres."""
 
 PostgresPlanHints = {HintType.Cardinality, HintType.Parallelization,
@@ -1535,19 +1477,6 @@ def _replace_postgres_cast_expressions(expression: qal.SqlExpression) -> qal.Sql
     return _PostgresCastExpression(expression) if isinstance(expression, qal.CastExpression) else expression
 
 
-class _IntermediateNodesCollector(JoinTreeVisitor[set[AuxiliaryNode]]):
-    """Visitor to extract all intermediate (Memoize/Materialize) nodes from a join tree."""
-
-    def visit_base_table_node(self, node: BaseTableNode) -> set[AuxiliaryNode]:
-        return set()
-
-    def visit_intermediate_node(self, node: IntermediateJoinNode) -> set[AuxiliaryNode]:
-        return node.left_child.accept_visitor(self) | node.right_child.accept_visitor(self)
-
-    def visit_auxiliary_node(self, node: AuxiliaryNode) -> set[AuxiliaryNode]:
-        return {node} | node.input_node.accept_visitor(self)
-
-
 PostgresHintingBackend = Literal["pg_hint_plan", "pg_lab", "none"]
 """The hinting backend being used.
 
@@ -1611,8 +1540,8 @@ class PostgresHintService(HintService):
 
     backend = property(_get_backend, _set_backend, doc="The hinting backend in use.")
 
-    def generate_hints(self, query: qal.SqlQuery,
-                       join_order: Optional[LogicalJoinTree | PhysicalQueryPlan] = None,
+    def generate_hints(self, query: qal.SqlQuery, plan: Optional[QueryPlan] = None, *,
+                       join_order: Optional[JoinTree] = None,
                        physical_operators: Optional[PhysicalOperatorAssignment] = None,
                        plan_parameters: Optional[PlanParameterization] = None) -> qal.SqlQuery:
         self._assert_active_backend()
@@ -1624,24 +1553,21 @@ class PostgresHintService(HintService):
 
         hint_parts = None
 
-        if join_order:
-            adapted_query, hint_parts = self._generate_pg_join_order_hint(adapted_query, join_order, physical_operators)
+        if plan is not None:
+            join_order = jointree_from_plan(plan)
+            physical_operators = operators_from_plan(plan)
+            plan_parameters = parameters_from_plan(plan)
+
+        adapted_query, hint_parts = self._generate_pg_join_order_hint(adapted_query, join_order, physical_operators)
 
         hint_parts = hint_parts if hint_parts else HintParts.empty()
-
-        physical_operators = (join_order.physical_operators()
-                              if not physical_operators and isinstance(join_order, PhysicalQueryPlan)
-                              else physical_operators)
-        plan_parameters = (join_order.plan_parameters()
-                           if not plan_parameters and isinstance(join_order, PhysicalQueryPlan)
-                           else plan_parameters)
 
         if physical_operators:
             operator_hints = self._generate_pg_operator_hints(physical_operators)
             hint_parts = hint_parts.merge_with(operator_hints)
 
-        if isinstance(join_order, PhysicalQueryPlan):
-            intermediate_hints = self._generate_pg_intermediate_hints(join_order)
+        if plan is not None:
+            intermediate_hints = self._generate_pg_intermediate_hints(plan)
             hint_parts = hint_parts.merge_with(intermediate_hints)
 
         if plan_parameters:
@@ -1764,17 +1690,13 @@ class PostgresHintService(HintService):
         # If we reach this point, we have to deactivate GeQO
         return True
 
-    def _generate_leading_hint_content(self, join_tree_node: AbstractJoinTreeNode,
-                                       operator_assignment: Optional[PhysicalOperatorAssignment] = None) -> str:
+    def _generate_leading_hint_content(self, node: JoinTree) -> str:
         """Builds a substring of the ``Leading`` hint to enforce the join order for a specific part of the join tree.
 
         Parameters
         ----------
-        join_tree_node : AbstractJoinTreeNode
+        node : JoinTree
             Subtree of the join order for which the hint should be generated
-        operator_assignment : Optional[PhysicalOperatorAssignment], optional
-            Operators that allow a smarter assignment of join directions. This is necessary due to pecularities of the
-            ``Leading`` hint. See reference below.
 
         Returns
         -------
@@ -1785,83 +1707,27 @@ class PostgresHintService(HintService):
         Raises
         ------
         ValueError
-            If the `join_tree_node` is neither a base table node, nor an intermediate join node. This error should never
+            If the `node` is neither a base table node, nor an intermediate join node. This error should never
             ever be raised. If it is, it means that the join tree representation was updated to include other types of
             nodes (whatever these should be), and the implementation of this method was not updated accordingly. This is
             a severe bug in the method!
-
-        See Also
-        --------
-        _is_hash_join
-
-        Notes
-        -----
-        To assign directions to the join partners, the following rules are used (in the given order):
-
-        1. If the join contains directional information (i.e. is annotated by a `DirectionalJoinOperatorAssignment`),
-        this assignment is used
-        2. If the join has cardinality estimates available on both input relations, the join direction is chosen such that
-        the outer relation is the one with the smaller cardinality estimate. This does not really make a difference for
-        plain nested-loop joins or sort-merge joins, but can lead to significant speedup for index nested-loop joins or
-        hash joins.
-        3. Otherwise, the left child node becomes the outer relation and the right child becomes the inner relation
-
-        Notice that we use the terminology of inner and outer relation in the conventional way here (and not how Postgres
-        applies these terms). Most importantly this means that for a hash join we consider the outer relation to be the
-        one that is put into a hash table and the inner relation to be the one that is used for probing. The necessity to
-        swap this meaning when applying this strategy for Postgres is merely an implementation detail.
 
         References
         ----------
 
         .. pg_hint_plan Leading hint: https://github.com/ossc-db/pg_hint_plan/blob/master/docs/hint_list.md
         """
-        if isinstance(join_tree_node, BaseTableNode):
-            return join_tree_node.table.identifier()
-        if isinstance(join_tree_node, AuxiliaryNode):
-            return self._generate_leading_hint_content(join_tree_node.input_node, operator_assignment)
-        if not isinstance(join_tree_node, IntermediateJoinNode):
-            raise ValueError(f"Unknown join tree node: {join_tree_node}")
+        if node.is_scan():
+            return node.base_table.identifier()
+        if not node.is_join():
+            raise ValueError(f"Unknown join tree node: {node}")
 
-        # for Postgres, the inner relation of a Hash join is the one that gets the hash table and the outer relation is
-        # the one being probed. For all other joins, the inner/outer relation actually is the inner/outer relation
-        # Therefore, we want to have the smaller relation as the inner relation for hash joins and the other way around
-        # for all other joins
-
-        has_directional_information = (
-            isinstance(join_tree_node.annotation, PhysicalJoinMetadata)
-            and isinstance(join_tree_node.annotation.operator, DirectionalJoinOperatorAssignment)
-        )
-        if has_directional_information:
-            annotation: DirectionalJoinOperatorAssignment = join_tree_node.annotation.operator
-            inner_tables = annotation.inner
-            inner_child = (join_tree_node.left_child if join_tree_node.left_child.tables() == inner_tables
-                           else join_tree_node.right_child)
-            outer_child = (join_tree_node.left_child if inner_child == join_tree_node.right_child
-                           else join_tree_node.right_child)
-            inner_child, outer_child = ((outer_child, inner_child) if annotation.operator == JoinOperators.HashJoin
-                                        else (inner_child, outer_child))
-        else:
-            left, right = join_tree_node.left_child, join_tree_node.right_child
-            has_left_bound = math.isfinite(left.cardinality)
-            has_right_bound = math.isfinite(right.cardinality)
-
-            if not has_left_bound or not has_right_bound:
-                inner_child, outer_child = right, left
-            # At this point we know that both child nodes have upper bounds
-            elif _is_hash_join(join_tree_node, operator_assignment):
-                # Apply the same Hash join direction correction as above
-                inner_child, outer_child = (left, right) if left.cardinality < right.cardinality else (right, left)
-            else:
-                # Otherwise have the smaller relation be the outer one
-                inner_child, outer_child = (right, left) if right.cardinality < left.cardinality else (left, right)
-
-        inner_hint = self._generate_leading_hint_content(inner_child, operator_assignment)
-        outer_hint = self._generate_leading_hint_content(outer_child, operator_assignment)
+        inner_hint = self._generate_leading_hint_content(node.inner_child)
+        outer_hint = self._generate_leading_hint_content(node.outer_child)
         return f"({outer_hint} {inner_hint})"
 
     def _generate_pg_join_order_hint(self, query: qal.SqlQuery,
-                                     join_order: LogicalJoinTree | PhysicalQueryPlan,
+                                     join_order: JoinTree,
                                      operator_assignment: Optional[PhysicalOperatorAssignment] = None
                                      ) -> tuple[qal.SqlQuery, Optional[HintParts]]:
         """Builds the entire ``Leading`` hint to enforce the join order for a specific query.
@@ -1880,7 +1746,7 @@ class PostgresHintService(HintService):
             already. Strictly speaking, this parameter is not even necessary for the hint generation part. However, it is
             still included to retain the ability to quickly switch to a query transformation-based join order enforcement
             at a later point in time.
-        join_order : LogicalJoinTree | PhysicalQueryPlan
+        join_order : JoinTree
             The desired join order
         operator_assignment : Optional[PhysicalOperatorAssignment], optional
             The operators that should be used to perform the actual joins. This is necessary to generate the correct join
@@ -1904,7 +1770,7 @@ class PostgresHintService(HintService):
         """
         if len(join_order) < 2:
             return query, None
-        leading_hint = self._generate_leading_hint_content(join_order.root, operator_assignment)
+        leading_hint = self._generate_leading_hint_content(join_order)
         leading_hint = f"JoinOrder({leading_hint})" if self._backend == "pg_lab" else f"Leading({leading_hint})"
         hints = HintParts([], [leading_hint])
         return query, hints
@@ -2015,7 +1881,7 @@ class PostgresHintService(HintService):
 
         return HintParts(settings, hints)
 
-    def _generate_pg_intermediate_hints(self, query_plan: PhysicalQueryPlan) -> HintParts:
+    def _generate_pg_intermediate_hints(self, query_plan: QueryPlan) -> HintParts:
         """Generates hints for auxiliary nodes in the query plan.
 
         This includes nodes that are neither scans nor joins, such as Memoize and Materialize. Notice that such hints are
@@ -2023,7 +1889,7 @@ class PostgresHintService(HintService):
 
         Parameters
         ----------
-        query_plan : PhysicalQueryPlan
+        query_plan : QueryPlan
             The plan to encode
 
         Returns
@@ -2034,13 +1900,13 @@ class PostgresHintService(HintService):
         if self._backend != "pg_lab":
             return HintParts.empty()
 
-        auxiliaries = query_plan.accept_visitor(_IntermediateNodesCollector())
+        auxiliaries = query_plan.find_all_nodes(QueryPlan.is_auxiliary)
         hints = HintParts.empty()
         for aux_node in auxiliaries:
-            if aux_node.name == "Materialize":
+            if aux_node.node_type == "Materialize":
                 table_identifier = ", ".join(tab.identifier() for tab in aux_node.tables())
                 hints.add(f"Material({table_identifier})")
-            elif aux_node.name == "Memoize":
+            elif aux_node.node_type == "Memoize":
                 table_identifier = ", ".join(tab.identifier() for tab in aux_node.tables())
                 hints.add(f"Memo({table_identifier})")
         return hints
@@ -2099,7 +1965,7 @@ class PostgresOptimizer(OptimizerInterface):
     def __init__(self, postgres_instance: PostgresInterface) -> None:
         self._pg_instance = postgres_instance
 
-    def query_plan(self, query: qal.SqlQuery | str) -> QueryExecutionPlan:
+    def query_plan(self, query: qal.SqlQuery | str) -> QueryPlan:
         self._pg_instance._current_geqo_state = self._pg_instance._obtain_geqo_state()
         if isinstance(query, qal.SqlQuery):
             query, deactivated_geqo = self._pg_instance._prepare_query_execution(query, drop_explain=True)
@@ -2111,7 +1977,7 @@ class PostgresOptimizer(OptimizerInterface):
             self._pg_instance._restore_geqo_state()
         return query_plan.as_query_execution_plan()
 
-    def analyze_plan(self, query: qal.SqlQuery) -> QueryExecutionPlan:
+    def analyze_plan(self, query: qal.SqlQuery) -> QueryPlan:
         self._pg_instance._current_geqo_state = self._pg_instance._obtain_geqo_state()
         query, deactivated_geqo = self._pg_instance._prepare_query_execution(qal.transform.as_explain_analyze(query))
         self._pg_instance.cursor().execute(query)
@@ -2500,15 +2366,15 @@ class TimeoutQueryExecutor:
         return self.execute_query(query, timeout)
 
 
-PostgresExplainJoinNodes = {"Nested Loop": JoinOperators.NestedLoopJoin,
-                            "Hash Join": JoinOperators.HashJoin,
-                            "Merge Join": JoinOperators.SortMergeJoin}
+PostgresExplainJoinNodes = {"Nested Loop": JoinOperator.NestedLoopJoin,
+                            "Hash Join": JoinOperator.HashJoin,
+                            "Merge Join": JoinOperator.SortMergeJoin}
 """A mapping from Postgres EXPLAIN node names to the corresponding join operators."""
 
-PostgresExplainScanNodes = {"Seq Scan": ScanOperators.SequentialScan,
-                            "Index Scan": ScanOperators.IndexScan,
-                            "Index Only Scan": ScanOperators.IndexOnlyScan,
-                            "Bitmap Heap Scan": ScanOperators.BitmapScan}
+PostgresExplainScanNodes = {"Seq Scan": ScanOperator.SequentialScan,
+                            "Index Scan": ScanOperator.IndexScan,
+                            "Index Only Scan": ScanOperator.IndexOnlyScan,
+                            "Bitmap Heap Scan": ScanOperator.BitmapScan}
 """A mapping from Postgres EXPLAIN node names to the corresponding scan operators."""
 
 
@@ -2578,6 +2444,9 @@ class PostgresExplainNode:
         For parallel operators in ``EXPLAIN ANALYZE`` plans, this is the actual number of worker processes that were started.
         Notice that in total there is one additional worker. This process takes care of spawning the other workers and
         managing them, but can also take part in the input processing.
+    sort_keys : list[str]
+        The columns that are used to sort the tuples that are produced by this node. This is most important for sort nodes,
+        but can also be present on other nodes.
     shared_blocks_read : float, default NaN
         For ``EXPLAIN ANALYZE`` plans with ``BUFFERS`` enabled, this is the number of blocks/pages that where retrieved from
         disk while executing this node, including the reads of all its child nodes.
@@ -2618,6 +2487,7 @@ class PostgresExplainNode:
 
         self.parent_relationship = explain_data.get("Parent Relationship", None)
         self.parallel_workers = explain_data.get("Workers Launched", math.nan)
+        self.sort_keys = explain_data.get("Sort Key", [])
 
         self.shared_blocks_read = explain_data.get("Shared Read Blocks", math.nan)
         self.shared_blocks_cached = explain_data.get("Shared Hit Blocks", math.nan)
@@ -2727,8 +2597,8 @@ class PostgresExplainNode:
         alias = self.relation_alias if self.relation_alias is not None and self.relation_alias != self.relation_name else ""
         return TableReference(self.relation_name, alias)
 
-    def as_query_execution_plan(self) -> QueryExecutionPlan:
-        """Transforms the postgres-specific plan to a standardized `QueryExecutionPlan` instance.
+    def as_query_execution_plan(self) -> QueryPlan:
+        """Transforms the postgres-specific plan to a standardized `QueryPlan` instance.
 
         Notice that this transformation is lossy since not all information from the Postgres plan can be represented in query
         execution plan instances. Furthermore, this transformation can be problematic for complicated queries that use
@@ -2739,7 +2609,7 @@ class PostgresExplainNode:
 
         Returns
         -------
-        db.QueryExecutionPlan
+        QueryPlan
             The equivalent query execution plan for this node
 
         Raises
@@ -2747,17 +2617,14 @@ class PostgresExplainNode:
         ValueError
             If the node contains more than two children.
         """
-        found_hash_join = self.node_type == "Hash Join"
         child_nodes = []
         inner_child, outer_child, subplan_child = None, None, None
         for child in self.children:
             parent_rel = child.parent_relationship
             qep_child = child.as_query_execution_plan()
-            found_inner = (parent_rel == "Inner" and not found_hash_join) or (parent_rel == "Outer" and found_hash_join)
-            found_outer = (parent_rel == "Outer" and not found_hash_join) or (parent_rel == "Inner" and found_hash_join)
-            if found_inner:
+            if parent_rel == "Inner":
                 inner_child = qep_child
-            elif found_outer:
+            elif parent_rel == "Outer":
                 outer_child = qep_child
             elif parent_rel == "SubPlan" or parent_rel == "InitPlan":
                 subplan_child = qep_child
@@ -2772,26 +2639,27 @@ class PostgresExplainNode:
             child = (inner_child,)
 
         table = self.parse_table()
-        is_scan = self.is_scan()
-        is_join = self.is_join()
         subplan_name = self.subplan_name or self.cte_name
-        par_workers = self.parallel_workers + 1  # in Postgres the control worker also processes input
         true_card = self.true_cardinality * self.loops
 
-        if is_scan:
+        if self.is_scan():
             operator = PostgresExplainScanNodes.get(self.node_type, None)
-        elif is_join:
+        elif self.is_join():
             operator = PostgresExplainJoinNodes.get(self.node_type, None)
         else:
             operator = None
 
-        return QueryExecutionPlan(self.node_type, is_join=is_join, is_scan=is_scan, table=table,
-                                  children=child_nodes, parallel_workers=par_workers,
-                                  cost=self.cost, estimated_cardinality=self.cardinality_estimate,
-                                  true_cardinality=true_card, execution_time=self.execution_time,
-                                  cached_pages=self.shared_blocks_cached, scanned_pages=self.shared_blocks_read,
-                                  physical_operator=operator, inner_child=inner_child,
-                                  subplan_input=subplan_child, subplan_name=subplan_name)
+        sort_keys = self._parse_sort_keys() if self.sort_keys else self._infer_sorting_from_children()
+        shared_hits = None if math.isnan(self.shared_blocks_cached) else self.shared_blocks_cached
+        shared_misses = None if math.isnan(self.shared_blocks_read) else self.shared_blocks_read
+        par_workers = None if math.isnan(self.parallel_workers) else self.parallel_workers
+
+        return QueryPlan(self.node_type, base_table=table, operator=operator, children=child_nodes,
+                         parallel_workers=par_workers, index=self.index_name, sort_keys=sort_keys,
+                         estimated_cost=self.cost, estimated_cardinality=self.cardinality_estimate,
+                         actual_cardinality=true_card, execution_time=self.execution_time,
+                         cache_hits=shared_hits, cache_misses=shared_misses,
+                         subplan_root=subplan_child, subplan_name=subplan_name)
 
     def inspect(self, *, _indentation: int = 0) -> str:
         """Provides a pretty string representation of the ``EXPLAIN`` sub-plan that can be printed.
@@ -2818,6 +2686,16 @@ class PostgresExplainNode:
         own_inspection += [prefix + str(self)]
         child_inspections = [child.inspect(_indentation=_indentation+2) for child in self.inner_outer_children()]
         return "\n".join(own_inspection + child_inspections)
+
+    def _infer_sorting_from_children(self) -> list[SortKey]:
+        # TODO: Postgres is a cruel mistress. Even if output is sorted, it might not be marked as such.
+        # For example, in index scans, this is implictly encoded in the index condition, somethimes even nested in other
+        # expressions. We first need a reliable way to parse the expressions into a PostBOUND-compatible format.
+        # See _parse_sort_keys for a start.
+        return None
+
+    def _parse_sort_keys(self) -> list[SortKey]:
+        return None
 
     def __hash__(self) -> int:
         return self._hash_val
@@ -2897,14 +2775,14 @@ class PostgresExplainPlan:
         """
         return self.query_plan.is_analyze()
 
-    def as_query_execution_plan(self) -> QueryExecutionPlan:
+    def as_query_execution_plan(self) -> QueryPlan:
         """Provides the actual explain plan as a normalized query execution plan instance
 
         For notes on pecularities of this method, take a look at the *See Also* section
 
         Returns
         -------
-        db.QueryExecutionPlan
+        QueryPlan
             The query execution plan
 
         See Also
