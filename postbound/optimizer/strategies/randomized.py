@@ -457,7 +457,7 @@ class RandomPlanGenerator:
 
         Yields
         ------
-        Generator[jointree.PhysicalQueryPlan, None, None]
+        Generator[QueryPlan, None, None]
             A generator producing random query plans
         """
         join_order_generator = self._join_order_generator.random_join_orders_for(query)

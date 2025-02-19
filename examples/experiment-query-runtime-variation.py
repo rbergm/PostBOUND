@@ -192,7 +192,7 @@ def determine_timeout(label: str, total_query_runtime: float, n_executed_plans: 
 
 def assert_correct_query_plan(label: str, query: qal.SqlQuery, expected_join_order: opt.JoinTree,
                               actual_query_plan: dict) -> None:
-    parsed_actual_plan = postgres.PostgresExplainPlan(actual_query_plan).as_query_execution_plan()
+    parsed_actual_plan = postgres.PostgresExplainPlan(actual_query_plan).as_qep()
     actual_join_order = opt.jointree_from_plan(parsed_actual_plan)
     if expected_join_order != actual_join_order:
         logging.error("Join order was not enforced correctly for label %s", label)

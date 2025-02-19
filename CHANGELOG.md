@@ -19,7 +19,8 @@ Be carefull when updating and check the changelog!
 ### 🐣 New features
 - Added a new `QueryPlan` class that combines the old `PhysicalQueryPlan` created by the optimizer modules and the old
   `QueryExecutionPlan` created by the database interfaces.
-  - Added support for recursive CTEs
+- Added JSON serialization/de-serialization functionality for query plans
+- Added support for recursive CTEs
 
 ### 💀 Breaking changes
 - The `generate_hints` method for databases now uses some named and some default arguments.
@@ -27,6 +28,8 @@ Be carefull when updating and check the changelog!
   line with Postgres' implementation.
 - Removed the `PhysicalQueryPlan` entirely. Use the unified `QueryPlan` instead
 - Removed the `QueryExecutionPlan` entirely. Use the unified `QueryPlan` instead
+- Renamed `PostgresExplainPlan.as_query_execution_plan()` to `as_qep()` to be more succinct. The same applies to
+  `PostgresExplainNode`.
 
 ### 📰 Updates
 - Moved the `postgres` module to the top of the package, i.e. you can now do `pb.postgres.connect()`

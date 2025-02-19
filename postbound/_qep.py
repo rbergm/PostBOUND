@@ -1210,7 +1210,7 @@ class QueryPlan:
     def __json__(self) -> jsondict:
         return {
             "node_type": self.node_type,
-            "input_node": self.input_node,
+            "operator": self.operator,
             "children": self.children,
             "plan_params": self._plan_params,
             "estimates": self._estimates,

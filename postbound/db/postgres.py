@@ -1975,7 +1975,7 @@ class PostgresOptimizer(OptimizerInterface):
         query_plan = PostgresExplainPlan(raw_query_plan)
         if deactivated_geqo:
             self._pg_instance._restore_geqo_state()
-        return query_plan.as_query_execution_plan()
+        return query_plan.as_qep()
 
     def analyze_plan(self, query: qal.SqlQuery) -> QueryPlan:
         self._pg_instance._current_geqo_state = self._pg_instance._obtain_geqo_state()
@@ -1985,7 +1985,7 @@ class PostgresOptimizer(OptimizerInterface):
         query_plan = PostgresExplainPlan(raw_query_plan)
         if deactivated_geqo:
             self._pg_instance._restore_geqo_state()
-        return query_plan.as_query_execution_plan()
+        return query_plan.as_qep()
 
     def cardinality_estimate(self, query: qal.SqlQuery | str) -> int:
         if isinstance(query, qal.SqlQuery):
@@ -2597,7 +2597,7 @@ class PostgresExplainNode:
         alias = self.relation_alias if self.relation_alias is not None and self.relation_alias != self.relation_name else ""
         return TableReference(self.relation_name, alias)
 
-    def as_query_execution_plan(self) -> QueryPlan:
+    def as_qep(self) -> QueryPlan:
         """Transforms the postgres-specific plan to a standardized `QueryPlan` instance.
 
         Notice that this transformation is lossy since not all information from the Postgres plan can be represented in query
@@ -2621,7 +2621,7 @@ class PostgresExplainNode:
         inner_child, outer_child, subplan_child = None, None, None
         for child in self.children:
             parent_rel = child.parent_relationship
-            qep_child = child.as_query_execution_plan()
+            qep_child = child.as_qep()
             if parent_rel == "Inner":
                 inner_child = qep_child
             elif parent_rel == "Outer":
@@ -2729,8 +2729,8 @@ class PostgresExplainPlan:
     In contrast to `PostgresExplainNode`, this includes additional parameters (planning time and execution time) for the entire
     plan, rather than just portions of it.
 
-    This class supports all methods that are specified on the general `db.QueryExecutionPlan` and returns the correct data for
-    its actual plan.
+    This class supports all methods that are specified on the general `QueryPlan` and returns the correct data for its actual
+    plan.
 
     Parameters
     ----------
@@ -2753,7 +2753,7 @@ class PostgresExplainPlan:
         self.planning_time: float = self.explain_data.get("Planning Time", math.nan) / 1000
         self.execution_time: float = self.explain_data.get("Execution Time", math.nan) / 1000
         self.query_plan = PostgresExplainNode(self.explain_data["Plan"])
-        self._normalized_plan = self.query_plan.as_query_execution_plan()
+        self._normalized_plan = self.query_plan.as_qep()
 
     @property
     def root(self) -> PostgresExplainNode:
@@ -2775,7 +2775,7 @@ class PostgresExplainPlan:
         """
         return self.query_plan.is_analyze()
 
-    def as_query_execution_plan(self) -> QueryPlan:
+    def as_qep(self) -> QueryPlan:
         """Provides the actual explain plan as a normalized query execution plan instance
 
         For notes on pecularities of this method, take a look at the *See Also* section
@@ -2787,7 +2787,7 @@ class PostgresExplainPlan:
 
         See Also
         --------
-        PostgresExplainNode.as_query_execution_plan
+        PostgresExplainNode.as_qep
         """
         return self._normalized_plan
 

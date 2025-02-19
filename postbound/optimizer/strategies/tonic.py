@@ -277,7 +277,7 @@ class QepsIdentifier:
         return table_str + filter_str
 
 
-class QepsNode:
+class QEPsNode:
     """Models the a join path with its learned operator costs.
 
     QEP-S nodes form a tree structure, with each branch corresponding to a different join path. Each node is identified by
@@ -317,17 +317,17 @@ class QepsNode:
     .. A. Hertzschuch et al.: "Turbo-Charging SPJ Query Plans with Learned Physical Join Operator Selections.", VLDB'2022
     """
     def __init__(self, filter_aware: bool, gamma: float, *,
-                 identifier: Optional[QepsIdentifier] = None, parent: Optional[QepsNode] = None) -> None:
+                 identifier: Optional[QepsIdentifier] = None, parent: Optional[QEPsNode] = None) -> None:
         self.filter_aware = filter_aware
         self.gamma = gamma
         self.operator_costs: dict[JoinOperator, float] = collections.defaultdict(float)
         self.child_nodes = util.dicts.DynamicDefaultDict(self._init_qeps)
-        self._subquery_root: Optional[QepsNode] = None  # only used for subquery nodes
+        self._subquery_root: Optional[QEPsNode] = None  # only used for subquery nodes
         self._parent = parent
         self._identifier = identifier
 
     @property
-    def subquery_root(self) -> QepsNode:
+    def subquery_root(self) -> QEPsNode:
         """The subquery that starts at the current node.
 
         Accessing this property means that this node is a subquery root. All child nodes are joins that should be executed
@@ -341,7 +341,7 @@ class QepsNode:
             The first table in the subquery.
         """
         if self._subquery_root is None:
-            self._subquery_root = QepsNode(self.filter_aware, self.gamma)
+            self._subquery_root = QEPsNode(self.filter_aware, self.gamma)
         return self._subquery_root
 
     def is_root_node(self) -> bool:
@@ -641,7 +641,7 @@ class QepsNode:
         inspect_entries = [cost_str, subquery_str, child_str]
         return "\n".join(entry for entry in inspect_entries if entry)
 
-    def _init_qeps(self, identifier: QepsIdentifier) -> QepsNode:
+    def _init_qeps(self, identifier: QepsIdentifier) -> QEPsNode:
         """Generates a new QEP-S node with a specific identifier.
 
         The new node "inherits" configuration settings from the current node. This includes filter awareness and gamma value.
@@ -657,7 +657,7 @@ class QepsNode:
         QepsNode
             The new node
         """
-        return QepsNode(self.filter_aware, self.gamma, parent=self, identifier=identifier)
+        return QEPsNode(self.filter_aware, self.gamma, parent=self, identifier=identifier)
 
     def _make_identifier(self, query: qal.SqlQuery,
                          table: TableReference | Iterable[TableReference]) -> QepsIdentifier:
@@ -732,7 +732,7 @@ class QepsNode:
         return f"{identifier} {costs}"
 
 
-class QueryExecutionPlanSynopsis:
+class QEPSynopsis:
     """The plan synopsis maintains a hierarchy of QEP-S nodes, starting at a single root node.
 
     Most of the methods this synopsis provides simply delegate to the root node.
@@ -748,7 +748,7 @@ class QueryExecutionPlanSynopsis:
     """
 
     @staticmethod
-    def create(filter_aware: bool, gamma: float) -> QueryExecutionPlanSynopsis:
+    def create(filter_aware: bool, gamma: float) -> QEPSynopsis:
         """Generates a new synopsis with specific settings.
 
         Parameters
@@ -760,13 +760,13 @@ class QueryExecutionPlanSynopsis:
 
         Returns
         -------
-        QueryExecutionPlanSynopsis
+        QEPSynopsis
             The synopsis
         """
-        root = QepsNode(filter_aware, gamma)
-        return QueryExecutionPlanSynopsis(root)
+        root = QEPsNode(filter_aware, gamma)
+        return QEPSynopsis(root)
 
-    def __init__(self, root: QepsNode) -> None:
+    def __init__(self, root: QEPsNode) -> None:
         self.root = root
 
     def recommend_operators(self, query: qal.SqlQuery, join_order: JoinTree) -> PhysicalOperatorAssignment:
@@ -830,7 +830,7 @@ class QueryExecutionPlanSynopsis:
 
         This does not only include cost information, but also the tree structure itself.
         """
-        self.root = QepsNode(self.root.filter_aware, self.root.gamma)
+        self.root = QEPsNode(self.root.filter_aware, self.root.gamma)
 
     def inspect(self) -> str:
         """Provides a nice hierarchical representation of the QEP-S structure.
@@ -876,8 +876,8 @@ def _load_qeps_id_from_json(json_data: dict) -> QepsIdentifier:
     return QepsIdentifier(tables, filter_pred)
 
 
-def _load_qeps_from_json(json_data: dict, qeps_id: Optional[QepsIdentifier], parent: Optional[QepsNode],
-                         filter_aware: bool, gamma: float) -> QepsNode:
+def _load_qeps_from_json(json_data: dict, qeps_id: Optional[QepsIdentifier], parent: Optional[QEPsNode],
+                         filter_aware: bool, gamma: float) -> QEPsNode:
     """Creates a QEP-S node from its JSON representation.
 
     Parameters
@@ -905,12 +905,12 @@ def _load_qeps_from_json(json_data: dict, qeps_id: Optional[QepsIdentifier], par
     KeyError
         If any of the child node encodings does not contain an actual node encoding
     """
-    node = QepsNode(filter_aware, gamma, identifier=qeps_id, parent=parent)
+    node = QEPsNode(filter_aware, gamma, identifier=qeps_id, parent=parent)
 
     cost_info = {JoinOperator(operator_str): cost for operator_str, cost in json_data.get("costs", {}).items()}
     subquery = (_load_qeps_from_json(json_data["subquery"], None, None, filter_aware, gamma)
                 if "subquery" in json_data else None)
-    children: dict[QepsIdentifier, QepsNode] = {}
+    children: dict[QepsIdentifier, QEPsNode] = {}
     for child_json in json_data.get("children", []):
         child_id = _load_qeps_id_from_json(child_json["identifier"])
         child_node = _load_qeps_from_json(json_data["node"], child_id, node, filter_aware, gamma)
@@ -922,7 +922,7 @@ def _load_qeps_from_json(json_data: dict, qeps_id: Optional[QepsIdentifier], par
     return node
 
 
-def make_qeps(path: Iterable[TableReference], root: Optional[QepsNode] = None, *, gamma: float = 0.8) -> QepsNode:
+def make_qeps(path: Iterable[TableReference], root: Optional[QEPsNode] = None, *, gamma: float = 0.8) -> QEPsNode:
     """Generates a QEP-S for the given join path.
 
     Parameters
@@ -940,7 +940,7 @@ def make_qeps(path: Iterable[TableReference], root: Optional[QepsNode] = None, *
     QepsNode
         The QEP-S. The synopsis is not filter-aware.
     """
-    current_node = root if root is not None else QepsNode(False, gamma)
+    current_node = root if root is not None else QEPsNode(False, gamma)
     root = current_node
     for table in path:
         current_node = current_node.child_nodes[QepsIdentifier(table)]
@@ -1111,7 +1111,7 @@ class TonicOperatorSelection(PhysicalOperatorSelection):
         filter_aware = json_data.get("filter_aware", False)
         gamma = json_data.get("gamma", 0.8)
         qeps_root = _load_qeps_from_json(json_data["root"], None, None, filter_aware, gamma)
-        qeps = QueryExecutionPlanSynopsis(qeps_root)
+        qeps = QEPSynopsis(qeps_root)
 
         tonic_model = TonicOperatorSelection(filter_aware, gamma, database=database)
         tonic_model.qeps = qeps
@@ -1122,7 +1122,7 @@ class TonicOperatorSelection(PhysicalOperatorSelection):
         super().__init__()
         self.filter_aware = filter_aware
         self.gamma = gamma
-        self.qeps = QueryExecutionPlanSynopsis.create(filter_aware, gamma)
+        self.qeps = QEPSynopsis.create(filter_aware, gamma)
         self._db = database if database else db.DatabasePool.get_instance().current_database()
 
     def integrate_cost(self, query: qal.SqlQuery, query_plan: Optional[QueryPlan] = None) -> None:

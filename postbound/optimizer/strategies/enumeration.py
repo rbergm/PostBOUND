@@ -370,7 +370,7 @@ class ExhaustivePlanEnumerator:
 
         Yields
         ------
-        Generator[jointree.PhysicalQueryPlan, None, None]
+        Generator[QueryPlan, None, None]
             A generator producing all possible query plans
         """
         for join_order in self._join_order_generator.all_join_orders_for(query):

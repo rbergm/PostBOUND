@@ -7,10 +7,10 @@ import typing
 from collections.abc import Container, Iterable
 from typing import Generic, Literal, Optional, Union
 
-from ._hints import PhysicalOperatorAssignment, PlanParameterization, operators_from_plan
+from ._hints import PhysicalOperatorAssignment, PlanParameterization, operators_from_plan, read_operator_json
 from .. import util
-from .._core import Cardinality, ScanOperator, JoinOperator
-from .._qep import JoinDirection, QueryPlan
+from .._core import Cardinality, ScanOperator, JoinOperator, PhysicalOperator
+from .._qep import JoinDirection, SortKey, QueryPlan, PlanParams, PlanEstimates, PlanMeasures, Subplan
 from ..qal import parser, TableReference, SqlQuery
 from ..util import jsondict, StateError
 
@@ -643,6 +643,75 @@ def to_query_plan(join_tree: JoinTree, *, query: Optional[SqlQuery] = None,
         return _make_simple_plan(join_tree, scan_op=scan_op, join_op=join_op, query=query, plan_params=plan_params)
     else:
         raise ValueError("Either operator assignment or default operators must be provided")
+
+
+def read_query_plan_json(json_data: dict | str) -> QueryPlan:
+    """Reads a query plan from its JSON representation.
+
+    Parameters
+    ----------
+    json_data : dict | str
+        Either the JSON dictionary, or a string encoding of the dictionary (which will be parsed by *json.loads*).
+
+    Returns
+    -------
+    QueryPlan
+        The corresponding query plan
+    """
+    from ..qal import parser  # local import to prevent circular imports
+
+    json_data = json.loads(json_data) if isinstance(json_data, str) else json_data
+    node_type: str = json_data["node_type"]
+    operator: PhysicalOperator = read_operator_json(json_data.get("operator"))
+    children = [read_query_plan_json(child) for child in json_data.get("children", [])]
+
+    params_json: dict = json_data.get("plan_params", {})
+    base_table_json: dict | None = params_json.get("base_table")
+    base_table = parser.load_table_json(base_table_json) if base_table_json else None
+
+    predicate_json: dict | None = params_json.get("filter_predicate")
+    filter_predicate = parser.load_predicate_json(predicate_json) if predicate_json else None
+
+    sort_keys: list[SortKey] = []
+    for sort_key_json in params_json.get("sort_keys", []):
+        sort_column = parser.load_expression_json(sort_key_json["column"])
+        ascending = sort_key_json["ascending"]
+        sort_keys.append(SortKey(sort_column, ascending))
+
+    index = params_json.get("index", "")
+    additional_params = {key: value for key, value in params_json.items()
+                         if key not in {"base_table", "filter_predicate", "sort_keys", "index"}}
+
+    plan_params = PlanParams(base_table=base_table, filter_predicate=filter_predicate, sort_keys=sort_keys, index=index,
+                             **additional_params)
+
+    estimates_json: dict = json_data.get("estimates", {})
+    cardinality = estimates_json.get("cardinality", math.nan)
+    cost = estimates_json.get("cost", math.nan)
+    additional_estimates = {key: value for key, value in estimates_json.items() if key not in {"cardinality", "cost"}}
+    estimates = PlanEstimates(cardinality=cardinality, cost=cost, **additional_estimates)
+
+    measures_json: dict = json_data.get("measures", {})
+    cardinality = measures_json.get("cardinality", math.nan)
+    cost = measures_json.get("cost", math.nan)
+    cache_hits = measures_json.get("cache_hits")
+    cache_misses = measures_json.get("cache_misses")
+    additional_measures = {key: value for key, value in measures_json.items()
+                           if key not in {"cardinality", "cost", "cache_hits", "cache_misses"}}
+    measures = PlanMeasures(cardinality=cardinality, cost=cost, cache_hits=cache_hits, cache_misses=cache_misses,
+                            **additional_measures)
+
+    subplan_json: dict = json_data.get("subplan", {})
+    if subplan_json:
+        subplan_root = parser.parse_query(subplan_json["root"])
+        subplan_target = subplan_json.get("target_name", "")
+        subplan = Subplan(root=subplan_root, target_name=subplan_target)
+    else:
+        subplan = None
+
+    return QueryPlan(node_type, operator=operator, children=children,
+                     plan_params=plan_params, estimates=estimates, measures=measures,
+                     subplan=subplan)
 
 
 def jointree_from_plan(plan: QueryPlan, *, card_source: Literal["estimates", "actual"] = "estimates") -> LogicalJoinTree:

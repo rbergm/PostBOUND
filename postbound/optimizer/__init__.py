@@ -38,6 +38,7 @@ from ._jointree import (
   parameters_from_plan,
   read_jointree_json,
   to_query_plan,
+  read_query_plan_json,
   explode_query_plan
 )
 from .._qep import (
@@ -73,6 +74,7 @@ __all__ = [
   "jointree_from_plan",
   "read_jointree_json",
   "to_query_plan",
+  "read_query_plan_json",
   "explode_query_plan",
   "SortKey",
   "PlanParams",

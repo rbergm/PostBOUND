@@ -1590,13 +1590,13 @@ class ParserError(RuntimeError):
         super().__init__(msg)
 
 
-def load_table_json(json_data: dict) -> Optional[TableReference]:
+def load_table_json(json_data: dict | str) -> Optional[TableReference]:
     """Re-creates a table reference from its JSON encoding.
 
     Parameters
     ----------
-    json_data : dict
-        The encoded table
+    json_data : dict | str
+        Either the JSON dictionary, or a string encoding of the dictionary (which will be parsed by *json.loads*)
 
     Returns
     -------
@@ -1605,16 +1605,17 @@ def load_table_json(json_data: dict) -> Optional[TableReference]:
     """
     if not json_data:
         return None
+    json_data = json_data if isinstance(json_data, dict) else json.loads(json_data)
     return TableReference(json_data.get("full_name", ""), json_data.get("alias", ""), json_data.get("virtual", False))
 
 
-def load_column_json(json_data: dict) -> Optional[ColumnReference]:
+def load_column_json(json_data: dict | str) -> Optional[ColumnReference]:
     """Re-creates a column reference from its JSON encoding.
 
     Parameters
     ----------
-    json_data : dict
-        The encoded column
+    json_data : dict | str
+        Either the JSON dictionary, or a string encoding of the dictionary (which will be parsed by *json.loads*)
 
     Returns
     -------
@@ -1623,16 +1624,17 @@ def load_column_json(json_data: dict) -> Optional[ColumnReference]:
     """
     if not json_data:
         return None
+    json_data = json_data if isinstance(json_data, dict) else json.loads(json_data)
     return ColumnReference(json_data.get("column"), load_table_json(json_data.get("table", None)))
 
 
-def load_expression_json(json_data: dict) -> Optional[SqlExpression]:
+def load_expression_json(json_data: dict | str) -> Optional[SqlExpression]:
     """Re-creates an arbitrary SQL expression from its JSON encoding.
 
     Parameters
     ----------
-    json_data : dict
-        The encoded expression
+    json_data : dict | str
+        Either the JSON dictionary, or a string encoding of the dictionary (which will be parsed by *json.loads*)
 
     Returns
     -------
@@ -1642,6 +1644,7 @@ def load_expression_json(json_data: dict) -> Optional[SqlExpression]:
     """
     if not json_data:
         return None
+    json_data = json_data if isinstance(json_data, dict) else json.loads(json_data)
 
     tables = [load_table_json(table_data) for table_data in json_data.get("tables", [])]
     expression_str = json_data["expression"]
@@ -1655,13 +1658,13 @@ def load_expression_json(json_data: dict) -> Optional[SqlExpression]:
     return parsed_query.select_clause.targets[0].expression
 
 
-def load_predicate_json(json_data: dict) -> Optional[AbstractPredicate]:
+def load_predicate_json(json_data: dict | str) -> Optional[AbstractPredicate]:
     """Re-creates an arbitrary predicate from its JSON encoding.
 
     Parameters
     ----------
-    json_data : dict
-        The encoded predicate
+    json_data : dict | str
+        Either the JSON dictionary, or a string encoding of the dictionary (which will be parsed by *json.loads*)
 
     Returns
     -------
@@ -1678,6 +1681,8 @@ def load_predicate_json(json_data: dict) -> Optional[AbstractPredicate]:
     """
     if not json_data:
         return None
+    json_data = json_data if isinstance(json_data, dict) else json.loads(json_data)
+
     tables = [load_table_json(table_data) for table_data in json_data.get("tables", [])]
     if not tables:
         raise KeyError("Predicate needs at least one table!")

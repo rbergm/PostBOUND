@@ -302,19 +302,23 @@ class DirectionalJoinOperatorAssignment(JoinOperatorAssignment):
                 and super().__eq__(other))
 
 
-def read_operator_json(json_data: dict | str) -> PhysicalOperator | ScanOperatorAssignment | JoinOperatorAssignment:
+def read_operator_json(json_data: dict | str) -> Optional[PhysicalOperator | ScanOperatorAssignment | JoinOperatorAssignment]:
     """Reads a physical operator assignment from a JSON dictionary.
 
     Parameters
     ----------
     json_data : dict | str
-        The JSON dictionary to read from
+        Either the JSON dictionary, or a string encoding of the dictionary (which will be parsed by *json.loads*).
 
     Returns
     -------
-    ScanOperators | JoinOperators | ScanOperatorAssignment | JoinOperatorAssignment
-        The parsed assignment. Whether it is a scan or join assignment is inferred from the JSON dictionary.
+    Optional[ScanOperators | JoinOperators | ScanOperatorAssignment | JoinOperatorAssignment]
+        The parsed assignment. Whether it is a scan or join assignment is inferred from the JSON dictionary. If the input is
+        empty or *None*, *None* is returned.
     """
+    if not json_data:
+        return None
+
     if isinstance(json_data, str):
         if json_data in {op.value for op in ScanOperator}:
             return ScanOperator(json_data)
@@ -361,7 +365,7 @@ class PhysicalOperatorAssignment:
 
     The assignment enables ``__getitem__`` access and tries to determine the requested setting in an intelligent way, i.e.
     supplying a single base table will provide the associated scan operator, supplying an iterable of base tables the join
-    operator and supplying an operator will return the global setting. If no item is found, ``None`` will be returned.
+    operator and supplying an operator will return the global setting. If no item is found, *None* will be returned.
 
     Attributes
     ----------
@@ -416,7 +420,7 @@ class PhysicalOperatorAssignment:
         enabled : bool
             Whether the database system is allowed to choose the operator
         overwrite_fine_grained_selection : bool, optional
-            How to deal with assignments of the same operator to individual scans or joins. If ``True`` all such assignments
+            How to deal with assignments of the same operator to individual scans or joins. If *True* all such assignments
             that contradict the setting are removed. For example, consider a situation where nested-loop joins should be
             disabled globally, but a specific join has already been assigned to be executed with an NLJ. In this case, setting
             `overwrite_fine_grained_selection` removes the assignment for the specific join. This is off by default, to enable
@@ -563,8 +567,8 @@ class PhysicalOperatorAssignment:
             default: Optional[T] = None) -> Optional[ScanOperatorAssignment | JoinOperatorAssignment | T]:
         """Retrieves the operator assignment for a specific scan or join.
 
-        This is similar to the **dict.get** method. An important distinction is that we never raise an error if there is no
-        intermediate assigned to the operator. Instead, we return the default value, which is **None** by default.
+        This is similar to the *dict.get* method. An important distinction is that we never raise an error if there is no
+        intermediate assigned to the operator. Instead, we return the default value, which is *None* by default.
 
         Parameters
         ----------
@@ -572,7 +576,7 @@ class PhysicalOperatorAssignment:
             The intermediate to retrieve the operator assignment for. For scans, either the scanned table can be given
             directly, or the table can be wrapped in a singleton iterable.
         default : Optional[T], optional
-            The default value to return if no assignment is found. Defaults to **None**.
+            The default value to return if no assignment is found. Defaults to *None*.
 
         Returns
         -------
@@ -663,7 +667,7 @@ def read_operator_assignment_json(json_data: dict | str) -> PhysicalOperatorAssi
     Parameters
     ----------
     json_data : dict | str
-        Either the JSON dictionary, or a string encoding of the dictionary (which will be parsed by **json.loads**).
+        Either the JSON dictionary, or a string encoding of the dictionary (which will be parsed by *json.loads*).
 
     Returns
     -------
@@ -767,9 +771,9 @@ class PlanParameterization:
             The name of the setting when using the separate key/value assignment mode. Defaults to an empty string to enable
             the integrated keyword parameter mode.
         setting_value : Any, optional
-            The setting's value when using the separate key/value assignment mode. Defaults to ``None`` to enable the
+            The setting's value when using the separate key/value assignment mode. Defaults to *None* to enable the
             integrated keyword parameter mode.
-        **kwargs
+        kwargs
             The key/value pairs in the integrated keyword parameter mode.
 
         Raises
@@ -838,7 +842,7 @@ def read_plan_params_json(json_data: dict | str) -> PlanParameterization:
     Parameters
     ----------
     json_data : dict | str
-        Either the JSON dictionary, or a string encoding of the dictionary (which will be parsed by **json.loads**).
+        Either the JSON dictionary, or a string encoding of the dictionary (which will be parsed by *json.loads*).
 
     Returns
     -------
@@ -868,7 +872,7 @@ def update_plan(query_plan: QueryPlan, *,
     Simplification removes all auxiliary non-join and non-scan operators, thereby effectively only leaving those nodes with a
     corresponding operator. But, there is no free lunch and the simplification might also remove some other important
     operators, such as using hash-based or sort-based aggregation operators. Therefore, simplification can be disabled by
-    setting the `simplify` parameter to **False**.
+    setting the `simplify` parameter to *False*.
 
     Parameters
     ----------
