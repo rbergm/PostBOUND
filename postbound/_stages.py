@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import abc
+from collections.abc import Iterable
 from typing import Optional
 
 
@@ -68,14 +69,14 @@ class CardinalityEstimator(abc.ABC):
     """The cardinality estimator calculates how many tuples specific operators will produce."""
 
     @abc.abstractmethod
-    def calculate_estimate(self, query: SqlQuery, intermediate: frozenset[TableReference]) -> Cardinality:
+    def calculate_estimate(self, query: SqlQuery, intermediate: TableReference | Iterable[TableReference]) -> Cardinality:
         """Determines the cardinality of a specific intermediate.
 
         Parameters
         ----------
         query : SqlQuery
             The query being optimized
-        intermediate : frozenset[TableReference]
+        intermediate : TableReference | Iterable[TableReference]
             The intermediate for which the cardinality should be estimated. All filter predicates, etc. that are applicable
             to the intermediate can be assumed to be applied.
 
@@ -143,7 +144,8 @@ class CostModel(abc.ABC):
 
         The following conventions are used for the estimation: the root node of the plan will not have any cost set. However,
         all input nodes will have already been estimated by earlier calls to the cost model. Hence, while estimating the cost
-        of the root node, all earlier costs will be available as inputs.
+        of the root node, all earlier costs will be available as inputs. It is further assumed that all nodes already have
+        associated cardinality estimates.
 
         It is not the responsibility of the cost model to set the estimate on the plan, this is the task of the enumerator
         (which can decide whether the plan should be considered any further).

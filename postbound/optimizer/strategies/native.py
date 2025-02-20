@@ -11,6 +11,7 @@ would provide a combined query optimizer with Oracle's join ordering algorithm a
 """
 from __future__ import annotations
 
+from collections.abc import Iterable
 from typing import Optional
 
 from .._hints import PhysicalOperatorAssignment, PlanParameterization, operators_from_plan
@@ -22,7 +23,8 @@ from ..._stages import (
     JoinOrderOptimization, PhysicalOperatorSelection, ParameterGeneration,
     CompleteOptimizationAlgorithm
 )
-from ... import db, qal
+from ... import db, qal, util
+from ...qal import SqlQuery
 from ...util import jsondict
 
 
@@ -33,14 +35,14 @@ class NativeCostModel(CostModel):
         super().__init__()
         self._target_db: Optional[db.Database] = None
 
-    def estimate_cost(self, query: qal.SqlQuery, plan: QueryPlan) -> Cost:
+    def estimate_cost(self, query: SqlQuery, plan: QueryPlan) -> Cost:
         hinted_query = self._target_db.hinting().generate_hints(query, plan.with_actual_card())
         return self._target_db.optimizer().cost_estimate(hinted_query)
 
     def describe(self) -> jsondict:
         return {"name": "native", "database_system": self._target_db.describe()}
 
-    def initialize(self, target_db: db.Database, query: qal.SqlQuery) -> None:
+    def initialize(self, target_db: db.Database, query: SqlQuery) -> None:
         self._target_db = target_db
 
     def cleanup(self) -> None:
@@ -54,14 +56,15 @@ class NativeCardinalityEstimator(CardinalityEstimator):
         super().__init__()
         self._target_db: Optional[db.Database] = None
 
-    def estimate_cardinality(self, query: qal.SqlQuery, intermediate: frozenset[TableReference]) -> Cardinality:
+    def estimate_cardinality(self, query: SqlQuery, intermediate: TableReference | Iterable[TableReference]) -> Cardinality:
+        intermediate = util.enlist(intermediate)
         subquery = qal.transform.extract_query_fragment(query, intermediate)
         return self._target_db.optimizer().cardinality_estimate(subquery)
 
     def describe(self) -> jsondict:
         return {"name": "native", "database_system": self._target_db.describe()}
 
-    def initialize(self, target_db: db.Database, query: qal.SqlQuery) -> None:
+    def initialize(self, target_db: db.Database, query: SqlQuery) -> None:
         self._target_db = target_db
 
     def cleanup(self) -> None:
@@ -81,7 +84,7 @@ class NativeJoinOrderOptimizer(JoinOrderOptimization):
         super().__init__()
         self.db_instance = db_instance
 
-    def optimize_join_order(self, query: qal.SqlQuery) -> Optional[JoinTree]:
+    def optimize_join_order(self, query: SqlQuery) -> Optional[JoinTree]:
         query_plan = self.db_instance.optimizer().query_plan(query)
         return jointree_from_plan(query_plan)
 
@@ -105,7 +108,7 @@ class NativePhysicalOperatorSelection(PhysicalOperatorSelection):
         super().__init__()
         self.db_instance = db_instance
 
-    def select_physical_operators(self, query: qal.SqlQuery, join_order: Optional[JoinTree]) -> PhysicalOperatorAssignment:
+    def select_physical_operators(self, query: SqlQuery, join_order: Optional[JoinTree]) -> PhysicalOperatorAssignment:
         if join_order:
             query = self.db_instance.hinting().generate_hints(query, join_order=join_order)
         query_plan = self.db_instance.optimizer().query_plan(query)
@@ -131,7 +134,7 @@ class NativePlanParameterization(ParameterGeneration):
         super().__init__()
         self.db_instance = db_instance
 
-    def generate_plan_parameters(self, query: qal.SqlQuery, join_order: Optional[JoinTree],
+    def generate_plan_parameters(self, query: SqlQuery, join_order: Optional[JoinTree],
                                  operator_assignment: Optional[PhysicalOperatorAssignment]) -> Optional[PlanParameterization]:
         if join_order or operator_assignment:
             query = self.db_instance.hinting().generate_hints(query, join_order=join_order,
@@ -156,7 +159,7 @@ class NativeOptimizer(CompleteOptimizationAlgorithm):
         super().__init__()
         self.db_instance = db_instance
 
-    def optimize_query(self, query: qal.SqlQuery) -> QueryPlan:
+    def optimize_query(self, query: SqlQuery) -> QueryPlan:
         return self.db_instance.optimizer().query_plan(query)
 
     def describe(self) -> jsondict:

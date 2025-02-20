@@ -669,6 +669,11 @@ class DatabaseSchema(abc.ABC):
         return self.is_primary_key(column) or self.has_secondary_index(column)
 
     @abc.abstractmethod
+    def indexes_on(self, column: ColumnReference) -> set[str]:
+        # TODO
+        raise NotImplementedError
+
+    @abc.abstractmethod
     def datatype(self, column: ColumnReference) -> str:
         """Retrieves the (physical) data type of a column.
 

@@ -1075,23 +1075,25 @@ class QueryPlan:
         smaller = min(self.estimated_cardinality, self.actual_cardinality) + 1
         return larger / smaller
 
-    def with_estimates(self, *, cardinality: Cardinality = math.nan, cost: Cost = math.nan,
+    def with_estimates(self, *, cardinality: Optional[Cardinality] = None, cost: Optional[Cost] = None,
                        keep_measures: bool = False) -> QueryPlan:
         """Replaces the current estimates of the operator with new ones.
 
         Parameters
         ----------
-        cardinality : Cardinality, optional
+        cardinality : Optional[Cardinality], optional
             The new estimated cardinality of the operator. If the estimate should be dropped *NaN* can be used. If the current
-            cardinality should be kept, it has to be passed explicitly.
-        cost : Cost, optional
+            cardinality should be kept, *None* can be passed (which is the default).
+        cost : Optional[Cost], optional
             The new estimated cost of the operator. If the estimate should be dropped, *NaN* can be used. If the current cost
-            should be kept, it has to be passed explicitly.
+            should be kept, *None* can be passed (which is the default).
         keep_measures : bool, optional
             Whether to keep the actual measurements of the operator. If this is set to *False*, the actual cardinality and
             execution time are dropped. Measures are dropped by default because they usually depend on the estimates (which
             are now changed).
         """
+        cardinality = self.estimated_cardinality if cardinality is None else cardinality
+        cost = self.estimated_cost if cost is None else cost
         updated_estimates = PlanEstimates(cardinality=cardinality, cost=cost)
         updated_measures = self._measures if keep_measures else None
         return QueryPlan(self.node_type, operator=self.operator, input_node=self.input_node, children=self.children,

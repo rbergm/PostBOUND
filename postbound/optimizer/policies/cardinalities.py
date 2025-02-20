@@ -13,7 +13,7 @@ from __future__ import annotations
 import abc
 import json
 import random
-from collections.abc import Generator
+from collections.abc import Generator, Iterable
 from typing import Literal, Optional
 
 import pandas as pd
@@ -65,7 +65,7 @@ class CardinalityHintsGenerator(ParameterGeneration, CardinalityEstimator, abc.A
         self.allow_cross_products = allow_cross_products
 
     @abc.abstractmethod
-    def calculate_estimate(self, query: qal.SqlQuery, tables: frozenset[TableReference]) -> Optional[int]:
+    def calculate_estimate(self, query: qal.SqlQuery, tables: TableReference | Iterable[TableReference]) -> Optional[int]:
         """Determines the cardinality estimate for a specific intermediate result.
 
         Ideally this is the only functionality-related method that needs to be implemented by developers using the cardinality
@@ -75,7 +75,7 @@ class CardinalityHintsGenerator(ParameterGeneration, CardinalityEstimator, abc.A
         ----------
         query : qal.SqlQuery
             The query to optimize
-        tables : frozenset[TableReference]
+        tables : TableReference | Iterable[TableReference]
             The intermediate which should be estimated. The intermediate is described by its tables. It should be assumed that
             all filters and join predicates have been pushed down as far as possible.
 
@@ -177,7 +177,8 @@ class NativeCardinalityHintGenerator(CardinalityHintsGenerator):
     def describe(self) -> dict:
         return {"name": "native-cards", "database": self.database.describe()}
 
-    def calculate_estimate(self, query: qal.SqlQuery, tables: frozenset[TableReference]) -> int:
+    def calculate_estimate(self, query: qal.SqlQuery, tables: TableReference | Iterable[TableReference]) -> int:
+        tables = util.enlist(tables)
         partial_query = qal.transform.as_star_query(qal.transform.extract_query_fragment(query, tables))
         return self.database.optimizer().cardinality_estimate(partial_query)
 
@@ -216,7 +217,8 @@ class PreciseCardinalityHintGenerator(CardinalityHintsGenerator):
     def describe(self) -> dict:
         return {"name": "true-cards", "database": self.database.describe()}
 
-    def calculate_estimate(self, query: qal.SqlQuery, tables: frozenset[TableReference]) -> int:
+    def calculate_estimate(self, query: qal.SqlQuery, tables: TableReference | Iterable[TableReference]) -> int:
+        tables = util.enlist(tables)
         partial_query = qal.transform.as_count_star_query(qal.transform.extract_query_fragment(query, tables))
         if partial_query in self._cardinality_cache:
             return self._cardinality_cache[partial_query]
@@ -315,7 +317,8 @@ class PreComputedCardinalities(CardinalityHintsGenerator):
 
         self._true_card_df = pd.read_csv(lookup_table_path, converters={tables_col: _parse_tables})
 
-    def calculate_estimate(self, query: qal.SqlQuery, tables: frozenset[TableReference]) -> Optional[int]:
+    def calculate_estimate(self, query: qal.SqlQuery, tables: TableReference | Iterable[TableReference]) -> Optional[int]:
+        tables = util.enlist(tables)
         label = self._workload.label_of(query)
         relevant_samples = self._true_card_df[self._true_card_df[self._label_col] == label]
         cardinality_sample = relevant_samples[relevant_samples[self._tables_col] == tables]
@@ -448,7 +451,8 @@ class CardinalityDistortion(CardinalityHintsGenerator):
         return {"name": "cardinality-distortion", "estimator": "distortion",
                 "distortion_factor": self.distortion_factor, "distortion_strategy": self.distortion_strategy}
 
-    def calculate_estimate(self, query: qal.SqlQuery, tables: frozenset[TableReference]) -> Optional[int]:
+    def calculate_estimate(self, query: qal.SqlQuery, tables: TableReference | Iterable[TableReference]) -> Optional[int]:
+        tables = util.enlist(tables)
         card_est = self.estimator.calculate_estimate(query, tables)
         if not card_est:
             return None
