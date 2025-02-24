@@ -476,17 +476,23 @@ def _pglast_parse_expression(pglast_data: dict, *, available_tables: dict[str, T
                 filter_expr = None
 
             if expression.get("agg_star", False):
-                return FunctionExpression(funcname, [StarExpression()], distinct=distinct, filter_by=filter_expr)
+                return FunctionExpression(funcname, [StarExpression()], distinct=distinct, filter_where=filter_expr)
 
             args = [_pglast_parse_expression(arg, available_tables=available_tables,
                                              resolved_columns=resolved_columns, schema=schema)
                     for arg in expression.get("args", [])]
-            return FunctionExpression(funcname, args, distinct=distinct, filter_by=filter_expr)
+            return FunctionExpression(funcname, args, distinct=distinct, filter_where=filter_expr)
 
         case "FuncCall" if "over" in pglast_data["FuncCall"]:  # window functions
             expression: dict = pglast_data["FuncCall"]
             funcname = expression["funcname"][0]["String"]["sval"]
-            window_spec = expression["over"]
+
+            args = [_pglast_parse_expression(arg, available_tables=available_tables,
+                                             resolved_columns=resolved_columns, schema=schema)
+                    for arg in expression.get("args", [])]
+            fn = FunctionExpression(funcname, args)
+
+            window_spec: dict = expression["over"]
 
             if "partitionClause" in window_spec:
                 partition = [_pglast_parse_expression(partition, available_tables=available_tables,
@@ -507,7 +513,7 @@ def _pglast_parse_expression(pglast_data: dict, *, available_tables: dict[str, T
             else:
                 filter_expr = None
 
-            return WindowExpression(funcname, partitioning=partition, ordering=order, filter_condition=filter_expr)
+            return WindowExpression(fn, partitioning=partition, ordering=order, filter_condition=filter_expr)
 
         case "CoalesceExpr":
             expression = pglast_data["CoalesceExpr"]

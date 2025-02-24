@@ -14,7 +14,40 @@ Be carefull when updating and check the changelog!
 
 ---
 
-# ➡ Version 0.12.0
+# ➡ Version 0.12.1
+
+### 🐣 New features
+-
+
+### 💀 Breaking changes
+-
+
+### 📰 Updates
+-
+
+### 🏥 Fixes
+- Fixed parsed window functions containing a plain string function name rather than an actual `FunctionExpression`
+
+### 🪲 Known bugs
+- Pre-defined workloads (`workloads.job()`, etc) do not work if installed as a Pip module. This is because the build process
+  does not retain the workload directory in the `site_packages`.
+
+### ⏳ WIP
+- Baseline for dynamic programming plan enumerator. This is not yet complete and trying to initialize a corresponding class
+  raises an error for now. The enumerator will probably be ready to go for v0.13.0
+
+---
+
+
+## 🚧 Version 0.13.0 👷
+
+### ⏳ Planned
+- Full dynamic programming support for the `TextbookOptimizationPipeline`, including a Postgres-specific algorithm
+
+---
+
+
+# 🕑 Version 0.12.0
 
 ### 🐣 New features
 - Added a new `QueryPlan` class that combines the old `PhysicalQueryPlan` created by the optimizer modules and the old
@@ -50,13 +83,6 @@ Be carefull when updating and check the changelog!
 ### ⏳ WIP
 - Baseline for dynamic programming plan enumerator. This is not yet complete and trying to initialize a corresponding class
   raises an error for now. The enumerator will probably be ready to go for v0.13.0
-
----
-
-## 🚧 Version 0.13.0 👷
-
-### ⏳ Planned
-- Full dynamic programming support for the `TextbookOptimizationPipeline`, including a Postgres-specific algorithm
 
 ---
 
