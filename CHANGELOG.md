@@ -29,6 +29,8 @@ Be carefull when updating and check the changelog!
 - Raise a more descriptive error message when parsing a single query of workload fails.
 
 ### 🏥 Fixes
+- Fixed `transform.rename_table()` only renaming column references to a table, but not the actual table (before, renaming *R*
+  to *S* in `SELECT R.a FROM R` produced `SELECT S.a FROM R` rather than `SELECT S.a FROM S`).
 - Fixed parsed window functions containing a plain string function name rather than an actual `FunctionExpression`
 - Fixed typos in some `__match_args__`
 - Fixed `format_quick` not using quoted identifiers in all cases

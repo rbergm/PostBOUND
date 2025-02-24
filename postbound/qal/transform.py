@@ -22,8 +22,8 @@ from __future__ import annotations
 
 import typing
 import warnings
-from collections.abc import Callable, Iterable
-from typing import Optional
+from collections.abc import Callable, Iterable, Sequence
+from typing import Optional, overload
 
 from ._qal import (
     TableReference, ColumnReference,
@@ -37,6 +37,7 @@ from ._qal import (
     BaseClause, Select, From, ImplicitFromClause, ExplicitFromClause, Where, GroupBy, Having, OrderBy,
     Limit, CommonTableExpression, UnionClause, IntersectClause, ExceptClause, Explain, Hint,
     SqlQuery, ImplicitSqlQuery, ExplicitSqlQuery, MixedSqlQuery, SetQuery, SelectStatement,
+    ClauseVisitor, SqlExpressionVisitor, PredicateVisitor,
     build_query, determine_join_equivalence_classes, generate_predicates_for_equivalence_classes
 )
 from .. import util
@@ -1394,6 +1395,257 @@ def rename_columns_in_clause(clause: Optional[ClauseType],
         raise ValueError("Unknown clause: " + str(clause))
 
 
+class _TableReferenceRenamer(ClauseVisitor[BaseClause],
+                             PredicateVisitor[AbstractPredicate],
+                             SqlExpressionVisitor[SqlExpression]):
+    """Visitor to replace all references to specific tables to refer to new tables instead.
+
+    Parameters
+    ----------
+    renamings : Optional[dict[TableReference, TableReference]], optional
+        Map from old table name to new name. If this is given, `source_table` and `target_table` are ignored.
+    source_table : Optional[TableReference], optional
+        Create a visitor for a single renaming operation. This parameter specifies the old table name that should be replaced.
+        This parameter is ignored if `renamings` is given.
+    target_table : Optional[TableReference], optional
+        Create a visitor for a single renaming operation. This parameter specifies the new table name that should be used
+        instead of `source_table`. This parameter is ignored if `renamings` is given.
+    """
+
+    def __init__(self, renamings: Optional[dict[TableReference, TableReference]] = None, *,
+                 source_table: Optional[TableReference] = None, target_table: Optional[TableReference] = None) -> None:
+        if renamings is not None:
+            self._renamings = renamings
+
+        if source_table is None or target_table is None:
+            raise ValueError("Both source_table and target_table must be provided if renamings are not given explicitly")
+        self._renamings = {source_table: target_table}
+
+    def visit_hint_clause(self, clause: Hint) -> Hint:
+        return clause
+
+    def visit_explain_clause(self, clause: Explain) -> Explain:
+        return clause
+
+    def visit_cte_clause(self, clause: CommonTableExpression) -> CommonTableExpression:
+        ctes: list[WithQuery] = []
+
+        for cte in clause.queries:
+            nested_renamings = cte.query.accept_visitor(self)
+            nested_query = build_query(nested_renamings.values())
+            target_table = self._rename_table(cte.target_table)
+
+            ctes.append(WithQuery(nested_query, target_table, materialized=cte.materialized))
+
+        return CommonTableExpression(ctes, recursive=clause.recursive)
+
+    def visit_select_clause(self, clause) -> Select:
+        projections: list[BaseProjection] = []
+
+        for proj in clause:
+            renamed_expression = proj.expression.accept_visitor(self)
+            projections.append(BaseProjection(renamed_expression, proj.target_name))
+
+        return Select(projections, clause.projection_type)
+
+    def visit_from_clause(self, clause: From) -> From:
+        match clause:
+            case ImplicitFromClause(tables):
+                renamed_tables = [self._rename_table_source(src) for src in tables]
+                return ImplicitFromClause.create_for(renamed_tables)
+
+            case ExplicitFromClause(join):
+                renamed_join = self._rename_table_source(join)
+                return ExplicitFromClause(renamed_join)
+
+            case From(items):
+                renamed_items = [self._rename_table_source(item) for item in items]
+                return From(renamed_items)
+
+            case _:
+                raise ValueError("Unknown from clause type: " + str(clause))
+
+    def visit_where_clause(self, clause: Where) -> Where:
+        renamed_predicate = clause.predicate.accept_visitor(self)
+        return Where(renamed_predicate)
+
+    def visit_groupby_clause(self, clause: GroupBy) -> GroupBy:
+        renamed_groupings = [grouping.accept_visitor(self) for grouping in clause.group_columns]
+        return GroupBy(renamed_groupings, clause.distinct)
+
+    def visit_having_clause(self, clause: Having) -> Having:
+        renamed_predicate = clause.condition.accept_visitor(self)
+        return Having(renamed_predicate)
+
+    def visit_orderby_clause(self, clause: OrderBy) -> OrderBy:
+        renamed_orderings: list[OrderByExpression] = []
+
+        for ordering in clause:
+            renamed_expression = ordering.column.accept_visitor(self)
+            renamed_orderings.append(OrderByExpression(renamed_expression, ordering.ascending, ordering.nulls_first))
+
+        return renamed_orderings
+
+    def visit_limit_clause(self, clause: Limit) -> Limit:
+        return clause
+
+    def visit_union_clause(self, clause: UnionClause) -> UnionClause:
+        renamed_lhs = clause.left_query.accept_visitor(self)
+        renamed_rhs = clause.right_query.accept_visitor(self)
+        return UnionClause(renamed_lhs, renamed_rhs, union_all=clause.union_all)
+
+    def visit_except_clause(self, clause: ExceptClause) -> ExceptClause:
+        renamed_lhs = clause.left_query.accept_visitor(self)
+        renamed_rhs = clause.right_query.accept_visitor(self)
+        return ExceptClause(renamed_lhs, renamed_rhs)
+
+    def visit_intersect_clause(self, clause: IntersectClause) -> IntersectClause:
+        renamed_lhs = clause.left_query.accept_visitor(self)
+        renamed_rhs = clause.right_query.accept_visitor(self)
+        return IntersectClause(renamed_lhs, renamed_rhs)
+
+    def visit_binary_predicate(self, predicate: BinaryPredicate) -> BinaryPredicate:
+        renamed_lhs = predicate.first_argument.accept_visitor(self)
+        renamed_rhs = predicate.second_argument.accept_visitor(self)
+        return BinaryPredicate(predicate.operation, renamed_lhs, renamed_rhs)
+
+    def visit_between_predicate(self, predicate: BetweenPredicate) -> BetweenPredicate:
+        renamed_col = predicate.column.accept_visitor(self)
+        renamed_start = predicate.interval_start.accept_visitor(self)
+        renamed_end = predicate.interval_end.accept_visitor(self)
+        return BetweenPredicate(renamed_col, (renamed_start, renamed_end))
+
+    def visit_in_predicate(self, predicate: InPredicate) -> InPredicate:
+        renamed_col = predicate.column.accept_visitor(self)
+        renamed_vals = [val.accept_visitor(self) for val in predicate.values]
+        return InPredicate(renamed_col, renamed_vals)
+
+    def visit_unary_predicate(self, predicate: UnaryPredicate) -> UnaryPredicate:
+        renamed_col = predicate.column.accept_visitor(self)
+        return UnaryPredicate(renamed_col, predicate.operation)
+
+    def visit_not_predicate(self, predicate: CompoundPredicate, child_predicate: AbstractPredicate) -> CompoundPredicate:
+        renamed_child = child_predicate.accept_visitor(self)
+        return CompoundPredicate(CompoundOperator.Not, [renamed_child])
+
+    def visit_or_predicate(self, predicate: CompoundPredicate,
+                           child_predicates: Sequence[AbstractPredicate]) -> CompoundPredicate:
+        renamed_children = [child.accept_visitor(self) for child in child_predicates]
+        return CompoundPredicate(CompoundOperator.Or, renamed_children)
+
+    def visit_and_predicate(self, predicate: CompoundPredicate,
+                            child_predicates: Sequence[AbstractPredicate]) -> CompoundPredicate:
+        renamed_children = [child.accept_visitor(self) for child in child_predicates]
+        return CompoundPredicate(CompoundOperator.And, renamed_children)
+
+    def visit_static_value_expr(self, expr: StaticValueExpression) -> StaticValueExpression:
+        return expr
+
+    def visit_cast_expr(self, expr: CastExpression) -> CastExpression:
+        renamed_child = expr.casted_expression.accept_visitor(self)
+        return CastExpression(renamed_child, expr.target_type)
+
+    def visit_mathematical_expr(self, expr: MathematicalExpression) -> MathematicalExpression:
+        renamed_lhs = expr.first_arg.accept_visitor(self)
+
+        if isinstance(expr.second_arg, SqlExpression):
+            renamed_rhs = expr.second_arg.accept_visitor(self)
+        elif expr.second_arg is not None:
+            renamed_rhs = [nested_expr.accept_visitor(self) for nested_expr in expr.second_arg]
+        else:
+            renamed_rhs = None
+
+        return MathematicalExpression(expr.operator, renamed_lhs, renamed_rhs)
+
+    def visit_column_expr(self, expr: ColumnExpression) -> ColumnExpression:
+        return self._rename_column(expr)
+
+    def visit_function_expr(self, expr: FunctionExpression) -> FunctionExpression:
+        renamed_args = [arg.accept_visitor(self) for arg in expr.arguments]
+        renamed_filter = expr.filter_where.accept_visitor(self) if expr.filter_where else None
+        return FunctionExpression(expr.function, renamed_args, distinct=expr.distinct, filter_where=renamed_filter)
+
+    def visit_subquery_expr(self, expr: SubqueryExpression) -> SubqueryExpression:
+        renamed_subquery = expr.query.accept_visitor(self)
+        return SubqueryExpression(renamed_subquery)
+
+    def visit_star_expr(self, expr: StarExpression) -> StarExpression:
+        renamed_table = self._rename_table(expr.from_table) if expr.from_table else None
+        return StarExpression(from_table=renamed_table)
+
+    def visit_window_expr(self, expr: WindowExpression) -> WindowExpression:
+        renamed_window_func = expr.window_function.accept_visitor(self)
+        renamed_partition = [part.accept_visitor(self) for part in expr.partitioning]
+        renamed_ordering = expr.ordering.accept_visitor(self) if expr.ordering else None
+        renamed_filter = expr.filter_condition.accept_visitor(self) if expr.filter_condition else None
+        return WindowExpression(renamed_window_func, partitioning=renamed_partition, ordering=renamed_ordering,
+                                filter_condition=renamed_filter)
+
+    def visit_case_expr(self, expr: CaseExpression) -> CaseExpression:
+        renamed_cases: list[tuple[AbstractPredicate, SqlExpression]] = []
+
+        for condition, value in expr.cases:
+            renamed_condition = condition.accept_visitor(self)
+            renamed_value = value.accept_visitor(self)
+            renamed_cases.append((renamed_condition, renamed_value))
+
+        renamed_default = expr.default_case.accept_visitor(self) if expr.default_case else None
+        return CaseExpression(renamed_cases, else_expr=renamed_default)
+
+    def visit_predicate_expr(self, expr: AbstractPredicate) -> AbstractPredicate:
+        return expr.accept_visitor(self)
+
+    def _rename_table_source(self, source: TableSource) -> JoinTableSource:
+        """Helper method to traverse and rename (the contents of) an arbitrary *FROM* item."""
+        match source:
+            case DirectTableSource(tab):
+                renamed_table = self._rename_table(tab)
+                return DirectTableSource(renamed_table)
+
+            case SubqueryTableSource(subquery, target_name, lateral):
+                nested_renamings = subquery.accept_visitor(self)
+                nested_query = build_query(nested_renamings.values())
+                target_table = self._rename_table(target_name)
+                return SubqueryTableSource(nested_query, target_table, lateral=lateral)
+
+            case JoinTableSource(lhs, rhs, join_condition, join_type):
+                renamed_lhs = self._rename_table_source(lhs)
+                renamed_rhs = self._rename_table_source(rhs)
+                renamed_condition = join_condition.accept_visitor(self) if join_condition else None
+                return JoinTableSource(renamed_lhs, renamed_rhs, join_condition=renamed_condition, join_type=join_type)
+
+            case ValuesTableSource(rows, alias, columns):
+                renamed_alias = self._rename_table(alias)
+                return ValuesTableSource(rows, alias=renamed_alias, columns=columns)
+
+            case _:
+                raise ValueError("Unknown table source type: " + str(source))
+
+    @overload
+    def _rename_table(self, table: TableReference) -> TableReference:
+        ...
+
+    @overload
+    def _rename_table(self, table: str) -> str:
+        ...
+
+    def _rename_table(self, table: str | TableReference) -> str | TableReference:
+        """Helper method to rename a specific table reference independent of its specific reprsentation."""
+        if isinstance(table, TableReference):
+            return self._renamings.get(table, table)
+
+        return next((target_tab.identifier() for orig_tab, target_tab in self._renamings.items()
+                     if orig_tab.identifier() == table), table)
+
+    def _rename_column(self, column: ColumnReference) -> ColumnReference:
+        """Helper method to rename a specific column reference."""
+        if not column.is_bound():
+            return column
+
+        target_table = self._renamings.get(column.table)
+        return column.bind_to(target_table) if target_table else column
+
+
 def rename_table(source_query: SelectQueryType, from_table: TableReference, target_table: TableReference, *,
                  prefix_column_names: bool = False) -> SelectQueryType:
     """Changes all references to a specific table to refer to another table instead.
@@ -1417,8 +1669,17 @@ def rename_table(source_query: SelectQueryType, from_table: TableReference, targ
     SelectQueryType
         The updated query
     """
+
+    # Despite the convenient _TableReferenceRenamer, we still need to do a little bit of manual gathering/traversal to support
+    # column prefixes.
     necessary_renamings: dict[ColumnReference, ColumnReference] = {}
     for column in filter(lambda col: col.table == from_table, source_query.columns()):
         new_column_name = f"{column.table.identifier()}_{column.name}" if prefix_column_names else column.name
         necessary_renamings[column] = ColumnReference(new_column_name, target_table)
-    return rename_columns_in_query(source_query, necessary_renamings)
+
+    renamed_cols = rename_columns_in_query(source_query, necessary_renamings)
+
+    tab_renamer = _TableReferenceRenamer(source_table=from_table, target_table=target_table)
+    renamed_clauses = renamed_cols.accept_visitor(tab_renamer)
+
+    return build_query(renamed_clauses.values())
