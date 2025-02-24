@@ -31,6 +31,7 @@ Be carefull when updating and check the changelog!
 ### 🏥 Fixes
 - Fixed parsed window functions containing a plain string function name rather than an actual `FunctionExpression`
 - Fixed typos in some `__match_args__`
+- Fixed `format_quick` not using quoted identifiers in all cases
 
 ### 🪲 Known bugs
 - Pre-defined workloads (`workloads.job()`, etc) do not work if installed as a Pip module. This is because the build process

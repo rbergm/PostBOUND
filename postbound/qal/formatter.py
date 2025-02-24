@@ -12,10 +12,11 @@ from ._qal import (
     ValuesWithQuery,
     From, ImplicitFromClause, ExplicitFromClause,
     TableSource, DirectTableSource, JoinTableSource, SubqueryTableSource, ValuesTableSource,
-    Select, Hint, Where, UnionClause, IntersectClause, ExceptClause,
+    Select, Hint, Where, GroupBy, UnionClause, IntersectClause, ExceptClause,
     SelectType,
     AbstractPredicate, CompoundPredicate,
-    SqlQuery, SetQuery, SelectStatement
+    SqlQuery, SetQuery, SelectStatement,
+    quote
 )
 from ..util.errors import InvariantViolationError
 
@@ -142,7 +143,7 @@ def _quick_format_cte(cte_clause: CommonTableExpression) -> list[str]:
         else:
             mat_info = "" if cte_query.materialized is None else ("MATERIALIZED " if cte_query.materialized
                                                                   else "NOT MATERIALIZED ")
-            cte_header = f"WITH {recursive_info}{cte_query.target_name} AS {mat_info}("
+            cte_header = f"WITH {recursive_info}{quote(cte_query.target_name)} AS {mat_info}("
             cte_content = format_quick(cte_query.query, trailing_semicolon=False)
         cte_content = _increase_indentation(cte_content)
         cte_footer = ")"
@@ -151,11 +152,11 @@ def _quick_format_cte(cte_clause: CommonTableExpression) -> list[str]:
     first_cte, *remaining_ctes = cte_clause.queries
     first_content = _increase_indentation(format_quick(first_cte.query, trailing_semicolon=False))
     mat_info = "" if first_cte.materialized is None else ("MATERIALIZED " if first_cte.materialized else "NOT MATERIALIZED ")
-    formatted_parts: list[str] = [f"WITH{recursive_info} {first_cte.target_name} AS {mat_info}(", first_content]
+    formatted_parts: list[str] = [f"WITH{recursive_info} {quote(first_cte.target_name)} AS {mat_info}(", first_content]
     for next_cte in remaining_ctes:
         mat_info = "" if next_cte.materialized is None else ("MATERIALIZED " if first_cte.materialized
                                                              else "NOT MATERIALIZED ")
-        current_header = f"), {next_cte.target_name} AS {mat_info}("
+        current_header = f"), {quote(next_cte.target_name)} AS {mat_info}("
         cte_content = _increase_indentation(format_quick(next_cte.query, trailing_semicolon=False))
 
         formatted_parts.append(current_header)
@@ -167,7 +168,7 @@ def _quick_format_cte(cte_clause: CommonTableExpression) -> list[str]:
 
 def _quick_format_select(select_clause: Select, *,
                          inlined_hint_block: Optional[Hint] = None) -> list[str]:
-    """Quick and dirty formatting logic for ``SELECT`` clauses.
+    """Quick and dirty formatting logic for *SELECT* clauses.
 
     Up to 3 targets are put on the same line, otherwise each target is put on a separate line.
 
@@ -176,7 +177,7 @@ def _quick_format_select(select_clause: Select, *,
     select_clause : Select
         The clause to format
     inlined_hint_block : Optional[Hint], optional
-        A hint block that should be inserted after the ``SELECT`` statement. Defaults to ``None`` which indicates that
+        A hint block that should be inserted after the *SELECT* statement. Defaults to *None* which indicates that
         no block should be inserted that way
 
     Returns
@@ -201,7 +202,7 @@ def _quick_format_select(select_clause: Select, *,
 
 
 def _quick_format_implicit_from(from_clause: ImplicitFromClause) -> list[str]:
-    """Quick and dirty formatting logic for implicit ``FROM`` clauses.
+    """Quick and dirty formatting logic for implicit *FROM* clauses.
 
     Up to 3 tables are put on the same line, otherwise each table is put on its own line.
 
@@ -256,7 +257,7 @@ def _quick_format_tablesource(table_source: TableSource) -> list[str]:
             elems.extend(subquery_elems)
             elems.append(")")
             if table_source.target_name:
-                elems[-1] += f" AS {table_source.target_name}"
+                elems[-1] += f" AS {quote(table_source.target_name)}"
             return elems
 
         case JoinTableSource():
@@ -299,9 +300,9 @@ def _quick_format_tablesource(table_source: TableSource) -> list[str]:
 
 
 def _quick_format_explicit_from(from_clause: ExplicitFromClause) -> list[str]:
-    """Quick and dirty formatting logic for explicit ``FROM`` clauses.
+    """Quick and dirty formatting logic for explicit *FROM* clauses.
 
-    This function just puts each ``JOIN ON`` statement on a separate line.
+    This function just puts each *JOIN ON* statement on a separate line.
 
     Parameters
     ----------
@@ -319,9 +320,9 @@ def _quick_format_explicit_from(from_clause: ExplicitFromClause) -> list[str]:
 
 
 def _quick_format_general_from(from_clause: From) -> list[str]:
-    """Quick and dirty formatting logic for general ``FROM`` clauses.
+    """Quick and dirty formatting logic for general *FROM* clauses.
 
-    This function just puts each part of the ``FROM`` clause on a separate line.
+    This function just puts each part of the *FROM* clause on a separate line.
 
     Parameters
     ----------
@@ -346,7 +347,7 @@ def _quick_format_general_from(from_clause: From) -> list[str]:
 def _quick_format_predicate(predicate: AbstractPredicate) -> list[str]:
     """Quick and dirty formatting logic for arbitrary (i.e. also compound) predicates.
 
-    ``AND`` conditions are put on separate lines, everything else is put on one line.
+    *AND* conditions are put on separate lines, everything else is put on one line.
 
     Parameters
     ----------
@@ -368,9 +369,9 @@ def _quick_format_predicate(predicate: AbstractPredicate) -> list[str]:
 
 
 def _quick_format_where(where_clause: Where) -> list[str]:
-    """Quick and dirty formatting logic for ``WHERE`` clauses.
+    """Quick and dirty formatting logic for *WHERE* clauses.
 
-    This function just puts each part of an ``AND`` condition on a separate line and leaves the parts of ``OR``
+    This function just puts each part of an *AND* condition on a separate line and leaves the parts of *OR*
     conditions, negations or base predicates on the same line.
 
     Parameters
@@ -387,8 +388,34 @@ def _quick_format_where(where_clause: Where) -> list[str]:
     return [f"WHERE {first_pred}"] + [((" " * FormatIndentDepth) + str(pred)) for pred in additional_preds]
 
 
+def _quick_format_groupby(groupby_clause: GroupBy) -> list[str]:
+    """Quick and dirty formatting logic for *GROUP BY* clauses.
+
+    Parameters
+    ----------
+    groupby_clause : GroupBy
+        _description_
+
+    Returns
+    -------
+    list[str]
+        _description_
+    """
+    distinct_text = "DISTINCT " if groupby_clause.distinct else ""
+    if len(groupby_clause.group_columns) > 3:
+        first_target, *remaining_targets = groupby_clause.group_columns
+        formatted_targets = [f"GROUP BY {distinct_text}{first_target}"]
+        formatted_targets += [((" " * FormatIndentDepth) + str(target)) for target in remaining_targets]
+        for i in range(len(formatted_targets) - 1):
+            formatted_targets[i] += ","
+        return formatted_targets
+    else:
+        targets_text = ", ".join(str(target) for target in groupby_clause)
+        return [f"GROUP BY {distinct_text}{targets_text}"]
+
+
 def _quick_format_limit(limit_clause: Limit) -> list[str]:
-    """Quick and dirty formatting logic for ``FETCH FIRST`` / ``LIMIT`` clauses.
+    """Quick and dirty formatting logic for *FETCH FIRST* / *LIMIT* clauses.
 
     This produces output that is equivalent to the SQL standard's syntax to denote limit clauses and splits the limit
     and offset parts onto separate lines.
@@ -415,7 +442,7 @@ def _subquery_replacement(expression: SqlExpression, *, inline_hints: bool,
     expression : SqlExpression
         The expression to replace.
     inline_hints : bool
-        Whether potential hint blocks should be inserted as part of the ``SELECT`` clause rather than before the
+        Whether potential hint blocks should be inserted as part of the *SELECT* clause rather than before the
         actual query.
     indentation : int
         The amount of indentation to use for the subquery
@@ -461,14 +488,14 @@ def _quick_format_set_query(query: SetQuery, *, inline_hint_block: bool, trailin
     query : SetQuery
         The query to format
     inline_hint_block : bool
-        Whether potential hint blocks should be inserted as part of the ``SELECT`` clause rather than before the
+        Whether potential hint blocks should be inserted as part of the *SELECT* clause rather than before the
     trailing_semicolon : bool
         Whether to append a semicolon to the formatted query
     custom_formatter : Optional[Callable[[SqlQuery], SqlQuery]]
         A post-processing formatting service to apply to the SQL query after all preparatory steps have been performed,
         but *before* the actual formatting is started. This can be used to inject custom clause or expression
         formatting rules that are necessary to adhere to specific SQL syntax deviations for a database system. Defaults
-        to ``None`` which skips this step.
+        to *None* which skips this step.
 
     Returns
     -------
@@ -493,26 +520,26 @@ def format_quick(query: SelectStatement, *, inline_hint_block: bool = False, tra
     The query will be structured as follows:
 
     - all clauses start at a new line
-    - long clauses with multiple parts (e.g. ``SELECT`` clause, ``FROM`` clause) are split along multiple intended
+    - long clauses with multiple parts (e.g. *SELECT* clause, *FROM* clause) are split along multiple intended
       lines
-    - the predicate in the ``WHERE`` clause is split on multiple lines along the different parts of a conjunctive
+    - the predicate in the *WHERE* clause is split on multiple lines along the different parts of a conjunctive
       predicate
 
-    All other clauses are written on a single line (e.g. ``GROUP BY`` clause).
+    All other clauses are written on a single line (e.g. *GROUP BY* clause).
 
     Parameters
     ----------
     query : SelectStatement
         The query to format
     inline_hint_block : bool, optional
-        Whether to insert a potential hint block in the ``SELECT`` clause (i.e. *inline* it), or leave it as a
-        block preceding the actual query. Defaults to ``False`` which indicates that the clause should be printed
+        Whether to insert a potential hint block in the *SELECT* clause (i.e. *inline* it), or leave it as a
+        block preceding the actual query. Defaults to *False* which indicates that the clause should be printed
         before the actual query.
     custom_formatter : Callable[[SqlQuery], SqlQuery], optional
         A post-processing formatting service to apply to the SQL query after all preparatory steps have been performed,
         but *before* the actual formatting is started. This can be used to inject custom clause or expression
         formatting rules that are necessary to adhere to specific SQL syntax deviations for a database system. Defaults
-        to ``None`` which skips this step.
+        to *None* which skips this step.
 
     Returns
     -------
@@ -557,6 +584,8 @@ def format_quick(query: SelectStatement, *, inline_hint_block: bool = False, tra
                 pretty_query_parts.extend(_quick_format_general_from(clause))
             case Where():
                 pretty_query_parts.extend(_quick_format_where(clause))
+            case GroupBy():
+                pretty_query_parts.extend(_quick_format_groupby(clause))
             case UnionClause() | IntersectClause() | ExceptClause():
                 raise RuntimeError("Set operations should not appear in this context")
             case _:
