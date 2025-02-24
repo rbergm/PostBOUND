@@ -605,16 +605,16 @@ class FunctionExpression(SqlExpression):
         return FunctionExpression("ANY", (subquery,))
 
     def __init__(self, function: str, arguments: Optional[Sequence[SqlExpression]] = None, *,
-                 distinct: bool = False, filter_by: Optional[AbstractPredicate] = None) -> None:
+                 distinct: bool = False, filter_where: Optional[AbstractPredicate] = None) -> None:
         if not function:
             raise ValueError("Function is required")
-        if function.upper() not in AggregateFunctions and (distinct or filter_by):
+        if function.upper() not in AggregateFunctions and (distinct or filter_where):
             raise ValueError("DISTINCT keyword or FILTER expressions are only valid for aggregate functions")
 
         self._function = function.upper()
         self._arguments: tuple[SqlExpression] = () if arguments is None else tuple(arguments)
         self._distinct = distinct
-        self._filter_expr = filter_by
+        self._filter_expr = filter_where
 
         hash_val = hash((self._function, self._distinct, self._arguments, self._filter_expr))
         super().__init__(hash_val)
@@ -1252,6 +1252,10 @@ class SqlExpressionVisitor(abc.ABC, Generic[VisitorResult]):
     def visit_case_expr(self, expr: CaseExpression) -> VisitorResult:
         raise NotImplementedError
 
+    @abc.abstractmethod
+    def visit_predicate_expr(self, expr: AbstractPredicate) -> VisitorResult:
+        raise NotImplementedError
+
 
 class ExpressionCollector(SqlExpressionVisitor[set[SqlExpression]]):
     """Utility to traverse an arbitrarily deep expression hierarchy in order to collect specific expressions.
@@ -1295,6 +1299,9 @@ class ExpressionCollector(SqlExpressionVisitor[set[SqlExpression]]):
         return self._check_match(expression)
 
     def visit_case_expr(self, expression: CaseExpression) -> set[SqlExpression]:
+        return self._check_match(expression)
+
+    def visit_predicate_expr(self, expression: AbstractPredicate) -> set[SqlExpression]:
         return self._check_match(expression)
 
     def _check_match(self, expression: SqlExpression) -> set[SqlExpression]:
@@ -4389,6 +4396,12 @@ class CommonTableExpression(BaseClause):
     def accept_visitor(self, visitor: ClauseVisitor[VisitorResult]) -> VisitorResult:
         return visitor.visit_cte_clause(self)
 
+    def __len__(self) -> int:
+        return len(self.queries)
+
+    def __iter__(self) -> Iterator[WithQuery]:
+        return iter(self.queries)
+
     __hash__ = BaseClause.__hash__
 
     def __eq__(self, other: object) -> bool:
@@ -4606,7 +4619,7 @@ class Select(BaseClause):
         hash_val = hash((self._projection_type, self._targets))
         super().__init__(hash_val)
 
-    __match_args = ("targets", "projection_type")
+    __match_args__ = ("targets", "projection_type")
 
     @property
     def targets(self) -> Sequence[BaseProjection]:
@@ -4679,6 +4692,12 @@ class Select(BaseClause):
 
     def accept_visitor(self, visitor: ClauseVisitor[VisitorResult]) -> VisitorResult:
         return visitor.visit_select_clause(self)
+
+    def __len__(self) -> int:
+        return len(self.targets)
+
+    def __iter__(self) -> Iterator[BaseProjection]:
+        return iter(self.targets)
 
     __hash__ = BaseClause.__hash__
 
@@ -4842,7 +4861,7 @@ class SubqueryTableSource(TableSource):
     ----------
     query : SqlQuery | SubqueryExpression
         The query that is sourced as a subquery
-    target_name : str, optional
+    target_name : str | TableReference, optional
         The name under which the subquery should be made available. Can empty for an anonymous subquery.
     lateral : bool, optional
         Whether the subquery should be executed as a lateral join. Defaults to ``False``.
@@ -4853,10 +4872,11 @@ class SubqueryTableSource(TableSource):
         If the `target_name` is empty
     """
 
-    def __init__(self, query: SqlQuery | SubqueryExpression, target_name: str = "", *, lateral: bool = False) -> None:
+    def __init__(self, query: SqlQuery | SubqueryExpression, target_name: str | TableReference = "", *,
+                 lateral: bool = False) -> None:
         self._subquery_expression = (query if isinstance(query, SubqueryExpression)
                                      else SubqueryExpression(query))
-        self._target_name = target_name
+        self._target_name = target_name if isinstance(target_name, str) else target_name.identifier()
         self._lateral = lateral
         self._hash_val = hash((self._subquery_expression, self._target_name, self._lateral))
 
@@ -4943,7 +4963,7 @@ class SubqueryTableSource(TableSource):
                 and self._target_name == other._target_name)
 
     def __repr__(self) -> str:
-        return str(self._subquery_expression)
+        return str(self)
 
     def __str__(self) -> str:
         lateral_str = "LATERAL " if self._lateral else ""
@@ -4991,7 +5011,7 @@ class ValuesTableSource(TableSource):
 
         self._hash_val = hash((self._table, self._columns, self._values))
 
-    __match_args__ = ("values", "alias", "columns")
+    __match_args__ = ("values", "alias", "cols")
 
     @property
     def rows(self) -> ValuesList:
@@ -5334,7 +5354,7 @@ class From(BaseClause, Generic[TableType]):
         self._items: tuple[TableSource] = tuple(items)
         super().__init__(hash(self._items))
 
-    __match_args_ = ("items",)
+    __match_args__ = ("items",)
 
     @property
     def items(self) -> Sequence[TableType]:
@@ -5368,7 +5388,13 @@ class From(BaseClause, Generic[TableType]):
         return QueryPredicates(merged_predicate)
 
     def accept_visitor(self, visitor: ClauseVisitor[VisitorResult]) -> VisitorResult:
-        return visitor.visit_from_clause(visitor)
+        return visitor.visit_from_clause(self)
+
+    def __len__(self) -> int:
+        return len(self._items)
+
+    def __iter__(self) -> Iterator[TableSource]:
+        return iter(self._items)
 
     __hash__ = BaseClause.__hash__
 
@@ -5418,6 +5444,8 @@ class ImplicitFromClause(From[DirectTableSource]):
     def __init__(self, tables: DirectTableSource | Iterable[DirectTableSource]):
         super().__init__(tables)
 
+    __match_args__ = ("items",)
+
     def itertables(self) -> Sequence[TableReference]:
         """Provides all tables in the ``FROM`` clause exactly in the sequence in which they were specified.
 
@@ -5444,6 +5472,8 @@ class ExplicitFromClause(From[JoinTableSource]):
         if isinstance(joins, Iterable) and len(joins) != 1:
             raise ValueError("Explicit FROM clauses can only contain a single join")
         super().__init__(joins)
+
+    __match_args__ = ("root",)
 
     @property
     def root(self) -> JoinTableSource:
@@ -5598,6 +5628,12 @@ class GroupBy(BaseClause):
 
     def accept_visitor(self, visitor: ClauseVisitor[VisitorResult]) -> VisitorResult:
         return visitor.visit_groupby_clause(self)
+
+    def __len__(self) -> int:
+        return len(self._group_columns)
+
+    def __iter__(self) -> Iterator[SqlExpression]:
+        return iter(self._group_columns)
 
     __hash__ = BaseClause.__hash__
 
@@ -5799,6 +5835,12 @@ class OrderBy(BaseClause):
 
     def accept_visitor(self, visitor: ClauseVisitor[VisitorResult]) -> VisitorResult:
         return visitor.visit_orderby_clause(self)
+
+    def __len__(self) -> int:
+        return len(self._expressions)
+
+    def __iter__(self) -> Iterator[OrderByExpression]:
+        return iter(self._expressions)
 
     __hash__ = BaseClause.__hash__
 
@@ -6443,12 +6485,10 @@ def _create_ast(item: Any, *, indentation: int = 0) -> str:
     match item:
         case ColumnExpression():
             return f"{prefix}+ {item_str} [{item.column}]"
-        case MathematicalExpression() | SubqueryExpression():
+        case SqlExpression():
             expressions = [_create_ast(e, indentation=indentation + 2) for e in item.iterchildren()]
             expression_str = "\n".join(expressions)
-            return f"{prefix}+-{item_str}\n{expression_str}"
-        case SqlExpression():
-            return f"{prefix}+-{item_str} [{item}]"
+            return f"{prefix}+-{item_str}\n{expression_str}" if expressions else f"{prefix}+-{item_str} [{item}]"
         case CompoundPredicate():
             children = [_create_ast(c, indentation=indentation + 2) for c in item.children]
             child_str = "\n".join(children)
@@ -7073,7 +7113,7 @@ class SqlQuery:
         """
         return _create_ast(self)
 
-    def accept_visitor(self, clause_visitor: ClauseVisitor) -> dict[BaseClause, VisitorResult]:
+    def accept_visitor(self, clause_visitor: ClauseVisitor[VisitorResult]) -> dict[BaseClause, VisitorResult]:
         """Applies a visitor over all clauses in the current query.
 
         Notice that since the visitor is applied to all clauses, it returns the results for each of them.

@@ -17,16 +17,19 @@ Be carefull when updating and check the changelog!
 # ➡ Version 0.12.1
 
 ### 🐣 New features
--
+- Added a bunch of convenience methods to parts of the QAL, e.g. the `CommonTableExpression` supports `len` now and its CTEs
+  can be iterated over directly.
 
 ### 💀 Breaking changes
--
+- Renamed the filter predicate when creating function expressions to `filter_where` to align with the property name.
 
 ### 📰 Updates
--
+- Added missing `visit_predicate_expr` method to the SQL expression visitor. This was a regression caused by making the
+  `AbstractPredicate` an SQL expression.
 
 ### 🏥 Fixes
 - Fixed parsed window functions containing a plain string function name rather than an actual `FunctionExpression`
+- Fixed typos in some `__match_args__`
 
 ### 🪲 Known bugs
 - Pre-defined workloads (`workloads.job()`, etc) do not work if installed as a Pip module. This is because the build process
