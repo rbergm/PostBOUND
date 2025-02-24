@@ -26,6 +26,7 @@ Be carefull when updating and check the changelog!
 ### 📰 Updates
 - Added missing `visit_predicate_expr` method to the SQL expression visitor. This was a regression caused by making the
   `AbstractPredicate` an SQL expression.
+- Raise a more descriptive error message when parsing a single query of workload fails.
 
 ### 🏥 Fixes
 - Fixed parsed window functions containing a plain string function name rather than an actual `FunctionExpression`
