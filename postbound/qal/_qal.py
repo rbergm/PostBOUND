@@ -921,7 +921,7 @@ class ArrayAccessExpression(FunctionExpression):
             index_str = f"[{self._lower_idx}:]"
         else:
             index_str = f"[:{self._upper_idx}]"
-        return f"{self._array}{index_str}"
+        return f"({self._array}){index_str}"
 
 
 class SubqueryExpression(SqlExpression):
@@ -4558,7 +4558,7 @@ class BaseProjection:
     def __str__(self) -> str:
         if not self.target_name:
             return str(self.expression)
-        return f"{self.expression} AS {self.target_name}"
+        return f"{self.expression} AS {quote(self.target_name)}"
 
 
 class SelectType(enum.Enum):
