@@ -761,7 +761,8 @@ def _pglast_parse_rangevar(rangevar: dict) -> TableReference:
     """
     name = rangevar["relname"]
     alias = rangevar["alias"]["aliasname"] if "alias" in rangevar else None
-    return TableReference(name, alias)
+    schema = rangevar.get("schemaname", "")
+    return TableReference(name, alias, schema=schema)
 
 
 def _pglast_is_values_list(pglast_data: dict) -> bool:
