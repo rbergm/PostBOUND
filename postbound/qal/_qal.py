@@ -279,6 +279,10 @@ class CastExpression(SqlExpression):
         The expression that is casted to a different type.
     target_type : str
         The type to which the expression should be converted to. This cannot be empty.
+    type_params: Optional[Sequence[SqlExpression]], optional
+        Additional arguments to parameterize the type, such as in *NUMERIC(4, 2)* or *VARCHAR(255)*. For example, when casting
+        to *VARCHAR(255)*, the *255* would be an additional parameter, represented as a single static value expression. When
+        casting to *NUMERIC(4, 2)*, the *4* and *2* would be the additional parameters (in that order).
 
     Raises
     ------
@@ -286,16 +290,18 @@ class CastExpression(SqlExpression):
         If the `target_type` is empty.
     """
 
-    def __init__(self, expression: SqlExpression, target_type: str) -> None:
+    def __init__(self, expression: SqlExpression, target_type: str, *,
+                 type_params: Optional[Sequence[SqlExpression]] = None) -> None:
         if not expression or not target_type:
             raise ValueError("Expression and target type are required")
         self._casted_expression = expression
         self._target_type = target_type
+        self._type_params = tuple(type_params) if type_params else ()
 
-        hash_val = hash((self._casted_expression, self._target_type))
+        hash_val = hash((self._casted_expression, self._target_type, self._type_params))
         super().__init__(hash_val)
 
-    __match_args__ = ("casted_expression", "target_type")
+    __match_args__ = ("casted_expression", "target_type", "type_params")
 
     @property
     def casted_expression(self) -> SqlExpression:
@@ -319,17 +325,31 @@ class CastExpression(SqlExpression):
         """
         return self._target_type
 
+    @property
+    def type_params(self) -> Sequence[SqlExpression]:
+        """Get additional arguments that parameterize the type.
+
+        For example, when casting to *VARCHAR(255)*, the *255* would be an additional parameter, represented as a single static
+        value expression. When casting to *NUMERIC(4, 2)*, the *4* and *2* would be the additional parameters (in that order).
+
+        Returns
+        -------
+        Sequence[SqlExpression]
+            The type parameters or an empty sequence if there are none.
+        """
+        return self._type_params
+
     def tables(self) -> set[TableReference]:
-        return self._casted_expression.tables()
+        return self._casted_expression.tables() | util.set_union(expr.tables() for expr in self._type_params)
 
     def columns(self) -> set[ColumnReference]:
-        return self.casted_expression.columns()
+        return self.casted_expression.columns() | util.set_union(expr.columns() for expr in self.type_params)
 
     def itercolumns(self) -> Iterable[ColumnReference]:
-        return self.casted_expression.itercolumns()
+        return self.casted_expression.itercolumns() + util.flatten(expr.itercolumns() for expr in self.type_params)
 
     def iterchildren(self) -> Iterable[SqlExpression]:
-        return [self.casted_expression]
+        return [self.casted_expression] + list(self.type_params)
 
     def accept_visitor(self, visitor: SqlExpressionVisitor[VisitorResult]) -> VisitorResult:
         return visitor.visit_cast_expr(self)
@@ -339,10 +359,16 @@ class CastExpression(SqlExpression):
     def __eq__(self, other) -> bool:
         return (isinstance(other, type(self))
                 and self.casted_expression == other.casted_expression
-                and self.target_type == other.target_type)
+                and self.target_type == other.target_type
+                and self.type_params == other.type_params)
 
     def __str__(self) -> str:
-        return f"CAST({self.casted_expression} AS {self.target_type})"
+        if self.type_params:
+            type_args = ", ".join(str(arg) for arg in self.type_params)
+            type_str = f"{self.target_type}({type_args})"
+        else:
+            type_str = self.target_type
+        return f"CAST({self.casted_expression} AS {type_str})"
 
 
 class MathematicalExpression(SqlExpression):

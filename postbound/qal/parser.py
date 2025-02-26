@@ -533,7 +533,11 @@ def _pglast_parse_expression(pglast_data: dict, *, available_tables: dict[str, T
             casted_expression = _pglast_parse_expression(expression["arg"], available_tables=available_tables,
                                                          resolved_columns=resolved_columns, schema=schema)
             target_type = _pglast_parse_type(expression["typeName"])
-            return CastExpression(casted_expression, target_type)
+            type_params = [_pglast_parse_expression(param, available_tables=available_tables,
+                                                    resolved_columns=resolved_columns, schema=schema)
+                           for param in expression["typeName"].get("typmods", [])]
+
+            return CastExpression(casted_expression, target_type, type_params=type_params)
 
         case "CaseExpr":
             return _pglast_parse_case(pglast_data["CaseExpr"], available_tables=available_tables,
