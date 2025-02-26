@@ -873,12 +873,12 @@ class PostgresSchemaInterface(DatabaseSchema):
     def __int__(self, postgres_db: PostgresInterface) -> None:
         super().__init__(postgres_db)
 
-    def tables(self) -> set[TableReference]:
+    def tables(self, *, schema: str = "public") -> set[TableReference]:
         query_template = textwrap.dedent("""
                                          SELECT table_name
                                          FROM information_schema.tables
-                                         WHERE table_catalog = %s AND table_schema = 'public'""")
-        self._db.cursor().execute(query_template, (self._db.database_name(),))
+                                         WHERE table_catalog = %s AND table_schema = %s""")
+        self._db.cursor().execute(query_template, (self._db.database_name(), schema))
         result_set = self._db.cursor().fetchall()
         assert result_set is not None
         return set(TableReference(row[0]) for row in result_set)
@@ -945,10 +945,11 @@ class PostgresSchemaInterface(DatabaseSchema):
             raise UnboundColumnError(column)
         if column.table.virtual:
             raise VirtualTableError(column.table)
+        schema = column.table.schema or "public"
         query_template = textwrap.dedent("""
             SELECT data_type FROM information_schema.columns
-            WHERE table_name = '{tab}' AND column_name = '{col}'""".format(tab=column.table.full_name, col=column.name))
-        self._db.cursor().execute(query_template)
+            WHERE table_name = %s AND column_name = %s AND table_schema = %s""")
+        self._db.cursor().execute(query_template, (column.table.full_name, column.name, schema))
         result_set = self._db.cursor().fetchone()
         return result_set[0]
 
@@ -957,10 +958,11 @@ class PostgresSchemaInterface(DatabaseSchema):
             raise UnboundColumnError(column)
         if column.table.virtual:
             raise VirtualTableError(column.table)
+        schema = column.table.schema or "public"
         query_tempalte = textwrap.dedent("""
             SELECT is_nullable = 'YES' FROM information_schema.columns
-            WHERE table_name = '{tab}' AND column_name = '{col}'""".format(tab=column.table.full_name, col=column.name))
-        self._db.cursor().execute(query_tempalte)
+            WHERE table_name = %s AND column_name = %s AND table_schema = %s""")
+        self._db.cursor().execute(query_tempalte, (column.table.full_name, column.name, schema))
         result_set = self._db.cursor().fetchone()
         return result_set[0]
 
@@ -984,8 +986,9 @@ class PostgresSchemaInterface(DatabaseSchema):
         """
         if table.virtual:
             raise VirtualTableError(table)
-        query_template = "SELECT column_name FROM information_schema.columns WHERE table_name = %s"
-        self._db.cursor().execute(query_template, (table.full_name,))
+        schema = table.schema or "public"
+        query_template = "SELECT column_name FROM information_schema.columns WHERE table_name = %s AND table_schema = %s"
+        self._db.cursor().execute(query_template, (table.full_name, schema))
         result_set = self._db.cursor().fetchall()
         return [col[0] for col in result_set]
 
@@ -1011,12 +1014,13 @@ class PostgresSchemaInterface(DatabaseSchema):
         if table.virtual:
             raise VirtualTableError(table)
         # query adapted from https://wiki.postgresql.org/wiki/Retrieve_primary_key_columns
+        table_name = table.qualified_name()
         index_query = textwrap.dedent(f"""
             SELECT attr.attname, idx.indisprimary
             FROM pg_index idx
                 JOIN pg_attribute attr
                 ON idx.indrelid = attr.attrelid AND attr.attnum = ANY(idx.indkey)
-            WHERE idx.indrelid = '{table.full_name}'::regclass
+            WHERE idx.indrelid = '{table_name}'::regclass
         """)
         self._db.cursor().execute(index_query)
         result_set = self._db.cursor().fetchall()
