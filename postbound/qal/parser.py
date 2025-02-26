@@ -1,10 +1,10 @@
 """The parser constructs `SqlQuery` objects from query strings.
 
 Other than the parsing itself, the process will also execute a basic column binding process. For example, consider
-a query like ``SELECT * FROM R WHERE R.a = 42``. In this case, the binding only affects the column reference ``R.a``
-and sets the table of that column to ``R``. This binding based on column and table names is always performed.
+a query like *SELECT \\* FROM R WHERE R.a = 42*. In this case, the binding only affects the column reference *R.a*
+and sets the table of that column to *R*. This binding based on column and table names is always performed.
 
-If the table cannot be inferred based on the column name (e.g. for a query like ``SELECT * FROM R, S WHERE a = 42``), a
+If the table cannot be inferred based on the column name (e.g. for a query like *SELECT * FROM R, S WHERE a = 42*), a
 second binding phase can be executed. This binding needs a working database connection and queries the database schema
 to detect the correct tables for each column. Whether the second phase should also be executed by default can be
 configured system-wide by setting the `auto_bind_columns` variable.
@@ -40,8 +40,9 @@ from ._qal import (
     BaseProjection, OrderByExpression,
     WithQuery, TableSource, DirectTableSource, JoinTableSource, SubqueryTableSource,
     ValuesList, ValuesTableSource, ValuesWithQuery,
-    SqlQuery, SetQuery, SelectStatement,
+    SqlQuery, SetQuery, SelectStatement, ImplicitSqlQuery, ExplicitSqlQuery, MixedSqlQuery,
     Select, Where, From, GroupBy, Having, OrderBy, Limit, CommonTableExpression, ImplicitFromClause, ExplicitFromClause,
+    Hint, Explain,
     AbstractPredicate, BinaryPredicate, InPredicate, BetweenPredicate, CompoundPredicate, UnaryPredicate,
     SqlExpression, StarExpression, StaticValueExpression, ColumnExpression, SubqueryExpression, CastExpression,
     MathematicalExpression, FunctionExpression, WindowExpression, CaseExpression, ArrayAccessExpression,
@@ -57,7 +58,7 @@ auto_bind_columns: bool = False
 def _pglast_is_actual_colref(pglast_data: dict) -> bool:
     """Checks, whether a apparent column reference is actually a column reference and not a star expression in disguise.
 
-    pglast represents both column references such as ``R.a`` or ``a`` as well as star expressions like ``R.*`` as ``ColumnRef``
+    pglast represents both column references such as *R.a* or *a* as well as star expressions like *R.** as ``ColumnRef``
     dictionaries, hence we need to make sure we are actually parsing the right thing. This method takes care of distinguishing
     the two cases.
 
@@ -188,7 +189,7 @@ def _pglast_parse_colref(pglast_data: dict, *, available_tables: dict[str, Table
 
 def _pglast_parse_star(pglast_data: dict, *,
                        available_tables: dict[str, TableReference]) -> StarExpression:  # type: ignore # noqa: F821
-    """Handler method to parse star expressions that are potentially bounded to a specific table, e.g. ``R.*``.
+    """Handler method to parse star expressions that are potentially bounded to a specific table, e.g. *R.\\**.
 
     Parameters
     ----------
@@ -1351,7 +1352,7 @@ def _pglast_parse_limit(pglast_data: dict, *, available_tables: dict[str, TableR
     Returns
     -------
     Limit
-        The limit clause. Can be ``None`` if no meaningful limit nor a meaningful offset is specified.
+        The limit clause. Can be *None* if no meaningful limit nor a meaningful offset is specified.
     """
     raw_limit: Optional[dict] = pglast_data.get("limitCount", None)
     raw_offset: Optional[dict] = pglast_data.get("limitOffset", None)
@@ -1444,6 +1445,43 @@ def _pglast_parse_setop(pglast_data: dict, *, available_tables: dict[str, TableR
                     cte_clause=with_clause, orderby_clause=order_clause, limit_clause=limit_clause)
 
 
+def _pglast_parse_explain(pglast_data: dict) -> tuple[Optional[Explain], dict]:
+    """Handler method to extract the *EXPLAIN* clause from a query.
+
+    Parameters
+    ----------
+    pglast_data : dict
+        JSON encoding of the entire query. The method takes care of accessing the appropriate keys by itself, no preparation
+        of the dictionary is necessary.
+
+    Returns
+    -------
+    tuple[Optional[Explain], dict]
+        The parsed explain clause if one exists as well as the wrapped query. The query representation should be used for all
+        further parsing steps.
+    """
+    if "ExplainStmt" not in pglast_data:
+        return None, pglast_data
+
+    pglast_data = pglast_data["ExplainStmt"]
+    explain_options: list[dict] = pglast_data.get("options", [])
+
+    use_analyze = False
+    output_format = "TEXT"
+    for option in explain_options:
+        definition: dict = option["DefElem"]
+        match definition["defname"]:
+            case "analyze":
+                use_analyze = True
+            case "format":
+                output_format = definition["arg"]["String"]["sval"]
+            case _:
+                raise ParserError("Unknown explain option: " + str(definition))
+
+    explain_clause = Explain(use_analyze, output_format)
+    return explain_clause, pglast_data["query"]
+
+
 def _pglast_parse_query(stmt: dict, *, available_tables: dict[str, TableReference],
                         resolved_columns: dict[tuple[str, str], ColumnReference],
                         schema: Optional["DatabaseSchema"]) -> SelectStatement:  # type: ignore # noqa: F821
@@ -1530,30 +1568,157 @@ def _pglast_parse_query(stmt: dict, *, available_tables: dict[str, TableReferenc
     return build_query(clauses)
 
 
+def _pglast_parse_set_commands(pglast_data: list[dict]) -> tuple[list[str], list[dict]]:
+    """Handler method to parse all *SET* commands that precede the actual query.
+
+    Parameters
+    ----------
+    pglast_data : list[dict]
+        JSON encoding of the entire query. The method takes care of accessing the appropriate keys by itself, no preparation
+        of the dictionary is necessary.
+
+    Returns
+    -------
+    tuple[list[str], list[dict]]
+        The parsed *SET* commands as a list of strings and the remaining query data. The query data is "forwarded" to the first
+        encoding that does not represent a *SET* command.
+    """
+    prep_stmts: list[str] = []
+
+    for i, item in enumerate(pglast_data):
+        stmt: dict = item["stmt"]
+        if "VariableSetStmt" not in stmt:
+            break
+
+        var_set_stmt: dict = stmt["VariableSetStmt"]
+        if var_set_stmt["kind"] != "VAR_SET_VALUE":
+            raise ParserError(f"Unknown variable set option: {var_set_stmt}")
+        var_name = var_set_stmt["name"]
+        var_value = var_set_stmt["args"][0]["A_Const"]["sval"]["sval"]
+
+        parsed_stmt = f"SET {var_name} TO '{var_value}';"
+        prep_stmts.append(parsed_stmt)
+
+    return prep_stmts, pglast_data[i:]
+
+
+def _parse_hint_block(raw_query: str, *, set_cmds: list[str], _current_hint_text: list[str] = None) -> Optional[Hint]:
+    """Handler method to extract the hint block (i.e. preceding comments) from a query
+
+    Parameters
+    ----------
+    raw_query : str
+        The query text that was passed to the parser. We require access to the raw query, because the PG parser ignores all
+        comments and does not represent them in the AST in any way.
+    set_cmds: list[str]
+        *SET* commands that have already been parsed. These will be added to the hint block.
+    _current_hint_text : list[str], optional
+        Internal parameter to keep track of the current hint text. This is used because the parsing logic uses a recursive
+        implementation.
+
+    Returns
+    -------
+    Optional[Hint]
+        The hint block if any hints were found, or *None* otherwise.
+    """
+    _current_hint_text = _current_hint_text or []
+
+    raw_query = raw_query.lstrip()
+    block_hint = raw_query.startswith("/*")
+    line_hint = raw_query.startswith("--")
+    if not block_hint and not line_hint:
+        prep_stms = "\n".join(set_cmds)
+        hints = "\n".join(_current_hint_text)
+        return Hint(prep_stms, hints) if prep_stms or hints else None
+
+    if line_hint:
+
+        line_end = raw_query.find("\n")
+        if line_end == -1:
+            # should never be raised b/c parsing should have failed already at this point
+            raise ParserError(f"Unterminated line comment: {raw_query}")
+
+        line_comment = raw_query[:line_end].strip()
+        _current_hint_text.append(line_comment)
+        return _parse_hint_block(raw_query[line_end:], set_cmds=set_cmds, _current_hint_text=_current_hint_text)
+
+    # must be block hint
+    block_end = raw_query.find("*/")
+    if block_end == -1:
+        # should never be raised b/c parsing should have failed already at this point
+        raise ParserError(f"Unterminated block comment: {raw_query}")
+
+    block_comment = raw_query[:block_end+2].strip()
+    _current_hint_text.append(block_comment)
+    return _parse_hint_block(raw_query[block_end+2:], set_cmds=set_cmds, _current_hint_text=_current_hint_text)
+
+
+def _apply_extra_clauses(parsed: SelectStatement, *, hint: Optional[Hint],
+                         explain_clause: Optional[Explain]) -> SelectStatement:
+    if parsed.is_set_query():
+        return SetQuery(
+            parsed.left_query, parsed.right_query,
+            set_operation=parsed.set_operation,
+            cte_clause=parsed.cte_clause,
+            orderby_clause=parsed.orderby_clause,
+            limit_clause=parsed.limit_clause,
+            hint=hint, explain_clause=explain_clause
+        )
+
+    # must be a regular query then
+    clauses = {
+        "select_clause": parsed.select_clause,
+        "from_clause": parsed.from_clause,
+        "where_clause": parsed.where_clause,
+        "groupby_clause": parsed.groupby_clause,
+        "having_clause": parsed.having_clause,
+        "orderby_clause": parsed.orderby_clause,
+        "limit_clause": parsed.limit_clause,
+        "cte_clause": parsed.cte_clause
+    }
+
+    if hint is not None:
+        clauses["hints"] = hint
+    if explain_clause is not None:
+        clauses["explain_clause"] = explain_clause
+
+    match parsed:
+        case ImplicitSqlQuery():
+            return ImplicitSqlQuery(**clauses)
+        case ExplicitSqlQuery():
+            return ExplicitSqlQuery(**clauses)
+        case MixedSqlQuery():
+            return MixedSqlQuery(**clauses)
+        case SqlQuery():
+            return SqlQuery(**clauses)
+        case _:
+            raise ValueError(f"Unknown query type: {parsed}")
+
+
 @overload
-def parse_query(query: str, *, bind_columns: bool | None = None,
+def parse_query(query: str, *, include_hints: bool = True, bind_columns: bool | None = None,
                 db_schema: Optional["DatabaseSchema"] = None) -> SqlQuery:  # type: ignore # noqa: F821
     ...
 
 
 @overload
-def parse_query(query: str, *, accept_set_query: bool,
+def parse_query(query: str, *, accept_set_query: bool, include_hints: bool = True,
                 bind_columns: Optional[bool] = None,
                 db_schema: Optional["DatabaseSchema"] = None) -> SelectStatement:  # type: ignore # noqa: F821
     ...
 
 
-def parse_query(query: str, *, accept_set_query: bool = False,
+def parse_query(query: str, *, accept_set_query: bool = False, include_hints: bool = True,
                 bind_columns: Optional[bool] = None,
                 db_schema: Optional["DatabaseSchema"] = None) -> SelectStatement:  # type: ignore # noqa: F821
     """Parses a query string into a proper `SqlQuery` object.
 
-    During parsing, the appropriate type of SQL query (i.e. with implicit, explicit or mixed ``FROM`` clause) will be
+    During parsing, the appropriate type of SQL query (i.e. with implicit, explicit or mixed *FROM* clause) will be
     inferred automatically. Therefore, this method can potentially return a subclass of `SqlQuery`.
 
     Once the query has been transformed, a text-based binding process is executed. During this process, the referenced
     tables are normalized such that column references using the table alias are linked to the correct tables that are
-    specified in the ``FROM`` clause (see the module-level documentation for an example). The parsing process can
+    specified in the *FROM* clause (see the module-level documentation for an example). The parsing process can
     optionally also involve a binding process based on the schema of a live database. This is important for all
     remaining columns where the text-based parsing was not possible, e.g. because the column was specified without a
     table alias.
@@ -1562,12 +1727,19 @@ def parse_query(query: str, *, accept_set_query: bool = False,
     ----------
     query : str
         The query to parse
+    accept_set_query : bool, optional
+        Whether set queries are a valid result of the parsing process. If this is *False* (the default), an error will be
+        raised if the input query is a set query. This implies that the result of the parsing process is always a `SqlQuery`
+        instance. Otherwise, the result can also be a `SetQuery` instance.
+    include_hints : bool, optional
+        Whether to include hints in the parsed query. If this is *True* (the default), any preceding comments in the query
+        text will be parsed as a hint block. Otherwise, these comments are simply ignored.
     bind_columns : bool | None, optional
         Whether to use *live binding*. This does not control the text-based binding, which is always performed. If this
-        parameter is ``None`` (the default), the global `auto_bind_columns` variable will be queried. Depending on its
+        parameter is *None* (the default), the global `auto_bind_columns` variable will be queried. Depending on its
         value, live binding will be performed or not.
     db_schema : Optional[DatabaseSchema], optional
-        For live binding, this indicates the database to use. If this is ``None`` (the default), the database will be
+        For live binding, this indicates the database to use. If this is *None* (the default), the database will be
         tried to extract from the `DatabasePool`
 
     Returns
@@ -1583,12 +1755,16 @@ def parse_query(query: str, *, accept_set_query: bool = False,
     pglast_data = json.loads(pglast.parser.parse_sql_json(query))
     stmts = pglast_data["stmts"]
 
-    # TODO: if there are preceeding configuration options (e.g. SET enable_seqscan = off;), we could handle them here and
-    # provide a initialized hint block to the novel query
-
+    set_cmds, stmts = _pglast_parse_set_commands(stmts)
     if len(stmts) != 1:
         raise ValueError("Parser can only support single-statement queries for now")
-    raw_query = stmts[0]["stmt"]
+    raw_query: dict = stmts[0]["stmt"]
+
+    if "ExplainStmt" in raw_query:
+        explain_clause, raw_query = _pglast_parse_explain(raw_query)
+    else:
+        explain_clause = None
+
     if "SelectStmt" not in raw_query:
         raise ValueError("Cannot parse non-SELECT queries")
     stmt = raw_query["SelectStmt"]
@@ -1596,6 +1772,9 @@ def parse_query(query: str, *, accept_set_query: bool = False,
     parsed_query = _pglast_parse_query(stmt, available_tables={}, resolved_columns={}, schema=db_schema)
     if not accept_set_query and isinstance(query, SetQuery):
         raise ParserError("Input query is a set query")
+
+    hint = _parse_hint_block(query, set_cmds=set_cmds) if include_hints else None
+    parsed_query = _apply_extra_clauses(parsed_query, hint=hint, explain_clause=explain_clause)
 
     return parsed_query
 
@@ -1623,7 +1802,8 @@ def load_table_json(json_data: dict | str) -> Optional[TableReference]:
     if not json_data:
         return None
     json_data = json_data if isinstance(json_data, dict) else json.loads(json_data)
-    return TableReference(json_data.get("full_name", ""), json_data.get("alias", ""), json_data.get("virtual", False))
+    return TableReference(json_data.get("full_name", ""), json_data.get("alias", ""),
+                          virtual=json_data.get("virtual", False), schema=json_data.get("schemaname", None))
 
 
 def load_column_json(json_data: dict | str) -> Optional[ColumnReference]:

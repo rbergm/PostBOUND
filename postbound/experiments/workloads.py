@@ -140,7 +140,7 @@ class Workload(collections.UserDict[LabelType, qal.SqlQuery]):
             try:
                 parsed_query = qal.parse_query(query_contents, bind_columns=bind_columns)
             except Exception as e:
-                raise ValueError(f"Could not parse query from {query_file_path}: {e}")
+                raise ValueError(f"Could not parse query from {query_file_path}", e)
             query_label = query_file_path.stem
             queries[label_prefix + query_label] = parsed_query
 
