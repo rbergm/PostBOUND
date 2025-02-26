@@ -439,10 +439,16 @@ def _pglast_parse_expression(pglast_data: dict, *, available_tables: dict[str, T
         case "A_Expr" if pglast_data["A_Expr"]["kind"] == "AEXPR_OP":
             expression = pglast_data["A_Expr"]
             operation = _pglast_parse_operator(expression["name"])
-            left = _pglast_parse_expression(expression["lexpr"], available_tables=available_tables,
-                                            resolved_columns=resolved_columns, schema=schema)
             right = _pglast_parse_expression(expression["rexpr"], available_tables=available_tables,
                                              resolved_columns=resolved_columns, schema=schema)
+
+            if "lexpr" not in expression and operation in MathOperator:
+                return MathematicalExpression(operation, right)
+            elif "lexpr" not in expression:
+                raise ParserError("Unknown operator format: " + str(expression))
+
+            left = _pglast_parse_expression(expression["lexpr"], available_tables=available_tables,
+                                            resolved_columns=resolved_columns, schema=schema)
 
             if operation in LogicalOperator:
                 return BinaryPredicate(operation, left, right)
