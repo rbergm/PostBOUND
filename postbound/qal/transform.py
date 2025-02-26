@@ -731,8 +731,8 @@ def replace_clause(query: SelectQueryType, replacements: BaseClause | Iterable[B
     replaced_clauses: list[BaseClause] = []
     for current_clause in query.clauses():
         if not available_replacements:
-            # if all available replacements have already been used, we can stop
-            break
+            replaced_clauses.append(current_clause)
+            continue
 
         final_clause = current_clause
         for replacement_clause in available_replacements:
