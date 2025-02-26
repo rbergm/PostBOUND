@@ -68,8 +68,11 @@ PhysicalOperator = ScanOperator | JoinOperator
 These can differ from the operators that are actually available in the selected target database system.
 """
 
-_IdentifierPattern = re.compile(r"^[a-zA-Z_][a-zA-Z0-9_\$]*$")
+_IdentifierPattern = re.compile(r"^[a-z_][a-z0-9_\$]*$")
 """Regular expression to check for valid identifiers.
+
+In line with Postgres' way of name resolution, we only permit identifiers with lower case characters. This forces all
+identifiers which contain at least one upper case character to be quoted.
 
 References
 ----------
@@ -94,8 +97,8 @@ SqlKeywords = frozenset({
 def quote(identifier: str) -> str:
     """Quotes an identifier if necessary.
 
-    Valid identifiers can be used as-is, e.g. ``title`` or ``movie_id``. Invalid identifiers will be wrapped in quotes, such as
-    ``"movie title"`` or ``"movie-id"``.
+    Valid identifiers can be used as-is, e.g. *title* or *movie_id*. Invalid identifiers will be wrapped in quotes, such as
+    *"movie title"* or *"movie-id"*.
 
     Parameters
     ----------
@@ -151,58 +154,71 @@ class TableReference:
         Alternative name that is in queries to refer to the table, or to refer to the same table multiple times.
         Defaults to an empty string
     virtual : bool, optional
-        Whether the table is virtual or not. As a rule of thumb, virtual tables cannot be part of a ``FROM`` clause on
+        Whether the table is virtual or not. As a rule of thumb, virtual tables cannot be part of a *FROM* clause on
         their own, but need some sort of context. For example, the alias of a subquery is typically represented as a
-        virtual table in PostBOUND. One cannot directly reference that alias in a ``FROM`` clause, without also
-        specifying the subquery. Defaults to ``False`` since most tables will have direct physical counterparts.
+        virtual table in PostBOUND. One cannot directly reference that alias in a *FROM* clause, without also
+        specifying the subquery. Defaults to *False* since most tables will have direct physical counterparts.
+    schema : str, optional
+        The schema in which the table is located. Defaults to an empty string if the table is in the default schema or the
+        schema is unknown.
 
     Raises
     ------
     ValueError
-        If neither full name nor an alias are provided
+        If neither full name nor an alias are provided, or if a schema without a full name is provided.
     """
 
     @staticmethod
-    def create_virtual(alias: str, *, full_name: str = "") -> TableReference:
+    def create_virtual(alias: str, *, full_name: str = "", schema: str = "") -> TableReference:
         """Generates a new virtual table reference with the given alias.
 
         Parameters
         ----------
         alias : str
-            The alias of the virtual table. Cannot be ``None``.
+            The alias of the virtual table. Cannot be *None*.
         full_name : str, optional
             An optional full name for the entire table. This is mostly used to create references to CTE tables.
+        schema : str, optional
+            The schema in which the table is located. Defaults to an empty string if the table is in the default schema or the
+            schema is unknown.
 
         Returns
         -------
         TableReference
             The virtual table reference
         """
-        return TableReference(full_name, alias, True)
+        return TableReference(full_name, alias, virtual=True, schema=schema)
 
-    def __init__(self, full_name: str, alias: str = "", virtual: bool = False) -> None:
+    def __init__(self, full_name: str, alias: str = "", *, virtual: bool = False, schema: str = "") -> None:
         if not full_name and not alias:
             raise ValueError("Full name or alias required")
+        if schema and not full_name:
+            raise ValueError("Schema can only be set if a full name is provided")
+
+        self._schema = schema if schema else ""
         self._full_name = full_name if full_name else ""
         self._alias = alias if alias else ""
         self._virtual = virtual
+
         self._identifier = self._alias if self._alias else self._full_name
 
+        self._normalized_schema = normalize(self._schema)
         self._normalized_full_name = normalize(self._full_name)
         self._normalized_alias = normalize(self._alias)
         self._nomalized_identifier = normalize(self._identifier)
-        self._hash_val = hash((self._normalized_full_name, self._normalized_alias))
+        self._hash_val = hash((self._normalized_full_name, self._normalized_alias, self._normalized_schema))
 
-        if self._full_name and self._alias:
-            self._sql_repr = f"{quote(self._full_name)} AS {quote(self._alias)}"
+        table_txt = f"{quote(self._schema)}.{quote(self._full_name)}" if self._schema else quote(self._full_name)
+        if table_txt and self._alias:
+            self._sql_repr = f"{table_txt} AS {quote(self._alias)}"
         elif self._alias:
             self._sql_repr = quote(self._alias)
         elif self._full_name:
-            self._sql_repr = quote(self._full_name)
+            self._sql_repr = table_txt
         else:
             raise ValueError("Full name or alias required")
 
-    __match_args__ = ("full_name", "alias", "virtual")
+    __match_args__ = ("full_name", "alias", "virtual", "schema")
 
     @property
     def full_name(self) -> str:
@@ -241,12 +257,24 @@ class TableReference:
         """
         return self._virtual
 
+    @property
+    def schema(self) -> str:
+        """Get the schema in which this table is located.
+
+        Returns
+        -------
+        str
+            The schema or an empty string if the schema is either unknown or the table is located in the default schema.
+        """
+
+        return self._schema
+
     def identifier(self) -> str:
         """Provides a shorthand key that columns can use to refer to this table reference.
 
-        For example, a table reference for ``movie_companies AS mc`` would have ``mc`` as its identifier (i.e. the
-        alias), whereas a table reference without an alias such as ``company_type`` would provide the full table name
-        as its identifier, i.e. ``company_type``.
+        For example, a table reference for *movie_companies AS mc* would have *mc* as its identifier (i.e. the
+        alias), whereas a table reference without an alias such as *company_type* would provide the full table name
+        as its identifier, i.e. *company_type*.
 
         Returns
         -------
@@ -254,6 +282,20 @@ class TableReference:
             The shorthand
         """
         return self._identifier
+
+    def qualified_name(self) -> str:
+        """Provides the fully qualified name (i.e. including the schema) of this table.
+
+        Notice that virtual tables do not have a qualified name, since they do not correspond to a physical table.
+
+        Returns
+        -------
+        str
+            The qualified name, quoted as necessary.
+        """
+        if self.virtual:
+            raise VirtualTableError(f"Table {self} does not have a qualified name.")
+        return f"{quote(self._schema)}.{quote(self._full_name)}" if self._schema else quote(self._full_name)
 
     def drop_alias(self) -> TableReference:
         """Removes the alias from the current table if there is one. Returns the tabel as-is otherwise.
@@ -271,7 +313,7 @@ class TableReference:
         """
         if self.virtual:
             raise StateError("An alias cannot be dropped from a virtual table!")
-        return TableReference(self.full_name)
+        return TableReference(self.full_name, schema=self._schema)
 
     def with_alias(self, alias: str) -> TableReference:
         """Creates a new table reference for the same table but with a different alias.
@@ -293,7 +335,7 @@ class TableReference:
         """
         if not self.full_name:
             raise StateError("Cannot add an alias to a table without full name")
-        return TableReference(self.full_name, alias, self.virtual)
+        return TableReference(self.full_name, alias, virtual=self.virtual)
 
     def make_virtual(self) -> TableReference:
         """Creates a new virtual table reference for the same table.
@@ -303,10 +345,18 @@ class TableReference:
         TableReference
             The updated table reference
         """
-        return TableReference(self.full_name, self.alias, True)
+        return TableReference(self.full_name, self.alias, virtual=True, schema=self._schema)
+
+    def update(self, *, full_name: Optional[str] = None, alias: Optional[str] = None, virtual: Optional[bool] = None,
+               schema: Optional[str] = "") -> TableReference:
+        full_name = self._full_name if full_name is None else full_name
+        alias = self._alias if alias is None else alias
+        virtual = self._virtual if virtual is None else virtual
+        schema = self._schema if schema is None else schema
+        return TableReference(full_name, alias, virtual=virtual, schema=schema)
 
     def __json__(self) -> object:
-        return {"full_name": self._full_name, "alias": self._alias, "virtual": self._virtual}
+        return {"full_name": self._full_name, "alias": self._alias, "virtual": self._virtual, "schema": self._schema}
 
     def __lt__(self, other: object) -> bool:
         if not isinstance(other, TableReference):
@@ -319,10 +369,12 @@ class TableReference:
     def __eq__(self, other: object) -> bool:
         return (isinstance(other, type(self))
                 and self._normalized_full_name == other._normalized_full_name
-                and self._normalized_alias == other._normalized_alias)
+                and self._normalized_alias == other._normalized_alias
+                and self._normalized_schema == other._normalized_schema)
 
     def __repr__(self) -> str:
-        return f"TableReference(full_name='{self.full_name}', alias='{self.alias}', virtual={self.virtual})"
+        return (f"TableReference(full_name='{self.full_name}', alias='{self.alias}', "
+                f"virtual={self.virtual}, schema='{self.schema}')")
 
     def __str__(self) -> str:
         return self._sql_repr
@@ -341,12 +393,12 @@ class ColumnReference:
     name : str
         The name of the column. Cannot be empty.
     table : Optional[TableReference], optional
-        The table which provides the column. Can be ``None`` if the table is unknown.
+        The table which provides the column. Can be *None* if the table is unknown.
 
     Raises
     ------
     ValueError
-        If the name is empty (or ``None``)
+        If the name is empty (or *None*)
 
     Notes
     -----
@@ -361,7 +413,7 @@ class ColumnReference:
         FROM bar JOIN cte_table ON bar.b_id = cte_table.f_id
         WHERE cte_table.sum < 42
 
-    In this case, the CTE exports a column ``sum`` that is constructed based on two "actual" columns. Hence, the sum
+    In this case, the CTE exports a column *sum* that is constructed based on two "actual" columns. Hence, the sum
     column itself does not have any physical representation but will be modelled as a column reference nevertheless.
     """
 
@@ -398,7 +450,7 @@ class ColumnReference:
         Returns
         -------
         Optional[TableReference]
-            The table or ``None``. The table can be an arbitrary reference, i.e. virtual or physical.
+            The table or *None*. The table can be an arbitrary reference, i.e. virtual or physical.
         """
         return self._table
 

@@ -2516,6 +2516,9 @@ class _SubqueryDetector(SqlExpressionVisitor[_SubquerySet], PredicateVisitor[_Su
     def visit_case_expr(self, expression: CaseExpression) -> _SubquerySet:
         return self._traverse_nested_expressions(expression)
 
+    def visit_predicate_expr(self, expression: AbstractPredicate) -> _SubquerySet:
+        return self._traverse_nested_expressions(expression)
+
     def _traverse_predicate_expressions(self, predicate: AbstractPredicate) -> _SubquerySet:
         """Handler to collect subqueries from predicates."""
         return functools.reduce(operator.add, [expression.accept_visitor(self) for expression in predicate.iterexpressions()])
@@ -2591,7 +2594,7 @@ class _BaseTableLookup(SqlExpressionVisitor[Optional[TableReference]], Predicate
         return self._fetch_valid_base_tables(base_tables)
 
     def visit_star_expr(self, expression: StarExpression) -> Optional[TableReference]:
-        return None
+        return expression.from_table
 
     def visit_subquery_expr(self, expression: SubqueryExpression) -> Optional[TableReference]:
         subquery = expression.query
@@ -2607,6 +2610,9 @@ class _BaseTableLookup(SqlExpressionVisitor[Optional[TableReference]], Predicate
     def visit_case_expr(self, expression: CaseExpression) -> Optional[TableReference]:
         # base tables can only appear in predicates and we only support case expressions in SELECT statements
         return None
+
+    def visist_predicate_expr(self, expression: AbstractPredicate) -> TableReference:
+        return expression.accept_visitor(self)
 
     def _fetch_valid_base_tables(self, base_tables: set[TableReference | None], *,
                                  accept_empty: bool = False) -> Optional[TableReference]:

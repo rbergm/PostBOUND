@@ -274,7 +274,8 @@ __all__ = [
 ]
 
 
-def parse_query(query: str, *, bind_columns: Optional[bool] = None,
+def parse_query(query: str, *, include_hints: bool = True,
+                bind_columns: Optional[bool] = None,
                 db_schema: Optional["DatabaseSchema"] = None) -> SqlQuery:  # type: ignore # noqa: F821
     """Parses a query string into a proper `SqlQuery` object.
 
@@ -292,6 +293,9 @@ def parse_query(query: str, *, bind_columns: Optional[bool] = None,
     ----------
     query : str
         The query to parse
+    include_hints : bool, optional
+        Whether to include hints in the parsed query. If this is *True* (the default), any preceding comments in the query
+        text will be parsed as a hint block. Otherwise, these comments are simply ignored.
     bind_columns : bool | None, optional
         Whether to use *live binding*. This does not control the text-based binding, which is always performed. If this
         parameter is ``None`` (the default), the global `auto_bind_columns` variable will be queried. Depending on its
@@ -306,16 +310,18 @@ def parse_query(query: str, *, bind_columns: Optional[bool] = None,
         The parsed SQL query.
     """
     from .parser import parse_query as parse_worker
-    return parse_worker(query, bind_columns=bind_columns, db_schema=db_schema)
+    return parse_worker(query, accept_set_query=False, include_hints=include_hints,
+                        bind_columns=bind_columns, db_schema=db_schema)
 
 
 def parse_full_query(statement: str, *, bind_columns: Optional[bool] = None,
                      db_schema: Optional["DatabaseSchema"] = None) -> SelectStatement:  # type: ignore # noqa: F821
-    """This method is very similar to `parse_query`, but it also support set queries (i.e. queries with **UNION**, etc.)
+    """This method is very similar to `parse_query`, but it also support set queries (i.e. queries with **UNION**, etc.).
 
     See Also
     --------
     parse_query : The simpler version of this method that only supports "plain" queries without set operations.
     """
     from .parser import parse_query as parse_worker
-    return parse_worker(statement, bind_columns=bind_columns, db_schema=db_schema, accept_set_query=True)
+    return parse_worker(statement, accept_set_query=True, include_hints=True,
+                        bind_columns=bind_columns, db_schema=db_schema)
