@@ -26,7 +26,6 @@ class MathOperator(enum.Enum):
     Multiply = "*"
     Divide = "/"
     Modulo = "%"
-    Negate = "-"
     Concatenate = "||"
 
 
@@ -420,6 +419,10 @@ class MathematicalExpression(SqlExpression):
         """
         return self._second_arg
 
+    def is_unary(self) -> bool:
+        """Checks, whether the expression is a unary one (e.g. a negation as in *-42*)."""
+        return not self.second_arg
+
     def tables(self) -> set[TableReference]:
         all_tables = set(self.first_arg.tables())
         if isinstance(self.second_arg, list):
@@ -461,7 +464,7 @@ class MathematicalExpression(SqlExpression):
 
     def __str__(self) -> str:
         operator_str = self.operator.value
-        if self.operator == MathOperator.Negate:
+        if not self.second_arg:
             return f"{operator_str}{self.first_arg}"
         if isinstance(self.second_arg, tuple):
             all_args = [self.first_arg] + list(self.second_arg)
