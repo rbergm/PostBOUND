@@ -638,12 +638,13 @@ class QueryPlan:
             plan_params = PlanParams(base_table=base_table, filter_predicate=filter_predicate,
                                      sort_keys=sort_keys, parallel_workers=parallel_workers, index=index, **kwargs)
 
-        if estimates is not None and any(v is not None for v in (estimated_cardinality, estimated_cost)):
+        if estimates is not None and any(not math.isnan(v) for v in (estimated_cardinality, estimated_cost)):
             raise ValueError("PlanEstimates and individual estimates cannot be provided at the same time")
         if estimates is None:
             estimates = PlanEstimates(cardinality=estimated_cardinality, cost=estimated_cost)
 
-        if measures is not None and any(v is not None for v in (execution_time, cache_hits, cache_misses)):
+        has_custom_measures = any(v is not None and not math.isnan(v) for v in (execution_time, cache_hits, cache_misses))
+        if measures is not None and has_custom_measures:
             raise ValueError("PlanMeasures and individual measures cannot be provided at the same time")
         if measures is None:
             measures = PlanMeasures(execution_time=execution_time, cardinality=actual_cardinality,
@@ -654,6 +655,7 @@ class QueryPlan:
         if subplan is None and (subplan_root is not None or subplan_target_name):
             subplan = Subplan(subplan_root, subplan_target_name)
 
+        children = [] if children is None else util.enlist(children)
         if len(children) > 2:
             raise ValueError("Query plan nodes can have at most two children")
 
@@ -664,7 +666,6 @@ class QueryPlan:
         self._node_type = node_type
         self._operator = operator
 
-        children = list(children) if children else []
         if len(children) == 1:
             self._input_node = children[0]
         else:
@@ -1096,7 +1097,7 @@ class QueryPlan:
         cost = self.estimated_cost if cost is None else cost
         updated_estimates = PlanEstimates(cardinality=cardinality, cost=cost)
         updated_measures = self._measures if keep_measures else None
-        return QueryPlan(self.node_type, operator=self.operator, input_node=self.input_node, children=self.children,
+        return QueryPlan(self.node_type, operator=self.operator, children=self.children,
                          plan_params=self.params, estimates=updated_estimates, measures=updated_measures,
                          subplan=self.subplan)
 
@@ -1134,7 +1135,7 @@ class QueryPlan:
         else:
             updated_subplan = None
 
-        return QueryPlan(self.node_type, operator=self.operator, input_node=self.input_node, children=self.children,
+        return QueryPlan(self.node_type, operator=self.operator, children=self.children,
                          plan_params=self.params, estimates=updated_estimates, measures=updated_measures,
                          subplan=updated_subplan)
 
@@ -1264,7 +1265,7 @@ def _default_explain(plan: QueryPlan, *, padding: str) -> str:
         components.append(f"{padding}{metadata_indent}Cache Hits={cache_hits}, Cache Misses={cache_misses}")
 
     params = plan.params
-    if params.parallel_workers is not None:
+    if params.parallel_workers:
         components.append(f"{padding}{metadata_indent}Parallel Workers={params.parallel_workers}")
 
     path_props: list[str] = []

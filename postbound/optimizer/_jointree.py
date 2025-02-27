@@ -790,7 +790,7 @@ def parameters_from_plan(query_plan: QueryPlan | LogicalJoinTree, *,
 
     if not math.isnan(card):
         params.add_cardinality_hint(query_plan.tables(), card)
-    if parallel_workers is not None:
+    if parallel_workers:
         params.add_parallelization_hint(query_plan.tables(), parallel_workers)
 
     for child in query_plan.children:
