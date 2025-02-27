@@ -13,7 +13,7 @@ sys.path.insert(0, os.path.abspath('../..'))
 project = 'PostBOUND'
 copyright = '2025, Database Group @ TU Dresden'
 author = 'Database Group @ TU Dresden'
-release = '0.12.1'
+release = '0.13.0'
 
 # -- General configuration ---------------------------------------------------
 # https://www.sphinx-doc.org/en/master/usage/configuration.html#general-configuration

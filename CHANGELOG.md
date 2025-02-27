@@ -14,6 +14,54 @@ Be carefull when updating and check the changelog!
 
 ---
 
+# ➡ Version 0.13.0
+
+### 🐣 New features
+- Table references can now be localized to a schema
+- Type casts now support type arguments, e.g. in `varchar(255)`
+- Added support for parsing queries with existing hints
+- Added support for parsing `EXPLAIN` queries
+- Added a very basic dynamic programming enumerator. This is the default enumerator used in the `TextBookOptimizationPipeline`.
+  As a WIP, this default should be switched to a Postgres-style DP algorithm if the target database is Postgres. The basic
+  enumerator is probably not what you want in production, but better than always forcing the user to supply her own enumerator.
+- Added an `indexes_on()` method to the database schema interface. This function returns all indexes for a specific column.
+
+### 💀 Breaking changes
+- `virtual` is now a keyword-parameter when creating a table reference
+- Removed `MathOperator.Negate` since this clashed with the representation of plain subtraction operations. Instead, negations
+  should be represented by `MathOperator.Subtract` and can now be checked with `math_expr.is_unary()`.
+
+### 📰 Updates
+- The schema-related Postgres functions now respect the optional table schema (and fall back to _public_ if no schema was
+  specified)
+- The `NativeCardinalityEstimator` is now an entire `CardinalityHintsGenerator` rather than just a `CardinalityEstimator`
+  for more flexible usage.
+
+### 🏥 Fixes
+- Fixed a parser error when parsing a unary mathematical expression (e.g. negations)
+- Fixed projections in the `SELECT` clause not quoting their alias if necessary
+- Fixed text representation of SQL expressions containing a minus
+- Fixed `transform.replace_clause()` stopping prematurely which caused some clauses to be dropped unintentionally
+- Quoting rules are now also applied to identifiers which contain upper case characters
+
+### 🪲 Known bugs
+- Pre-defined workloads (`workloads.job()`, etc) do not work if installed as a Pip module. This is because the build process
+  does not retain the workload directory in the `site_packages`.
+
+### ⏳ WIP
+- Baseline for a Postgres-style dynamic programming plan enumerator. This is not yet complete and trying to initialize the
+  corresponding class raises an error for now. The enumerator will probably be ready to go for v0.14.0
+
+---
+
+
+## 🚧 Version 0.14.0 👷
+
+### ⏳ Planned
+- Full dynamic programming support for the `TextbookOptimizationPipeline`, including a Postgres-specific algorithm
+
+---
+
 # ➡ Version 0.12.1
 
 ### 🐣 New features
@@ -42,14 +90,6 @@ Be carefull when updating and check the changelog!
 ### ⏳ WIP
 - Baseline for dynamic programming plan enumerator. This is not yet complete and trying to initialize a corresponding class
   raises an error for now. The enumerator will probably be ready to go for v0.13.0
-
----
-
-
-## 🚧 Version 0.13.0 👷
-
-### ⏳ Planned
-- Full dynamic programming support for the `TextbookOptimizationPipeline`, including a Postgres-specific algorithm
 
 ---
 
