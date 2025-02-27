@@ -19,10 +19,11 @@ from .._jointree import JoinTree, jointree_from_plan, parameters_from_plan
 from ..._core import Cost, Cardinality, TableReference
 from ..._qep import QueryPlan
 from ..._stages import (
-    CostModel, CardinalityEstimator,
+    CostModel,
     JoinOrderOptimization, PhysicalOperatorSelection, ParameterGeneration,
     CompleteOptimizationAlgorithm
 )
+from ..policies.cardinalities import CardinalityHintsGenerator
 from ... import db, qal, util
 from ...qal import SqlQuery
 from ...util import jsondict
@@ -49,14 +50,14 @@ class NativeCostModel(CostModel):
         self._target_db = None
 
 
-class NativeCardinalityEstimator(CardinalityEstimator):
+class NativeCardinalityEstimator(CardinalityHintsGenerator):
     """Obtains the cardinality of a query plan by using the cardinality estimator of an actual database system."""
 
-    def __init__(self) -> None:
-        super().__init__()
-        self._target_db: Optional[db.Database] = None
+    def __init__(self, target_db: Optional[db.Database] = None) -> None:
+        super().__init__(True)
+        self._target_db: Optional[db.Database] = target_db
 
-    def estimate_cardinality(self, query: SqlQuery, intermediate: TableReference | Iterable[TableReference]) -> Cardinality:
+    def calculate_estimate(self, query: SqlQuery, intermediate: TableReference | Iterable[TableReference]) -> Cardinality:
         intermediate = util.enlist(intermediate)
         subquery = qal.transform.extract_query_fragment(query, intermediate)
         return self._target_db.optimizer().cardinality_estimate(subquery)
