@@ -940,6 +940,28 @@ class PostgresSchemaInterface(DatabaseSchema):
         # value.
         return not index_map.get(column.name, True)
 
+    def indexes_on(self, column: ColumnReference) -> set[str]:
+        if not column.table:
+            raise UnboundColumnError(column)
+        if column.table.virtual:
+            raise VirtualTableError(column.table)
+        schema = column.table.schema or "public"
+        query_template = textwrap.dedent("""
+            SELECT cls.relname
+            FROM pg_index idx
+                JOIN pg_class cls ON idx.indexrelid = cls.oid
+                JOIN pg_class rel ON idx.indrelid = rel.oid
+                JOIN pg_attribute att ON att.attnum = ANY(idx.indkey) AND idx.indrelid = att.attrelid
+                JOIN pg_namespace nsp ON cls.relnamespace = nsp.oid AND rel.relnamespace = nsp.oid
+            WHERE rel.relname = %s
+                AND att.attname = %s
+                AND nsp.nspname = %s
+
+        """)
+        self._db.cursor().execute(query_template, (column.table.full_name, column.name, schema))
+        result_set = self._db.cursor().fetchall()
+        return {row[0] for row in result_set}
+
     def datatype(self, column: ColumnReference) -> str:
         if not column.table:
             raise UnboundColumnError(column)
@@ -1014,15 +1036,18 @@ class PostgresSchemaInterface(DatabaseSchema):
         if table.virtual:
             raise VirtualTableError(table)
         # query adapted from https://wiki.postgresql.org/wiki/Retrieve_primary_key_columns
-        table_name = table.qualified_name()
-        index_query = textwrap.dedent(f"""
+        table_name = table.full_name
+        schema = table.schema or "public"
+        index_query = textwrap.dedent("""
             SELECT attr.attname, idx.indisprimary
             FROM pg_index idx
-                JOIN pg_attribute attr
-                ON idx.indrelid = attr.attrelid AND attr.attnum = ANY(idx.indkey)
-            WHERE idx.indrelid = '{table_name}'::regclass
+                JOIN pg_attribute attr ON idx.indrelid = attr.attrelid AND attr.attnum = ANY(idx.indkey)
+                JOIN pg_class cls ON idx.indrelid = cls.oid
+                JOIN pg_namespace nsp ON cls.relnamespace = nsp.oid
+            WHERE cls.relname = %s
+                AND nsp.nspname = %s
         """)
-        self._db.cursor().execute(index_query)
+        self._db.cursor().execute(index_query, (table_name, schema))
         result_set = self._db.cursor().fetchall()
         index_map = dict(result_set)
         return index_map

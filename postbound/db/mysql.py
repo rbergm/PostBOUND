@@ -274,6 +274,17 @@ class MysqlSchemaInterface(DatabaseSchema):
         # value.
         return not index_map.get(column.name, True)
 
+    def indexes_on(self, column: ColumnReference) -> set[str]:
+        if not column.table:
+            raise UnboundColumnError(column)
+        if column.table.virtual:
+            raise VirtualTableError(column.table)
+        query_template = ("SELECT index_name FROM information_schema.statistics "
+                          "WHERE table_name = %s AND column_name = %s")
+        self._db.cursor().execute(query_template, (column.table.full_name, column.name))
+        result_set = self._db.cursor().fetchall()
+        return {index[0] for index in result_set}
+
     def datatype(self, column: ColumnReference) -> str:
         if not column.table:
             raise UnboundColumnError(column)
