@@ -278,7 +278,8 @@ class TextBookOptimizationPipeline(OptimizationPipeline):
         self._card_est: CardinalityEstimator = NativeCardinalityEstimator()
         self._cost_model: CostModel = NativeCostModel()
 
-        if isinstance(target_db, PostgresInterface):
+        if isinstance(target_db, PostgresInterface) and False:
+            # we do not have the PG DP algorithm yet, so just fall back to the simplified one
             self._plan_enumerator: PlanEnumerator = PostgresDynProg()
         else:
             self._plan_enumerator: PlanEnumerator = DynamicProgrammingEnumerator()
