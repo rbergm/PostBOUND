@@ -670,7 +670,25 @@ class DatabaseSchema(abc.ABC):
 
     @abc.abstractmethod
     def indexes_on(self, column: ColumnReference) -> set[str]:
-        # TODO
+        """Retrieves the names of all indexes of a specific column.
+
+        Parameters
+        ----------
+        column : ColumnReference
+            The column to check.
+
+        Returns
+        -------
+        set[str]
+            The indexes. If no indexes are available, the set will be empty.
+
+        Raises
+        ------
+        postbound.qal.UnboundColumnError
+            If the column is not associated with any table
+        postbound.qal.VirtualTableError
+            If the table associated with the column is a virtual table (e.g. subquery or CTE)
+        """
         raise NotImplementedError
 
     @abc.abstractmethod

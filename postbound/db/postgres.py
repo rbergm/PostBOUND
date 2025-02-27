@@ -42,7 +42,7 @@ from ._db import (
     UnsupportedDatabaseFeatureError
 )
 from .. import qal, util
-from .._core import JoinOperator, ScanOperator, PhysicalOperator
+from .._core import JoinOperator, ScanOperator, IntermediateOperator, PhysicalOperator
 from .._qep import QueryPlan, SortKey
 from ..qal import (
     TableReference, ColumnReference,
@@ -2406,6 +2406,11 @@ PostgresExplainScanNodes = {"Seq Scan": ScanOperator.SequentialScan,
                             "Bitmap Heap Scan": ScanOperator.BitmapScan}
 """A mapping from Postgres EXPLAIN node names to the corresponding scan operators."""
 
+PostgresExplainIntermediateNodes = {"Materialize": IntermediateOperator.Materialize,
+                                    "Memoize": IntermediateOperator.Memoize,
+                                    "Sort": IntermediateOperator.Sort}
+"""A mapping from Postgres EXPLAIN node names to the corresponding intermediate operators."""
+
 
 class PostgresExplainNode:
     """Simplified model of a plan node as provided by Postgres' ``EXPLAIN`` output in JSON format.
@@ -2676,7 +2681,7 @@ class PostgresExplainNode:
         elif self.is_join():
             operator = PostgresExplainJoinNodes.get(self.node_type, None)
         else:
-            operator = None
+            operator = PostgresExplainIntermediateNodes.get(self.node_type, None)
 
         sort_keys = self._parse_sort_keys() if self.sort_keys else self._infer_sorting_from_children()
         shared_hits = None if math.isnan(self.shared_blocks_cached) else self.shared_blocks_cached

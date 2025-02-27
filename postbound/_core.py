@@ -62,7 +62,24 @@ class JoinOperator(Enum):
         return self.value < other.value
 
 
-PhysicalOperator = ScanOperator | JoinOperator
+class IntermediateOperator(Enum):
+    """The intermediate operators supported by PostBOUND.
+
+    Intermediate operators are those that do not change the contents of their input relation, but only the way in which it is
+    available. For example, a sort operator changes the order of the tuples.
+    """
+
+    Sort = "Sort"
+    Memoize = "Memoize"
+    Materialize = "Materialize"
+
+    def __lt__(self, other: object) -> bool:
+        if not isinstance(other, type(self)):
+            return NotImplemented
+        return self.value < other.value
+
+
+PhysicalOperator = ScanOperator | JoinOperator | IntermediateOperator
 """Supertype to model all physical operators supported by PostBOUND.
 
 These can differ from the operators that are actually available in the selected target database system.
