@@ -1,7 +1,7 @@
 # PostBOUND
 
 ![GitHub License](https://img.shields.io/github/license/rbergm/PostBOUND)
-![Static Badge](https://img.shields.io/badge/version-0.13.0-blue)
+![Static Badge](https://img.shields.io/badge/version-0.13.1-blue)
 
 PostBOUND is a framework for studying query optimization algorithms for (relational) database systems. It provides
 tools to easily implement prototypes of new optimization algorithms and to compare them in a transparent and

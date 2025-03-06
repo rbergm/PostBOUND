@@ -14,39 +14,34 @@ Be carefull when updating and check the changelog!
 
 ---
 
-# ➡ Version 0.13.0
+# ➡ Version 0.13.1
 
 ### 🐣 New features
-- Table references can now be localized to a schema
-- Type casts now support type arguments, e.g. in `varchar(255)`
-- Added support for parsing queries with existing hints
-- Added support for parsing `EXPLAIN` queries
-- Added a very basic dynamic programming enumerator. This is the default enumerator used in the `TextBookOptimizationPipeline`.
-  As a WIP, this default should be switched to a Postgres-style DP algorithm if the target database is Postgres. The basic
-  enumerator is probably not what you want in production, but better than always forcing the user to supply her own enumerator.
-- Added an `indexes_on()` method to the database schema interface. This function returns all indexes for a specific column.
+- Added an `expect_match` keyword parameter to `DatabaseSchema.lookup_column`. If this is true, an error is raised if no
+  owning table is found (which is the current behavior). Otherwise, _None_ is returned if no match is found.
+- Added support for Postgres' *SELECT DISTINCT ON (cols)* syntax. This required a rework of *SELECT* clauses.
 
 ### 💀 Breaking changes
-- `virtual` is now a keyword-parameter when creating a table reference
-- Removed `MathOperator.Negate` since this clashed with the representation of plain subtraction operations. Instead, negations
-  should be represented by `MathOperator.Subtract` and can now be checked with `math_expr.is_unary()`.
+- `MathematicalExpression` is now called `MathExpression` for brevity's sake
+- Reworked *SELECT* clauses (see above)
 
 ### 📰 Updates
-- The schema-related Postgres functions now respect the optional table schema (and fall back to _public_ if no schema was
-  specified)
-- The `NativeCardinalityEstimator` is now an entire `CardinalityHintsGenerator` rather than just a `CardinalityEstimator`
-  for more flexible usage.
+- Lifted restriction to support only query plans with 0-2 children. This is necessary to represent _UNION_ statements of more
+  than two queries
+- `DatabaseSchema.columns` now provides the columns as a sequence instead of a set, ordered by their ordinal position. This is
+  necessary to resolve the columns in a *SELECT \** statement correctly.
 
 ### 🏥 Fixes
-- Fixed a parser error when parsing a unary mathematical expression (e.g. negations)
-- Fixed projections in the `SELECT` clause not quoting their alias if necessary
-- Fixed text representation of SQL expressions containing a minus
-- Fixed `transform.replace_clause()` stopping prematurely which caused some clauses to be dropped unintentionally
-- Quoting rules are now also applied to identifiers which contain upper case characters
+- Lots and lots of fixes for parsing and formatting (very) complicated SQL queries, including correct table resolution
+- Fixed some incorrectly named `__match_args__` in the QAL
+- Various fixes for `QueryPlan.find_first_node` and `QueryPlan.find_all_nodes`, including checking the subplan if necessary.
+- Fixed parsing of *UNION* plans for Postgres
 
 ### 🪲 Known bugs
 - Pre-defined workloads (`workloads.job()`, etc) do not work if installed as a Pip module. This is because the build process
   does not retain the workload directory in the `site_packages`.
+- Parsing workloads and pretty-printing queries now takes considerably longer than in 0.13.0. This is due to the much more
+  complicated parsing logic. We will likely do a performance optimization pass in the near future.
 
 ### ⏳ WIP
 - Baseline for a Postgres-style dynamic programming plan enumerator. This is not yet complete and trying to initialize the
@@ -90,6 +85,47 @@ Be carefull when updating and check the changelog!
 ### ⏳ WIP
 - Baseline for dynamic programming plan enumerator. This is not yet complete and trying to initialize a corresponding class
   raises an error for now. The enumerator will probably be ready to go for v0.13.0
+
+---
+
+
+# ➡ Version 0.13.0
+
+### 🐣 New features
+- Table references can now be localized to a schema
+- Type casts now support type arguments, e.g. in `varchar(255)`
+- Added support for parsing queries with existing hints
+- Added support for parsing `EXPLAIN` queries
+- Added a very basic dynamic programming enumerator. This is the default enumerator used in the `TextBookOptimizationPipeline`.
+  As a WIP, this default should be switched to a Postgres-style DP algorithm if the target database is Postgres. The basic
+  enumerator is probably not what you want in production, but better than always forcing the user to supply her own enumerator.
+- Added an `indexes_on()` method to the database schema interface. This function returns all indexes for a specific column.
+
+### 💀 Breaking changes
+- `virtual` is now a keyword-parameter when creating a table reference
+- Removed `MathOperator.Negate` since this clashed with the representation of plain subtraction operations. Instead, negations
+  should be represented by `MathOperator.Subtract` and can now be checked with `math_expr.is_unary()`.
+
+### 📰 Updates
+- The schema-related Postgres functions now respect the optional table schema (and fall back to _public_ if no schema was
+  specified)
+- The `NativeCardinalityEstimator` is now an entire `CardinalityHintsGenerator` rather than just a `CardinalityEstimator`
+  for more flexible usage.
+
+### 🏥 Fixes
+- Fixed a parser error when parsing a unary mathematical expression (e.g. negations)
+- Fixed projections in the `SELECT` clause not quoting their alias if necessary
+- Fixed text representation of SQL expressions containing a minus
+- Fixed `transform.replace_clause()` stopping prematurely which caused some clauses to be dropped unintentionally
+- Quoting rules are now also applied to identifiers which contain upper case characters
+
+### 🪲 Known bugs
+- Pre-defined workloads (`workloads.job()`, etc) do not work if installed as a Pip module. This is because the build process
+  does not retain the workload directory in the `site_packages`.
+
+### ⏳ WIP
+- Baseline for a Postgres-style dynamic programming plan enumerator. This is not yet complete and trying to initialize the
+  corresponding class raises an error for now. The enumerator will probably be ready to go for v0.14.0
 
 ---
 
