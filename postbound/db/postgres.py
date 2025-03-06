@@ -2661,21 +2661,25 @@ class PostgresExplainNode:
         for child in self.children:
             parent_rel = child.parent_relationship
             qep_child = child.as_qep()
-            if parent_rel == "Inner":
-                inner_child = qep_child
-            elif parent_rel == "Outer":
-                outer_child = qep_child
-            elif parent_rel == "SubPlan" or parent_rel == "InitPlan":
-                subplan_child = qep_child
-            else:
-                raise ValueError("Unknown parent relationship in child node:", child)
+
+            match parent_rel:
+                case "Inner":
+                    inner_child = qep_child
+                case "Outer":
+                    outer_child = qep_child
+                case "SubPlan" | "InitPlan" | "Subquery":
+                    subplan_child = qep_child
+                case "Member":
+                    child_nodes.append(qep_child)
+                case _:
+                    raise ValueError(f"Unknown parent relationship '{parent_rel}' for child {child}")
 
         if inner_child and outer_child:
-            child_nodes = (outer_child, inner_child)
+            child_nodes = [outer_child, inner_child] + child_nodes
         elif outer_child:
-            child_nodes = (outer_child,)
+            child_nodes.insert(0, outer_child)
         elif inner_child:
-            child = (inner_child,)
+            child_nodes.insert(0, inner_child)
 
         table = self.parse_table()
         subplan_name = self.subplan_name or self.cte_name
