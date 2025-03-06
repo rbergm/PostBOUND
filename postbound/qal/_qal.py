@@ -87,13 +87,13 @@ class SqlExpression(abc.ABC):
     columns such as in ``SELECT R.a FROM R``, but it can also modify the column values slightly, such as in
     ``SELECT R.a + 42 FROM R``. To account for all  these different situations, the `SqlExpression` is intended to form
     hierarchical trees and chains of expressions. In the first case, a `ColumnExpression` is used, whereas a
-    `MathematicalExpression` can model the second case. Whereas column expressions represent leaves in the expression
-    tree, mathematical expressions are intermediate nodes.
+    `MathExpression` can model the second case. Whereas column expressions represent leaves in the expression tree,
+    mathematical expressions are intermediate nodes.
 
     As a more advanced example, a complicated expressions such as `my_udf(R.a::interval + 42)` which consists of a
     user-defined function, a value cast and a mathematical operation is represented the following way:
-    `FunctionExpression(MathematicalExpression(CastExpression(ColumnExpression), StaticValueExpression))`. The methods
-    provided by all expression instances enable a more convenient use and access to the expression hierarchies.
+    `FunctionExpression(MathExpression(CastExpression(ColumnExpression), StaticValueExpression))`. The methods provided by all
+    expression instances enable a more convenient use and access to the expression hierarchies.
 
     The different kinds of expressions are represented using different subclasses of the `SqlExpression` interface.
     This really is an abstract interface, not a usable expression. All inheriting expression have to provide their own
@@ -368,11 +368,14 @@ class CastExpression(SqlExpression):
             type_str = f"{self.target_type}({type_args})"
         else:
             type_str = self.target_type
-        return f"CAST({self.casted_expression} AS {type_str})"
+        casted_str = (str(self.casted_expression)
+                      if isinstance(self.casted_expression, (ColumnExpression, StaticValueExpression))
+                      else f"({self.casted_expression})")
+        return f"CAST({casted_str} AS {type_str})"
 
 
-class MathematicalExpression(SqlExpression):
-    """A mathematical expression computes a result value based on a mathematical formula.
+class MathExpression(SqlExpression):
+    """A mathematical expression computes a result value based on some formula.
 
     The formula is based on an arbitrary expression, an operator and potentially a number of additional
     expressions/arguments.
@@ -397,9 +400,17 @@ class MathematicalExpression(SqlExpression):
             raise ValueError("Operator and first argument are required!")
         self._operator = operator
         self._first_arg = first_argument
-        self._second_arg: SqlExpression | tuple[SqlExpression] | None = (tuple(second_argument)
-                                                                         if isinstance(second_argument, Sequence)
-                                                                         else second_argument)
+
+        match second_argument:
+            case SqlExpression():
+                self._second_arg = second_argument
+            case None:
+                self._second_arg = None
+            case Sequence():
+                self._second_arg = util.simplify(second_argument)
+            case _:
+                raise ValueError("Second argument must be a single expression or a sequence of expressions, "
+                                 f"not '{second_argument}'")
 
         if isinstance(self._second_arg, tuple) and len(self._second_arg) == 1:
             self._second_arg = self._second_arg[0]
@@ -478,7 +489,26 @@ class MathematicalExpression(SqlExpression):
         return [self.first_arg, self.second_arg]
 
     def accept_visitor(self, visitor: SqlExpressionVisitor[VisitorResult]) -> VisitorResult:
-        return visitor.visit_mathematical_expr(self)
+        return visitor.visit_math_expr(self)
+
+    def _requires_brackets(self, child: SqlExpression) -> bool:
+        """Checks, whether some expression must be wrapped in brackets to ensure correct evaluation order."""
+        if not isinstance(child, MathExpression):
+            return False
+        if child.operator == self.operator:
+            return False
+        if self.operator == MathOperator.Concatenate or child.operator == MathOperator.Concatenate:
+            return True
+
+        lazy_ops = {MathOperator.Add, MathOperator.Multiply, MathOperator.Modulo}
+        eager_ops = {MathOperator.Subtract, MathOperator.Divide}
+
+        strict_brackets = self.operator in eager_ops and child.operator in lazy_ops
+
+        # these brackets are not really required, but we still use them for better readability
+        pretty_brackets = self.operator in lazy_ops and child.operator in eager_ops
+
+        return strict_brackets or pretty_brackets
 
     __hash__ = SqlExpression.__hash__
 
@@ -494,8 +524,10 @@ class MathematicalExpression(SqlExpression):
             return f"{operator_str}{self.first_arg}"
         if isinstance(self.second_arg, tuple):
             all_args = [self.first_arg] + list(self.second_arg)
-            return operator_str.join(str(arg) for arg in all_args)
-        return f"{self.first_arg} {operator_str} {self.second_arg}"
+            return operator_str.join(f"({arg})" for arg in all_args)
+        first_str = f"({self.first_arg})" if self._requires_brackets(self.first_arg) else str(self.first_arg)
+        second_str = f"({self.second_arg})" if self._requires_brackets(self.second_arg) else str(self.second_arg)
+        return f"{first_str} {operator_str} {second_str}"
 
 
 class ColumnExpression(SqlExpression):
@@ -648,7 +680,7 @@ class FunctionExpression(SqlExpression):
         hash_val = hash((self._function, self._distinct, self._arguments, self._filter_expr))
         super().__init__(hash_val)
 
-    __match_args__ = ("function", "arguments", "distinct")
+    __match_args__ = ("function", "arguments", "distinct", "filter_where")
 
     @property
     def function(self) -> str:
@@ -844,6 +876,8 @@ class ArrayAccessExpression(FunctionExpression):
         args = [arg for arg in (array_expr, idx, lower_idx, upper_idx) if arg is not None]
         super().__init__("ARRAY_GET", args)
 
+    __match_args__ = ("array", "index", "lower_index", "upper_index")
+
     @property
     def array(self) -> SqlExpression:
         """Get the array that is being accessed.
@@ -998,6 +1032,8 @@ class StarExpression(SqlExpression):
     def __init__(self, *, from_table: Optional[TableReference] = None) -> None:
         self._table = from_table
         super().__init__(hash(("*", self._table)))
+
+    __match_args__ = ("from_table",)
 
     @property
     def from_table(self) -> Optional[TableReference]:
@@ -1177,7 +1213,7 @@ class CaseExpression(SqlExpression):
         hash_val = hash((self._cases, self._else_expr))
         super().__init__(hash_val)
 
-    __match_args__ = ("cases", "else_expr")
+    __match_args__ = ("cases", "else_expression")
 
     @property
     def cases(self) -> Sequence[tuple[AbstractPredicate, SqlExpression]]:
@@ -1219,6 +1255,12 @@ class CaseExpression(SqlExpression):
     def accept_visitor(self, visitor: SqlExpressionVisitor[VisitorResult]) -> VisitorResult:
         return visitor.visit_case_expr(self)
 
+    def _braketify(self, expression: SqlExpression) -> str:
+        """Wraps the given expression in brackets if necessary."""
+        if isinstance(expression, (CaseExpression, MathExpression)):
+            return f"({expression})"
+        return str(expression)
+
     __hash__ = SqlExpression.__hash__
 
     def __eq__(self, other: object) -> bool:
@@ -1227,8 +1269,8 @@ class CaseExpression(SqlExpression):
                 and self.else_expression == other.else_expression)
 
     def __str__(self) -> str:
-        cases_str = " ".join(f"WHEN {pred} THEN {expr}" for pred, expr in self.cases)
-        else_str = f" ELSE {self.else_expression}" if self.else_expression else ""
+        cases_str = " ".join(f"WHEN {pred} THEN {self._braketify(expr)}" for pred, expr in self.cases)
+        else_str = f" ELSE {self._braketify(self.else_expression)}" if self.else_expression else ""
         return f"CASE {cases_str}{else_str} END"
 
 
@@ -1254,7 +1296,7 @@ class SqlExpressionVisitor(abc.ABC, Generic[VisitorResult]):
         raise NotImplementedError
 
     @abc.abstractmethod
-    def visit_mathematical_expr(self, expr: MathematicalExpression) -> VisitorResult:
+    def visit_math_expr(self, expr: MathExpression) -> VisitorResult:
         raise NotImplementedError
 
     @abc.abstractmethod
@@ -1312,7 +1354,7 @@ class ExpressionCollector(SqlExpressionVisitor[set[SqlExpression]]):
     def visit_function_expr(self, expression: FunctionExpression) -> set[SqlExpression]:
         return self._check_match(expression)
 
-    def visit_mathematical_expr(self, expression: MathematicalExpression) -> set[SqlExpression]:
+    def visit_math_expr(self, expression: MathExpression) -> set[SqlExpression]:
         return self._check_match(expression)
 
     def visit_star_expr(self, expression: StarExpression) -> set[SqlExpression]:
@@ -2416,7 +2458,9 @@ class UnaryPredicate(BasePredicate):
             assert isinstance(self.column, SubqueryExpression)
             return f"EXISTS {self.column}"
 
-        return f"{self.operation.value}{self.column}"
+        col_str = (str(self.column) if isinstance(self.column, (StaticValueExpression, ColumnExpression))
+                   else f"({self.column})")
+        return f"{self.operation.value}{col_str}"
 
 
 class CompoundPredicate(AbstractPredicate):
@@ -4193,6 +4237,22 @@ class WithQuery:
         """
         return self._materialized
 
+    def output_columns(self) -> Sequence[ColumnReference]:
+        """Provides the columns that form the result relation of this CTE.
+
+        The columns are named according to the following rules:
+
+        - If the column has an alias, this name is used
+        - If the column is a simple column reference, the column name is used
+        - Otherwise, a generic name is used, e.g. "column_1", "column_2", etc.
+
+        Returns
+        -------
+        Sequence[ColumnReference]
+            The columns. Their order matches the order in which they appear in the *SELECT* clause of the query.
+        """
+        return [col.bind_to(self.target_table) for col in self._query.output_columns()]
+
     def tables(self) -> set[TableReference]:
         return self._query.tables()
 
@@ -4222,7 +4282,7 @@ class WithQuery:
             mat_info = ""
         else:
             mat_info = "MATERIALIZED " if self._materialized else "NOT MATERIALIZED "
-        return f"{self._target_name} AS {mat_info}({query_str})"
+        return f"{quote(self._target_name)} AS {mat_info}({query_str})"
 
 
 class ValuesWithQuery(WithQuery):
@@ -4299,6 +4359,18 @@ class ValuesWithQuery(WithQuery):
             return set()
         return {ColumnReference(col, self.target_table) for col in self._columns}
 
+    def output_columns(self) -> Sequence[ColumnExpression]:
+        """Provides the columns that form the result relation of this CTE.
+
+        Returns
+        -------
+        Sequence[ColumnExpression]
+            The columns. If no columns were provided, generic column names are used.
+        """
+        if self._columns:
+            return self._columns
+        return [ColumnExpression(f"column_{i + 1}") for i in range(len(self._values[0]))]
+
     def iterexpressions(self) -> Iterable[SqlExpression]:
         return util.flatten(row for row in self._values)
 
@@ -4328,10 +4400,10 @@ class ValuesWithQuery(WithQuery):
         else:
             mat_info = "MATERIALIZED " if self._materialized else "NOT MATERIALIZED "
 
-        cols = ", ".join(col.name for col in self._columns)
+        cols = ", ".join(quote(col.name) for col in self._columns)
         cols_str = f"({cols})" if cols else ""
 
-        return f"{self._target_name}{cols_str} AS {mat_info}(VALUES {complete_vals_str})"
+        return f"{quote(self._target_name)}{cols_str} AS {mat_info}(VALUES {complete_vals_str})"
 
 
 class CommonTableExpression(BaseClause):
@@ -4561,14 +4633,7 @@ class BaseProjection:
         return f"{self.expression} AS {quote(self.target_name)}"
 
 
-class SelectType(enum.Enum):
-    """Indicates the specific type of the ``SELECT`` clause."""
-
-    Select = "SELECT"
-    """Plain projection without duplicate removal."""
-
-    SelectDistinct = "SELECT DISTINCT"
-    """Projection with duplicate elimination."""
+DistinctType = Literal["all", "none", "on"]
 
 
 class Select(BaseClause):
@@ -4583,9 +4648,10 @@ class Select(BaseClause):
     ----------
     targets : BaseProjection | Sequence[BaseProjection]
         The individual projection(s) that form the ``SELECT`` clause
-    projection_type : SelectType, optional
-        The kind of projection that should be performed (i.e. with duplicate elimination or without). Defaults
-        to a `SelectType.Select`, which is a plain projection without duplicate removal.
+    distinct : Iterable[SqlExpression] | bool, optional
+        Whether a duplicate elimination should be performed. By default, this is *False* indicating no duplicate elimination.
+        If *True*, rows are eliminated based on all columns. Alternatively, a *DISTINCT ON* clause can be created by specifying
+        the columns that should be used for duplicate elimination.
 
     Raises
     ------
@@ -4594,30 +4660,44 @@ class Select(BaseClause):
     """
 
     @staticmethod
-    def count_star() -> Select:
+    def count_star(*, distinct: Iterable[SqlExpression] | bool = False) -> Select:
         """Shortcut method to create a ``SELECT COUNT(*)`` clause.
 
+        Parameters
+        ----------
+        distinct : Iterable[SqlExpression] | bool
+            Whether a duplicate elimination should be performed. By default, this is *False* indicating no duplicate
+            elimination. If *True*, rows are eliminated based on all columns. Alternatively, a *DISTINCT ON* clause can be
+            created by specifying the columns that should be used for duplicate elimination.
+
         Returns
         -------
         Select
             The clause
         """
-        return Select(BaseProjection.count_star())
+        return Select(BaseProjection.count_star(), distinct=distinct)
 
     @staticmethod
-    def star() -> Select:
+    def star(*, distinct: Iterable[SqlExpression] | bool = False) -> Select:
         """Shortcut to create a ``SELECT *`` clause.
 
+        Parameters
+        ----------
+        distinct : Iterable[SqlExpression] | bool
+            Whether a duplicate elimination should be performed. By default, this is *False* indicating no duplicate
+            elimination. If *True*, rows are eliminated based on all columns. Alternatively, a *DISTINCT ON* clause can be
+            created by specifying the columns that should be used for duplicate elimination.
+
         Returns
         -------
         Select
             The clause
         """
-        return Select(BaseProjection.star())
+        return Select(BaseProjection.star(), distinct=distinct)
 
     @staticmethod
-    def create_for(columns: Iterable[ColumnReference],
-                   projection_type: SelectType = SelectType.Select) -> Select:
+    def create_for(columns: Iterable[ColumnReference], *,
+                   distinct: Iterable[SqlExpression] | bool = False) -> Select:
         """Full factory method to accompany `star` and `count_star` factory methods.
 
         This is basically the same as calling the `__init__` method directly.
@@ -4626,9 +4706,10 @@ class Select(BaseClause):
         ----------
         columns : Iterable[ColumnReference]
             The columns that should form the projection
-        projection_type : SelectType, optional
-            The kind of projection that should be performed, by default `SelectType.Select` which is a plain selection
-            without duplicate removal
+        distinct : Iterable[SqlExpression] | bool, optional
+            Whether a duplicate elimination should be performed. By default, this is *False* indicating no duplicate
+            elimination. If *True*, rows are eliminated based on all columns. Alternatively, a *DISTINCT ON* clause can be
+            created by specifying the columns that should be used for duplicate elimination.
 
         Returns
         -------
@@ -4636,19 +4717,29 @@ class Select(BaseClause):
             The clause
         """
         target_columns = [BaseProjection.column(column) for column in columns]
-        return Select(target_columns, projection_type)
+        return Select(target_columns, distinct=distinct)
 
-    def __init__(self, targets: BaseProjection | Sequence[BaseProjection],
-                 projection_type: SelectType = SelectType.Select) -> None:
+    def __init__(self, targets: BaseProjection | Sequence[BaseProjection], *,
+                 distinct: Iterable[SqlExpression] | bool = False) -> None:
         if not targets:
             raise ValueError("At least one target must be specified")
         self._targets = tuple(util.enlist(targets))
-        self._projection_type = projection_type
 
-        hash_val = hash((self._projection_type, self._targets))
+        match distinct:
+            case True:
+                self._distinct_type = "all"
+                self._distinct_cols = ()
+            case False:
+                self._distinct_type = "none"
+                self._distinct_cols = ()
+            case _:
+                self._distinct_type = "on" if distinct else "none"
+                self._distinct_cols = tuple(distinct)
+
+        hash_val = hash((self._distinct_type, self._distinct_cols, self._targets))
         super().__init__(hash_val)
 
-    __match_args__ = ("targets", "projection_type")
+    __match_args__ = ("targets", "distinct", "distinct_on")
 
     @property
     def targets(self) -> Sequence[BaseProjection]:
@@ -4662,25 +4753,42 @@ class Select(BaseClause):
         return self._targets
 
     @property
-    def projection_type(self) -> SelectType:
-        """Get the type of projection (with or without duplicate elimination).
+    def distinct(self) -> DistinctType:
+        return self._distinct_type
 
-        Returns
-        -------
-        SelectType
-            The projection type
-        """
-        return self._projection_type
+    @property
+    def distinct_on(self) -> Sequence[SqlExpression]:
+        return self._distinct_cols
 
     def is_star(self) -> bool:
-        """Checks, whether the clause is simply ``SELECT *``.
+        """Checks, whether the clause is simply *SELECT \\**."""
+        return len(self._targets) == 1 and self._targets[0] == BaseProjection.star()
+
+    def is_distinct(self) -> bool:
+        """Checks, whether this is a *SELECT DISTINCT* clause (including a *DISTINCT ON*)."""
+        return self._distinct_type != "none"
+
+    def distinct_specifier(self) -> Iterable[SqlExpression] | bool:
+        """Provides a precise description of the distinct qualifier.
 
         Returns
         -------
-        bool
-            Whether this clause is a ``SELECT *`` clause.
+        Iterable[SqlExpression] | bool
+            Output should be interpreted as follows:
+
+            - *True*: plain *DISTINCT* over all columns
+            - *False*: no *DISTINCT* qualifier
+            - *Iterable[SqlExpression]*: *DISTINCT ON* clause over the given expressions
         """
-        return len(self._targets) == 1 and self._targets[0] == BaseProjection.star()
+        match self._distinct_type:
+            case "all":
+                return True
+            case "none":
+                return False
+            case "on":
+                return self._distinct_cols
+            case _:
+                raise RuntimeError("Invalid distinct type, something is severly broken")
 
     def columns(self) -> set[ColumnReference]:
         return util.set_union(target.columns() for target in self.targets)
@@ -4736,7 +4844,11 @@ class Select(BaseClause):
                 and self.targets == other.targets)
 
     def __str__(self) -> str:
-        select_str = self.projection_type.value
+        if self.is_distinct():
+            distinct_cols = ", ".join(str(col) for col in self.distinct_on)
+            select_str = f"SELECT DISTINCT ON ({distinct_cols})" if distinct_cols else "SELECT DISTINCT"
+        else:
+            select_str = "SELECT"
         parts_str = ", ".join(str(target) for target in self.targets)
         return f"{select_str} {parts_str}"
 
@@ -4969,6 +5081,24 @@ class SubqueryTableSource(TableSource):
         """
         return self._lateral
 
+    def output_columns(self) -> Sequence[ColumnReference]:
+        """Provides the columns that form the result relation of this subquery.
+
+        The columns are named according to the following rules:
+
+        - If the column has an alias, this name is used
+        - If the column is a simple column reference, the column name is used
+        - Otherwise, a generic name is used, e.g. "column_1", "column_2", etc.
+
+        Returns
+        -------
+        Sequence[ColumnReference]
+            The columns. Their order matches the order in which they appear in the *SELECT* clause of the query.
+        """
+        if not self.target_name:
+            return self._subquery_expression.query.output_columns()
+        return [col.bind_to(self.target_table) for col in self._subquery_expression.query.output_columns()]
+
     def tables(self) -> set[TableReference]:
         return self._subquery_expression.tables() | {self.target_table}
 
@@ -4997,7 +5127,7 @@ class SubqueryTableSource(TableSource):
     def __str__(self) -> str:
         lateral_str = "LATERAL " if self._lateral else ""
         query_str = self._subquery_expression.query.stringify(trailing_delimiter=False)
-        target_str = f" AS {self._target_name}" if self._target_name else ""
+        target_str = f" AS {quote(self._target_name)}" if self._target_name else ""
         return f"{lateral_str}({query_str}){target_str}"
 
 
@@ -5012,10 +5142,10 @@ class ValuesTableSource(TableSource):
     ----------
     values : ValuesList
         The available table rows.
-    alias : str, optional
+    alias : str | TableReference, optional
         The name under which the virtual table can be accessed in the actual query. If this is empty, an anonymous table is
         created.
-    columns : Iterable[str]
+    columns : Optional[Iterable[str | ColumnReference]], optional
         The names of the columns that are available in the virtual table. The length of this list must match the length
         of the tuples in the `values` list. Alternatively, an empty list can be provided, in which case the columns will
         be named automatically.
@@ -5092,6 +5222,19 @@ class ValuesTableSource(TableSource):
     def columns(self) -> set[ColumnReference]:
         return set(self._columns)
 
+    def output_columns(self) -> Sequence[ColumnReference]:
+        """Provides the columns that form the result relation.
+
+        Returns
+        -------
+        Sequence[ColumnReference]
+            The columns. If column names have been explicitly provided, these are used. Otherwise, generic names are
+            used, e.g. "column_1", "column_2", etc.
+        """
+        if self._columns:
+            return self._columns
+        return [ColumnReference(f"column_{i}", self._table) for i in range(len(self._values[0]))]
+
     def iterexpressions(self) -> Iterable[SqlExpression]:
         return util.flatten(row for row in self._values)
 
@@ -5120,9 +5263,9 @@ class ValuesTableSource(TableSource):
             vals.append(f"({current_str})")
 
         complete_vals_str = ", ".join(vals)
-        cols = ", ".join(col.name for col in self._columns)
+        cols = ", ".join(quote(col.name) for col in self._columns)
         cols_str = f" ({cols})" if cols else ""
-        tab_str = f" AS {self._table}{cols_str}" if self._table else ""
+        tab_str = f" AS {quote(self._table.identifier())}{cols_str}" if self._table else ""
 
         return f"(VALUES {complete_vals_str}){tab_str}"
 
@@ -6868,6 +7011,42 @@ class SqlQuery:
 
         return tabs
 
+    def output_columns(self) -> Sequence[ColumnReference]:
+        """Provides the columns that form the result relation of this query.
+
+        Columns are ordered according to their appearance in the *SELECT* clause and will not have a bound table associated
+        with them. This is because the query result is "anonymous" and does not have a relation name associated with it.
+        The columns are named according to the following rules:
+
+        - If the expression has an alias, this name is used
+        - If the expression is a simple column reference, the column name is used
+        - Otherwise, a generic name is used, e.g. "column_1", "column_2", etc.
+
+        Returns
+        -------
+        Sequence[ColumnReference]
+            The columns. Their order matches the order in which they appear in the *SELECT* clause of the query.
+        """
+        cols: list[ColumnReference] = []
+        anon_idx = 1
+
+        for projection in self._select_clause:
+            if projection.target_name:
+                cols.append(ColumnReference(projection.target_name))
+                continue
+
+            match projection.expression:
+                case ColumnExpression(column):
+                    cols.append(column.as_unbound())
+                case StarExpression():
+                    warnings.warn("Cannot compute the output columns for SELECT * queries. Please use the database schema "
+                                  "to infer the columns. The result of this method is likely not what you want.")
+                case _:
+                    cols.append(ColumnReference(f"column_{anon_idx}"))
+                    anon_idx += 1
+
+        return cols
+
     def columns(self) -> set[ColumnReference]:
         """Provides all columns that are referenced at any point in the query.
 
@@ -7045,7 +7224,7 @@ class SqlQuery:
         bool
             Whether the query will always return a single scalar value
         """
-        if not len(self.select_clause.targets) == 1 or self.select_clause.projection_type != SelectType.Select:
+        if not len(self.select_clause.targets) == 1 or self.select_clause.is_distinct():
             return False
         target: SqlExpression = util.simplify(self.select_clause.targets).expression
         return isinstance(target, FunctionExpression) and target.is_aggregate() and not self._groupby_clause
@@ -7594,6 +7773,49 @@ class SetQuery:
         """
         return self._lhs.columns() | self._rhs.columns()
 
+    def output_columns(self) -> Sequence[ColumnReference]:
+        """Provides the columns that form the result relation of this query.
+
+        Columns are ordered according to their appearance in the *SELECT* clause and will not have a bound table associated
+        with them. This is because the query result is "anonymous" and does not have a relation name associated with it.
+        The columns are named according to the following rules:
+
+        - If the expression has an alias, this name is used
+        - If the expression is a simple column reference, the column name is used
+        - Otherwise, a generic name is used, e.g. "column_1", "column_2", etc.
+
+        Additionally, to resolve naming conflicts between the left-hand side and the right-hand side of the set operation,
+        names from the left-hand side overwrite names from the right-hand side. Names from the right-hand side are only used if
+        the left-hand side does not provide a name. If both sides do not specify a name, a new generic name is used.
+
+        Returns
+        -------
+        Sequence[ColumnReference]
+            The columns. Their order matches the order in which they appear in the *SELECT* clause of the query.
+        """
+        cols: list[ColumnReference] = []
+        anon_idx = 1
+
+        lhs_cols, rhs_cols = self._lhs.output_columns(), self._rhs.output_columns()
+        if len(lhs_cols) != len(rhs_cols):
+            raise ValueError("The left and right queries of a set operation must have the same number of columns")
+
+        for i in range(len(lhs_cols)):
+            lhs_col = lhs_cols[i]
+            if not lhs_col.name.startswith("column_"):
+                cols.append(lhs_col)
+                continue
+
+            rhs_col = rhs_cols[i]
+            if not rhs_col.name.startswith("column_"):
+                cols.append(rhs_col)
+                continue
+
+            cols.append(ColumnReference(f"column_{anon_idx}"))
+            anon_idx += 1
+
+        return cols
+
     def predicates(self) -> QueryPredicates:
         """Placeholder method to ensure compatibility with the `SqlQuery` interface. Raises a `QueryTypeError`."""
         raise QueryTypeError("You are trying to access the predicates on a set query. "
@@ -7959,7 +8181,7 @@ def build_query(query_clauses: Iterable[BaseClause]) -> SqlQuery:
 
     if build_set_query:
         if union_clause is not None:
-            setop = SetOperator.Union if union_clause.union_all else SetOperator.UnionAll
+            setop = SetOperator.UnionAll if union_clause.union_all else SetOperator.Union
         elif except_clause is not None:
             setop = SetOperator.Except
         elif intersect_clause is not None:

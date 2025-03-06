@@ -47,6 +47,10 @@ from .._qep import QueryPlan, SortKey
 from ..qal import (
     TableReference, ColumnReference,
     UnboundColumnError, VirtualTableError,
+    SqlExpression, StaticValueExpression, ColumnExpression, StarExpression, SubqueryExpression, CaseExpression, CastExpression,
+    MathExpression, FunctionExpression, ArrayAccessExpression, WindowExpression, OrderByExpression, OrderBy,
+    AbstractPredicate, BinaryPredicate, UnaryPredicate, InPredicate, BetweenPredicate, CompoundPredicate,
+    transform
 )
 from ..optimizer._jointree import JoinTree, jointree_from_plan, parameters_from_plan
 from ..optimizer._hints import (
@@ -1429,19 +1433,22 @@ PostgresPlanHints = {HintType.Cardinality, HintType.Parallelization,
 
 
 class _PostgresCastExpression(qal.CastExpression):
-    """A specialized cast expression to handle the custom syntax for ``CAST`` statements used by Postgres.
+    """A specialized cast expression to handle the custom syntax for ``CAST`` statements used by Postgres."""
 
-    Parameters
-    ----------
-    original_cast : qal.CastExpression
-        The actual cast expression. The new cast expression acts as a decorator around the original expression.
-    """
-
-    def __init__(self, original_cast: qal.CastExpression) -> None:
-        super().__init__(original_cast.casted_expression, original_cast.target_type)
+    def __init__(self, expression: SqlExpression, target_type: str, *,
+                 type_params: Optional[Sequence[SqlExpression]] = None) -> None:
+        super().__init__(expression, target_type, type_params=type_params)
 
     def __str__(self) -> str:
-        return f"{self.casted_expression}::{self.target_type}"
+        if self.type_params:
+            type_args = ", ".join(str(arg) for arg in self.type_params)
+            type_str = f"{self.target_type}({type_args})"
+        else:
+            type_str = self.target_type
+        casted_str = (str(self.casted_expression)
+                      if isinstance(self.casted_expression, (qal.ColumnExpression, qal.StaticValueExpression))
+                      else f"({self.casted_expression})")
+        return f"{casted_str}::{type_str}"
 
 
 class PostgresExplainClause(qal.Explain):
@@ -1488,7 +1495,7 @@ class PostgresLimitClause(qal.Limit):
             return ""
 
 
-def _replace_postgres_cast_expressions(expression: qal.SqlExpression) -> qal.SqlExpression:
+def _replace_postgres_cast_expressions(expression: SqlExpression) -> SqlExpression:
     """Wraps a given expression by a `_PostgresCastExpression` if necessary.
 
     This is the replacment method required by the `replace_expressions` transformation. It wraps all `CastExpression`
@@ -1496,19 +1503,83 @@ def _replace_postgres_cast_expressions(expression: qal.SqlExpression) -> qal.Sql
 
     Parameters
     ----------
-    expression : qal.SqlExpression
+    expression : SqlExpression
         The expression to check
 
     Returns
     -------
-    qal.SqlExpression
+    SqlExpression
         A potentially wrapped version of the original expression
 
     See Also
     --------
     postbound.qal.transform.replace_expressions
     """
-    return _PostgresCastExpression(expression) if isinstance(expression, qal.CastExpression) else expression
+    target = type(expression)
+    match expression:
+        case StaticValueExpression() | ColumnExpression() | StarExpression():
+            return expression
+        case SubqueryExpression(query):
+            replaced_subquery = transform.replace_expressions(query, _replace_postgres_cast_expressions)
+            return target(replaced_subquery)
+        case CaseExpression(cases, else_expr):
+            replaced_cases: list[tuple[AbstractPredicate, SqlExpression]] = []
+            for condition, result in cases:
+                replaced_condition = _replace_postgres_cast_expressions(condition)
+                replaced_result = _replace_postgres_cast_expressions(result)
+                replaced_cases.append((replaced_condition, replaced_result))
+            replaced_else = _replace_postgres_cast_expressions(else_expr) if else_expr else None
+            return target(replaced_cases, else_expr=replaced_else)
+        case CastExpression(cast, typ, params):
+            return _PostgresCastExpression(cast, typ, type_params=params)
+        case MathExpression(op, lhs, rhs):
+            replaced_lhs = _replace_postgres_cast_expressions(lhs)
+            rhs = util.enlist(rhs) if rhs else []
+            replaced_rhs = [_replace_postgres_cast_expressions(expr) for expr in rhs]
+            return target(op, replaced_lhs, replaced_rhs)
+        case ArrayAccessExpression(array, ind, lo, hi):
+            replaced_arr = _replace_postgres_cast_expressions(array)
+            replaced_ind = _replace_postgres_cast_expressions(ind) if ind is not None else None
+            replaced_lo = _replace_postgres_cast_expressions(lo) if lo is not None else None
+            replaced_hi = _replace_postgres_cast_expressions(hi) if hi is not None else None
+            return target(replaced_arr, idx=replaced_ind, lower_idx=replaced_lo, upper_idx=replaced_hi)
+        case FunctionExpression(fn, args, distinct, cond):
+            replaced_args = [_replace_postgres_cast_expressions(arg) for arg in args]
+            replaced_cond = _replace_postgres_cast_expressions(cond) if cond else None
+            return FunctionExpression(fn, replaced_args, distinct=distinct, filter_where=replaced_cond)
+        case WindowExpression(fn, parts, ordering, cond):
+            replaced_fn = _replace_postgres_cast_expressions(fn)
+            replaced_parts = [_replace_postgres_cast_expressions(part) for part in parts]
+            replaced_cond = _replace_postgres_cast_expressions(cond) if cond else None
+
+            replaced_order_exprs: list[OrderByExpression] = []
+            for order in ordering or []:
+                replaced_expr = _replace_postgres_cast_expressions(order.column)
+                replaced_order_exprs.append(OrderByExpression(replaced_expr, order.ascending, order.nulls_first))
+            replaced_ordering = OrderBy(replaced_order_exprs) if replaced_order_exprs else None
+
+            return target(replaced_fn, partitioning=replaced_parts, ordering=replaced_ordering, filter_condition=replaced_cond)
+        case BinaryPredicate(op, lhs, rhs):
+            replaced_lhs = _replace_postgres_cast_expressions(lhs)
+            replaced_rhs = _replace_postgres_cast_expressions(rhs)
+            return target(op, replaced_lhs, replaced_rhs)
+        case BetweenPredicate(col, lo, hi):
+            replaced_col = _replace_postgres_cast_expressions(col)
+            replaced_lo = _replace_postgres_cast_expressions(lo)
+            replaced_hi = _replace_postgres_cast_expressions(hi)
+            return BetweenPredicate(replaced_col, (replaced_lo, replaced_hi))
+        case InPredicate(col, vals):
+            replaced_col = _replace_postgres_cast_expressions(col)
+            replaced_vals = [_replace_postgres_cast_expressions(val) for val in vals]
+            return target(replaced_col, replaced_vals)
+        case UnaryPredicate(col, op):
+            replaced_col = _replace_postgres_cast_expressions(col)
+            return target(replaced_col, op)
+        case CompoundPredicate(op, children):
+            replaced_children = [_replace_postgres_cast_expressions(child) for child in children]
+            return target(op, replaced_children)
+        case _:
+            raise ValueError(f"Unsupported expression type {type(expression)}: {expression}")
 
 
 PostgresHintingBackend = Literal["pg_hint_plan", "pg_lab", "none"]

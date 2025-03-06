@@ -112,10 +112,11 @@ from ._qal import (
     SqlExpression,
     StaticValueExpression,
     CastExpression,
-    MathematicalExpression,
+    MathExpression,
     ColumnExpression,
     AggregateFunctions,
     FunctionExpression,
+    ArrayAccessExpression,
     SubqueryExpression,
     StarExpression,
     WindowExpression,
@@ -147,7 +148,7 @@ from ._qal import (
     WithQuery,
     CommonTableExpression,
     BaseProjection,
-    SelectType,
+    DistinctType,
     Select,
     TableSource,
     DirectTableSource,
@@ -180,6 +181,7 @@ from ._qal import (
     SqlStatement,
     build_query
 )
+from .parser import DBCatalog
 from .formatter import format_quick
 from .._core import TableReference, ColumnReference, UnboundColumnError, VirtualTableError, quote, normalize
 
@@ -193,10 +195,11 @@ __all__ = [
     "SqlExpression",
     "StaticValueExpression",
     "CastExpression",
-    "MathematicalExpression",
+    "MathExpression",
     "ColumnExpression",
     "AggregateFunctions",
     "FunctionExpression",
+    "ArrayAccessExpression",
     "SubqueryExpression",
     "StarExpression",
     "WindowExpression",
@@ -228,7 +231,7 @@ __all__ = [
     "WithQuery",
     "CommonTableExpression",
     "BaseProjection",
-    "SelectType",
+    "DistinctType",
     "Select",
     "TableSource",
     "DirectTableSource",
@@ -276,15 +279,15 @@ __all__ = [
 
 def parse_query(query: str, *, include_hints: bool = True,
                 bind_columns: Optional[bool] = None,
-                db_schema: Optional["DatabaseSchema"] = None) -> SqlQuery:  # type: ignore # noqa: F821
+                db_schema: Optional[DBCatalog] = None) -> SqlQuery:
     """Parses a query string into a proper `SqlQuery` object.
 
-    During parsing, the appropriate type of SQL query (i.e. with implicit, explicit or mixed ``FROM`` clause) will be
+    During parsing, the appropriate type of SQL query (i.e. with implicit, explicit or mixed *FROM* clause) will be
     inferred automatically. Therefore, this method can potentially return a subclass of `SqlQuery`.
 
     Once the query has been transformed, a text-based binding process is executed. During this process, the referenced
     tables are normalized such that column references using the table alias are linked to the correct tables that are
-    specified in the ``FROM`` clause (see the module-level documentation for an example). The parsing process can
+    specified in the *FROM* clause (see the module-level documentation for an example). The parsing process can
     optionally also involve a binding process based on the schema of a live database. This is important for all
     remaining columns where the text-based parsing was not possible, e.g. because the column was specified without a
     table alias.
@@ -298,10 +301,10 @@ def parse_query(query: str, *, include_hints: bool = True,
         text will be parsed as a hint block. Otherwise, these comments are simply ignored.
     bind_columns : bool | None, optional
         Whether to use *live binding*. This does not control the text-based binding, which is always performed. If this
-        parameter is ``None`` (the default), the global `auto_bind_columns` variable will be queried. Depending on its
+        parameter is *None* (the default), the global `auto_bind_columns` variable will be queried. Depending on its
         value, live binding will be performed or not.
-    db_schema : Optional[DatabaseSchema], optional
-        For live binding, this indicates the database to use. If this is ``None`` (the default), the database will be
+    db_schema : Optional[DBCatalog], optional
+        For live binding, this indicates the database to use. If this is *None* (the default), the database will be
         tried to extract from the `DatabasePool`
 
     Returns
@@ -315,7 +318,7 @@ def parse_query(query: str, *, include_hints: bool = True,
 
 
 def parse_full_query(statement: str, *, bind_columns: Optional[bool] = None,
-                     db_schema: Optional["DatabaseSchema"] = None) -> SelectStatement:  # type: ignore # noqa: F821
+                     db_schema: Optional[DBCatalog] = None) -> SelectStatement:
     """This method is very similar to `parse_query`, but it also support set queries (i.e. queries with **UNION**, etc.).
 
     See Also

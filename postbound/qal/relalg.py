@@ -46,7 +46,7 @@ from . import transform
 from ._qal import (
     TableReference, ColumnReference,
     LogicalOperator, CompoundOperator, SetOperator,
-    SqlExpression, ColumnExpression, StaticValueExpression, MathematicalExpression, CastExpression, FunctionExpression,
+    SqlExpression, ColumnExpression, StaticValueExpression, MathExpression, CastExpression, FunctionExpression,
     SubqueryExpression, StarExpression, OrderByExpression,
     WindowExpression, CaseExpression,
     AbstractPredicate, BinaryPredicate, InPredicate, BetweenPredicate, UnaryPredicate, CompoundPredicate,
@@ -2501,7 +2501,7 @@ class _SubqueryDetector(SqlExpressionVisitor[_SubquerySet], PredicateVisitor[_Su
     def visit_function_expr(self, expression: FunctionExpression) -> _SubquerySet:
         return self._traverse_nested_expressions(expression)
 
-    def visit_mathematical_expr(self, expression: MathematicalExpression) -> _SubquerySet:
+    def visit_math_expr(self, expression: MathExpression) -> _SubquerySet:
         return self._traverse_nested_expressions(expression)
 
     def visit_star_expr(self, expression: StarExpression) -> _SubquerySet:
@@ -2589,7 +2589,7 @@ class _BaseTableLookup(SqlExpressionVisitor[Optional[TableReference]], Predicate
         referenced_tables = {argument.accept_visitor(self) for argument in expression.arguments}
         return self._fetch_valid_base_tables(referenced_tables, accept_empty=True)
 
-    def visit_mathematical_expr(self, expression: MathematicalExpression) -> bool:
+    def visit_math_expr(self, expression: MathExpression) -> bool:
         base_tables = {child.accept_visitor(self) for child in expression.iterchildren()}
         return self._fetch_valid_base_tables(base_tables)
 
@@ -2687,7 +2687,7 @@ def _determine_expression_phase(expression: SqlExpression) -> EvaluationPhase:
             return EvaluationPhase.BaseTable
         case FunctionExpression() if expression.is_aggregate():
             return EvaluationPhase.PostAggregation
-        case FunctionExpression() | MathematicalExpression() | CastExpression():
+        case FunctionExpression() | MathExpression() | CastExpression():
             own_phase = EvaluationPhase.Join if len(expression.tables()) > 1 else EvaluationPhase.BaseTable
             child_phase = max(_determine_expression_phase(child_expr) for child_expr in expression.iterchildren())
             return max(own_phase, child_phase)
@@ -3418,7 +3418,7 @@ class _ImplicitRelalgParser:
                         assert isinstance(unwrapped_scan, Projection) and len(unwrapped_scan.columns) == 1
                         in_predicate = BinaryPredicate.equal(in_column, unwrapped_scan.columns[0])
                         return SemiJoin(input_node, subquery_root, in_predicate)
-            case CastExpression() | FunctionExpression() | MathematicalExpression():
+            case CastExpression() | FunctionExpression() | MathExpression():
                 return self._ensure_expression_applicability(expression, input_node)
             case WindowExpression() | CaseExpression():
                 return self._ensure_expression_applicability(expression, input_node)

@@ -7,17 +7,19 @@ from typing import Optional
 
 from . import transform
 from ._qal import (
-    SqlExpression, SubqueryExpression, CaseExpression, Limit, CommonTableExpression,
+    SqlExpression, SubqueryExpression, CaseExpression, StaticValueExpression, ColumnExpression, StarExpression, CastExpression,
+    MathExpression, FunctionExpression, WindowExpression, ArrayAccessExpression,
+    Limit, CommonTableExpression, OrderBy, OrderByExpression,
     CompoundOperator,
     ValuesWithQuery,
     From, ImplicitFromClause, ExplicitFromClause,
     TableSource, DirectTableSource, JoinTableSource, SubqueryTableSource, ValuesTableSource,
     Select, Hint, Where, GroupBy, UnionClause, IntersectClause, ExceptClause,
-    SelectType,
-    AbstractPredicate, CompoundPredicate,
+    AbstractPredicate, CompoundPredicate, BinaryPredicate, BetweenPredicate, InPredicate, UnaryPredicate,
     SqlQuery, SetQuery, SelectStatement,
     quote
 )
+from .. import util
 from ..util.errors import InvariantViolationError
 
 FormatIndentDepth = 2
@@ -80,8 +82,8 @@ class FormattingSubqueryExpression(SubqueryExpression):
 
 
 class FormattingCaseExpression(CaseExpression):
-    def __init__(self, original_expression: CaseExpression, indentation: int) -> None:
-        super().__init__(original_expression.cases, else_expr=original_expression.else_expression)
+    def __init__(self, cases, *, else_expr, indentation: int) -> None:
+        super().__init__(cases, else_expr=else_expr)
         self._indentation = indentation
 
     def __str__(self) -> str:
@@ -138,11 +140,24 @@ def _quick_format_cte(cte_clause: CommonTableExpression) -> list[str]:
     if len(cte_clause.queries) == 1:
         cte_query = cte_clause.queries[0]
         if isinstance(cte_query, ValuesWithQuery):
-            cte_header = "WITH "
-            cte_content = str(cte_query)
+            cte_structure = ", ".join(quote(target.name) for target in cte_query.cols)
+            cte_structure = f"({cte_structure})" if cte_structure else ""
+            cte_header = f"WITH {quote(cte_query.target_name)}{cte_structure} AS ("
+            cte_rows: list[str] = []
+            for row in cte_query.rows:
+                row_values = ", ".join(str(value) for value in row)
+                cte_rows.append(f"({row_values})")
+            cte_rows[0] = f"VALUES {cte_rows[0]}" if cte_rows else ""
+            cte_content = ",\n".join(cte_rows)
         else:
-            mat_info = "" if cte_query.materialized is None else ("MATERIALIZED " if cte_query.materialized
-                                                                  else "NOT MATERIALIZED ")
+            match cte_query.materialized:
+                case None:
+                    mat_info = ""
+                case True:
+                    mat_info = "MATERIALIZED "
+                case False:
+                    mat_info = "NOT MATERIALIZED "
+
             cte_header = f"WITH {recursive_info}{quote(cte_query.target_name)} AS {mat_info}("
             cte_content = format_quick(cte_query.query, trailing_semicolon=False)
         cte_content = _increase_indentation(cte_content)
@@ -152,10 +167,16 @@ def _quick_format_cte(cte_clause: CommonTableExpression) -> list[str]:
     first_cte, *remaining_ctes = cte_clause.queries
     first_content = _increase_indentation(format_quick(first_cte.query, trailing_semicolon=False))
     mat_info = "" if first_cte.materialized is None else ("MATERIALIZED " if first_cte.materialized else "NOT MATERIALIZED ")
-    formatted_parts: list[str] = [f"WITH{recursive_info} {quote(first_cte.target_name)} AS {mat_info}(", first_content]
+    formatted_parts: list[str] = [f"WITH {recursive_info} {quote(first_cte.target_name)} AS {mat_info}(", first_content]
     for next_cte in remaining_ctes:
-        mat_info = "" if next_cte.materialized is None else ("MATERIALIZED " if first_cte.materialized
-                                                             else "NOT MATERIALIZED ")
+        match next_cte.materialized:
+            case None:
+                mat_info = ""
+            case True:
+                mat_info = "MATERIALIZED "
+            case False:
+                mat_info = "NOT MATERIALIZED "
+
         current_header = f"), {quote(next_cte.target_name)} AS {mat_info}("
         cte_content = _increase_indentation(format_quick(next_cte.query, trailing_semicolon=False))
 
@@ -185,20 +206,28 @@ def _quick_format_select(select_clause: Select, *,
     list[str]
         The pretty-printed parts of the clause, indented as necessary.
     """
+    prefix = " " * FormatIndentDepth
     hint_text = f"{inlined_hint_block} " if inlined_hint_block else ""
-    if len(select_clause.targets) > 3:
+    if select_clause.is_distinct():
+        on_cols = ", ".join(str(col) for col in select_clause.distinct_on)
+        select_prefix = f"SELECT DISTINCT ON ({on_cols})" if on_cols else "SELECT DISTINCT"
+    else:
+        on_cols = ""
+        select_prefix = "SELECT"
+
+    if len(select_clause.targets) >= 3 or on_cols:
         first_target, *remaining_targets = select_clause.targets
-        formatted_targets = [f"SELECT {hint_text}{first_target}"
-                             if select_clause.projection_type == SelectType.Select
-                             else f"SELECT DISTINCT {hint_text}{first_target}"]
-        formatted_targets += [((" " * FormatIndentDepth) + str(target)) for target in remaining_targets]
+        formatted_targets = ([f"{hint_text}{prefix}{first_target}"] if on_cols
+                             else [f"{select_prefix} {hint_text}{first_target}"])
+        formatted_targets += [f"{prefix}{target}" for target in remaining_targets]
         for i in range(len(formatted_targets) - 1):
             formatted_targets[i] += ","
+        if on_cols:
+            formatted_targets.insert(0, select_prefix)
         return formatted_targets
     else:
-        distinct_text = "DISTINCT " if select_clause.projection_type == SelectType.SelectDistinct else ""
         targets_text = ", ".join(str(target) for target in select_clause.targets)
-        return [f"SELECT {distinct_text}{hint_text}{targets_text}"]
+        return [f"{select_prefix} {hint_text}{targets_text}"]
 
 
 def _quick_format_implicit_from(from_clause: ImplicitFromClause) -> list[str]:
@@ -433,9 +462,8 @@ def _quick_format_limit(limit_clause: Limit) -> list[str]:
     pass
 
 
-def _subquery_replacement(expression: SqlExpression, *, inline_hints: bool,
-                          indentation: int) -> SqlExpression:
-    """Handler method for `transform.replace_expressions` to apply our custom `FormattingSubqueryExpression`.
+def _expression_prettifier(expression: SqlExpression, *, inline_hints: bool, indentation: int) -> SqlExpression:
+    """Handler method for `transform.replace_expressions` to apply our custom formatting expressions.
 
     Parameters
     ----------
@@ -450,33 +478,79 @@ def _subquery_replacement(expression: SqlExpression, *, inline_hints: bool,
     Returns
     -------
     SqlExpression
-        The original SQL expression if the `expression` is not a `SubqueryExpression`. Otherwise, the expression is
-        wrapped in a `FormattingSubqueryExpression`.
+        A semantically equivalent version of the original expression that uses our custom formatting rules
     """
-    if not isinstance(expression, SubqueryExpression):
-        return expression
-    return FormattingSubqueryExpression(expression, inline_hints, indentation)
+    target = type(expression)
+    match expression:
+        case StaticValueExpression() | ColumnExpression() | StarExpression():
+            return expression
+        case SubqueryExpression():
+            return FormattingSubqueryExpression(expression, inline_hints, indentation)
+        case CaseExpression(cases, else_expr):
+            replaced_cases: list[tuple[AbstractPredicate, SqlExpression]] = []
+            for condition, result in cases:
+                replaced_condition = _expression_prettifier(condition, inline_hints=inline_hints, indentation=indentation+2)
+                replaced_result = _expression_prettifier(result, inline_hints=inline_hints, indentation=indentation+2)
+                replaced_cases.append((replaced_condition, replaced_result))
+            replaced_else = (_expression_prettifier(else_expr, inline_hints=inline_hints, indentation=indentation+2)
+                             if else_expr else None)
+            return FormattingCaseExpression(replaced_cases, else_expr=replaced_else, indentation=indentation)
+        case CastExpression(casted_expression, typ, params):
+            replaced_cast = _expression_prettifier(casted_expression, inline_hints=inline_hints, indentation=indentation)
+            return target(replaced_cast, typ, type_params=params)
+        case MathExpression(op, lhs, rhs):
+            replaced_lhs = _expression_prettifier(lhs, inline_hints=inline_hints, indentation=indentation)
+            rhs = util.enlist(rhs) if rhs else []
+            replaced_rhs = [_expression_prettifier(expr, inline_hints=inline_hints, indentation=indentation) for expr in rhs]
+            return target(op, replaced_lhs, replaced_rhs)
+        case ArrayAccessExpression(array, ind, lo, hi):
+            replaced_array = _expression_prettifier(array, inline_hints=inline_hints, indentation=indentation)
+            replaced_ind = (_expression_prettifier(ind, inline_hints=inline_hints, indentation=indentation) if ind is not None
+                            else None)
+            replaced_hi = (_expression_prettifier(hi, inline_hints=inline_hints, indentation=indentation) if hi is not None
+                           else None)
+            replaced_lo = (_expression_prettifier(lo, inline_hints=inline_hints, indentation=indentation) if lo is not None
+                           else None)
+            return target(replaced_array, idx=replaced_ind, lower_idx=replaced_lo, upper_idx=replaced_hi)
+        case FunctionExpression(fn, args, distinct, cond):
+            replaced_args = [_expression_prettifier(arg, inline_hints=inline_hints, indentation=indentation) for arg in args]
+            replaced_cond = _expression_prettifier(cond, inline_hints=inline_hints, indentation=indentation) if cond else None
+            return FunctionExpression(fn, replaced_args, distinct=distinct, filter_where=replaced_cond)
+        case WindowExpression(fn, parts, ordering, cond):
+            replaced_fn = _expression_prettifier(fn, inline_hints=inline_hints, indentation=indentation)
+            replaced_parts = [_expression_prettifier(part, inline_hints=inline_hints, indentation=indentation)
+                              for part in parts]
+            replaced_cond = _expression_prettifier(cond, inline_hints=inline_hints, indentation=indentation) if cond else None
 
+            replaced_order_exprs: list[OrderByExpression] = []
+            for order in ordering or []:
+                replaced_expr = _expression_prettifier(order.column, inline_hints=inline_hints, indentation=indentation)
+                replaced_order_exprs.append(OrderByExpression(replaced_expr, order.ascending, order.nulls_first))
+            replaced_ordering = OrderBy(replaced_order_exprs) if replaced_order_exprs else None
 
-def _case_expression_replacement(expression: SqlExpression, *, indentation: int) -> SqlExpression:
-    """Handler method for `transform.replace_expressions` to apply our custom `FormattingCaseExpression`.
-
-    Parameters
-    ----------
-    expression : SqlExpression
-        The expression to replace.
-    indentation : int
-        The amount of indentation to use for the case expression
-
-    Returns
-    -------
-    SqlExpression
-        The original SQL expression if the `expression` is not a `CaseExpression`. Otherwise, the expression is
-        wrapped in a `FormattingCaseExpression`.
-    """
-    if not isinstance(expression, CaseExpression):
-        return expression
-    return FormattingCaseExpression(expression, indentation)
+            return target(replaced_fn, partitioning=replaced_parts, ordering=replaced_ordering, filter_condition=replaced_cond)
+        case BinaryPredicate(op, lhs, rhs):
+            replaced_lhs = _expression_prettifier(lhs, inline_hints=inline_hints, indentation=indentation)
+            replaced_rhs = _expression_prettifier(rhs, inline_hints=inline_hints, indentation=indentation)
+            return BinaryPredicate(op, replaced_lhs, replaced_rhs)
+        case BetweenPredicate(col, lo, hi):
+            replaced_col = _expression_prettifier(col, inline_hints=inline_hints, indentation=indentation)
+            replaced_lo = _expression_prettifier(lo, inline_hints=inline_hints, indentation=indentation)
+            replaced_hi = _expression_prettifier(hi, inline_hints=inline_hints, indentation=indentation)
+            return target(replaced_col, (replaced_lo, replaced_hi))
+        case InPredicate(col, vals):
+            replaced_col = _expression_prettifier(col, inline_hints=inline_hints, indentation=indentation)
+            replaced_vals = [_expression_prettifier(val, inline_hints=inline_hints, indentation=indentation) for val in vals]
+            return target(replaced_col, replaced_vals)
+        case UnaryPredicate(col, op):
+            replaced_col = _expression_prettifier(col, inline_hints=inline_hints, indentation=indentation)
+            return UnaryPredicate(replaced_col, op)
+        case CompoundPredicate(op, children):
+            replaced_children = [_expression_prettifier(child, inline_hints=inline_hints, indentation=indentation)
+                                 for child in children]
+            return target(op, replaced_children)
+        case _:
+            raise ValueError(f"Unsupported expression type {type(expression)}: {expression}")
 
 
 def _quick_format_set_query(query: SetQuery, *, inline_hint_block: bool, trailing_semicolon: bool,
@@ -504,13 +578,36 @@ def _quick_format_set_query(query: SetQuery, *, inline_hint_block: bool, trailin
     """
     # while formatting the nested queries, we still need to use rstrip in addition to trailing_semicolon=False in order to
     # format nested set queries correctly
+    query_parts: list[str] = []
+
+    if query.hints:
+        query_parts.append(str(query.hints))
+    if query.explain:
+        query_parts.append(str(query.explain))
+    if query.cte_clause:
+        query_parts.extend(_quick_format_cte(query.cte_clause))
+
     left_query = format_quick(query.left_query, inline_hint_block=inline_hint_block, trailing_semicolon=False,
                               custom_formatter=custom_formatter).rstrip("; ")
+    query_parts.append(f"({left_query})")
+
+    prefix = " " * FormatIndentDepth
+    query_parts.append(f"{prefix}{query.set_operation.value}")
+
     right_query = format_quick(query.right_query, inline_hint_block=inline_hint_block,
                                trailing_semicolon=False, custom_formatter=custom_formatter).rstrip("; ")
-    prefix = " " * FormatIndentDepth
+    query_parts.append(f"({right_query})")
+
+    if query.orderby_clause:
+        query_parts.append(str(query.orderby_clause))
+    if query.limit_clause:
+        query_parts.append(str(query.limit_clause))
+
     suffix = ";" if trailing_semicolon else ""
-    return f"{left_query}\n{prefix}{query.set_operation.value}\n{right_query}{suffix}"
+    if suffix:
+        query_parts[-1] += suffix
+
+    return "\n".join(query_parts)
 
 
 def format_quick(query: SelectStatement, *, inline_hint_block: bool = False, trailing_semicolon: bool = True,
@@ -552,11 +649,9 @@ def format_quick(query: SelectStatement, *, inline_hint_block: bool = False, tra
 
     pretty_query_parts = []
     inlined_hint_block = None
-    subquery_update = functools.partial(_subquery_replacement, inline_hints=inline_hint_block,
-                                        indentation=FormatIndentDepth)
-    case_expression_update = functools.partial(_case_expression_replacement, indentation=FormatIndentDepth)
-    query = transform.replace_expressions(query, subquery_update)
-    query = transform.replace_expressions(query, case_expression_update)
+    expression_prettifier = functools.partial(_expression_prettifier, inline_hints=inline_hint_block,
+                                              indentation=FormatIndentDepth)
+    query = transform.replace_expressions(query, expression_prettifier)
     if query.limit_clause is not None:
         query = transform.replace_clause(query, FormattingLimitClause(query.limit_clause))
 

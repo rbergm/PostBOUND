@@ -28,7 +28,7 @@ from typing import Optional, overload
 from ._qal import (
     TableReference, ColumnReference,
     CompoundOperator,
-    SqlExpression, ColumnExpression, StaticValueExpression, MathematicalExpression, CastExpression, FunctionExpression,
+    SqlExpression, ColumnExpression, StaticValueExpression, MathExpression, CastExpression, FunctionExpression,
     SubqueryExpression, StarExpression,
     WindowExpression, CaseExpression,
     AbstractPredicate, BinaryPredicate, InPredicate, BetweenPredicate, UnaryPredicate, CompoundPredicate, JoinType,
@@ -282,14 +282,14 @@ def extract_query_fragment(source_query: SelectQueryType,
                         hints=source_query.hints, explain=source_query.explain)
 
     select_fragment = []
-    for target in source_query.select_clause.targets:
+    for target in source_query.select_clause:
         if target.tables() == referenced_tables or not target.columns():
             select_fragment.append(target)
 
     if select_fragment:
-        select_clause = Select(select_fragment, source_query.select_clause.projection_type)
+        select_clause = Select(select_fragment, distinct=source_query.select_clause.is_distinct())
     else:
-        select_clause = Select.star()
+        select_clause = Select.star(distinct=source_query.select_clause.is_distinct())
 
     if source_query.from_clause:
         from_clause = ImplicitFromClause([DirectTableSource(tab) for tab in source_query.tables() if tab in referenced_tables])
@@ -898,7 +898,7 @@ def _replace_expressions_in_clause(clause: Optional[ClauseType],
     elif isinstance(clause, Select):
         replaced_targets = [BaseProjection(replacement(proj.expression), proj.target_name)
                             for proj in clause.targets]
-        return Select(replaced_targets, clause.projection_type)
+        return Select(replaced_targets, distinct=clause.distinct_specifier())
     elif isinstance(clause, ImplicitFromClause):
         return clause
     elif isinstance(clause, ExplicitFromClause):
@@ -1139,10 +1139,10 @@ def rename_columns_in_expression(expression: Optional[SqlExpression],
     elif isinstance(expression, CastExpression):
         renamed_child = rename_columns_in_expression(expression.casted_expression, available_renamings)
         return CastExpression(renamed_child, expression.target_type)
-    elif isinstance(expression, MathematicalExpression):
+    elif isinstance(expression, MathExpression):
         renamed_first_arg = rename_columns_in_expression(expression.first_arg, available_renamings)
         renamed_second_arg = rename_columns_in_expression(expression.second_arg, available_renamings)
-        return MathematicalExpression(expression.operator, renamed_first_arg, renamed_second_arg)
+        return MathExpression(expression.operator, renamed_first_arg, renamed_second_arg)
     elif isinstance(expression, FunctionExpression):
         renamed_arguments = [rename_columns_in_expression(arg, available_renamings)
                              for arg in expression.arguments]
@@ -1355,7 +1355,7 @@ def rename_columns_in_clause(clause: Optional[ClauseType],
         renamed_targets = [BaseProjection(rename_columns_in_expression(proj.expression, available_renamings),
                                           proj.target_name)
                            for proj in clause.targets]
-        return Select(renamed_targets, clause.projection_type)
+        return Select(renamed_targets, distinct=clause.distinct_specifier())
     elif isinstance(clause, ImplicitFromClause):
         return clause
     elif isinstance(clause, ExplicitFromClause):
@@ -1446,7 +1446,7 @@ class _TableReferenceRenamer(ClauseVisitor[BaseClause],
             renamed_expression = proj.expression.accept_visitor(self)
             projections.append(BaseProjection(renamed_expression, proj.target_name))
 
-        return Select(projections, clause.projection_type)
+        return Select(projections, distinct=clause.distinct_specifier())
 
     def visit_from_clause(self, clause: From) -> From:
         match clause:
@@ -1545,7 +1545,7 @@ class _TableReferenceRenamer(ClauseVisitor[BaseClause],
         renamed_child = expr.casted_expression.accept_visitor(self)
         return CastExpression(renamed_child, expr.target_type)
 
-    def visit_mathematical_expr(self, expr: MathematicalExpression) -> MathematicalExpression:
+    def visit_math_expr(self, expr: MathExpression) -> MathExpression:
         renamed_lhs = expr.first_arg.accept_visitor(self)
 
         if isinstance(expr.second_arg, SqlExpression):
@@ -1555,7 +1555,7 @@ class _TableReferenceRenamer(ClauseVisitor[BaseClause],
         else:
             renamed_rhs = None
 
-        return MathematicalExpression(expr.operator, renamed_lhs, renamed_rhs)
+        return MathExpression(expr.operator, renamed_lhs, renamed_rhs)
 
     def visit_column_expr(self, expr: ColumnExpression) -> ColumnExpression:
         return self._rename_column(expr)

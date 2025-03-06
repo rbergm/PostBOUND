@@ -744,6 +744,12 @@ class DatabaseSchema(abc.ABC):
         """
         raise NotImplementedError
 
+    def __hash__(self) -> int:
+        return hash(self._db)
+
+    def __eq__(self, other: object) -> bool:
+        return isinstance(other, type(self)) and self._db == other._db
+
     def __repr__(self) -> str:
         return str(self)
 
