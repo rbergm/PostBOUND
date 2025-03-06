@@ -656,8 +656,6 @@ class QueryPlan:
             subplan = Subplan(subplan_root, subplan_target_name)
 
         children = [] if children is None else util.enlist(children)
-        if len(children) > 2:
-            raise ValueError("Query plan nodes can have at most two children")
 
         if isinstance(node_type, PhysicalOperator):
             operator = node_type
@@ -671,7 +669,7 @@ class QueryPlan:
         else:
             self._input_node = None
 
-        self._children = tuple(children) if children else ()
+        self._children: tuple[QueryPlan] = tuple(children) if children else ()
         self._plan_params = plan_params
         self._estimates = estimates
         self._measures = measures
@@ -999,15 +997,23 @@ class QueryPlan:
         """
         if predicate(self, *args, **kwargs):
             return self
-        if self.is_scan():
+        if not self.children:
             return None
 
-        first_candidate, second_candidate = (self.outer_child, self.inner_child if direction == "outer"
-                                             else self.inner_child, self.outer_child)
+        if len(self.children) == 1:
+            return self.input_node.find_first_node(predicate, *args, direction=direction, **kwargs)
+
+        first_candidate, second_candidate = ((self.outer_child, self.inner_child) if direction == "outer"
+                                             else (self.inner_child, self.outer_child))
         first_match = first_candidate.find_first_node(predicate, *args, direction=direction, **kwargs)
         if first_match:
             return first_match
-        return second_candidate.find_first_node(predicate, *args, direction=direction, **kwargs)
+
+        second_match = second_candidate.find_first_node(predicate, *args, direction=direction, **kwargs)
+        if second_match:
+            return second_match
+
+        return self._subplan.root.find_first_node(predicate, *args, direction=direction, **kwargs) if self._subplan else None
 
     def find_all_nodes(self, predicate: Callable[[QueryPlan], bool], *args, **kwargs) -> Iterable[QueryPlan]:
         """Recursively searches for all nodes that match a specific predicate.
@@ -1032,6 +1038,8 @@ class QueryPlan:
         matches: list[QueryPlan] = [self] if predicate(self, *args, **kwargs) else []
         for child in self._children:
             matches.extend(child.find_all_nodes(predicate, *args, **kwargs))
+        if self._subplan:
+            matches.extend(self._subplan.root.find_all_nodes(predicate, *args, **kwargs))
         return matches
 
     def cout(self, *, include_auxiliaries: bool = True) -> float:
@@ -1306,6 +1314,9 @@ def _explainify(plan: QueryPlan, *, fields: list[str], level: int = _starting_in
     header = f"{plan.node_type}({plan.base_table})" if plan.is_scan() else plan.node_type
     explain_data = _custom_explain(plan, fields=fields, padding=padding) if fields else _default_explain(plan, padding=padding)
     child_explains = "\n".join(f"{_explainify(child, fields=fields, level=level + 1)}" for child in plan.children)
+    subplan_explains = _explainify(plan.subplan.root, fields=fields, level=level + 1) if plan.subplan else ""
+    if subplan_explains:
+        child_explains = f"{child_explains}\n{subplan_explains}"
 
     if not child_explains:
         return f"{prefix}{header}\n{explain_data}"

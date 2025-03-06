@@ -101,9 +101,9 @@ SqlKeywords = frozenset({
     "ALL", "AND", "ANY", "ARRAY", "AS", "ASC", "ASYMMETRIC", "BINARY", "BOTH", "CASE", "CAST", "CHECK", "COLLATE",
     "COLUMN", "CONSTRAINT", "CREATE", "CROSS", "CURRENT_CATALOG", "CURRENT_DATE", "CURRENT_ROLE", "CURRENT_SCHEMA",
     "CURRENT_TIME", "CURRENT_TIMESTAMP", "CURRENT_USER", "DEFAULT", "DEFERRABLE", "DESC", "DISTINCT", "DO", "ELSE",
-    "END", "EXCEPT", "FALSE", "FETCH", "FOR", "FOREIGN", "FROM", "FULL", "GRANT", "GROUP", "HAVING", "ILIKE", "IN",
+    "END", "EXCEPT", "FALSE", "FETCH", "FOR", "FOREIGN", "FROM", "FULL", "GRANT", "GROUP", "HAVING", "ID", "ILIKE", "IN",
     "INITIALLY", "INNER", "INTERSECT", "INTO", "IS", "JOIN", "LATERAL", "LEADING", "LEFT", "LIKE", "LIMIT", "LOCALTIME",
-    "LOCALTIMESTAMP", "NATURAL", "NOT", "NULL", "OFFSET", "ON", "ONLY", "OR", "ORDER", "OUTER", "OVERLAPS", "PLACING",
+    "LOCALTIMESTAMP", "NAME", "NATURAL", "NOT", "NULL", "OFFSET", "ON", "ONLY", "OR", "ORDER", "OUTER", "OVERLAPS", "PLACING",
     "PRIMARY", "REFERENCES", "RETURNING", "RIGHT", "SELECT", "SESSION_USER", "SIMILAR", "SOME", "SYMMETRIC", "TABLE",
     "THEN", "TO", "TRAILING", "TRUE", "UNION", "UNIQUE", "USER", "USING", "VARIADIC", "VERBOSE", "WHEN", "WHERE",
     "WINDOW", "WITH"
@@ -513,6 +513,16 @@ class ColumnReference:
             The updated column reference, the original reference is not modified.
         """
         return ColumnReference(self.name, table)
+
+    def as_unbound(self) -> ColumnReference:
+        """Removes the table binding from this column.
+
+        Returns
+        -------
+        ColumnReference
+            The updated column reference, the original reference is not modified.
+        """
+        return ColumnReference(self.name, None)
 
     def __json__(self) -> object:
         return {"name": self._name, "table": self._table}
