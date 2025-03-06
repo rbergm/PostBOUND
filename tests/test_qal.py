@@ -8,6 +8,7 @@ from __future__ import annotations
 import pathlib
 import textwrap
 import unittest
+from collections.abc import Sequence
 
 import postbound as pb
 from postbound import TableReference, ColumnReference
@@ -228,6 +229,14 @@ class MockSchemaLookup:
                       candidates: list[TableReference]) -> TableReference:
         column = column.name if isinstance(column, ColumnReference) else column
         return MockSchemaLookup.LookupData[column]
+
+    def columns(self, table: TableReference) -> Sequence[ColumnReference]:
+        if table == TableReference("R"):
+            return [ColumnReference("a", table), ColumnReference("b", table)]
+        elif table == TableReference("S"):
+            return [ColumnReference("c", table)]
+        else:
+            raise ValueError(f"Unknown table {table}")
 
 
 class TransformationTests(unittest.TestCase):

@@ -821,7 +821,7 @@ def _pglast_parse_expression(pglast_data: dict, *, namespace: QueryNamespace) ->
 
         case "SubLink" if pglast_data["SubLink"]["subLinkType"] == "EXPR_SUBLINK":
             subquery = _pglast_parse_query(pglast_data["SubLink"]["subselect"]["SelectStmt"],
-                                           namespace=namespace.open_nested())
+                                           namespace=namespace.open_nested(source="temporary"))
             return SubqueryExpression(subquery)
 
         case "A_Indirection":
@@ -1149,21 +1149,21 @@ def _pglast_parse_values(pglast_data: dict, *, parent_namespace: QueryNamespace)
         The parsed *VALUES* list.
     """
 
+    raw_alias: dict = pglast_data.get("alias", {})
+    alias = raw_alias.get("aliasname", "")
+    child_nsp = parent_namespace.open_nested(alias=alias, source="values")
     raw_values: list[dict] = pglast_data["subquery"]["SelectStmt"]["valuesLists"]
 
     values: ValuesList = []
     for row in raw_values:
         raw_items = row["List"]["items"]
-        parsed_items = [_pglast_parse_expression(item, available_tables={}, resolved_columns={}, schema=None)
+        parsed_items = [_pglast_parse_expression(item, namespace=child_nsp)
                         for item in raw_items]
         values.append(tuple(parsed_items))
 
-    if "alias" not in pglast_data:
-        return ValuesTableSource(values, alias="", columns=[])
+    if not alias:
+        return ValuesTableSource(values, alias=alias, columns=[])
 
-    raw_alias = pglast_data["alias"]
-    alias = raw_alias["aliasname"]
-    child_nsp = parent_namespace.open_nested(alias=alias, source="values")
     if "colnames" not in raw_alias:
         return ValuesTableSource(values, alias=alias, columns=[])
 

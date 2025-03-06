@@ -4840,8 +4840,9 @@ class Select(BaseClause):
 
     def __eq__(self, other) -> bool:
         return (isinstance(other, type(self))
-                and self.projection_type == other.projection_type
-                and self.targets == other.targets)
+                and self._distinct_type == other._distinct_type
+                and self._targets == other._targets
+                and self._distinct_cols == other._distinct_cols)
 
     def __str__(self) -> str:
         if self.is_distinct():
