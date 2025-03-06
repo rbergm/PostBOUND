@@ -242,13 +242,17 @@ class MysqlSchemaInterface(DatabaseSchema):
     def __init__(self, mysql_db: MysqlInterface):
         super().__init__(mysql_db)
 
-    def lookup_column(self, column: ColumnReference | str,
-                      candidate_tables: list[TableReference]) -> TableReference:
+    def lookup_column(self, column: ColumnReference | str, candidate_tables: list[TableReference], *,
+                      expect_match: bool = False) -> Optional[TableReference]:
         column = column.name if isinstance(column, ColumnReference) else column
+
         for table in candidate_tables:
             table_columns = self._fetch_columns(table)
             if column in table_columns:
                 return table
+
+        if not expect_match:
+            return None
         candidate_tables = [tab.full_name for tab in candidate_tables]
         raise ValueError(f"Column {column} not found in candidate tables {candidate_tables}")
 

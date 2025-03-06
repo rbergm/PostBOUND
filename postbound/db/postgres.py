@@ -883,15 +883,20 @@ class PostgresSchemaInterface(DatabaseSchema):
         assert result_set is not None
         return set(TableReference(row[0]) for row in result_set)
 
-    def lookup_column(self, column: ColumnReference | str,
-                      candidate_tables: list[TableReference]) -> TableReference:
+    def lookup_column(self, column: ColumnReference | str, candidate_tables: Iterable[TableReference], *,
+                      expect_match: bool = False) -> Optional[TableReference]:
+        candidate_tables = set(candidate_tables) if len(candidate_tables) > 5 else list(candidate_tables)
         column = column.name if isinstance(column, ColumnReference) else column
-        column = column.lower()
+        lower_col = column.lower()
+
         for table in candidate_tables:
             table_columns = self._fetch_columns(table)
-            if column in table_columns:
+            if column in table_columns or lower_col in table_columns:
                 return table
-        candidate_tables = [table.full_name for table in candidate_tables]
+
+        if not expect_match:
+            return None
+        candidate_tables = [table.qualified_name() for table in candidate_tables]
         raise ValueError(f"Column '{column}' not found in candidate tables {candidate_tables}")
 
     def primary_key_column(self, table: TableReference | str) -> ColumnReference:

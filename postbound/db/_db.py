@@ -506,7 +506,7 @@ class DatabaseSchema(abc.ABC):
         assert result_set is not None
         return set(TableReference(row[0]) for row in result_set)
 
-    def columns(self, table: TableReference | str) -> set[ColumnReference]:
+    def columns(self, table: TableReference | str) -> Sequence[ColumnReference]:
         """Fetches all columns of the given table.
 
         Parameters
@@ -516,7 +516,7 @@ class DatabaseSchema(abc.ABC):
 
         Returns
         -------
-        set[ColumnReference]
+        Sequence[ColumnReference]
             All columns for the given table. Will be empty if the table is not found or does not contain any columns.
 
         Raises
@@ -531,12 +531,13 @@ class DatabaseSchema(abc.ABC):
                                          SELECT column_name
                                          FROM information_schema.columns
                                          WHERE table_catalog = %s AND table_name = %s
+                                         ORDER BY ordinal_position
                                          """)
         db_name = self._db.database_name()
         self._db.cursor().execute(query_template, (db_name, table.full_name))
         result_set = self._db.cursor().fetchall()
         assert result_set is not None
-        return set(ColumnReference(row[0], table) for row in result_set)
+        return [ColumnReference(row[0], table) for row in result_set]
 
     def is_view(self, table: TableReference | str) -> bool:
         """Checks, whether a specific table is actually is a view.
@@ -574,8 +575,8 @@ class DatabaseSchema(abc.ABC):
         return table_type == "VIEW"
 
     @abc.abstractmethod
-    def lookup_column(self, column: ColumnReference | str,
-                      candidate_tables: Iterable[TableReference]) -> TableReference:
+    def lookup_column(self, column: ColumnReference | str, candidate_tables: Iterable[TableReference], *,
+                      expect_match: bool = False) -> Optional[TableReference]:
         """Searches for a table that owns the given column.
 
         Parameters
@@ -584,6 +585,9 @@ class DatabaseSchema(abc.ABC):
             The column that is being looked up
         candidate_tables : Iterable[TableReference]
             Tables that could possibly own the given column
+        expect_match : bool, optional
+            If enabled, an error is raised whenever no table is found. Otherwise *None* is returned. By default, this is
+            disabled.
 
         Returns
         -------
@@ -593,7 +597,7 @@ class DatabaseSchema(abc.ABC):
         Raises
         ------
         ValueError
-            If none of the candidate tables has a column of the given name.
+            If `expect_match` is enabled and none of the candidate tables has a column of the given name.
         """
         raise NotImplementedError
 
