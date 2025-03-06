@@ -983,13 +983,15 @@ def _pglast_parse_select(pglast_data: dict, *, namespace: QueryNamespace) -> Sel
     else:
         raise ParserError(f"Unknown DISTINCT format: {pglast_distinct}")
 
-    targetlist: list[dict] = pglast_data["targetList"]
+    targetlist: list[dict] = pglast_data["targetList"]  # targetlist must always be present, so no need for .get()
+
     # first, try for SELECT * queries
     if len(targetlist) == 1:
         target = targetlist[0]["ResTarget"]["val"]
         select_star = _pglast_try_select_star(target, distinct=distinct)
 
         if select_star:
+            namespace.determine_output_shape(select_star)
             return select_star
         # if this is not a SELECT * query, we can continue with the regular parsing
 
