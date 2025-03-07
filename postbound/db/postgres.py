@@ -1433,25 +1433,6 @@ PostgresPlanHints = {HintType.Cardinality, HintType.Parallelization,
 """All non-operator hints supported by Postgres, that can be used to enforce additional optimizer behaviour."""
 
 
-class _PostgresCastExpression(qal.CastExpression):
-    """A specialized cast expression to handle the custom syntax for ``CAST`` statements used by Postgres."""
-
-    def __init__(self, expression: SqlExpression, target_type: str, *,
-                 type_params: Optional[Sequence[SqlExpression]] = None) -> None:
-        super().__init__(expression, target_type, type_params=type_params)
-
-    def __str__(self) -> str:
-        if self.type_params:
-            type_args = ", ".join(str(arg) for arg in self.type_params)
-            type_str = f"{self.target_type}({type_args})"
-        else:
-            type_str = self.target_type
-        casted_str = (str(self.casted_expression)
-                      if isinstance(self.casted_expression, (qal.ColumnExpression, qal.StaticValueExpression))
-                      else f"({self.casted_expression})")
-        return f"{casted_str}::{type_str}"
-
-
 class PostgresExplainClause(qal.Explain):
     """A specialized ``EXPLAIN`` clause implementation to handle Postgres custom syntax for query plans.
 
@@ -1533,7 +1514,8 @@ def _replace_postgres_cast_expressions(expression: SqlExpression) -> SqlExpressi
             return target(replaced_cases, else_expr=replaced_else)
         case CastExpression(cast, typ, params):
             replaced_cast = _replace_postgres_cast_expressions(cast)
-            return _PostgresCastExpression(replaced_cast, typ, type_params=params)
+            #  return _PostgresCastExpression(replaced_cast, typ, type_params=params)
+            return CastExpression(replaced_cast, typ, params)
         case MathExpression(op, lhs, rhs):
             replaced_lhs = _replace_postgres_cast_expressions(lhs)
             rhs = util.enlist(rhs) if rhs else []
@@ -1689,12 +1671,9 @@ class PostgresHintService(HintService):
         return adapted_query
 
     def format_query(self, query: qal.SqlQuery) -> str:
-        query = qal.transform.replace_expressions(query, _replace_postgres_cast_expressions)
-        if query.explain and not isinstance(query.explain, PostgresExplainClause):
-            query = qal.transform.replace_clause(query, PostgresExplainClause(query.explain))
-        if query.limit_clause and not isinstance(query.limit_clause, PostgresLimitClause):
-            query = qal.transform.replace_clause(query, PostgresLimitClause(query.limit_clause))
-        return qal.format_quick(query)
+        if query.explain:
+            query = transform.replace_clause(query, PostgresExplainClause(query.explain))
+        return qal.format_quick(query, flavor="postgres")
 
     def supports_hint(self, hint: PhysicalOperator | HintType) -> bool:
         self._assert_active_backend()

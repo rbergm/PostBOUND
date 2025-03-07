@@ -110,6 +110,8 @@ class SqlExpression(abc.ABC):
     def __init__(self, hash_val: int):
         self._hash_val = hash_val
 
+    __slots__ = ("_hash_val",)
+
     @abc.abstractmethod
     def tables(self) -> set[TableReference]:
         """Provides all tables that are accessed by this expression.
@@ -161,13 +163,17 @@ class SqlExpression(abc.ABC):
         raise NotImplementedError
 
     @abc.abstractmethod
-    def accept_visitor(self, visitor: SqlExpressionVisitor[VisitorResult]) -> VisitorResult:
+    def accept_visitor(self, visitor: SqlExpressionVisitor[VisitorResult], *args, **kwargs) -> VisitorResult:
         """Enables processing of the current expression by an expression visitor.
 
         Parameters
         ----------
         visitor : SqlExpressionVisitor[VisitorResult]
             The visitor
+        args
+            Additional arguments that are passed to the visitor
+        kwargs
+            Additional keyword arguments that are passed to the visitor
         """
         raise NotImplementedError
 
@@ -218,6 +224,7 @@ class StaticValueExpression(SqlExpression, Generic[T]):
         self._value = value
         super().__init__(hash(value))
 
+    __slots__ = ("_value",)
     __match_args__ = ("value",)
 
     @property
@@ -253,8 +260,8 @@ class StaticValueExpression(SqlExpression, Generic[T]):
     def iterchildren(self) -> Iterable[SqlExpression]:
         return []
 
-    def accept_visitor(self, visitor: SqlExpressionVisitor[VisitorResult]) -> VisitorResult:
-        return visitor.visit_static_value_expr(self)
+    def accept_visitor(self, visitor: SqlExpressionVisitor[VisitorResult], *args, **kwargs) -> VisitorResult:
+        return visitor.visit_static_value_expr(self, *args, **kwargs)
 
     __hash__ = SqlExpression.__hash__
 
@@ -301,6 +308,7 @@ class CastExpression(SqlExpression):
         hash_val = hash((self._casted_expression, self._target_type, self._type_params))
         super().__init__(hash_val)
 
+    __slots__ = ("_casted_expression", "_target_type", "_type_params")
     __match_args__ = ("casted_expression", "target_type", "type_params")
 
     @property
@@ -351,8 +359,8 @@ class CastExpression(SqlExpression):
     def iterchildren(self) -> Iterable[SqlExpression]:
         return [self.casted_expression] + list(self.type_params)
 
-    def accept_visitor(self, visitor: SqlExpressionVisitor[VisitorResult]) -> VisitorResult:
-        return visitor.visit_cast_expr(self)
+    def accept_visitor(self, visitor: SqlExpressionVisitor[VisitorResult], *args, **kwargs) -> VisitorResult:
+        return visitor.visit_cast_expr(self, *args, **kwargs)
 
     __hash__ = SqlExpression.__hash__
 
@@ -418,6 +426,7 @@ class MathExpression(SqlExpression):
         hash_val = hash((self._operator, self._first_arg, self._second_arg))
         super().__init__(hash_val)
 
+    __slots__ = ("_operator", "_first_arg", "_second_arg")
     __match_args__ = ("operator", "first_arg", "second_arg")
 
     @property
@@ -488,8 +497,8 @@ class MathExpression(SqlExpression):
     def iterchildren(self) -> Iterable[SqlExpression]:
         return [self.first_arg, self.second_arg]
 
-    def accept_visitor(self, visitor: SqlExpressionVisitor[VisitorResult]) -> VisitorResult:
-        return visitor.visit_math_expr(self)
+    def accept_visitor(self, visitor: SqlExpressionVisitor[VisitorResult], *args, **kwargs) -> VisitorResult:
+        return visitor.visit_math_expr(self, *args, **kwargs)
 
     def _requires_brackets(self, child: SqlExpression) -> bool:
         """Checks, whether some expression must be wrapped in brackets to ensure correct evaluation order."""
@@ -548,6 +557,7 @@ class ColumnExpression(SqlExpression):
         self._column = column
         super().__init__(hash(self._column))
 
+    __slots__ = ("_column",)
     __match_args__ = ("column",)
 
     @property
@@ -575,7 +585,7 @@ class ColumnExpression(SqlExpression):
     def iterchildren(self) -> Iterable[SqlExpression]:
         return []
 
-    def accept_visitor(self, visitor: SqlExpressionVisitor[VisitorResult]) -> VisitorResult:
+    def accept_visitor(self, visitor: SqlExpressionVisitor[VisitorResult], *args, **kwargs) -> VisitorResult:
         return visitor.visit_column_expr(self)
 
     __hash__ = SqlExpression.__hash__
@@ -620,6 +630,8 @@ class FunctionExpression(SqlExpression):
         Whether the (aggregation) function should only operate on distinct column values and hence a duplicate
         elimination needs to be performed before passing the argument values (e.g. ``COUNT(DISTINCT *)``). Defaults to
         ``False``
+    filter_where : Optional[AbstractPredicate], optional
+        An optional filter expression that restricts the values included in an aggregation function.
 
     Raises
     ------
@@ -680,6 +692,7 @@ class FunctionExpression(SqlExpression):
         hash_val = hash((self._function, self._distinct, self._arguments, self._filter_expr))
         super().__init__(hash_val)
 
+    __slots__ = ("_function", "_arguments", "_distinct", "_filter_expr")
     __match_args__ = ("function", "arguments", "distinct", "filter_where")
 
     @property
@@ -813,8 +826,8 @@ class FunctionExpression(SqlExpression):
     def iterchildren(self) -> Iterable[SqlExpression]:
         return list(self.arguments)
 
-    def accept_visitor(self, visitor: SqlExpressionVisitor[VisitorResult]) -> VisitorResult:
-        return visitor.visit_function_expr(self)
+    def accept_visitor(self, visitor: SqlExpressionVisitor[VisitorResult], *args, **kwargs) -> VisitorResult:
+        return visitor.visit_function_expr(self, *args, **kwargs)
 
     __hash__ = SqlExpression.__hash__
 
@@ -876,6 +889,7 @@ class ArrayAccessExpression(FunctionExpression):
         args = [arg for arg in (array_expr, idx, lower_idx, upper_idx) if arg is not None]
         super().__init__("ARRAY_GET", args)
 
+    __slots__ = ("_array", "_idx", "_lower_idx", "_upper_idx", "_hash_val")
     __match_args__ = ("array", "index", "lower_index", "upper_index")
 
     @property
@@ -936,6 +950,9 @@ class ArrayAccessExpression(FunctionExpression):
             return None
         return self._lower_idx, self._upper_idx
 
+    def accept_visitor(self, visitor: SqlExpressionVisitor[VisitorResult], *args, **kwargs) -> VisitorResult:
+        return visitor.visit_array_access_expr(self, *args, **kwargs)
+
     def __eq__(self, other):
         return (isinstance(other, type(self))
                 and self._array == other._array
@@ -981,6 +998,7 @@ class SubqueryExpression(SqlExpression):
         self._query = subquery
         super().__init__(hash(subquery))
 
+    __slots__ = ("_query",)
     __match_args__ = ("query",)
 
     @property
@@ -1006,8 +1024,8 @@ class SubqueryExpression(SqlExpression):
     def iterchildren(self) -> Iterable[SqlExpression]:
         return []
 
-    def accept_visitor(self, visitor: SqlExpressionVisitor[VisitorResult]) -> VisitorResult:
-        return visitor.visit_subquery_expr(self)
+    def accept_visitor(self, visitor: SqlExpressionVisitor[VisitorResult], *args, **kwargs) -> VisitorResult:
+        return visitor.visit_subquery_expr(self, *args, **kwargs)
 
     __hash__ = SqlExpression.__hash__
 
@@ -1033,6 +1051,7 @@ class StarExpression(SqlExpression):
         self._table = from_table
         super().__init__(hash(("*", self._table)))
 
+    __slots__ = ("_table",)
     __match_args__ = ("from_table",)
 
     @property
@@ -1062,8 +1081,8 @@ class StarExpression(SqlExpression):
     def iterchildren(self) -> Iterable[SqlExpression]:
         return []
 
-    def accept_visitor(self, visitor: SqlExpressionVisitor[VisitorResult]) -> VisitorResult:
-        return visitor.visit_star_expr(self)
+    def accept_visitor(self, visitor: SqlExpressionVisitor[VisitorResult], *args, **kwargs) -> VisitorResult:
+        return visitor.visit_star_expr(self, *args, **kwargs)
 
     __hash__ = SqlExpression.__hash__
 
@@ -1103,6 +1122,7 @@ class WindowExpression(SqlExpression):
         hash_val = hash((self._window_function, self._partitioning, self._ordering, self._filter_condition))
         super().__init__(hash_val)
 
+    __slots__ = ("_window_function", "_partitioning", "_ordering", "_filter_condition")
     __match_args__ = ("window_function", "partitioning", "ordering", "filter_condition")
 
     @property
@@ -1164,7 +1184,7 @@ class WindowExpression(SqlExpression):
         filter_children = self.filter_condition.iterexpressions() if self.filter_condition else []
         return function_children + partitioning_children + ordering_children + filter_children
 
-    def accept_visitor(self, visitor: SqlExpressionVisitor[VisitorResult]) -> VisitorResult:
+    def accept_visitor(self, visitor: SqlExpressionVisitor[VisitorResult], *args, **kwargs) -> VisitorResult:
         return visitor.visit_window_expr(self)
 
     __hash__ = SqlExpression.__hash__
@@ -1213,6 +1233,7 @@ class CaseExpression(SqlExpression):
         hash_val = hash((self._cases, self._else_expr))
         super().__init__(hash_val)
 
+    __slots__ = ("_cases", "_else_expr")
     __match_args__ = ("cases", "else_expression")
 
     @property
@@ -1252,8 +1273,8 @@ class CaseExpression(SqlExpression):
         else_children = self.else_expression.iterchildren() if self.else_expression else []
         return case_children + else_children
 
-    def accept_visitor(self, visitor: SqlExpressionVisitor[VisitorResult]) -> VisitorResult:
-        return visitor.visit_case_expr(self)
+    def accept_visitor(self, visitor: SqlExpressionVisitor[VisitorResult], *args, **kwargs) -> VisitorResult:
+        return visitor.visit_case_expr(self, *args, **kwargs)
 
     def _braketify(self, expression: SqlExpression) -> str:
         """Wraps the given expression in brackets if necessary."""
@@ -1288,44 +1309,47 @@ class SqlExpressionVisitor(abc.ABC, Generic[VisitorResult]):
     """
 
     @abc.abstractmethod
-    def visit_static_value_expr(self, expr: StaticValueExpression) -> VisitorResult:
+    def visit_static_value_expr(self, expr: StaticValueExpression, *args, **kwargs) -> VisitorResult:
         raise NotImplementedError
 
     @abc.abstractmethod
-    def visit_cast_expr(self, expr: CastExpression) -> VisitorResult:
+    def visit_cast_expr(self, expr: CastExpression, *args, **kwargs) -> VisitorResult:
         raise NotImplementedError
 
     @abc.abstractmethod
-    def visit_math_expr(self, expr: MathExpression) -> VisitorResult:
+    def visit_math_expr(self, expr: MathExpression, *args, **kwargs) -> VisitorResult:
         raise NotImplementedError
 
     @abc.abstractmethod
-    def visit_column_expr(self, expr: ColumnExpression) -> VisitorResult:
+    def visit_column_expr(self, expr: ColumnExpression, *args, **kwargs) -> VisitorResult:
         raise NotImplementedError
 
     @abc.abstractmethod
-    def visit_function_expr(self, expr: FunctionExpression) -> VisitorResult:
+    def visit_function_expr(self, expr: FunctionExpression, *args, **kwargs) -> VisitorResult:
         raise NotImplementedError
 
     @abc.abstractmethod
-    def visit_subquery_expr(self, expr: SubqueryExpression) -> VisitorResult:
+    def visit_subquery_expr(self, expr: SubqueryExpression, *args, **kwargs) -> VisitorResult:
         raise NotImplementedError
 
     @abc.abstractmethod
-    def visit_star_expr(self, expr: StarExpression) -> VisitorResult:
+    def visit_star_expr(self, expr: StarExpression, *args, **kwargs) -> VisitorResult:
         raise NotImplementedError
 
     @abc.abstractmethod
-    def visit_window_expr(self, expr: WindowExpression) -> VisitorResult:
+    def visit_window_expr(self, expr: WindowExpression, *args, **kwargs) -> VisitorResult:
         raise NotImplementedError
 
     @abc.abstractmethod
-    def visit_case_expr(self, expr: CaseExpression) -> VisitorResult:
+    def visit_case_expr(self, expr: CaseExpression, *args, **kwargs) -> VisitorResult:
         raise NotImplementedError
 
     @abc.abstractmethod
-    def visit_predicate_expr(self, expr: AbstractPredicate) -> VisitorResult:
+    def visit_predicate_expr(self, expr: AbstractPredicate, *args, **kwargs) -> VisitorResult:
         raise NotImplementedError
+
+    def visit_array_access_expr(self, expr: ArrayAccessExpression, *args, **kwargs) -> VisitorResult:
+        return self.visit_function_expr(expr, *args, **kwargs)
 
 
 class ExpressionCollector(SqlExpressionVisitor[set[SqlExpression]]):
@@ -1477,7 +1501,7 @@ class NoFilterPredicateError(StateError):
         self.predicate = predicate
 
 
-BaseExpression = Union[ColumnExpression, StaticValueExpression, SubqueryExpression]
+BaseExpression = ColumnExpression | StaticValueExpression | SubqueryExpression
 """Supertype that captures all expression types that can be considered base expressions for predicates."""
 
 
@@ -1877,13 +1901,17 @@ class AbstractPredicate(SqlExpression, abc.ABC):
         return column_tables | subquery_tables
 
     @abc.abstractmethod
-    def accept_visitor(self, visitor: PredicateVisitor[VisitorResult]) -> VisitorResult:
+    def accept_visitor(self, visitor: PredicateVisitor[VisitorResult], *args, **kwargs) -> VisitorResult:
         """Enables processing of the current predicate by a predicate visitor.
 
         Parameters
         ----------
         visitor : PredicateVisitor[VisitorResult]
             The visitor
+        args
+            Additional arguments to pass to the visitor
+        kwargs
+            Additional keyword arguments to pass to the visitor
         """
         raise NotImplementedError
 
@@ -1943,6 +1971,9 @@ class BasePredicate(AbstractPredicate, abc.ABC):
         self._operation = operation
         super().__init__(hash_val)
 
+    __slots__ = ("_operation",)
+    __match_args__ = ("operation",)
+
     @property
     def operation(self) -> Optional[SqlOperator]:
         """Get the operation that is used to obtain matching (pairs of) tuples.
@@ -1998,6 +2029,7 @@ class BinaryPredicate(BasePredicate):
         hash_val = hash((operation, first_argument, second_argument))
         super().__init__(operation, hash_val=hash_val)
 
+    __slots__ = ("_first_argument", "_second_argument")
     __match_args__ = ("operation", "first_argument", "second_argument")
 
     @property
@@ -2052,8 +2084,8 @@ class BinaryPredicate(BasePredicate):
         partners |= _generate_join_pairs(first_columns, second_columns)
         return partners
 
-    def accept_visitor(self, visitor: PredicateVisitor[VisitorResult]) -> VisitorResult:
-        return visitor.visit_binary_predicate(self)
+    def accept_visitor(self, visitor: PredicateVisitor[VisitorResult], *args, **kwargs) -> VisitorResult:
+        return visitor.visit_binary_predicate(self, *args, **kwargs)
 
     __hash__ = AbstractPredicate.__hash__
 
@@ -2112,6 +2144,7 @@ class BetweenPredicate(BasePredicate):
         hash_val = hash((LogicalOperator.Between, self._column, self._interval_start, self._interval_end))
         super().__init__(LogicalOperator.Between, hash_val=hash_val)
 
+    __slots__ = ("_column", "_interval", "_interval_start", "_interval_end")
     __match_args__ = ("column", "interval_start", "interval_end")
 
     @property
@@ -2188,8 +2221,8 @@ class BetweenPredicate(BasePredicate):
         partners |= _generate_join_pairs(predicate_columns, end_columns)
         return set(partners)
 
-    def accept_visitor(self, visitor: PredicateVisitor[VisitorResult]) -> VisitorResult:
-        return visitor.visit_between_predicate(self)
+    def accept_visitor(self, visitor: PredicateVisitor[VisitorResult], *args, **kwargs) -> VisitorResult:
+        return visitor.visit_between_predicate(self, *args, **kwargs)
 
     __hash__ = AbstractPredicate.__hash__
 
@@ -2265,6 +2298,7 @@ class InPredicate(BasePredicate):
         hash_val = hash((LogicalOperator.In, self._column, self._values))
         super().__init__(LogicalOperator.In, hash_val=hash_val)
 
+    __slots__ = ("_column", "_values")
     __match_args__ = ("column", "values")
 
     @property
@@ -2331,8 +2365,8 @@ class InPredicate(BasePredicate):
             partners |= _generate_join_pairs(predicate_columns, value_columns)
         return partners
 
-    def accept_visitor(self, visitor: PredicateVisitor[VisitorResult]) -> VisitorResult:
-        return visitor.visit_in_predicate(self)
+    def accept_visitor(self, visitor: PredicateVisitor[VisitorResult], *args, **kwargs) -> VisitorResult:
+        return visitor.visit_in_predicate(self, *args, **kwargs)
 
     def _stringify_values(self) -> str:
         """Converts the allowed values into a valid string representation."""
@@ -2403,6 +2437,7 @@ class UnaryPredicate(BasePredicate):
         self._column = column
         super().__init__(operation, hash_val=hash((operation, column)))
 
+    __slots__ = ("_column",)
     __match_args__ = ("column", "operation")
 
     @property
@@ -2442,8 +2477,8 @@ class UnaryPredicate(BasePredicate):
         columns = _collect_column_expression_columns(self.column)
         return _generate_join_pairs(columns, columns)
 
-    def accept_visitor(self, visitor: PredicateVisitor[VisitorResult]) -> VisitorResult:
-        return visitor.visit_unary_predicate(self)
+    def accept_visitor(self, visitor: PredicateVisitor[VisitorResult], *args, **kwargs) -> VisitorResult:
+        return visitor.visit_unary_predicate(self, *args, **kwargs)
 
     __hash__ = AbstractPredicate.__hash__
 
@@ -2615,6 +2650,7 @@ class CompoundPredicate(AbstractPredicate):
         self._children = tuple(util.enlist(children))
         super().__init__(hash((self._operation, self._children)))
 
+    __slots__ = ("_operation", "_children")
     __match_args__ = ("operation", "children")
 
     @property
@@ -2677,14 +2713,14 @@ class CompoundPredicate(AbstractPredicate):
     def base_predicates(self) -> Iterable[AbstractPredicate]:
         return util.set_union(set(child.base_predicates()) for child in self._children)
 
-    def accept_visitor(self, visitor: PredicateVisitor[VisitorResult]) -> VisitorResult:
+    def accept_visitor(self, visitor: PredicateVisitor[VisitorResult], *args, **kwargs) -> VisitorResult:
         match self.operation:
             case CompoundOperator.Not:
-                return visitor.visit_not_predicate(self, self.children)
+                return visitor.visit_not_predicate(self, self.children, *args, **kwargs)
             case CompoundOperator.And:
-                return visitor.visit_and_predicate(self, self.children)
+                return visitor.visit_and_predicate(self, self.children, *args, **kwargs)
             case CompoundOperator.Or:
-                return visitor.visit_or_predicate(self, self.children)
+                return visitor.visit_or_predicate(self, self.children, *args, **kwargs)
             case _:
                 raise ValueError(f"Unknown operation: '{self.operation}'")
 
@@ -2731,31 +2767,34 @@ class PredicateVisitor(abc.ABC, Generic[VisitorResult]):
     """
 
     @abc.abstractmethod
-    def visit_binary_predicate(self, predicate: BinaryPredicate) -> VisitorResult:
+    def visit_binary_predicate(self, predicate: BinaryPredicate, *args, **kwargs) -> VisitorResult:
         raise NotImplementedError
 
     @abc.abstractmethod
-    def visit_between_predicate(self, predicate: BetweenPredicate) -> VisitorResult:
+    def visit_between_predicate(self, predicate: BetweenPredicate, *args, **kwargs) -> VisitorResult:
         raise NotImplementedError
 
     @abc.abstractmethod
-    def visit_in_predicate(self, predicate: InPredicate) -> VisitorResult:
+    def visit_in_predicate(self, predicate: InPredicate, *args, **kwargs) -> VisitorResult:
         raise NotImplementedError
 
     @abc.abstractmethod
-    def visit_unary_predicate(self, predicate: UnaryPredicate) -> VisitorResult:
+    def visit_unary_predicate(self, predicate: UnaryPredicate, *args, **kwargs) -> VisitorResult:
         raise NotImplementedError
 
     @abc.abstractmethod
-    def visit_not_predicate(self, predicate: CompoundPredicate, child_predicate: AbstractPredicate) -> VisitorResult:
+    def visit_not_predicate(self, predicate: CompoundPredicate, child_predicate: AbstractPredicate, *args,
+                            **kwargs) -> VisitorResult:
         raise NotImplementedError
 
     @abc.abstractmethod
-    def visit_or_predicate(self, predicate: CompoundPredicate, components: Sequence[AbstractPredicate]) -> VisitorResult:
+    def visit_or_predicate(self, predicate: CompoundPredicate, components: Sequence[AbstractPredicate], *args,
+                           **kwargs) -> VisitorResult:
         raise NotImplementedError
 
     @abc.abstractmethod
-    def visit_and_predicate(self, predicate: CompoundPredicate, components: Sequence[AbstractPredicate]) -> VisitorResult:
+    def visit_and_predicate(self, predicate: CompoundPredicate, components: Sequence[AbstractPredicate], *args,
+                            **kwargs) -> VisitorResult:
         raise NotImplementedError
 
 
@@ -3074,6 +3113,9 @@ class SimplifiedFilterView(AbstractPredicate):
 
         hash_val = hash((column, operation, value))
         super().__init__(hash_val)
+
+    __slots__ = ("_column", "_operation", "_value", "_predicate")
+    __match_args__ = ("column", "operation", "value")
 
     @property
     def column(self) -> ColumnReference:
@@ -3830,6 +3872,8 @@ class BaseClause(abc.ABC):
     def __init__(self, hash_val: int):
         self._hash_val = hash_val
 
+    __slots__ = ("_hash_val",)
+
     def tables(self) -> set[TableReference]:
         """Provides all tables that are referenced in the clause.
 
@@ -3881,13 +3925,17 @@ class BaseClause(abc.ABC):
         raise NotImplementedError
 
     @abc.abstractmethod
-    def accept_visitor(self, visitor: ClauseVisitor[VisitorResult]) -> VisitorResult:
+    def accept_visitor(self, visitor: ClauseVisitor[VisitorResult], *args, **kwargs) -> VisitorResult:
         """Enables processing of the current clause by a visitor.
 
         Parameters
         ----------
         visitor : ClauseVisitor[VisitorResult]
             The visitor
+        args
+            Additional arguments that are passed to the visitor
+        kwargs
+            Additional keyword arguments that are passed to the visitor
         """
         raise NotImplementedError
 
@@ -3953,6 +4001,7 @@ class Hint(BaseClause):
         hash_val = hash((preparatory_statements, query_hints))
         super().__init__(hash_val)
 
+    __slots__ = ("_preparatory_statements", "_query_hints")
     __match_args__ = ("preparatory_statements", "query_hints")
 
     @property
@@ -3990,8 +4039,8 @@ class Hint(BaseClause):
     def itercolumns(self) -> Iterable[ColumnReference]:
         return []
 
-    def accept_visitor(self, visitor: ClauseVisitor[VisitorResult]) -> VisitorResult:
-        return visitor.visit_hint_clause(self)
+    def accept_visitor(self, visitor: ClauseVisitor[VisitorResult], *args, **kwargs) -> VisitorResult:
+        return visitor.visit_hint_clause(self, *args, **kwargs)
 
     __hash__ = BaseClause.__hash__
 
@@ -4081,6 +4130,7 @@ class Explain(BaseClause):
         hash_val = hash((analyze, target_format))
         super().__init__(hash_val)
 
+    __slots__ = ("_analyze", "_target_format")
     __match_args__ = ("analyze", "target_format")
 
     @property
@@ -4117,7 +4167,7 @@ class Explain(BaseClause):
     def itercolumns(self) -> Iterable[ColumnReference]:
         return []
 
-    def accept_visitor(self, visitor: ClauseVisitor[VisitorResult]) -> VisitorResult:
+    def accept_visitor(self, visitor: ClauseVisitor[VisitorResult], *args, **kwargs) -> VisitorResult:
         return visitor.visit_explain_clause(self)
 
     __hash__ = BaseClause.__hash__
@@ -4174,6 +4224,8 @@ class WithQuery:
         self._target_name = target_name if isinstance(target_name, str) else target_name.identifier()
         self._materialized = materialized
         self._hash_val = hash((query, target_name))
+
+    __slots__ = ("_query", "_subquery_expression", "_target_name", "_materialized", "_hash_val")
 
     @property
     def query(self) -> SqlQuery:
@@ -4329,6 +4381,8 @@ class ValuesWithQuery(WithQuery):
         )
         super().__init__(self._query, self._table, materialized=materialized)
 
+    __slots__ = ("_values", "_materialized", "_table", "_columns", "_query")
+
     @property
     def rows(self) -> ValuesList:
         """Get the values that are used to construct the CTE.
@@ -4435,6 +4489,7 @@ class CommonTableExpression(BaseClause):
         hash_val = hash((self._with_queries, self._recursive))
         super().__init__(hash_val)
 
+    __slots__ = ("_with_queries", "_recursive")
     __match_args__ = ("queries",)
 
     @property
@@ -4494,8 +4549,8 @@ class CommonTableExpression(BaseClause):
     def itercolumns(self) -> Iterable[ColumnReference]:
         return util.flatten(with_query.itercolumns() for with_query in self._with_queries)
 
-    def accept_visitor(self, visitor: ClauseVisitor[VisitorResult]) -> VisitorResult:
-        return visitor.visit_cte_clause(self)
+    def accept_visitor(self, visitor: ClauseVisitor[VisitorResult], *args, **kwargs) -> VisitorResult:
+        return visitor.visit_cte_clause(self, *args, **kwargs)
 
     def __len__(self) -> int:
         return len(self.queries)
@@ -4584,6 +4639,8 @@ class BaseProjection:
         self._target_name = target_name
         self._hash_val = hash((expression, target_name))
 
+    __slots__ = ("_expression", "_target_name", "_hash_val")
+
     @property
     def expression(self) -> SqlExpression:
         """Get the expression that forms the column.
@@ -4634,6 +4691,12 @@ class BaseProjection:
 
 
 DistinctType = Literal["all", "none", "on"]
+"""The different modes a *SELECT* clause can use for duplicate elimination.
+
+- *all*: All columns are used for duplicate elimination
+- *none*: No duplicate elimination is performed
+- *on*: A specific subset of columns is used for duplicate elimination
+"""
 
 
 class Select(BaseClause):
@@ -4739,6 +4802,7 @@ class Select(BaseClause):
         hash_val = hash((self._distinct_type, self._distinct_cols, self._targets))
         super().__init__(hash_val)
 
+    __slots__ = ("_targets", "_distinct_type", "_distinct_cols")
     __match_args__ = ("targets", "distinct", "distinct_on")
 
     @property
@@ -4827,8 +4891,8 @@ class Select(BaseClause):
             output[projection.target_name] = util.simplify(source_columns)
         return output
 
-    def accept_visitor(self, visitor: ClauseVisitor[VisitorResult]) -> VisitorResult:
-        return visitor.visit_select_clause(self)
+    def accept_visitor(self, visitor: ClauseVisitor[VisitorResult], *args, **kwargs) -> VisitorResult:
+        return visitor.visit_select_clause(self, *args, **kwargs)
 
     def __len__(self) -> int:
         return len(self.targets)
@@ -4950,6 +5014,7 @@ class DirectTableSource(TableSource):
     def __init__(self, table: TableReference) -> None:
         self._table = table
 
+    __slots__ = ("_table",)
     __match_args__ = ("table",)
 
     @property
@@ -5022,6 +5087,7 @@ class SubqueryTableSource(TableSource):
         self._lateral = lateral
         self._hash_val = hash((self._subquery_expression, self._target_name, self._lateral))
 
+    __slots__ = ("_subquery_expression", "_target_name", "_lateral", "_hash_val")
     __match_args__ = ("query", "target_name", "lateral")
 
     @property
@@ -5171,6 +5237,7 @@ class ValuesTableSource(TableSource):
 
         self._hash_val = hash((self._table, self._columns, self._values))
 
+    __slots__ = ("_values", "_table", "_columns", "_hash_val")
     __match_args__ = ("values", "alias", "cols")
 
     @property
@@ -5300,9 +5367,9 @@ AutoJoins = {JoinType.CrossJoin,
              JoinType.NaturalOuterJoin,
              JoinType.NaturalLeftJoin,
              JoinType.NaturalRightJoin}
-"""Automatic joins are those joins that use the **JOIN** syntax, but do not require a predicate to work.
+"""Automatic joins are those joins that use the *JOIN* syntax, but do not require a predicate to work.
 
-Examples include **CROSS JOIN** and **NATURAL JOIN**.
+Examples include *CROSS JOIN* and *NATURAL JOIN*.
 """
 
 
@@ -5342,6 +5409,7 @@ class JoinTableSource(TableSource):
         self._join_type = join_type if join_condition else JoinType.CrossJoin
         self._hash_val = hash((self._left, self._right, self._join_condition, self._join_type))
 
+    __slots__ = ("_left", "_right", "_join_condition", "_join_type", "_hash_val")
     __match_args__ = ("left", "right", "join_condition", "join_type")
 
     @property
@@ -5527,6 +5595,7 @@ class From(BaseClause, Generic[TableType]):
         self._items: tuple[TableSource] = tuple(items)
         super().__init__(hash(self._items))
 
+    __slots__ = ("_items",)
     __match_args__ = ("items",)
 
     @property
@@ -5560,8 +5629,8 @@ class From(BaseClause, Generic[TableType]):
         merged_predicate = CompoundPredicate.create_and(actual_predicates)
         return QueryPredicates(merged_predicate)
 
-    def accept_visitor(self, visitor: ClauseVisitor[VisitorResult]) -> VisitorResult:
-        return visitor.visit_from_clause(self)
+    def accept_visitor(self, visitor: ClauseVisitor[VisitorResult], *args, **kwargs) -> VisitorResult:
+        return visitor.visit_from_clause(self, *args, **kwargs)
 
     def __len__(self) -> int:
         return len(self._items)
@@ -5701,6 +5770,7 @@ class Where(BaseClause):
         self._predicate = predicate
         super().__init__(hash(predicate))
 
+    __slots__ = ("_predicate",)
     __match_args__ = ("predicate",)
 
     @property
@@ -5726,8 +5796,8 @@ class Where(BaseClause):
     def itercolumns(self) -> Iterable[ColumnReference]:
         return self.predicate.itercolumns()
 
-    def accept_visitor(self, visitor: ClauseVisitor[VisitorResult]) -> VisitorResult:
-        return visitor.visit_where_clause(self)
+    def accept_visitor(self, visitor: ClauseVisitor[VisitorResult], *args, **kwargs) -> VisitorResult:
+        return visitor.visit_where_clause(self, *args, **kwargs)
 
     __hash__ = BaseClause.__hash__
 
@@ -5766,6 +5836,7 @@ class GroupBy(BaseClause):
         hash_val = hash((self._group_columns, self._distinct))
         super().__init__(hash_val)
 
+    __slots__ = ("_group_columns", "_distinct")
     __match_args__ = ("group_columns", "distinct")
 
     @property
@@ -5799,8 +5870,8 @@ class GroupBy(BaseClause):
     def itercolumns(self) -> Iterable[ColumnReference]:
         return util.flatten(column.itercolumns() for column in self.group_columns)
 
-    def accept_visitor(self, visitor: ClauseVisitor[VisitorResult]) -> VisitorResult:
-        return visitor.visit_groupby_clause(self)
+    def accept_visitor(self, visitor: ClauseVisitor[VisitorResult], *args, **kwargs) -> VisitorResult:
+        return visitor.visit_groupby_clause(self, *args, **kwargs)
 
     def __len__(self) -> int:
         return len(self._group_columns)
@@ -5842,6 +5913,7 @@ class Having(BaseClause):
         self._condition = condition
         super().__init__(hash(condition))
 
+    __slots__ = ("_condition",)
     __match_args__ = ("condition",)
 
     @property
@@ -5864,8 +5936,8 @@ class Having(BaseClause):
     def itercolumns(self) -> Iterable[ColumnReference]:
         return self.condition.itercolumns()
 
-    def accept_visitor(self, visitor: ClauseVisitor[VisitorResult]) -> VisitorResult:
-        return visitor.visit_having_clause(self)
+    def accept_visitor(self, visitor: ClauseVisitor[VisitorResult], *args, **kwargs) -> VisitorResult:
+        return visitor.visit_having_clause(self, *args, **kwargs)
 
     __hash__ = BaseClause.__hash__
 
@@ -5903,6 +5975,8 @@ class OrderByExpression:
         self._ascending = ascending
         self._nulls_first = nulls_first
         self._hash_val = hash((self._column, self._ascending, self._nulls_first))
+
+    __slots__ = ("_column", "_ascending", "_nulls_first", "_hash_val")
 
     @property
     def column(self) -> SqlExpression:
@@ -5983,6 +6057,7 @@ class OrderBy(BaseClause):
         self._expressions = tuple(expressions)
         super().__init__(hash(self._expressions))
 
+    __slots__ = ("_expressions",)
     __match_args__ = ("expressions",)
 
     @property
@@ -6006,7 +6081,7 @@ class OrderBy(BaseClause):
     def itercolumns(self) -> Iterable[ColumnReference]:
         return util.flatten(expression.itercolumns() for expression in self.iterexpressions())
 
-    def accept_visitor(self, visitor: ClauseVisitor[VisitorResult]) -> VisitorResult:
+    def accept_visitor(self, visitor: ClauseVisitor[VisitorResult], *args, **kwargs) -> VisitorResult:
         return visitor.visit_orderby_clause(self)
 
     def __len__(self) -> int:
@@ -6056,6 +6131,7 @@ class Limit(BaseClause):
         hash_val = hash((self._limit, self._offset))
         super().__init__(hash_val)
 
+    __slots__ = ("_limit", "_offset")
     __match_args__ = ("limit", "offset")
 
     @property
@@ -6089,8 +6165,8 @@ class Limit(BaseClause):
     def itercolumns(self) -> Iterable[ColumnReference]:
         return []
 
-    def accept_visitor(self, visitor: ClauseVisitor[VisitorResult]) -> VisitorResult:
-        return visitor.visit_limit_clause(self)
+    def accept_visitor(self, visitor: ClauseVisitor[VisitorResult], *args, **kwargs) -> VisitorResult:
+        return visitor.visit_limit_clause(self, *args, **kwargs)
 
     __hash__ = BaseClause.__hash__
 
@@ -6132,6 +6208,7 @@ class UnionClause(BaseClause):
         hash_val = hash((self._lhs, self._rhs, self._union_all))
         super().__init__(hash_val)
 
+    __slots__ = ("_lhs", "_rhs", "_union_all")
     __match_args__ = ("left_query", "right_query", "union_all")
 
     @property
@@ -6208,8 +6285,8 @@ class UnionClause(BaseClause):
     def itercolumns(self) -> Iterable[ColumnReference]:
         return list(self._lhs.itercolumns()) + list(self._rhs.itercolumns())
 
-    def accept_visitor(self, visitor) -> VisitorResult:
-        return visitor.visit_union_clause(self)
+    def accept_visitor(self, visitor: ClauseVisitor[VisitorResult], *args, **kwargs) -> VisitorResult:
+        return visitor.visit_union_clause(self, *args, **kwargs)
 
     __hash__ = BaseClause.__hash__
 
@@ -6242,6 +6319,7 @@ class ExceptClause(BaseClause):
         self._rhs = right_query
         super().__init__(hash((self._lhs, self._rhs)))
 
+    __slots__ = ("_lhs", "_rhs")
     __match_args__ = ("left_query", "right_query")
 
     @property
@@ -6282,8 +6360,8 @@ class ExceptClause(BaseClause):
     def itercolumns(self) -> Iterable[ColumnReference]:
         return list(self._lhs.itercolumns()) + list(self._rhs.itercolumns())
 
-    def accept_visitor(self, visitor: ClauseVisitor[VisitorResult]) -> VisitorResult:
-        return visitor.visit_except_clause(self)
+    def accept_visitor(self, visitor: ClauseVisitor[VisitorResult], *args, **kwargs) -> VisitorResult:
+        return visitor.visit_except_clause(self, *args, **kwargs)
 
     __hash__ = BaseClause.__hash__
 
@@ -6314,6 +6392,7 @@ class IntersectClause(BaseClause):
         self._rhs = right_query
         super().__init__(hash((self._lhs, self._rhs)))
 
+    __slots__ = ("_lhs", "_rhs")
     __match_args__ = ("left_query", "right_query")
 
     @property
@@ -6369,8 +6448,8 @@ class IntersectClause(BaseClause):
     def itercolumns(self) -> Iterable[ColumnReference]:
         return list(self._lhs.itercolumns()) + list(self._rhs.itercolumns())
 
-    def accept_visitor(self, visitor: ClauseVisitor[VisitorResult]) -> VisitorResult:
-        return visitor.visit_intersect_clause(self)
+    def accept_visitor(self, visitor: ClauseVisitor[VisitorResult], *args, **kwargs) -> VisitorResult:
+        return visitor.visit_intersect_clause(self, *args, **kwargs)
 
     __hash__ = BaseClause.__hash__
 
@@ -6401,55 +6480,55 @@ class ClauseVisitor(abc.ABC, Generic[VisitorResult]):
     """
 
     @abc.abstractmethod
-    def visit_hint_clause(self, clause: Hint) -> VisitorResult:
+    def visit_hint_clause(self, clause: Hint, *args, **kwargs) -> VisitorResult:
         raise NotImplementedError
 
     @abc.abstractmethod
-    def visit_explain_clause(self, clause: Explain) -> VisitorResult:
+    def visit_explain_clause(self, clause: Explain, *args, **kwargs) -> VisitorResult:
         raise NotImplementedError
 
     @abc.abstractmethod
-    def visit_cte_clause(self, clause: WithQuery) -> VisitorResult:
+    def visit_cte_clause(self, clause: WithQuery, *args, **kwargs) -> VisitorResult:
         raise NotImplementedError
 
     @abc.abstractmethod
-    def visit_select_clause(self, clause: Select) -> VisitorResult:
+    def visit_select_clause(self, clause: Select, *args, **kwargs) -> VisitorResult:
         raise NotImplementedError
 
     @abc.abstractmethod
-    def visit_from_clause(self, clause: From) -> VisitorResult:
+    def visit_from_clause(self, clause: From, *args, **kwargs) -> VisitorResult:
         raise NotImplementedError
 
     @abc.abstractmethod
-    def visit_where_clause(self, clause: Where) -> VisitorResult:
+    def visit_where_clause(self, clause: Where, *args, **kwargs) -> VisitorResult:
         raise NotImplementedError
 
     @abc.abstractmethod
-    def visit_groupby_clause(self, clause: GroupBy) -> VisitorResult:
+    def visit_groupby_clause(self, clause: GroupBy, *args, **kwargs) -> VisitorResult:
         raise NotImplementedError
 
     @abc.abstractmethod
-    def visit_having_clause(self, clause: Having) -> VisitorResult:
+    def visit_having_clause(self, clause: Having, *args, **kwargs) -> VisitorResult:
         raise NotImplementedError
 
     @abc.abstractmethod
-    def visit_orderby_clause(self, clause: OrderBy) -> VisitorResult:
+    def visit_orderby_clause(self, clause: OrderBy, *args, **kwargs) -> VisitorResult:
         raise NotImplementedError
 
     @abc.abstractmethod
-    def visit_limit_clause(self, clause: Limit) -> VisitorResult:
+    def visit_limit_clause(self, clause: Limit, *args, **kwargs) -> VisitorResult:
         raise NotImplementedError
 
     @abc.abstractmethod
-    def visit_union_clause(self, clause: UnionClause) -> VisitorResult:
+    def visit_union_clause(self, clause: UnionClause, *args, **kwargs) -> VisitorResult:
         raise NotImplementedError
 
     @abc.abstractmethod
-    def visit_except_clause(self, clause: ExceptClause) -> VisitorResult:
+    def visit_except_clause(self, clause: ExceptClause, *args, **kwargs) -> VisitorResult:
         raise NotImplementedError
 
     @abc.abstractmethod
-    def visit_intersect_clause(self, clause: IntersectClause) -> VisitorResult:
+    def visit_intersect_clause(self, clause: IntersectClause, *args, **kwargs) -> VisitorResult:
         raise NotImplementedError
 
 
@@ -6816,6 +6895,20 @@ class SqlQuery:
                                self._select_clause, self._from_clause, self._where_clause,
                                self._groupby_clause, self._having_clause,
                                self._orderby_clause, self._limit_clause))
+
+    __slots__ = (
+        "_cte_clause",
+        "_select_clause",
+        "_from_clause",
+        "_where_clause",
+        "_groupby_clause",
+        "_having_clause",
+        "_orderby_clause",
+        "_limit_clause",
+        "_hints",
+        "_explain",
+        "_hash_val"
+    )
 
     @property
     def cte_clause(self) -> Optional[CommonTableExpression]:
@@ -7322,7 +7415,7 @@ class SqlQuery:
         """
         return _create_ast(self)
 
-    def accept_visitor(self, clause_visitor: ClauseVisitor[VisitorResult]) -> dict[BaseClause, VisitorResult]:
+    def accept_visitor(self, clause_visitor: ClauseVisitor[VisitorResult], *args, **kwargs) -> dict[BaseClause, VisitorResult]:
         """Applies a visitor over all clauses in the current query.
 
         Notice that since the visitor is applied to all clauses, it returns the results for each of them.
@@ -7332,7 +7425,7 @@ class SqlQuery:
         clause_visitor : ClauseVisitor
             The visitor algorithm to use.
         """
-        return {clause: clause.accept_visitor(clause_visitor) for clause in self.clauses()}
+        return {clause: clause.accept_visitor(clause_visitor, *args, **kwargs) for clause in self.clauses()}
 
     def __json__(self) -> str:
         return str(self)
@@ -7594,6 +7687,17 @@ class SetQuery:
         self._explain = explain_clause
         self._hash_val = hash((self._lhs, self._rhs, self._op, self._cte, self._limit, self._hints, self._explain))
 
+    __slots__ = (
+        "_lhs",
+        "_rhs",
+        "_op",
+        "_cte",
+        "_orderby",
+        "_limit",
+        "_hints",
+        "_explain",
+        "_hash_val"
+    )
     __match_args__ = ("set_operation", "left_query", "right_query")
 
     @property
@@ -8037,7 +8141,7 @@ class SetQuery:
         """
         return _create_ast(self)
 
-    def accept_visitor(self, clause_visitor: ClauseVisitor) -> dict[BaseClause, VisitorResult]:
+    def accept_visitor(self, clause_visitor: ClauseVisitor, *args, **kwargs) -> dict[BaseClause, VisitorResult]:
         """Applies a visitor over all clauses in the current query.
 
         Notice that since the visitor is applied to all clauses, it returns the results for each of them.
@@ -8047,7 +8151,7 @@ class SetQuery:
         clause_visitor : ClauseVisitor
             The visitor algorithm to use.
         """
-        return {clause: clause.accept_visitor(clause_visitor) for clause in self.clauses()}
+        return {clause: clause.accept_visitor(clause_visitor, *args, **kwargs) for clause in self.clauses()}
 
     def __json__(self) -> str:
         return str(self)
@@ -8094,8 +8198,10 @@ SelectStatement
 
 
 class QueryTypeError(RuntimeError):
-    def __init__(self, message: str) -> None:
-        super().__init__(message)
+    """Error to indicate that a different type of query was expected (e.g. an `ExplicitSqlQuery` instead of a `SetQuery`)."""
+
+    def __init__(self, *args) -> None:
+        super().__init__(*args)
 
 
 def build_query(query_clauses: Iterable[BaseClause]) -> SqlQuery:

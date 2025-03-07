@@ -1796,6 +1796,9 @@ def parse_query(query: str, *, accept_set_query: bool = False, include_hints: bo
         The parsed SQL query.
     """
     # NOTE: this documentation is a 1:1 copy of qal.parse_query. Both should be kept in sync.
+    if not query:
+        raise ParserError("Empty query")
+
     if db_schema is None and (bind_columns or (bind_columns is None and auto_bind_columns)):
         from ..db import DatabasePool  # local import to prevent circular imports
         db_schema = None if DatabasePool.get_instance().empty() else DatabasePool.get_instance().current_database().schema()

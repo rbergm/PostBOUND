@@ -14,7 +14,41 @@ Be carefull when updating and check the changelog!
 
 ---
 
-# ➡ Version 0.13.1
+# ➡ Version 0.13.2
+
+### 🐣 New features
+- `format_quick` now supports different SQL flavors (defaulting to standard SQL and also supporting Postgres)
+
+### 💀 Breaking changes
+_None_
+
+### 📰 Updates
+- Added `__slots__` to all elements of the QAL for improved performance
+- The QAL visitors now support optional `*args` and `*kwargs` to supply additional parameters to the visitor
+
+### 🏥 Fixes
+- Fixed last couple of parsing/formatting bugs for SQL queries (hopefully)
+- Fixed performance regressions when formatting large SQL queries in Postgres-style SQL
+
+### 🪲 Known bugs
+- Pre-defined workloads (`workloads.job()`, etc) do not work if installed as a Pip module. This is because the build process
+  does not retain the workload directory in the `site_packages`.
+
+### ⏳ WIP
+- Baseline for a Postgres-style dynamic programming plan enumerator. This is not yet complete and trying to initialize the
+  corresponding class raises an error for now. The enumerator will probably be ready to go for v0.14.0
+
+---
+
+
+## 🚧 Version 0.14.0 👷
+
+### ⏳ Planned
+- Full dynamic programming support for the `TextbookOptimizationPipeline`, including a Postgres-specific algorithm
+
+---
+
+# 🕑 Version 0.13.1
 
 ### 🐣 New features
 - Added an `expect_match` keyword parameter to `DatabaseSchema.lookup_column`. If this is true, an error is raised if no
@@ -50,46 +84,7 @@ Be carefull when updating and check the changelog!
 ---
 
 
-## 🚧 Version 0.14.0 👷
-
-### ⏳ Planned
-- Full dynamic programming support for the `TextbookOptimizationPipeline`, including a Postgres-specific algorithm
-
----
-
-# ➡ Version 0.12.1
-
-### 🐣 New features
-- Added a bunch of convenience methods to parts of the QAL, e.g. the `CommonTableExpression` supports `len` now and its CTEs
-  can be iterated over directly.
-
-### 💀 Breaking changes
-- Renamed the filter predicate when creating function expressions to `filter_where` to align with the property name.
-
-### 📰 Updates
-- Added missing `visit_predicate_expr` method to the SQL expression visitor. This was a regression caused by making the
-  `AbstractPredicate` an SQL expression.
-- Raise a more descriptive error message when parsing a single query of workload fails.
-
-### 🏥 Fixes
-- Fixed `transform.rename_table()` only renaming column references to a table, but not the actual table (before, renaming *R*
-  to *S* in `SELECT R.a FROM R` produced `SELECT S.a FROM R` rather than `SELECT S.a FROM S`).
-- Fixed parsed window functions containing a plain string function name rather than an actual `FunctionExpression`
-- Fixed typos in some `__match_args__`
-- Fixed `format_quick` not using quoted identifiers in all cases
-
-### 🪲 Known bugs
-- Pre-defined workloads (`workloads.job()`, etc) do not work if installed as a Pip module. This is because the build process
-  does not retain the workload directory in the `site_packages`.
-
-### ⏳ WIP
-- Baseline for dynamic programming plan enumerator. This is not yet complete and trying to initialize a corresponding class
-  raises an error for now. The enumerator will probably be ready to go for v0.13.0
-
----
-
-
-# ➡ Version 0.13.0
+# 🕑 Version 0.13.0
 
 ### 🐣 New features
 - Table references can now be localized to a schema
@@ -126,6 +121,38 @@ Be carefull when updating and check the changelog!
 ### ⏳ WIP
 - Baseline for a Postgres-style dynamic programming plan enumerator. This is not yet complete and trying to initialize the
   corresponding class raises an error for now. The enumerator will probably be ready to go for v0.14.0
+
+---
+
+
+# 🕑 Version 0.12.1
+
+### 🐣 New features
+- Added a bunch of convenience methods to parts of the QAL, e.g. the `CommonTableExpression` supports `len` now and its CTEs
+  can be iterated over directly.
+
+### 💀 Breaking changes
+- Renamed the filter predicate when creating function expressions to `filter_where` to align with the property name.
+
+### 📰 Updates
+- Added missing `visit_predicate_expr` method to the SQL expression visitor. This was a regression caused by making the
+  `AbstractPredicate` an SQL expression.
+- Raise a more descriptive error message when parsing a single query of workload fails.
+
+### 🏥 Fixes
+- Fixed `transform.rename_table()` only renaming column references to a table, but not the actual table (before, renaming *R*
+  to *S* in `SELECT R.a FROM R` produced `SELECT S.a FROM R` rather than `SELECT S.a FROM S`).
+- Fixed parsed window functions containing a plain string function name rather than an actual `FunctionExpression`
+- Fixed typos in some `__match_args__`
+- Fixed `format_quick` not using quoted identifiers in all cases
+
+### 🪲 Known bugs
+- Pre-defined workloads (`workloads.job()`, etc) do not work if installed as a Pip module. This is because the build process
+  does not retain the workload directory in the `site_packages`.
+
+### ⏳ WIP
+- Baseline for dynamic programming plan enumerator. This is not yet complete and trying to initialize a corresponding class
+  raises an error for now. The enumerator will probably be ready to go for v0.13.0
 
 ---
 
