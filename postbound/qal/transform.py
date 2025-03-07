@@ -896,8 +896,7 @@ def _replace_expressions_in_clause(clause: Optional[ClauseType],
 
         return CommonTableExpression(replaced_queries, recursive=clause.recursive)
     elif isinstance(clause, Select):
-        replaced_targets = [BaseProjection(replacement(proj.expression), proj.target_name)
-                            for proj in clause.targets]
+        replaced_targets = [BaseProjection(replacement(proj.expression), proj.target_name) for proj in clause.targets]
         return Select(replaced_targets, distinct=clause.distinct_specifier())
     elif isinstance(clause, ImplicitFromClause):
         return clause

@@ -6240,7 +6240,7 @@ class ExceptClause(BaseClause):
     def __init__(self, left_query: SelectStatement, right_query: SelectStatement) -> None:
         self._lhs = left_query
         self._rhs = right_query
-        super().__init__(hash(self._lhs, self._rhs))
+        super().__init__(hash((self._lhs, self._rhs)))
 
     __match_args__ = ("left_query", "right_query")
 
@@ -6312,7 +6312,7 @@ class IntersectClause(BaseClause):
     def __init__(self, left_query: SelectStatement, right_query: SelectStatement) -> None:
         self._lhs = left_query
         self._rhs = right_query
-        super().__init__(hash(self._lhs, self._rhs))
+        super().__init__(hash((self._lhs, self._rhs)))
 
     __match_args__ = ("left_query", "right_query")
 

@@ -288,7 +288,7 @@ class QueryNamespace:
 
                         defining_nsp = self._lookup_namespace(table.identifier())
                         if not defining_nsp:
-                            continue
+                            raise ParserError(f"No namespace found for table '{table}'")
                         self._output_shape.extend(defining_nsp._output_shape)
 
                 case _:
@@ -1311,7 +1311,8 @@ def _pglast_parse_predicate(pglast_data: dict, *, namespace: QueryNamespace) -> 
             expression = pglast_data["SubLink"]
             sublink_type = expression["subLinkType"]
 
-            subquery = _pglast_parse_query(expression["subselect"]["SelectStmt"], namespace=namespace)
+            subquery = _pglast_parse_query(expression["subselect"]["SelectStmt"],
+                                           namespace=namespace.open_nested(source="temporary"))
             if sublink_type == "EXISTS_SUBLINK":
                 return UnaryPredicate.exists(subquery)
 

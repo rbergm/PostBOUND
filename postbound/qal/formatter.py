@@ -545,10 +545,13 @@ def _expression_prettifier(expression: SqlExpression, *, inline_hints: bool, ind
         case UnaryPredicate(col, op):
             replaced_col = _expression_prettifier(col, inline_hints=inline_hints, indentation=indentation)
             return UnaryPredicate(replaced_col, op)
-        case CompoundPredicate(op, children):
+        case CompoundPredicate(op, children) if op in {CompoundOperator.And, CompoundOperator.Or}:
             replaced_children = [_expression_prettifier(child, inline_hints=inline_hints, indentation=indentation)
                                  for child in children]
             return target(op, replaced_children)
+        case CompoundPredicate(op, child) if op == CompoundOperator.Not:
+            replaced_child = _expression_prettifier(child, inline_hints=inline_hints, indentation=indentation)
+            return target(op, [replaced_child])
         case _:
             raise ValueError(f"Unsupported expression type {type(expression)}: {expression}")
 

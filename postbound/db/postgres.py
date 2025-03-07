@@ -47,6 +47,7 @@ from .._qep import QueryPlan, SortKey
 from ..qal import (
     TableReference, ColumnReference,
     UnboundColumnError, VirtualTableError,
+    CompoundOperator,
     SqlExpression, StaticValueExpression, ColumnExpression, StarExpression, SubqueryExpression, CaseExpression, CastExpression,
     MathExpression, FunctionExpression, ArrayAccessExpression, WindowExpression, OrderByExpression, OrderBy,
     AbstractPredicate, BinaryPredicate, UnaryPredicate, InPredicate, BetweenPredicate, CompoundPredicate,
@@ -1531,7 +1532,8 @@ def _replace_postgres_cast_expressions(expression: SqlExpression) -> SqlExpressi
             replaced_else = _replace_postgres_cast_expressions(else_expr) if else_expr else None
             return target(replaced_cases, else_expr=replaced_else)
         case CastExpression(cast, typ, params):
-            return _PostgresCastExpression(cast, typ, type_params=params)
+            replaced_cast = _replace_postgres_cast_expressions(cast)
+            return _PostgresCastExpression(replaced_cast, typ, type_params=params)
         case MathExpression(op, lhs, rhs):
             replaced_lhs = _replace_postgres_cast_expressions(lhs)
             rhs = util.enlist(rhs) if rhs else []
@@ -1575,9 +1577,12 @@ def _replace_postgres_cast_expressions(expression: SqlExpression) -> SqlExpressi
         case UnaryPredicate(col, op):
             replaced_col = _replace_postgres_cast_expressions(col)
             return target(replaced_col, op)
-        case CompoundPredicate(op, children):
+        case CompoundPredicate(op, children) if op in {CompoundOperator.And, CompoundOperator.Or}:
             replaced_children = [_replace_postgres_cast_expressions(child) for child in children]
             return target(op, replaced_children)
+        case CompoundPredicate(op, child) if op == CompoundOperator.Not:
+            replaced_child = _replace_postgres_cast_expressions(child)
+            return target(op, replaced_child)
         case _:
             raise ValueError(f"Unsupported expression type {type(expression)}: {expression}")
 
