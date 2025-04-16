@@ -14,7 +14,46 @@ Be carefull when updating and check the changelog!
 
 ---
 
-# ➡ Version 0.13.2
+# ➡ Version 0.13.3
+
+### 🐣 New features
+- Added support for `len()` (providing the plan depth) and `iter()` (iterating over all nodes, including subplans) on
+  `QueryPlan`
+
+### 💀 Breaking changes
+_None_
+
+### 📰 Updates
+- Made the native cost model more resilient to illegal query plans. It now provides costs of infinity by default.
+
+### 🏥 Fixes
+- Fixed `QueryPlan.with_actual_card()` not updating child nodes
+- Fixed wrong `__match_args__` in `ValuesTableSource`
+- Fixed namespace lookup of aliased CTEs during query parsing which caused some tables to be bound to the wrong table (or no
+  table at all)
+- Fixed regression causing wrong plan visualization after query plan unification in v0.12.0
+- Various fixes for situations when the Postgres hinting and plan analysis services received unusual input
+
+### 🪲 Known bugs
+- Pre-defined workloads (`workloads.job()`, etc) do not work if installed as a Pip module. This is because the build process
+  does not retain the workload directory in the `site_packages`.
+
+### ⏳ WIP
+- Baseline for a Postgres-style dynamic programming plan enumerator. This is not yet complete and trying to initialize the
+  corresponding class raises an error for now. The enumerator will probably be ready to go for v0.14.0
+
+---
+
+
+## 🚧 Version 0.14.0 👷
+
+### ⏳ Planned
+- Full dynamic programming support for the `TextbookOptimizationPipeline`, including a Postgres-specific algorithm
+
+---
+
+
+# 🕑 Version 0.13.2
 
 ### 🐣 New features
 - `format_quick` now supports different SQL flavors (defaulting to standard SQL and also supporting Postgres)
@@ -40,13 +79,6 @@ _None_
 
 ---
 
-
-## 🚧 Version 0.14.0 👷
-
-### ⏳ Planned
-- Full dynamic programming support for the `TextbookOptimizationPipeline`, including a Postgres-specific algorithm
-
----
 
 # 🕑 Version 0.13.1
 
