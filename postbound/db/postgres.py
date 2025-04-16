@@ -1650,7 +1650,8 @@ class PostgresHintService(HintService):
             physical_operators = operators_from_plan(plan)
             plan_parameters = parameters_from_plan(plan)
 
-        adapted_query, hint_parts = self._generate_pg_join_order_hint(adapted_query, join_order, physical_operators)
+        if join_order is not None:
+            adapted_query, hint_parts = self._generate_pg_join_order_hint(adapted_query, join_order, physical_operators)
 
         hint_parts = hint_parts if hint_parts else HintParts.empty()
 
@@ -1888,7 +1889,10 @@ class PostgresHintService(HintService):
         settings = []
         for operator, enabled in physical_operators.global_settings.items():
             setting = "on" if enabled else "off"
-            operator_key = PostgresOptimizerSettings[operator]
+            operator_key = PostgresOptimizerSettings.get(operator)
+            if not operator_key:
+                continue
+
             settings.append(f"SET {operator_key} = '{setting}';")
 
         hints = []
@@ -2782,7 +2786,7 @@ class PostgresExplainNode:
         padding = " " * _indentation
         prefix = f"{padding}<- " if padding else ""
         own_inspection += [prefix + str(self)]
-        child_inspections = [child.inspect(_indentation=_indentation+2) for child in self.inner_outer_children()]
+        child_inspections = [child.inspect(_indentation=_indentation+2) for child in self.children]
         return "\n".join(own_inspection + child_inspections)
 
     def _infer_sorting_from_children(self) -> list[SortKey]:
