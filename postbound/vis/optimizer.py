@@ -175,9 +175,9 @@ def _query_plan_labels(node: QueryPlan, *,
                                            subplan_target=node.subplan.target_name)
         label = f"<<SubPlan>> {subplan_target}\n{label}"
         params["style"] = "dashed"
-    elif node.is_join:
+    elif node.is_join():
         label, params = node.node_type, {"style": "bold"}
-    elif node.is_scan:
+    elif node.is_scan():
         label, params = f"<<{node.node_type}>>\n{node.base_table}", {"color": "grey"}
     else:
         label, params = node.node_type, {"style": "dashed", "color": "grey"}
