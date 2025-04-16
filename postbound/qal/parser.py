@@ -286,7 +286,11 @@ class QueryNamespace:
                             self._output_shape.extend(self._schema_cache.columns_of(table))
                             continue
 
-                        defining_nsp = self._lookup_namespace(table.identifier())
+                        if table.alias:
+                            defining_nsp = self._lookup_namespace(table.alias)
+                        if not defining_nsp and table.full_name:
+                            # if we try to look up an aliased CTE, we need to use the full name instead
+                            defining_nsp = self._lookup_namespace(table.full_name)
                         if not defining_nsp:
                             raise ParserError(f"No namespace found for table '{table}'")
                         self._output_shape.extend(defining_nsp._output_shape)

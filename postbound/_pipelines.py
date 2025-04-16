@@ -9,7 +9,6 @@ from __future__ import annotations
 import abc
 from typing import Optional, Protocol
 
-
 from .optimizer import validation
 from .optimizer.validation import OptimizationPreCheck
 from .optimizer._hints import PhysicalOperatorAssignment, PlanParameterization
