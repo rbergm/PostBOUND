@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import collections
 import math
-from collections.abc import Callable, Iterable, Sequence
+from collections.abc import Callable, Iterable, Iterator, Sequence
 from dataclasses import dataclass
 from numbers import Number
 from typing import Any, Literal, Optional
@@ -536,6 +536,9 @@ class QueryPlan:
     To convert between different optimization artifacts, a number of methods are available. For example, `to_query_plan` can
     be used to construct a query plan from a join order and a set of operators. Likewise, `explode_query_plan` converts the
     query plan back into join order, operators and parameters.
+
+    Query plans support *len()*  (providing the plan depth without subplans) and *iter()* (providing all contained nodes
+    including subplans).
 
     Parameters
     ----------
@@ -1109,7 +1112,8 @@ class QueryPlan:
                          plan_params=self.params, estimates=updated_estimates, measures=updated_measures,
                          subplan=self.subplan)
 
-    def with_actual_card(self, *, cost_estimator: Optional[Callable[[QueryPlan, Cardinality], Cost]] = None) -> QueryPlan:
+    def with_actual_card(self, *, cost_estimator: Optional[Callable[[QueryPlan, Cardinality], Cost]] = None,
+                         ignore_nan: bool = True) -> QueryPlan:
         """Replaces the current estimates of the operator with the actual measurements.
 
         The updated plan will not contain any measurements anymore and the costs will be set to *Nan* unless an explicit cost
@@ -1121,6 +1125,9 @@ class QueryPlan:
             An optional cost function to compute new estimates based on the new estimates. If no cost estimator is provided,
             the cost is set to *NaN*. The estimator receives the old plan now along with the new cardinality estimate as input
             and should return the new cost estimate.
+        ignore_nan : bool, optional
+            Whether *NaN* cardinalities should also be swapped. By default, this is set to *True*, which only replaces the
+            estimated cardinality if the actual cardinality is a meaningful value.
 
         Returns
         -------
@@ -1129,7 +1136,8 @@ class QueryPlan:
             estimated cost. The current plan is not changed.
         """
         if self.actual_cardinality:
-            updated_cardinality = self.actual_cardinality
+            updated_cardinality = (self.estimated_cardinality if ignore_nan and math.isnan(self.actual_cardinality)
+                                   else self.actual_cardinality)
             updated_cost = cost_estimator(self, updated_cardinality) if cost_estimator else math.nan
             updated_estimates = PlanEstimates(cardinality=updated_cardinality, cost=updated_cost)
             updated_measures = None
@@ -1137,13 +1145,17 @@ class QueryPlan:
             updated_estimates = self._estimates
             updated_measures = None
 
+        updated_children = [child.with_actual_card(cost_estimator=cost_estimator, ignore_nan=ignore_nan)
+                            for child in self.children]
+
         if self.subplan:
-            updated_subplan_root = self.subplan.root.with_actual_card()
+            updated_subplan_root = self.subplan.root.with_actual_card(cost_estimator=cost_estimator,
+                                                                      ignore_nan=ignore_nan)
             updated_subplan = Subplan(updated_subplan_root, self.subplan.target_name)
         else:
             updated_subplan = None
 
-        return QueryPlan(self.node_type, operator=self.operator, children=self.children,
+        return QueryPlan(self.node_type, operator=self.operator, children=updated_children,
                          plan_params=self.params, estimates=updated_estimates, measures=updated_measures,
                          subplan=updated_subplan)
 
@@ -1228,6 +1240,16 @@ class QueryPlan:
             "measures": self._measures,
             "subplan": self._subplan
         }
+
+    def __len__(self) -> int:
+        return self.plan_depth()
+
+    def __iter__(self) -> Iterator[QueryPlan]:
+        yield self
+        for child in self.children:
+            yield from child
+        if self.subplan:
+            yield from self.subplan.root
 
     def __eq__(self, other: object) -> bool:
         return (isinstance(other, type(self))

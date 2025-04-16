@@ -5238,7 +5238,7 @@ class ValuesTableSource(TableSource):
         self._hash_val = hash((self._table, self._columns, self._values))
 
     __slots__ = ("_values", "_table", "_columns", "_hash_val")
-    __match_args__ = ("values", "alias", "cols")
+    __match_args__ = ("rows", "alias", "cols")
 
     @property
     def rows(self) -> ValuesList:
@@ -7732,6 +7732,23 @@ class SetQuery:
             The right-hand side of the set operation
         """
         return self._rhs
+
+    @property
+    def set_clause(self) -> SetOperationClause:
+        """Get the set clause of the query."""
+
+        match self._op:
+            case SetOperator.Union:
+                return UnionClause(self._lhs, self._rhs, union_all=False)
+            case SetOperator.UnionAll:
+                return UnionClause(self._lhs, self._rhs, union_all=True)
+            case SetOperator.Intersect:
+                return IntersectClause(self._lhs, self._rhs)
+            case SetOperator.Except:
+                return ExceptClause(self._lhs, self._rhs)
+            case _:
+                raise RuntimeError("Unknown set operation. This is likely a bug in the PostBOUND query abstraction. "
+                                   "Please consider filing a bug report.")
 
     @property
     def cte_clause(self) -> Optional[CommonTableExpression]:

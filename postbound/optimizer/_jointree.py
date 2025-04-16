@@ -438,7 +438,7 @@ class JoinTree(Container[TableReference], Generic[AnnotationType]):
 
     def __str__(self):
         if self.is_scan():
-            return str(self._table)
+            return self._table.identifier()
         return f"({self._outer} ⋈ {self._inner})"
 
 
