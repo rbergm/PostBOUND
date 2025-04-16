@@ -165,13 +165,7 @@ cython_debug/
 dt-venv/
 postbound-venv/
 pb-venv/
-.psycopg_connection
-.psycopg_connection_job
-.psycopg_connection_imdb
-.psycopg_connection_tpch
-.psycopg_connection_ssb
-.psycopg_connection_stack
-.psycopg_connection_stats
+.psycopg_connection*
 .mysql_connection.config
 
 # PostBOUND-specific files

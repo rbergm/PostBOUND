@@ -11,6 +11,7 @@ would provide a combined query optimizer with Oracle's join ordering algorithm a
 """
 from __future__ import annotations
 
+import math
 from collections.abc import Iterable
 from typing import Optional
 
@@ -23,6 +24,7 @@ from ..._stages import (
     JoinOrderOptimization, PhysicalOperatorSelection, ParameterGeneration,
     CompleteOptimizationAlgorithm
 )
+from ...db import DatabaseServerError, DatabaseUserError
 from ..policies.cardinalities import CardinalityHintsGenerator
 from ... import db, qal, util
 from ...qal import SqlQuery
@@ -30,15 +32,31 @@ from ...util import jsondict
 
 
 class NativeCostModel(CostModel):
-    """Obtains the cost of a query plan by using the cost model of an actual database system."""
+    """Obtains the cost of a query plan by using the cost model of an actual database system.
 
-    def __init__(self) -> None:
+    Parameters
+    ----------
+    raise_on_error : bool
+        Whether the cost model should raise an error if anything goes wrong during the estimation. For example, this can
+        happen if the query plan cannot be executed on the target database system. If this is off (the default), failure
+        results in an infinite cost.
+    """
+
+    def __init__(self, raise_on_error: bool = False) -> None:
         super().__init__()
         self._target_db: Optional[db.Database] = None
+        self._raise_on_error = raise_on_error
 
     def estimate_cost(self, query: SqlQuery, plan: QueryPlan) -> Cost:
         hinted_query = self._target_db.hinting().generate_hints(query, plan.with_actual_card())
-        return self._target_db.optimizer().cost_estimate(hinted_query)
+        if self._raise_on_error:
+            cost = self._target_db.optimizer().cost_estimate(hinted_query)
+        else:
+            try:
+                cost = self._target_db.optimizer().cost_estimate(hinted_query)
+            except DatabaseServerError | DatabaseUserError:
+                cost = math.inf
+        return cost
 
     def describe(self) -> jsondict:
         return {"name": "native", "database_system": self._target_db.describe()}
