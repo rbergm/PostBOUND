@@ -21,7 +21,7 @@ Be carefull when updating and check the changelog!
   `QueryPlan`
 
 ### 💀 Breaking changes
-_None_
+- Removed scipy dependency. Right now, we don't use this library anyway.
 
 ### 📰 Updates
 - Made the native cost model more resilient to illegal query plans. It now provides costs of infinity by default.

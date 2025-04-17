@@ -9,7 +9,6 @@ numpy==2.0.0
 pandas==2.2.2
 pglast==7.2
 psycopg[binary]==3.2.1
-scipy==1.14.0
 setuptools==59.6.0
 tomli==2.0.1
 wheel==0.43.0
