@@ -2680,7 +2680,10 @@ class PostgresExplainNode:
         self.cost = explain_data.get("Total Cost", math.nan)
         self.cardinality_estimate = explain_data.get("Plan Rows", math.nan)
         self.execution_time = explain_data.get("Actual Total Time", math.nan) / 1000
-        self.true_cardinality = explain_data.get("Actual Rows", math.nan)
+
+        # true_cardinality is accessed as a property to add a warning for BitmapAnd/Or nodes
+        self._true_card = explain_data.get("Actual Rows", math.nan)
+
         self.loops = explain_data.get("Actual Loops", 1)
 
         self.relation_name = explain_data.get("Relation Name", None)
@@ -2714,6 +2717,15 @@ class PostgresExplainNode:
                                self.recheck_condition,
                                self.parent_relationship, self.parallel_workers,
                                tuple(self.children)))
+
+    @property
+    def true_cardinality(self) -> float:
+        if self.node_type in {"BitmapAnd", "BitmapOr"}:
+            # For BitmapAnd/BitmapOr nodes, the actual number of rows is always 0.
+            # This is due to limitations in the Postgres implementation.
+            warnings.warn("Postgres does not report the actual number of rows for bitmap nodes correctly. Returning NaN.")
+            return math.nan
+        return self._true_card
 
     def is_scan(self) -> bool:
         """Checks, whether the current node corresponds to a scan node.
@@ -2751,7 +2763,7 @@ class PostgresExplainNode:
         bool
             Whether the node represents part of an ``EXPLAIN ANALYZE`` plan
         """
-        return not math.isnan(self.execution_time) or not math.isnan(self.true_cardinality)
+        return not math.isnan(self.execution_time)
 
     def filter_conditions(self) -> dict[str, str]:
         """Collects all filter conditions that are defined on this node
