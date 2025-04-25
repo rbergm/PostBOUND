@@ -25,6 +25,8 @@ import warnings
 from collections.abc import Iterable, Sequence
 from typing import Any, Optional
 
+import networkx as nx
+
 from .. import util
 from .._qep import QueryPlan
 from ..qal import TableReference, ColumnReference, SqlQuery, VirtualTableError, UnboundColumnError
@@ -787,6 +789,39 @@ class DatabaseSchema(abc.ABC):
             If the table associated with the column is a virtual table (e.g. subquery or CTE)
         """
         raise NotImplementedError
+
+    def as_graph(self) -> nx.DiGraph:
+        """Constructs a compact representation of the database schema.
+
+        The schema is expressed as a directed graph. Each table is represented as a node. Nodes contain the following
+        attributes:
+        - `columns`: a list of all columns in the table
+        - `data_type`: a dictionary mapping each column to its data type
+        - `primary_key`: the primary key of the table (if it exists, otherwise *None*)
+
+        In addition, edges are used to model foreign key constraints. Each edge points from the table that contains the foreign
+        key (column *y* in the example in `foreign_keys_on`) to the table that is referenced by the foreign key (*x* in the
+        example in `foreign_keys_on`). Edges contain two attributes:
+        - `referenced_col`: the column in the referenced table
+        - `fk_col`: the column in the table that contains the foreign key
+        """
+        g = nx.DiGraph()
+        all_columns: set[ColumnReference] = set()
+
+        for table in self.tables():
+            cols = self.columns(table)
+            dtypes = {col: self.datatype(col) for col in cols}
+            pkey = self.primary_key_column(table)
+            g.add_node(table, columns=cols, data_type=dtypes, primary_key=pkey)
+
+            all_columns |= set(cols)
+
+        for col in all_columns:
+            foreign_keys = self.foreign_keys_on(col)
+            for fk_target in foreign_keys:
+                g.add_edge(fk_target.table, col.table, referenced_col=fk_target, fk_col=col)
+
+        return g
 
     def __hash__(self) -> int:
         return hash(self._db)
