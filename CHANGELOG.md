@@ -14,7 +14,45 @@ Be carefull when updating and check the changelog!
 
 ---
 
-# ➡ Version 0.13.3
+# ➡ Version 0.14.0
+
+### 🐣 New features
+- `PostgresSetting` and `PostgresConfiguration` can now be updated
+- Improved schema introspection
+  - All schema objects can now provide the Primary key column directly with `primary_key_column()`
+  - Foreign key constraints can now be queried via the `foreign_keys_on()` method
+  - The entire schema can be represented as a DAG using `as_graph()`
+
+### 💀 Breaking changes
+-
+
+### 📰 Updates
+- Added a warning when retrieving the actual cardinality of Bitmap AND/OR nodes in Postgres EXPLAIN plans. Postgres does not
+  measure these.
+- Added `match` support for `PostgresSetting`
+
+### 🏥 Fixes
+-
+
+### 🪲 Known bugs
+- Pre-defined workloads (`workloads.job()`, etc) do not work if installed as a Pip module. This is because the build process
+  does not retain the workload directory in the `site_packages`.
+
+### ⏳ WIP
+- Baseline for a Postgres-style dynamic programming plan enumerator. This is not yet complete and trying to initialize the
+  corresponding class raises an error for now. The enumerator will probably be ready to go for v0.15.0
+
+---
+
+
+## 🚧 Version 0.15.0 👷
+
+### ⏳ Planned
+- Full dynamic programming support for the `TextbookOptimizationPipeline`, including a Postgres-specific algorithm
+
+---
+
+# 🕑 Version 0.13.3
 
 ### 🐣 New features
 - Added support for `len()` (providing the plan depth) and `iter()` (iterating over all nodes, including subplans) on
@@ -41,14 +79,6 @@ Be carefull when updating and check the changelog!
 ### ⏳ WIP
 - Baseline for a Postgres-style dynamic programming plan enumerator. This is not yet complete and trying to initialize the
   corresponding class raises an error for now. The enumerator will probably be ready to go for v0.14.0
-
----
-
-
-## 🚧 Version 0.14.0 👷
-
-### ⏳ Planned
-- Full dynamic programming support for the `TextbookOptimizationPipeline`, including a Postgres-specific algorithm
 
 ---
 
