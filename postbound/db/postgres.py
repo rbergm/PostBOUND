@@ -904,30 +904,6 @@ class PostgresSchemaInterface(DatabaseSchema):
         candidate_tables = [table.qualified_name() for table in candidate_tables]
         raise ValueError(f"Column '{column}' not found in candidate tables {candidate_tables}")
 
-    def primary_key_column(self, table: TableReference | str) -> ColumnReference:
-        """Determines the primary key column of a specific table.
-
-        Parameters
-        ----------
-        table : TableReference | str
-            The table to check
-
-        Returns
-        -------
-        ColumnReference
-            The column that acts as the primary key.
-
-        Warnings
-        --------
-        Calling this method on a table with no primary key, or with a composite primary key yields undefined behavior.
-        """
-        table = TableReference(table) if isinstance(table, str) else table
-        indexes = self._fetch_indexes(table)
-        col_name = next((col for col, primary in indexes.items() if primary), None)
-        if col_name is None:
-            raise ValueError("No primary key column found on table " + str(table))
-        return ColumnReference(col_name, table)
-
     def is_primary_key(self, column: ColumnReference) -> bool:
         if not column.table:
             raise UnboundColumnError(column)
@@ -966,11 +942,36 @@ class PostgresSchemaInterface(DatabaseSchema):
             WHERE rel.relname = %s
                 AND att.attname = %s
                 AND nsp.nspname = %s
-
         """)
+
         self._db.cursor().execute(query_template, (column.table.full_name, column.name, schema))
         result_set = self._db.cursor().fetchall()
         return {row[0] for row in result_set}
+
+    def foreign_keys_on(self, column: ColumnReference) -> set[ColumnReference]:
+        if not column.table:
+            raise UnboundColumnError(column)
+        if column.table.virtual:
+            raise VirtualTableError(column.table)
+        schema = column.table.schema or "public"
+        query_template = textwrap.dedent("""
+            SELECT target.table_name, target.column_name
+            FROM information_schema.key_column_usage AS fk_sources
+                JOIN information_schema.table_constraints AS all_constraints
+                ON fk_sources.constraint_name = all_constraints.constraint_name
+                    AND fk_sources.table_schema = all_constraints.table_schema
+                JOIN information_schema.constraint_column_usage AS target
+                ON fk_sources.constraint_name = target.constraint_name
+                    AND fk_sources.table_schema = target.table_schema
+            WHERE fk_sources.table_name = %s
+                AND fk_sources.column_name = %s
+                AND fk_sources.table_schema = %s
+                AND all_constraints.constraint_type = 'FOREIGN KEY'
+            """)
+
+        self._db.cursor().execute(query_template, (column.table.full_name, column.name, schema))
+        result_set = self._db.cursor().fetchall()
+        return {ColumnReference(row[1], TableReference(row[0])) for row in result_set}
 
     def datatype(self, column: ColumnReference) -> str:
         if not column.table:

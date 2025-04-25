@@ -289,6 +289,18 @@ class MysqlSchemaInterface(DatabaseSchema):
         result_set = self._db.cursor().fetchall()
         return {index[0] for index in result_set}
 
+    def foreign_keys_on(self, column: ColumnReference) -> set[ColumnReference]:
+        if not column.table:
+            raise UnboundColumnError(column)
+        if column.table.virtual:
+            raise VirtualTableError(column.table)
+        query_template = ("SELECT referenced_table_name, referenced_column_name "
+                          "FROM information_schema.key_column_usage "
+                          "WHERE table_name = %s AND column_name = %s AND referenced_column_name IS NOT NULL")
+        self._db.cursor().execute(query_template, (column.table.full_name, column.name))
+        result_set = self._db.cursor().fetchall()
+        return {ColumnReference(table=TableReference(name=table), name=col) for table, col in result_set}
+
     def datatype(self, column: ColumnReference) -> str:
         if not column.table:
             raise UnboundColumnError(column)

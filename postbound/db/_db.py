@@ -695,6 +695,50 @@ class DatabaseSchema(abc.ABC):
         """
         raise NotImplementedError
 
+    def primary_key_column(self, table: TableReference | str) -> Optional[ColumnReference]:
+        """Determines the primary key column of a specific table.
+
+        Parameters
+        ----------
+        table : TableReference | str
+            The table to check
+
+        Returns
+        -------
+        Optional[ColumnReference]
+            The primary key if it exists, or *None* otherwise.
+        """
+        return next((col for col in self.columns(table) if self.is_primary_key(col)), None)
+
+    @abc.abstractmethod
+    def foreign_keys_on(self, column: ColumnReference) -> set[ColumnReference]:
+        """Fetches all foreign key constraints that are specified on a specific column.
+
+        The provided columns are the target columns that are referenced by the foreign key constraint. E.g., suppose there are
+        tables A and B with columns x and y. We specify a foreign key constraint on column y to ensure that all values in y
+        reference a value in x. Then, calling this method on column y will return column x. If there are multiple foreign key
+        constraints on the same column, all of them will be returned.
+
+        Parameters
+        ----------
+        column : ColumnReference
+            The column to check. All foreign keys that are "pointing from" this column to another column are returned.
+
+        Returns
+        -------
+        set[ColumnReference]
+            The columns that are "pointed to" by foreign key constraints on the given column. If no such foreign keys exist,
+            an empty set is returned.
+
+        Raises
+        ------
+        postbound.qal.UnboundColumnError
+            If the column is not associated with any table
+        postbound.qal.VirtualTableError
+            If the table associated with the column is a virtual table (e.g. subquery or CTE)
+        """
+        raise NotImplementedError
+
     @abc.abstractmethod
     def datatype(self, column: ColumnReference) -> str:
         """Retrieves the (physical) data type of a column.
