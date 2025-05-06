@@ -9,57 +9,152 @@ from typing import Any, Literal, Optional
 
 from . import util
 from ._core import Cardinality, Cost, ScanOperator, JoinOperator, PhysicalOperator, TableReference, ColumnReference
-from .qal import SqlExpression, AbstractPredicate
-from .util import jsondict
+from .qal import SqlExpression, ColumnExpression, AbstractPredicate
+from .util import jsondict, StateError
 
 
 JoinDirection = Literal["inner", "outer"]
 
 
-@dataclass(frozen=True)
 class SortKey:
     """Sort keys describe how the tuples in a relation are sorted.
 
-    Attributes
+    Each sort key contains a set of columns that describe the equivalence class of the sort key, i.e. the column values in each
+    row are all equal to one another. Therefore, the relation can be treated as being sorted by any of them.
+
+    Most commonly, relations will only be sorted by a single column (which can be checked by calling *len()* on the sort key,
+    or by checking the `equivalence_class` directly). In this case, the `column` property can be used to retrieve the
+    corresponding expression that forms the column.
+
+    To check, whether two sort keys are equivalent, the `is_compatible_with` method can be used. For more idiomatic access,
+    ``column in sort_key`` is also supported.
+
+    To create a new equivalence class, the `for_equivalence_class(columns)` method is available to create a new sort key from
+    scratch. To combine two existing sort keys, `merge_with` can be used.
+
+    Parameters
     ----------
-    column : SqlExpression
-        The column that is used to sort the tuples. This will usually be a column reference, but can also be a more complex
-        expression.
+    columns : Iterable[SqlExpression]
+        The column(s) that is used to sort the tuples. This will usually contain plain column references (`ColumnExpression`),
+        but can also use more complex expressions.
     ascending : bool
         Whether the sorting is ascending or descending. Defaults to ascending.
     """
 
-    column: SqlExpression
-    ascending: bool = True
-
     @staticmethod
-    def of(column: SqlExpression, ascending: bool = True) -> SortKey:
-        """Creates a new sort key.
-
-        This is just a more expressive alias for the constructor.
+    def of(column: SqlExpression | ColumnReference, *, ascending: bool = True) -> SortKey:
+        """Creates a new sort key for a single column.
 
         Parameters
         ----------
-        column : SqlExpression
-            The column that is used to sort the tuples. This will usually be a column reference, but can also be a more complex
-            expression.
+        column : SqlExpression | ColumnReference
+            The column that is used to sort the tuples. Can be a plain column reference, which will be wrapped by a
+            `ColumnExpression` automatically.
         ascending : bool, optional
             Whether the sorting is ascending or descending. Defaults to ascending.
 
         Returns
         -------
         SortKey
-            The sort key
+            The sort key with an equivalence class for the single column.
         """
-        return SortKey(column, ascending)
+        if isinstance(column, ColumnReference):
+            column = ColumnExpression(column)
+        return SortKey([column], ascending=ascending)
+
+    @staticmethod
+    def for_equivalence_class(members: Iterable[SqlExpression | ColumnReference], *, ascending: bool = True) -> SortKey:
+        """Creates a new sort key for an equivalence class of columns.
+
+        This is just a more expressive alias for calling the constructor directly. This method assumes that the values for
+        all columns in the equivalence class are equal to one another. The client is responsible for ensuring and checking
+        that this is actually the case.
+
+        Parameters
+        ----------
+        members : Iterable[SqlExpression  |  ColumnReference]
+            The columns that describe the sorting of the relation. This can contain just a single item, in which case the
+            method is pretty much the same as `of`. Any passed `ColumnReference` will be wrapped in a `ColumnExpression`.
+        ascending : bool, optional
+            Whether the sorting is ascending or descending. Defaults to ascending.
+
+        Returns
+        -------
+        SortKey
+            The sort key with an equivalence class for the columns.
+        """
+        members = [ColumnExpression(mem) if isinstance(mem, ColumnReference) else mem for mem in members]
+        return SortKey(members, ascending=ascending)
+
+    def __init__(self, columns: Iterable[SqlExpression], *, ascending: bool = True) -> None:
+        self._members = frozenset(columns)
+        if not self._members:
+            raise ValueError("Sort key must contain at least one column")
+        self._ascending = ascending
+
+    __match_args___ = ("equivalence_class", "ascending")
+
+    @property
+    def column(self) -> SqlExpression:
+        """For single-column sort keys, get this column."""
+        if len(self._members) != 1:
+            raise StateError("Sort key is not a single column reference")
+        return next(iter(self._members))
+
+    @property
+    def equivalence_class(self) -> frozenset[SqlExpression]:
+        """Get all columns that are part of the equivalence class. This will be 1 or more columns."""
+        return self._members
+
+    @property
+    def ascending(self) -> bool:
+        """Get the sort direction of this key."""
+        return self._ascending
+
+    def is_compatible_with(self, other: SortKey | ColumnReference) -> bool:
+        """Checks, whether two keys are sorted the same way.
+
+        For single column references, this essentially checks whether the column is part of the key's equivalence class.
+        """
+        if isinstance(other, ColumnReference):
+            return other in self._members
+
+        if self.ascending != other.ascending:
+            return False
+        return len(self._members & other._members) > 0
+
+    def merge_with(self, other: SortKey) -> SortKey:
+        """Merges the equivalence classes of two sort keys."""
+        if self.ascending != other.ascending:
+            raise ValueError("Cannot merge sort keys with different sort orders")
+        return SortKey(self._members | other._members, ascending=self.ascending)
 
     def __json__(self) -> jsondict:
-        return {"column": self.column, "ascending": self.ascending}
+        return {"equivalence_class": self._members, "ascending": self._ascending}
 
-    def __str__(self):
-        if self.ascending:
-            return str(self.column)
-        return f"{self.column} DESC"
+    def __len__(self) -> int:
+        return len(self._members)
+
+    def __contains__(self, item: object) -> bool:
+        return self.is_compatible_with(item) if isinstance(item, (ColumnReference, SortKey)) else False
+
+    def __eq__(self, other: object) -> bool:
+        return isinstance(other, type(self)) and self._members == other._members and self._ascending == other._ascending
+
+    def __hash__(self) -> int:
+        return hash((self._members, self._ascending))
+
+    def __repr__(self) -> str:
+        return str(self)
+
+    def __str__(self) -> str:
+        suffix = "" if self.ascending else " DESC"
+        if len(self._members) == 1:
+            member = str(self.column)
+        else:
+            members = ", ".join(str(m) for m in self._members)
+            member = f"{{{members}}}"
+        return f"{member}{suffix}"
 
 
 class PlanParams:
@@ -749,6 +844,16 @@ class QueryPlan:
         This is just a shorthand for accessing the plan parameters manually.
         """
         return self._plan_params.filter_predicate
+
+    @property
+    def sort_keys(self) -> Sequence[SortKey]:
+        """Get the sort keys describing the ordering of tuples in the output relation.
+
+        Absence of a specific sort order is indicated by an empty sequence.
+
+        This is just a shorthand for accessing the plan parameters manually.
+        """
+        return self._plan_params.sort_keys
 
     @property
     def estimates(self) -> PlanEstimates:
