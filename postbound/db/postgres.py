@@ -887,8 +887,15 @@ class PostgresInterface(Database):
         """
         if not query.upper().startswith("EXPLAIN (FORMAT JSON)"):
             query = "EXPLAIN (FORMAT JSON) " + query
-        self._cursor.execute(query)
-        return self._cursor.fetchone()[0]
+        try:
+            self._cursor.execute(query)
+            return self._cursor.fetchone()[0]
+        except (psycopg.InternalError, psycopg.OperationalError) as e:
+            msg = "\n".join([f"At {util.timestamp()}", "For query:", str(query), "Message:", str(e)])
+            raise DatabaseServerError(msg, e)
+        except psycopg.Error as e:
+            msg = "\n".join([f"At {util.timestamp()}", "For query:", str(query), "Message:", str(e)])
+            raise DatabaseUserError(msg, e)
 
     def _obtain_geqo_state(self) -> _GeQOState:
         """Fetches the current GeQO configuration from the database.
@@ -899,7 +906,7 @@ class PostgresInterface(Database):
             The relevant GeQO config
         """
         self._cursor.execute("SELECT name, setting FROM pg_settings "
-                             "WHERE name = 'geqo' OR name = 'geqo_threshold' ORDER BY name;")
+                             "WHERE name IN ('geqo', 'geqo_threshold') ORDER BY name;")
         geqo_enabled: bool = False
         geqo_threshold: int = 0
         for name, value in self._cursor.fetchall():
@@ -908,7 +915,8 @@ class PostgresInterface(Database):
             elif name == "geqo_threshold":
                 geqo_threshold = int(value)
             else:
-                raise RuntimeError("Malformed GeQO query. This is a programming error, it's not your fault!")
+                warnings.warn(f"Unexpected GeQO setting '{name}' with value '{value}'")
+                continue
         return _GeQOState(geqo_enabled, geqo_threshold)
 
     def _restore_geqo_state(self) -> None:
@@ -2921,6 +2929,7 @@ class PostgresExplainNode:
         return None
 
     def _parse_sort_keys(self) -> list[SortKey]:
+        # TODO implementation
         return None
 
     def __hash__(self) -> int:
