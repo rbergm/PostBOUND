@@ -3394,6 +3394,8 @@ class QueryPredicates:
         Collection[AbstractPredicate]
             The filter predicates.
         """
+        if self.is_empty():
+            return []
         return _collect_filter_predicates(self._root)
 
     @functools.cache
@@ -3415,6 +3417,8 @@ class QueryPredicates:
         Collection[AbstractPredicate]
             The join predicates
         """
+        if self.is_empty():
+            return []
         return _collect_join_predicates(self._root)
 
     @functools.cache
