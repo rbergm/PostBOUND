@@ -2,27 +2,25 @@
 from __future__ import annotations
 
 
+class LogicError(RuntimeError):
+    """Generic error to indicate that any kind of algorithmic problem occurred.
+
+    This error is generally used when some assumption within PostBOUND is violated, but it's (probably) not the user's fault.
+    As a rule of thumb, if the user supplies faulty input, a `ValueError` should be raised instead.
+    Therefore, encoutering a `LogicError` indicates a bug in PostBOUND itself.
+    """
+    def __init__(self, *args, **kwargs) -> None:
+        super().__init__(*args, **kwargs)
+
+
 class StateError(RuntimeError):
-    """Indicates that an object is not in the right state to perform an operation.
-
-    Parameters
-    ----------
-    *args
-        Further details on which state was violated and how.
-    """
-
-    def __init__(self, *args) -> None:
-        super().__init__(*args)
+    """Indicates that an object is not in the right state to perform an operation."""
+    def __init__(self, *args, **kwargs) -> None:
+        super().__init__(*args, **kwargs)
 
 
-class InvariantViolationError(RuntimeError):
-    """Indicates that some contract of a method was violated. The arguments should provide further details
+class InvariantViolationError(LogicError):
+    """Indicates that some contract of a method was violated. The arguments should provide further details."""
 
-    Parameters
-    ----------
-    *args
-        Further details on what invariant was violated
-    """
-
-    def __init__(self, *args: object) -> None:
-        super().__init__(*args)
+    def __init__(self, *args, **kwargs) -> None:
+        super().__init__(*args, **kwargs)

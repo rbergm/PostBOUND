@@ -13,7 +13,7 @@ from .dicts import (
     frozendict
 )
 from . import dicts
-from .errors import StateError
+from .errors import StateError, LogicError, InvariantViolationError
 from . import errors
 from .jsonize import jsondict, to_json
 from .logging import timestamp, make_logger
@@ -38,6 +38,8 @@ __all__ = [
     "frozendict",
     "dicts",
     "StateError",
+    "LogicError",
+    "InvariantViolationError",
     "errors",
     "jsondict",
     "to_json",
