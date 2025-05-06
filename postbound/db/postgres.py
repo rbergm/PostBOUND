@@ -436,7 +436,7 @@ class PostgresConfiguration(collections.UserString):
 
 
 _PGVersionPattern = re.compile(r"^PostgreSQL (?P<pg_ver>[\d]+(\.[\d]+)?).*$")
-"""Regular expression to extract the Postgres server version from the ``VERSION()`` function.
+"""Regular expression to extract the Postgres server version from the *VERSION()* function.
 
 References
 ----------
@@ -521,16 +521,20 @@ class PostgresInterface(Database):
     connect_string : str
         Connection string for `psycopg` to establish a connection to the Postgres server
     system_name : str, optional
-        Description of the specific Postgres server, by default ``"Postgres"``
+        Description of the specific Postgres server, by default *Postgres*
     cache_enabled : bool, optional
-        Whether to enable caching of database queries, by default ``True``
+        Whether to enable caching of database queries, by default *False*
+    debug : bool, optional
+        Whether additional debug information should be printed during database interaction. Defaults to *False*.
     """
 
-    def __init__(self, connect_string: str, system_name: str = "Postgres", *, cache_enabled: bool = True,
-                 debug: bool = False) -> None:
+    def __init__(self, connect_string: str, system_name: str = "Postgres", *,
+                 client_encoding: str = "UTF8",
+                 cache_enabled: bool = False, debug: bool = False) -> None:
         self.connect_string = connect_string
         self.debug = debug
         self._connection: psycopg.Connection = psycopg.connect(connect_string, application_name="PostBOUND",
+                                                               client_encoding=client_encoding,
                                                                row_factory=psycopg.rows.tuple_row)
         self._init_connection()
 
@@ -658,7 +662,7 @@ class PostgresInterface(Database):
     def obtain_new_local_connection(self) -> psycopg.Connection:
         """Provides a new database connection to be used exclusively be the client.
 
-        The current connection maintained by the ``PostgresInterface`` is not affected by obtaining a new connection in any
+        The current connection maintained by the `PostgresInterface` is not affected by obtaining a new connection in any
         way.
 
         Returns
@@ -849,7 +853,7 @@ class PostgresInterface(Database):
             The query to prepare. Only queries from the query abstraction layer can be prepared.
         drop_explain : bool, optional
             Whether any `Explain` clauses on the query should be ignored. This is intended for cases where the callee
-            has its own handling of ``EXPLAIN`` blocks. Defaults to ``False``.
+            has its own handling of *EXPLAIN* blocks. Defaults to *False*.
 
         Returns
         -------
@@ -878,12 +882,12 @@ class PostgresInterface(Database):
         Parameters
         ----------
         query : str
-            The query to plan. It does not have to be an ``EXPLAIN`` query already, this will be added if necessary.
+            The query to plan. It does not have to be an *EXPLAIN* query already, this will be added if necessary.
 
         Returns
         -------
         dict
-            The raw ``EXPLAIN`` data.
+            The raw *EXPLAIN* data.
         """
         if not query.upper().startswith("EXPLAIN (FORMAT JSON)"):
             query = "EXPLAIN (FORMAT JSON) " + query
@@ -1203,12 +1207,12 @@ class PostgresStatisticsInterface(DatabaseStatistics):
     postgres_db : PostgresInterface
         The database instance for which the statistics should be retrieved
     emulated : bool, optional
-        Whether the statistics interface should operate in emulation mode. To enable reproducibility, this is ``True``
+        Whether the statistics interface should operate in emulation mode. To enable reproducibility, this is *True*
         by default
     enable_emulation_fallback : bool, optional
         Whether emulation should be used for unsupported statistics when running in native mode, by default True
     cache_enabled : Optional[bool], optional
-        Whether emulated statistics queries should be subject to caching, by default True. Set to ``None`` to use the
+        Whether emulated statistics queries should be subject to caching, by default True. Set to *None* to use the
         caching behavior of the `db`
     """
 
@@ -1530,7 +1534,7 @@ def _apply_hint_block_to_query(query: qal.SqlQuery, hint_block: Optional[qal.Hin
     query : qal.SqlQuery
         The query to apply the hint block to
     hint_block : Optional[qal.Hint]
-        The hint block to apply. If this is ``None``, no modifications are performed.
+        The hint block to apply. If this is *None*, no modifications are performed.
 
     Returns
     -------
@@ -1554,14 +1558,14 @@ PostgresPlanHints = {HintType.Cardinality, HintType.Parallelization,
 
 
 class PostgresExplainClause(qal.Explain):
-    """A specialized ``EXPLAIN`` clause implementation to handle Postgres custom syntax for query plans.
+    """A specialized *EXPLAIN* clause implementation to handle Postgres custom syntax for query plans.
 
-    If ``ANALYZE`` is enabled, this also retrieves information about shared buffer usage (page hits and disk reads).
+    If *ANALYZE* is enabled, this also retrieves information about shared buffer usage (page hits and disk reads).
 
     Parameters
     ----------
     original_clause : qal.Explain
-        The actual ``EXPLAIN`` clause. The new explain clause acts as a decorator around the original clause.
+        The actual *EXPLAIN* clause. The new explain clause acts as a decorator around the original clause.
     """
     def __init__(self, original_clause: qal.Explain) -> None:
         super().__init__(original_clause.analyze, original_clause.target_format)
@@ -1575,12 +1579,12 @@ class PostgresExplainClause(qal.Explain):
 
 
 class PostgresLimitClause(qal.Limit):
-    """A specialized ``LIMIT`` clause implementation to handle Postgres custom syntax for limits / offsets
+    """A specialized *LIMIT* clause implementation to handle Postgres custom syntax for limits / offsets
 
     Parameters
     ----------
     original_clause : qal.Limit
-        The actual ``LIMIT`` clause. The new limit clause acts as a decorator around the original clause.
+        The actual *LIMIT* clause. The new limit clause acts as a decorator around the original clause.
     """
 
     def __init__(self, original_clause: qal.Limit) -> None:
@@ -1701,8 +1705,8 @@ class PostgresHintService(HintService):
     """Postgres-specific implementation of the hinting capabilities.
 
     Most importantly, this service implements a mapping from the abstract optimization descisions (join order + operators) to
-    their counterparts in the hinting backend and integrates Postgres' few deviations from standard SQL syntax (``CAST``
-    expressions and ``LIMIT`` clauses).
+    their counterparts in the hinting backend and integrates Postgres' few deviations from standard SQL syntax (*CAST*
+    expressions and *LIMIT* clauses).
 
     The hinting service supports two different kinds of backends: pg_lab or pg_hint_plan. The former is the preferred option
     since it provides cardinality hints for base joins and does not require management of the GeQO optimizer.
@@ -1712,7 +1716,7 @@ class PostgresHintService(HintService):
 
     1. forcing a join order also involves forcing a specific join direction. Our implementation applies a couple of heuristics
        to mitigate a bad impact on performance
-    2. the extension only instruments the dynamic programming-based optimizer. If the ``geqo_threshold`` is reached and the
+    2. the extension only instruments the dynamic programming-based optimizer. If the *geqo_threshold* is reached and the
        genetic optimizer takes over, no modifications are applied. Therefore, it is best to disable GeQO while working with
        Postgres. At the same time, this means that certain scenarios like custom cardinality estimation for the genetic
        optimizer cannot currently be tested
@@ -1901,7 +1905,7 @@ class PostgresHintService(HintService):
         return True
 
     def _generate_leading_hint_content(self, node: JoinTree) -> str:
-        """Builds a substring of the ``Leading`` hint to enforce the join order for a specific part of the join tree.
+        """Builds a substring of the *Leading* hint to enforce the join order for a specific part of the join tree.
 
         Parameters
         ----------
@@ -1940,9 +1944,9 @@ class PostgresHintService(HintService):
                                      join_order: JoinTree,
                                      operator_assignment: Optional[PhysicalOperatorAssignment] = None
                                      ) -> tuple[qal.SqlQuery, Optional[HintParts]]:
-        """Builds the entire ``Leading`` hint to enforce the join order for a specific query.
+        """Builds the entire *Leading* hint to enforce the join order for a specific query.
 
-        Using a ``Leading`` hint, it is possible to generate the an arbitrarily nested join order for an input query.
+        Using a *Leading* hint, it is possible to generate the an arbitrarily nested join order for an input query.
         However, at the same time this hint also enforces the join direction (i.e. inner or outer relation) of the join
         partners. Due to some pecularities of the interpretation of inner and outer relation by Postgres, this method
         also needs to access the operator assignment in addition to the join tree. The directions in the hint depend on the
@@ -2136,7 +2140,7 @@ class PostgresHintService(HintService):
         -------
         Optional[qal.Hint]
             A syntactically correct hint clause tailored for Postgres and pg_hint_plan. If neither settings nor hints
-            are contained in the `parts`, ``None`` is returned instead.
+            are contained in the `parts`, *None* is returned instead.
         """
         settings, hints = parts.settings, parts.hints
         if not settings and not hints:
@@ -2225,8 +2229,8 @@ class PostgresOptimizer(OptimizerInterface):
         return estimate
 
 
-def connect(*, name: str = "postgres", connect_string: str | None = None,
-            config_file: str | None = ".psycopg_connection", cache_enabled: bool = True,
+def connect(*, name: str = "postgres", connect_string: str | None = None, config_file: str | None = ".psycopg_connection",
+            encoding: str = "UTF8", cache_enabled: bool = False,
             refresh: bool = False, private: bool = False, debug: bool = False) -> PostgresInterface:
     """Convenience function to seamlessly connect to a Postgres instance.
 
@@ -2244,15 +2248,18 @@ def connect(*, name: str = "postgres", connect_string: str | None = None,
     ----------
     name : str, optional
         A name to identify the current connection if multiple connections to different Postgres instances should be maintained.
-        This is used to register the instance on the `DatabasePool`. Defaults to ``"postgres"``.
+        This is used to register the instance on the `DatabasePool`. Defaults to *postgres*.
     connect_string : str | None, optional
         A Psycopg-compatible connect string for the database. Supplying this parameter overwrites any other connection
         data
     config_file : str | None, optional
         A file containing a Psycopg-compatible connect string for the database. This is the default and preferred method of
         connecting to a Postgres database. Defaults to *.psycopg_connection*
+    encoding : str, optional
+        The client enconding of the connection. Defaults to *UTF8*.
     cache_enabled : bool, optional
-        Controls the default caching behaviour of the Postgres instance. Caching is enabled by default.
+        Controls the default caching behaviour of the Postgres instance. Caching of general queries is disabled by default,
+        whereas queries from the statistics interface are cached by default.
     refresh : bool, optional
         If true, a new connection to the database will always be established, even if a connection to the same database is
         already pooled. The registration key will be suffixed to prevent collisions. By default, the current connection is
@@ -2294,7 +2301,8 @@ def connect(*, name: str = "postgres", connect_string: str | None = None,
                          "connect() method, or put a configuration file in your working directory. See the documentation of "
                          "the connect() method for more details.")
 
-    postgres_db = PostgresInterface(connect_string, system_name=name, cache_enabled=cache_enabled, debug=debug)
+    postgres_db = PostgresInterface(connect_string, system_name=name, client_encoding=encoding,
+                                    cache_enabled=cache_enabled, debug=debug)
     if not private:
         orig_name = name
         instance_idx = 2
@@ -2315,7 +2323,7 @@ def _parallel_query_initializer(connect_string: str, local_data: threading.local
     local_data : threading.local
         Data object to store the opened connection
     verbose : bool, optional
-        Whether to print logging information, by default ``False``
+        Whether to print logging information, by default *False*
 
     References
     ----------
@@ -2344,10 +2352,10 @@ def _parallel_query_worker(query: str | qal.SqlQuery, local_data: threading.loca
         Data object that contains the database connection to use. This should have been initialized by
         `_parallel_query_initializer`
     timeout : Optional[int], optional
-        The number of seconds to wait until the calculation is aborted. Defaults to ``None``, which indicates no timeout. In
+        The number of seconds to wait until the calculation is aborted. Defaults to *None*, which indicates no timeout. In
         case of timeout, *None* is returned.
     verbose : bool, optional
-        Whether to print logging information, by default ``False``
+        Whether to print logging information, by default *False*
 
     Returns
     -------
@@ -2446,7 +2454,7 @@ class ParallelQueryExecutor:
         Parameters
         ----------
         timeout : Optional[float], optional
-            The number of seconds to wait until the calculation is aborted. Defaults to ``None``, which indicates no timeout,
+            The number of seconds to wait until the calculation is aborted. Defaults to *None*, which indicates no timeout,
             i.e. wait forever.
 
         Raises
@@ -2509,7 +2517,7 @@ class TimeoutQueryExecutor:
     invalidate some of the state that is exposed by the database interface (see *Warnings* below). Therefore, the relevant
     variables should be refreshed once the timeout executor was used.
 
-    In addition to calling the `execute_query` method directly, the executor also implements ``__call__`` for more convenient
+    In addition to calling the `execute_query` method directly, the executor also implements *__call__* for more convenient
     access. Both methods accept the same parameters.
 
     Parameters
@@ -2597,13 +2605,13 @@ PostgresExplainIntermediateNodes = {"Materialize": IntermediateOperator.Material
 
 
 class PostgresExplainNode:
-    """Simplified model of a plan node as provided by Postgres' ``EXPLAIN`` output in JSON format.
+    """Simplified model of a plan node as provided by Postgres' *EXPLAIN* output in JSON format.
 
     Generally speaking, a node stores all the information about the plan node that we currently care about. This is mostly
     focused on optimizer statistics, along with some additional data. Explain nodes form a hierarchichal structure with each
     node containing an arbitrary number of child nodes. Notice that this model is very loose in the sense that no constraints
     are enforced and no sanity checking is performed. For example, this means that nodes can contain more than two children
-    even though this can never happen in a real ``EXPLAIN`` plan. Similarly, the correspondence between filter predicates and
+    even though this can never happen in a real *EXPLAIN* plan. Similarly, the correspondence between filter predicates and
     the node typse (e.g. join filter for a join node) is not checked.
 
     All relevant data from the explain node is exposed as attributes on the objects. Even though these are mutable, they should
@@ -2612,26 +2620,26 @@ class PostgresExplainNode:
     Parameters
     ----------
     explain_data : dict
-        The JSON data of the current explain node. This is parsed and prepared as part of the ``__init__`` method.
+        The JSON data of the current explain node. This is parsed and prepared as part of the *__init__* method.
 
     Attributes
     ----------
     node_type : str | None, default None
-        The node type. This should never be empty or ``None``, even though it is technically allowed.
+        The node type. This should never be empty or *None*, even though it is technically allowed.
     cost : float, default NaN
         The optimizer's cost estimation for this node. This includes the cost of all child nodes as well. This should normally
-        not be ``NaN``, even though it is technically allowed.
+        not be *NaN*, even though it is technically allowed.
     cardinality_estimate : float, default NaN
         The optimizer's estimation of the number of tuples that will be *produced* by this operator. This should normally not
-        be ``NaN``, even though it is technically allowed.
+        be *NaN*, even though it is technically allowed.
     execution_time : float, default NaN
-        For ``EXPLAIN ANALYZE`` plans, this is the actual total execution time of the node in seconds. For pure ``EXPLAIN``
-        plans, this is ``NaN``
+        For *EXPLAIN ANALYZE* plans, this is the actual total execution time of the node in seconds. For pure *EXPLAIN*
+        plans, this is *NaN*
     true_cardinality : float, default NaN
-        For ``EXPLAIN ANALYZE`` plans, this is the average of the number of tuples that were actually produced for each loop of
-        the node. For pure ``EXPLAIN`` plans, this is ``NaN``
+        For *EXPLAIN ANALYZE* plans, this is the average of the number of tuples that were actually produced for each loop of
+        the node. For pure *EXPLAIN* plans, this is *NaN*
     loops : int, default 1
-        For ``EXPLAIN ANALYZE`` plans, this is the number of times the operator was invoked. The number of invocations can mean
+        For *EXPLAIN ANALYZE* plans, this is the number of times the operator was invoked. The number of invocations can mean
         a number of different things: for parallel operators, this normally matches the number of parallel workers. For scans,
         this matches the number of times a new tuple was requested (e.g. for an index nested-loop join the number of loops of
         the index scan part indicates how many times the index was probed).
@@ -2656,26 +2664,26 @@ class PostgresExplainNode:
         For lossy bitmap scans or bitmap scans based on lossy indexes, this is post-processing check for whether the produced
         tuples actually match the filter condition
     parent_relationship : str | None, default None
-        Describes the role that this node plays in relation to its parent. Common values are ``"inner"`` which denotes that
-        this is the inner child of a join and ``"outer"`` which denotes the opposite.
+        Describes the role that this node plays in relation to its parent. Common values are *inner* which denotes that
+        this is the inner child of a join and *outer* which denotes the opposite.
     parallel_workers : int | float, default NaN
-        For parallel operators in ``EXPLAIN ANALYZE`` plans, this is the actual number of worker processes that were started.
+        For parallel operators in *EXPLAIN ANALYZE* plans, this is the actual number of worker processes that were started.
         Notice that in total there is one additional worker. This process takes care of spawning the other workers and
         managing them, but can also take part in the input processing.
     sort_keys : list[str]
         The columns that are used to sort the tuples that are produced by this node. This is most important for sort nodes,
         but can also be present on other nodes.
     shared_blocks_read : float, default NaN
-        For ``EXPLAIN ANALYZE`` plans with ``BUFFERS`` enabled, this is the number of blocks/pages that where retrieved from
+        For *EXPLAIN ANALYZE* plans with *BUFFERS* enabled, this is the number of blocks/pages that where retrieved from
         disk while executing this node, including the reads of all its child nodes.
     shared_blocks_buffered : float, default NaN
-        For ``EXPLAIN ANALYZE`` plans with ``BUFFERS`` enabled, this is the number of blocks/pages that where retrieved from
+        For *EXPLAIN ANALYZE* plans with *BUFFERS* enabled, this is the number of blocks/pages that where retrieved from
         the shared buffer while executing this node, including the hits of all its child nodes.
     temp_blocks_read : float, default NaN
-        For ``EXPLAIN ANALYZE`` blocks with ``BUFFERS`` enabled, this is the number of short-term data structures (e.g. hash
+        For *EXPLAIN ANALYZE* blocks with *BUFFERS* enabled, this is the number of short-term data structures (e.g. hash
         tables, sorts) that where read by this node, including reads of all its child nodes.
     temp_blocks_written : float, default NaN
-        For ``EXPLAIN ANALYZE`` blocks with ``BUFFERS`` enabled, this is the number of short-term data structures (e.g. hash
+        For *EXPLAIN ANALYZE* blocks with *BUFFERS* enabled, this is the number of short-term data structures (e.g. hash
         tables, sorts) that where written by this node, including writes of all its child nodes.
     plan_width : float, default NaN
         The average width of the tuples that are produced by this node.
@@ -2759,17 +2767,17 @@ class PostgresExplainNode:
         return self.node_type in PostgresExplainJoinNodes
 
     def is_analyze(self) -> bool:
-        """Checks, whether this ``EXPLAIN`` plan is an ``EXPLAIN ANALYZE`` plan or a pure ``EXPLAIN`` plan.
+        """Checks, whether this *EXPLAIN* plan is an *EXPLAIN ANALYZE* plan or a pure *EXPLAIN* plan.
 
         The analyze variant does not only obtain the plan, but actually executes it. This enables the comparison of the
-        optimizer's estimates to the actual values. If a plan is an ``EXPLAIN ANALYZE`` plan, some attributes of this node
+        optimizer's estimates to the actual values. If a plan is an *EXPLAIN ANALYZE* plan, some attributes of this node
         receive actual values. These include `execution_time`, `true_cardinality`, `loops` and `parallel_workers`.
 
 
         Returns
         -------
         bool
-            Whether the node represents part of an ``EXPLAIN ANALYZE`` plan
+            Whether the node represents part of an *EXPLAIN ANALYZE* plan
         """
         return not math.isnan(self.execution_time)
 
@@ -2820,7 +2828,7 @@ class PostgresExplainNode:
         Returns
         -------
         Optional[TableReference]
-            The table being scanned. For non-scan nodes, or nodes where no table can be inferred, ``None`` will be returned.
+            The table being scanned. For non-scan nodes, or nodes where no table can be inferred, *None* will be returned.
         """
         if not self.relation_name:
             return None
@@ -2896,7 +2904,7 @@ class PostgresExplainNode:
                          subplan_root=subplan_child, subplan_name=subplan_name)
 
     def inspect(self, *, _indentation: int = 0) -> str:
-        """Provides a pretty string representation of the ``EXPLAIN`` sub-plan that can be printed.
+        """Provides a pretty string representation of the *EXPLAIN* sub-plan that can be printed.
 
         Parameters
         ----------
@@ -2907,7 +2915,7 @@ class PostgresExplainNode:
         Returns
         -------
         str
-            A string representation of the ``EXPLAIN`` sub-plan.
+            A string representation of the *EXPLAIN* sub-plan.
         """
         if self.parent_relationship in ("InitPlan", "SubPlan"):
             padding = " " * (max(_indentation - 2, 0))
@@ -2959,7 +2967,7 @@ class PostgresExplainNode:
 
 
 class PostgresExplainPlan:
-    """Models an entire ``EXPLAIN`` plan produced by Postgres
+    """Models an entire *EXPLAIN* plan produced by Postgres
 
     In contrast to `PostgresExplainNode`, this includes additional parameters (planning time and execution time) for the entire
     plan, rather than just portions of it.
@@ -2970,7 +2978,7 @@ class PostgresExplainPlan:
     Parameters
     ----------
     explain_data : dict
-        The JSON data of the entire explain plan. This is parsed and prepared as part of the ``__init__`` method.
+        The JSON data of the entire explain plan. This is parsed and prepared as part of the *__init__* method.
 
 
     Attributes
@@ -2996,17 +3004,17 @@ class PostgresExplainPlan:
         return self.query_plan
 
     def is_analyze(self) -> bool:
-        """Checks, whether this ``EXPLAIN`` plan is an ``EXPLAIN ANALYZE`` plan or a pure ``EXPLAIN`` plan.
+        """Checks, whether this *EXPLAIN* plan is an *EXPLAIN ANALYZE* plan or a pure *EXPLAIN* plan.
 
         The analyze variant does not only obtain the plan, but actually executes it. This enables the comparison of the
-        optimizer's estimates to the actual values. If a plan is an ``EXPLAIN ANALYZE`` plan, some attributes of this node
+        optimizer's estimates to the actual values. If a plan is an *EXPLAIN ANALYZE* plan, some attributes of this node
         receive actual values. These include `execution_time`, `true_cardinality`, `loops` and `parallel_workers`.
 
 
         Returns
         -------
         bool
-            Whether the plan represents an ``EXPLAIN ANALYZE`` plan
+            Whether the plan represents an *EXPLAIN ANALYZE* plan
         """
         return self.query_plan.is_analyze()
 
@@ -3095,9 +3103,9 @@ class WorkloadShifter:
         table : TableReference | str
             The table from which to delete
         n_rows : Optional[int], optional
-            The absolute number of rows to delete. Defaults to ``None`` in which case the `row_pct` is used.
+            The absolute number of rows to delete. Defaults to *None* in which case the `row_pct` is used.
         row_pct : Optional[float], optional
-            The share of rows to delete. Value should be in range (0, 1). Defaults to ``None`` in which case the `n_rows` is
+            The share of rows to delete. Value should be in range (0, 1). Defaults to *None* in which case the `n_rows` is
             used.
         vacuum : bool, optional
             Whether the database should be vacuumed after deletion. This optimizes the page layout by compacting the pages and
@@ -3140,14 +3148,14 @@ class WorkloadShifter:
             The column to infer the deletion order. Can be either a proper column reference including the containing table, or
             a fully-qualified column string such as _table.column_ .
         n_rows : Optional[int], optional
-            The absolute number of rows to delete. Defaults to ``None`` in which case the `row_pct` is used.
+            The absolute number of rows to delete. Defaults to *None* in which case the `row_pct` is used.
         row_pct : Optional[float], optional
-            The share of rows to delete. Value should be in range (0, 1). Defaults to ``None`` in which case the `n_rows` is
+            The share of rows to delete. Value should be in range (0, 1). Defaults to *None* in which case the `n_rows` is
             used.
         ascending : bool, optional
-            Whether the first or the last rows should be deleted. ``NULL`` values are according to `null_placement`.
+            Whether the first or the last rows should be deleted. *NULL* values are according to `null_placement`.
         null_placement : Optional[Literal["first", "last"]], optional
-            Where to put ``NULL`` values in the order. Using the default value of ``None`` treats ``NULL`` values as being the
+            Where to put *NULL* values in the order. Using the default value of *None* treats *NULL* values as being the
             largest values possible.
         vacuum : bool, optional
             Whether the database should be vacuumed after deletion. This optimizes the page layout by compacting the pages and
