@@ -22,8 +22,8 @@ cd /postbound && tools/setup-py-venv.sh --venv /postbound/pb-venv
 # Setup databases
 cd /postbound/db-support/postgres
 if [ "$SETUP_IMDB" = "true" ] ; then
-        ./workload-job-setup.sh --cleanup
-        ./postgres-psycopg-setup.sh imdb job
+    ./workload-job-setup.sh --cleanup
+    ./postgres-psycopg-setup.sh job imdb
 fi
 if [ "$SETUP_STATS" = "true" ] ; then
     ./workload-stats-setup.sh --cleanup
@@ -38,6 +38,10 @@ if [ "$SETUP_STACK" = "true" ] ; then
     cd /postbound/db-support/postgres
 fi
 mv  .psycopg_connection_* /postbound
+cd /postbound
+if [ $(ls -a /postbound | grep .psycopg_connection | wc -l ) -eq 1 ]; then
+    ln -s $(ls -a /postbound | grep .psycopg_connection) .psycopg_connection
+fi
 
 # User config
 if [ "$USE_PGLAB" = "true" ] ; then
