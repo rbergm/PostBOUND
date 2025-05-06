@@ -14,25 +14,31 @@ Be carefull when updating and check the changelog!
 
 ---
 
-# ➡ Version 0.14.0
+# ➡ Version 0.14.1
 
 ### 🐣 New features
-- `PostgresSetting` and `PostgresConfiguration` can now be updated
-- Improved schema introspection
-  - All schema objects can now provide the Primary key column directly with `primary_key_column()`
-  - Foreign key constraints can now be queried via the `foreign_keys_on()` method
-  - The entire schema can be represented as a DAG using `as_graph()`
+- _None_
 
 ### 💀 Breaking changes
--
+- `SortKey` is now an equivalence class of keys, rather than a single column. The old behavior is now made explicit via methods
+  such as `is_compatible_with()`
 
 ### 📰 Updates
-- Added a warning when retrieving the actual cardinality of Bitmap AND/OR nodes in Postgres EXPLAIN plans. Postgres does not
-  measure these.
-- Added `match` support for `PostgresSetting`
+- 🐘 Assume UTF-8 as the default encoding for Postgres connections
+- 🐘 Switched caching behavior of Postgres to only cache queries from the statistics interface by default
+- 🐘 Query plan-related methods of the Postgres interface now raise errors the same way that `execute_query()` does
+- Added a `star_expression()` method to *SELECT* clauses to retrieve all star expressions from the clause
+- Added a utility `create_for(col)` method to create an *ORDER BY* clause for a single column
+- Added a new `LogicError` to catch bugs within PostBOUND
+- Updated `set_workload.sh` utility to support the Stats benchmark
 
 ### 🏥 Fixes
--
+- 🐳 Install additional tools during Docker setup that are important for PostBOUND internals
+- 🐳 Configure English + UTF-8 as the locale during Docker setup. This prevents weird interactions with Postgres database,
+  specifically when Postgres relied on the current locale to determine appropriate string collations. This issue caused
+  string columns to be returned as byte objects instead of proper strings, which breaks a lot of PostBOUND behavior.
+- Fixed `open_files()` working incorrectly on newer version of _lsof_
+- Fixed `QueryPredicates.filters()` and `QueryPredicates.joins()` not working for empty predicates
 
 ### 🪲 Known bugs
 - Pre-defined workloads (`workloads.job()`, etc) do not work if installed as a Pip module. This is because the build process
@@ -45,12 +51,44 @@ Be carefull when updating and check the changelog!
 ---
 
 
-## 🚧 Version 0.15.0 👷
+# 🚧 Version 0.15.0 👷
 
 ### ⏳ Planned
 - Full dynamic programming support for the `TextbookOptimizationPipeline`, including a Postgres-specific algorithm
 
 ---
+
+
+# 🕑 Version 0.14.0
+
+### 🐣 New features
+- `PostgresSetting` and `PostgresConfiguration` can now be updated
+- Improved schema introspection
+  - All schema objects can now provide the Primary key column directly with `primary_key_column()`
+  - Foreign key constraints can now be queried via the `foreign_keys_on()` method
+  - The entire schema can be represented as a DAG using `as_graph()`
+
+### 💀 Breaking changes
+- _None_
+
+### 📰 Updates
+- Added a warning when retrieving the actual cardinality of Bitmap AND/OR nodes in Postgres EXPLAIN plans. Postgres does not
+  measure these.
+- Added `match` support for `PostgresSetting`
+
+### 🏥 Fixes
+- _None_
+
+### 🪲 Known bugs
+- Pre-defined workloads (`workloads.job()`, etc) do not work if installed as a Pip module. This is because the build process
+  does not retain the workload directory in the `site_packages`.
+
+### ⏳ WIP
+- Baseline for a Postgres-style dynamic programming plan enumerator. This is not yet complete and trying to initialize the
+  corresponding class raises an error for now. The enumerator will probably be ready to go for v0.15.0
+
+---
+
 
 # 🕑 Version 0.13.3
 
