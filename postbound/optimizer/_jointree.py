@@ -674,9 +674,9 @@ def read_query_plan_json(json_data: dict | str) -> QueryPlan:
 
     sort_keys: list[SortKey] = []
     for sort_key_json in params_json.get("sort_keys", []):
-        sort_column = parser.load_expression_json(sort_key_json["column"])
+        sort_column = [parser.load_expression_json(col) for col in sort_key_json.get("equivalence_class", [])]
         ascending = sort_key_json["ascending"]
-        sort_keys.append(SortKey(sort_column, ascending))
+        sort_keys.append(SortKey.of(sort_column, ascending))
 
     index = params_json.get("index", "")
     additional_params = {key: value for key, value in params_json.items()
