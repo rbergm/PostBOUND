@@ -83,7 +83,7 @@ class SqlExpression(abc.ABC):
     Expressions form one of the central building blocks of representing a SQL query in the QAL. They specify how values
     from different columns are modified and combined, thereby forming larger (hierarchical) structures.
 
-    Expressions can be inserted in many different places in a SQL query. For example, a ``SELECT`` clause produces
+    Expressions can be inserted in many different places in a SQL query. For example, a *SELECT* clause produces
     columns such as in ``SELECT R.a FROM R``, but it can also modify the column values slightly, such as in
     ``SELECT R.a + 42 FROM R``. To account for all  these different situations, the `SqlExpression` is intended to form
     hierarchical trees and chains of expressions. In the first case, a `ColumnExpression` is used, whereas a
@@ -211,7 +211,7 @@ class StaticValueExpression(SqlExpression, Generic[T]):
     Examples
     --------
     Consider the following SQL query: ``SELECT * FROM R WHERE R.a = 42``. In this case the comparison value of 42 will
-    be represented as a static value expression. The reference to the column ``R.a`` cannot be a static value since its
+    be represented as a static value expression. The reference to the column *R.a* cannot be a static value since its
     values depend on the actual column values. Hence, a `ColumnExpression` is used for it.
     """
 
@@ -399,7 +399,7 @@ class MathExpression(SqlExpression):
         The first argument. For unary expressions, this can also be the only argument
     second_argument : SqlExpression | Sequence[SqlExpression] | None, optional
         Additional arguments. For the most common case of a binary expression, this will be exactly one argument.
-        Defaults to ``None`` to accomodate for unary expressions.
+        Defaults to *None* to accomodate for unary expressions.
     """
 
     def __init__(self, operator: MathOperator, first_argument: SqlExpression,
@@ -624,12 +624,12 @@ class FunctionExpression(SqlExpression):
     function : str
         The name of the function that should be called. Cannot be empty.
     arguments : Optional[Sequence[SqlExpression]], optional
-        The parameters that should be passed to the function. Can be ``None`` if the function does not take or does not
+        The parameters that should be passed to the function. Can be *None* if the function does not take or does not
         need any arguments (e.g. ``CURRENT_TIME()``)
     distinct : bool, optional
         Whether the (aggregation) function should only operate on distinct column values and hence a duplicate
         elimination needs to be performed before passing the argument values (e.g. ``COUNT(DISTINCT *)``). Defaults to
-        ``False``
+        *False*
     filter_where : Optional[AbstractPredicate], optional
         An optional filter expression that restricts the values included in an aggregation function.
 
@@ -645,7 +645,7 @@ class FunctionExpression(SqlExpression):
 
     @staticmethod
     def all_func(subquery: SqlQuery | SubqueryExpression) -> FunctionExpression:
-        """Create a function expression for the ``ALL`` function, as used for subqueries.
+        """Create a function expression for the *ALL* function, as used for subqueries.
 
         Parameters
         ----------
@@ -655,14 +655,14 @@ class FunctionExpression(SqlExpression):
         Returns
         -------
         FunctionExpression
-            The ``ALL`` function expression
+            The *ALL* function expression
         """
         subquery = SubqueryExpression(subquery) if not isinstance(subquery, SubqueryExpression) else subquery
         return FunctionExpression("ALL", (subquery,))
 
     @staticmethod
     def any_func(subquery: SqlQuery) -> FunctionExpression:
-        """Create a function expression for the ``ANY`` function, as used for subqueries.
+        """Create a function expression for the *ANY* function, as used for subqueries.
 
         Parameters
         ----------
@@ -672,7 +672,7 @@ class FunctionExpression(SqlExpression):
         Returns
         -------
         FunctionExpression
-            The ``ANY`` function expression
+            The *ANY* function expression
         """
         subquery = SubqueryExpression(subquery) if not isinstance(subquery, SubqueryExpression) else subquery
         return FunctionExpression("ANY", (subquery,))
@@ -713,7 +713,7 @@ class FunctionExpression(SqlExpression):
         Returns
         -------
         Sequence[SqlExpression]
-            The arguments. Can be empty if no arguments are passed (but will never be ``None``).
+            The arguments. Can be empty if no arguments are passed (but will never be *None*).
         """
         return self._arguments
 
@@ -742,7 +742,7 @@ class FunctionExpression(SqlExpression):
         Returns
         -------
         Optional[AbstractPredicate]
-            The filter expression or ``None`` if no filter is applied (or the function is not an aggregate).
+            The filter expression or *None* if no filter is applied (or the function is not an aggregate).
         """
         return self._filter_expr
 
@@ -759,33 +759,33 @@ class FunctionExpression(SqlExpression):
         return self._function.upper() in AggregateFunctions
 
     def is_all(self) -> bool:
-        """Checks, whether the function is an ``ALL`` function.
+        """Checks, whether the function is an *ALL* function.
 
         If this is the case, the `subquery()` method can be used to directly retrieve the subquery being checked.
 
         Returns
         -------
         bool
-            Whether the function is an ``ALL`` function.
+            Whether the function is an *ALL* function.
         """
         return self._function.upper() == "ALL"
 
     def is_any(self) -> bool:
-        """Checks, whether the function is an ``ANY`` function.
+        """Checks, whether the function is an *ANY* function.
 
         If this is the case, the `subquery()` method can be used to directly retrieve the subquery being checked.
 
         Returns
         -------
         bool
-            Whether the function is an ``ANY`` function.
+            Whether the function is an *ANY* function.
         """
         return self._function.upper() == "ANY"
 
     def subquery(self) -> SqlQuery:
         """Get the subquery that is passed as argument to the function.
 
-        This is only possible if the function is an ``ALL`` or ``ANY`` function. Otherwise, an error is raised.
+        This is only possible if the function is an *ALL* or *ANY* function. Otherwise, an error is raised.
 
         Returns
         -------
@@ -795,7 +795,7 @@ class FunctionExpression(SqlExpression):
         Raises
         ------
         StateError
-            If the function is not an ``ALL`` or ``ANY`` function
+            If the function is not an *ALL* or *ANY* function
         """
         if not self.is_all() and not self.is_any():
             raise StateError("Function is not an ALL or ANY function")
@@ -866,11 +866,11 @@ class ArrayAccessExpression(FunctionExpression):
     array_expr : SqlExpression
         The array being accessed
     idx : Optional[SqlExpression], optional
-        For point-based access, the index of the element to access. Defaults to ``None``.
+        For point-based access, the index of the element to access. Defaults to *None*.
     lower_idx : Optional[SqlExpression], optional
-        For slice-based access, the lower boundary of the slice. Defaults to ``None``.
+        For slice-based access, the lower boundary of the slice. Defaults to *None*.
     upper_idx : Optional[SqlExpression], optional
-        For slice-based access, the upper boundary of the slice. Defaults to ``None``.
+        For slice-based access, the upper boundary of the slice. Defaults to *None*.
     """
 
     def __init__(self, array_expr: SqlExpression, *, idx: Optional[SqlExpression] = None,
@@ -910,7 +910,7 @@ class ArrayAccessExpression(FunctionExpression):
         Returns
         -------
         Optional[SqlExpression]
-            The index or ``None`` if sliced access is used
+            The index or *None* if sliced access is used
         """
         return self._idx
 
@@ -921,7 +921,7 @@ class ArrayAccessExpression(FunctionExpression):
         Returns
         -------
         Optional[SqlExpression]
-            The lower boundary or ``None`` if either point-based access is used, or the slice is open at the lower end
+            The lower boundary or *None* if either point-based access is used, or the slice is open at the lower end
         """
         return self._lower_idx
 
@@ -932,7 +932,7 @@ class ArrayAccessExpression(FunctionExpression):
         Returns
         -------
         Optional[SqlExpression]
-            The upper boundary or ``None`` if either point-based access is used, or the slice is open at the upper end
+            The upper boundary or *None* if either point-based access is used, or the slice is open at the upper end
         """
         return self._upper_idx
 
@@ -944,7 +944,7 @@ class ArrayAccessExpression(FunctionExpression):
         -------
         Optional[tuple[Optional[SqlExpression], Optional[SqlExpression]]]
             The slice interval. Any boundaries can be none if the interval is open at that end. If the array access is not
-            sliced, the entire tuple is ``None``.
+            sliced, the entire tuple is *None*.
         """
         if self._idx:
             return None
@@ -1038,7 +1038,7 @@ class SubqueryExpression(SqlExpression):
 
 
 class StarExpression(SqlExpression):
-    """A special expression that is only used in ``SELECT`` clauses to select all columns.
+    """A special expression that is only used in *SELECT* clauses to select all columns.
 
     Parameters
     ----------
@@ -1254,7 +1254,7 @@ class CaseExpression(SqlExpression):
         Returns
         -------
         Optional[SqlExpression]
-            The expression. Can be ``None``, in which case the case expression evaluates to *NULL*.
+            The expression. Can be *None*, in which case the case expression evaluates to *NULL*.
         """
         return self._else_expr
 
@@ -1479,7 +1479,7 @@ class NoJoinPredicateError(StateError):
     Parameters
     ----------
     predicate : AbstractPredicate | None, optional
-        The predicate that caused the error, defaults to ``None``
+        The predicate that caused the error, defaults to *None*
     """
 
     def __init__(self, predicate: AbstractPredicate | None = None) -> None:
@@ -1493,7 +1493,7 @@ class NoFilterPredicateError(StateError):
     Parameters
     ----------
     predicate : AbstractPredicate | None, optional
-        The predicate that caused the error, defaults to ``None``.
+        The predicate that caused the error, defaults to *None*.
     """
 
     def __init__(self, predicate: AbstractPredicate | None = None) -> None:
@@ -1610,8 +1610,8 @@ def _generate_join_pairs(first_columns: Iterable[ColumnReference], second_column
 class AbstractPredicate(SqlExpression, abc.ABC):
     """Base class for all predicates.
 
-    Predicates constitute the central building block for ``WHERE`` and ``HAVING`` clauses and model the join conditions in
-    explicit joins using the ``JOIN ON`` syntax.
+    Predicates constitute the central building block for *WHERE* and *HAVING* clauses and model the join conditions in
+    explicit joins using the *JOIN ON* syntax.
 
     The different kinds of predicates are represented as subclasses of the `AbstractPredicate` interface. This really is an
     abstract interface, not a usable predicate and it only specifies the behaviour that is shared among all specific predicate
@@ -1649,7 +1649,7 @@ class AbstractPredicate(SqlExpression, abc.ABC):
     def is_base(self) -> bool:
         """Checks, whether this predicate forms a leaf in the predicate tree, i.e. does not contain any more child predicates.
 
-        This is the case for basic binary predicates, ``IN`` predicates, etc. This method serves as a high-level check,
+        This is the case for basic binary predicates, *IN* predicates, etc. This method serves as a high-level check,
         preventing the usage of dedicated ``isinstance`` calls in some use-cases.
 
         Returns
@@ -1672,8 +1672,8 @@ class AbstractPredicate(SqlExpression, abc.ABC):
         3. all subqueries are treated as filters, no matter whether they are dependent subqueries or not. This means that both
            ``R.a = (SELECT MAX(S.b) FROM S)`` and ``R.a = (SELECT MAX(S.b) FROM S WHERE R.c = S.d)`` are treated as filters and
            not as joins, even though the second subquery will require some sort of the join in the query plan.
-        4. ``BETWEEN`` and ``IN`` predicates are treated according to rule 1 since they can be emulated via base predicates
-           (subqueries in ``IN`` predicates are evaluated according to rule 3.)
+        4. *BETWEEN* and *IN* predicates are treated according to rule 1 since they can be emulated via base predicates
+           (subqueries in *IN* predicates are evaluated according to rule 3.)
 
         Although these rules might seem a bit arbitrary at first, there is actually no clear consensus of what constitutes a
         join and the query optimizers of different industrial database systems treat different predicates as joins. For
@@ -1844,7 +1844,7 @@ class AbstractPredicate(SqlExpression, abc.ABC):
 
         If multiple columns are joined or it is unclear which columns are involved in a join exactly, this method falls back to
         returning the cross-product of all potential join partners. For example, consider the following query:
-        ``SELECT * FROM R, S WHERE my_udf(R.a, R.b, S.c)``. In this case, it cannot be determined which columns of ``R`` take
+        ``SELECT * FROM R, S WHERE my_udf(R.a, R.b, S.c)``. In this case, it cannot be determined which columns of *R* take
         part in the join. Therefore, `join_partners` will return the set ``{(R.a, S.c), (R.b, S.c)}``.
 
         Returns
@@ -1885,7 +1885,7 @@ class AbstractPredicate(SqlExpression, abc.ABC):
         scanned by the subquery and only include those that must be "provided" by the query execution engine.
 
         Consider the following example predicate: ``R.a = (SELECT MIN(S.b) FROM S)``. Calling `tables` on this predicate would
-        return the set ``{R, S}``. However, table ``S`` is already provided by the subquery. Therefore, `required_tables` only
+        return the set ``{R, S}``. However, table *S* is already provided by the subquery. Therefore, `required_tables` only
         returns ``{R}``, since this is the only table that has to be provided by the context of this method.
 
         Returns
@@ -1956,12 +1956,12 @@ class AbstractPredicate(SqlExpression, abc.ABC):
 class BasePredicate(AbstractPredicate, abc.ABC):
     """A base predicate is a predicate that is not composed of any additional child predicates, such as a binary predicate.
 
-    It represents the smallest kind of condition that evaluates to ``TRUE`` or ``FALSE``.
+    It represents the smallest kind of condition that evaluates to *TRUE* or *FALSE*.
 
     Parameters
     ----------
     operation : Optional[SqlOperator]
-        The operation that compares the column value(s). For unary base predicates, this may be ``None`` if a
+        The operation that compares the column value(s). For unary base predicates, this may be *None* if a
         predicate function is used to determine matching tuples.
     hash_val : int
         The hash of the entire predicate
@@ -1979,7 +1979,7 @@ class BasePredicate(AbstractPredicate, abc.ABC):
         """Get the operation that is used to obtain matching (pairs of) tuples.
 
         Most of the time, this operation will be set to one of the SQL operators. However, for unary predicates that filter
-        based on a predicate function this might be ``None`` (e.g. a user-defined function such as in
+        based on a predicate function this might be *None* (e.g. a user-defined function such as in
         `SELECT * FROM R WHERE my_udf_predicate(R.a, R.b)`).
 
         Returns
@@ -2100,9 +2100,9 @@ class BinaryPredicate(BasePredicate):
 
 
 class BetweenPredicate(BasePredicate):
-    """A ``BETWEEN`` predicate is a special case of a conjunction of two binary predicates.
+    """A *BETWEEN* predicate is a special case of a conjunction of two binary predicates.
 
-    Each ``BETWEEN`` predicate has a structure of ``<col> BETWEEN <a> AND <b>``, where ``<col>`` describes the (column)
+    Each *BETWEEN* predicate has a structure of ``<col> BETWEEN <a> AND <b>``, where ``<col>`` describes the (column)
     expression to which the condition should apply and ``<a>`` and ``<b>`` are the expressions that denote the valid bounds.
 
     Each BETWEEN predicate can be represented by a conjunction of binary predicates: ``<col> BETWEEN <a> AND <b>`` is
@@ -2123,7 +2123,7 @@ class BetweenPredicate(BasePredicate):
 
     Notes
     -----
-    A ``BETWEEN`` predicate can be a join predicate as in ``R.a BETWEEN 42 AND S.b``.
+    A *BETWEEN* predicate can be a join predicate as in ``R.a BETWEEN 42 AND S.b``.
     Furthermore, some systems even allow the ``<col>`` part to be an arbitrary expression. For example, in Postgres this is a
     valid query:
 
@@ -2149,7 +2149,7 @@ class BetweenPredicate(BasePredicate):
 
     @property
     def column(self) -> SqlExpression:
-        """Get the column that is tested (``R.a`` in ``SELECT * FROM R WHERE R.a BETWEEN 1 AND 42``).
+        """Get the column that is tested (*R.a* in ``SELECT * FROM R WHERE R.a BETWEEN 1 AND 42``).
 
         Returns
         -------
@@ -2235,7 +2235,7 @@ class BetweenPredicate(BasePredicate):
 
 
 class InPredicate(BasePredicate):
-    """An ``IN`` predicate lists the allowed values for a column.
+    """An *IN* predicate lists the allowed values for a column.
 
     In most cases, such a predicate with *n* allowed values can be transformed into a disjunction of *n* equality
     predicates, i.e. ``R.a IN (1, 2, 3)`` is equivalent to ``R.a = 1 OR R.a = 2 OR R.a = 3``. Depending on the allowed
@@ -2269,7 +2269,7 @@ class InPredicate(BasePredicate):
 
     @staticmethod
     def subquery(column: SqlExpression, subquery: SubqueryExpression | SqlQuery) -> InPredicate:
-        """Generates an ``IN`` predicate that is based on a subquery.
+        """Generates an *IN* predicate that is based on a subquery.
 
         Such a predicate is of the form ``R.a IN (SELECT S.b FROM S)``.
 
@@ -2303,7 +2303,7 @@ class InPredicate(BasePredicate):
 
     @property
     def column(self) -> SqlExpression:
-        """Get the expression that is tested (``R.a`` in ``SELECT * FROM R WHERE R.a IN (1, 2, 3)``).
+        """Get the expression that is tested (*R.a* in ``SELECT * FROM R WHERE R.a IN (1, 2, 3)``).
 
         Returns
         -------
@@ -2401,8 +2401,8 @@ class UnaryPredicate(BasePredicate):
         The expression that is tested. This can also be a user-defined function that produces a boolen return value.
     operation : Optional[SqlOperator], optional
         The operation that is used to generate the unary predicate. Only a small subset of operators can actually be used in
-        this context (e.g. ``EXISTS`` or ``MISSING``). If the predicate does not require an operator (e.g. in the case of
-        filtering UDFs), the operation can be ``None``. Notice however, that PostBOUND has no knowledge of the semantics of
+        this context (e.g. *EXISTS* or *MISSING*). If the predicate does not require an operator (e.g. in the case of
+        filtering UDFs), the operation can be *None*. Notice however, that PostBOUND has no knowledge of the semantics of
         UDFs and can therefore not enforce, whether UDFs is actually valid in this context. This has to be done at runtime by
         the actual database system.
 
@@ -2414,7 +2414,7 @@ class UnaryPredicate(BasePredicate):
 
     @staticmethod
     def exists(subquery: SqlQuery | SubqueryExpression) -> UnaryPredicate:
-        """Creates an ``EXISTS`` predicate for a subquery.
+        """Creates an *EXISTS* predicate for a subquery.
 
         Parameters
         ----------
@@ -2424,7 +2424,7 @@ class UnaryPredicate(BasePredicate):
         Returns
         -------
         UnaryPredicate
-            The ``EXISTS`` predicate
+            The *EXISTS* predicate
         """
         subquery = subquery if isinstance(subquery, SubqueryExpression) else SubqueryExpression(subquery)
         return UnaryPredicate(subquery, LogicalOperator.Exists)
@@ -2452,12 +2452,12 @@ class UnaryPredicate(BasePredicate):
         return self._column
 
     def is_exists(self) -> bool:
-        """Checks, whether this predicate is an ``EXISTS`` predicate.
+        """Checks, whether this predicate is an *EXISTS* predicate.
 
         Returns
         -------
         bool
-            Whether this predicate is an ``EXISTS`` predicate
+            Whether this predicate is an *EXISTS* predicate
         """
         return self.operation == LogicalOperator.Exists
 
@@ -2563,10 +2563,10 @@ class CompoundPredicate(AbstractPredicate):
 
     @staticmethod
     def create_and(parts: Collection[AbstractPredicate]) -> AbstractPredicate:
-        """Creates an ``AND`` predicate, combining a number of child predicates.
+        """Creates an *AND* predicate, combining a number of child predicates.
 
         If just a single child predicate is provided, that child is returned directly instead of wrapping it in an
-        ``AND`` predicate.
+        *AND* predicate.
 
         Parameters
         ----------
@@ -2593,7 +2593,7 @@ class CompoundPredicate(AbstractPredicate):
 
     @staticmethod
     def create_not(predicate: AbstractPredicate) -> CompoundPredicate:
-        """Builds a ``NOT`` predicate, wrapping a specific child predicate.
+        """Builds a *NOT* predicate, wrapping a specific child predicate.
 
         Parameters
         ----------
@@ -2610,10 +2610,10 @@ class CompoundPredicate(AbstractPredicate):
 
     @staticmethod
     def create_or(parts: Collection[AbstractPredicate]) -> AbstractPredicate:
-        """Creates an ``OR`` predicate, combining a number of child predicates.
+        """Creates an *OR* predicate, combining a number of child predicates.
 
         If just a single child predicate is provided, that child is returned directly instead of wrapping it in an
-        ``OR`` predicate.
+        *OR* predicate.
 
         Parameters
         ----------
@@ -2674,7 +2674,7 @@ class CompoundPredicate(AbstractPredicate):
         Returns
         -------
         Sequence[AbstractPredicate] | AbstractPredicate
-            The sequence of child predicates for ``AND`` and ``OR`` predicates, or the negated predicate for ``NOT``
+            The sequence of child predicates for *AND* and *OR* predicates, or the negated predicate for *NOT*
             predicates.
         """
         return self._children[0] if self.operation == CompoundOperator.Not else self._children
@@ -2806,9 +2806,9 @@ def as_predicate(column: ColumnReference, operation: LogicalOperator,
 
     The specific type of generated predicate is determined by the given operation. The following rules are applied:
 
-    - for ``BETWEEN`` predicates, the arguments can be either two values, or a tuple of values
+    - for *BETWEEN* predicates, the arguments can be either two values, or a tuple of values
       (additional arguments are ignored)
-    - for ``IN`` predicates, the arguments can be either a number of arguments, or a (nested) iterable of arguments
+    - for *IN* predicates, the arguments can be either a number of arguments, or a (nested) iterable of arguments
     - for all other binary predicates exactly one additional argument must be given (and an error is raised if that
       is not the case)
 
@@ -2962,7 +2962,7 @@ def _attempt_filter_unwrap(predicate: AbstractPredicate) -> UnwrappedFilter:
     Returns
     -------
     Optional[UnwrappedFilter]
-        A triple consisting of column, operator and value(s) if the `predicate` could be unwrapped, or ``None`` otherwise.
+        A triple consisting of column, operator and value(s) if the `predicate` could be unwrapped, or *None* otherwise.
 
     Raises
     ------
@@ -2997,7 +2997,7 @@ class SimplifiedFilterView(AbstractPredicate):
     """The intent behind this view is to provide more streamlined and direct access to filter predicates.
 
     As the name suggests, the view is a read-only predicate, i.e. it cannot be created on its own and has to be derived
-    from a base predicate (either a binary predicate, a ``BETWEEN`` predicate or an ``IN`` predicate). Afterward, it provides
+    from a base predicate (either a binary predicate, a *BETWEEN* predicate or an *IN* predicate). Afterward, it provides
     read-only access to the predicate being filtered, the filter operation, as well as the values used to restrict the allowed
     column instances.
 
@@ -3130,12 +3130,12 @@ class SimplifiedFilterView(AbstractPredicate):
 
     @property
     def operation(self) -> LogicalOperator:
-        """Get the SQL operation that is used for the filter (e.g. ``IN`` or ``<>``).
+        """Get the SQL operation that is used for the filter (e.g. *IN* or ``<>``).
 
         Returns
         -------
         LogicalSqlOperators
-            the operator. This cannot be ``EXISTS`` or ``MISSING``, since subqueries cannot be represented in simplified
+            the operator. This cannot be *EXISTS* or *MISSING*, since subqueries cannot be represented in simplified
             views.
         """
         return self._operation
@@ -3147,8 +3147,8 @@ class SimplifiedFilterView(AbstractPredicate):
         Returns
         -------
         object | tuple[object] | Sequence[object]
-            The value. For a binary predicate, this is just the value itself. For a ``BETWEEN`` predicate, this is tuple of the
-            form ``(lower, upper)`` and for an ``IN`` predicate, this is a sequence of the allowed values.
+            The value. For a binary predicate, this is just the value itself. For a *BETWEEN* predicate, this is tuple of the
+            form ``(lower, upper)`` and for an *IN* predicate, this is a sequence of the allowed values.
         """
         return self._value
 
@@ -3202,10 +3202,10 @@ def _collect_filter_predicates(predicate: AbstractPredicate) -> set[AbstractPred
 
     This method handles compound predicates as follows:
 
-    - conjunctions are un-nested, i.e. all predicates that form an ``AND`` predicate are collected individually
-    - ``OR`` predicates are included with exactly those predicates from their children that are filters. If this is only true
+    - conjunctions are un-nested, i.e. all predicates that form an *AND* predicate are collected individually
+    - *OR* predicates are included with exactly those predicates from their children that are filters. If this is only true
        for a single predicate, that predicate will be returned directly.
-    - ``NOT`` predicates are included if their child predicate is a filter
+    - *NOT* predicates are included if their child predicate is a filter
 
     Parameters
     ----------
@@ -3258,10 +3258,10 @@ def _collect_join_predicates(predicate: AbstractPredicate) -> set[AbstractPredic
 
     This method handles compound predicates as follows:
 
-    - conjunctions are un-nested, i.e. all predicates that form an ``AND`` predicate are collected individually
-    - ``OR`` predicates are included with exactly those predicates from their children that are joins. If this is only true for
+    - conjunctions are un-nested, i.e. all predicates that form an *AND* predicate are collected individually
+    - *OR* predicates are included with exactly those predicates from their children that are joins. If this is only true for
        a single predicate, that predicate will be returned directly.
-    - ``NOT`` predicates are included if their child predicate is a join
+    - *NOT* predicates are included if their child predicate is a join
 
     Parameters
     ----------
@@ -3320,7 +3320,7 @@ class QueryPredicates:
     global `DefaultPredicateHandler` variable to that class. Afterwards, each call to `predicates` on a new `SqlQuery` object
     will use the updated handler. Notice however, that any change to the defaut handler should also involve changes to the
     join and filter check of the actual predicates. Otherwise, the query predicates might provide a predicate as a join
-    predicate, but calling `is_join` on that predicate returns ``False``. This could break application behaviour.
+    predicate, but calling `is_join` on that predicate returns *False*. This could break application behaviour.
 
     Parameters
     ----------
@@ -3384,10 +3384,10 @@ class QueryPredicates:
 
         This method handles compound predicates as follows:
 
-        - conjunctions are un-nested, i.e. all predicates that form an ``AND`` predicate are collected individually
-        - ``OR`` predicates are included with exactly those predicates from their children that are filters. If this is only
+        - conjunctions are un-nested, i.e. all predicates that form an *AND* predicate are collected individually
+        - *OR* predicates are included with exactly those predicates from their children that are filters. If this is only
           true for a single predicate, that predicate will be returned directly.
-        - ``NOT`` predicates are included if their child predicate is a filter.
+        - *NOT* predicates are included if their child predicate is a filter.
 
         Returns
         -------
@@ -3405,10 +3405,10 @@ class QueryPredicates:
 
         This method handles compound predicates as follows:
 
-        - conjunctions are un-nested, i.e. all predicates that form an ``AND`` predicate are collected individually
-        - ``OR`` predicates are included with exactly those predicates from their children that are joins. If this is only true
+        - conjunctions are un-nested, i.e. all predicates that form an *AND* predicate are collected individually
+        - *OR* predicates are included with exactly those predicates from their children that are joins. If this is only true
           for a single predicate, that predicate will be returned directly.
-        - ``NOT`` predicates are included if their child predicate is a join.
+        - *NOT* predicates are included if their child predicate is a join.
 
         Returns
         -------
@@ -3423,8 +3423,8 @@ class QueryPredicates:
 
         A join graph is an undirected graph, where each node corresponds to a base table and each edge corresponds to a
         join predicate between two base tables. In addition, each node is annotated by a ``predicate`` key which is a
-        conjunction of all filter predicates on that table (or ``None`` if the table is unfiltered). Likewise, each edge is
-        annotated by a ``predicate`` key that corresponds to the join predicate (which can never be ``None``).
+        conjunction of all filter predicates on that table (or *None* if the table is unfiltered). Likewise, each edge is
+        annotated by a ``predicate`` key that corresponds to the join predicate (which can never be *None*).
 
         Returns
         -------
@@ -3467,7 +3467,7 @@ class QueryPredicates:
         Returns
         -------
         Optional[AbstractPredicate]
-            A (conjunction of) the filter predicates of the `table`, or ``None`` if the table is unfiltered.
+            A (conjunction of) the filter predicates of the `table`, or *None* if the table is unfiltered.
         """
         if self.is_empty():
             return None
@@ -3535,7 +3535,7 @@ class QueryPredicates:
             The (set of) join partners for `first_table`.
         _computation : Literal[&quot;legacy&quot;, &quot;graph&quot;, &quot;map&quot;], optional
             The specific algorithm to use for determining the join partners. The algorithms have very different performance
-            and memory charactersistics. The default ``"map"`` setting is usually the fastest. It should only really be changed
+            and memory charactersistics. The default ``map`` setting is usually the fastest. It should only really be changed
             if there are very good reasons for it. The following settings exist:
 
             - *legacy*: uses a recursive strategy in case `first_table` or `second_table` contain multiple references.
@@ -3549,7 +3549,7 @@ class QueryPredicates:
         -------
         Optional[AbstractPredicate]
             A conjunction of all the individual join predicates between the two sets of candidate tables. If there is no join
-            predicate between any of the tables, ``None`` is returned.
+            predicate between any of the tables, *None* is returned.
 
         Raises
         ------
@@ -3714,7 +3714,7 @@ class QueryPredicates:
 
         .. deprecated::
             There is no real advantage of using this method, other than slightly easier debugging. Should be removed at some
-            later point in time (in which case the old ``"legacy"`` strategy key will be re-mapped to a different) strategy.
+            later point in time (in which case the old ``legacy`` strategy key will be re-mapped to a different) strategy.
 
         Parameters
         ----------
@@ -3727,7 +3727,7 @@ class QueryPredicates:
         -------
         Optional[AbstractPredicate]
             A conjunction of all the individual join predicates between the two sets of candidate tables. If there is no join
-            predicate between any of the tables, ``None`` is returned.
+            predicate between any of the tables, *None* is returned.
         """
         if isinstance(first_table, TableReference) and isinstance(second_table, TableReference):
             if first_table == second_table:
@@ -3762,7 +3762,7 @@ class QueryPredicates:
         -------
         Optional[AbstractPredicate]
             A conjunction of all the individual join predicates between the two sets of candidate tables. If there is no join
-            predicate between any of the tables, ``None`` is returned.
+            predicate between any of the tables, *None* is returned.
 
         """
         join_graph = self.join_graph()
@@ -3807,7 +3807,7 @@ class QueryPredicates:
         -------
         Optional[AbstractPredicate]
             A conjunction of all the individual join predicates between the two sets of candidate tables. If there is no join
-            predicate between any of the tables, ``None`` is returned.
+            predicate between any of the tables, *None* is returned.
 
         """
         join_predicates = set()
@@ -4058,27 +4058,27 @@ class Hint(BaseClause):
 
 
 class Explain(BaseClause):
-    """``EXPLAIN`` block of a query.
+    """*EXPLAIN* block of a query.
 
-    ``EXPLAIN`` queries change the execution mode of a query. Instead of focusing on the actual query result, an
-    ``EXPLAIN`` query produces information about the internal processes of the database system. Typically, this
-    includes which execution plan the DBS would choose for the query. Additionally, ``EXPLAIN ANALYZE`` (as for example
+    *EXPLAIN* queries change the execution mode of a query. Instead of focusing on the actual query result, an
+    *EXPLAIN* query produces information about the internal processes of the database system. Typically, this
+    includes which execution plan the DBS would choose for the query. Additionally, *EXPLAIN ANALYZE* (as for example
     supported by Postgres) provides the query plan and executes the actual query. The returned plan is then annotated
-    by how the optimizer predictions match reality. Furthermore, such ``ANALYZE`` plans typically also contain some
+    by how the optimizer predictions match reality. Furthermore, such *ANALYZE* plans typically also contain some
     runtime statistics such as runtime of certain operators.
 
-    Notice that there is no ``EXPLAIN`` keyword in the SQL standard, but all major database systems provide this
-    functionality. Nevertheless, the precise syntax and semantic of an ``EXPLAIN`` statement depends on the actual DBS.
+    Notice that there is no *EXPLAIN* keyword in the SQL standard, but all major database systems provide this
+    functionality. Nevertheless, the precise syntax and semantic of an *EXPLAIN* statement depends on the actual DBS.
     The Explain clause object is modeled after Postgres and needs to adapted accordingly for different systems (see
-    `db.HintService`). Especially the ``EXPLAIN ANALYZE`` variant is not supported by all systems.
+    `db.HintService`). Especially the *EXPLAIN ANALYZE* variant is not supported by all systems.
 
     Parameters
     ----------
     analyze : bool, optional
-        Whether the query should not only be executed as an ``EXPLAIN`` query, but rather as an ``EXPLAIN ANALYZE``
-        query. Defaults to ``False`` which runs the query as a pure ``EXPLAIN`` query.
+        Whether the query should not only be executed as an *EXPLAIN* query, but rather as an *EXPLAIN ANALYZE*
+        query. Defaults to *False* which runs the query as a pure *EXPLAIN* query.
     target_format : Optional[str], optional
-        The desired output format of the query plan, if this is supported by the database system. Defaults to ``None``
+        The desired output format of the query plan, if this is supported by the database system. Defaults to *None*
         which normally forces the default output format.
 
     See Also
@@ -4088,17 +4088,17 @@ class Explain(BaseClause):
     References
     ----------
 
-    .. PostgreSQL ``EXPLAIN`` command: https://www.postgresql.org/docs/current/sql-explain.html
+    .. PostgreSQL *EXPLAIN* command: https://www.postgresql.org/docs/current/sql-explain.html
     """
 
     @staticmethod
     def explain_analyze(format_type: str = "JSON") -> Explain:
-        """Constructs an ``EXPLAIN ANALYZE`` clause with the specified output format.
+        """Constructs an *EXPLAIN ANALYZE* clause with the specified output format.
 
         Parameters
         ----------
         format_type : str, optional
-            The output format, by default ``"JSON"``
+            The output format, by default ``JSON``
 
         Returns
         -------
@@ -4109,12 +4109,12 @@ class Explain(BaseClause):
 
     @staticmethod
     def plan(format_type: str = "JSON") -> Explain:
-        """Constructs a pure ``EXPLAIN`` clause (i.e. without ``ANALYZE``) with the specified output format.
+        """Constructs a pure *EXPLAIN* clause (i.e. without *ANALYZE*) with the specified output format.
 
         Parameters
         ----------
         format_type : str, optional
-            The output format, by default ``"JSON"``
+            The output format, by default ``JSON``
 
         Returns
         -------
@@ -4135,26 +4135,26 @@ class Explain(BaseClause):
 
     @property
     def analyze(self) -> bool:
-        """Check, whether the query should be executed as ``EXPLAIN ANALYZE`` rather than just plain ``EXPLAIN``.
+        """Check, whether the query should be executed as *EXPLAIN ANALYZE* rather than just plain *EXPLAIN*.
 
-        Usually, ``EXPLAIN ANALYZE`` executes the query and gathers extensive runtime statistics (e.g. comparing
+        Usually, *EXPLAIN ANALYZE* executes the query and gathers extensive runtime statistics (e.g. comparing
         estimated vs. true cardinalities for intermediate nodes).
 
         Returns
         -------
         bool
-            Whether ``ANALYZE`` mode is enabled
+            Whether *ANALYZE* mode is enabled
         """
         return self._analyze
 
     @property
     def target_format(self) -> Optional[str]:
-        """Get the target format in which the ``EXPLAIN`` plan should be provided.
+        """Get the target format in which the *EXPLAIN* plan should be provided.
 
         Returns
         -------
         Optional[str]
-            The output format, or ``None`` if this is not specified. This is never an empty string.
+            The output format, or *None* if this is not specified. This is never an empty string.
         """
         return self._target_format
 
@@ -4192,7 +4192,7 @@ class Explain(BaseClause):
 class WithQuery:
     """A single common table expression that can be referenced in the actual query.
 
-    Each ``WITH`` clause can consist of multiple auxiliary common table expressions. This class models exactly one
+    Each *WITH* clause can consist of multiple auxiliary common table expressions. This class models exactly one
     such query. It consists of the query as well as the name under which the temporary table can be referenced
     in the actual SQL query.
 
@@ -4203,7 +4203,7 @@ class WithQuery:
     target_name : str | TableReference
         The name under which the table should be made available. If a table reference is provided, its identifier will be used.
     materialized : Optional[bool], optional
-        Whether the query should be materialized or not. If this is not supported or not known, this can be set to ``None``
+        Whether the query should be materialized or not. If this is not supported or not known, this can be set to *None*
         (the default). Since materialization is not part of the SQL standard, we do not include it in the WITH querie's
         identity.
 
@@ -4350,7 +4350,7 @@ class ValuesWithQuery(WithQuery):
         The columns that should be used to construct the CTE. If no columns are provided, all columns are anonymous.
         If columns are provided, they have to match the number of columns in the values list.
     materialized : Optional[bool], optional
-        Whether the query should be materialized or not. If this is not supported or not known, this can be set to ``None``
+        Whether the query should be materialized or not. If this is not supported or not known, this can be set to *None*
         (the default). Since materialization is not part of the SQL standard, we do not include it in the WITH querie's
         identity.
     """
@@ -4461,14 +4461,14 @@ class ValuesWithQuery(WithQuery):
 
 
 class CommonTableExpression(BaseClause):
-    """The ``WITH`` clause of a query, consisting of at least one CTE query.
+    """The *WITH* clause of a query, consisting of at least one CTE query.
 
     Parameters
     ----------
     with_queries : Iterable[WithQuery]
         The common table expressions that form the WITH clause.
     recursive : bool, optional
-        Whether the WITH clause is recursive or not. Defaults to ``False``.
+        Whether the WITH clause is recursive or not. Defaults to *False*.
 
     Raises
     ------
@@ -4494,7 +4494,7 @@ class CommonTableExpression(BaseClause):
 
     @property
     def queries(self) -> Sequence[WithQuery]:
-        """Get CTEs that form the ``WITH`` clause
+        """Get CTEs that form the *WITH* clause
 
         Returns
         -------
@@ -4572,9 +4572,9 @@ class CommonTableExpression(BaseClause):
 
 
 class BaseProjection:
-    """The `BaseProjection` forms the fundamental building block of a ``SELECT`` clause.
+    """The `BaseProjection` forms the fundamental building block of a *SELECT* clause.
 
-    Each ``SELECT`` clause is composed of at least one base projection. Each projection can be an arbitrary
+    Each *SELECT* clause is composed of at least one base projection. Each projection can be an arbitrary
     `SqlExpression` (rules and restrictions of the SQL standard are not enforced here). In addition, each projection
     can receive a target name as in ``SELECT foo AS f FROM bar``.
 
@@ -4665,6 +4665,10 @@ class BaseProjection:
         """
         return self._target_name
 
+    def is_star(self) -> bool:
+        """Checks, whether this projection is a star projection."""
+        return isinstance(self._expression, StarExpression)
+
     def columns(self) -> set[ColumnReference]:
         return self.expression.columns()
 
@@ -4700,17 +4704,17 @@ DistinctType = Literal["all", "none", "on"]
 
 
 class Select(BaseClause):
-    """The ``SELECT`` clause of a query.
+    """The *SELECT* clause of a query.
 
     This is the only required part of a query. Everything else is optional and can be left out. (Notice that PostBOUND
-    is focused on SPJ-queries, hence there are no ``INSERT``, ``UPDATE``, or ``DELETE`` queries)
+    is focused on SPJ-queries, hence there are no *INSERT*, *UPDATE*, or *DELETE* queries)
 
-    A ``SELECT`` clause simply consists of a number of individual projections (see `BaseProjection`), its `targets`.
+    A *SELECT* clause simply consists of a number of individual projections (see `BaseProjection`), its `targets`.
 
     Parameters
     ----------
     targets : BaseProjection | Sequence[BaseProjection]
-        The individual projection(s) that form the ``SELECT`` clause
+        The individual projection(s) that form the *SELECT* clause
     distinct : Iterable[SqlExpression] | bool, optional
         Whether a duplicate elimination should be performed. By default, this is *False* indicating no duplicate elimination.
         If *True*, rows are eliminated based on all columns. Alternatively, a *DISTINCT ON* clause can be created by specifying
@@ -4854,6 +4858,16 @@ class Select(BaseClause):
             case _:
                 raise RuntimeError("Invalid distinct type, something is severly broken")
 
+    def star_expressions(self) -> Iterable[BaseProjection]:
+        """Provides all * and R.* expressions.
+
+        Returns
+        -------
+        Iterable[BaseProjection]
+            The star expressions. Can be empty if no star expressions are used.
+        """
+        return [target for target in self.targets if target.is_star()]
+
     def columns(self) -> set[ColumnReference]:
         return util.set_union(target.columns() for target in self.targets)
 
@@ -4873,8 +4887,8 @@ class Select(BaseClause):
         provides the dictionary ``{'foo': R.a, 'bar': R.b}``.
 
         Currently, this method only works for 1:1 mappings and other aliases are ignored. For example, consider a query
-        ``SELECT my_udf(R.a, R.b) AS c FROM R``. Here, a user-defined function is used to combine the values of ``R.a``
-        and ``R.b`` to form an output column ``c``. Such a projection is ignored by `output_names`.
+        ``SELECT my_udf(R.a, R.b) AS c FROM R``. Here, a user-defined function is used to combine the values of *R.a*
+        and *R.b* to form an output column *c*. Such a projection is ignored by `output_names`.
 
         Returns
         -------
@@ -4921,10 +4935,10 @@ class Select(BaseClause):
 class TableSource(abc.ABC):
     """A table source models a relation that can be scanned by the database system, filtered, joined, ...
 
-    This is what is commonly reffered to as a *table* or a *relation* and forms the basic item of a ``FROM`` clause. In
-    an SQL query the items of the ``FROM`` clause can originate from a number of different concepts. In the simplest
+    This is what is commonly reffered to as a *table* or a *relation* and forms the basic item of a *FROM* clause. In
+    an SQL query the items of the *FROM* clause can originate from a number of different concepts. In the simplest
     case, this is just a physical table (e.g. ``SELECT * FROM R, S, T WHERE ...``), but other queries might reference
-    subqueries or common table expressions in the ``FROM`` clause (e.g.
+    subqueries or common table expressions in the *FROM* clause (e.g.
     ``SELECT * FROM R, (SELECT * FROM S, T WHERE ...) WHERE ...``). This class models the similarities between these
     concepts. Specific sub-classes implement them for the concrete kind of source (e.g. `DirectTableSource` or
     `SubqueryTableSource`).
@@ -4993,18 +5007,18 @@ class TableSource(abc.ABC):
     def predicates(self) -> QueryPredicates | None:
         """Provides all predicates that are contained in the source.
 
-        For plain table sources this will be ``None``, but for subquery sources, etc. all predicates are returned.
+        For plain table sources this will be *None*, but for subquery sources, etc. all predicates are returned.
 
         Returns
         -------
         QueryPredicates | None
-            The predicates or ``None`` if the source does not allow predicates or simply does not contain any.
+            The predicates or *None* if the source does not allow predicates or simply does not contain any.
         """
         raise NotImplementedError
 
 
 class DirectTableSource(TableSource):
-    """Models a plain table that is directly referenced in a ``FROM`` clause, e.g. ``R`` in ``SELECT * FROM R, S``.
+    """Models a plain table that is directly referenced in a *FROM* clause, e.g. *R* in ``SELECT * FROM R, S``.
 
     Parameters
     ----------
@@ -5059,10 +5073,10 @@ class DirectTableSource(TableSource):
 
 
 class SubqueryTableSource(TableSource):
-    """Models subquery that is referenced as a virtual table in the ``FROM`` clause.
+    """Models subquery that is referenced as a virtual table in the *FROM* clause.
 
     Consider the example query ``SELECT * FROM R, (SELECT * FROM S, T WHERE S.a = T.b) AS s_t WHERE R.c = s_t.a``.
-    In this query, the subquery ``s_t`` would be represented as a subquery table source.
+    In this query, the subquery *s_t* would be represented as a subquery table source.
 
     Parameters
     ----------
@@ -5071,7 +5085,7 @@ class SubqueryTableSource(TableSource):
     target_name : str | TableReference, optional
         The name under which the subquery should be made available. Can empty for an anonymous subquery.
     lateral : bool, optional
-        Whether the subquery should be executed as a lateral join. Defaults to ``False``.
+        Whether the subquery should be executed as a lateral join. Defaults to *False*.
 
     Raises
     ------
@@ -5339,7 +5353,7 @@ class ValuesTableSource(TableSource):
 
 
 class JoinType(enum.Enum):
-    """Indicates the type of a join using the explicit ``JOIN`` syntax, e.g. ``OUTER JOIN`` or ``NATURAL JOIN``.
+    """Indicates the type of a join using the explicit *JOIN* syntax, e.g. *OUTER JOIN* or *NATURAL JOIN*.
 
     The names of the individual values should be pretty self-explanatory and correspond entirely to the names in the
     SQL standard.
@@ -5469,13 +5483,13 @@ class JoinTableSource(TableSource):
     def join_condition(self) -> Optional[AbstractPredicate]:
         """Get the predicate that is used to determine matching tuples from the table.
 
-        This can be ``None`` if the specific `join_type` does not require or allow a join condition (e.g.
-        ``NATURAL JOIN``).
+        This can be *None* if the specific `join_type` does not require or allow a join condition (e.g.
+        *NATURAL JOIN*).
 
         Returns
         -------
         Optional[AbstractPredicate]
-            The condition if it is specified, ``None`` otherwise.
+            The condition if it is specified, *None* otherwise.
         """
         return self._join_condition
 
@@ -5568,20 +5582,20 @@ TableType = TypeVar("TableType", bound=TableSource)
 
 
 class From(BaseClause, Generic[TableType]):
-    """The ``FROM`` clause models which tables should be selected and potentially how they are combined.
+    """The *FROM* clause models which tables should be selected and potentially how they are combined.
 
-    A ``FROM`` clause permits arbitrary source items and does not enforce a specific structure or semantic on them.
+    A *FROM* clause permits arbitrary source items and does not enforce a specific structure or semantic on them.
     This puts the user in charge to generate a valid and meaningful structure. For example, the model allows for the
     first item to be a `JoinTableSource`, even though this is not valid SQL. Likewise, no duplicate checks are
     performed.
 
-    To represent ``FROM`` clauses with a bit more structure, the `ImplicitFromClause` and `ExplicitFromClause`
+    To represent *FROM* clauses with a bit more structure, the `ImplicitFromClause` and `ExplicitFromClause`
     subclasses exist and should generally be preffered over direct usage of the raw `From` clause class.
 
     Parameters
     ----------
     items : TableSource | Iterable[TableSource]
-        The tables that should be sourced in the ``FROM`` clause
+        The tables that should be sourced in the *FROM* clause
 
     Raises
     ------
@@ -5600,7 +5614,7 @@ class From(BaseClause, Generic[TableType]):
 
     @property
     def items(self) -> Sequence[TableType]:
-        """Get the tables that are sourced in the ``FROM`` clause
+        """Get the tables that are sourced in the *FROM* clause
 
         Returns
         -------
@@ -5649,12 +5663,12 @@ class From(BaseClause, Generic[TableType]):
 
 
 class ImplicitFromClause(From[DirectTableSource]):
-    """Represents a special case of ``FROM`` clause that only allows for pure tables to be selected.
+    """Represents a special case of *FROM* clause that only allows for pure tables to be selected.
 
-    Specifically, this means that subqueries or explicit joins using the ``JOIN ON`` syntax are not allowed. Just
+    Specifically, this means that subqueries or explicit joins using the *JOIN ON* syntax are not allowed. Just
     plain old ``SELECT ... FROM R, S, T WHERE ...`` queries.
 
-    As a special case, all ``FROM`` clauses that consist of a single (non-subquery) table can be represented as
+    As a special case, all *FROM* clauses that consist of a single (non-subquery) table can be represented as
     implicit clauses.
 
     Parameters
@@ -5665,9 +5679,9 @@ class ImplicitFromClause(From[DirectTableSource]):
 
     @staticmethod
     def create_for(tables: TableReference | Iterable[TableReference]) -> ImplicitFromClause:
-        """Shorthand method to create a ``FROM`` clause for a set of table references.
+        """Shorthand method to create a *FROM* clause for a set of table references.
 
-        This saves the user from creating the `DirectTableSource` instances before instantiating a implicit ``FROM``
+        This saves the user from creating the `DirectTableSource` instances before instantiating a implicit *FROM*
         clause.
 
         Parameters
@@ -5678,7 +5692,7 @@ class ImplicitFromClause(From[DirectTableSource]):
         Returns
         -------
         ImplicitFromClause
-            The ``FROM`` clause
+            The *FROM* clause
         """
         tables = util.enlist(tables)
         return ImplicitFromClause([DirectTableSource(tab) for tab in tables])
@@ -5689,7 +5703,7 @@ class ImplicitFromClause(From[DirectTableSource]):
     __match_args__ = ("items",)
 
     def itertables(self) -> Sequence[TableReference]:
-        """Provides all tables in the ``FROM`` clause exactly in the sequence in which they were specified.
+        """Provides all tables in the *FROM* clause exactly in the sequence in which they were specified.
 
         This utility saves the user from unwrapping all the `DirectTableSource` objects by herself.
 
@@ -5702,7 +5716,7 @@ class ImplicitFromClause(From[DirectTableSource]):
 
 
 class ExplicitFromClause(From[JoinTableSource]):
-    """Represents a special kind of ``FROM`` clause that requires all tables to be joined using the ``JOIN ON`` syntax.
+    """Represents a special kind of *FROM* clause that requires all tables to be joined using the *JOIN ON* syntax.
 
     Parameters
     ----------
@@ -5719,7 +5733,7 @@ class ExplicitFromClause(From[JoinTableSource]):
 
     @property
     def root(self) -> JoinTableSource:
-        """Get the root join of the ``FROM`` clause.
+        """Get the root join of the *FROM* clause.
 
         Returns
         -------
@@ -5742,7 +5756,7 @@ class ExplicitFromClause(From[JoinTableSource]):
         return self.root.base_table()
 
     def iterpredicates(self) -> Iterable[AbstractPredicate]:
-        """Provides all join conditions that are contained in the ``FROM`` clause.
+        """Provides all join conditions that are contained in the *FROM* clause.
 
         Returns
         -------
@@ -5753,7 +5767,7 @@ class ExplicitFromClause(From[JoinTableSource]):
 
 
 class Where(BaseClause):
-    """The ``WHERE`` clause specifies conditions that result rows must satisfy.
+    """The *WHERE* clause specifies conditions that result rows must satisfy.
 
     All conditions are collected in a (potentially conjunctive or disjunctive) predicate object. See
     `AbstractPredicate` for details.
@@ -5775,7 +5789,7 @@ class Where(BaseClause):
 
     @property
     def predicate(self) -> AbstractPredicate:
-        """Get the root predicate that contains all filters and joins in the ``WHERE`` clause.
+        """Get the root predicate that contains all filters and joins in the *WHERE* clause.
 
         Returns
         -------
@@ -5809,7 +5823,7 @@ class Where(BaseClause):
 
 
 class GroupBy(BaseClause):
-    """The ``GROUP BY`` clause combines rows that match a grouping criterion to enable aggregation on these groups.
+    """The *GROUP BY* clause combines rows that match a grouping criterion to enable aggregation on these groups.
 
     Despite their names, all grouped columns can be arbitrary `SqlExpression` instances, rules and restrictions of the SQL
     standard are not enforced by PostBOUND.
@@ -5819,7 +5833,7 @@ class GroupBy(BaseClause):
     group_columns : Sequence[SqlExpression]
         The expressions that should be used to perform the grouping
     distinct : bool, optional
-        Whether the grouping should perform duplicate elimination, by default ``False``
+        Whether the grouping should perform duplicate elimination, by default *False*
 
     Raises
     ------
@@ -5892,13 +5906,13 @@ class GroupBy(BaseClause):
 
 
 class Having(BaseClause):
-    """The ``HAVING`` clause enables filtering of the groups constructed by a ``GROUP BY`` clause.
+    """The *HAVING* clause enables filtering of the groups constructed by a *GROUP BY* clause.
 
     All conditions are collected in a (potentially conjunctive or disjunctive) predicate object. See
     `AbstractPredicate` for details.
 
     The structure of this clause is similar to the `Where` clause, but its scope is different (even though PostBOUND
-    does no semantic validation to enforce this): predicates of the ``HAVING`` clause are only checked on entire groups
+    does no semantic validation to enforce this): predicates of the *HAVING* clause are only checked on entire groups
     of values and have to be valid their, instead of on individual tuples.
 
     Parameters
@@ -5918,7 +5932,7 @@ class Having(BaseClause):
 
     @property
     def condition(self) -> AbstractPredicate:
-        """Get the root predicate that is used to form the ``HAVING`` clause.
+        """Get the root predicate that is used to form the *HAVING* clause.
 
         Returns
         -------
@@ -5949,7 +5963,7 @@ class Having(BaseClause):
 
 
 class OrderByExpression:
-    """The `OrderByExpression` is the fundamental building block for an ``ORDER BY`` clause.
+    """The `OrderByExpression` is the fundamental building block for an *ORDER BY* clause.
 
     Each expression consists of the actual column (which might be an arbitrary `SqlExpression`, rules and restrictions
     by the SQL standard are not enforced here) as well as information regarding the ordering of the column. Setting
@@ -5960,10 +5974,10 @@ class OrderByExpression:
     column : SqlExpression
         The column that should be used for ordering
     ascending : Optional[bool], optional
-        Whether the column values should be sorted in ascending order. Defaults to ``None``, which indicates that the
+        Whether the column values should be sorted in ascending order. Defaults to *None*, which indicates that the
         system-default ordering should be used.
     nulls_first : Optional[bool], optional
-        Whether ``NULL`` values should be placed at beginning or at the end of the sorted list. Defaults to ``None``,
+        Whether *NULL* values should be placed at beginning or at the end of the sorted list. Defaults to *None*,
         which indicates that the system-default behaviour should be used.
     """
 
@@ -5999,19 +6013,19 @@ class OrderByExpression:
         Returns
         -------
         Optional[bool]
-            Whether to sort in ascending order. ``None`` indicates that the default behaviour of the system should be
+            Whether to sort in ascending order. *None* indicates that the default behaviour of the system should be
             used.
         """
         return self._ascending
 
     @property
     def nulls_first(self) -> Optional[bool]:
-        """Get where to place ``NULL`` values in the result set.
+        """Get where to place *NULL* values in the result set.
 
         Returns
         -------
         Optional[bool]
-            Whether to put ``NULL`` values at the beginning of the result set (or at the end). ``None`` indicates that
+            Whether to put *NULL* values at the beginning of the result set (or at the end). *None* indicates that
             the default behaviour of the system should be used.
         """
         return self._nulls_first
@@ -6035,14 +6049,14 @@ class OrderByExpression:
 
 
 class OrderBy(BaseClause):
-    """The ``ORDER BY`` clause specifies how result rows should be sorted.
+    """The *ORDER BY* clause specifies how result rows should be sorted.
 
     This clause has a similar structure like a `Select` clause and simply consists of an arbitrary number of
     `OrderByExpression` objects.
 
     Parameters
     ----------
-    expressions : Iterable[OrderByExpression]
+    expressions : Iterable[OrderByExpression] | OrderByExpression
         The terms that should be used to determine the ordering. At least one expression is required
 
     Raises
@@ -6051,10 +6065,15 @@ class OrderBy(BaseClause):
         If no `expressions` are provided
     """
 
-    def __init__(self, expressions: Iterable[OrderByExpression]) -> None:
+    @staticmethod
+    def create_for(*columns: ColumnReference) -> OrderBy:
+        """Shorthand method to create an *ORDER BY* clause for a set of column references."""
+        return OrderBy([OrderByExpression(col) for col in columns])
+
+    def __init__(self, expressions: Iterable[OrderByExpression] | OrderByExpression) -> None:
         if not expressions:
             raise ValueError("At least one ORDER BY expression required")
-        self._expressions = tuple(expressions)
+        self._expressions = tuple(util.enlist(expressions))
         super().__init__(hash(self._expressions))
 
     __slots__ = ("_expressions",)
@@ -6062,7 +6081,7 @@ class OrderBy(BaseClause):
 
     @property
     def expressions(self) -> Sequence[OrderByExpression]:
-        """Get the expressions that form this ``ORDER BY`` clause.
+        """Get the expressions that form this *ORDER BY* clause.
 
         Returns
         -------
@@ -6100,20 +6119,20 @@ class OrderBy(BaseClause):
 
 
 class Limit(BaseClause):
-    """The ``FETCH FIRST`` or ``LIMIT`` clause restricts the number of output rows returned by the database system.
+    """The *FETCH FIRST* or *LIMIT* clause restricts the number of output rows returned by the database system.
 
-    Each clause can specify an offset (which is probably only meaningful if there is also an ``ORDER BY`` clause)
+    Each clause can specify an offset (which is probably only meaningful if there is also an *ORDER BY* clause)
     and the actual limit. Notice that although many database systems use a non-standard syntax for this clause, our
-    implementation is modelled after the actual SQL standard version (i.e. it produces a ``FETCH ...`` string output).
+    implementation is modelled after the actual SQL standard version (i.e. it produces a *FETCH ...* string output).
 
     Parameters
     ----------
     limit : Optional[int], optional
-        The maximum number of tuples to put in the result set. Defaults to ``None`` which indicates that all tuples
+        The maximum number of tuples to put in the result set. Defaults to *None* which indicates that all tuples
         should be returned.
     offset : Optional[int], optional
         The number of tuples that should be skipped from the beginning of the result set. If no `OrderBy` clause is
-        defined, this makes the result set's contents non-deterministic (at least in theory). Defaults to ``None``
+        defined, this makes the result set's contents non-deterministic (at least in theory). Defaults to *None*
         which indicates that no tuples should be skipped.
 
     Raises
@@ -6141,7 +6160,7 @@ class Limit(BaseClause):
         Returns
         -------
         Optional[int]
-            The limit or ``None``, if all rows should be returned.
+            The limit or *None*, if all rows should be returned.
         """
         return self._limit
 
@@ -6152,7 +6171,7 @@ class Limit(BaseClause):
         Returns
         -------
         Optional[int]
-            The offset or ``None`` if no rows should be skipped.
+            The offset or *None* if no rows should be skipped.
         """
         return self._offset
 
@@ -6186,7 +6205,7 @@ class Limit(BaseClause):
 
 
 class UnionClause(BaseClause):
-    """The ``UNION`` or ``UNION ALL`` clause of a query.
+    """The *UNION* or *UNION ALL* clause of a query.
 
     Parameters
     ----------
@@ -6197,7 +6216,7 @@ class UnionClause(BaseClause):
         The right input to the UNION operation. Since UNIONs are commutative, the assignment of left and right does not really
         matter.
     union_all : bool, optional
-        Whether the ``UNION`` operation should eliminate duplicates or not. Defaults to ``False`` which indicates that
+        Whether the *UNION* operation should eliminate duplicates or not. Defaults to *False* which indicates that
         duplicates should be eliminated.
     """
 
@@ -6213,7 +6232,7 @@ class UnionClause(BaseClause):
 
     @property
     def left_query(self) -> SelectStatement:
-        """Get the left query that is part of the ``UNION`` operation.
+        """Get the left query that is part of the *UNION* operation.
 
         Returns
         -------
@@ -6228,7 +6247,7 @@ class UnionClause(BaseClause):
 
     @property
     def right_query(self) -> SelectStatement:
-        """Get the right query that is part of the ``UNION`` operation.
+        """Get the right query that is part of the *UNION* operation.
 
         Returns
         -------
@@ -6243,27 +6262,27 @@ class UnionClause(BaseClause):
 
     @property
     def union_all(self) -> bool:
-        """Get whether this is a ``UNION`` or ``UNION ALL`` clause.
+        """Get whether this is a *UNION* or *UNION ALL* clause.
 
         Returns
         -------
         bool
-            ``True`` if duplicates are eliminated, ``False`` otherwise.
+            *True* if duplicates are eliminated, *False* otherwise.
         """
         return self._union_all
 
     def is_union_all(self) -> bool:
-        """Whether this is a ``UNION`` or ``UNION ALL`` clause.
+        """Whether this is a *UNION* or *UNION ALL* clause.
 
         Returns
         -------
         bool
-            ``True`` if duplicates are eliminated, ``False`` otherwise.
+            *True* if duplicates are eliminated, *False* otherwise.
         """
         return self._union_all
 
     def input_queries(self) -> set[SelectStatement]:
-        """Get the two input queries that are part of the ``UNION`` operation.
+        """Get the two input queries that are part of the *UNION* operation.
 
         Returns
         -------
@@ -6304,14 +6323,14 @@ class UnionClause(BaseClause):
 
 
 class ExceptClause(BaseClause):
-    """The ``EXCEPT`` clause of a query.
+    """The *EXCEPT* clause of a query.
 
     Parameters
     ----------
     left_query: SelectStatement
-        The left query that is part of the ``EXCEPT`` operation. This is the result set from which tuples are removed.
+        The left query that is part of the *EXCEPT* operation. This is the result set from which tuples are removed.
     right_query: SelectStatement
-        The right query that is part of the ``EXCEPT`` operation. This is the result set of the tuples that should be removed.
+        The right query that is part of the *EXCEPT* operation. This is the result set of the tuples that should be removed.
     """
 
     def __init__(self, left_query: SelectStatement, right_query: SelectStatement) -> None:
@@ -6324,7 +6343,7 @@ class ExceptClause(BaseClause):
 
     @property
     def left_query(self) -> SelectStatement:
-        """Get the left query that is part of the ``EXCEPT`` operation.
+        """Get the left query that is part of the *EXCEPT* operation.
 
         The left query provides the result set from which tuples are removed.
 
@@ -6337,7 +6356,7 @@ class ExceptClause(BaseClause):
 
     @property
     def right_query(self) -> SelectStatement:
-        """Get the right query that is part of the ``EXCEPT`` operation.
+        """Get the right query that is part of the *EXCEPT* operation.
 
         The right query provides the result set of the tuples that should be removed.
 
@@ -6375,15 +6394,15 @@ class ExceptClause(BaseClause):
 
 
 class IntersectClause(BaseClause):
-    """The ``INTERSECT`` clause of a query.
+    """The *INTERSECT* clause of a query.
 
     Parameters
     ----------
     left_query: SelectStatement
-        The left query that is part of the ``INTERSECT`` operation. Since set intersection is commutative, the assignment
+        The left query that is part of the *INTERSECT* operation. Since set intersection is commutative, the assignment
         of left and right does not really matter.
     right_query: SelectStatement
-        The right query that is part of the ``INTERSECT``. Since set intersection is commutative, the assignment of left
+        The right query that is part of the *INTERSECT*. Since set intersection is commutative, the assignment of left
         and right does not really matter.
     """
 
@@ -6397,7 +6416,7 @@ class IntersectClause(BaseClause):
 
     @property
     def left_query(self) -> SelectStatement:
-        """Get the left query that is part of the ``INTERSECT`` operation.
+        """Get the left query that is part of the *INTERSECT* operation.
 
         Returns
         -------
@@ -6412,7 +6431,7 @@ class IntersectClause(BaseClause):
 
     @property
     def right_query(self) -> SelectStatement:
-        """Get the right query that is part of the ``INTERSECT`` operation.
+        """Get the right query that is part of the *INTERSECT* operation.
 
         Returns
         -------
@@ -6426,7 +6445,7 @@ class IntersectClause(BaseClause):
         return self._rhs
 
     def input_queries(self) -> set[SelectStatement]:
-        """Get the two input queries that are part of the ``INTERSECT`` operation.
+        """Get the two input queries that are part of the *INTERSECT* operation.
 
         Returns
         -------
@@ -6671,8 +6690,8 @@ def _collect_subqueries(clause: BaseClause) -> set[SqlQuery]:
 def _collect_bound_tables_from_source(table_source: TableSource) -> set[TableReference]:
     """Handler method to provide all tables that are "produced" by a table source.
 
-    "Produced" tables are tables that are either directly referenced in the ``FROM`` clause (e.g. ``FROM R``), referenced as
-    part of joins (e.g. ``FROM R JOIN S ON ...``), or part of the ``FROM`` clauses of subqueries. In contrast, an unbound table
+    "Produced" tables are tables that are either directly referenced in the *FROM* clause (e.g. ``FROM R``), referenced as
+    part of joins (e.g. ``FROM R JOIN S ON ...``), or part of the *FROM* clauses of subqueries. In contrast, an unbound table
     is one that has to be provided by "context", such as the dependent table in a dependent subquery.
 
     Parameters
@@ -6703,8 +6722,8 @@ def _collect_bound_tables_from_source(table_source: TableSource) -> set[TableRef
 def _collect_bound_tables(from_clause: From) -> set[TableReference]:
     """Handler method to provide all tables that are "produced" in the given clause.
 
-    "Produced" tables are tables that are either directly referenced in the ``FROM`` clause (e.g. ``FROM R``), referenced as
-    part of joins (e.g. ``FROM R JOIN S ON ...``), or part of the ``FROM`` clauses of subqueries. In contrast, an unbound table
+    "Produced" tables are tables that are either directly referenced in the *FROM* clause (e.g. ``FROM R``), referenced as
+    part of joins (e.g. ``FROM R JOIN S ON ...``), or part of the *FROM* clauses of subqueries. In contrast, an unbound table
     is one that has to be provided by "context", such as the dependent table in a dependent subquery.
 
     Parameters
@@ -6790,23 +6809,23 @@ def _create_ast(item: Any, *, indentation: int = 0) -> str:
 
 
 class SqlQuery:
-    """Represents a plain ``SELECT`` query, providing direct access to the different clauses in the query.
+    """Represents a plain *SELECT* query, providing direct access to the different clauses in the query.
 
     At a basic level, PostBOUND differentiates between two types of queries:
 
-    - implicit SQL queries specify all referenced tables in the ``FROM`` clause and the join predicates in the ``WHERE``
+    - implicit SQL queries specify all referenced tables in the *FROM* clause and the join predicates in the *WHERE*
       clause, e.g. ``SELECT * FROM R, S WHERE R.a = S.b AND R.c = 42``. This is the traditional way of writing SQL queries.
-    - explicit SQL queries use the ``JOIN ON`` syntax to reference tables, e.g.
+    - explicit SQL queries use the *JOIN ON* syntax to reference tables, e.g.
       ``SELECT * FROM R JOIN S ON R.a = S.b WHERE R.c = 42``. This is the more "modern" way of writing SQL queries.
 
     There is also a third possibility of mixing the implicit and explicit syntax. For each of these cases, designated
-    subclasses exist. They all provide the same functionality and only differ in the (sub-)types of their ``FROM`` clauses.
+    subclasses exist. They all provide the same functionality and only differ in the (sub-)types of their *FROM* clauses.
     Therefore, these classes can be considered as "marker" types to indicate that at a certain point of a computation, a
     specific kind of query is required. The `SqlQuery` class acts as a superclass that specifies the general behaviour of all
     query instances and can act as the most general type of query.
 
     To represent other types of SQL statements (e.g. DML statements), different classes have to be used. Notably, this also
-    applies to set queries, i.e. queries containing ``UNION``, ``INTERSECT``, or ``EXCEPT`` clauses. These are represented by
+    applies to set queries, i.e. queries containing *UNION*, *INTERSECT*, or *EXCEPT* clauses. These are represented by
     the `SetQuery` class. The reason for this distinction is a pragmatic one: most research in query optimization is currently
     concerned with single **SELECT** queries and the interface for a set query has to be quite different from that of an
     ordinary query. For example, there is no obvious way how to represent the predicates of a query with an **EXCEPT** clause.
@@ -6820,7 +6839,7 @@ class SqlQuery:
     the `SelectStatement` super type.
 
     The clauses of each query can be accessed via properties. If a clause is optional, the absence of the clause is indicated
-    through a ``None`` value. All additional behaviour of the queries is provided by the different methods. These are mostly
+    through a *None* value. All additional behaviour of the queries is provided by the different methods. These are mostly
     focused on an easy introspection of the query's structure.
 
     Notice that PostBOUND does not enforce any semantics on the queries (e.g. regarding data types, access to values, the
@@ -6833,7 +6852,7 @@ class SqlQuery:
     While the query abstraction is quite powerful, it is cannot represent the full range of SQL statements. Noteworthy
     limitations include:
 
-    - no DDL or DML statements. The query abstraction is really only focused on *queries*, i.e. ``SELECT``
+    - no DDL or DML statements. The query abstraction is really only focused on *queries*, i.e. *SELECT*
       statements.
     - no recursive CTEs. While plain CTEs are supported, recursive CTEs are not. While this would be an easy addition, there
       simply was no need for it so far. If you need recursive CTEs, PRs are always welcome!
@@ -6843,30 +6862,30 @@ class SqlQuery:
     Parameters
     ----------
     select_clause : Select
-        The ``SELECT`` part of the query. This is the only required part of a query. Notice however, that some database systems
-        do not allow queries without a ``FROM`` clause.
+        The *SELECT* part of the query. This is the only required part of a query. Notice however, that some database systems
+        do not allow queries without a *FROM* clause.
     from_clause : Optional[From], optional
-        The ``FROM`` part of the query, by default ``None``
+        The *FROM* part of the query, by default *None*
     where_clause : Optional[Where], optional
-        The ``WHERE`` part of the query, by default ``None``
+        The *WHERE* part of the query, by default *None*
     groupby_clause : Optional[GroupBy], optional
-        The ``GROUP BY`` part of the query, by default ``None``
+        The *GROUP BY* part of the query, by default *None*
     having_clause : Optional[Having], optional
-        The ``HAVING`` part of the query, by default ``None``.
+        The *HAVING* part of the query, by default *None*.
     orderby_clause : Optional[OrderBy], optional
-        The ``ORDER BY`` part of the query, by default ``None``
+        The *ORDER BY* part of the query, by default *None*
     limit_clause : Optional[Limit], optional
-        The ``LIMIT`` and ``OFFSET`` part of the query. In standard SQL, this is designated using the ``FETCH FIRST`` syntax.
-        Defaults to ``None``.
+        The *LIMIT* and *OFFSET* part of the query. In standard SQL, this is designated using the *FETCH FIRST* syntax.
+        Defaults to *None*.
     cte_clause : Optional[CommonTableExpression], optional
-        The ``WITH`` part of the query, by default ``None``
+        The *WITH* part of the query, by default *None*
     hints : Optional[Hint], optional
         The hint block of the query. Hints are not part of standard SQL and follow a completely system-specific syntax. Even
-        their placement in within the query varies from system to system and from extension to extension. Defaults to ``None``.
+        their placement in within the query varies from system to system and from extension to extension. Defaults to *None*.
     explain : Optional[Explain], optional
-        The ``EXPLAIN`` part of the query. Like hints, this is not part of standard SQL. However, most systems provide
-        ``EXPLAIN`` functionality. The specific features and syntax are quite similar, but still system specific. Defaults to
-        ``None``.
+        The *EXPLAIN* part of the query. Like hints, this is not part of standard SQL. However, most systems provide
+        *EXPLAIN* functionality. The specific features and syntax are quite similar, but still system specific. Defaults to
+        *None*.
 
     Warnings
     --------
@@ -6912,92 +6931,92 @@ class SqlQuery:
 
     @property
     def cte_clause(self) -> Optional[CommonTableExpression]:
-        """Get the ``WITH`` clause of the query.
+        """Get the *WITH* clause of the query.
 
         Returns
         -------
         Optional[CommonTableExpression]
-            The ``WITH`` clause if it was specified, or ``None`` otherwise.
+            The *WITH* clause if it was specified, or *None* otherwise.
         """
         return self._cte_clause
 
     @property
     def select_clause(self) -> Select:
-        """Get the ``SELECT`` clause of the query. Will always be set.
+        """Get the *SELECT* clause of the query. Will always be set.
 
         Returns
         -------
         Select
-            The ``SELECT`` clause
+            The *SELECT* clause
         """
         return self._select_clause
 
     @property
     def from_clause(self) -> Optional[From]:
-        """Get the ``FROM`` clause of the query.
+        """Get the *FROM* clause of the query.
 
         Returns
         -------
         Optional[From]
-            The ``FROM`` clause if it was specified, or ``None`` otherwise.
+            The *FROM* clause if it was specified, or *None* otherwise.
         """
         return self._from_clause
 
     @property
     def where_clause(self) -> Optional[Where]:
-        """Get the ``WHERE`` clause of the query.
+        """Get the *WHERE* clause of the query.
 
         Returns
         -------
         Optional[Where]
-            The ``WHERE`` clause if it was specified, or ``None`` otherwise.
+            The *WHERE* clause if it was specified, or *None* otherwise.
         """
         return self._where_clause
 
     @property
     def groupby_clause(self) -> Optional[GroupBy]:
-        """Get the ``GROUP BY`` clause of the query.
+        """Get the *GROUP BY* clause of the query.
 
         Returns
         -------
         Optional[GroupBy]
-            The ``GROUP BY`` clause if it was specified, or ``None`` otherwise.
+            The *GROUP BY* clause if it was specified, or *None* otherwise.
         """
         return self._groupby_clause
 
     @property
     def having_clause(self) -> Optional[Having]:
-        """Get the ``HAVING`` clause of the query.
+        """Get the *HAVING* clause of the query.
 
         Returns
         -------
         Optional[Having]
-            The ``HAVING`` clause if it was specified, or ``None`` otherwise.
+            The *HAVING* clause if it was specified, or *None* otherwise.
         """
         return self._having_clause
 
     @property
     def orderby_clause(self) -> Optional[OrderBy]:
-        """Get the ``ORDER BY`` clause of the query.
+        """Get the *ORDER BY* clause of the query.
 
         Returns
         -------
         Optional[OrderBy]
-            The ``ORDER BY`` clause if it was specified, or ``None`` otherwise.
+            The *ORDER BY* clause if it was specified, or *None* otherwise.
         """
         return self._orderby_clause
 
     @property
     def limit_clause(self) -> Optional[Limit]:
-        """Get the combined ``LIMIT`` and ``OFFSET`` clauses of the query.
+        """Get the combined *LIMIT* and *OFFSET* clauses of the query.
 
-        According to the SQL standard, these clauses should use the ``FETCH FIRST`` syntax. However, many systems use
-        ``OFFSET`` and ``LIMIT`` instead.
+        According to the SQL standard, these clauses should use the *FETCH FIRST* syntax. However, many systems use
+        *OFFSET* and *LIMIT* instead.
 
         Returns
         -------
         Optional[Limit]
-            The ``FETCH FIRST`` clause if it was specified, or ``None`` otherwise.
+            The *FETCH FIRST* clause if it was specified, or *None* otherwise.
         """
         return self._limit_clause
 
@@ -7011,27 +7030,27 @@ class SqlQuery:
         Returns
         -------
         Optional[Hint]
-            The hint block if it was specified, or ``None`` otherwise.
+            The hint block if it was specified, or *None* otherwise.
         """
         return self._hints
 
     @property
     def explain(self) -> Optional[Explain]:
-        """Get the ``EXPLAIN`` block of the query.
+        """Get the *EXPLAIN* block of the query.
 
         Returns
         -------
         Optional[Explain]
-            The ``EXPLAIN`` settings if specified, or ``None`` otherwise.
+            The *EXPLAIN* settings if specified, or *None* otherwise.
         """
         return self._explain
 
     @abc.abstractmethod
     def is_implicit(self) -> bool:
-        """Checks, whether this query has an implicit ``FROM`` clause.
+        """Checks, whether this query has an implicit *FROM* clause.
 
-        The implicit ``FROM`` clause only consists of the source tables that should be scanned for the query. No subqueries or
-        joins are contained in the clause. All join predicates must be part of the ``WHERE`` clause.
+        The implicit *FROM* clause only consists of the source tables that should be scanned for the query. No subqueries or
+        joins are contained in the clause. All join predicates must be part of the *WHERE* clause.
 
         Returns
         -------
@@ -7046,12 +7065,12 @@ class SqlQuery:
 
     @abc.abstractmethod
     def is_explicit(self) -> bool:
-        """Checks, whether this query has an explicit ``FROM`` clause.
+        """Checks, whether this query has an explicit *FROM* clause.
 
-        The explicit ``FROM`` clause exclusively makes use of the ``JOIN ON`` syntax to denote both the tables that should be
-        scanned, and the predicates that should be used to join the tables together. Therefore, the ``WHERE`` clause should
-        only consist of filter predicates on the base tables. However, this is not enforced and the contents of the ``ON``
-        conditions as well as the ``WHERE`` clause can be arbitrary predicates.
+        The explicit *FROM* clause exclusively makes use of the *JOIN ON* syntax to denote both the tables that should be
+        scanned, and the predicates that should be used to join the tables together. Therefore, the *WHERE* clause should
+        only consist of filter predicates on the base tables. However, this is not enforced and the contents of the *ON*
+        conditions as well as the *WHERE* clause can be arbitrary predicates.
 
         Returns
         -------
@@ -7065,9 +7084,9 @@ class SqlQuery:
         raise NotImplementedError
 
     def is_explain(self) -> bool:
-        """Checks, whether this query is an ``EXPLAIN`` query rather than a normal SQL query.
+        """Checks, whether this query is an *EXPLAIN* query rather than a normal SQL query.
 
-        An ``EXPLAIN`` query is not executed like a normal ``SELECT ...`` query. Instead of actually calculating a result set,
+        An *EXPLAIN* query is not executed like a normal ``SELECT ...`` query. Instead of actually calculating a result set,
         the database system only provides a query plan. This plan is the execution plan that would be used, had the query been
         entered as a normal SQL query.
 
@@ -7084,7 +7103,7 @@ class SqlQuery:
 
         This includes tables from all clauses. Virtual tables will be included and tables that are only scanned within
         subqueries are included as well. Notice however, that some database systems might not support subqueries to be put
-        at arbitrary positions in the query (e.g. ``GROUP BY`` clause).
+        at arbitrary positions in the query (e.g. *GROUP BY* clause).
 
         Returns
         -------
@@ -7178,8 +7197,8 @@ class SqlQuery:
     def predicates(self) -> QueryPredicates:
         """Provides all predicates in this query.
 
-        *All* predicates really means *all* predicates: this includes predicates that appear in the ``FROM`` clause, the
-        ``WHERE`` clause, as well as any predicates from CTEs.
+        *All* predicates really means *all* predicates: this includes predicates that appear in the *FROM* clause, the
+        *WHERE* clause, as well as any predicates from CTEs.
 
         Returns
         -------
@@ -7216,7 +7235,7 @@ class SqlQuery:
         return util.set_union(_collect_subqueries(clause) for clause in self.clauses())
 
     def clauses(self, *, skip: Optional[Type | Iterable[Type]] = NoneType) -> Sequence[BaseClause]:
-        """Provides all the clauses that are defined (i.e. not ``None``) in this query.
+        """Provides all the clauses that are defined (i.e. not *None*) in this query.
 
         Parameters
         ----------
@@ -7239,17 +7258,17 @@ class SqlQuery:
     def bound_tables(self) -> set[TableReference]:
         """Provides all tables that can be assigned to a physical or virtual table reference in this query.
 
-        Bound tables are those tables, that are selected in the ``FROM`` clause of the query, or a subquery. Conversely,
+        Bound tables are those tables, that are selected in the *FROM* clause of the query, or a subquery. Conversely,
         unbound tables are those that have to be "injected" by an outer query, as is the case for dependent subqueries.
 
-        For example, the query ``SELECT * FROM R, S WHERE R.a = S.b`` has two bound tables: ``R`` and ``S``.
-        On the other hand, the query ``SELECT * FROM R WHERE R.a = S.b`` has only bound ``R``, whereas ``S`` has to be bound in
+        For example, the query ``SELECT * FROM R, S WHERE R.a = S.b`` has two bound tables: *R* and *S*.
+        On the other hand, the query ``SELECT * FROM R WHERE R.a = S.b`` has only bound *R*, whereas *S* has to be bound in
         a surrounding query.
 
         Returns
         -------
         set[TableReference]
-            All tables that are bound (i.e. listed in the ``FROM`` clause or a CTE) of the query.
+            All tables that are bound (i.e. listed in the *FROM* clause or a CTE) of the query.
         """
         subquery_produced_tables = util.set_union(subquery.bound_tables()
                                                   for subquery in self.subqueries())
@@ -7288,7 +7307,7 @@ class SqlQuery:
         Returns
         -------
         bool
-            Whether a valid ``ORDER BY`` clause was specified on the query.
+            Whether a valid *ORDER BY* clause was specified on the query.
         """
         return self.orderby_clause is not None
 
@@ -7327,10 +7346,10 @@ class SqlQuery:
         """Checks, whether this query is a set query.
 
         A set query is a query that combines the results of two or more queries into a single result set. This can be done
-        by combining the tuples from both sets using a ``UNION`` clause (which removes duplicates), or a ``UNION ALL`` clause
+        by combining the tuples from both sets using a *UNION* clause (which removes duplicates), or a *UNION ALL* clause
         (which retains duplicates). Alternatively, only tuples that are present in both sets can be retained using an
-        ``INTERSECT`` clause. Finally, all tuples from the first result set that are not part of the second result set can be
-        computed using an ``EXCEPT`` clause.
+        *INTERSECT* clause. Finally, all tuples from the first result set that are not part of the second result set can be
+        computed using an *EXCEPT* clause.
 
         Notice that only one of the set operators can be used at a time, but the input query of one set operation can itself
         use another set operation.
@@ -7393,7 +7412,7 @@ class SqlQuery:
         Parameters
         ----------
         trailing_delimiter : bool, optional
-            Whether a delimiter should be appended to the query. Defaults to ``True``.
+            Whether a delimiter should be appended to the query. Defaults to *True*.
 
         Returns
         -------
@@ -7444,11 +7463,11 @@ class SqlQuery:
 
 
 class ImplicitSqlQuery(SqlQuery):
-    """An implicit query restricts the constructs that may appear in the ``FROM`` clause.
+    """An implicit query restricts the constructs that may appear in the *FROM* clause.
 
-    For implicit queries, the ``FROM`` clause may only consist of simple table sources. All join conditions have to be put in
-    the ``WHERE`` clause. Notice that this does not restrict the structure of other clauses. For example, the ``WHERE`` clause
-    can still contain subqueries. As a special case, queries without a ``FROM`` clause are also considered implicit.
+    For implicit queries, the *FROM* clause may only consist of simple table sources. All join conditions have to be put in
+    the *WHERE* clause. Notice that this does not restrict the structure of other clauses. For example, the *WHERE* clause
+    can still contain subqueries. As a special case, queries without a *FROM* clause are also considered implicit.
 
     The attributes and parameters for this query type are the same as for `SqlQuery`, only the type of the `From` clause is
     restricted.
@@ -7507,15 +7526,15 @@ class ImplicitSqlQuery(SqlQuery):
 
 
 class ExplicitSqlQuery(SqlQuery):
-    """An explicit query restricts the constructs that may appear in the ``FROM`` clause.
+    """An explicit query restricts the constructs that may appear in the *FROM* clause.
 
-    For explicit queries, the ``FROM`` clause must utilize the ``JOIN ON`` syntax for all tables. The join conditions should
-    be put into the ``ON`` blocks. Notice however, that PostBOUND does not perform any sanity checks here. Therefore, it is
-    possible to put mix joins and filters in the ``ON`` blocks, move all joins to the ``WHERE`` clause or scatter the join
+    For explicit queries, the *FROM* clause must utilize the *JOIN ON* syntax for all tables. The join conditions should
+    be put into the *ON* blocks. Notice however, that PostBOUND does not perform any sanity checks here. Therefore, it is
+    possible to put mix joins and filters in the *ON* blocks, move all joins to the *WHERE* clause or scatter the join
     conditions between the two clauses. Whether this is good style is up for debate, but at least PostBOUND does allow it. In
     contrast to the implicit query, subqueries are also allowed as table sources.
 
-    Notice that each explicit query must join at least two tables in its ``FROM`` clause.
+    Notice that each explicit query must join at least two tables in its *FROM* clause.
 
     The attributes and parameters for this query type are the same as for `SqlQuery`, only the type of the `From` clause is
     restricted.
@@ -7573,11 +7592,11 @@ class ExplicitSqlQuery(SqlQuery):
 
 
 class MixedSqlQuery(SqlQuery):
-    """A mixed query allows for both the explicit as well as the implicit syntax to be used within the same ``FROM`` clause.
+    """A mixed query allows for both the explicit as well as the implicit syntax to be used within the same *FROM* clause.
 
     The mixed query complements `ImplicitSqlQuery` and `ExplicitSqlQuery` by removing the "purity" restriction: the tables that
-    appear in the ``FROM`` clause can be described using either plain references or subqueries and they are free to use the
-    ``JOIN ON`` syntax. The only thing that is not allowed as a ``FROM`` clause is an instance of `ImplicitFromClause` or an
+    appear in the *FROM* clause can be described using either plain references or subqueries and they are free to use the
+    *JOIN ON* syntax. The only thing that is not allowed as a *FROM* clause is an instance of `ImplicitFromClause` or an
     instance of `ExplicitFromClause`, since those cases are already covered by their respective query classes.
 
     Notice however, that we currently do not enforce the `From` clause to not be a valid explicit or implicit clause. All
@@ -7590,7 +7609,7 @@ class MixedSqlQuery(SqlQuery):
     Raises
     ------
     ValueError
-        If the given `from_clause` is either an implicit ``FROM`` clause or an explicit one.
+        If the given `from_clause` is either an implicit *FROM* clause or an explicit one.
     """
     def __init__(self, *, select_clause: Select,
                  from_clause: Optional[From] = None,
@@ -7620,9 +7639,9 @@ class MixedSqlQuery(SqlQuery):
 class SetQuery:
     """A set query combines the result sets of two queries using one of the set operations.
 
-    Set operations include ``UNION``, ``UNION ALL``, ``INTERSECT``, and ``EXCEPT``. We represent set queries as a different
-    type than "plain" ``SELECT`` queries because these allow for a different interface (e.g. providing access to predicates
-    or the **SELECT** block). See the documentation of `SqlQuery` for more details on the distinction and the reasoning behind
+    Set operations include *UNION*, *UNION ALL*, *INTERSECT*, and *EXCEPT*. We represent set queries as a different
+    type than "plain" *SELECT* queries because these allow for a different interface (e.g. providing access to predicates
+    or the *SELECT* block). See the documentation of `SqlQuery` for more details on the distinction and the reasoning behind
     it.
 
     Still, the `SetQuery` provides exactly the same high-level interface. In case a specific method or property is not
@@ -7647,7 +7666,7 @@ class SetQuery:
     orderby_clause : Optional[OrderBy], optional
         The **ORDER BY** part of the query, by default **None**
     limit_clause : Optional[Limit], optional
-        The **LIMIT** and **OFFSET** part of the query. In standard SQL, this is designated using the ``FETCH FIRST`` syntax.
+        The **LIMIT** and **OFFSET** part of the query. In standard SQL, this is designated using the *FETCH FIRST* syntax.
         Defaults to **None**.
     hints : Optional[Hint], optional
         The hint block of the query. Hints are not part of standard SQL and follow a completely system-specific syntax. Even
@@ -7958,7 +7977,7 @@ class SetQuery:
         return self._lhs.subqueries() | self._rhs.subqueries()
 
     def clauses(self, *, skip: Optional[Type | Iterable[Type]] = NoneType) -> Sequence[BaseClause]:
-        """Provides all the clauses that are defined (i.e. not ``None``) in this query.
+        """Provides all the clauses that are defined (i.e. not *None*) in this query.
 
         Parameters
         ----------
@@ -8001,17 +8020,17 @@ class SetQuery:
     def bound_tables(self) -> set[TableReference]:
         """Provides all tables that can be assigned to a physical or virtual table reference in this query.
 
-        Bound tables are those tables, that are selected in the ``FROM`` clause of the query, or a subquery. Conversely,
+        Bound tables are those tables, that are selected in the *FROM* clause of the query, or a subquery. Conversely,
         unbound tables are those that have to be "injected" by an outer query, as is the case for dependent subqueries.
 
-        For example, the query ``SELECT * FROM R, S WHERE R.a = S.b`` has two bound tables: ``R`` and ``S``.
-        On the other hand, the query ``SELECT * FROM R WHERE R.a = S.b`` has only bound ``R``, whereas ``S`` has to be bound in
+        For example, the query ``SELECT * FROM R, S WHERE R.a = S.b`` has two bound tables: *R* and *S*.
+        On the other hand, the query ``SELECT * FROM R WHERE R.a = S.b`` has only bound *R*, whereas *S* has to be bound in
         a surrounding query.
 
         Returns
         -------
         set[TableReference]
-            All tables that are bound (i.e. listed in any ``FROM`` clause or a CTE) of the query.
+            All tables that are bound (i.e. listed in any *FROM* clause or a CTE) of the query.
         """
         return self._lhs.bound_tables() | self._rhs.bound_tables()
 
@@ -8035,7 +8054,7 @@ class SetQuery:
         Returns
         -------
         bool
-            Whether a valid ``ORDER BY`` clause was specified on the query.
+            Whether a valid *ORDER BY* clause was specified on the query.
         """
         return self._orderby is not None
 
@@ -8075,10 +8094,10 @@ class SetQuery:
         """Checks, whether this query is a set query.
 
         A set query is a query that combines the results of two or more queries into a single result set. This can be done
-        by combining the tuples from both sets using a ``UNION`` clause (which removes duplicates), or a ``UNION ALL`` clause
+        by combining the tuples from both sets using a *UNION* clause (which removes duplicates), or a *UNION ALL* clause
         (which retains duplicates). Alternatively, only tuples that are present in both sets can be retained using an
-        ``INTERSECT`` clause. Finally, all tuples from the first result set that are not part of the second result set can be
-        computed using an ``EXCEPT`` clause.
+        *INTERSECT* clause. Finally, all tuples from the first result set that are not part of the second result set can be
+        computed using an *EXCEPT* clause.
 
         Notice that only one of the set operators can be used at a time, but the input query of one set operation can itself
         use another set operation.
@@ -8136,7 +8155,7 @@ class SetQuery:
         Parameters
         ----------
         trailing_delimiter : bool, optional
-            Whether a delimiter should be appended to the query. Defaults to ``True``.
+            Whether a delimiter should be appended to the query. Defaults to *True*.
 
         Returns
         -------
@@ -8225,7 +8244,7 @@ def build_query(query_clauses: Iterable[BaseClause]) -> SqlQuery:
     """Constructs an SQL query based on specific clauses.
 
     No validation is performed. If clauses appear multiple times, later clauses overwrite former ones. The specific
-    type of query (i.e. implicit, explicit or mixed) is inferred from the clauses (i.e. occurrence of an implicit ``FROM``
+    type of query (i.e. implicit, explicit or mixed) is inferred from the clauses (i.e. occurrence of an implicit *FROM*
     clause enforces an `ImplicitSqlQuery` and vice-versa). The overwriting rules apply here as well: a later `From` clause
     overwrites a former one and can change the type of the produced query.
 
