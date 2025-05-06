@@ -21,5 +21,17 @@ def open_files(pid: Optional[int] = None) -> list[str]:
         All opened files
     """
     pid = os.getpid() if pid is None else pid
-    res = proc.run_cmd(f"lsof -p {pid}" + "| awk '{print $9}' | grep -E '*.so'", shell=True)
+
+    # lsof -p produces some "weird" (or rather impractical) output from time to time (and depending on the lsof version)
+    # we do the following:
+    # lsof -Fn -p gives the names of all opened files for a specific PID
+    # But: it prefixes those names with a "n" to distinguish from other files (e.g. sockets)
+    # Hence, we grep for ^n to only get real files
+    # Afterwards, we remove the n prefix with cut
+    # Still, some files are weird because lsof adds a suffix like (path dev=...) to the output. As of right now, I don't know
+    # how to interpret this output nor how to get rid of it. The second cut removes this suffix.
+    # Lastly, the final grep filters for shared objects. Notice that we don't grep for '.so$' in order to keep files like
+    # loibc.so.6
+    res = proc.run_cmd(f"lsof -Fn -p {pid}" + "| grep '^n' | cut -c2- | cut -d' ' -f1 | grep '.so'", shell=True)
+
     return res.splitlines()
