@@ -10,60 +10,99 @@
 
 import random
 import warnings
+from collections.abc import Iterable
 from typing import Optional
 
 import postbound as pb
 
 warnings.simplefilter("ignore")
 
+# In PostBOUND, there are two optimization pipelines that can work with cardinality estimates:
+# - the TextBookOptimizationPipeline, which models the traditional optimizer architecture with plan enumerator, cost model and
+#   cardinality estimator.
+# - the TwoStageOptimizationPipeline, which first generates a logical join order and afterwards selects the optimal physical
+#   operators for the join order. This pipeline is designed to let the optimizer of the target database to "fill the gaps" and
+#   only perform part of the optimization process. For example, the pipeline can only specify the logical join order, in which
+#   case the native optimizer selects its own physical operators. In this case, the cardinality estimates are used to guide the
+#   operator selection of the native optimizer. (As an extreme case, one can also omit join order and physical operators in the
+#   pipeline. This is equivalent to just overwriting the cardinality estimates)
+#
+# Since both pipelines require different interfaces for cardinality estimation, we would need to choose which one we want to
+# implement. However, cardinality estimation is often agnostic to the specific usage scenario (text book or two-stage).
+# Therefore, the cardinalities module provides a common interface for both pipelines, called CardinalityGenerator.
+# In this example, we are going to use that interface to implement a cardinality estimator that works in both pipelines.
 
-class JitteringCardinalityEstimator(pb.ParameterGeneration):
+
+class JitteringCardinalityEstimator(pb.CardinalityGenerator):
     # The entire estimation algorithm is implemented in this class. It satisfies the interface of the corresponding
     # optimization stage.
 
     def __init__(self, native_optimizer: pb.db.OptimizerInterface) -> None:
-        super().__init__()
+        super().__init__(False)
         self.native_optimizer = native_optimizer
 
-    def generate_plan_parameters(self, query: pb.SqlQuery, join_order: Optional[pb.opt.LogicalJoinTree],
-                                 operator_assignment: Optional[pb.opt.PhysicalOperatorAssignment]
-                                 ) -> pb.opt.PlanParameterization:
-        # This is the most important method that handles the actual cardinality estimation
+    def calculate_estimate(self, query: pb.SqlQuery, tables: pb.TableReference | Iterable[pb.TableReference]) -> Optional[int]:
 
-        # We store our cardinalities in this object
-        cardinalities = pb.opt.PlanParameterization()
+        # For our current intermediate, we simply ask the native optimizer for its cardinality estimate. Afterwards, we distort
+        # the estimate by a random factor.
+        # To retrieve the native cardinality estimate, we need to construct a specialized SQL query that only computes the
+        # intermediate result, but applies all joins and filters from the original query.
+        # This is stored in the query_fragment.
 
-        # Now, we need to iterate over all potential intermediate results of the query to generate an estimate for all of them
+        query_fragment = pb.qal.transform.extract_query_fragment(query, tables)
+        if not query_fragment:
+            return None
+        query_fragment = pb.qal.transform.as_star_query(query_fragment)
+        native_estimate = self.native_optimizer.cardinality_estimate(query_fragment)
+
+        distortion_factor = random.random()
+        estimated_cardinality = int(distortion_factor * native_estimate)
+        return estimated_cardinality
+
+    def generate_plan_parameters(self, query: pb.SqlQuery,
+                                 join_order: Optional[pb.LogicalJoinTree],
+                                 operator_assignment: Optional[pb.PhysicalOperatorAssignment]) -> pb.PlanParameterization:
+        # This method is specific to the TwoStageOptimizationPipeline
+        # We actually do not need to implement this method, the CardinalityHintsGenerator interface already provides a decent
+        # default implementation, which essentially performs the same steps as we do in this method.
+        # We just show how we could implement it, if we wanted to or needed to.
+
+        cardinalities = pb.PlanParameterization()
+
+        # If we do not have a join order, we need to iterate over all potential intermediate results of the query to generate
+        # an estimate for all of them.
         # This is a drawback of the two-stage optimization approach used in PostBOUND: the actual physical database system has
         # no way to "call-back" to PostBOUND to request a new estimate because it does not know about PostBOUND's existence in
         # the first place. Therefore, we have to already pre-generate all information that could potentially become useful
         # within PostBOUND.
         # In our case, the easiest way to do so is to construct the powerset of all tables in the query. This spans all
         # possible intermediate results.
+        #
+        # If a join order is provided, we can use all intermediates from the join order, which is way more efficient.
+        #
+        # We call the container candidate_joins, even though it also contains the base tables.
 
-        for join in pb.util.collections.powerset(query.tables()):
+        if join_order is not None:
+            candidate_joins = [node.tables() for node in join_order.iternodes()]
+        else:
+            candidate_joins = pb.util.collections.powerset(query.tables())
+
+        for join in candidate_joins:
             if not join:
                 # skip the empty set
                 continue
 
-            # In order to obtain the cardinality estimate of the native optimizer of the actual database system, we simulate
-            # the query execution of our current intermediate result. This is done by constructing a specialized SQL query that
-            # only handles the computation of the intermediate result. Afterwards, we can ask the optimizer for its cardinality
-            # estimate of the specialized query to obtain the cardinality estimate for the intermediate result.
-            query_fragment = pb.qal.transform.extract_query_fragment(query, join)
-            query_fragment = pb.qal.transform.as_star_query(query_fragment)
-            native_estimate = self.native_optimizer.cardinality_estimate(query_fragment)
+            estimated_cardinality = self.calculate_estimate(query, join)
+            if estimated_cardinality is None:
+                # Make sure to check for None, because 0 is a valid cardinality estimate!
+                warnings.warn(f"Could not estimate cardinality for intermediate {join} in query {query}.")
+                continue
 
-            # Apply the distortion to the estimated cardinality
-            estimate_devitation = random.random()
-            estimated_cardinality = int(estimate_devitation * native_estimate)
-
-            # And finally store the new cardinality estimate
             cardinalities.add_cardinality_hint(join, estimated_cardinality)
 
         return cardinalities
 
-    def describe(self) -> dict:
+    def describe(self) -> pb.util.jsondict:
         return {"name": "random_cardinalities"}
 
 
@@ -82,11 +121,20 @@ for i in range(3):
     print("Run", i+1, "::")
     optimized_query = pipeline.optimize_query(query)
     query_plan = postgres_db.optimizer().query_plan(optimized_query)
-    print(query_plan.inspect(skip_intermediates=True))
+    print(query_plan.inspect())
     print("--- --- ---")
 
-# If you check the output carefully, you notice a caveat: The estimates of the base tables do not change. This is because the
-# tool we use for cardinality injection with Postgres only works for intermediate results/joins. Therefore, even though our
-# estimation algorithm produced different estimates for the base tables, these estimates had to be ignored in the query.
+# Depending on your Postgres installation, you may notice a caveat:
+#
+# For setups with pg_hint_plan, the estimates of the base tables do not change. This is because pg_hint_plan can only hint
+# cardinalities for intermediate results/joins. Therefore, even though our estimation algorithm produced different estimates
+# for the base tables, the hinting backend had to ignore these estimates in the final query.
 # If you take a look at the hint block, you will notice that cardinality hints for base tables indeed do not exist. Disabling
 # the warnings-filter in line 22 will also show warnings during the query generation.
+#
+# On the other hand, if you use pg_lab (https://github.com/rbergm/pg_lab), we can hint cardinalities for base tables just fine,
+# so there are no issues.
+#
+# The Postgres interface tries to detect the available hinting backend automatically and uses the appropriate hinting features.
+# However, this requires that the database system runs in the exact same namespace as PostBOUND (e.g. in the same Docker
+# container). Otherwise, you might need to specify the hinting backend manually.

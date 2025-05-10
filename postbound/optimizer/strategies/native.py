@@ -25,7 +25,7 @@ from ..._stages import (
     CompleteOptimizationAlgorithm
 )
 from ...db import DatabaseServerError, DatabaseUserError
-from ..policies.cardinalities import CardinalityHintsGenerator
+from ..policies.cardinalities import CardinalityGenerator
 from ... import db, qal, util
 from ...qal import SqlQuery
 from ...util import jsondict
@@ -68,7 +68,7 @@ class NativeCostModel(CostModel):
         self._target_db = None
 
 
-class NativeCardinalityEstimator(CardinalityHintsGenerator):
+class NativeCardinalityEstimator(CardinalityGenerator):
     """Obtains the cardinality of a query plan by using the cardinality estimator of an actual database system."""
 
     def __init__(self, target_db: Optional[db.Database] = None) -> None:

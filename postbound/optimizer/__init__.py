@@ -5,7 +5,7 @@ These include:
 - a representation for logical join trees and physical query execution plans in the `jointree` module
 - a representation for join graphs in the `joingraph` module
 - interfaces for policies that can be used to parameterize actual optimization algorithms, e.g. to inject different cardinality
-  estimation strategies. These are contained in the `policies` package
+  estimation strategies. These are contained in the `policies` package and need to be imported explicitly.
 - utilities to load pre-configured optimization strategies into optimization pipelines in the `presets` module
 - supporting code to ensure that custom optimization strategies are only applied to supported databases and queries using the
   `validation` module
@@ -16,7 +16,7 @@ plans and basic hinting support. All other modules need to be imported explicitl
 module and the `strategies` package.
 """
 
-from . import _jointree, joingraph, policies
+from . import _jointree, joingraph
 from ._hints import (
   ScanOperator,
   JoinOperator,

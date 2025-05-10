@@ -116,12 +116,18 @@ from ._stages import (
   CardinalityEstimator, CostModel, PlanEnumerator,
   JoinOrderOptimization, PhysicalOperatorSelection, ParameterGeneration,
   IncrementalOptimizationStep,
-  as_complete_algorithm
+  as_complete_algorithm,
+  CardinalityGenerator
 )
 from ._qep import QueryPlan
 from .db import Database
 from .qal import relalg, transform, SqlQuery, parse_query
-from .optimizer import validation
+from .optimizer import (
+  LogicalJoinTree,
+  PhysicalOperatorAssignment,
+  PlanParameterization,
+  validation
+)
 from .experiments import analysis, executor, workloads
 from .experiments.executor import execute_workload, optimize_and_execute_workload
 from .db import postgres
@@ -140,6 +146,6 @@ __all__ = [
   "Database", "postgres",
   "relalg", "transform", "SqlQuery", "ColumnReference", "parse_query",
   "QueryPlan",
-  "validation",
+  "LogicalJoinTree", "PhysicalOperatorAssignment",  "PlanParameterization", "CardinalityGenerator", "validation",
   "analysis", "workloads", "executor", "execute_workload", "optimize_and_execute_workload"
 ]
