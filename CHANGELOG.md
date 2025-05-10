@@ -17,11 +17,15 @@ Be carefull when updating and check the changelog!
 # ➡ Version 0.14.1
 
 ### 🐣 New features
-- _None_
+- Moved the main data structures for the optimizer pipelines to be available as top-level imports, i.e. instead of typing
+  `pb.opt.JoinTree`, `pb.JoinTree` can now be used directly. This is consistent with the corresponding optimization stages,
+  that have already been available as top-level imports.
 
 ### 💀 Breaking changes
 - `SortKey` is now an equivalence class of keys, rather than a single column. The old behavior is now made explicit via methods
   such as `is_compatible_with()`
+- Renamed `CardinalityHintsGenerator` to `CardinalityGenerator` and moved it from the `cardinalities` module to be available
+  directly in the `optimizer` package.
 
 ### 📰 Updates
 - 🐘 Assume UTF-8 as the default encoding for Postgres connections
@@ -39,6 +43,7 @@ Be carefull when updating and check the changelog!
   string columns to be returned as byte objects instead of proper strings, which breaks a lot of PostBOUND behavior.
 - Fixed `open_files()` working incorrectly on newer version of _lsof_
 - Fixed `QueryPredicates.filters()` and `QueryPredicates.joins()` not working for empty predicates
+- Updated dead download links for the Stats workload in `workload-stats-setup.sh`
 
 ### 🪲 Known bugs
 - Pre-defined workloads (`workloads.job()`, etc) do not work if installed as a Pip module. This is because the build process
