@@ -22,10 +22,13 @@ Be carefull when updating and check the changelog!
   that have already been available as top-level imports.
 - Added a `configure_operator` method to the Postgres optimizer interface
 - Created a new example to demonstrate BAO-style algorithms
+- Added a new random query generator. Available in the `experiments` package or as a top-level tool.
 
 ### 💀 Breaking changes
 - Renamed `CardinalityHintsGenerator` to `CardinalityGenerator` and moved it from the `cardinalities` module to be available
   directly in the `optimizer` package.
+- Changed how the `IntegratedOptimizationPipeline` is configured to be in line with the other pipelines. We now use a
+  `setup()` method followed by `build()` instead of a property-based configuration.
 
 ### 📰 Updates
 - _None_
