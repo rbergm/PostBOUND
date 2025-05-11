@@ -819,7 +819,7 @@ class DatabaseSchema(abc.ABC):
         for col in all_columns:
             foreign_keys = self.foreign_keys_on(col)
             for fk_target in foreign_keys:
-                g.add_edge(fk_target.table, col.table, referenced_col=fk_target, fk_col=col)
+                g.add_edge(col.table, fk_target.table, referenced_col=fk_target, fk_col=col)
 
         return g
 

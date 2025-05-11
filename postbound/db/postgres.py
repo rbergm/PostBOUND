@@ -1432,7 +1432,10 @@ PostgresOptimizerSettings = {
     ScanOperator.SequentialScan: "enable_seqscan",
     ScanOperator.IndexScan: "enable_indexscan",
     ScanOperator.IndexOnlyScan: "enable_indexonlyscan",
-    ScanOperator.BitmapScan: "enable_bitmapscan"
+    ScanOperator.BitmapScan: "enable_bitmapscan",
+    IntermediateOperator.Memoize: "enable_memoize",
+    IntermediateOperator.Materialize: "enable_material",
+    IntermediateOperator.Sort: "enable_sort"
 }
 """All (session-global) optimizer settings that modify the allowed physical operators."""
 
@@ -2227,6 +2230,26 @@ class PostgresOptimizer(OptimizerInterface):
         if deactivated_geqo:
             self._pg_instance._restore_geqo_state()
         return estimate
+
+    def configure_operator(self, operator: PhysicalOperator, *, enabled: bool) -> None:
+        """Enables or disables a specific physical operator for the current Postgres connection.
+
+        Parameters
+        ----------
+        operator : PhysicalOperator
+            The operator to configure.
+        enabled : bool
+            Whether the operator should be allowed or not.
+
+        References
+        ----------
+        https://www.postgresql.org/docs/current/runtime-config-query.html
+        """
+        setting_name = PostgresOptimizerSettings.get(operator)
+        if not setting_name:
+            raise ValueError(f"Cannot configure operator {operator} as it is not supported by Postgres")
+        status = "on" if enabled else "off"
+        self._pg_instance.cursor.execute(f"SET {setting_name} TO {status}")
 
 
 def connect(*, name: str = "postgres", connect_string: str | None = None, config_file: str | None = ".psycopg_connection",

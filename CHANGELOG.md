@@ -20,6 +20,8 @@ Be carefull when updating and check the changelog!
 - Moved the main data structures for the optimizer pipelines to be available as top-level imports, i.e. instead of typing
   `pb.opt.JoinTree`, `pb.JoinTree` can now be used directly. This is consistent with the corresponding optimization stages,
   that have already been available as top-level imports.
+- Added a `configure_operator` method to the Postgres optimizer interface
+- Created a new example to demonstrate BAO-style algorithms
 
 ### 💀 Breaking changes
 - `SortKey` is now an equivalence class of keys, rather than a single column. The old behavior is now made explicit via methods
