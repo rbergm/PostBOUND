@@ -4,7 +4,7 @@
 # these concepts in more detail. The example is focused on the UES optimization algorithm.
 #
 # Requirements: a running IMDB instance on Postgres with the connect file being set-up correctly. This can be achieved using
-# the utilities postgres directory under db-support/
+# the utilities from db-support/postgres
 #
 
 # Step 0: imports

@@ -5,7 +5,7 @@
 # optimization algorithm.
 #
 # Requirements: a running IMDB instance on Postgres with the connect file being set-up correctly. This can be achieved using
-# the utilities in the root postgres directory.
+# the utilities from db-support/postgres.
 #
 
 import math
