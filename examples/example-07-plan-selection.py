@@ -89,8 +89,9 @@ postgres_db = pb.postgres.connect()
 job_workload = pb.workloads.job()
 
 # Configure the optimization pipeline with our plan selection algorithm
-pipeline = pb.IntegratedOptimizationPipeline(postgres_db)
-pipeline.optimization_algorithm = PlanSelection(postgres_db)
+pipeline = (pb.IntegratedOptimizationPipeline(postgres_db)
+            .setup_optimization_algorithm(PlanSelection(postgres_db))
+            .build())
 
 # Run a couple of optimizations.
 for label, query in job_workload.first(5).items():

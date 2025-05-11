@@ -156,7 +156,8 @@ class OptimizationPipeline(abc.ABC):
 class IntegratedOptimizationPipeline(OptimizationPipeline):
     """This pipeline is intended for algorithms that calculate the entire query plan in a single process.
 
-    To configure the pipeline, assign the selected strategy to the `optimization_algorithm` property.
+    To configure the pipeline, use the `set_optimization_algorithm` method followed by the `build` method (in line with the
+    other pipelines).
 
     Parameters
     ----------
@@ -169,13 +170,14 @@ class IntegratedOptimizationPipeline(OptimizationPipeline):
         self._target_db = (target_db if target_db is not None
                            else DatabasePool.get_instance().current_database())
         self._optimization_algorithm: Optional[CompleteOptimizationAlgorithm] = None
+        self._build = False
         super().__init__()
 
     @property
     def target_db(self) -> Database:
         """The database for which optimized queries should be generated.
 
-        When assigning a new target database, compatibility with the current `optimization_algorithm` will be checked.
+        When assigning a new target database, the pipeline has to be build again.
 
         Returns
         -------
@@ -195,21 +197,47 @@ class IntegratedOptimizationPipeline(OptimizationPipeline):
 
     @target_db.setter
     def target_db(self, system: Database) -> None:
-        if self._optimization_algorithm is not None:
-            pre_check = self._optimization_algorithm.pre_check()
-            pre_check.check_supported_database_system(system).ensure_all_passed()
+        self._build = False
         self._target_db = system
 
     @property
     def optimization_algorithm(self) -> Optional[CompleteOptimizationAlgorithm]:
         """The optimization algorithm is used each time a query should be optimized.
 
-        When assigning a new algorithm, it is checked for compatibility with `target_db`.
-
         Returns
         -------
         Optional[CompleteOptimizationAlgorithm]
             The currently selected optimization algorithm, if any.
+        """
+        return self._optimization_algorithm
+
+    def setup_optimization_algorithm(self, algorithm: CompleteOptimizationAlgorithm) -> IntegratedOptimizationPipeline:
+        """Configures the pipeline to use the given optimization algorithm.
+
+        Parameters
+        ----------
+        algorithm : CompleteOptimizationAlgorithm
+            The new optimization algorithm to use. No compatibility checks are performed, yet. This is done when building the
+            pipeline.
+
+        Returns
+        -------
+        IntegratedOptimizationPipeline
+            The current pipeline to allow for easy method-chaining.
+        """
+        self._optimization_algorithm = algorithm
+        return self
+
+    def build(self) -> IntegratedOptimizationPipeline:
+        """Constructs the optimization pipeline.
+
+        This includes checking the selected optimization algorithm for compatibility with the `target_db`. Afterwards, the
+        pipeline is ready to optimize queries.
+
+        Returns
+        -------
+        IntegratedOptimizationPipeline
+            The current pipeline to allow for easy method-chaining.
 
         Raises
         ------
@@ -219,20 +247,16 @@ class IntegratedOptimizationPipeline(OptimizationPipeline):
         See Also
         --------
         CompleteOptimizationAlgorithm.pre_check
-
         """
-        return self._optimization_algorithm
-
-    @optimization_algorithm.setter
-    def optimization_algorithm(self, algorithm: CompleteOptimizationAlgorithm) -> None:
-        pre_check = algorithm.pre_check()
-        if pre_check:
+        pre_check = self._optimization_algorithm.pre_check()
+        if pre_check is not None:
             pre_check.check_supported_database_system(self._target_db).ensure_all_passed()
-        self._optimization_algorithm = algorithm
+        self._build = True
+        return self
 
     def query_execution_plan(self, query: SqlQuery) -> QueryPlan:
-        if self.optimization_algorithm is None:
-            raise StateError("No algorithm has been selected")
+        if not self._build:
+            raise StateError("No algorithm has been selected. Don't forget to call `build()` after setting the algorithm.")
 
         pre_check = self.optimization_algorithm.pre_check()
         if pre_check is not None:
