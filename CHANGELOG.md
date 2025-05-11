@@ -14,7 +14,7 @@ Be carefull when updating and check the changelog!
 
 ---
 
-# ➡ Version 0.14.1
+# ➡ Version 0.14.2
 
 ### 🐣 New features
 - Moved the main data structures for the optimizer pipelines to be available as top-level imports, i.e. instead of typing
@@ -24,10 +24,42 @@ Be carefull when updating and check the changelog!
 - Created a new example to demonstrate BAO-style algorithms
 
 ### 💀 Breaking changes
-- `SortKey` is now an equivalence class of keys, rather than a single column. The old behavior is now made explicit via methods
-  such as `is_compatible_with()`
 - Renamed `CardinalityHintsGenerator` to `CardinalityGenerator` and moved it from the `cardinalities` module to be available
   directly in the `optimizer` package.
+
+### 📰 Updates
+- _None_
+
+### 🏥 Fixes
+- _None_
+
+### 🪲 Known bugs
+- Pre-defined workloads (`workloads.job()`, etc) do not work if installed as a Pip module. This is because the build process
+  does not retain the workload directory in the `site_packages`.
+
+### ⏳ WIP
+- Baseline for a Postgres-style dynamic programming plan enumerator. This is not yet complete and trying to initialize the
+  corresponding class raises an error for now. The enumerator will probably be ready to go for v0.15.0
+
+---
+
+
+# 🚧 Version 0.15.0 👷
+
+### ⏳ Planned
+- Full dynamic programming support for the `TextbookOptimizationPipeline`, including a Postgres-specific algorithm
+
+---
+
+
+# 🕑 Version 0.14.1
+
+### 🐣 New features
+- _None_
+
+### 💀 Breaking changes
+- `SortKey` is now an equivalence class of keys, rather than a single column. The old behavior is now made explicit via methods
+  such as `is_compatible_with()`
 
 ### 📰 Updates
 - 🐘 Assume UTF-8 as the default encoding for Postgres connections
@@ -54,14 +86,6 @@ Be carefull when updating and check the changelog!
 ### ⏳ WIP
 - Baseline for a Postgres-style dynamic programming plan enumerator. This is not yet complete and trying to initialize the
   corresponding class raises an error for now. The enumerator will probably be ready to go for v0.15.0
-
----
-
-
-# 🚧 Version 0.15.0 👷
-
-### ⏳ Planned
-- Full dynamic programming support for the `TextbookOptimizationPipeline`, including a Postgres-specific algorithm
 
 ---
 
