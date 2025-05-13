@@ -85,7 +85,7 @@ class JitteringCardinalityEstimator(pb.CardinalityGenerator):
         if join_order is not None:
             candidate_joins = [node.tables() for node in join_order.iternodes()]
         else:
-            candidate_joins = pb.util.collections.powerset(query.tables())
+            candidate_joins = pb.util.powerset(query.tables())
 
         for join in candidate_joins:
             if not join:

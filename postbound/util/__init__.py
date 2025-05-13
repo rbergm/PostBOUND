@@ -4,7 +4,8 @@ from .collections import (
     flatten,
     enlist,
     simplify,
-    set_union
+    set_union,
+    powerset
 )
 from . import collections
 from .dicts import (
@@ -32,6 +33,7 @@ __all__ = [
     "enlist",
     "simplify",
     "set_union",
+    "powerset",
     "collections",
     "hash_dict",
     "argmin",
