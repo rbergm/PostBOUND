@@ -7,7 +7,7 @@
 # the utilities from db-support/postgres.
 #
 
-
+import math
 import random
 import warnings
 from collections.abc import Iterable
@@ -41,7 +41,8 @@ class JitteringCardinalityEstimator(pb.CardinalityGenerator):
         super().__init__(False)
         self.native_optimizer = native_optimizer
 
-    def calculate_estimate(self, query: pb.SqlQuery, tables: pb.TableReference | Iterable[pb.TableReference]) -> Optional[int]:
+    def calculate_estimate(self, query: pb.SqlQuery,
+                           tables: pb.TableReference | Iterable[pb.TableReference]) -> pb.Cardinality:
 
         # For our current intermediate, we simply ask the native optimizer for its cardinality estimate. Afterwards, we distort
         # the estimate by a random factor.
@@ -49,14 +50,15 @@ class JitteringCardinalityEstimator(pb.CardinalityGenerator):
         # intermediate result, but applies all joins and filters from the original query.
         # This is stored in the query_fragment.
 
+        tables = pb.util.enlist(tables)
         query_fragment = pb.qal.transform.extract_query_fragment(query, tables)
         if not query_fragment:
-            return None
+            return math.nan
         query_fragment = pb.qal.transform.as_star_query(query_fragment)
         native_estimate = self.native_optimizer.cardinality_estimate(query_fragment)
 
         distortion_factor = random.random()
-        estimated_cardinality = int(distortion_factor * native_estimate)
+        estimated_cardinality = round(distortion_factor * native_estimate)
         return estimated_cardinality
 
     def generate_plan_parameters(self, query: pb.SqlQuery,
@@ -73,8 +75,8 @@ class JitteringCardinalityEstimator(pb.CardinalityGenerator):
         # an estimate for all of them.
         # This is a drawback of the two-stage optimization approach used in PostBOUND: the actual physical database system has
         # no way to "call-back" to PostBOUND to request a new estimate because it does not know about PostBOUND's existence in
-        # the first place. Therefore, we have to already pre-generate all information that could potentially become useful
-        # within PostBOUND.
+        # the first place. Therefore, we have to pre-generate all information within PostBOUND that could potentially become
+        # useful for the native optimizer of the physical database system.
         # In our case, the easiest way to do so is to construct the powerset of all tables in the query. This spans all
         # possible intermediate results.
         #
@@ -93,8 +95,8 @@ class JitteringCardinalityEstimator(pb.CardinalityGenerator):
                 continue
 
             estimated_cardinality = self.calculate_estimate(query, join)
-            if estimated_cardinality is None:
-                # Make sure to check for None, because 0 is a valid cardinality estimate!
+            if math.isnan(estimated_cardinality):
+                # Make sure to check for *NaN*, rather than just true-ish value. 0 is a valid cardinality estimate!
                 warnings.warn(f"Could not estimate cardinality for intermediate {join} in query {query}.")
                 continue
 

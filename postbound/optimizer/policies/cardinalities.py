@@ -331,7 +331,7 @@ class CardinalityDistortion(CardinalityGenerator):
             distortion_factor = random.uniform(min(self.distortion_factor, 1.0), max(self.distortion_factor, 1.0))
         else:
             raise ValueError(f"Unknown distortion strategy: '{self.distortion_strategy}'")
-        return card_est * distortion_factor
+        return round(card_est * distortion_factor)
 
 
 class BaseTableCardinalityEstimator(abc.ABC):
