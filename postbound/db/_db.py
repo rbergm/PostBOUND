@@ -28,6 +28,7 @@ from typing import Any, Optional
 import networkx as nx
 
 from .. import util
+from .._core import Cardinality
 from .._qep import QueryPlan
 from ..qal import TableReference, ColumnReference, SqlQuery, VirtualTableError, UnboundColumnError
 from ..optimizer import (
@@ -1438,7 +1439,7 @@ class OptimizerInterface(abc.ABC):
         raise NotImplementedError
 
     @abc.abstractmethod
-    def cardinality_estimate(self, query: SqlQuery | str) -> int:
+    def cardinality_estimate(self, query: SqlQuery | str) -> Cardinality:
         """Queries the DBMS query optimizer for its cardinality estimate, instead of executing the query.
 
         The cardinality estimate will correspond to the estimate for the final node. Therefore, running this method
@@ -1451,7 +1452,7 @@ class OptimizerInterface(abc.ABC):
 
         Returns
         -------
-        int
+        Cardinality
             The cardinality estimate of the native optimizer for the database system.
         """
         raise NotImplementedError

@@ -39,7 +39,7 @@ from .. import joingraph, validation
 from .._jointree import JoinTree, LogicalJoinTree
 from .._hints import PhysicalOperatorAssignment
 from ..policies import cardinalities as cardpol, jointree as treepol
-from ..._core import JoinOperator
+from ..._core import JoinOperator, Cardinality
 from ..._stages import JoinOrderOptimization, PhysicalOperatorSelection, JoinOrderOptimizationError
 from ... import db, qal, util
 from ...qal import TableReference, ColumnReference
@@ -338,7 +338,7 @@ class UESJoinBoundEstimator(cardpol.JoinCardinalityEstimator):
         """
         self.stats_container = stats_container
 
-    def estimate_for(self, join_edge: qal.AbstractPredicate, join_graph: joingraph.JoinGraph) -> int:
+    def estimate_for(self, join_edge: qal.AbstractPredicate, join_graph: joingraph.JoinGraph) -> Cardinality:
         current_min_bound = np.inf
 
         for base_predicate in join_edge.base_predicates():
@@ -363,7 +363,7 @@ class UESJoinBoundEstimator(cardpol.JoinCardinalityEstimator):
         # It suffices to check that there are only conjunctive equi joins.
         return UESOptimizationPreCheck
 
-    def _estimate_pk_fk_join(self, fk_column: ColumnReference, pk_column: ColumnReference) -> int:
+    def _estimate_pk_fk_join(self, fk_column: ColumnReference, pk_column: ColumnReference) -> Cardinality:
         """Estimation formula for primary key/foreign key joins.
 
         Parameters
@@ -375,14 +375,14 @@ class UESJoinBoundEstimator(cardpol.JoinCardinalityEstimator):
 
         Returns
         -------
-        int
+        Cardinality
             An upper bound of the primary key/foreign key join cardinality.
         """
         pk_cardinality = self.stats_container.base_table_estimates[pk_column.table]
         fk_frequency = self.stats_container.attribute_frequencies[fk_column]
         return math.ceil(fk_frequency * pk_cardinality)
 
-    def _estimate_n_m_join(self, first_column: ColumnReference, second_column: ColumnReference) -> int:
+    def _estimate_n_m_join(self, first_column: ColumnReference, second_column: ColumnReference) -> Cardinality:
         """Estimation formula for n:m joins.
 
         Parameters
@@ -394,7 +394,7 @@ class UESJoinBoundEstimator(cardpol.JoinCardinalityEstimator):
 
         Returns
         -------
-        int
+        Cardinality
             An upper bound of the n:m join cardinality.
         """
         first_bound, second_bound = self._fetch_bound(first_column), self._fetch_bound(second_column)
@@ -410,7 +410,7 @@ class UESJoinBoundEstimator(cardpol.JoinCardinalityEstimator):
         n_m_bound = min(first_distinct_vals, second_distinct_vals) * first_freq * second_freq
         return math.ceil(n_m_bound)
 
-    def _fetch_bound(self, column: ColumnReference) -> int:
+    def _fetch_bound(self, column: ColumnReference) -> Cardinality:
         """Provides the appropriate table bound (based on upper bound or base table estimate) for the given column.
 
         This is a utility method to work with the statistics container in a more convenient way, since the container can store
@@ -424,7 +424,7 @@ class UESJoinBoundEstimator(cardpol.JoinCardinalityEstimator):
 
         Returns
         -------
-        int
+        Cardinality
             An upper bound on the cardinality of the table
         """
         table = column.table

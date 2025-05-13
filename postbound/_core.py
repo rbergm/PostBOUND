@@ -22,7 +22,13 @@ Cost = float
 Cardinality = float
 """Type alias for a cardinality estimate.
 
-We use floats instead of ints to for cardinalities to represent missing values as NaN as well as infinite cardinalities.
+Despite the type alias, cardinalities should not be ordinary floating point numbers but rather integers. We only alias float
+instead of int to allow *NaN* for missing cardinalities as well as *inf* for infinite cardinalities.
+Therefore, in order to check for valid cardinalities, ``math.isnan()`` should be used (or ``math.isinf()``, depneding on the
+context).
+
+We could be more precise and introduce our own cardinality type (which allows int | NaN | inf), but for now this is good enough
+and allows to easily return integers.
 """
 
 

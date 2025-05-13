@@ -49,7 +49,7 @@ from ._db import (
     UnsupportedDatabaseFeatureError
 )
 from .. import qal, util
-from .._core import ScanOperator, JoinOperator, PhysicalOperator
+from .._core import ScanOperator, JoinOperator, PhysicalOperator, Cardinality
 from .._qep import QueryPlan
 from ..qal import (
     transform,
@@ -548,7 +548,7 @@ class MysqlOptimizer(OptimizerInterface):
     def analyze_plan(self, query: SqlQuery) -> QueryPlan:
         raise NotImplementedError("MySQL interface does not support ANALYZE plans yet")
 
-    def cardinality_estimate(self, query: SqlQuery | str) -> int:
+    def cardinality_estimate(self, query: SqlQuery | str) -> Cardinality:
         return self.query_plan(query).estimated_cardinality
 
     def cost_estimate(self, query: SqlQuery | str) -> float:

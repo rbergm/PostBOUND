@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import abc
+import math
 from collections.abc import Generator, Iterable
 from typing import Optional
 
@@ -679,7 +680,7 @@ class CardinalityGenerator(ParameterGeneration, CardinalityEstimator, abc.ABC):
         self.allow_cross_products = allow_cross_products
 
     @abc.abstractmethod
-    def calculate_estimate(self, query: SqlQuery, tables: TableReference | Iterable[TableReference]) -> Optional[int]:
+    def calculate_estimate(self, query: SqlQuery, tables: TableReference | Iterable[TableReference]) -> Cardinality:
         """Determines the cardinality estimate for a specific intermediate result.
 
         Ideally this is the only functionality-related method that needs to be implemented by developers using the cardinality
@@ -695,8 +696,8 @@ class CardinalityGenerator(ParameterGeneration, CardinalityEstimator, abc.ABC):
 
         Returns
         -------
-        Optional[int]
-            The estimated cardinality if it could be computed, *None* otherwise.
+        Cardinality
+            The estimated cardinality if it could be computed, *NaN* otherwise.
         """
         raise NotImplementedError
 
@@ -747,7 +748,7 @@ class CardinalityGenerator(ParameterGeneration, CardinalityEstimator, abc.ABC):
         parameterization = PlanParameterization()
         for join in self.generate_intermediates(query):
             estimate = self.calculate_estimate(query, join)
-            if estimate is not None:
+            if not math.isnan(estimate):
                 parameterization.add_cardinality_hint(join, estimate)
         return parameterization
 
@@ -759,7 +760,7 @@ class CardinalityGenerator(ParameterGeneration, CardinalityEstimator, abc.ABC):
         parameterization = PlanParameterization()
         for intermediate in join_order.iternodes():
             estimate = self.calculate_estimate(query, intermediate.tables())
-            if estimate is not None:
+            if not math.isnan(estimate):
                 parameterization.add_cardinality_hint(intermediate.tables(), estimate)
 
         return parameterization

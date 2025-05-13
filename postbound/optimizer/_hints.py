@@ -8,7 +8,7 @@ from enum import Enum
 from typing import Any, Optional
 
 from .. import util
-from .._core import ScanOperator, JoinOperator, PhysicalOperator, T
+from .._core import ScanOperator, JoinOperator, PhysicalOperator, Cardinality, T
 from .._qep import QueryPlan, PlanParams, PlanEstimates
 from ..qal import parser, TableReference
 from ..util import jsondict
@@ -709,7 +709,7 @@ class PlanParameterization:
 
     Attributes
     ----------
-    cardinality_hints : dict[frozenset[TableReference], int | float]
+    cardinality_hints : dict[frozenset[TableReference], Cardinality]
         Contains the cardinalities for individual joins and scans. This is always the cardinality that is emitted by a specific
         operator. All joins are identified by the base tables that they combine. Keys of single tables correpond to scans.
     paralell_worker_hints : dict[frozenset[TableReference], int]
@@ -724,18 +724,18 @@ class PlanParameterization:
     """
 
     def __init__(self) -> None:
-        self.cardinality_hints: dict[frozenset[TableReference], int | float] = {}
+        self.cardinality_hints: dict[frozenset[TableReference], Cardinality] = {}
         self.parallel_worker_hints: dict[frozenset[TableReference], int] = {}
         self.system_specific_settings: dict[str, Any] = {}
 
-    def add_cardinality_hint(self, tables: Iterable[TableReference], cardinality: int | float) -> None:
+    def add_cardinality_hint(self, tables: Iterable[TableReference], cardinality: Cardinality) -> None:
         """Assigns a specific cardinality hint to a (join of) tables.
 
         Parameters
         ----------
         tables : Iterable[TableReference]
             The tables for which the hint is generated. This can be an iterable of a single table, which denotes a scan hint.
-        cardinality : int | float
+        cardinality : Cardinality
             The estimated or known cardinality.
         """
         self.cardinality_hints[frozenset(tables)] = cardinality

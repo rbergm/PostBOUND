@@ -42,7 +42,7 @@ from ._db import (
     UnsupportedDatabaseFeatureError
 )
 from .. import qal, util
-from .._core import JoinOperator, ScanOperator, IntermediateOperator, PhysicalOperator
+from .._core import JoinOperator, ScanOperator, IntermediateOperator, PhysicalOperator, Cardinality
 from .._qep import QueryPlan, SortKey
 from ..qal import (
     TableReference, ColumnReference,
@@ -2207,7 +2207,7 @@ class PostgresOptimizer(OptimizerInterface):
             self._pg_instance._restore_geqo_state()
         return query_plan.as_qep()
 
-    def cardinality_estimate(self, query: qal.SqlQuery | str) -> int:
+    def cardinality_estimate(self, query: qal.SqlQuery | str) -> Cardinality:
         if isinstance(query, qal.SqlQuery):
             self._pg_instance._current_geqo_state = self._pg_instance._obtain_geqo_state()
             query, deactivated_geqo = self._pg_instance._prepare_query_execution(query, drop_explain=True)
