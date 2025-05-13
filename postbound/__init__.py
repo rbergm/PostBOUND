@@ -102,7 +102,11 @@ from . import (
   experiments,
   util
 )
-from ._core import Cost, Cardinality, TableReference, ColumnReference
+from ._core import (
+  Cost, Cardinality,
+  TableReference, ColumnReference,
+  PhysicalOperator, ScanOperator, JoinOperator, IntermediateOperator
+)
 from ._pipelines import (
   OptimizationPipeline,
   IntegratedOptimizationPipeline,
@@ -136,15 +140,17 @@ __version__ = "0.14.2"
 
 __all__ = [
   "db", "opt", "qal", "experiments", "util",
+  "Cost", "Cardinality",
+  "TableReference", "ColumnReference",
+  "PhysicalOperator", "ScanOperator", "JoinOperator", "IntermediateOperator",
   "OptimizationPipeline",
   "CompleteOptimizationAlgorithm", "IntegratedOptimizationPipeline",
-  "Cost", "Cardinality", "TableReference",
   "CardinalityEstimator", "CostModel", "PlanEnumerator", "TextBookOptimizationPipeline",
   "JoinOrderOptimization", "PhysicalOperatorSelection", "ParameterGeneration", "TwoStageOptimizationPipeline",
   "IncrementalOptimizationStep", "IncrementalOptimizationPipeline",
   "as_complete_algorithm", "OptimizationSettings",
   "Database", "postgres",
-  "relalg", "transform", "SqlQuery", "ColumnReference", "parse_query",
+  "relalg", "transform", "SqlQuery", "parse_query",
   "QueryPlan",
   "LogicalJoinTree", "PhysicalOperatorAssignment",  "PlanParameterization", "CardinalityGenerator", "validation",
   "analysis", "workloads", "executor", "execute_workload", "optimize_and_execute_workload"
