@@ -8,7 +8,7 @@ from enum import Enum
 from typing import Any, Optional
 
 from .. import util
-from .._core import ScanOperator, JoinOperator, PhysicalOperator, Cardinality, T
+from .._core import ScanOperator, JoinOperator, IntermediateOperator, PhysicalOperator, Cardinality, T
 from .._qep import QueryPlan, PlanParams, PlanEstimates
 from ..qal import parser, TableReference
 from ..util import jsondict
@@ -356,16 +356,19 @@ class PhysicalOperatorAssignment:
     - `join_operators` and `scan_operators` are concerned with specific (joins of) base tables. These assignments overwrite the
       global settings, i.e. it is possible to assign a nested loop join to a specific set of tables, but disable NLJ globally.
       In this case, only the specified join will be executed as an NLJ and other algorithms are used for all other joins
+    - `intermediate_operators` are used to pre-process the input for joins, e.g. by caching input tuples in a memo.
 
     The basic assumption here is that for all joins and scans that have no assignment, the database system should determine the
-    best operators by itself.
+    best operators by itself. Likewise, the database system is free to insert intermediate operators wherever it sees fit.
 
-    Although it is allowed to modify the different dictionaries directly, the more high-level methods should be used instead.
-    This ensures that all potential (future) invariants are maintained.
+    Although it is allowed to modify the different dictionaries directly, the high-level methods (e.g. `add` or
+    `set_join_operator`) should be used instead. This ensures that all potential (future) invariants are maintained.
 
     The assignment enables ``__getitem__`` access and tries to determine the requested setting in an intelligent way, i.e.
     supplying a single base table will provide the associated scan operator, supplying an iterable of base tables the join
     operator and supplying an operator will return the global setting. If no item is found, *None* will be returned.
+    ``__iter__`` and ``__contains__`` wrap scan and join operators and ``__bool__`` checks for any assignment
+    (global or specific). Notice that intermediate operators are not considered in the container-like methods.
 
     Attributes
     ----------
@@ -380,11 +383,19 @@ class PhysicalOperatorAssignment:
         Contains the scan operators that should be used for individual base table scans. Each scan is identified by the table
         that should be scanned. If a table does not appear in this dictionary, the database system has to choose an appropriate
         operator (perhaps while considering the `global_settings`).
+    intermediate_operators : dict[frozenset[TableReference], IntermediateOperator]
+        Contains the intermediate operators that are used to pre-process the input for joins. Keys are the intermediate tables
+        that are processed by the operator, i.e. an entry ``intermediate_operators[{R, S}] = Materialize`` means that the
+        result of the join between *R* and *S* should be materialized and *not* that the input to the join between *R* and *S*
+        should be materialized. Notice that intermediate operators are not enforced in conjunction with the join operators. For
+        example, a merge join assignment between *R* and *S* does not require the presence of sort operators for *R* and *S*.
+        Such interactions must be handled by the database hinting backend.
     """
 
     def __init__(self) -> None:
         self.global_settings: dict[ScanOperator | JoinOperator, bool] = {}
         self.join_operators: dict[frozenset[TableReference], JoinOperatorAssignment] = {}
+        self.intermediate_operators: dict[frozenset[TableReference], IntermediateOperator] = {}
         self.scan_operators: dict[TableReference, ScanOperatorAssignment] = {}
 
     def get_globally_enabled_operators(self, include_by_default: bool = True) -> frozenset[PhysicalOperator]:
@@ -407,22 +418,24 @@ class PhysicalOperatorAssignment:
         """
         enabled_scan_ops = [scan_op for scan_op in ScanOperator if self.global_settings.get(scan_op, include_by_default)]
         enabled_join_ops = [join_op for join_op in JoinOperator if self.global_settings.get(join_op, include_by_default)]
-        return frozenset(enabled_scan_ops + enabled_join_ops)
+        enabled_intermediate_ops = [intermediate_op for intermediate_op in IntermediateOperator
+                                    if self.global_settings.get(intermediate_op, include_by_default)]
+        return frozenset(enabled_scan_ops + enabled_join_ops + enabled_intermediate_ops)
 
-    def set_operator_enabled_globally(self, operator: ScanOperator | JoinOperator, enabled: bool, *,
+    def set_operator_enabled_globally(self, operator: PhysicalOperator, enabled: bool, *,
                                       overwrite_fine_grained_selection: bool = False) -> None:
-        """Enables or disables an operator for all joins/scans in the query.
+        """Enables or disables an operator for all parts of a query.
 
         Parameters
         ----------
-        operator : ScanOperators | JoinOperators
+        operator : PhysicalOperator
             The operator to configure
         enabled : bool
             Whether the database system is allowed to choose the operator
         overwrite_fine_grained_selection : bool, optional
-            How to deal with assignments of the same operator to individual scans or joins. If *True* all such assignments
-            that contradict the setting are removed. For example, consider a situation where nested-loop joins should be
-            disabled globally, but a specific join has already been assigned to be executed with an NLJ. In this case, setting
+            How to deal with assignments of the same operator to individual nodes. If *True* all assignments that contradict
+            the setting are removed. For example, consider a situation where nested-loop joins should be disabled globally, but
+            a specific join has already been assigned to be executed with an NLJ. In this case, setting
             `overwrite_fine_grained_selection` removes the assignment for the specific join. This is off by default, to enable
             the per-node selection to overwrite global settings.
         """
@@ -433,14 +446,21 @@ class PhysicalOperatorAssignment:
 
         # at this point we know that we should disable a scan or join operator that was potentially set for
         # individual joins or tables
-        if isinstance(operator, ScanOperator):
-            self.scan_operators = {table: current_setting for table, current_setting in self.scan_operators.items()
-                                   if current_setting != operator}
-        elif isinstance(operator, JoinOperator):
-            self.join_operators = {join: current_setting for join, current_setting in self.join_operators.items()
-                                   if current_setting != operator}
+        match operator:
+            case ScanOperator():
+                self.scan_operators = {table: current_setting for table, current_setting in self.scan_operators.items()
+                                       if current_setting != operator}
+            case JoinOperator():
+                self.join_operators = {join: current_setting for join, current_setting in self.join_operators.items()
+                                       if current_setting != operator}
+            case IntermediateOperator():
+                self.intermediate_operators = {join: current_setting for join, current_setting
+                                               in self.intermediate_operators.items()
+                                               if current_setting != operator}
+            case _:
+                raise ValueError(f"Unknown operator type: {operator}")
 
-    def set_join_operator(self, join_operator: JoinOperatorAssignment | JoinOperator,
+    def set_join_operator(self, operator: JoinOperatorAssignment | JoinOperator,
                           tables: Iterable[TableReference] | None = None) -> None:
         """Enforces a specific join operator for the join that consists of the contained tables.
 
@@ -456,12 +476,12 @@ class PhysicalOperatorAssignment:
             The tables to join. This parameter is only used if only a join operator without a proper assignment is supplied in
             the `join_operator` parameter. Otherwise it is ignored.
         """
-        if isinstance(join_operator, JoinOperator):
-            join_operator = JoinOperatorAssignment(join_operator, tables)
+        if isinstance(operator, JoinOperator):
+            operator = JoinOperatorAssignment(operator, tables)
 
-        self.join_operators[join_operator.join] = join_operator
+        self.join_operators[operator.join] = operator
 
-    def set_scan_operator(self, scan_operator: ScanOperatorAssignment | ScanOperator,
+    def set_scan_operator(self, operator: ScanOperatorAssignment | ScanOperator,
                           table: TableReference | Iterable[TableReference] | None = None) -> None:
         """Enforces a specific scan operator for the contained base table.
 
@@ -477,11 +497,30 @@ class PhysicalOperatorAssignment:
             The table to scan. This parameter is only used if only a scan operator without a proper assignment is supplied in
             the `scan_operator` parameter. Otherwise it is ignored.
         """
-        if isinstance(scan_operator, ScanOperator):
+        if isinstance(operator, ScanOperator):
             table = util.simplify(table)
-            scan_operator = ScanOperatorAssignment(scan_operator, table)
+            operator = ScanOperatorAssignment(operator, table)
 
-        self.scan_operators[scan_operator.table] = scan_operator
+        self.scan_operators[operator.table] = operator
+
+    def set_intermediate_operator(self, operator: IntermediateOperator, tables: Iterable[TableReference]) -> None:
+        """Enforces an intermediate operator to process specific tables.
+
+        This overwrites all previous assignments for the same intermediate. Global settings are left unmodified since
+        per-intermediate settings overwrite them anyway.
+
+        Parameters
+        ----------
+        intermediate_operator : IntermediateOperator
+            The intermediate operator
+        tables : Iterable[TableReference]
+            The tables to process. Notice that these tables are not the tables that are joined, but the input to the join.
+            For example, consider a neste-loop join between *R* and *S* where the tuples from *S* should be materialized
+            (perhaps because they stem from an expensive index access). In this case, the assignment should contain a
+            nested-loop assignment for the intermediate *{R, S}* and an assignment for the materialize operator for *S*.
+
+        """
+        self.intermediate_operators[frozenset(tables)] = operator
 
     def add(self, operator: ScanOperatorAssignment | JoinOperatorAssignment | PhysicalOperator,
             tables: Iterable[TableReference] | None = None) -> None:
@@ -508,6 +547,8 @@ class PhysicalOperatorAssignment:
                 self.set_scan_operator(operator)
             case JoinOperatorAssignment():
                 self.set_join_operator(operator)
+            case IntermediateOperator():
+                self.set_intermediate_operator(operator, tables)
             case _:
                 raise ValueError(f"Unknown operator assignment: {operator}")
 
@@ -531,6 +572,7 @@ class PhysicalOperatorAssignment:
         merged_assignment.global_settings = self.global_settings | other_assignment.global_settings
         merged_assignment.join_operators = self.join_operators | other_assignment.join_operators
         merged_assignment.scan_operators = self.scan_operators | other_assignment.scan_operators
+        merged_assignment.intermediate_operators = self.intermediate_operators | other_assignment.intermediate_operators
         return merged_assignment
 
     def global_settings_only(self) -> PhysicalOperatorAssignment:
@@ -561,6 +603,7 @@ class PhysicalOperatorAssignment:
         cloned_assignment.global_settings = dict(self.global_settings)
         cloned_assignment.join_operators = dict(self.join_operators)
         cloned_assignment.scan_operators = dict(self.scan_operators)
+        cloned_assignment.intermediate_operators = dict(self.intermediate_operators)
         return cloned_assignment
 
     def get(self, intermediate: TableReference | Iterable[TableReference],
@@ -569,6 +612,8 @@ class PhysicalOperatorAssignment:
 
         This is similar to the *dict.get* method. An important distinction is that we never raise an error if there is no
         intermediate assigned to the operator. Instead, we return the default value, which is *None* by default.
+
+        Notice that this method never provides intermediate operators!
 
         Parameters
         ----------
@@ -594,11 +639,15 @@ class PhysicalOperatorAssignment:
         return {
             "global_settings": self.global_settings,
             "join_operators": self.join_operators,
-            "scan_operators": self.scan_operators
+            "scan_operators": self.scan_operators,
+            "intermediate_operators": self.intermediate_operators
         }
 
     def __bool__(self) -> bool:
-        return bool(self.global_settings) or bool(self.join_operators) or bool(self.scan_operators)
+        return (bool(self.global_settings)
+                or bool(self.join_operators)
+                or bool(self.scan_operators)
+                or bool(self.intermediate_operators))
 
     def __iter__(self) -> Iterable[ScanOperatorAssignment | JoinOperatorAssignment]:
         yield from self.scan_operators.values()
@@ -638,11 +687,18 @@ class PhysicalOperatorAssignment:
 
     def __str__(self) -> str:
         global_str = ", ".join(f"{op.value}: {enabled}" for op, enabled in self.global_settings.items())
+
         scans_str = ", ".join(
             f"{scan.table.identifier()}: {scan.operator.value}" for scan in self.scan_operators.values())
+
         joins_keys = ((join, " ⨝ ".join(tab.identifier() for tab in join.join)) for join in self.join_operators.values())
         joins_str = ", ".join(f"{key}: {join.operator.value}" for join, key in joins_keys)
-        return f"global=[{global_str}] scans=[{scans_str}] joins=[{joins_str}]"
+
+        intermediates_keys = ((intermediate, " ⨝ ".join(tab.identifier() for tab in intermediate))
+                              for intermediate in self.intermediate_operators.keys())
+        intermediates_str = ", ".join(f"{key}: {intermediate.value}" for intermediate, key in intermediates_keys)
+
+        return f"global=[{global_str}] scans=[{scans_str}] joins=[{joins_str}] intermediates=[{intermediates_str}]"
 
 
 def operators_from_plan(query_plan: QueryPlan) -> PhysicalOperatorAssignment:

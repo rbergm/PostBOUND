@@ -4,12 +4,13 @@ from __future__ import annotations
 import json
 import math
 import typing
+import warnings
 from collections.abc import Container, Iterable
 from typing import Generic, Literal, Optional, Union
 
 from ._hints import PhysicalOperatorAssignment, PlanParameterization, operators_from_plan, read_operator_json
 from .. import util
-from .._core import Cardinality, ScanOperator, JoinOperator, PhysicalOperator
+from .._core import Cardinality, ScanOperator, JoinOperator, IntermediateOperator, PhysicalOperator
 from .._qep import JoinDirection, SortKey, QueryPlan, PlanParams, PlanEstimates, PlanMeasures, Subplan
 from ..qal import parser, TableReference, SqlQuery
 from ..util import jsondict, StateError
@@ -579,13 +580,23 @@ def _make_custom_plan(join_tree: JoinTree, *, physical_ops: PhysicalOperatorAssi
         children = []
 
     if query is None:
-        return QueryPlan(operator, children=children, estimated_cardinality=cardinality, parallel_workers=par_workers)
+        plan = QueryPlan(operator, children=children, estimated_cardinality=cardinality, parallel_workers=par_workers)
+    else:
+        predicates = query.predicates()
+        filter_condition = (predicates.joins_between(join_tree.outer_child.tables(), join_tree.inner_child.tables())
+                            if join_tree.is_join() else predicates.filters_for(join_tree.base_table))
+        plan = QueryPlan(operator, children=children, estimated_cardinality=cardinality, filter_condition=filter_condition,
+                         parallel_workers=par_workers)
 
-    predicates = query.predicates()
-    filter_condition = (predicates.joins_between(join_tree.outer_child.tables(), join_tree.inner_child.tables())
-                        if join_tree.is_join() else predicates.filters_for(join_tree.base_table))
-    return QueryPlan(operator, children=children, estimated_cardinality=cardinality, filter_condition=filter_condition,
-                     parallel_workers=par_workers)
+    intermediate_op = physical_ops.intermediate_operators.get(frozenset(plan.tables()))
+    if not intermediate_op:
+        return plan
+    if intermediate_op in {IntermediateOperator.Sort, IntermediateOperator.Memoize}:
+        warnings.warn("Ignoring intermediate operator for sort/memoize. These require additional information to be inserted.")
+        return plan
+
+    plan = QueryPlan(intermediate_op, children=plan, estimated_cardinality=cardinality)
+    return plan
 
 
 def to_query_plan(join_tree: JoinTree, *, query: Optional[SqlQuery] = None,

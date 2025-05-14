@@ -1465,7 +1465,9 @@ PGLabOptimizerHints = {
     ScanOperator.SequentialScan: "SeqScan",
     ScanOperator.IndexScan: "IdxScan",
     ScanOperator.IndexOnlyScan: "IdxScan",
-    ScanOperator.BitmapScan: "IdxScan"
+    ScanOperator.BitmapScan: "IdxScan",
+    IntermediateOperator.Materialize: "Material",
+    IntermediateOperator.Memoize: "Memo"
 }
 """All physical operators that can be enforced by pg_lab.
 
@@ -1786,10 +1788,6 @@ class PostgresHintService(HintService):
             operator_hints = self._generate_pg_operator_hints(physical_operators)
             hint_parts = hint_parts.merge_with(operator_hints)
 
-        if plan is not None:
-            intermediate_hints = self._generate_pg_intermediate_hints(plan)
-            hint_parts = hint_parts.merge_with(intermediate_hints)
-
         if plan_parameters:
             plan_hints = self._generate_pg_parameter_hints(plan_parameters)
             hint_parts = hint_parts.merge_with(plan_hints)
@@ -2020,6 +2018,7 @@ class PostgresHintService(HintService):
             if not operator_key:
                 continue
 
+            # TODO: can we use SET LOCAL here? This could make any rollbacks unnecessary..
             settings.append(f"SET {operator_key} = '{setting}';")
 
         hints = []
@@ -2036,6 +2035,19 @@ class PostgresHintService(HintService):
             join_assignment = (PGLabOptimizerHints[join_assignment.operator] if self._backend == "pg_lab"
                                else PGHintPlanOptimizerHints[join_assignment.operator])
             hints.append(f"{join_assignment}({join_key})")
+
+        if self._backend == "pg_lab":
+
+            if hints:
+                hints.append("")
+            for intermediate, op in physical_operators.intermediate_operators.items():
+                if op == IntermediateOperator.Sort:
+                    # no need to hint these
+                    continue
+
+                intermediate_op = PGLabOptimizerHints[op]
+                intermediate_key = _generate_join_key(intermediate)
+                hints.append(f"{intermediate_op}({intermediate_key})")
 
         if not settings and not hints:
             return HintParts.empty()
