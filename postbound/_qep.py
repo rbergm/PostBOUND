@@ -160,7 +160,7 @@ class SortKey:
 class PlanParams:
     """Plan parameters contain additional "structural" metadata about the operators in a query plan.
 
-    This information is mostly concerned with how the operator should function, e.g. which table it should scan, which index
+    This information is mostly concerned with how the operator should function, e.g. which table it should scan, or which index
     to use or how the tuples will be sorted.
 
     In addition to the pre-defined attributes, users can attach arbitrary metadata using a dict-like access into the
@@ -186,6 +186,10 @@ class PlanParams:
     index : Optional[str], optional
         The name of the index that should be used to scan the table. This is only relevant for scan nodes and should be
         *None* for all other nodes.
+    lookup_key : Optional[SqlExpression], optional
+        The expression that is used to lookup tuples in some indexing structure. For scans, this could actually be the physical
+        index. For intermediate operators such as hash tables or memoize nodes, this could be the expression that is used to
+        build the table or to structure the memo.
     **kwargs
         Additional metadata that should be attached to the plan parameters.
     """
@@ -195,6 +199,7 @@ class PlanParams:
                  sort_keys: Optional[Sequence[SortKey]] = None,
                  parallel_workers: Optional[int] = None,
                  index: Optional[str] = None,
+                 lookup_key: Optional[SqlExpression] = None,
                  **kwargs) -> None:
         self._params: dict[str, Any] = {
             "base_table": base_table,
@@ -202,6 +207,7 @@ class PlanParams:
             "sort_keys": tuple(sort_keys) if sort_keys else tuple(),
             "parallel_workers": parallel_workers if parallel_workers else 0,
             "index": index if index else "",
+            "lookup_key": lookup_key if lookup_key else None,
             **kwargs
         }
 
@@ -251,6 +257,16 @@ class PlanParams:
         """
         return self._params["index"]
 
+    @property
+    def lookup_key(self) -> Optional[SqlExpression]:
+        """Get the expression that is used to lookup tuples in some indexing structure.
+
+        For scans, this could actually be the physical index. In this case, the lookup expression should be the one that is
+        used to build the index, e.g., the primary key column. For intermediate operators such as hash tables or memoize nodes,
+        this could be the expression that is used to build the table or to structure the memo.
+        """
+        return self._params["lookup_key"]
+
     def tables(self) -> set[TableReference]:
         """Provide all tables that are referenced at some point in the plan parameters.
 
@@ -268,6 +284,8 @@ class PlanParams:
             tables.add(self.base_table)
         if self.filter_predicate:
             tables |= self.filter_predicate.tables()
+        if self.lookup_key:
+            tables |= self.lookup_key.tables()
         return tables
 
     def columns(self) -> set[ColumnReference]:
@@ -672,6 +690,11 @@ class QueryPlan:
         The name of the index that should be used to scan the table. This is mostly relevant for scan nodes and should be
         *None* for all other nodes. If this argument is used, no other plan parameters can be supplied in the `plan_params`
         argument.
+    lookup_key : Optional[SqlExpression], optional
+        The expression that is used to lookup tuples in some indexing structure. For scans, this could actually be the
+        physical index. For intermediate operators such as hash tables or memoize nodes, this could be the expression that is
+        used to build the table or to structure the memo. If this argument is used, no other plan parameters can be supplied
+        in the `plan_params` argument.
     sort_keys : Optional[Sequence[SortKey]], optional
         How the tuples in a the output of a relation are sorted. Absence of a specific sort order can be indicated either
         through an empty list or by setting this parameter to *None*. In this case, tuples are assumed to be in some random
@@ -719,7 +742,7 @@ class QueryPlan:
                  estimates: Optional[PlanEstimates] = None, measures: Optional[PlanMeasures] = None,
                  base_table: Optional[TableReference] = None, filter_predicate: Optional[AbstractPredicate] = None,
                  parallel_workers: Optional[int] = None, index: Optional[str] = None,
-                 sort_keys: Optional[Sequence[SortKey]] = None,
+                 sort_keys: Optional[Sequence[SortKey]] = None, lookup_key: Optional[SqlExpression] = None,
                  estimated_cardinality: Cardinality = math.nan, estimated_cost: Cost = math.nan,
                  actual_cardinality: Cardinality = math.nan, execution_time: float = math.nan,
                  cache_hits: Optional[int] = None, cache_misses: Optional[int] = None,
@@ -728,13 +751,13 @@ class QueryPlan:
         if not node_type:
             raise ValueError("Node type must be provided")
 
-        custom_params = (base_table, filter_predicate, parallel_workers, index, sort_keys)
+        custom_params = (base_table, filter_predicate, parallel_workers, index, sort_keys, lookup_key)
         has_custom_params = any(v is not None for v in custom_params) or bool(kwargs)
         if plan_params is not None and has_custom_params:
             raise ValueError("PlanParams and individual parameters/kwargs cannot be provided at the same time")
         if plan_params is None:
-            plan_params = PlanParams(base_table=base_table, filter_predicate=filter_predicate,
-                                     sort_keys=sort_keys, parallel_workers=parallel_workers, index=index, **kwargs)
+            plan_params = PlanParams(base_table=base_table, filter_predicate=filter_predicate, sort_keys=sort_keys,
+                                     lookup_key=lookup_key, parallel_workers=parallel_workers, index=index, **kwargs)
 
         if estimates is not None and any(not math.isnan(v) for v in (estimated_cardinality, estimated_cost)):
             raise ValueError("PlanEstimates and individual estimates cannot be provided at the same time")
@@ -834,6 +857,10 @@ class QueryPlan:
         """Get the table that is being scanned. For non-scan nodes, this will probably is *None*.
 
         This is just a shorthand for accessing the plan parameters manually.
+
+        See Also
+        --------
+        PlanParams.base_table
         """
         return self._plan_params.base_table
 
@@ -842,6 +869,10 @@ class QueryPlan:
         """Get the filter predicate that is used to restrict the tuples in the output of a relation.
 
         This is just a shorthand for accessing the plan parameters manually.
+
+        See Also
+        --------
+        PlanParams.filter_predicate
         """
         return self._plan_params.filter_predicate
 
@@ -852,8 +883,38 @@ class QueryPlan:
         Absence of a specific sort order is indicated by an empty sequence.
 
         This is just a shorthand for accessing the plan parameters manually.
+
+        See Also
+        --------
+        PlanParams.sort_keys
         """
         return self._plan_params.sort_keys
+
+    @property
+    def lookup_key(self) -> Optional[SqlExpression]:
+        """Get the expression that is used to lookup tuples in some indexing structure.
+
+        This is just a shorthand for accessing the plan parameters manually.
+
+        See Also
+        --------
+        PlanParams.lookup_key
+        """
+        return self._plan_params.lookup_key
+
+    @property
+    def parallel_workers(self) -> int:
+        """Get the number of parallel workers that should be used to execute the operator.
+
+        Absence of parallel execution is indicated by 0.
+
+        This is just a shorthand for accessing the plan parameters manually.
+
+        See Also
+        --------
+        PlanParams.parallel_workers
+        """
+        return self._plan_params.parallel_workers
 
     @property
     def estimates(self) -> PlanEstimates:
@@ -865,6 +926,10 @@ class QueryPlan:
         """Get the cardinality estimate of the optimizer.
 
         This is just a shorthand for accessing the estimates manually.
+
+        See Also
+        --------
+        PlanEstimates.cardinality
         """
         return self._estimates.cardinality
 
@@ -873,6 +938,10 @@ class QueryPlan:
         """Get the cost estimate of the optimizer.
 
         This is just a shorthand for accessing the estimates manually.
+
+        See Also
+        --------
+        PlanEstimates.cost
         """
         return self._estimates.cost
 
@@ -886,6 +955,10 @@ class QueryPlan:
         """Get the actual cardinality of the operator.
 
         This is just a shorthand for accessing the measures manually.
+
+        See Also
+        --------
+        PlanMeasures.cardinality
         """
         return self._measures.cardinality
 
@@ -894,6 +967,10 @@ class QueryPlan:
         """Get the actual execution time of the operator.
 
         This is just a shorthand for accessing the measures manually.
+
+        See Also
+        --------
+        PlanMeasures.execution_time
         """
         return self._measures.execution_time
 
@@ -1402,6 +1479,8 @@ def _default_explain(plan: QueryPlan, *, padding: str) -> str:
     params = plan.params
     if params.parallel_workers:
         components.append(f"{padding}{metadata_indent}Parallel Workers={params.parallel_workers}")
+    if params.lookup_key:
+        components.append(f"{padding}{metadata_indent}Lookup Key={params.lookup_key}")
 
     path_props: list[str] = []
     if params.index:
