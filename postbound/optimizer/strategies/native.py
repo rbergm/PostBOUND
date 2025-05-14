@@ -12,23 +12,25 @@ would provide a combined query optimizer with Oracle's join ordering algorithm a
 from __future__ import annotations
 
 import math
+import warnings
 from collections.abc import Iterable
 from typing import Optional
 
 from .._hints import PhysicalOperatorAssignment, PlanParameterization, operators_from_plan
 from .._jointree import JoinTree, jointree_from_plan, parameters_from_plan
-from ..._core import Cost, Cardinality, TableReference
+from ..._core import Cost, Cardinality, TableReference, ColumnReference, IntermediateOperator, ScanOperator, JoinOperator
 from ..._qep import QueryPlan
 from ..._stages import (
     CostModel,
     JoinOrderOptimization, PhysicalOperatorSelection, ParameterGeneration,
     CompleteOptimizationAlgorithm
 )
+from ... import db, util
+from ...qal import SqlQuery, ColumnExpression, OrderBy, transform
 from ...db import DatabaseServerError, DatabaseUserError
-from ..policies.cardinalities import CardinalityGenerator
-from ... import db, qal, util
-from ...qal import SqlQuery
+from ...db.postgres import PostgresInterface
 from ...util import jsondict
+from ..policies.cardinalities import CardinalityGenerator
 
 
 class NativeCostModel(CostModel):
@@ -48,13 +50,31 @@ class NativeCostModel(CostModel):
         self._raise_on_error = raise_on_error
 
     def estimate_cost(self, query: SqlQuery, plan: QueryPlan) -> Cost:
+        matching_tables = query.tables() == plan.tables()
+        intermediate_op = plan.operator in {IntermediateOperator.Materialize, IntermediateOperator.Memoize}
+        if intermediate_op and matching_tables:
+            raise ValueError("Cannot estimate the cost of intermediate operators as final operator in a plan.")
+        if not intermediate_op and not matching_tables:
+            query = transform.extract_query_fragment(query, plan.tables())
+
+        match plan.operator:
+            case IntermediateOperator.Materialize:
+                return self._cost_materialize_op(query, plan)
+            case IntermediateOperator.Memoize:
+                return self._cost_memoize_op(query, plan)
+            case IntermediateOperator.Sort:
+                return self._cost_sort_op(query, plan)
+            case _:
+                # No action needed, processing starts below
+                pass
+
         hinted_query = self._target_db.hinting().generate_hints(query, plan.with_actual_card())
         if self._raise_on_error:
             cost = self._target_db.optimizer().cost_estimate(hinted_query)
         else:
             try:
                 cost = self._target_db.optimizer().cost_estimate(hinted_query)
-            except DatabaseServerError | DatabaseUserError:
+            except (DatabaseServerError, DatabaseUserError):
                 cost = math.inf
         return cost
 
@@ -67,6 +87,187 @@ class NativeCostModel(CostModel):
     def cleanup(self) -> None:
         self._target_db = None
 
+    def _cost_materialize_op(self, query: SqlQuery, plan: QueryPlan) -> Cost:
+        """Try to estimate the cost of a materialize node at the root of a specific query plan.
+
+        Parameters
+        ----------
+        query : SqlQuery
+            The **entire** query that should be optimized (not just the fragment that should be estimated right now). This
+            query has to include additional tables that are not part of the plan. Ensuring that this is actually the case is
+            the responsibility of the caller.
+        plan : QueryPlan
+            The plan that should be estimated. The root node of this plan is expected to be a materialize node.
+
+        Returns
+        -------
+        Cost
+            The estimated cost or *inf* if costing did not work.
+        """
+
+        # It is quite difficult to estimate the cost of a materialize node based on the subplan because materialization only
+        # happens within a plan and never at the top level. Therefore, we have to improvise a bit here:
+        # Our strategy is to create a plan that uses the materialize operator as an inner child and then extract the cost of
+        # that node.
+        # Since materialization only really happens in front of nested-loop joins, we just construct one of those.
+        # Now, to build such an additional join, we need to determine a suitable join partner and and construct a meaningful
+        # query for it, which makes up for the lion's share of this method.
+        #
+        # Since we are going to push a new join node on top of our current plan, we will call the additional join partner and
+        # the resulting plan "topped".
+        #
+        # Our entire strategy is closely aligned with the Postgres planning and execution model. Therefore, we are going to
+        # restrict this cost function to Postgres backends.
+
+        if not isinstance(self._target_db, PostgresInterface):
+            warnings.warn("Can only estimate the cost of materialize operators for Postgres.")
+            return math.inf
+
+        # Our join partner has to be a table that is not already part of the plan. Based on these tables, we need to determine
+        # all tables that have a suitable join condition with the tables that are already part of the plan.
+        free_tables = query.tables() - plan.tables()
+        candidate_joins = query.predicates().joins_between(free_tables, plan.tables())
+        if not candidate_joins:
+            warnings.warn("Could not find a suitable consumer of the materialized table. Returning infinite costs.")
+            return math.inf
+        candidate_tables = free_tables & candidate_joins.tables()
+
+        # Materialization of the child node should always cost the same, no matter what we join afterwards. Therefore, it does
+        # not matter which table we choose here.
+        topped_table = util.collections.get_any(candidate_tables)
+
+        # Now that we have a table to join with, we can build the updated plan.
+        topped_scan = QueryPlan(ScanOperator.SequentialScan, base_table=topped_table)
+        topped_plan = QueryPlan(JoinOperator.NestedLoopJoin, children=[topped_scan, plan])
+
+        # Based on the plan we need to construct a suitable query and retrieve its execution plan.
+        query_fragment = transform.extract_query_fragment(query, plan.tables() | {topped_table})
+        query_fragment = transform.as_star_query(query_fragment)
+        topped_query = self._target_db.hinting().generate_hints(query_fragment, topped_plan)
+        try:
+            topped_explain = self._target_db.optimizer().query_plan(topped_query)
+        except (DatabaseServerError, DatabaseUserError):
+            warnings.warn(f"Could not estimate the cost of materialize plan {plan}. Returning infinite costs.")
+            return math.inf
+
+        # Finally, we need to extract the cost estimate of the materialize node.
+        intermediate_node = topped_explain.find_first_node(lambda node: node.node_type == IntermediateOperator.Materialize
+                                                           and node.tables == plan.tables())
+        if not intermediate_node:
+            warnings.warn(f"Could not estimate cost of materialize plan {plan}. Returning infinite costs.")
+            return math.inf
+        return intermediate_node.estimated_cost
+
+    def _cost_memoize_op(self, query: SqlQuery, plan: QueryPlan) -> Cost:
+        """Try to estimate the cost of a memoize node at the root of a specific query plan.
+
+        Parameters
+        ----------
+        query : SqlQuery
+            The **entire** query that should be optimized (not just the fragment that should be estimated right now). This
+            query has to include additional tables that are not part of the plan. Ensuring that this is actually the case is
+            the responsibility of the caller.
+        plan : QueryPlan
+            The plan that should be estimated. The root node of this plan is expected to be a memoize node.
+
+        Returns
+        -------
+        Cost
+            The estimated cost or *inf* if costing did not work.
+        """
+
+        # It is quite difficult to estimate the cost of a memoize node based on the subplan because memoization only
+        # happens within a plan and never at the top level. Therefore, we have to improvise a bit here:
+        # Our strategy is to create a plan that uses the memoize operator as an inner child and then extract the cost of
+        # that node.
+        # Since memoization only really happens in front of nested-loop joins, we just construct one of those.
+        # Now, to build such an additional join, we need to determine a suitable join partner and and construct a meaningful
+        # query for it. This makes up for the lion's share of this method, even though we can use the plan's lookup key to
+        # guide our process.
+        #
+        # Since we are going to push a new join node on top of our current plan, we will call the additional join partner and
+        # the resulting plan "topped".
+        #
+        # Our entire strategy is closely aligned with the Postgres planning and execution model. Therefore, we are going to
+        # restrict this cost function to Postgres backends.
+
+        if not isinstance(self._target_db, PostgresInterface):
+            warnings.warn("Can only estimate the cost of memoize operators for Postgres. Returning infinte costs.")
+            return math.inf
+
+        cache_key = plan.lookup_key
+        if not cache_key:
+            raise ValueError("Cannot estimate the cost of memoize operators without a lookup key.")
+        if not isinstance(cache_key, ColumnExpression):
+            warnings.warn("Can only estimate the cost of memoize for single column cache keys. Returning infinite costs.")
+            return math.inf
+
+        # Our join partner has to be a table that is not already part of the plan. Based on these tables, we need to determine
+        # all tables that have a suitable join condition with our cache key.
+        free_tables = query.tables() - plan.tables()
+        candidate_joins = query.predicates().joins_between(free_tables, cache_key.column.table)
+        if not candidate_joins:
+            warnings.warn("Could not find a suitable consumer of the materialized table. Returning infinite costs.")
+            return math.inf
+        candidate_tables = free_tables & candidate_joins.tables()
+
+        # Memoization of the child node should always cost the same as long as the same cache key to construct the lookup table
+        # is used. Since we enforce this based on the lookup_key it does not matter which table we choose here.
+        topped_table = util.collections.get_any(candidate_tables)
+
+        # Now that we have a table to join with, we can build the updated plan.
+        topped_scan = QueryPlan(ScanOperator.SequentialScan, base_table=topped_table)
+        topped_plan = QueryPlan(JoinOperator.NestedLoopJoin, children=[topped_scan, plan])
+
+        # Based on the plan we need to construct a suitable query and retrieve its execution plan.
+        query_fragment = transform.extract_query_fragment(query, plan.tables() | {topped_table})
+        query_fragment = transform.as_star_query(query_fragment)
+        topped_query = self._target_db.hinting().generate_hints(query_fragment, topped_plan)
+        try:
+            topped_explain = self._target_db.optimizer().query_plan(topped_query)
+        except (DatabaseServerError, DatabaseUserError):
+            warnings.warn(f"Could not estimate the cost of memoize plan {plan}. Returning infinite costs.")
+            return math.inf
+
+        # Finally, we need to extract the cost estimate of the materialize node.
+        intermediate_node = topped_explain.find_first_node(lambda node: node.node_type == IntermediateOperator.Memoize
+                                                           and node.tables == plan.tables())
+        if not intermediate_node:
+            warnings.warn(f"Could not estimate cost of memoize plan {plan}. Returning infinite costs.")
+            return math.inf
+        return intermediate_node.estimated_cost
+
+    def _cost_sort_op(self, query: SqlQuery, plan: QueryPlan) -> Cost:
+        """Try to estimate the cost of a sort node at the root of a specific query plan.
+
+        Parameters
+        ----------
+        query : SqlQuery
+            The query should be estimated. This can be the entire query being optimized or just the part that should be costed
+            right now. We don't really care since we are going to extract the relevant bits anyway.
+        plan : QueryPlan
+            The plan that should be estimated. The root node of this plan is expected to be a sort node.
+        """
+
+        # Estimating the cost of a sort node is a bit tricky but not too difficult compared with costing memoize or materialize
+        # nodes. The trick is to determine the cost of a modified ORDER BY query which encodes the desired sort order.
+        # We just need to be a bit careful because the sort column might not be referenced in the plan, yet, nor must it be
+        # present in the query (e.g. for cheap merge joins).
+
+        query_fragment = transform.extract_query_fragment(query, plan.tables())
+        query_fragment = transform.as_star_query(query_fragment)
+        target_columns: set[ColumnReference] = util.set_union([self._target_db.schema().columns(tab) for tab in plan.tables()])
+
+        orderby_cols: list[ColumnReference] = []
+        for sort_key in plan.sort_keys:
+            col = next((col for col in sort_key.equivalence_class
+                        if isinstance(col, ColumnExpression) and col.column in target_columns))
+            orderby_cols.append(col)
+        orderby_clause = OrderBy.create_for(orderby_cols)
+        query_fragment = transform.add_clause(query_fragment, orderby_clause)
+
+        return self.estimate_cost(query_fragment, plan.input_node)
+
 
 class NativeCardinalityEstimator(CardinalityGenerator):
     """Obtains the cardinality of a query plan by using the cardinality estimator of an actual database system."""
@@ -77,7 +278,8 @@ class NativeCardinalityEstimator(CardinalityGenerator):
 
     def calculate_estimate(self, query: SqlQuery, intermediate: TableReference | Iterable[TableReference]) -> Cardinality:
         intermediate = util.enlist(intermediate)
-        subquery = qal.transform.extract_query_fragment(query, intermediate)
+        subquery = transform.extract_query_fragment(query, intermediate)
+        subquery = transform.as_star_query(subquery)
         return self._target_db.optimizer().cardinality_estimate(subquery)
 
     def describe(self) -> jsondict:
