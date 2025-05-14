@@ -1,7 +1,7 @@
 # PostBOUND
 
 ![GitHub License](https://img.shields.io/github/license/rbergm/PostBOUND)
-![Static Badge](https://img.shields.io/badge/version-0.14.2-blue)
+![Static Badge](https://img.shields.io/badge/version-0.15.0-blue)
 
 <img src="docs/figures/postbound-logo.png" style="float: left; width: 150px; margin: 15px;">
 
@@ -19,7 +19,7 @@ systems and loading commonly used databases and benchmarks for them.
 ## Getting Started
 
 > [!TIP]
-> PostBOUND can also as an all-in-one Docker container. See [Dockerfile](#Dockerfile) for details.
+> PostBOUND can also be installed as an all-in-one Docker container. See [Dockerfile](#Dockerfile) for details.
 
 All package requirements can be installed from the `requirements.txt` file. To use PostBOUND in different projects,
 it can also be build and installed as a local package using pip. This is generally the recommended way to go and can be

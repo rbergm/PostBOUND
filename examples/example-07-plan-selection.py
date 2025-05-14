@@ -37,7 +37,7 @@ class PlanSelection(pb.CompleteOptimizationAlgorithm):
 
         # To implement our optimizer, we need to think about two questions::
         # 1. how do we generate different candidate plans, and
-        # 2. how do we selected the best one among the candidates
+        # 2. how do we select the best one among the candidates
         #
         # For 1., we use a mechanism similar to BAO: we use hints to restrict the optimizer's search space, thereby obtaining
         # different plan. Our algorithm works as follows: from the set of all hints, we generate all possible true subsets.
