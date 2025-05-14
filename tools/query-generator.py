@@ -12,23 +12,36 @@ import postbound as pb
 from postbound.experiments import querygen
 
 
-def _resolve_ignore_tables(table_specifiers: list[str], *, pg_instance: pb.postgres.PostgresInterface) -> list[str]:
+def _resolve_ignore_tables(table_specifiers: list[str], *,
+                           pg_instance: pb.postgres.PostgresInterface) -> set[pb.TableReference]:
     if not table_specifiers:
-        return []
+        return set()
 
     candidate_tables = pg_instance.schema().tables()
 
-    ignored: list[pb.TableReference] = []
+    ignored: set[pb.TableReference] = set()
     for spec in table_specifiers:
         if "*" not in spec:
-            ignored.append(pb.TableReference(spec))
+            ignored.add(pb.TableReference(spec))
             continue
 
         table_pattern = re.compile(spec.replace("*", ".*"))
         matching_tables = [tab for tab in candidate_tables if table_pattern.match(tab.full_name)]
-        ignored.extend(matching_tables)
+        ignored.update(matching_tables)
 
     return ignored
+
+
+def _prewarm_tables(tables: set[pb.TableReference], *, pg_instance: pb.postgres.PostgresInterface) -> None:
+    if not pg_instance.has_extension("pg_prewarm"):
+        print("pg_prewarm seems to be unavailable. Skipping prewarming.", file=sys.stderr)
+        return
+
+    # We start the prewarming with the smallest tables because they are cheap to re-load if the shared buffer is not large
+    # enough to fit all tables. Ideally, this enables us to keep the large tables mostly in the buffer.
+    tables_by_size = sorted(tables, key=lambda tab: pg_instance.statistics().total_rows(tab))
+    for tab in tables_by_size:
+        pg_instance.prewarm_tables(tab)
 
 
 def main() -> None:
@@ -87,6 +100,7 @@ def main() -> None:
 
     ignored_tables = _resolve_ignore_tables(args.ignore_tables, pg_instance=pg_instance)
     count_star = args.projection == "countstar"
+    _prewarm_tables(pg_instance.schema().tables() - ignored_tables, pg_instance=pg_instance)
 
     query_hashes: set[int] = set()
     generated_queries: list[tuple[str, pb.SqlQuery]] = []
