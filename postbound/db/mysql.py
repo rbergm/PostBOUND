@@ -33,6 +33,7 @@ import math
 import numbers
 import os
 import textwrap
+import warnings
 from collections.abc import Iterable, Sequence
 from typing import Any, Optional
 
@@ -440,6 +441,7 @@ def _generate_operator_hints(physical_operators: Optional[PhysicalOperatorAssign
     if not physical_operators:
         return ""
     hints = []
+
     for table, scan_assignment in physical_operators.scan_operators.items():
         table_key = table.identifier()
         operator = MysqlOptimizerHints[scan_assignment.operator]
@@ -449,6 +451,9 @@ def _generate_operator_hints(physical_operators: Optional[PhysicalOperatorAssign
         join_key = ", ".join(tab.identifier() for tab in join)
         operator = MysqlOptimizerHints[join_assignment.operator]
         hints.append(f"  {operator}({join_key})")
+
+    if physical_operators.intermediate_operators:
+        warnings.warn("Cannot generate intermediate operator hints for MySQL.")
 
     return "\n".join(hints)
 

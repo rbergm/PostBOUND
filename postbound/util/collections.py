@@ -85,7 +85,7 @@ def get_any(elems: Iterable[T]) -> T:
     T
         Any of the elements from the iterable. If the iterable is empty, the behaviour is undefined.
     """
-    return next(elems)
+    return next(iter(elems))
 
 
 def simplify(obj: Collection[T] | T) -> T | Collection[T]:
