@@ -824,6 +824,24 @@ class PostgresInterface(Database):
 
         self._cursor.execute(configuration)
 
+    def has_extension(self, extension: str) -> bool:
+        """Checks whether a specific extension is installed in the current database.
+
+        Parameters
+        ----------
+        extension : str
+            The name of the extension. This should be equivalent to the name of the shared object file that contains the
+            extension. The *.so* suffix is optional.
+
+        Returns
+        -------
+        bool
+            Whether the extension is installed
+        """
+        target_so = extension if extension.endswith(".so") else f"{extension}.so"
+        loaded_shared_objects = util.system.open_files(self._connection.info.backend_pid)
+        return any(so.endswith(target_so) for so in loaded_shared_objects)
+
     def _init_connection(self) -> int:
         """Sets all default connection parameters and creates the actual database cursor.
 
