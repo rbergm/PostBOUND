@@ -271,7 +271,12 @@ class StaticValueExpression(SqlExpression, Generic[T]):
     def __str__(self) -> str:
         if self.value is None:
             return "NULL"
-        return f"{self.value}" if isinstance(self.value, numbers.Number) else f"'{self.value}'"
+        match self.value:
+            case numbers.Number():
+                return str(self.value)
+            case _:
+                escaped = str(self.value).replace("'", "''")
+                return f"'{escaped}'"
 
 
 class CastExpression(SqlExpression):
