@@ -300,15 +300,15 @@ class TextBookOptimizationPipeline(OptimizationPipeline):
         self._target_db = target_db
         self._card_est: CardinalityEstimator = NativeCardinalityEstimator()
         self._cost_model: CostModel = NativeCostModel()
-
-        if isinstance(target_db, PostgresInterface) and False:
-            # we do not have the PG DP algorithm yet, so just fall back to the simplified one
-            self._plan_enumerator: PlanEnumerator = PostgresDynProg()
-        else:
-            self._plan_enumerator: PlanEnumerator = DynamicProgrammingEnumerator()
+        self._plan_enumerator: PlanEnumerator = (PostgresDynProg(target_db=target_db)
+                                                 if isinstance(target_db, PostgresInterface)
+                                                 else DynamicProgrammingEnumerator(target_db=target_db))
 
         self._support_check = validation.EmptyPreCheck()
         self._build = False
+
+    def target_database(self) -> Database:
+        return self._target_db
 
     def setup_cardinality_estimator(self, estimator: CardinalityEstimator) -> TextBookOptimizationPipeline:
         """Configures the cardinality estimator of the optimizer.

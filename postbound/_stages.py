@@ -147,6 +147,10 @@ class CostModel(abc.ABC):
         all input nodes will have already been estimated by earlier calls to the cost model. Hence, while estimating the cost
         of the root node, all earlier costs will be available as inputs. It is further assumed that all nodes already have
         associated cardinality estimates.
+        This method explicitly does not make any assumption regarding the relationship between query and plan. Specifically,
+        it does not assume that the plan is capable of computing the entire result set nor a correct result set. Instead,
+        the plan might just be a partial plan that computes a subset of the query (e.g. a join of some of the tables).
+        It is the implementation's responsibility to figure out the appropriate course of action.
 
         It is not the responsibility of the cost model to set the estimate on the plan, this is the task of the enumerator
         (which can decide whether the plan should be considered any further).
