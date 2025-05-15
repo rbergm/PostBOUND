@@ -47,6 +47,9 @@ _0.15.1 changes._
 - 🐳 Fixed remote login to the PG instance of the PostBOUND docker container, now using password "postbound"
 
 ### 🪲 Known bugs
+- 🐘 `PostgresConfiguration` cannot be passed directly to `execute_query()` or a manual psycopg cursor. It seems that psycopg
+  does not recognize *UserString* as a valid string and raises an error. As a workaround, make sure to call *str()* on the
+  configuration before trying to execute it. `apply_configuration()` does so automatically.
 - Pre-defined workloads (`workloads.job()`, etc) do not work if installed as a Pip module. This is because the build process
   does not retain the workload directory in the `site_packages`.
 

@@ -278,6 +278,13 @@ class PostgresConfiguration(collections.UserString):
     ----------
     settings : Iterable[PostgresSetting]
         The settings that form the configuration.
+
+    Warnings
+    --------
+    Notice that while the configuration is a *UserString*, pyscopg currently does not support executing the configuration, i.e.
+    executing ``cursor.execute(config)`` will not work. Instead, the configuration has to be manually converted into a string
+    first by calling *str* as in ``cursor.execute(str(config))``. This also applies to the `execute_query()` method of the
+    `PostgresInterface` class, since it uses psycopg under the hood.
     """
     @staticmethod
     def load(*args, **kwargs) -> PostgresConfiguration:
@@ -820,7 +827,7 @@ class PostgresInterface(Database):
             if unsupported_settings:
                 warnings.warn(f"Skipping configuration settings {unsupported_settings} "
                               "because they cannot be changed at runtime")
-            configuration = PostgresConfiguration(supported_settings)
+            configuration = str(PostgresConfiguration(supported_settings))
 
         self._cursor.execute(configuration)
 
