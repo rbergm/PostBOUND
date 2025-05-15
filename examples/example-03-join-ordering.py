@@ -89,5 +89,5 @@ for i in range(3):
     print("Run", i+1, "::")
     optimized_query = pipeline.optimize_query(query)
     query_plan = postgres_db.optimizer().query_plan(optimized_query)
-    print(query_plan.inspect(skip_intermediates=True))
+    print(query_plan.inspect())
     print("--- --- ---")
