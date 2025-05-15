@@ -1,10 +1,12 @@
 #!/bin/bash
 
-if [ "$USE_PGLAB" = "true" ] ; then
-    cd /pg_lab
-else
-    cd /postbound/db-support/postgres
-fi
-. ./postgres-start.sh
 
-/bin/bash
+if [ "$USE_PGLAB" = "true" ] ; then
+    PG_PATH=/pg_lab
+else
+    PG_PATH=/postbound/db-support/postgres
+fi
+
+cd $PG_PATH
+. ./postgres-load-env.sh
+postgres -D $PGDATA

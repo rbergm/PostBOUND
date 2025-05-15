@@ -38,6 +38,7 @@ _0.15.1 changes._
 - The query generator now attempts to prewarm the shared buffer before starting the sampling to improve sampling performance
 - Refactored all cardinality estimation methods to return their result as a proper `Cardinality` instance, rather than as ints,
   floats, or Optionals
+- 🐳 Made Postgres server the main process inside the Docker container, rather than spawning a pseudo-terminal
 
 ### 🏥 Fixes
 - Properly escape static values containing single quotes

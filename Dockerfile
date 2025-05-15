@@ -1,6 +1,7 @@
 FROM ubuntu:noble
 
 EXPOSE 5432
+STOPSIGNAL SIGINT
 
 # Install dependencies
 RUN apt update && apt install -y \
