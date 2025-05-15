@@ -14,7 +14,47 @@ Be carefull when updating and check the changelog!
 
 ---
 
-# ➡ Version 0.15.0
+# ➡ Version 0.15.1
+
+_Since this is the direct completion of work started in v0.15.0, we include the 0.15.0 changelog in addition to the_
+_0.15.1 changes._
+
+### 🐣 New features
+- 🐘 Added a Postgres-style dynamic programming enumerator. This enumerator is used as the default for the textbook
+  optimization pipeline whenever the target database is Postgres.
+  Current limitations include: no parallel plans and no bushy plans
+- `PhysicalOperatorAssignment` can now store intermediate operators (e.g. memoize or materialize)
+- Added a `lookup_key` property to query plans. This key represents expressions that are used to build hash tables or memos.
+- 🐘 Added a `has_extension()` method to the Postgres interface to check whether the server has a specific extension available
+
+### 💀 Breaking changes
+- Refactored `Cardinality` into a proper class to have a single way to represent cardinalities and unknown cardinalities
+  accross the entire code base.
+- Renamed MySQL's `as_query_execution_plan()` to `as_qep()` in line with the PG terminology
+
+### 📰 Updates
+- Reworked native cost estimation for intermediate operators (i.e. materialize, memoize and sort). This now for Postgres now,
+  but other systems are still pending (and probably will be for a very long time)
+- The query generator now attempts to prewarm the shared buffer before starting the sampling to improve sampling performance
+- Refactored all cardinality estimation methods to return their result as a proper `Cardinality` instance, rather than as ints,
+  floats, or Optionals
+
+### 🏥 Fixes
+- Properly escape static values containing single quotes
+- No longer silently drop intermediate nodes when estimating the cost of intermediate operators
+- Corrected broken download links in `workload-stats-setup.sh`
+
+### 🪲 Known bugs
+- Pre-defined workloads (`workloads.job()`, etc) do not work if installed as a Pip module. This is because the build process
+  does not retain the workload directory in the `site_packages`.
+
+### ⏳ WIP
+- Better cardinality representation, rather than just aliasing float or int. This is will probably be included in v0.15.1
+
+---
+
+
+# 🕑 Version 0.15.0
 
 ### 🐣 New features
 - 🐘 Added a Postgres-style dynamic programming enumerator. This enumerator is used as the default for the textbook
