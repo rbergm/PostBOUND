@@ -23,7 +23,7 @@ class PlanSelection(pb.CompleteOptimizationAlgorithm):
 
         # We need the default server configuration to make sure that our connection is in a clean state whenever we obtain a
         # new query plan. See the comment in _reset_db_state for more details.
-        self._default_config = self._target_db.current_configuration()
+        self._default_config = self._target_db.current_configuration(runtime_changeable_only=True)
 
         # These are all hints that we are going to use to generate different query plans. There are more hints available, but
         # we don't use them for simplicity (and because we would suffer from combinatorial explosion).
