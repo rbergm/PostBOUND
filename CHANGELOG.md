@@ -43,6 +43,7 @@ _0.15.1 changes._
 - Properly escape static values containing single quotes
 - No longer silently drop intermediate nodes when estimating the cost of intermediate operators
 - Corrected broken download links in `workload-stats-setup.sh`
+- 🐳 Fixed remote login to the PG instance of the PostBOUND docker container, now using password "postbound"
 
 ### 🪲 Known bugs
 - Pre-defined workloads (`workloads.job()`, etc) do not work if installed as a Pip module. This is because the build process

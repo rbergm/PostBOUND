@@ -171,10 +171,14 @@ $ docker run -dt \
     --shm-size 4G \
     --name postbound \
     --volume $PWD/postbound-docker:/postbound/public \
-    --expose 5432 \
+    --publish 5432:5432 \
     postbound
 $ docker exec -it postbound /bin/bash
 ```
+
+This also makes the Postgres server available outside of the Docker container (using user _postbound_ with password
+_postbound_).
+
 
 ---
 

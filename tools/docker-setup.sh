@@ -3,10 +3,10 @@
 # Setup local Postgres or pg_lab
 if [ "$USE_PGLAB" = "true" ] ; then
     git clone --depth 1 --branch=main https://github.com/rbergm/pg_lab /pg_lab
-    cd /pg_lab && ./postgres-setup.sh --remote-password "" --stop
+    cd /pg_lab && ./postgres-setup.sh --remote-password "postbound" --stop
     . ./postgres-start.sh
 else
-    cd /postbound/db-support/postgres && ./postgres-setup.sh --remote-password "" --stop
+    cd /postbound/db-support/postgres && ./postgres-setup.sh --remote-password "postbound" --stop
     . ./postgres-start.sh
 fi
 
