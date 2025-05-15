@@ -2244,10 +2244,10 @@ class PostgresOptimizer(OptimizerInterface):
         else:
             deactivated_geqo = False
         query_plan = self._pg_instance._obtain_query_plan(query)
-        estimate = query_plan[0]["Plan"]["Plan Rows"]
+        estimate: int = query_plan[0]["Plan"]["Plan Rows"]
         if deactivated_geqo:
             self._pg_instance._restore_geqo_state()
-        return estimate
+        return Cardinality(estimate)
 
     def cost_estimate(self, query: qal.SqlQuery | str) -> float:
         self._pg_instance._current_geqo_state = self._pg_instance._obtain_geqo_state()
@@ -2951,8 +2951,8 @@ class PostgresExplainNode:
 
         return QueryPlan(self.node_type, base_table=table, operator=operator, children=child_nodes,
                          parallel_workers=par_workers, index=self.index_name, sort_keys=sort_keys,
-                         estimated_cost=self.cost, estimated_cardinality=self.cardinality_estimate,
-                         actual_cardinality=true_card, execution_time=self.execution_time,
+                         estimated_cost=self.cost, estimated_cardinality=Cardinality(self.cardinality_estimate),
+                         actual_cardinality=Cardinality(true_card), execution_time=self.execution_time,
                          cache_hits=shared_hits, cache_misses=shared_misses,
                          subplan_root=subplan_child, subplan_name=subplan_name)
 

@@ -380,8 +380,9 @@ class PlanEstimates:
     worker execution time or some other measure.
     """
     def __init__(self, *,
-                 cardinality: Cardinality = math.nan,
+                 cardinality: Cardinality = Cardinality.unknown(),
                  cost: Cost = math.nan) -> None:
+        cardinality = cardinality if isinstance(cardinality, Cardinality) else Cardinality(cardinality)
         self._params = {
             "cardinality": cardinality,
             "cost": cost
@@ -480,10 +481,11 @@ class PlanMeasures:
     """
 
     def __init__(self, *,
-                 cardinality: Cardinality = None,
+                 cardinality: Cardinality = Cardinality.unknown(),
                  execution_time: float = math.nan,
                  cache_hits: Optional[int] = None,
                  cache_misses: Optional[int] = None) -> None:
+        cardinality = cardinality if isinstance(cardinality, Cardinality) else Cardinality(cardinality)
         self._params = {
             "cardinality": cardinality,
             "execution_time": execution_time,
@@ -568,7 +570,7 @@ class PlanMeasures:
         self._params[key] = value
 
     def __bool__(self) -> bool:
-        return any(not math.isnan(v) if isinstance(v, float) else (v is not None) for v in self._params.values())
+        return any(not math.isnan(v) if isinstance(v, Number) else (v is not None) for v in self._params.values())
 
 
 @dataclass(frozen=True)
@@ -743,8 +745,8 @@ class QueryPlan:
                  base_table: Optional[TableReference] = None, filter_predicate: Optional[AbstractPredicate] = None,
                  parallel_workers: Optional[int] = None, index: Optional[str] = None,
                  sort_keys: Optional[Sequence[SortKey]] = None, lookup_key: Optional[SqlExpression] = None,
-                 estimated_cardinality: Cardinality = math.nan, estimated_cost: Cost = math.nan,
-                 actual_cardinality: Cardinality = math.nan, execution_time: float = math.nan,
+                 estimated_cardinality: Cardinality = Cardinality.unknown(), estimated_cost: Cost = math.nan,
+                 actual_cardinality: Cardinality = Cardinality.unknown(), execution_time: float = math.nan,
                  cache_hits: Optional[int] = None, cache_misses: Optional[int] = None,
                  subplan_root: Optional[QueryPlan] = None, subplan_target_name: str = "",
                  **kwargs) -> None:
@@ -1318,7 +1320,7 @@ class QueryPlan:
             estimated cost. The current plan is not changed.
         """
         if self.actual_cardinality:
-            updated_cardinality = (self.estimated_cardinality if ignore_nan and math.isnan(self.actual_cardinality)
+            updated_cardinality = (self.estimated_cardinality if ignore_nan and self.actual_cardinality.isnan()
                                    else self.actual_cardinality)
             updated_cost = cost_estimator(self, updated_cardinality) if cost_estimator else math.nan
             updated_estimates = PlanEstimates(cardinality=updated_cardinality, cost=updated_cost)

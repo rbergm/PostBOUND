@@ -1,8 +1,10 @@
 
 from __future__ import annotations
 
+import math
 import re
 from enum import Enum
+from numbers import Number
 from typing import Optional, TypeVar
 
 from .util.errors import StateError
@@ -19,17 +21,352 @@ VisitorResult = TypeVar("VisitorResult")
 Cost = float
 """Type alias for a cost estimate."""
 
-Cardinality = float
-"""Type alias for a cardinality estimate.
 
-Despite the type alias, cardinalities should not be ordinary floating point numbers but rather integers. We only alias float
-instead of int to allow *NaN* for missing cardinalities as well as *inf* for infinite cardinalities.
-Therefore, in order to check for valid cardinalities, ``math.isnan()`` should be used (or ``math.isinf()``, depneding on the
-context).
+class Cardinality(Number):
+    """Cardinlities represent the number of tuples/row in a relation.
 
-We could be more precise and introduce our own cardinality type (which allows int | NaN | inf), but for now this is good enough
-and allows to easily return integers.
-"""
+    Our cardinality model can be in one of three states:
+
+    - A valid cardinality can be any non-negative integer. This is the default and most common state.
+    - An unknown cardinality is represented by NaN.
+    - A prohibitively large cardinality is represented by inf.
+
+    Basically, cardinality instances are just wrappers around their integer value that also catch the two special cases.
+    Use cardinalities as you would use normal numbers. Notice that cardinalities are immutable, so all mathematical operators
+    return a new cardinality instance.
+
+    To check for the state of a cardinality, you can either use `is_valid()` or the more specific `isnan()` and `isinf()`.
+    Furthermore, a more expressive alias for `isnan()` exists in the form of `is_unknown()`.
+
+    You can access the raw cardinality value vie the `value` property. However, this property requires that the cardinality is
+    indeed in a valid state. If you want to handle invalid cardinalities yourself, `get()` returns a general float value (that
+    can also be *NaN* or *inf*).
+
+    To construct valid cardinalities, it is probably easiest to just create a new instance and passing the desired value.
+    The `of()` factory method can be used for better readability. Additionally, the `unknown()` and `infinite()` factory
+    methods can be used to create cardinalities in the special states.
+
+    Lastly, cardinalities can be used in *match* statements. They match the following pattern: *(is_valid, value)*. If the
+    cardinality is invalid, the value is set to -1.
+    """
+
+    @staticmethod
+    def of(value: int | float) -> Cardinality:
+        """Creates a new cardinality with a specific value. This is just a shorthand for `Cardinality(value)`."""
+        return Cardinality(value)
+
+    @staticmethod
+    def unknown() -> Cardinality:
+        """Creates a new cardinality with an unknown value."""
+        return Cardinality(math.nan)
+
+    @staticmethod
+    def infinite() -> Cardinality:
+        """Creates a new cardinality with an infinite value."""
+        return Cardinality(math.inf)
+
+    def __init__(self, value: int | float) -> None:
+        self._nan = math.isnan(value)
+        self._inf = math.isinf(value)
+        self._valid = not self._nan and not self._inf
+        self._value = round(value) if self._valid else -1
+
+    __slots__ = ("_nan", "_inf", "_valid", "_value")
+    __match_args__ = ("_valid", "_value")
+
+    @property
+    def value(self) -> int:
+        """Get the value wrapped by this cardinality instance. If the cardinality is invalid, a `StateError` is raised."""
+        if not self._valid:
+            raise StateError("Not a valid cardinality. Use is_valid() to check, or get() to handle unknown values yourself.")
+        return self._value
+
+    def isnan(self) -> bool:
+        """Checks, whether cardinality value is *NaN*."""
+        # We call this method isnan instead of is_nan to be consistent with math.isnan and np.isnan
+        return self._nan
+
+    def isinf(self) -> bool:
+        """Checks, whether cardinality value is infinite."""
+        # We call this method isinf instead of is_inf to be consistent with math.isinf and np.isinf
+        return self._inf
+
+    def is_unknown(self) -> bool:
+        """Checks, whether cardinality value is unknown (i.e. *NaN*).
+
+        This is just a more expressive alias for `isnan()`. It is not a synonym for `is_valid()`.
+        """
+        return self._nan
+
+    def is_valid(self) -> bool:
+        """Checks, whether this cardinality is valid, i.e. neither *NaN* nor infinite.
+
+        If the cardinality is valid, the value can be safely accessed via the `value` property.
+        """
+        return self._valid
+
+    def get(self) -> float:
+        """Provides the value of this cardinality.
+
+        In contrast to accessing the `value` property, this method always returns a float and does not raise an error for
+        invalid cardinalities. Instead, it returns *NaN* for unknown cardinalities and *inf* for infinite cardinalities.
+        """
+        return float(self)
+
+    def __bool__(self) -> bool:
+        return self._valid
+
+    def __add__(self, other: object) -> Cardinality:
+        if isinstance(other, Cardinality):
+            return Cardinality(self.get() + other.get())
+        if isinstance(other, (int, float)):
+            return Cardinality(self.get() + other)
+        return NotImplemented
+
+    def __radd__(self, other: object) -> Cardinality:
+        if isinstance(other, (int, float)):
+            return Cardinality(other + self.get())
+        return NotImplemented
+
+    def __neg__(self) -> Cardinality:
+        # What's a negative cardinality supposed to be?
+        return NotImplemented
+
+    def __sub__(self, other: object) -> Cardinality:
+        if isinstance(other, Cardinality):
+            return Cardinality(self.get() - other.get())
+        if isinstance(other, (int, float)):
+            return Cardinality(self.get() - other)
+        return NotImplemented
+
+    def __rsub__(self, other: object) -> Cardinality:
+        if isinstance(other, (int, float)):
+            return Cardinality(other - self.get())
+        return NotImplemented
+
+    def __mul__(self, other: object) -> Cardinality:
+        if isinstance(other, Cardinality):
+            return Cardinality(self.get() * other.get())
+        if isinstance(other, (int, float)):
+            return Cardinality(self.get() * other)
+        return NotImplemented
+
+    def __rmul__(self, other: object) -> Cardinality:
+        if isinstance(other, (int, float)):
+            return Cardinality(other * self.get())
+        return NotImplemented
+
+    def __div__(self, other: object) -> Cardinality:
+        if isinstance(other, Cardinality):
+            return Cardinality(self.get() / other.get())
+        if isinstance(other, (int, float)):
+            return Cardinality(self.get() / other)
+        return NotImplemented
+
+    def __rdiv__(self, other: object) -> Cardinality:
+        if isinstance(other, (int, float)):
+            return Cardinality(other / self.get())
+        return NotImplemented
+
+    def __pow__(self, other: object) -> Cardinality:
+        if isinstance(other, Cardinality):
+            # TODO: should we allow exponentiation by a cardinality? What would that mean?
+            # For now, I can't really think of a use case, but it's probably not a good idea to restrict the
+            # allowed operations too much. Therefore, we leave it allowed for now.
+            return Cardinality(self.get() ** other.get())
+        if isinstance(other, (int, float)):
+            return Cardinality(self.get() ** other)
+        return NotImplemented
+
+    def __rpow__(self, other: object) -> Cardinality:
+        # See comment on __pow__. Not sure, whether this is a good idea or not.
+        if isinstance(other, (int, float)):
+            return Cardinality(other ** self.get())
+        return NotImplemented
+
+    def __abs__(self) -> Cardinality:
+        # Cardinalities are always positive (and -1 is only used internally)
+        return self
+
+    def __trunc__(self) -> Cardinality:
+        # Cardinalities are always positive integers, so truncating does nothing
+        return self
+
+    def __ceil__(self) -> Cardinality:
+        # Cardinalities are always positive integers, so ceiling does nothing
+        return self
+
+    def __floor__(self) -> Cardinality:
+        # Cardinalities are always positive integers, so flooring does nothing
+        return self
+
+    def __round__(self, ndigits: int = 0) -> Cardinality:
+        # Cardinalities are always positive integers, so rounding does nothing
+        return self
+
+    def __divmod__(self, other: object) -> tuple[Number, Number]:
+        if not self._valid:
+            return math.nan, math.nan
+        if isinstance(other, Cardinality):
+            if other._nan:
+                return math.nan, math.nan
+            if other._inf:
+                return 0, self.value
+            return divmod(self.value, other.value)
+        if isinstance(other, (int, float)):
+            return divmod(self.value, other)
+        return NotImplemented
+
+    def __rdivmod__(self, other: object) -> tuple[Number, Number]:
+        if self._nan:
+            own_value = math.nan
+        elif self._inf:
+            own_value = math.inf
+        else:
+            own_value = self.value
+        return divmod(other, own_value)
+
+    def __floordiv__(self, other: object) -> int:
+        return math.floor(self / other)
+
+    def __rfloordiv__(self, other: object) -> int:
+        return math.floor(other / self)
+
+    def __mod__(self, other: object) -> Cardinality:
+        if not self._valid:
+            return Cardinality.unknown()
+
+        match other:
+            case Cardinality(_, otherval):
+                if other._nan:
+                    return Cardinality.unknown()
+                if other._inf:
+                    return self
+                return Cardinality(self.value % otherval)
+
+            case int():
+                return Cardinality(self.value % other)
+
+            case float():
+                if math.isnan(other):
+                    return Cardinality.unknown()
+                if math.isinf(other):
+                    return self
+                return Cardinality(self.value % other)
+
+        return NotImplemented
+
+    def __rmod__(self, other: object) -> Cardinality:
+        if math.isnan(other) or math.isinf(other):
+            return Cardinality.unknown()
+
+        if self._nan:
+            return Cardinality.unknown()
+        if self._inf:
+            return Cardinality(other)
+        return Cardinality(other % self.value)
+
+    def __lt__(self, other: object) -> bool:
+        if not self._valid:
+            return False
+
+        match other:
+            case Cardinality(_, otherval):
+                if other._nan:
+                    return False
+                if other._inf:
+                    return True
+                return self.value < otherval
+
+            case int():
+                return self.value < other
+
+            case float():
+                if math.isnan(other):
+                    return False
+                if math.isinf(other):
+                    return True
+                return self.value < other
+
+        return NotImplemented
+
+    def __le__(self, other: object) -> bool:
+        if not self._valid:
+            return False
+
+        match other:
+            case Cardinality(_, otherval):
+                if other._nan:
+                    return False
+                if other._inf:
+                    return True
+                return self.value <= otherval
+
+            case int():
+                return self.value <= other
+
+            case float():
+                if math.isnan(other):
+                    return False
+                if math.isinf(other):
+                    return True
+                return self.value <= other
+
+        return NotImplemented
+
+    def __float__(self) -> float:
+        if self._nan:
+            return math.nan
+        if self._inf:
+            return math.inf
+        return float(self.value)
+
+    def __int__(self) -> int:
+        if not self._valid:
+            raise StateError("Not a valid cardinality. Use is_valid() to check, or get() to handle unknown values yourself.")
+        return self.value
+
+    def __complex__(self) -> complex:
+        if self._nan:
+            return complex(math.nan)
+        if self._inf:
+            return complex(math.inf)
+        return complex(float(self.value))
+
+    def __eq__(self, other: object) -> None:
+        match other:
+            case Cardinality():
+                if self._nan and other._nan:
+                    return True
+                if self._inf and other._inf:
+                    return True
+                return self.value == other.value
+
+            case int():
+                return self._valid and self.value == other
+
+            case float():
+                if self._nan and math.isnan(other):
+                    return True
+                if self._inf and math.isinf(other):
+                    return True
+                return self._valid and self.value == other
+
+        return NotImplemented
+
+    def __hash__(self) -> int:
+        # There is no need to hash _valid, since it is directly derived from _nan and _inf
+        return hash((self._nan, self._inf, self._value))
+
+    def __repr__(self) -> str:
+        return str(self)
+
+    def __str__(self) -> str:
+        if self._nan:
+            return "NaN"
+        if self._inf:
+            return "inf"
+        return str(self.value)
 
 
 class ScanOperator(Enum):

@@ -353,7 +353,7 @@ class UESJoinBoundEstimator(cardpol.JoinCardinalityEstimator):
             if join_bound < current_min_bound:
                 current_min_bound = join_bound
 
-        return current_min_bound
+        return Cardinality(current_min_bound)
 
     def describe(self) -> dict:
         return {"name": "ues"}
@@ -378,7 +378,7 @@ class UESJoinBoundEstimator(cardpol.JoinCardinalityEstimator):
         Cardinality
             An upper bound of the primary key/foreign key join cardinality.
         """
-        pk_cardinality = self.stats_container.base_table_estimates[pk_column.table]
+        pk_cardinality = Cardinality(self.stats_container.base_table_estimates[pk_column.table])
         fk_frequency = self.stats_container.attribute_frequencies[fk_column]
         return math.ceil(fk_frequency * pk_cardinality)
 
@@ -408,7 +408,7 @@ class UESJoinBoundEstimator(cardpol.JoinCardinalityEstimator):
         second_distinct_vals = second_bound / second_freq
 
         n_m_bound = min(first_distinct_vals, second_distinct_vals) * first_freq * second_freq
-        return math.ceil(n_m_bound)
+        return Cardinality(math.ceil(n_m_bound))
 
     def _fetch_bound(self, column: ColumnReference) -> Cardinality:
         """Provides the appropriate table bound (based on upper bound or base table estimate) for the given column.
@@ -428,8 +428,9 @@ class UESJoinBoundEstimator(cardpol.JoinCardinalityEstimator):
             An upper bound on the cardinality of the table
         """
         table = column.table
-        return (self.stats_container.upper_bounds[table] if table in self.stats_container.upper_bounds
+        card = (self.stats_container.upper_bounds[table] if table in self.stats_container.upper_bounds
                 else self.stats_container.base_table_estimates[table])
+        return Cardinality(card)
 
 
 class UESSubqueryGenerationPolicy(treepol.BranchGenerationPolicy):

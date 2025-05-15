@@ -13,7 +13,6 @@ from __future__ import annotations
 
 import abc
 import json
-import math
 import random
 from collections.abc import Iterable
 from typing import Literal, Optional
@@ -91,7 +90,7 @@ class PreciseCardinalityHintGenerator(CardinalityGenerator):
         partial_query = qal.transform.as_count_star_query(qal.transform.extract_query_fragment(query, tables))
         if partial_query in self._cardinality_cache:
             return self._cardinality_cache[partial_query]
-        cardinality = self.database.execute_query(partial_query)
+        cardinality = Cardinality(self.database.execute_query(partial_query))
         self._cardinality_cache[partial_query] = cardinality
         return cardinality
 
@@ -131,10 +130,10 @@ class PreComputedCardinalities(CardinalityGenerator):
     include_cross_products : bool, optional
         Whether cardinality estimates for arbitrary cross products are contained in the CSV file and hence can be used during
         estimation. By default this is disabled.
-    default_cardinality : Optional[int], optional
+    default_cardinality : Optional[Cardinality], optional
         In case no cardinality estimate exists for a specific intermediate, a default cardinality can be used instead. In case
         no default value has been specified, an error would be raised. Notice that a ``None`` value unsets the default. If the
-        client should handle this situation instead, another value (e.g. ``math.nan`` has to be used).
+        client should handle this situation instead, another value (e.g. ``Cardinality.unknown()`` has to be used).
     label_col : str, optional
         The column in the CSV file that contains the query labels. Defaults to *label*.
     tables_col : str, optional
@@ -161,7 +160,7 @@ class PreComputedCardinalities(CardinalityGenerator):
         table. This is only used if live fallback is active and enabled by default.
     """
     def __init__(self, workload: workloads.Workload, lookup_table_path: str, *,
-                 include_cross_products: bool = False, default_cardinality: Optional[int] = None,
+                 include_cross_products: bool = False, default_cardinality: Optional[Cardinality] = None,
                  label_col: str = "label", tables_col: str = "tables", cardinality_col: str = "cardinality",
                  live_fallback: bool = False, error_on_missing_card: bool = True,
                  live_db: Optional[db.Database] = None,
@@ -195,7 +194,7 @@ class PreComputedCardinalities(CardinalityGenerator):
         tables_debug = "(" + ", ".join(tab.identifier() for tab in tables) + ")"
         n_samples = len(cardinality_sample)
         if n_samples == 1:
-            cardinality = cardinality_sample.iloc[0][self._card_col]
+            cardinality = Cardinality(cardinality_sample.iloc[0][self._card_col])
             return cardinality
         elif n_samples > 1:
             raise ValueError(f"{n_samples} samples found for join {tables_debug} in query {label}. Expected 1.")
@@ -234,21 +233,21 @@ class PreComputedCardinalities(CardinalityGenerator):
             The fallback value if it could be inferred, otherwise *NaN*.
         """
         if n_samples == 1:
-            # If we found exactly one sample, we do not need to fall back at all
-            return math.nan
+            # If we found exactly one sample, we did not need to fall back at all
+            return Cardinality.unknown()
 
         if self._default_card is not None:
             return self._default_card
         if self._live_db is None:
-            return math.nan
+            return Cardinality.unknown()
 
         query_fragment = qal.transform.extract_query_fragment(query, tables)
         if not query_fragment:
-            return math.nan
+            return Cardinality.unknown()
 
         if self._live_fallback_style == "actual":
             true_card_query = qal.transform.as_count_star_query(query_fragment)
-            cardinality = self._live_db.execute_query(true_card_query)
+            cardinality = Cardinality(self._live_db.execute_query(true_card_query))
         elif self._live_fallback_style == "estimated":
             cardinality = self._live_db.optimizer().cardinality_estimate(query_fragment)
         else:
@@ -258,7 +257,8 @@ class PreComputedCardinalities(CardinalityGenerator):
             self._dump_fallback_estimate(query, tables, cardinality)
         return cardinality
 
-    def _dump_fallback_estimate(self, query: qal.SqlQuery, tables: frozenset[TableReference], cardinality: int) -> None:
+    def _dump_fallback_estimate(self, query: qal.SqlQuery, tables: frozenset[TableReference],
+                                cardinality: Cardinality) -> None:
         """Stores a newly computed cardinality estimate in the lookup table.
 
         Parameters
@@ -323,8 +323,8 @@ class CardinalityDistortion(CardinalityGenerator):
     def calculate_estimate(self, query: qal.SqlQuery, tables: TableReference | Iterable[TableReference]) -> Cardinality:
         tables = util.enlist(tables)
         card_est = self.estimator.calculate_estimate(query, tables)
-        if not card_est:
-            return math.nan
+        if not card_est.is_valid():
+            return Cardinality.unknown()
         if self.distortion_strategy == "fixed":
             distortion_factor = self.distortion_factor
         elif self.distortion_strategy == "random":
@@ -460,7 +460,7 @@ class NativeCardinalityEstimator(BaseTableCardinalityEstimator):
         return self.database.optimizer().cardinality_estimate(emulated_query)
 
     def estimate_total_rows(self, table: TableReference) -> Cardinality:
-        return self.database.statistics().total_rows(table, emulated=True)
+        return Cardinality(self.database.statistics().total_rows(table, emulated=True))
 
     def describe(self) -> dict:
         return {"name": "native", "database": self.database.describe()}
@@ -500,10 +500,10 @@ class PreciseCardinalityEstimator(BaseTableCardinalityEstimator):
                                               where_clause=where_clause)
 
         cache_enabled = self.database.statistics().cache_enabled  # this should be treated like a statistics query
-        return self.database.execute_query(emulated_query, cache_enabled=cache_enabled)
+        return Cardinality(self.database.execute_query(emulated_query, cache_enabled=cache_enabled))
 
     def estimate_total_rows(self, table: TableReference) -> Cardinality:
-        return self.database.statistics().total_rows(table, emulated=False)
+        return Cardinality(self.database.statistics().total_rows(table, emulated=False))
 
     def describe(self) -> dict:
         return {"name": "precise", "database": self.database.describe()}
