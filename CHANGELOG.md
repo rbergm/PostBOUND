@@ -60,7 +60,8 @@ _0.15.1 changes._
 
 
 ### 🐣 New features
-- _None_
+- Much improved `tools/setup-py-venv.sh`: now auto-updates the PostBOUND source code and supports installation into an active
+  virtual environment. This provides direct support for installing an update of PostBOUND into the virtual environment.
 
 ### 💀 Breaking changes
 - _None_

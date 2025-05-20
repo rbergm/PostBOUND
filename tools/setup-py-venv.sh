@@ -8,6 +8,7 @@ EXTRAS=""
 MINIMAL_EXTRAS=""
 ALL_EXTRAS="[mysql,vis]"
 BUILD_DOC="true"
+GIT_PULL="true"
 
 show_help() {
   RET=$1
@@ -15,17 +16,24 @@ show_help() {
   echo -e ""
   echo -e "Installs PostBOUND into a (possibly existing) Python virtual environment. This script is assumed to be run from the "
   echo -e "root of the PostBOUND repository, i.e. as tools/setup-py-venv.sh."
+  echo -e "If PostBOUND is already installed, it will be upgraded."
   echo -e ""
   echo -e "Allowed options:"
-  echo -e "--venv <dir>"
+  echo -e "\n--venv <dir>"
   echo -e "\tPath to the virtual environment where PostBOUND will be installed. If this venv exists, it will be "
-  echo -e "\tused. Otherwise, an empty venv will be created. Defaults to ./pb-venv/"
-  echo -e "--features <features>"
+  echo -e "\tused. Otherwise, an empty venv will be created at the location. Defaults to ./pb-venv/. This parameter is ignored"
+  echo -e "\tif a venv is already active."
+  echo -e "\n--features <features>"
   echo -e "\tOptional extras to install with PostBOUND. These are specified as a comma-separated list."
   echo -e "\tSupported extras are: 'mysql' for installing the MySQL backend and 'vis' for using the visualization utilities."
   echo -e "\tFurthermore, 'all' can be used to install all available extras and 'minimal' only installs the core package."
-  echo -e "--skip-doc"
+  echo -e "\n--skip-doc"
   echo -e "\tDon't build the documentation."
+  echo -e "\n--skip-pull"
+  echo -e "\tDon't pull the latest version of the repository before building. Notice that a pull will not update this script."
+  echo -e "\tIf there should be any issues with the setup script, please pull the latest version manually and try again."
+  echo -e "\n--help"
+  echo -e "\tShow this help message."
   exit $RET
 }
 
@@ -61,6 +69,10 @@ while [ $# -gt 0 ] ; do
       BUILD_DOC="false"
       shift
       ;;
+    --skip-pull)
+      GIT_PULL="false"
+      shift
+      ;;
     --help)
       show_help 0
       ;;
@@ -73,6 +85,11 @@ done
 PYTHON_VERSION=$(python3 --version 2>&1 | awk '{print $2}')
 REQUIRED_VERSION="3.10"
 
+if [ "$GIT_PULL" == "true" ] ; then
+  echo ".. Checking for latest version of PostBOUND"
+  git pull
+fi
+
 if [[ $(echo -e "$PYTHON_VERSION\n$REQUIRED_VERSION" | sort -V | head -n1) != "$REQUIRED_VERSION" ]]; then
   echo ".. Default Python appears to be older than 3.10. Trying to set up local Python 3.10."
   PYTHON="$WD/tools/python-3.10"
@@ -83,14 +100,24 @@ if [[ $(echo -e "$PYTHON_VERSION\n$REQUIRED_VERSION" | sort -V | head -n1) != "$
   cd $WD
 fi
 
-if [ -d "$TARGET_DIR" ] ; then
-  echo ".. Installing into existing virtual environment $TARGET_DIR"
-else
-  echo ".. Creating new virtual environment $TARGET_DIR"
-  python3 -m venv "$TARGET_DIR"
-fi
+if [ -z "$VIRTUAL_ENV" ] ; then
 
-. $TARGET_DIR/bin/activate
+  # We are not in a virtual environment, so we need to create or activate one.
+
+  if [ -d "$TARGET_DIR" ] ; then
+    echo ".. Installing into existing virtual environment $TARGET_DIR"
+  else
+    echo ".. Creating new virtual environment $TARGET_DIR"
+    python3 -m venv "$TARGET_DIR"
+  fi
+
+  . $TARGET_DIR/bin/activate
+
+else
+
+  echo ".. Using active virtual environment $VIRTUAL_ENV"
+
+fi
 
 echo ".. Building PostBOUND package"
 pip install build wheel ipython
@@ -113,5 +140,5 @@ if [ "$BUILD_DOC" == "true" ] ; then
   make html
 fi
 
-echo ".. Done. Activate venv as '. $TARGET_DIR/bin/activate'"
+echo ".. Done. Activate venv as '. $VIRTUAL_ENV/bin/activate' or 'source $VIRTUAL_ENV/bin/activate'."
 cd "$WD"
