@@ -14,7 +14,7 @@ Be carefull when updating and check the changelog!
 
 ---
 
-# ➡ Version 0.15.1
+# ➡ Version 0.15.1 _(current)_
 
 _Since this is the direct completion of work started in v0.15.0, we include the 0.15.0 changelog in addition to the_
 _0.15.1 changes._
@@ -53,8 +53,31 @@ _0.15.1 changes._
 - Pre-defined workloads (`workloads.job()`, etc) do not work if installed as a Pip module. This is because the build process
   does not retain the workload directory in the `site_packages`.
 
-### ⏳ WIP
-- Better cardinality representation, rather than just aliasing float or int. This is will probably be included in v0.15.1
+---
+
+
+# ⏳ Version 0.15.2 _(WIP)_
+
+
+### 🐣 New features
+- _None_
+
+### 💀 Breaking changes
+- _None_
+
+### 📰 Updates
+- _None_
+
+### 🏥 Fixes
+- Multiple smaller fixes concerning state management in the textbook optimization pipeline
+
+### 🪲 Known bugs
+- 🐘 `PostgresConfiguration` cannot be passed directly to `execute_query()` or a manual psycopg cursor. It seems that psycopg
+  does not recognize *UserString* as a valid string and raises an error. As a workaround, make sure to call *str()* on the
+  configuration before trying to execute it. `apply_configuration()` does so automatically.
+- Pre-defined workloads (`workloads.job()`, etc) do not work if installed as a Pip module. This is because the build process
+  does not retain the workload directory in the `site_packages`.
+
 
 ---
 

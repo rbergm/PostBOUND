@@ -79,13 +79,10 @@ class NativeCostModel(CostModel):
         return cost
 
     def describe(self) -> jsondict:
-        return {"name": "native", "database_system": self._target_db.describe()}
+        return {"name": "native", "database_system": self._target_db.describe() if self._target_db is not None else None}
 
     def initialize(self, target_db: db.Database, query: SqlQuery) -> None:
         self._target_db = target_db
-
-    def cleanup(self) -> None:
-        self._target_db = None
 
     def _cost_materialize_op(self, query: SqlQuery, plan: QueryPlan) -> Cost:
         """Try to estimate the cost of a materialize node at the root of a specific query plan.
@@ -283,13 +280,10 @@ class NativeCardinalityEstimator(CardinalityGenerator):
         return self._target_db.optimizer().cardinality_estimate(subquery)
 
     def describe(self) -> jsondict:
-        return {"name": "native", "database_system": self._target_db.describe()}
+        return {"name": "native", "database_system": self._target_db.describe() if self._target_db is not None else None}
 
     def initialize(self, target_db: db.Database, query: SqlQuery) -> None:
         self._target_db = target_db
-
-    def cleanup(self) -> None:
-        self._target_db = None
 
 
 class NativeJoinOrderOptimizer(JoinOrderOptimization):

@@ -73,7 +73,7 @@ class PlanSelection(pb.CompleteOptimizationAlgorithm):
 
     def describe(self) -> pb.util.jsondict:
         return {
-            "type": "plan_selection",
+            "name": "plan-selection",
             "hints": self._hints,
         }
 
