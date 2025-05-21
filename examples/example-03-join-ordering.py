@@ -79,7 +79,7 @@ postgres_db = pb.postgres.connect()
 job_workload = pb.workloads.job()
 
 # Now let's generate the optimization pipeline with our new optimizer
-pipeline = pb.TwoStageOptimizationPipeline(postgres_db)
+pipeline = pb.MultiStageOptimizationPipeline(postgres_db)
 pipeline.setup_join_order_optimization(RandomJoinOrderOptimizer(postgres_db))
 pipeline.build()
 

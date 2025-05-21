@@ -279,7 +279,7 @@ class PlanEnumerator(abc.ABC):
 class JoinOrderOptimization(abc.ABC):
     """The join order optimization generates a complete join order for an input query.
 
-    This is the first step in a two-stage optimizer design.
+    This is the first step in a multi-stage optimizer design.
     """
 
     @abc.abstractmethod
@@ -287,8 +287,8 @@ class JoinOrderOptimization(abc.ABC):
         """Performs the actual join ordering process.
 
         The join tree can be further annotated with an initial operator assignment, if that is an inherent part of
-        the specific optimization strategy. However, this is generally discouraged and the two-stage pipeline will discard such
-        operators to prepare for the subsequent physical operator selection.
+        the specific optimization strategy. However, this is generally discouraged and the multi-stage pipeline will discard
+        such operators to prepare for the subsequent physical operator selection.
 
         Other than the join order and operator assignment, the algorithm should add as much information to the join
         tree as possible, e.g. including join conditions and cardinality estimates that were calculated for the
@@ -424,7 +424,7 @@ class ParameterGeneration(abc.ABC):
     """The parameter generation assigns additional metadata to a query plan.
 
     Such parameters do not influence the previous choice of join order and physical operators directly, but affect their
-    specific implementation. Therefore, this is an optional final step in a two-stage optimization process.
+    specific implementation. Therefore, this is an optional final step in a multi-stage optimization process.
     """
 
     @abc.abstractmethod
@@ -621,7 +621,7 @@ def as_complete_algorithm(stage: JoinOrderOptimization | PhysicalOperatorSelecti
     This emulation is achieved by using the partial stage to obtain a partial query plan. The target database system is then
     tasked with filling the gaps to construct a complete execution plan.
 
-    Basically this method is syntactic sugar in situations where a `TwoStageOptimizationPipeline` would be filled with only a
+    Basically this method is syntactic sugar in situations where a `MultiStageOptimizationPipeline` would be filled with only a
     single stage. Using `as_complete_algorithm`, the construction of an entire pipeline can be omitted. Furthermore it can seem
     more natural to "convert" the stage into a complete algorithm in this case.
 

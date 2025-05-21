@@ -1,6 +1,6 @@
 """Presets allow to set up optimization pipelines quickly by providing pre-defined combinations of different algorithms.
 
-The current design of the presets is targeted at the `TwoStageOptimizationPipeline`, since this one requires the most setup.
+The current design of the presets is targeted at the `MultiStageOptimizationPipeline`, since this one requires the most setup.
 """
 from __future__ import annotations
 

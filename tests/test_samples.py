@@ -19,7 +19,7 @@ class ReadmeExampleTests(unittest.TestCase):
         job_workload = pb.workloads.job()
         ues_settings = presets.fetch("ues")
 
-        optimization_pipeline = pb.TwoStageOptimizationPipeline(postgres_instance)
+        optimization_pipeline = pb.MultiStageOptimizationPipeline(postgres_instance)
         optimization_pipeline.load_settings(ues_settings)
         optimization_pipeline.build()
 

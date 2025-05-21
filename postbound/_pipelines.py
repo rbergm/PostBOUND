@@ -27,17 +27,17 @@ from .util import StateError
 class OptimizationPipeline(abc.ABC):
     """The optimization pipeline is the main tool to apply different strategies to optimize SQL queries.
 
-    Depending on the specific scenario, different concrete pipeline implementations exist. For example, to apply a two-stage
+    Depending on the specific scenario, different concrete pipeline implementations exist. For example, to apply multi-stage
     optimization design (e.g. consisting of join ordering and a subsequent physical operator selection), the
-    `TwoStageOptimizationPipeline` exists. Similarly, for optimization algorithms that perform join ordering and operator
+    `MultiStageOptimizationPipeline` exists. Similarly, for optimization algorithms that perform join ordering and operator
     selection in one process, an `IntegratedOptimizationPipeline` is available. The `TextBookOptimizationPipeline` is modelled
     after the traditional interplay of cardinality estimator, cost model and plan enumerator. Lastly, to model approaches that
     subsequently improve query plans by correcting some previous optimization decisions (e.g. transforming a hash join to a
     nested loop join), the `IncrementalOptimizationPipeline` is provided. Consult the individual pipeline documentation for
     more details. This class only describes the basic interface that is shared by all the pipeline implementations.
 
-    If in doubt what the best pipeline implementation is, it is probably best to start with the `TwoStageOptimizationPipeline`
-    or the `TextBookOptimizationPipeline`, since they are the most flexible.
+    If in doubt what the best pipeline implementation is, it is probably best to start with the
+    `MultiStageOptimizationPipeline` or the `TextBookOptimizationPipeline`, since they are the most flexible.
     """
 
     @abc.abstractmethod
@@ -416,8 +416,8 @@ class TextBookOptimizationPipeline(OptimizationPipeline):
         }
 
 
-class TwoStageOptimizationPipeline(OptimizationPipeline):
-    """This optimization pipeline is the main tool to apply and combine different optimization strategies.
+class MultiStageOptimizationPipeline(OptimizationPipeline):
+    """This optimization pipeline performs query optimization in separate phases.
 
     The pipeline is organized in two large stages (join ordering and physical operator selection), which are
     accompanied by initial pre check and a final plan parameterization steps. In total, those four individual steps
@@ -429,9 +429,17 @@ class TwoStageOptimizationPipeline(OptimizationPipeline):
     1. the incoming query is checked for unsupported features
     2. an optimized join order for the query is calculated
     3. appropriate physical operators are determined, depending on the join order
-    4. the query plan (join order + physical operators) is further parameterized
+    4. the query plan (join order + physical operators) is further parameterized, for example with custom cardinality estimates
 
-    All steps are optional. If they are not specified, no operation will be performed at the specific stage.
+    All steps are optional. If they are not specified, no operation will be performed at the specific stage. Effectively, this
+    means that the query optimizer of the target database system needs to step in and "fill the gaps". For example, if no
+    join ordering is performed, the native optimizer needs to come up with a join order. But, the native optimizer will use
+    the selected physical operators to perform these joins. Likewise, specifying only a join order means that the native
+    optimizer will select its own physical operators. If cardinalities are provided, they are used to guide the native
+    optimizer. As an extreme case, one can skip join ordering and physical operator selection completely and only compute
+    cardinality estimates in the parameterization step. This way, a different cardinality estimator can be simulated without
+    using the `TextBookOptimizationPipeline`. This has the advantage that no default strategies for cost estimation and plan
+    enumeration need to to be simulated and the actual algorithms from the target database are used.
 
     Once the optimization settings have been selected via the *setup* methods (or alternatively via the `load_settings`
     functionality), the pipeline has to be build using the `build` method. Afterwards, it is ready to optimize
@@ -442,6 +450,8 @@ class TwoStageOptimizationPipeline(OptimizationPipeline):
     database system). This field can be changed between optimization calls to use the same pipeline for different
     systems.
 
+    As a shortcut, `load_settings` can be used to initialize a pipeline with pre-defined optimization strategies.
+
     Parameters
     ----------
     target_db : Database
@@ -450,7 +460,7 @@ class TwoStageOptimizationPipeline(OptimizationPipeline):
 
     Examples
     --------
-    >>> pipeline = pb.TwoStageOptimizationPipline(postgres_db)
+    >>> pipeline = pb.MultiStageOptimizationPipline(postgres_db)
     >>> pipeline.load_settings(ues_settings)
     >>> pipeline.build()
     >>> pipeline.optimize_query(join_order_benchmark["1a"])
@@ -529,7 +539,7 @@ class TwoStageOptimizationPipeline(OptimizationPipeline):
         """
         return self._plan_parameterization
 
-    def setup_query_support_check(self, check: OptimizationPreCheck) -> TwoStageOptimizationPipeline:
+    def setup_query_support_check(self, check: OptimizationPreCheck) -> MultiStageOptimizationPipeline:
         """Configures the pre-check that should be executed for each query.
 
         This check will be combined with any additional checks that are required by the actual optimization strategies.
@@ -549,7 +559,7 @@ class TwoStageOptimizationPipeline(OptimizationPipeline):
         self._build = False
         return self
 
-    def setup_join_order_optimization(self, enumerator: JoinOrderOptimization) -> TwoStageOptimizationPipeline:
+    def setup_join_order_optimization(self, enumerator: JoinOrderOptimization) -> MultiStageOptimizationPipeline:
         """Configures the pipeline to obtain an optimized join order.
 
         The actual strategy can either produce a purely logical join order, or an initial physical query execution plan
@@ -572,7 +582,7 @@ class TwoStageOptimizationPipeline(OptimizationPipeline):
         self._build = False
         return self
 
-    def setup_physical_operator_selection(self, selector: PhysicalOperatorSelection) -> TwoStageOptimizationPipeline:
+    def setup_physical_operator_selection(self, selector: PhysicalOperatorSelection) -> MultiStageOptimizationPipeline:
         """Configures the algorithm to assign physical operators to the query.
 
         This algorithm receives the input query as well as the join order (if there is one) as input. In a special
@@ -595,7 +605,7 @@ class TwoStageOptimizationPipeline(OptimizationPipeline):
         self._build = False
         return self
 
-    def setup_plan_parameterization(self, param_generator: ParameterGeneration) -> TwoStageOptimizationPipeline:
+    def setup_plan_parameterization(self, param_generator: ParameterGeneration) -> MultiStageOptimizationPipeline:
         """Configures the algorithm to parameterize the query plan.
 
         This algorithm receives the input query as well as the join order and the physical operators (if those have
@@ -617,7 +627,7 @@ class TwoStageOptimizationPipeline(OptimizationPipeline):
         self._build = False
         return self
 
-    def load_settings(self, optimization_settings: OptimizationSettings) -> TwoStageOptimizationPipeline:
+    def load_settings(self, optimization_settings: OptimizationSettings) -> MultiStageOptimizationPipeline:
         """Applies all the optimization settings from a pre-defined optimization strategy to the pipeline.
 
         This is just a shorthand method to skip calling all setup methods individually for a fixed combination of
@@ -651,7 +661,7 @@ class TwoStageOptimizationPipeline(OptimizationPipeline):
         self._build = False
         return self
 
-    def build(self) -> TwoStageOptimizationPipeline:
+    def build(self) -> MultiStageOptimizationPipeline:
         """Constructs the optimization pipeline.
 
         This includes filling all undefined optimization steps with empty strategies and checking all strategies for
@@ -733,7 +743,7 @@ class TwoStageOptimizationPipeline(OptimizationPipeline):
 
 
 class IncrementalOptimizationPipeline(OptimizationPipeline):
-    """This optimization pipeline can be thought of as a generalization of the `TwoStageOptimizationPipeline`.
+    """This optimization pipeline can be thought of as a generalization of the `MultiStageOptimizationPipeline`.
 
     Instead of only operating in two stages, an arbitrary amount of optimization steps can be applied. During each
     step an entire physical query execution plan is received as input and also produced as output. Therefore, partial

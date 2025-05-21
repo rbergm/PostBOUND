@@ -18,7 +18,7 @@ job_workload = pb.workloads.job()
 
 # Configure the optimization pipeline for UES
 ues_settings = presets.fetch("ues")
-ues_pipeline = pb.TwoStageOptimizationPipeline(postgres_db).load_settings(ues_settings).build()
+ues_pipeline = pb.MultiStageOptimizationPipeline(postgres_db).load_settings(ues_settings).build()
 
 # Execute the benchmarks: each query should be repeated 3 times and each workload should be repeated 3 times as well
 # After each workload repetition, the execution order of all queries should be changed. Finally, all queries should be executed

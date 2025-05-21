@@ -20,7 +20,7 @@ warnings.simplefilter("ignore")
 # In PostBOUND, there are two optimization pipelines that can work with cardinality estimates:
 # - the TextBookOptimizationPipeline, which models the traditional optimizer architecture with plan enumerator, cost model and
 #   cardinality estimator.
-# - the TwoStageOptimizationPipeline, which first generates a logical join order and afterwards selects the optimal physical
+# - the MultiStageOptimizationPipeline, which first generates a logical join order and afterwards selects the optimal physical
 #   operators for the join order. This pipeline is designed to let the optimizer of the target database to "fill the gaps" and
 #   only perform part of the optimization process. For example, the pipeline can only specify the logical join order, in which
 #   case the native optimizer selects its own physical operators. In this case, the cardinality estimates are used to guide the
@@ -28,7 +28,7 @@ warnings.simplefilter("ignore")
 #   pipeline. This is equivalent to just overwriting the cardinality estimates)
 #
 # Since both pipelines require different interfaces for cardinality estimation, we would need to choose which one we want to
-# implement. However, cardinality estimation is often agnostic to the specific usage scenario (text book or two-stage).
+# implement. However, cardinality estimation is often agnostic to the specific usage scenario (text book or multi-stage).
 # Therefore, the cardinalities module provides a common interface for both pipelines, called CardinalityGenerator.
 # In this example, we are going to use that interface to implement a cardinality estimator that works in both pipelines.
 
@@ -64,7 +64,7 @@ class JitteringCardinalityEstimator(pb.CardinalityGenerator):
     def generate_plan_parameters(self, query: pb.SqlQuery,
                                  join_order: Optional[pb.LogicalJoinTree],
                                  operator_assignment: Optional[pb.PhysicalOperatorAssignment]) -> pb.PlanParameterization:
-        # This method is specific to the TwoStageOptimizationPipeline
+        # This method is specific to the MultiStageOptimizationPipeline
         # We actually do not need to implement this method, the CardinalityHintsGenerator interface already provides a decent
         # default implementation, which essentially performs the same steps as we do in this method.
         # We just show how we could implement it, if we wanted to or needed to.
@@ -73,9 +73,9 @@ class JitteringCardinalityEstimator(pb.CardinalityGenerator):
 
         # If we do not have a join order, we need to iterate over all potential intermediate results of the query to generate
         # an estimate for all of them.
-        # This is a drawback of the two-stage optimization approach used in PostBOUND: the actual physical database system has
-        # no way to "call-back" to PostBOUND to request a new estimate because it does not know about PostBOUND's existence in
-        # the first place. Therefore, we have to pre-generate all information within PostBOUND that could potentially become
+        # This is a drawback of the multi-stage optimization approach used in PostBOUND: the actual physical database system
+        # has no way to "call-back" to PostBOUND to request a new estimate because it does not know about PostBOUND's existence
+        # in the first place. Therefore, we have to pre-generate all information within PostBOUND that could potentially become
         # useful for the native optimizer of the physical database system.
         # In our case, the easiest way to do so is to construct the powerset of all tables in the query. This spans all
         # possible intermediate results.
@@ -113,7 +113,7 @@ postgres_db = pb.postgres.connect()
 job_workload = pb.workloads.job()
 
 # Now let's generate the optimization pipeline with our new cardinality estimator
-pipeline = pb.TwoStageOptimizationPipeline(postgres_db)
+pipeline = pb.MultiStageOptimizationPipeline(postgres_db)
 pipeline.setup_plan_parameterization(JitteringCardinalityEstimator(postgres_db.optimizer()))
 pipeline.build()
 

@@ -30,7 +30,7 @@ for train_query in train_queries.queries():
     tonic_recommender.simulate_feedback(train_query)
 
 # Now let's generate the optimization pipeline with our learned optimizer
-pipeline = pb.TwoStageOptimizationPipeline(postgres_db)
+pipeline = pb.MultiStageOptimizationPipeline(postgres_db)
 pipeline.setup_physical_operator_selection(tonic_recommender)
 pipeline.build()
 

@@ -22,7 +22,7 @@ job_workload = pb.workloads.job()
 # Step 2: Optimization pipeline setup
 # If necessary, this step can also include the definition of different optimization strategies
 ues_settings = presets.fetch("ues")
-optimization_pipeline = pb.TwoStageOptimizationPipeline(postgres_instance)
+optimization_pipeline = pb.MultiStageOptimizationPipeline(postgres_instance)
 optimization_pipeline.load_settings(ues_settings)
 optimization_pipeline.build()
 

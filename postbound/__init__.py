@@ -55,10 +55,10 @@ Optimization pipeline
 PostBOUND does not provide a single pipeline implementation. Rather, different pipeline types exists to accomodate
 different use-cases. See the documentation of the general `OptimizationPipeline` base class for details. That class serves as
 the smallest common denominator among all pipeline implementations. Based on the general interface, the most commonly used
-pipelines are the `TextBookOptimizationPipeline` and the `TwoStageOptimizationPipeline`. The former models an optimizer based
+pipelines are the `TextBookOptimizationPipeline` and the `MultiStageOptimizationPipeline`. The former models an optimizer based
 on the traditional architecture of cost-based optimizers (i.e. plan enumerator, cost model and cardinality estimator). The
 latter first computes a join order and afterwards selects the physical operators for this join order. The resulting plan can be
-further parameterized, e.g. using cardinality estimates. Importantly, the `TwoStageOptimizationPipeline` allows to leave some
+further parameterized, e.g. using cardinality estimates. Importantly, the `MultiStageOptimizationPipeline` allows to leave some
 of the stages empty, which forces the native query optimizer to "fill the gaps" with its own policies. For example, one might
 only compute a join order along with the cardinality estimates. The target optimizer would then select the physical operators
 based on its own cost model, but using the cardinality estimates in place of its own estimation procedures.
@@ -111,7 +111,7 @@ from ._pipelines import (
   OptimizationPipeline,
   IntegratedOptimizationPipeline,
   TextBookOptimizationPipeline,
-  TwoStageOptimizationPipeline,
+  MultiStageOptimizationPipeline,
   IncrementalOptimizationPipeline,
   OptimizationSettings
 )
@@ -146,7 +146,7 @@ __all__ = [
   "OptimizationPipeline",
   "CompleteOptimizationAlgorithm", "IntegratedOptimizationPipeline",
   "CardinalityEstimator", "CostModel", "PlanEnumerator", "TextBookOptimizationPipeline",
-  "JoinOrderOptimization", "PhysicalOperatorSelection", "ParameterGeneration", "TwoStageOptimizationPipeline",
+  "JoinOrderOptimization", "PhysicalOperatorSelection", "ParameterGeneration", "MultiStageOptimizationPipeline",
   "IncrementalOptimizationStep", "IncrementalOptimizationPipeline",
   "as_complete_algorithm", "OptimizationSettings",
   "Database", "postgres",

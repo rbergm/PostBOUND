@@ -67,7 +67,7 @@ ues_settings = presets.fetch("ues")
 ##
 ## Step 2: Optimization pipeline setup
 ##
-optimization_pipeline = pb.TwoStageOptimizationPipeline(postgres_instance)
+optimization_pipeline = pb.MultiStageOptimizationPipeline(postgres_instance)
 optimization_pipeline.load_settings(ues_settings)
 optimization_pipeline.build()
 

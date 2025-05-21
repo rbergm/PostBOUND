@@ -52,10 +52,10 @@ instance.
     ues_settings = presets.fetch("ues")      # load the optimization strategies
     tonic_operators = tonic.TonicOperatorSelection.load_model("tonic_model.json")
 
-    optimization_pipeline = pb.TwoStageOptimizationPipeline(target_db=postgres_db)  # constructs our pipeline for Postgres
-    optimization_pipeline.load_settings(ues_settings)                               # apply our optimization strategies
-    optimization_pipeline.setup_physical_operator_selection(tonic_operators)        # use TONIC for physical operators
-    optimization_pipeline.build()                                                   # get ready to optimize
+    optimization_pipeline = pb.MultiStageOptimizationPipeline(target_db=postgres_db)  # constructs our pipeline for Postgres
+    optimization_pipeline.load_settings(ues_settings)                                 # apply our optimization strategies
+    optimization_pipeline.setup_physical_operator_selection(tonic_operators)          # use TONIC for physical operators
+    optimization_pipeline.build()                                                     # get ready to optimize
 
     for label, query in job.entries():
         print("Now optimizing query", label)
