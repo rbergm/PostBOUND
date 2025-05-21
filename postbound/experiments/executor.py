@@ -4,9 +4,9 @@ from __future__ import annotations
 import json
 import functools
 import math
+import time
 import warnings
 from dataclasses import dataclass
-from datetime import datetime
 from collections.abc import Callable, Iterable
 from typing import Any, Optional
 
@@ -74,7 +74,7 @@ class QueryPreparationService:
 
     These transformations mostly ensure that all queries in a workload provide the same type of result even in face
     of input queries that are structured slightly differently. For example, the preparation service can transform
-    all the queries to be executed as *EXPLAIN* or *COUNT(*)* queries. Furthermore, the preparation service can
+    all the queries to be executed as *EXPLAIN* or *COUNT(\\*)* queries. Furthermore, the preparation service can
     store SQL statements that have to be executed before running the query. For example, a statement that disables
     parallel execution could be supplied here.
 
@@ -83,7 +83,7 @@ class QueryPreparationService:
     explain : bool, optional
         Whether to force all queries to be executed as *EXPLAIN* queries, by default *False*
     count_star : bool, optional
-        Whether to force all queries to be executed as *COUNT(*)* queries, overwriting their default projection. Defaults to
+        Whether to force all queries to be executed as *COUNT(\\*)* queries, overwriting their default projection. Defaults to
         *False*
     analyze : bool, optional
         Whether to force all queries to be executed as ``EXPLAIN ANALYZE`` queries. Setting this option implies `explain`,
@@ -144,20 +144,20 @@ class QueryPreparationService:
 
 
 def _standard_executor(query: qal.SqlQuery, *, target: db.Database) -> tuple[Any, float]:
-    start = datetime.now()
+    start = time.perf_counter_ns()
     result_set = target.execute_query(query, cache_enabled=False)
-    end = datetime.now()
-    runtime = (end - start).total_seconds()
+    end = time.perf_counter_ns()
+    runtime = (end - start) / 1_000_000_000  # convert to seconds
     return result_set, runtime
 
 
 def _timeout_executor(query: qal.SqlQuery, *, target: postgres.PostgresInterface, timeout: float) -> tuple[Any, float]:
     timeout_executor = postgres.TimeoutQueryExecutor(target)
     try:
-        start = datetime.now()
+        start = time.perf_counter_ns()
         result_set = timeout_executor.execute_query(query, timeout=timeout)
-        end = datetime.now()
-        runtime = (end - start).total_seconds()
+        end = time.perf_counter_ns()
+        runtime = (end - start) / 1_000_000_000  # convert to seconds
         return result_set, runtime
     except TimeoutError:
         return None, math.inf
@@ -467,10 +467,10 @@ def optimize_and_execute_query(query: qal.SqlQuery, optimization_pipeline: Optim
     execute_query
     """
     try:
-        start_time = datetime.now()
+        start_time = time.perf_counter_ns()
         optimized_query = optimization_pipeline.optimize_query(query)
-        end_time = datetime.now()
-        optimization_time = (end_time - start_time).total_seconds()
+        end_time = time.perf_counter_ns()
+        optimization_time = (end_time - start_time) / 1_000_000_000  # convert to seconds
 
         execution_result = execute_query(optimized_query, repetitions=repetitions, query_preparation=query_preparation,
                                          database=optimization_pipeline.target_database(),

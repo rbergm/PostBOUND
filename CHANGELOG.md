@@ -67,7 +67,7 @@ _0.15.1 changes._
 - _None_
 
 ### 📰 Updates
-- _None_
+- Switched to `perf_counter_ns()` for executor-related execution time measurements (e.g. `optimize_and_execute_workload()`)
 
 ### 🏥 Fixes
 - Multiple smaller fixes concerning state management in the textbook optimization pipeline
