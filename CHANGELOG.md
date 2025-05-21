@@ -1,20 +1,47 @@
 # Changelog
 
-Updates to PostBOUND are typically made according to the following rules:
-
-1. Version numbers are composed of three numbers, following the typical _major.minor.patch_ scheme. However, until version 1.0
-   the boundary between minor versions and patches as well as between major and minor versions is somewhat arbitrary.
-2. Minor updates should normally be backwards-compatible and only consist of new functions or parameters with default values.
-   The same applies to patches.
-3. The version suffixes indicate stability of the current PostBOUND version. No suffix means well-tested and stable, beta means
-   decently tested and stable for the most part. Anything below is prototypical.
-
-Notice however that PostBOUND is still a research project. There could be breaking changes if there is very good reason for it.
-Be carefull when updating and check the changelog!
+Version numbers are composed of three components, i.e. _major_._minor_._patch_
+As a rough guideline, patch releases are just for fixing bugs or adding minor details (e.g. a new default parameter to some
+function), minor releases change slightly larger parts of the framework or add significant new functionality (e.g. a new
+optimization pipeline or support for an SQL feature). Major releases fundamentally shift how the framework is used and indicate
+stability. Since we are not ready for the 1.0 release yet, this does not matter right now.
 
 ---
 
-# ➡ Version 0.15.1 _(current)_
+
+# ➡ Version 0.15.2 _(current)_
+
+
+### 🐣 New features
+- Much improved `tools/setup-py-venv.sh`: now auto-updates the PostBOUND source code and supports installation into an active
+  virtual environment. This provides direct support for installing an update of PostBOUND into the virtual environment.
+- Workload benchmarking functions can write their results progressively after each workload repetition
+- Added support for table functions to the QAL (e.g. `SELECT * FROM my_udf()`), including the parser
+- Added support for non-default *FETCH* clauses, e.g. `FETCH PRIOR 5 ROWS ONLY`. Notice that the parser only supports
+  *FETCH FIRST* and *FETCH NEXT* (b/c this is what Postgres supports). *TIES* are still not implemented.
+
+
+### 💀 Breaking changes
+- Renamed the `TwoStageOptimizationPipeline` to
+
+### 📰 Updates
+- Switched to `perf_counter_ns()` for executor-related execution time measurements (e.g. `optimize_and_execute_workload()`)
+- 🐳 Allow customizing the Postgres version when building a Docker container.
+
+### 🏥 Fixes
+- Multiple smaller fixes concerning state management in the textbook optimization pipeline
+
+### 🪲 Known bugs
+- 🐘 `PostgresConfiguration` cannot be passed directly to `execute_query()` or a manual psycopg cursor. It seems that psycopg
+  does not recognize *UserString* as a valid string and raises an error. As a workaround, make sure to call *str()* on the
+  configuration before trying to execute it. `apply_configuration()` does so automatically.
+- Pre-defined workloads (`workloads.job()`, etc) do not work if installed as a Pip module. This is because the build process
+  does not retain the workload directory in the `site_packages`.
+
+---
+
+
+# 🕑 Version 0.15.1
 
 _Since this is the direct completion of work started in v0.15.0, we include the 0.15.0 changelog in addition to the_
 _0.15.1 changes._
@@ -52,39 +79,6 @@ _0.15.1 changes._
   configuration before trying to execute it. `apply_configuration()` does so automatically.
 - Pre-defined workloads (`workloads.job()`, etc) do not work if installed as a Pip module. This is because the build process
   does not retain the workload directory in the `site_packages`.
-
----
-
-
-# ⏳ Version 0.15.2 _(WIP)_
-
-
-### 🐣 New features
-- Much improved `tools/setup-py-venv.sh`: now auto-updates the PostBOUND source code and supports installation into an active
-  virtual environment. This provides direct support for installing an update of PostBOUND into the virtual environment.
-- Workload benchmarking functions can write their results progressively after each workload repetition
-- Added support for table functions to the QAL (e.g. `SELECT * FROM my_udf()`), including the parser
-- Added support for non-default *FETCH* clauses, e.g. `FETCH PRIOR 5 ROWS ONLY`. Notice that the parser only supports
-  *FETCH FIRST* and *FETCH NEXT* (b/c this is what Postgres supports). *TIES* are still not implemented.
-
-
-### 💀 Breaking changes
-- _None_
-
-### 📰 Updates
-- Switched to `perf_counter_ns()` for executor-related execution time measurements (e.g. `optimize_and_execute_workload()`)
-- 🐳 Allow customizing the Postgres version when building a Docker container.
-
-### 🏥 Fixes
-- Multiple smaller fixes concerning state management in the textbook optimization pipeline
-
-### 🪲 Known bugs
-- 🐘 `PostgresConfiguration` cannot be passed directly to `execute_query()` or a manual psycopg cursor. It seems that psycopg
-  does not recognize *UserString* as a valid string and raises an error. As a workaround, make sure to call *str()* on the
-  configuration before trying to execute it. `apply_configuration()` does so automatically.
-- Pre-defined workloads (`workloads.job()`, etc) do not work if installed as a Pip module. This is because the build process
-  does not retain the workload directory in the `site_packages`.
-
 
 ---
 

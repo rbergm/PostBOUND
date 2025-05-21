@@ -136,7 +136,7 @@ from .experiments import analysis, executor, workloads
 from .experiments.executor import execute_workload, optimize_and_execute_workload
 from .db import postgres
 
-__version__ = "0.15.1"
+__version__ = "0.15.2"
 
 __all__ = [
   "db", "opt", "qal", "experiments", "util",
