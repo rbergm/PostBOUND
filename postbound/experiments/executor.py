@@ -8,6 +8,7 @@ import time
 import warnings
 from dataclasses import dataclass
 from collections.abc import Callable, Iterable
+from pathlib import Path
 from typing import Any, Optional
 
 import natsort
@@ -144,6 +145,7 @@ class QueryPreparationService:
 
 
 def _standard_executor(query: qal.SqlQuery, *, target: db.Database) -> tuple[Any, float]:
+    """Default executor that delegates to `execute_query`."""
     start = time.perf_counter_ns()
     result_set = target.execute_query(query, cache_enabled=False)
     end = time.perf_counter_ns()
@@ -152,6 +154,10 @@ def _standard_executor(query: qal.SqlQuery, *, target: db.Database) -> tuple[Any
 
 
 def _timeout_executor(query: qal.SqlQuery, *, target: postgres.PostgresInterface, timeout: float) -> tuple[Any, float]:
+    """Executor that automatically cancels the query if it exceeds a specific timeout.
+
+    Timed-out queries are not retried, they produce a result of *(None, inf)*.
+    """
     timeout_executor = postgres.TimeoutQueryExecutor(target)
     try:
         start = time.perf_counter_ns()
@@ -321,6 +327,7 @@ def execute_workload(queries: Iterable[qal.SqlQuery] | workloads.Workload, datab
                      include_labels: bool = False,
                      post_process: Optional[Callable[[ExecutionResult], None]] = None,
                      post_repetition_callback: Optional[Callable[[int], None]] = None,
+                     progressive_output: Optional[str | Path] = None,
                      logger: Optional[Callable[[str], None]] = None) -> pd.DataFrame:
     """Executes all the given queries on the provided database.
 
@@ -371,6 +378,9 @@ def execute_workload(queries: Iterable[qal.SqlQuery] | workloads.Workload, datab
     post_repetition_callback : Optional[Callable[[int], None]], optional
         An optional post-process action that is executed after each workload repetition. The current repetition number is
         provided as the only argument. Repetitions start at 0.
+    progressive_output: Optional[str | Path], optional
+        If provided, the results will be written to this file after each workload repetition. If the file already exists, it
+        will be overwritten. This is file is assumed to be a CSV file.
     logger : post_process : Optional[Callable[[str], None]], optional
         A logging function that is invoked before every query execution. If omitted, no logging is performed (the default)
 
@@ -385,10 +395,11 @@ def execute_workload(queries: Iterable[qal.SqlQuery] | workloads.Workload, datab
     """
     queries = _wrap_workload(queries)
     logger = util.make_logger(False) if logger is None else logger
-    results = []
+    progressive_output = Path(progressive_output) if progressive_output else None
+    results: list[pd.DataFrame] = []
     current_execution_index = 1
     for i in range(workload_repetitions):
-        current_repetition_results = []
+        current_repetition_results: list[pd.DataFrame] = []
         if shuffled:
             queries = queries.shuffle()
 
@@ -408,6 +419,13 @@ def execute_workload(queries: Iterable[qal.SqlQuery] | workloads.Workload, datab
         current_df = pd.concat(current_repetition_results)
         current_df[COL_WORKLOAD_ITER] = i + 1
         results.append(current_df)
+
+        if progressive_output and progressive_output.is_file():
+            current_output = prepare_export(current_df)
+            current_output.to_csv(progressive_output, mode="a", index=False, header=False)
+        elif progressive_output:
+            current_output = prepare_export(current_df)
+            current_output.to_csv(progressive_output, index=False, mode="w")
 
         if post_repetition_callback:
             post_repetition_callback(i)
@@ -499,6 +517,7 @@ def optimize_and_execute_workload(queries: Iterable[qal.SqlQuery] | workloads.Wo
                                   include_labels: bool = False,
                                   post_process: Optional[Callable[[ExecutionResult], None]] = None,
                                   post_repetition_callback: Optional[Callable[[int], None]] = None,
+                                  progressive_output: Optional[str | Path] = None,
                                   logger: Optional[Callable[[str], None]] = None) -> pd.DataFrame:
     """This function combines the functionality of `execute_workload` and `optimize_query` in one utility.
 
@@ -539,6 +558,9 @@ def optimize_and_execute_workload(queries: Iterable[qal.SqlQuery] | workloads.Wo
     post_repetition_callback : Optional[Callable[[int], None]], optional
         An optional post-process action that is executed after each workload repetition. The current repetition number is
         provided as the only argument. Repetitions start at 0.
+    progressive_output: Optional[str | Path], optional
+        If provided, the results will be written to this file after each workload repetition. If the file already exists, it
+        will be overwritten. This is file is assumed to be a CSV file.
     logger : post_process : Optional[Callable[[str], None]], optional
         A logging function that is invoked before every query execution. If omitted, no logging is performed (the default)
 
@@ -554,10 +576,11 @@ def optimize_and_execute_workload(queries: Iterable[qal.SqlQuery] | workloads.Wo
     """
     queries = _wrap_workload(queries)
     logger = util.make_logger(False) if logger is None else logger
-    results = []
+    progressive_output = Path(progressive_output) if progressive_output else None
+    results: list[pd.DataFrame] = []
     current_execution_index = 1
     for i in range(workload_repetitions):
-        current_repetition_results = []
+        current_repetition_results: list[pd.DataFrame] = []
         if shuffled:
             queries = queries.shuffle()
 
@@ -579,6 +602,13 @@ def optimize_and_execute_workload(queries: Iterable[qal.SqlQuery] | workloads.Wo
         current_df = pd.concat(current_repetition_results)
         current_df[COL_WORKLOAD_ITER] = i + 1
         results.append(current_df)
+
+        if progressive_output and progressive_output.is_file():
+            current_output = prepare_export(current_df)
+            current_output.to_csv(progressive_output, mode="a", index=False, header=False)
+        elif progressive_output:
+            current_output = prepare_export(current_df)
+            current_output.to_csv(progressive_output, index=False, mode="w")
 
         if post_repetition_callback:
             post_repetition_callback(i)
