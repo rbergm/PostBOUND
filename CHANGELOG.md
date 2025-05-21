@@ -69,6 +69,7 @@ _0.15.1 changes._
 
 ### 📰 Updates
 - Switched to `perf_counter_ns()` for executor-related execution time measurements (e.g. `optimize_and_execute_workload()`)
+- 🐳 Allow customizing the Postgres version when building a Docker container.
 
 ### 🏥 Fixes
 - Multiple smaller fixes concerning state management in the textbook optimization pipeline
