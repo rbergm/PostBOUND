@@ -463,6 +463,19 @@ class ParserTests(regression_suite.QueryTestCase):
         self.assertQueriesEqual(query, parsed, "Did not parse/format VALUES list correctly")
         self.assertIn(values_table, parsed.tables(), "Did not recognize VALUES list as table")
 
+    def test_table_function(self) -> None:
+        query = "SELECT * FROM my_table_function(42) as foo"
+        table_fn = TableReference.create_virtual("foo")
+        parsed = pb.parse_query(query)
+        self.assertQueriesEqual(query, parsed, "Did not parse/format table function correctly")
+        self.assertIn(table_fn, parsed.tables(), "Did not recognize table function as table")
+
+    def test_fetch_next(self) -> None:
+        # we cannot test FETCH PRIOR or FETCH LAST, because they are not supported by the internal PostgreSQL parser
+        query = "SELECT * FROM R FETCH NEXT 10 ROWS ONLY"
+        parsed = pb.parse_query(query)
+        self.assertQueriesEqual(query, parsed, "Did not parse/format FETCH NEXT correctly")
+
 
 @regression_suite.skip_if_no_db(f"{pg_connect_dir}/.psycopg_connection_job")
 class JobWorkloadTests(regression_suite.DatabaseTestCase):

@@ -32,7 +32,8 @@ from ._qal import (
     SubqueryExpression, StarExpression,
     WindowExpression, CaseExpression,
     AbstractPredicate, BinaryPredicate, InPredicate, BetweenPredicate, UnaryPredicate, CompoundPredicate, JoinType,
-    BaseProjection, TableSource, DirectTableSource, SubqueryTableSource, JoinTableSource, ValuesTableSource,
+    BaseProjection,
+    TableSource, DirectTableSource, SubqueryTableSource, JoinTableSource, ValuesTableSource, FunctionTableSource,
     WithQuery, ValuesWithQuery, OrderByExpression,
     BaseClause, Select, From, ImplicitFromClause, ExplicitFromClause, Where, GroupBy, Having, OrderBy,
     Limit, CommonTableExpression, UnionClause, IntersectClause, ExceptClause, Explain, Hint,
@@ -700,7 +701,7 @@ def drop_clause(query: SelectQueryType, clauses_to_drop: ClauseDescription) -> S
     """
     clauses_to_drop = set(util.enlist(clauses_to_drop))
     clauses_to_drop = {drop if isinstance(drop, typing.Type) else type(drop) for drop in clauses_to_drop}
-    remaining_clauses = [clause for clause in query.clauses() if not type(clause) in clauses_to_drop]
+    remaining_clauses = [clause for clause in query.clauses() if type(clause) not in clauses_to_drop]
     return build_query(remaining_clauses)
 
 
@@ -846,6 +847,9 @@ def _replace_expression_in_table_source(table_source: Optional[TableSource],
         case ValuesTableSource():
             replaced_values = [tuple([replacement(val) for val in row]) for row in table_source.rows]
             return ValuesTableSource(replaced_values, alias=table_source.table.identifier(), columns=table_source.cols)
+        case FunctionTableSource():
+            replaced_function = replacement(table_source.function)
+            return FunctionTableSource(replaced_function, table_source.target_table)
         case _:
             raise TypeError("Unknown table source type: " + str(table_source))
 
@@ -1261,15 +1265,18 @@ def _rename_columns_in_table_source(table_source: TableSource,
         case DirectTableSource():
             # no columns in a plain table reference, we are done here
             return table_source
+
         case SubqueryTableSource():
             renamed_subquery = rename_columns_in_query(table_source.query, available_renamings)
             return SubqueryTableSource(renamed_subquery, table_source.target_name, lateral=table_source.lateral)
+
         case JoinTableSource():
             renamed_left = _rename_columns_in_table_source(table_source.left, available_renamings)
             renamed_right = _rename_columns_in_table_source(table_source.right, available_renamings)
             renamed_condition = rename_columns_in_predicate(table_source.join_condition, available_renamings)
             return JoinTableSource(renamed_left, renamed_right, join_condition=renamed_condition,
                                    join_type=table_source.join_type)
+
         case ValuesTableSource():
             if not any(col.belongs_to(table_source.table) for col in available_renamings):
                 return table_source
@@ -1288,6 +1295,10 @@ def _rename_columns_in_table_source(table_source: TableSource,
                 table_source = ValuesTableSource(table_source.rows, alias=table_source.table.identifier(),
                                                  columns=new_col_spec)
             return table_source
+
+        case FunctionTableSource():
+            renamed_function = rename_columns_in_expression(table_source.function, available_renamings)
+            return FunctionTableSource(renamed_function, table_source.target_table)
 
         case _:
             raise TypeError("Unknown table source type: " + str(table_source))
@@ -1617,6 +1628,11 @@ class _TableReferenceRenamer(ClauseVisitor[BaseClause],
                 renamed_alias = self._rename_table(alias)
                 return ValuesTableSource(rows, alias=renamed_alias, columns=columns)
 
+            case FunctionTableSource(function, alias):
+                renamed_function = function.accept_visitor(self)
+                renamed_alias = self._rename_table(alias) if alias else ""
+                return FunctionTableSource(renamed_function, renamed_alias)
+
             case _:
                 raise ValueError("Unknown table source type: " + str(source))
 
@@ -1629,7 +1645,7 @@ class _TableReferenceRenamer(ClauseVisitor[BaseClause],
         ...
 
     def _rename_table(self, table: str | TableReference) -> str | TableReference:
-        """Helper method to rename a specific table reference independent of its specific reprsentation."""
+        """Helper method to rename a specific table reference independent of its specific representation."""
         if isinstance(table, TableReference):
             return self._renamings.get(table, table)
 

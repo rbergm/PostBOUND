@@ -5361,6 +5361,88 @@ class ValuesTableSource(TableSource):
         return f"(VALUES {complete_vals_str}){tab_str}"
 
 
+class FunctionTableSource(TableSource):
+    """Models a table that is constructed from a function call, e.g. as in *SELECT * FROM my_udf(42)*.
+
+    Parameters
+    ----------
+    function : FunctionExpression
+        The function that computes the temporary relation.
+    alias : str | TableReference, optional
+        The name under which the virtual table can be accessed in the actual query. If this is empty, an anonymous table is
+        created.
+    """
+
+    def __init__(self, function: FunctionExpression, *, alias: str | TableReference = "") -> None:
+        self._function = function
+
+        if isinstance(alias, TableReference):
+            self._alias = alias.make_virtual()
+        else:
+            self._alias = TableReference.create_virtual(alias) if alias else None
+
+        self._hash_val = hash((self._function, self._alias))
+
+    __slots__ = ("_function", "_alias", "_hash_val")
+    __match_args__ = ("function", "alias")
+
+    @property
+    def function(self) -> FunctionExpression:
+        """Get the function that computes the temporary relation."""
+        return self._function
+
+    @property
+    def target_name(self) -> str:
+        """Get the name under which the virtual table can be accessed in the actual query.
+
+        For anonymous tables, this is an empty string.
+        """
+        return self._alias.identifier() if self._alias else ""
+
+    @property
+    def target_table(self) -> Optional[TableReference]:
+        """Get the virtual table that contains the tuples.
+
+        This will always be a virtual table, or *None* for anonymous tables.
+
+        This property differs from `target_name` only by its return type.
+        """
+        return self._alias
+
+    def alias(self) -> str:
+        """Get the name under which the virtual table can be accessed in the actual query."""
+        return self._alias.identifier() if self._alias else ""
+
+    def tables(self) -> set[TableReference]:
+        return self._function.tables() | {self._alias} if self._alias else set()
+
+    def columns(self) -> set[ColumnReference]:
+        return self._function.columns()
+
+    def iterexpressions(self) -> Iterable[SqlExpression]:
+        return [self._function]
+
+    def itercolumns(self) -> Iterable[ColumnReference]:
+        return self._function.itercolumns()
+
+    def predicates(self) -> QueryPredicates | None:
+        return None
+
+    def __hash__(self) -> int:
+        return self._hash_val
+
+    def __eq__(self, other: object) -> bool:
+        return (isinstance(other, type(self)) and self._function == other._function and self._alias == other._alias)
+
+    def __repr__(self) -> str:
+        return str(self)
+
+    def __str__(self) -> str:
+        if not self._alias:
+            return str(self._function)
+        return f"{self._function} AS {quote(self._alias.identifier())}"
+
+
 class JoinType(enum.Enum):
     """Indicates the type of a join using the explicit *JOIN* syntax, e.g. *OUTER JOIN* or *NATURAL JOIN*.
 
@@ -6127,6 +6209,10 @@ class OrderBy(BaseClause):
         return "ORDER BY " + ", ".join(str(order_expr) for order_expr in self.expressions)
 
 
+FetchDirection = Literal["first", "next", "prior", "last"]
+"""Which values should be selected in a *LIMIT* / *FETCH* clause."""
+
+
 class Limit(BaseClause):
     """The *FETCH FIRST* or *LIMIT* clause restricts the number of output rows returned by the database system.
 
@@ -6150,16 +6236,18 @@ class Limit(BaseClause):
         If neither a `limit`, nor an `offset` are specified
     """
 
-    def __init__(self, *, limit: Optional[int] = None, offset: Optional[int] = None) -> None:
+    def __init__(self, *, limit: Optional[int] = None, offset: Optional[int] = None,
+                 fetch_direction: FetchDirection = "first") -> None:
         if limit is None and offset is None:
             raise ValueError("Limit and offset cannot be both unspecified")
         self._limit = limit
+        self._fetch_dir = fetch_direction
         self._offset = offset
 
-        hash_val = hash((self._limit, self._offset))
+        hash_val = hash((self._limit, self._offset, self._fetch_dir))
         super().__init__(hash_val)
 
-    __slots__ = ("_limit", "_offset")
+    __slots__ = ("_limit", "_offset", "_fetch_dir")
     __match_args__ = ("limit", "offset")
 
     @property
@@ -6184,6 +6272,11 @@ class Limit(BaseClause):
         """
         return self._offset
 
+    @property
+    def fetch_direction(self) -> FetchDirection:
+        """Get the direction of the limit (e.g. *first* or *prior*)."""
+        return self._fetch_dir
+
     def columns(self) -> set[ColumnReference]:
         return set()
 
@@ -6203,7 +6296,8 @@ class Limit(BaseClause):
 
     def __str__(self) -> str:
         offset_str = f"OFFSET {self.offset} ROWS" if self.offset is not None else ""
-        limit_str = f"FETCH FIRST {self.limit} ROWS ONLY" if self.limit is not None else ""
+        fetch_direction = self.fetch_direction.upper()
+        limit_str = f"FETCH {fetch_direction} {self.limit} ROWS ONLY" if self.limit is not None else ""
         if offset_str and limit_str:
             return offset_str + " " + limit_str
         elif offset_str:

@@ -1618,9 +1618,13 @@ class PostgresLimitClause(qal.Limit):
     """
 
     def __init__(self, original_clause: qal.Limit) -> None:
-        super().__init__(limit=original_clause.limit, offset=original_clause.offset)
+        super().__init__(limit=original_clause.limit, offset=original_clause.offset,
+                         fetch_direction=original_clause.fetch_direction)
 
     def __str__(self) -> str:
+        if self.fetch_direction != "first":
+            return super().__str__()
+
         if self.limit and self.offset:
             return f"LIMIT {self.limit} OFFSET {self.offset}"
         elif self.limit:

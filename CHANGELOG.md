@@ -63,6 +63,10 @@ _0.15.1 changes._
 - Much improved `tools/setup-py-venv.sh`: now auto-updates the PostBOUND source code and supports installation into an active
   virtual environment. This provides direct support for installing an update of PostBOUND into the virtual environment.
 - Workload benchmarking functions can write their results progressively after each workload repetition
+- Added support for table functions to the QAL (e.g. `SELECT * FROM my_udf()`), including the parser
+- Added support for non-default *FETCH* clauses, e.g. `FETCH PRIOR 5 ROWS ONLY`. Notice that the parser only supports
+  *FETCH FIRST* and *FETCH NEXT* (b/c this is what Postgres supports). *TIES* are still not implemented.
+
 
 ### 💀 Breaking changes
 - _None_

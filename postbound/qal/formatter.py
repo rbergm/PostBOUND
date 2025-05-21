@@ -14,7 +14,7 @@ from ._qal import (
     CompoundOperator,
     ValuesWithQuery,
     From, ImplicitFromClause, ExplicitFromClause,
-    TableSource, DirectTableSource, JoinTableSource, SubqueryTableSource, ValuesTableSource,
+    TableSource, DirectTableSource, JoinTableSource, SubqueryTableSource, ValuesTableSource, FunctionTableSource,
     Select, Hint, Where, GroupBy, UnionClause, IntersectClause, ExceptClause,
     AbstractPredicate, CompoundPredicate, BinaryPredicate, BetweenPredicate, InPredicate, UnaryPredicate,
     SqlQuery, SetQuery, SelectStatement,
@@ -267,7 +267,7 @@ def _quick_format_tablesource(table_source: TableSource, *, flavor: SqlDialect) 
 
     prefix = " " * DefaultIndent
     match table_source:
-        case DirectTableSource() | ValuesTableSource():
+        case DirectTableSource() | ValuesTableSource() | FunctionTableSource():
             return [str(table_source)]
 
         case SubqueryTableSource():
@@ -465,16 +465,17 @@ def _quick_format_limit(limit_clause: Limit, *, flavor: SqlDialect) -> list[str]
     match flavor:
 
         case "vanilla":
+            fetch_direction = limit_clause.fetch_direction.upper()
             if limit_clause.limit and limit_clause.offset:
-                return [f"FETCH FIRST {limit_clause.limit} ROWS ONLY", f"OFFSET {limit_clause.offset} ROWS"]
+                return [f"FETCH {fetch_direction} {limit_clause.limit} ROWS ONLY", f"OFFSET {limit_clause.offset} ROWS"]
             elif limit_clause.limit:
-                return [f"FETCH FIRST {limit_clause.limit} ROWS ONLY"]
+                return [f"FETCH {fetch_direction} {limit_clause.limit} ROWS ONLY"]
             elif limit_clause.offset:
                 return [f"OFFSET {limit_clause.offset} ROWS"]
             else:
                 return []
 
-        case "postgres":
+        case "postgres" if limit_clause.fetch_direction in {"first", "next"}:
             if limit_clause.limit and limit_clause.offset:
                 return [f"LIMIT {limit_clause.limit}", f"OFFSET {limit_clause.offset}"]
             elif limit_clause.limit:
@@ -482,6 +483,10 @@ def _quick_format_limit(limit_clause: Limit, *, flavor: SqlDialect) -> list[str]
             elif limit_clause.offset:
                 return [f"OFFSET {limit_clause.offset}"]
             return []
+
+        case "postgres" if limit_clause.fetch_direction in {"prior", "last"}:
+            warnings.warn("Postgres does not support FETCH PRIOR and FETCH LAST. Falling back to naive formatting")
+            return [str(limit_clause)]
 
         case _:
             warnings.warn("Unknown SQL flavor for LIMIT clauses. Falling back to naive formatting")
