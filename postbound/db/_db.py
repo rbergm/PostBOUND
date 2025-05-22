@@ -23,7 +23,7 @@ import textwrap
 import typing
 import warnings
 from collections.abc import Iterable, Sequence
-from typing import Any, Optional
+from typing import Any, Optional, runtime_checkable
 
 import networkx as nx
 
@@ -37,6 +37,13 @@ from ..optimizer import (
     HintType
 )
 from ..optimizer._jointree import JoinTree
+
+
+ResultRow = tuple
+"""Simple type alias to denote a single tuple from a result set."""
+
+ResultSet = Sequence[ResultRow]
+"""Simple type alias to denote the result relation of a query."""
 
 
 class Cursor(typing.Protocol):
@@ -61,11 +68,11 @@ class Cursor(typing.Protocol):
         raise NotImplementedError
 
     @abc.abstractmethod
-    def fetchone(self) -> Optional[tuple]:
+    def fetchone(self) -> Optional[ResultRow]:
         raise NotImplementedError
 
     @abc.abstractmethod
-    def fetchall(self) -> Optional[list[tuple]]:
+    def fetchall(self) -> Optional[ResultSet]:
         raise NotImplementedError
 
 
@@ -91,7 +98,7 @@ class Connection(typing.Protocol):
         raise NotImplementedError
 
 
-@typing.runtime_checkable
+@runtime_checkable
 class PrewarmingSupport(typing.Protocol):
     """Some databases might support adding specific tables to their shared buffer.
 
@@ -132,7 +139,37 @@ class PrewarmingSupport(typing.Protocol):
         >>> database.prewarm_tables([table1, table2])
         >>> database.prewarm_tables(table1, table2)
         """
-        raise NotImplementedError
+        ...
+
+
+@runtime_checkable
+class TimeoutSupport(typing.Protocol):
+    """Marks database systems that support executing queries with a timeout."""
+
+    def execute_with_timeout(self, query: SqlQuery | str, *, timeout: float = 60.0) -> Optional[ResultSet]:
+        """Executes a query with a specific timeout.
+
+        For query execution, we use the following rules in contrast to `Database.execute_query`:
+        1. We never make use of the database interfaces' cache, even if it the query is contained in the cache
+        2. We never attempt to simplify the result set, even if this would be possible (e.g., for single-row result sets).
+           This is more of a pragmatic decision to be able to indicate a timeout with *None* and distinguishing it from a
+           valid result set of a single *NULL* tuple. Otherwise, we would have to resort to raising *TimeoutError* or similar
+           strategies, which complicates the control flow for the caller.
+
+        Parameters
+        ----------
+        query : SqlQuery | str
+            The query to execute. If this contains hints or other special features, those will be treated normally.
+        timeout : float, optional
+            The timeout in seconds. If the query takes longer (inlcuding all special treatment of the database interface),
+            it will be cancelled. Defaults to 60 seconds.
+
+        Returns
+        -------
+        Optional[ResultSet]
+            The result set of the query. If the query was cancelled, this will be *None*.
+        """
+        ...
 
 
 class QueryCacheWarning(UserWarning):

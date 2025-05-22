@@ -13,6 +13,9 @@ stability. Since we are not ready for the 1.0 release yet, this does not matter 
 
 
 ### 🐣 New features
+- 🐘 Added direct support for executing queries with timeouts. There is not need for the `TimeoutExecutor` any more (but we
+      still  use it internally, so we don't deprecate it yet). Whether a database interface is capable of using timeouts can be
+      checked using the `TimeoutSupport` protocol.
 - Much improved `tools/setup-py-venv.sh`: now auto-updates the PostBOUND source code and supports installation into an active
   virtual environment. This provides direct support for installing an update of PostBOUND into the virtual environment.
 - Workload benchmarking functions can write their results progressively after each workload repetition

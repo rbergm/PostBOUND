@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import abc
 import enum
-from typing import IO, Protocol
+from typing import IO, Protocol, runtime_checkable
 
 import json
 from typing import Any
@@ -21,6 +21,7 @@ jsondict = dict
 """Type alias for a JSON-izeable dictionary."""
 
 
+@runtime_checkable
 class Jsonizable(Protocol):
     """Protocol to indicate that a certain class provides the `__json__` method."""
 

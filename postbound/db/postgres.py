@@ -30,6 +30,7 @@ import psycopg
 import psycopg.rows
 
 from ._db import (
+    ResultSet,
     Database,
     DatabaseSchema,
     DatabaseStatistics,
@@ -550,6 +551,7 @@ class PostgresInterface(Database):
         self._hinting_backend = PostgresHintService(self)
 
         self._current_geqo_state = self._obtain_geqo_state()
+        self._timeout_executor = TimeoutQueryExecutor(self)
 
         super().__init__(system_name, cache_enabled=cache_enabled)
 
@@ -562,7 +564,11 @@ class PostgresInterface(Database):
     def hinting(self) -> PostgresHintService:
         return self._hinting_backend
 
-    def execute_query(self, query: qal.SqlQuery | str, *, cache_enabled: Optional[bool] = None, raw: bool = False) -> Any:
+    def execute_query(self, query: qal.SqlQuery | str, *, cache_enabled: Optional[bool] = None, raw: bool = False,
+                      timeout: Optional[float] = None) -> Any:
+        if timeout is not None:
+            return self._timeout_executor.execute_query(query, timeout=timeout, cache_enabled=cache_enabled, raw=raw)
+
         cache_enabled = cache_enabled or (cache_enabled is None and self._cache_enabled)
 
         if cache_enabled and query in self._query_cache:
@@ -586,6 +592,15 @@ class PostgresInterface(Database):
                 raise DatabaseUserError(msg, e)
 
         return query_result if raw else _simplify_result_set(query_result)
+
+    def execute_with_timeout(self, query: qal.SqlQuery | str, timeout: float = 60.0) -> Optional[ResultSet]:
+        current_config = self.current_configuration(runtime_changeable_only=True)
+        try:
+            result = self.execute_query(query, timeout=timeout, cache_enabled=False, raw=True)
+            return result
+        except TimeoutError:
+            self.apply_configuration(current_config)
+            return None
 
     def optimizer(self) -> PostgresOptimizer:
         return PostgresOptimizer(self)
@@ -2555,7 +2570,7 @@ class ParallelQueryExecutor:
 
 
 def _timeout_query_worker(query: qal.SqlQuery | str, pg_instance: PostgresInterface,
-                          query_result_sender: mp_conn.Connection) -> None:
+                          query_result_sender: mp_conn.Connection, **kwargs) -> None:
     """Internal function to the `TimeoutQueryExecutor` to run individual queries.
 
     Query results are sent via the pipe, not as a return value.
@@ -2568,8 +2583,10 @@ def _timeout_query_worker(query: qal.SqlQuery | str, pg_instance: PostgresInterf
         Database connection to execute the query on
     query_result_sender : mp_conn.Connection
         Pipe connection to send the query result
+    kwargs : Any
+        Additional parameters to pass to the `PostgresInterface.execute_query` method.
     """
-    result = pg_instance.execute_query(query)
+    result = pg_instance.execute_query(query, **kwargs)
     query_result_sender.send(result)
 
 
@@ -2598,7 +2615,7 @@ class TimeoutQueryExecutor:
         self._pg_instance = (postgres_instance if postgres_instance is not None
                              else DatabasePool.get_instance().current_database())
 
-    def execute_query(self, query: qal.SqlQuery | str, timeout: float) -> Any:
+    def execute_query(self, query: qal.SqlQuery | str, timeout: float, **kwargs) -> Any:
         """Runs a query on the database connection, cancelling if it takes longer than a specific timeout.
 
         Parameters
@@ -2607,6 +2624,8 @@ class TimeoutQueryExecutor:
             Query to execute
         timeout : float
             Maximum query execution time in seconds.
+        **kwargs
+            Additional parameters to pass to the `PostgresInterface.execute_query` method.
 
         Returns
         -------
@@ -2624,7 +2643,8 @@ class TimeoutQueryExecutor:
         PostgresInterface.reset_connection
         """
         query_result_receiver, query_result_sender = mp.Pipe(False)
-        query_execution_worker = mp.Process(target=_timeout_query_worker, args=(query, self._pg_instance, query_result_sender))
+        query_execution_worker = mp.Process(target=_timeout_query_worker, args=(query, self._pg_instance, query_result_sender),
+                                            kwargs=kwargs)
 
         query_execution_worker.start()
         query_execution_worker.join(timeout)

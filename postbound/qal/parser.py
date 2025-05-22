@@ -1336,7 +1336,8 @@ def _pglast_parse_predicate(pglast_data: dict, *, namespace: QueryNamespace, que
         case "BoolExpr":
             expression = pglast_data["BoolExpr"]
             operator = _PglastOperatorMap[expression["boolop"]]
-            children = [_pglast_parse_predicate(child, namespace=namespace, query_txt=query_txt) for child in expression["args"]]
+            children = [_pglast_parse_predicate(child, namespace=namespace, query_txt=query_txt)
+                        for child in expression["args"]]
             return CompoundPredicate(operator, children)
 
         case "NullTest":
