@@ -4,6 +4,7 @@ set -e
 
 WD=$PWD
 TARGET_DIR=pb-venv/
+EXPLICIT_TARGET="false"
 EXTRAS=""
 MINIMAL_EXTRAS=""
 ALL_EXTRAS="[mysql,vis]"
@@ -41,6 +42,7 @@ while [ $# -gt 0 ] ; do
   case $1 in
     --venv)
       TARGET_DIR="$2"
+      EXPLICIT_TARGET="true"
       shift
       shift
       ;;
@@ -100,7 +102,7 @@ if [[ $(echo -e "$PYTHON_VERSION\n$REQUIRED_VERSION" | sort -V | head -n1) != "$
   cd $WD
 fi
 
-if [ -z "$VIRTUAL_ENV" ] ; then
+if [ -z "$VIRTUAL_ENV" ] || [ "$EXPLICIT_TARGET" = "true" ] ; then
 
   # We are not in a virtual environment, so we need to create or activate one.
 
@@ -125,7 +127,8 @@ python3 -m build
 
 echo ".. Installing PostBOUND package"
 LATEST_WHEEL=$(ls dist/*.whl | sort -V | tail -n 1)
-pip install "$LATEST_WHEEL$EXTRAS"
+pip install -r requirements.txt  # this skips unnecessary updates
+pip install --force-reinstall --no-deps "$LATEST_WHEEL$EXTRAS"  # this always forces the installation of the latest binary
 
 if [ "$BUILD_DOC" == "true" ] ; then
   echo ".. Building documentation"
