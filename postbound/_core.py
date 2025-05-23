@@ -156,14 +156,14 @@ class Cardinality(Number):
             return Cardinality(other * self.get())
         return NotImplemented
 
-    def __div__(self, other: object) -> Cardinality:
+    def __truediv__(self, other: object) -> Cardinality:
         if isinstance(other, Cardinality):
             return Cardinality(self.get() / other.get())
         if isinstance(other, (int, float)):
             return Cardinality(self.get() / other)
         return NotImplemented
 
-    def __rdiv__(self, other: object) -> Cardinality:
+    def __rtruediv__(self, other: object) -> Cardinality:
         if isinstance(other, (int, float)):
             return Cardinality(other / self.get())
         return NotImplemented
