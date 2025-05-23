@@ -30,6 +30,7 @@ stability. Since we are not ready for the 1.0 release yet, this does not matter 
 ### 📰 Updates
 - Switched to `perf_counter_ns()` for executor-related execution time measurements (e.g. `optimize_and_execute_workload()`)
 - 🐳 Allow customizing the Postgres version when building a Docker container.
+- Physical operators can now be json-serialized
 
 ### 🏥 Fixes
 - Multiple smaller fixes concerning state management in the textbook optimization pipeline

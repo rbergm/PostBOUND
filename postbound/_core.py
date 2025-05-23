@@ -381,6 +381,9 @@ class ScanOperator(Enum):
     IndexOnlyScan = "Idx-only Scan"
     BitmapScan = "Bitmap Scan"
 
+    def __json__(self) -> str:
+        return self.value
+
     def __lt__(self, other: object) -> bool:
         if not isinstance(other, type(self)):
             return NotImplemented
@@ -399,6 +402,9 @@ class JoinOperator(Enum):
     SortMergeJoin = "Sort-Merge Join"
     IndexNestedLoopJoin = "Idx. NLJ"
 
+    def __json__(self) -> str:
+        return self.value
+
     def __lt__(self, other: object) -> bool:
         if not isinstance(other, type(self)):
             return NotImplemented
@@ -415,6 +421,9 @@ class IntermediateOperator(Enum):
     Sort = "Sort"
     Memoize = "Memoize"
     Materialize = "Materialize"
+
+    def __json__(self) -> str:
+        return self.value
 
     def __lt__(self, other: object) -> bool:
         if not isinstance(other, type(self)):
