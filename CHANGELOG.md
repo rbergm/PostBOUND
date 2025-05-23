@@ -9,13 +9,39 @@ stability. Since we are not ready for the 1.0 release yet, this does not matter 
 ---
 
 
-# ➡ Version 0.15.2 _(current)_
+# ➡ Version 0.15.3 _(current)_
 
 
 ### 🐣 New features
 - 🐘 Added direct support for executing queries with timeouts. There is not need for the `TimeoutExecutor` any more (but we
       still  use it internally, so we don't deprecate it yet). Whether a database interface is capable of using timeouts can be
       checked using the `TimeoutSupport` protocol.
+
+### 💀 Breaking changes
+- _None_
+
+### 📰 Updates
+- Physical operators can now be json-serialized
+- Relaxed parameters for `transform.extract_query_fragment` to accept plain table objects
+
+### 🏥 Fixes
+- Fixed JSON serialization of physical operator assignments
+- `Cardinality` now implements _\_\_truediv\_\__ rather than _\_\_div\_\__ to properly support _card / number_
+
+### 🪲 Known bugs
+- 🐘 `PostgresConfiguration` cannot be passed directly to `execute_query()` or a manual psycopg cursor. It seems that psycopg
+  does not recognize *UserString* as a valid string and raises an error. As a workaround, make sure to call *str()* on the
+  configuration before trying to execute it. `apply_configuration()` does so automatically.
+- Pre-defined workloads (`workloads.job()`, etc) do not work if installed as a Pip module. This is because the build process
+  does not retain the workload directory in the `site_packages`.
+
+---
+
+
+# 🕑 Version 0.15.2
+
+
+### 🐣 New features
 - Much improved `tools/setup-py-venv.sh`: now auto-updates the PostBOUND source code and supports installation into an active
   virtual environment. This provides direct support for installing an update of PostBOUND into the virtual environment.
 - Workload benchmarking functions can write their results progressively after each workload repetition
@@ -25,7 +51,8 @@ stability. Since we are not ready for the 1.0 release yet, this does not matter 
 
 
 ### 💀 Breaking changes
-- Renamed the `TwoStageOptimizationPipeline` to
+- Renamed the `TwoStageOptimizationPipeline` to `MultiStageOptimizationPipeline`. It wasn't _really_ two stage in the first
+  place
 
 ### 📰 Updates
 - Switched to `perf_counter_ns()` for executor-related execution time measurements (e.g. `optimize_and_execute_workload()`)
