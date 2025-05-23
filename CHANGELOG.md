@@ -34,6 +34,7 @@ stability. Since we are not ready for the 1.0 release yet, this does not matter 
 
 ### 🏥 Fixes
 - Multiple smaller fixes concerning state management in the textbook optimization pipeline
+- Fixed JSON serialization of physical operator assignments
 
 ### 🪲 Known bugs
 - 🐘 `PostgresConfiguration` cannot be passed directly to `execute_query()` or a manual psycopg cursor. It seems that psycopg

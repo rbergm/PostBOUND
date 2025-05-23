@@ -372,7 +372,7 @@ class PhysicalOperatorAssignment:
 
     Attributes
     ----------
-    global_settings : dict[ScanOperators | JoinOperators, bool]
+    global_settings : dict[ScanOperators | JoinOperators | IntermediateOperator, bool]
         Contains the global settings. Each operator is mapped to whether it is enable for the entire query or not. If an
         operator is not present in the dictionary, the default setting of the database system is used.
     join_operators : dict[frozenset[TableReference], JoinOperatorAssignment]
@@ -393,7 +393,7 @@ class PhysicalOperatorAssignment:
     """
 
     def __init__(self) -> None:
-        self.global_settings: dict[ScanOperator | JoinOperator, bool] = {}
+        self.global_settings: dict[ScanOperator | JoinOperator | IntermediateOperator, bool] = {}
         self.join_operators: dict[frozenset[TableReference], JoinOperatorAssignment] = {}
         self.intermediate_operators: dict[frozenset[TableReference], IntermediateOperator] = {}
         self.scan_operators: dict[TableReference, ScanOperatorAssignment] = {}
@@ -636,12 +636,27 @@ class PhysicalOperatorAssignment:
                 else self.join_operators.get(intermediate_set, default))
 
     def __json__(self) -> jsondict:
-        return {
-            "global_settings": self.global_settings,
-            "join_operators": self.join_operators,
-            "scan_operators": self.scan_operators,
-            "intermediate_operators": self.intermediate_operators
+        jsonized = {
+            "global_settings": [],
+            "scan_operators": [{"table": scan.table, "operator": scan.operator} for scan in self.scan_operators.values()],
+            "join_operators": [{"intermediate": join.join, "operator": join.operator}
+                               for join in self.join_operators.values()],
+            "intermediate_operators": [{"intermediate": intermediate, "operator": op}
+                                       for intermediate, op in self.intermediate_operators.items()]
         }
+
+        global_settings: list[dict] = []
+        for operator, enabled in self.global_settings.items():
+            match operator:
+                case ScanOperator():
+                    global_settings.append({"operator": operator, "enabled": enabled, "kind": "scan"})
+                case JoinOperator():
+                    global_settings.append({"operator": operator, "enabled": enabled, "kind": "join"})
+                case IntermediateOperator():
+                    global_settings.append({"operator": operator, "enabled": enabled, "kind": "intermediate"})
+        jsonized["global_settings"] = global_settings
+
+        return jsonized
 
     def __bool__(self) -> bool:
         return (bool(self.global_settings)
@@ -732,15 +747,30 @@ def read_operator_assignment_json(json_data: dict | str) -> PhysicalOperatorAssi
     """
     json_data = json.loads(json_data) if isinstance(json_data, str) else json_data
     assignment = PhysicalOperatorAssignment()
-    assignment.global_settings = {ScanOperator(op): enabled for op, enabled in json_data.get("global_settings", {}).items()}
 
-    for tab, op in json_data.get("scan_operators", {}).items():
-        parsed_table = parser.load_table_json(tab)
-        assignment.scan_operators[parsed_table] = ScanOperatorAssignment(ScanOperator(op), parsed_table)
+    for hint in json_data.get("global_settings", []):
+        enabled = hint["enabled"]
+        match hint["kind"]:
+            case "scan":
+                assignment.global_settings[ScanOperator(hint["operator"])] = enabled
+            case "join":
+                assignment.global_settings[JoinOperator(hint["operator"])] = enabled
+            case "intermediate":
+                assignment.global_settings[IntermediateOperator(hint["operator"])] = enabled
+            case _:
+                raise ValueError(f"Unknown operator kind: {hint['kind']}")
 
-    for tabs, op in json_data.get("join_operators", {}).items():
-        parsed_tables = frozenset(parser.load_table_json(tab) for tab in tabs)
-        assignment.join_operators[parsed_tables] = JoinOperatorAssignment(JoinOperator(op), parsed_tables)
+    for hint in json_data.get("scan_operators", []):
+        parsed_table = parser.load_table_json(hint["table"])
+        assignment.scan_operators[parsed_table] = ScanOperatorAssignment(ScanOperator(hint["operator"]), parsed_table)
+
+    for hint in json_data.get("join_operators", []):
+        parsed_tables = frozenset(parser.load_table_json(tab) for tab in hint["intermediate"])
+        assignment.join_operators[parsed_tables] = JoinOperatorAssignment(JoinOperator(hint["operator"]), parsed_tables)
+
+    for hint in json_data.get("intermediate_operators", []):
+        parsed_tables = frozenset(parser.load_table_json(tab) for tab in hint["intermediate"])
+        assignment.intermediate_operators[parsed_tables] = IntermediateOperator(hint["operator"])
 
     return assignment
 
