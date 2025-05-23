@@ -31,6 +31,7 @@ stability. Since we are not ready for the 1.0 release yet, this does not matter 
 - Switched to `perf_counter_ns()` for executor-related execution time measurements (e.g. `optimize_and_execute_workload()`)
 - 🐳 Allow customizing the Postgres version when building a Docker container.
 - Physical operators can now be json-serialized
+- Relaxed parameters for `transform.extract_query_fragment` to accept plain table objects
 
 ### 🏥 Fixes
 - Multiple smaller fixes concerning state management in the textbook optimization pipeline

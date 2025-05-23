@@ -223,7 +223,7 @@ def _get_predicate_fragment(predicate: AbstractPredicate,
 
 
 def extract_query_fragment(source_query: SelectQueryType,
-                           referenced_tables: Iterable[TableReference]) -> Optional[SelectQueryType]:
+                           referenced_tables: TableReference | Iterable[TableReference]) -> Optional[SelectQueryType]:
     """Filters a query to only include parts that reference specific tables.
 
     This builds a new query from the given query that contains exactly those parts of the original query's clauses that
@@ -242,7 +242,7 @@ def extract_query_fragment(source_query: SelectQueryType,
     ----------
     source_query : SelectQueryType
         The query that should be transformed
-    referenced_tables : Iterable[TableReference]
+    referenced_tables : TableReference | Iterable[TableReference]
         The tables that should be extracted
 
     Returns
@@ -259,7 +259,7 @@ def extract_query_fragment(source_query: SelectQueryType,
     if not isinstance(source_query, (ImplicitSqlQuery, SetQuery)):
         raise ValueError("Fragment extraction only works for implicit queries and set queries")
 
-    referenced_tables = set(referenced_tables)
+    referenced_tables: set[TableReference] = set(util.enlist(referenced_tables))
     if not referenced_tables.issubset(source_query.tables()):
         return None
 
