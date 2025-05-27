@@ -37,6 +37,30 @@ stability. Since we are not ready for the 1.0 release yet, this does not matter 
 
 ---
 
+# ⏳ Version 0.15.4 _(planned)_
+
+### 🐣 New features
+- Added [tqdm](https://tqdm.github.io/)-support for the benchmark utilities like `execute_workload()`
+
+### 💀 Breaking changes
+- _None_
+
+### 📰 Updates
+- _None_
+
+### 🏥 Fixes
+- _None_
+
+### 🪲 Known bugs
+- 🐘 `PostgresConfiguration` cannot be passed directly to `execute_query()` or a manual psycopg cursor. It seems that psycopg
+  does not recognize *UserString* as a valid string and raises an error. As a workaround, make sure to call *str()* on the
+  configuration before trying to execute it. `apply_configuration()` does so automatically.
+- Pre-defined workloads (`workloads.job()`, etc) do not work if installed as a Pip module. This is because the build process
+  does not retain the workload directory in the `site_packages`.
+
+
+---
+
 
 # 🕑 Version 0.15.2
 

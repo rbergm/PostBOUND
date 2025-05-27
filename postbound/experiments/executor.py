@@ -9,7 +9,7 @@ import warnings
 from dataclasses import dataclass
 from collections.abc import Callable, Iterable
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Literal, Optional
 
 import natsort
 import numpy as np
@@ -39,6 +39,9 @@ COL_OPT_SUCCESS = "optimization_success"
 COL_OPT_FAILURE_REASON = "optimization_failure_reason"
 
 COL_DB_CONFIG = "db_config"
+
+
+PredefLogger = Literal["tqdm"]
 
 
 @dataclass
@@ -222,7 +225,9 @@ def execute_query(query: qal.SqlQuery, database: db.Database, *,
                   query_preparation: Optional[QueryPreparationService] = None,
                   post_process: Optional[Callable[[ExecutionResult], None]] = None,
                   timeout: Optional[float] = None,
-                  _optimization_time: float = math.nan) -> pd.DataFrame:
+                  label: str = "",
+                  logger: Optional[PredefLogger] = None,
+                  optimization_time: float = math.nan) -> pd.DataFrame:
     """Runs the given query on the provided database.
 
     The query execution will be repeated for a total of `repetitions` times. Before the first repetition, the
@@ -261,9 +266,13 @@ def execute_query(query: qal.SqlQuery, database: db.Database, *,
         The maximum time in seconds that the query is allowed to run. If the query exceeds this time, the execution is
         cancelled and the execution time is set to *Inf*. If this parameter is omitted, no timeout is enforced. Notice that
         timeouts are currently only supported for PostgreSQL. If another database system is used, an error will be raised.
-    _optimization_time : float, optional
-        The optimization time that has been spent to generate the input query. This should not be set directly by the user, but
-        is initialized by other runner methods instead (see below). Defaults to ``NaN``, which indicates no optimization time.
+    label : str, optional
+        A label that identifies the query. Currently, this is only used for logging purposes.
+    logger : Optional[PredefLogger], optional
+        Configures how progress of the repetitions should be logged.
+    optimization_time : float, optional
+        The optimization time that has been spent to generate the input query. If specified, a corresponding column is added
+        to the output data frame.
 
     Returns
     -------
@@ -275,6 +284,14 @@ def execute_query(query: qal.SqlQuery, database: db.Database, *,
     optimize_and_execute_query
     """
     original_query = query
+
+    if logger == "tqdm":
+        from tqdm import tqdm
+        label = label if label else "query"
+        iterations = tqdm(range(repetitions), desc=label, unit="rep", leave=False)
+    else:
+        iterations = range(repetitions)
+
     if query_preparation:
         query = query_preparation.prepare_query(query, on=database)
 
@@ -287,11 +304,12 @@ def execute_query(query: qal.SqlQuery, database: db.Database, *,
 
     query_results = []
     execution_times = []
-    for __ in range(repetitions):
+
+    for __ in iterations:
         current_result, exec_time = query_executor(query)
         query_results.append(current_result)
         execution_times.append(exec_time)
-        execution_result = ExecutionResult(query, current_result, _optimization_time, exec_time)
+        execution_result = ExecutionResult(query, current_result, optimization_time, exec_time)
         _invoke_post_process(execution_result, post_process)
 
     return pd.DataFrame({
@@ -328,7 +346,7 @@ def execute_workload(queries: Iterable[qal.SqlQuery] | workloads.Workload, datab
                      post_process: Optional[Callable[[ExecutionResult], None]] = None,
                      post_repetition_callback: Optional[Callable[[int], None]] = None,
                      progressive_output: Optional[str | Path] = None,
-                     logger: Optional[Callable[[str], None]] = None) -> pd.DataFrame:
+                     logger: Optional[Callable[[str], None] | PredefLogger] = None) -> pd.DataFrame:
     """Executes all the given queries on the provided database.
 
     Most of this process delegates to the `execute_query` method, so refer to its documentation for more details.
@@ -381,8 +399,15 @@ def execute_workload(queries: Iterable[qal.SqlQuery] | workloads.Workload, datab
     progressive_output: Optional[str | Path], optional
         If provided, the results will be written to this file after each workload repetition. If the file already exists, it
         will be overwritten. This is file is assumed to be a CSV file.
-    logger : post_process : Optional[Callable[[str], None]], optional
-        A logging function that is invoked before every query execution. If omitted, no logging is performed (the default)
+    logger : Optional[Callable[[str], None] | PredefLogger], optional
+        Configures how progress should be logged. Depending on the specific argument, a number of different strategies are
+        available:
+
+        - passing *None* (the default) disables logging
+        - passing a callable invokes the function before every query execution. It receives information about the current
+          execution as argument
+        - referencing a pre-defined logger invokes. Currently, only *tqdm*  is supported. It uses the same library to
+          print a progress bar
 
     Returns
     -------
@@ -394,8 +419,12 @@ def execute_workload(queries: Iterable[qal.SqlQuery] | workloads.Workload, datab
     execute_query
     """
     queries = _wrap_workload(queries)
-    logger = util.make_logger(False) if logger is None else logger
     progressive_output = Path(progressive_output) if progressive_output else None
+    use_tqdm = logger == "tqdm"
+    logger = util.make_logger(False) if use_tqdm or logger is None else logger
+    if use_tqdm:
+        from tqdm import tqdm
+
     results: list[pd.DataFrame] = []
     current_execution_index = 1
     for i in range(workload_repetitions):
@@ -403,11 +432,15 @@ def execute_workload(queries: Iterable[qal.SqlQuery] | workloads.Workload, datab
         if shuffled:
             queries = queries.shuffle()
 
-        for label, query in queries.entries():
+        workload_entries = (tqdm(queries.entries(), desc=f"Repetition {i + 1}/{workload_repetitions}", unit="q") if use_tqdm
+                            else queries.entries())
+
+        for label, query in workload_entries:
             logger(f"Now benchmarking query {label} (repetition {i+1}/{workload_repetitions})")
             execution_result = execute_query(query, database, repetitions=per_query_repetitions,
                                              timeout=timeout,
-                                             query_preparation=query_preparation, post_process=post_process)
+                                             query_preparation=query_preparation, post_process=post_process,
+                                             label=label, logger="tqdm" if use_tqdm else None)
             execution_result[COL_EXEC_IDX] = list(range(current_execution_index,
                                                         current_execution_index + per_query_repetitions))
             if include_labels:
@@ -442,7 +475,9 @@ def optimize_and_execute_query(query: qal.SqlQuery, optimization_pipeline: Optim
                                repetitions: int = 1,
                                query_preparation: Optional[QueryPreparationService] = None,
                                post_process: Optional[Callable[[ExecutionResult], None]] = None,
-                               timeout: Optional[float] = None) -> pd.DataFrame:
+                               timeout: Optional[float] = None,
+                               label: str = "",
+                               logger: Optional[PredefLogger] = None) -> pd.DataFrame:
     """Optimizes the a query according to the settings of an optimization pipeline and executes it afterwards.
 
     This function delegates most of its work to `execute_query`. In addition, the resulting data frame contains the
@@ -474,6 +509,10 @@ def optimize_and_execute_query(query: qal.SqlQuery, optimization_pipeline: Optim
         The maximum time in seconds that the query is allowed to run. If the query exceeds this time, the execution is
         cancelled and the execution time is set to *Inf*. If this parameter is omitted, no timeout is enforced. Notice that
         timeouts are currently only supported for PostgreSQL. If another database system is used, an error will be raised.
+    label : str, optional
+        A label that identifies the query. Currently, this is only used for logging purposes.
+    logger : Optional[PredefLogger], optional
+        Configures how progress of the repetitions should be logged.
 
     Returns
     -------
@@ -492,7 +531,9 @@ def optimize_and_execute_query(query: qal.SqlQuery, optimization_pipeline: Optim
 
         execution_result = execute_query(optimized_query, repetitions=repetitions, query_preparation=query_preparation,
                                          database=optimization_pipeline.target_database(),
-                                         post_process=post_process, timeout=timeout, _optimization_time=optimization_time)
+                                         post_process=post_process, timeout=timeout,
+                                         optimization_time=optimization_time,
+                                         label=label, logger=logger)
         execution_result[COL_T_OPT] = optimization_time
         execution_result[COL_OPT_SUCCESS] = True
         execution_result[COL_OPT_FAILURE_REASON] = None
@@ -518,7 +559,7 @@ def optimize_and_execute_workload(queries: Iterable[qal.SqlQuery] | workloads.Wo
                                   post_process: Optional[Callable[[ExecutionResult], None]] = None,
                                   post_repetition_callback: Optional[Callable[[int], None]] = None,
                                   progressive_output: Optional[str | Path] = None,
-                                  logger: Optional[Callable[[str], None]] = None) -> pd.DataFrame:
+                                  logger: Optional[Callable[[str], None] | PredefLogger] = None) -> pd.DataFrame:
     """This function combines the functionality of `execute_workload` and `optimize_query` in one utility.
 
     Each workload iteration starts "from scratch", i.e. with the raw, un-optimized queries. If the post-process actions mutated
@@ -561,8 +602,15 @@ def optimize_and_execute_workload(queries: Iterable[qal.SqlQuery] | workloads.Wo
     progressive_output: Optional[str | Path], optional
         If provided, the results will be written to this file after each workload repetition. If the file already exists, it
         will be overwritten. This is file is assumed to be a CSV file.
-    logger : post_process : Optional[Callable[[str], None]], optional
-        A logging function that is invoked before every query execution. If omitted, no logging is performed (the default)
+    logger : Optional[Callable[[str], None] | PredefLogger], optional
+        Configures how progress should be logged. Depending on the specific argument, a number of different strategies are
+        available:
+
+        - passing *None* (the default) disables logging
+        - passing a callable invokes the function before every query execution. It receives information about the current
+          execution as argument
+        - referencing a pre-defined logger invokes. Currently, only *tqdm*  is supported. It uses the same library to
+          print a progress bar
 
     Returns
     -------
@@ -575,8 +623,12 @@ def optimize_and_execute_workload(queries: Iterable[qal.SqlQuery] | workloads.Wo
     execute_workload
     """
     queries = _wrap_workload(queries)
-    logger = util.make_logger(False) if logger is None else logger
     progressive_output = Path(progressive_output) if progressive_output else None
+    use_tqdm = logger == "tqdm"
+    logger = util.make_logger(False) if use_tqdm or logger is None else logger
+    if use_tqdm:
+        from tqdm import tqdm
+
     results: list[pd.DataFrame] = []
     current_execution_index = 1
     for i in range(workload_repetitions):
@@ -584,13 +636,17 @@ def optimize_and_execute_workload(queries: Iterable[qal.SqlQuery] | workloads.Wo
         if shuffled:
             queries = queries.shuffle()
 
-        for label, query in queries.entries():
+        workload_entries = (tqdm(queries.entries(), desc=f"Repetition {i + 1}/{workload_repetitions}", unit="q") if use_tqdm
+                            else queries.entries())
+
+        for label, query in workload_entries:
             logger(f"Now benchmarking query {label} (repetition {i+1}/{workload_repetitions})")
             execution_result = optimize_and_execute_query(query, optimization_pipeline,
                                                           repetitions=per_query_repetitions,
                                                           timeout=timeout,
                                                           query_preparation=query_preparation,
-                                                          post_process=post_process)
+                                                          post_process=post_process,
+                                                          label=label, logger="tqdm" if use_tqdm else None)
             execution_result[COL_EXEC_IDX] = list(range(current_execution_index,
                                                         current_execution_index + per_query_repetitions))
             if include_labels:
