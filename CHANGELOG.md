@@ -26,7 +26,7 @@ stability. Since we are not ready for the 1.0 release yet, this does not matter 
 
 ### 🏥 Fixes
 - Fixed JSON serialization of physical operator assignments
-- `Cardinality` now implements _\_\_truediv\_\__ rather than _\_\_div\_\__ to properly support _card / number_
+- `Cardinality` now implements *\_\_truediv\_\_* rather than *\_\_div\_\_* to properly support _card / number_
 
 ### 🪲 Known bugs
 - 🐘 `PostgresConfiguration` cannot be passed directly to `execute_query()` or a manual psycopg cursor. It seems that psycopg
@@ -49,15 +49,12 @@ stability. Since we are not ready for the 1.0 release yet, this does not matter 
 - _None_
 
 ### 🏥 Fixes
-- _None_
+- Pre-defined workloads (`workloads.job()`, etc.) are now supported when running as a pip module.
 
 ### 🪲 Known bugs
 - 🐘 `PostgresConfiguration` cannot be passed directly to `execute_query()` or a manual psycopg cursor. It seems that psycopg
   does not recognize *UserString* as a valid string and raises an error. As a workaround, make sure to call *str()* on the
   configuration before trying to execute it. `apply_configuration()` does so automatically.
-- Pre-defined workloads (`workloads.job()`, etc) do not work if installed as a Pip module. This is because the build process
-  does not retain the workload directory in the `site_packages`.
-
 
 ---
 

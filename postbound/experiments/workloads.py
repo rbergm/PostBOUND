@@ -36,8 +36,8 @@ References
 from __future__ import annotations
 
 import collections
-import pathlib
 import os
+import pathlib
 import random
 import typing
 from collections.abc import Callable, Hashable, Iterable, Sequence
@@ -48,11 +48,31 @@ import pandas as pd
 
 from .. import db, qal, util
 
-workloads_base_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "workloads"))
+workloads_base_dir: str | pathlib.Path = ""
 """Indicates the PostBOUND directory that contains all natively supported workloads.
 
-Can be changed to match the project-specific file layout.
+This setting can be changed to match the project-specific file layout.
+
+By default, PostBOUND tries to guess the location of the workloads directory by checking the following locations in that order:
+
+1. If there is a `workloads` directory in the current working directory, this is used.
+2. If there is a `workloads` directory in the parent directory of the current working directory, this is used.
+3. If there is a `workloads` directory in the parent directory of the experiments package, this is used.
+   **This is the setting being triggered when installing PostBOUND as a Python package.**
+4. If there is a `workloads` directory in the user's home directory, under `.local/share/postbound`, this is used.
 """
+
+if pathlib.Path("workloads").is_dir():
+    workloads_base_dir = pathlib.Path("workloads").absolute()
+elif pathlib.Path("../workloads").is_dir():
+    workloads_base_dir = pathlib.Path("../workloads").resolve()
+elif (pathlib.Path(__file__).parent.parent / "workloads").is_dir():  # file into directory into parent
+    # venv installation
+    workloads_base_dir = (pathlib.Path(__file__).parent.parent / "workloads").resolve()
+elif (pathlib.Path().home() / ".local" / "share" / "postbound" / "workloads").is_dir():
+    # last resort: global workloads directory
+    workloads_base_dir = (pathlib.Path().home() / ".local" / "share" / "postbound" / "workloads").resolve()
+
 
 LabelType = typing.TypeVar("LabelType", bound=Hashable)
 """The labels that are used to identify individual queries in a workload."""
