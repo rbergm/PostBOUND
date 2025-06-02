@@ -8,8 +8,30 @@ stability. Since we are not ready for the 1.0 release yet, this does not matter 
 
 ---
 
+# ➡ Version 0.15.4 _(current)_
 
-# ➡ Version 0.15.3 _(current)_
+### 🐣 New features
+- Added [tqdm](https://tqdm.github.io/)-support for the benchmark utilities like `execute_workload()`
+
+### 💀 Breaking changes
+- _None_
+
+### 📰 Updates
+- The data frames returned by `execute_workload()` and related methods have proper indexes now.
+
+### 🏥 Fixes
+- Pre-defined workloads (`workloads.job()`, etc.) are now supported when running as a pip module.
+- Fixed being unable to compare cardinalities to ints or floats when used as a second argument.
+- Fixed typo in relalg module preventing parsing of any queries to relational algebra
+
+### 🪲 Known bugs
+- 🐘 `PostgresConfiguration` cannot be passed directly to `execute_query()` or a manual psycopg cursor. It seems that psycopg
+  does not recognize *UserString* as a valid string and raises an error. As a workaround, make sure to call *str()* on the
+  configuration before trying to execute it. `apply_configuration()` does so automatically.
+
+---
+
+# 🕑 Version 0.15.3
 
 
 ### 🐣 New features
@@ -34,27 +56,6 @@ stability. Since we are not ready for the 1.0 release yet, this does not matter 
   configuration before trying to execute it. `apply_configuration()` does so automatically.
 - Pre-defined workloads (`workloads.job()`, etc) do not work if installed as a Pip module. This is because the build process
   does not retain the workload directory in the `site_packages`.
-
----
-
-# ⏳ Version 0.15.4 _(planned)_
-
-### 🐣 New features
-- Added [tqdm](https://tqdm.github.io/)-support for the benchmark utilities like `execute_workload()`
-
-### 💀 Breaking changes
-- _None_
-
-### 📰 Updates
-- _None_
-
-### 🏥 Fixes
-- Pre-defined workloads (`workloads.job()`, etc.) are now supported when running as a pip module.
-
-### 🪲 Known bugs
-- 🐘 `PostgresConfiguration` cannot be passed directly to `execute_query()` or a manual psycopg cursor. It seems that psycopg
-  does not recognize *UserString* as a valid string and raises an error. As a workaround, make sure to call *str()* on the
-  configuration before trying to execute it. `apply_configuration()` does so automatically.
 
 ---
 
