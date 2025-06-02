@@ -719,7 +719,7 @@ class MultiStageOptimizationPipeline(OptimizationPipeline):
 
     def describe(self) -> dict:
         return {
-            "name": "two_stage_pipeline",
+            "name": "multi_stage_pipeline",
             "database_system": self._target_db.describe(),
             "query_pre_check": self._pre_check.describe() if self._pre_check else None,
             "join_ordering": self._join_order_enumerator.describe() if self._join_order_enumerator else None,
@@ -739,7 +739,7 @@ class MultiStageOptimizationPipeline(OptimizationPipeline):
     def __str__(self) -> str:
         components = [self._join_order_enumerator, self._physical_operator_selection, self._plan_parameterization]
         opt_chain = " -> ".join(str(comp) for comp in components)
-        return f"OptimizationPipeline [{opt_chain}]"
+        return f"MultiStageOptimization [{opt_chain}]"
 
 
 class IncrementalOptimizationPipeline(OptimizationPipeline):

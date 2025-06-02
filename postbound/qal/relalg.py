@@ -2611,7 +2611,7 @@ class _BaseTableLookup(SqlExpressionVisitor[Optional[TableReference]], Predicate
         # base tables can only appear in predicates and we only support case expressions in SELECT statements
         return None
 
-    def visist_predicate_expr(self, expression: AbstractPredicate) -> TableReference:
+    def visit_predicate_expr(self, expression: AbstractPredicate) -> TableReference:
         return expression.accept_visitor(self)
 
     def _fetch_valid_base_tables(self, base_tables: set[TableReference | None], *,

@@ -468,7 +468,7 @@ def execute_workload(queries: Iterable[qal.SqlQuery] | workloads.Workload, datab
     target_labels += [COL_EXEC_IDX, COL_QUERY,
                       COL_WORKLOAD_ITER, COL_REP,
                       COL_T_EXEC, COL_RESULT]
-    return result_df[target_labels]
+    return result_df[target_labels].reset_index(drop=True)
 
 
 def optimize_and_execute_query(query: qal.SqlQuery, optimization_pipeline: OptimizationPipeline, *,
@@ -676,7 +676,7 @@ def optimize_and_execute_workload(queries: Iterable[qal.SqlQuery] | workloads.Wo
                       COL_T_OPT, COL_T_EXEC, COL_RESULT,
                       COL_OPT_SUCCESS, COL_OPT_FAILURE_REASON,
                       COL_ORIG_QUERY, COL_OPT_SETTINGS, COL_DB_CONFIG]
-    return result_df[target_labels]
+    return result_df[target_labels].reset_index(drop=True)
 
 
 def prepare_export(results_df: pd.DataFrame) -> pd.DataFrame:
