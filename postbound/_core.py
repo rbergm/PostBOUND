@@ -314,6 +314,54 @@ class Cardinality(Number):
 
         return NotImplemented
 
+    def __gt__(self, other: object) -> bool:
+        if not self._valid:
+            return False
+
+        match other:
+            case Cardinality(_, otherval):
+                if other._nan:
+                    return False
+                if other._inf:
+                    return True
+                return self.value > otherval
+
+            case int():
+                return self.value > other
+
+            case float():
+                if math.isnan(other):
+                    return False
+                if math.isinf(other):
+                    return True
+                return self.value > other
+
+        return NotImplemented
+
+    def __ge__(self, other: object) -> bool:
+        if not self._valid:
+            return False
+
+        match other:
+            case Cardinality(_, otherval):
+                if other._nan:
+                    return False
+                if other._inf:
+                    return True
+                return self.value >= otherval
+
+            case int():
+                return self.value >= other
+
+            case float():
+                if math.isnan(other):
+                    return False
+                if math.isinf(other):
+                    return True
+                return self.value >= other
+
+        return NotImplemented
+
     def __float__(self) -> float:
         if self._nan:
             return math.nan
