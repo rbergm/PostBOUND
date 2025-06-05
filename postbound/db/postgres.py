@@ -756,7 +756,8 @@ class PostgresInterface(Database):
                         include_primary_index: bool = True, include_secondary_indexes: bool = True) -> None:
         """Removes tuples from specific tables from  the Postgres buffer pool.
 
-        This method can be used to simulate a cold start for the next incoming query.
+        This method can be used to simulate a cold start for the next incoming query. It requires the *pg_temperature*
+        extension that is part of the pg_lab project.
 
         Parameters
         ----------
@@ -778,8 +779,12 @@ class PostgresInterface(Database):
         --------
         >>> pg.cooldown_tables([table1, table2])
         >>> pg.cooldown_tables(table1, table2)
+
+        References
+        ----------
+        pg_lab : https://github.com/rbergm/pg_lab
         """
-        self._assert_active_extension("pg_cooldown")
+        self._assert_active_extension("pg_temperature")
         tables: Iterable[TableReference] = list(util.enlist(tables)) + list(more_tables)
         if not tables:
             return
@@ -846,23 +851,46 @@ class PostgresInterface(Database):
 
         self._cursor.execute(configuration)
 
-    def has_extension(self, extension: str) -> bool:
-        """Checks whether a specific extension is installed in the current database.
+    def has_extension(self, extension_name: str, *, is_shared_object: bool = True) -> bool:
+        """Checks, whether the current Postgres database has a specific extension loaded and active.
+
+        Extensions can be either created using the *CREATE EXTENSION* command, or by loading the shared object via *LOAD*.
+        For the shared object-based check to work correctly, the Postgres server has to run in the same namespace as the
+        PostBOUND client.
 
         Parameters
         ----------
-        extension : str
-            The name of the extension. This should be equivalent to the name of the shared object file that contains the
-            extension. The *.so* suffix is optional.
+        extension_name : str
+            The name of the extension to be checked. In case of shared objects, this should be equivalent to the name of said
+            object. In this case, the suffix is optional.
+        is_shared_object : bool, optional
+            Whether the extension is a shared object that is loaded into the Postgres server. By default this is set to *True*,
+            which assumes that the extension is loaded as a shared object, rather than as a default extension.
+
 
         Returns
         -------
         bool
-            Whether the extension is installed
+            Whether the extension is loaded and active in the current Postgres database.
         """
-        target_so = extension if extension.endswith(".so") else f"{extension}.so"
-        loaded_shared_objects = util.system.open_files(self._connection.info.backend_pid)
-        return any(so.endswith(target_so) for so in loaded_shared_objects)
+        match sys.platform:
+            case "win32" | "cygwin":
+                lib_suffix = ".dll"
+            case "darwin":
+                lib_suffix = ".dylib"
+            case "linux":
+                lib_suffix = ".so"
+            case _:
+                raise RuntimeError(f"Plaform '{sys.platform}' is not supported by extension check.")
+
+        if is_shared_object or extension_name in ("pg_hint_plan", "pg_lab"):
+            shared_object_name = (f"{extension_name}{lib_suffix}" if not extension_name.endswith(lib_suffix)
+                                  else extension_name)
+            loaded_shared_objects = util.system.open_files(self._connection.info.backend_pid)
+            return any(so.endswith(shared_object_name) for so in loaded_shared_objects)
+        else:
+            self._cursor.execute("SELECT extname FROM pg_extension;")
+            return any(ext[0] == extension_name for ext in self._cursor.fetchall())
 
     def _init_connection(self) -> int:
         """Sets all default connection parameters and creates the actual database cursor.
@@ -1017,14 +1045,7 @@ class PostgresInterface(Database):
         StateError
             If the given extension is not active
         """
-        if is_shared_object or extension_name in ("pg_hint_plan", "pg_lab"):
-            shared_object_name = f"{extension_name}.so" if not extension_name.endswith(".so") else extension_name
-            loaded_shared_objects = util.system.open_files(self._connection.info.backend_pid)
-            extension_is_active = any(so.endswith(shared_object_name) for so in loaded_shared_objects)
-        else:
-            self._cursor.execute("SELECT extname FROM pg_extension;")
-            extension_is_active = any(ext[0] == extension_name for ext in self._cursor.fetchall())
-
+        extension_is_active = self.has_extension(extension_name, is_shared_object=is_shared_object)
         if not extension_is_active:
             raise StateError(f"Extension '{extension_name}' is not active in database '{self.database_name()}'")
 

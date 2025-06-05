@@ -31,6 +31,29 @@ stability. Since we are not ready for the 1.0 release yet, this does not matter 
 
 ---
 
+
+# ⏳ Version 0.15.5 _(planned)_
+
+### 🐣 New features
+- _None_
+
+### 💀 Breaking changes
+- _None_
+
+### 📰 Updates
+- 🐘 Migrated the `cooldown_tables()` method to pg_temperature
+
+### 🏥 Fixes
+- _None_
+
+### 🪲 Known bugs
+- 🐘 `PostgresConfiguration` cannot be passed directly to `execute_query()` or a manual psycopg cursor. It seems that psycopg
+  does not recognize *UserString* as a valid string and raises an error. As a workaround, make sure to call *str()* on the
+  configuration before trying to execute it. `apply_configuration()` does so automatically.
+
+---
+
+
 # 🕑 Version 0.15.3
 
 
