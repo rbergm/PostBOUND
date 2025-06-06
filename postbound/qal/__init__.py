@@ -65,8 +65,8 @@ PostBOUND's implementation of predicates is structured using a composite-style l
 describes all behaviour that is common to the concrete predicate types. There are `BasePredicate`s, which typically contain
 different expressions. The `CompoundPredicate` is used to nest different predicates, thereby creating tree-shaped hierarchies.
 
-In addition to the predicate representation, this module also provides a utility for streamlined access to the important parts
-of simple filter predicates via the `SimplifiedFilterView`.
+In addition to the predicate representation, this module also provides a utility for streamlined access to simple predicates
+via `SimpleFilter` and `SimpleJoin`.
 Likwise, the `QueryPredicates` provide high-level access to all predicates (join and filter) that are specified in a query.
 From a user perspective, this is probably the best entry point to work with predicates. Alternatively, the predicate tree can
 also be traversed using custom functions.
@@ -139,7 +139,8 @@ from ._qal import (
     determine_join_equivalence_classes,
     generate_predicates_for_equivalence_classes,
     UnwrappedFilter,
-    SimplifiedFilterView,
+    SimpleFilter,
+    SimpleJoin,
     QueryPredicates,
     DefaultPredicateHandler,
     BaseClause,
@@ -222,7 +223,8 @@ __all__ = [
     "determine_join_equivalence_classes",
     "generate_predicates_for_equivalence_classes",
     "UnwrappedFilter",
-    "SimplifiedFilterView",
+    "SimpleFilter",
+    "SimpleJoin",
     "QueryPredicates",
     "DefaultPredicateHandler",
     "BaseClause",

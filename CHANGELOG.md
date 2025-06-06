@@ -35,12 +35,13 @@ stability. Since we are not ready for the 1.0 release yet, this does not matter 
 # ⏳ Version 0.15.5 _(planned)_
 
 ### 🐣 New features
-- _None_
+- Introduced a new `SimpleJoin` as a streamlined representation of simple inner equi-join predicates.
 
 ### 💀 Breaking changes
-- _None_
+- Renamed `SimplifiedFilterView` to `SimpleFilter` for more conciseness (and to align with `SimpleJoin`)
 
 ### 📰 Updates
+- Added a `simplify()` method to query predicates to provide all simplified counterparts of the joins and filters
 - 🐘 Migrated the `cooldown_tables()` method to pg_temperature
 
 ### 🏥 Fixes
