@@ -182,6 +182,9 @@ pb-venv/
 # PyCharm
 .idea/
 
+# MacOS
+.DS_Store
+
 # Project specific files
 LocalTest*
 localtest*

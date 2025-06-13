@@ -16,19 +16,19 @@ classifiers = [
     "Operating System :: OS Independent",
 ]
 dependencies = [
-    "levenshtein==0.25.1",
+    "levenshtein==0.27.1",
     "natsort==8.4.0",
     "networkx==3.3",
-    "numpy==2.0.0",
-    "pandas==2.2.2",
+    "numpy==2.2.3",
+    "pandas==2.2.3",
     "pglast==7.2",
-    "psycopg[binary]==3.2.1",
+    "psycopg[binary]==3.2.9",
     "tomli==2.0.1",
 ]
 
 [project.optional-dependencies]
 vis = [
-    "matplotlib==3.9.0",
+    "matplotlib==3.10.1",
     "seaborn==0.13.2",
     "graphviz==0.20.3",
 ]

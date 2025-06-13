@@ -8,39 +8,35 @@
 
 import os
 import sys
-sys.path.insert(0, os.path.abspath('../..'))
 
-project = 'PostBOUND'
-copyright = '2025, Database Group @ TU Dresden'
-author = 'Database Group @ TU Dresden'
-release = '0.15.4'
+sys.path.insert(0, os.path.abspath("../.."))
+
+import postbound as pb
+
+project = "PostBOUND"
+copyright = "2025, Database Group @ TU Dresden"
+author = "Database Group @ TU Dresden"
+release = pb.__version__
 
 # -- General configuration ---------------------------------------------------
 # https://www.sphinx-doc.org/en/master/usage/configuration.html#general-configuration
 
-extensions = [
-    'sphinx.ext.autosummary',
-    'sphinx.ext.autodoc',
-    'sphinx.ext.napoleon'
-]
+extensions = ["sphinx.ext.autosummary", "sphinx.ext.autodoc", "sphinx.ext.napoleon"]
 
-templates_path = ['_templates']
+templates_path = ["_templates"]
 exclude_patterns = []
 
 # -- Options for HTML output -------------------------------------------------
 # https://www.sphinx-doc.org/en/master/usage/configuration.html#options-for-html-output
 
-html_theme = 'bizstyle'
+html_theme = "sphinx_book_theme"
 html_theme_options = {
-    'body_min_width': 0,
-    'body_max_width': 'none',
-    'sidebarwidth': '30%'
+    "body_min_width": 0,
+    "body_max_width": "none",
+    "sidebarwidth": "30%",
 }
 
 # -- Options for API documentation -------------------------------------------------
 
-autodoc_default_options = {
-    'member_order': 'bysource',
-    'special-members': '__init__'
-}
-autodoc_member_order = 'bysource'
+autodoc_default_options = {"member_order": "bysource", "special-members": "__init__"}
+autodoc_member_order = "bysource"
