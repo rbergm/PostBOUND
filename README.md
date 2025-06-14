@@ -3,101 +3,240 @@
 ![GitHub License](https://img.shields.io/github/license/rbergm/PostBOUND)
 ![Static Badge](https://img.shields.io/badge/version-0.15.4-blue)
 
-<img src="docs/figures/postbound-logo.png" style="float: left; width: 150px; margin: 15px;">
+<p align="center">
+    <img src="docs/figures/postbound-logo.svg" style="width: 150px; margin: 15px;">
+</p>
 
-PostBOUND is a framework for studying query optimization algorithms for (relational) database systems. It provides
-tools to easily implement prototypes of new optimization algorithms and to compare them in a transparent and
-reproducible way. It is implemented as a Python tool that takes an input query, applies a user-configured optimization pipeline
-to that query and produces an annotated output query that enforces the selected query plan during execution on a native
-database system.
-This repository provides the actual Python implementation of the PostBOUND framework (located in the
-`postbound` directory), along with a number of utilities that automate some of the tedious parts of evaluating an optimization
-algorithm on a specific benchmark. Those utilities are mostly focused on setting up different popular database management
-systems and loading commonly used databases and benchmarks for them.
+PostBOUND is a Python framework for studying query optimization in database systems.
+At a high level, PostBOUND has the following goals and features:
 
+- 🏃‍♀️ **Rapid prototyping:** PostBOUND allows researchers to implement specific phases of the optimization process, such
+  as the cardinality estimator or the join order optimization. Researchers can focus precisely on the parts that they are
+  studying and use _reasonable_ defaults for the rest. See [🧑‍🏫 Example](#-example) for how this looks in practice.
+- 🧰 **Support infrastructure:** to ease the implementation of the optimizers, PostBOUND provides a large toolbox of
+  support functionality, such as query parsing, join graph construction, relational algebra or database statistics. This
+  limits the amount of boilerplate that researchers have to deal with.
+- 📊 **Transparent benchmarks:** once a new optimizer prototype is completed, the benchmarking tools allow to compare this
+  prototype against other optimization strategies in a transparent and reproducible way. As a core design principle,
+  PostBOUND executes queries on an actual database system such as PostgreSQL, rather than research systems or artificial
+  "lab" comparisons. See [💡 Essentials](#-essentials) for more information on this.
+- 🔋 **Batteries included:** in addition to the Python package, PostBOUND provides a lot of utilities to setup databases
+  and load commonly used benchmarks (e.g., JOB, Stats and Stack).
 
-## Getting Started
+**| [💻 Installation](#https://postbound.readthedocs.io/en/latest/setup.html) | [📖 Documentation](https://postbound.readthedocs.io/en/latest/) | [🧑‍🏫 Examples](https://github.com/rbergm/PostBOUND/tree/main/examples) |**
 
-> [!TIP]
-> PostBOUND can also be installed as an all-in-one Docker container. See [Dockerfile](#Dockerfile) for details.
+## ⚡️ Quick Start
 
-All package requirements can be installed from the `requirements.txt` file. To use PostBOUND in different projects,
-it can also be build and installed as a local package using pip. This is generally the recommended way to go and can be
-automated using the `tools/setup-py-venv.sh` script.
+The fastest way to get an installation of PostBOUND up and running is to use the provided Dockerfile.
+You can build your Docker image with the following command:
 
-In addition to the Python packages, PostBOUND also needs a database connection in order to optimize and execute queries.
-Currently, PostgreSQL and MySQL are supported, with the MySQL features being a bit more limited due to restrictions of
-the system. The root directory of the PostBOUND repository contains setup utilities for some database systems, databases
-and workloads.
-
-The best way to familiarize yourself with PostBOUND is to study the examples and the documentation of the used classes
-and functions. A high-level documentation is also being worked on, but still subject to change and not entirely
-up-to-date. Therefore, the Python documentation of the source code is more extensive. Consult it for the specifics of _how_ to
-use a specific feature and take a look at the examples to get an idea of _when_ to use it and which features are available. The
-best starting point for the in-code documentation is the `__init__.py` file in the `postbound` source directory.
-
-We also published a paper[^1] which explains the concepts that motivated the initial versions of PostBOUND.
-Notice however, that at the time of its publication the framework had a much more limited scope and was heavily
-expanded since then. More specifically, PostBOUND is no longer limited to upper bound-driven optimization strategies
-and much more independent of specific database systems.
-
-
-## Example
-
-The following snippet gives a glimpse of the different parts of the framework and how they can interact. The specific
-example implements the UES upper-bound optimization algorithm[^2] to obtain an optimized join order for the queries of
-the Join Order Benchmark[^3] and applies them to a Postgres database instance.
-
-```python
-##
-## Step 0: imports
-##
-
-import postbound as pb
-from postbound.optimizer import presets
-
-##
-## Step 1: System setup
-##
-postgres_instance = pb.postgres.connect()
-presets.apply_standard_system_options()
-job_workload = pb.workloads.job()
-ues_settings = presets.fetch("ues")
-
-##
-## Step 2: Optimization pipeline setup
-##
-optimization_pipeline = pb.MultiStageOptimizationPipeline(postgres_instance)
-optimization_pipeline.load_settings(ues_settings)
-optimization_pipeline.build()
-
-##
-## Step 3: Query optimization
-##
-input_query = job_workload["1a"]
-optimized_query = optimization_pipeline.optimize_query(input_query)
-
-##
-## Step 4: Query execution
-##
-query_result = postgres_instance.execute_query(optimized_query)
-print(query_result)
+```sh
+docker build -t postbound \
+    --build-arg TIMEZONE=$(cat /etc/timezone) \
+    --build-arg USE_PGLAB=true \
+    --build-arg OPTIMIZE_PG_CONFIG=true \
+    --build-arg SETUP_STATS=true \
+    --build-arg SETUP_JOB=true \
+    --build-arg SETUP_STACK=true \
+    .
 ```
 
-This examples can be *almost* executed as-is, there is only one setup step missing: in Step 1, PostBOUND is asked to connect to
-a Postgres database, but no information is provided on how this connection should be obtained. By default, PostBOUND reads this
-information from a hidden config file. In the case of Postgres, this file is called `.psycopg_connection` and it has to be
-placed in the same directory from which the code is executed. The Postgres file has to contain a connection string that can
-be used to establish a database connection, such as `dbname=<my db> user=<my user> host=localhost`. Consult the documentation
-on the database systems for more info on what information is required and how it should be stored. As a final note, the
-database setup utilities that are shipped with PostBOUND also contain scripts that automatically generate valid connect files
-for the system. These files than only need to be moved to the correct location.
+This will create a Docker image with a local Postgres instance (using [pg_lab](https://github.com/rbergm/pg_lab)) and
+setup the Stats, JOB and Stack benchmarks.
+Adjust these arguments to your needs.
+See [Essentials](#-essentials) for why the Postgres instance is necessary.
+All supported build arguments are listed under [🐳 Docker options](#-docker-options).
 
+Once the image is built, create a container like so:
 
-## Repo Structure
+```sh
+docker run -dt \
+    --shm-size 4G \
+    --name postbound \
+    --volume $PWD/postbound-docker:/postbound/public \
+    --publish 5432:5432 \
+    postbound
+```
 
-The repository is structured as follows. The `postbound` directory contains the actual source code, all other folders are
-concerned with "supporting" aspects (which are important nevertheless.).
+Adjust the amount of shared memory depending on your machine.
+
+> [!TIP]
+> Shared memory is used by Postgres for its internal caching and therefore paramount for good server performance.
+> The general recommendation is to set it to at least 1/4 of the available RAM.
+
+The Postgres server will be available at port 5432 from the host machine (using the user _postbound_ with the same
+password).
+The volume mountpoint can be used to easily copy experiment scripts into the container and to export results back out
+again.
+
+You can connect to the PostBOUND container using the usual
+
+```sh
+docker exec -it postbound /bin/bash
+```
+
+The shell enviroment is setup to have PostBOUND available in a fresh Python virtual environment (which is activated by
+default).
+Furthermore, all Postgres utilities are available in the _PATH_.
+
+> [!TIP]
+> If you want to install PostBOUND directly on your machine, the
+> [documentation](https://postbound.readthedocs.io/en/latest/setup.html) provides a detailed setup guide.
+
+## 💡 Essentials
+
+As a central design decision, PostBOUND is not integrated into a specific database system.
+Instead, it is implemented as a Python framework operating on top of a running database instance.
+This decision was made to ensure that the optimization strategies are actually useful in practice - PostBOUND executes the
+optimized queries on a real databases and we treat the execution time as the ultimate measure of optimization quality.
+
+However, this decision means that we need a way to ensure that the optimization decisions made within the framework are
+actually used when executing the query in the context of the target database.
+This is achieved by using query hints which typically encode the optimization decisions in comment blocks within the query.
+
+In the case of Postgres, this interaction roughly looks like this:
+
+<p align="center">
+  <img src="docs/figures/postbound-pg-interaction.svg" style="width: 450px; margin: 15px;">
+</p>
+
+Depending on the actual database system, these hints might differ in syntax as well as semantics.
+Generally speaking, PostBOUND figures out which hints to use on its own, without user intervention.
+Sadly, **PostgreSQL** does not support query hints out of the box.
+Therefore, PostBOUND relies on either [pg_hint_plan](https://github.com/ossc-db/pg_hint_plan) or
+[pg_lab](https://github.com/rbergm/pg_lab) to provide the necessary hinting functionality.
+
+> [!NOTE]
+> PostBOUND's database interaction is designed to be independent of a specific system (such as PostgreSQL, Oracle, ...).
+> However, the current implementation is most complete for PostgreSQL with limited support for MySQL.
+> This is due to practical reasons, mostly our own time budget and the popularity of PostgreSQL in the optimizer research
+> community.
+
+## 🧑‍🏫 Example
+
+The typical end-to-end workflow using PostBOUND looks like this:
+
+1. Implement your new optimization strategy. To do so, you need to figure out which parts of the optimization process you
+   want to customize and what the most appropriate optimization pipeline is. In a nutshell, the optimization pipeline is
+   a mental model of how the optimizer works. Commonly used pipelines are the textbook-style pipeline (i.e. using plan
+   enumerator, cost model and cardinality estimator), or the multi-stage pipeline which first computes a join order and
+   afterwards selects the best physical operators. The pipeline determines which interfaces can be implemented.
+2. Select your target database system and benchmark that should be used for the evaluation.
+3. Optionally, select different optimization strategies that you want to compare against.
+4. Use the benchmarking tools to execute the workload against the target database system.
+
+For example, a random join order optimizer could be implemented like this:
+
+```python
+import random
+
+import postbound as pb
+
+# Step 1: define our optimization strategy. We use the pre-defined join graph to keep track of free tables
+class RandomJoinOrderOptimizer(pb.JoinOrderOptimization):
+    def optimize_join_order(self, query: pb.SqlQuery) -> pb.LogicalJoinTree:
+        join_tree = pb.LogicalJoinTree()
+        join_graph = pb.opt.joingraph.JoinGraph(query)
+
+        while join_graph.contains_free_tables():
+            candidate_tables = [
+                path.target_table for path in join_graph.available_join_paths()
+            ]
+            next_table = random.choice(candidate_tables)
+
+            join_tree = join_tree.join_with(next_table)
+            join_graph.mark_joined(next_table)
+
+        return join_tree
+
+    def describe(self) -> pb.util.jsondict:
+        return {"name": "random-join-order"}
+
+# Step 2: connect to the target database, load the workload and setup the optimization pipeline
+pg_imdb = pb.postgres.connect(config_file=".psycopg_connection_job")
+job = pb.workloads.job()
+
+optimization_pipeline = (
+    pb.MultiStageOptimizationPipeline(pg_imdb)
+    .setup_join_order_optimization(RandomJoinOrderOptimizer())
+    .build()
+)
+
+# (Step 3): we just compare against the native Postgres optimizer, which does not require any additional setup.
+
+# Step 4: execute the workload. We use the QueryPreparationService to prewarm the database buffer run all queries
+# as EXPLAIN ANALYZE.
+query_prep = pb.experiments.QueryPreparationService(
+    prewarm=True, analyze=True, preparatory_statements=["SET geqo TO off;"]
+)
+native_results = pb.execute_workload(
+    job, pg_imdb, query_preparation=query_prep, workload_repetitions=3
+)
+optimized_results = pb.optimize_and_execute_workload(
+    job, optimization_pipeline, query_preparation=query_prep, workload_repetitions=3
+)
+
+pb.experiments.prepare_export(native_results).to_csv("job-results-native.csv")
+pb.experiments.prepare_export(optimized_results).to_csv("job-results-optimized.csv")
+```
+
+## 📖 Documentation
+
+A detailed documentation of PostBOUND is available [here](https://postbound.readthedocs.io/en/latest/).
+
+## 🐳 Docker options
+
+| Argument | Allowed values | Description | Default |
+|----------|----------------|-------------|---------|
+| `TIMEZONE` | Any valid timezone identifier | Timezone of the Docker container (and hence the Postgres server). It is probably best to just use the value of `cat /etc/timezone` | _UTC_ |
+| `USERNAME` | Any valid UNIX username. | The username within the Docker container. This will also be the Postgres user and password. | _postbound_ |
+| `SETUP_IMDB` | `true` or `false` | Whether an [IMDB](https://doi.org/10.14778/2850583.2850594) instance should be created as part of the Postgres setup. | `false` |
+| `SETUP_STATS` | `true` or `false` | Whether a [Stats](https://doi.org/10.14778/3503585.3503586) instance should be created as part of the Postgres setup. | `false` |
+| `SETUP_STACK` | `true` or `false`| Whether a [Stack](https://doi.org/10.1145/3448016.3452838) instance should be created as part of the Postgres setup. | `false` |
+| `OPTIMIZE_PG_CONFIG` |  `true` or `false` | Whether the Postgres configuration parameters should be automatically set based on your hardware platform. Rules are based on [PGTune](https://pgtune.leopard.in.ua/) by [le0pard](https://github.com/le0pard). | `false` |
+| `PG_DISK_TYPE` | `SSD` or `HDD` | In case the Postgres server is automatically configured (see `OPTIMIZE_PG_CONFIG`) this indicates the kind of storage for the actual database. In turn, this influences the relative cost of sequential access and index-based access for the query optimizer. | `SSD` |
+| `PG_VER` | 16, 17, ... | The Postgres version to use. Notice that pg_lab supports fewer versions. This value is passed to the `postgres-setup.sh` script of the Postgres tooling (either under `db-support` or from pg_lab), which provides the most up to date list of supported versions. | 17 |
+| `USE_PGLAB` | `true` or `false` | Whether to initialize a [pg_lab](https://github.com/rbergm/pg_lab) server instead of a normal Postgres server. pg_lab provides advanced hinting capabilities and offers additional extension points for the query optimizer. | `false` |
+
+The PostBOUND source code is located at `/postbound`. If pg_lab is being used, the corresponding files are located at `/pg_lab`.
+The container automatically exposes the Postgres port 5432 and provides a volume mountpoint at `/postbound/public`. This
+mountpoint can be used to easily get experiment scripts into the container and to export results back out again.
+
+> [!TIP]
+> pg_lab provides advanced hinting support (e.g. for materialization or cardinality hints for base tables) and offers
+> additional extension points for the query optimizer (e.g. hooks for the different cost functions).
+> If pg_lab is not used, the Postgres server will setup pg_hint_plan instead.
+
+## 🫶 Reference
+
+If you find our work useful, please cite the following paper:
+
+```bibtex
+@inproceedings{bergmann2025elephant,
+  author       = {Rico Bergmann and
+                  Claudio Hartmann and
+                  Dirk Habich and
+                  Wolfgang Lehner},
+  title        = {An Elephant Under the Microscope: Analyzing the Interaction of Optimizer
+                  Components in PostgreSQL},
+  journal      = {Proc. {ACM} Manag. Data},
+  volume       = {3},
+  number       = {1},
+  pages        = {9:1--9:28},
+  year         = {2025},
+  url          = {https://doi.org/10.1145/3709659},
+  doi          = {10.1145/3709659},
+  timestamp    = {Tue, 01 Apr 2025 19:03:19 +0200},
+  biburl       = {https://dblp.org/rec/journals/pacmmod/BergmannHHL25.bib},
+  bibsource    = {dblp computer science bibliography, https://dblp.org}
+}
+```
+
+## 📑 Repo Structure
+
+The repository is structured as follows.
+The `postbound` directory contains the actual source code, all other folders are concerned with "supporting" aspects
+(which are nevertheless important..).
 Almost all of the subdirectories contain further READMEs that explain their purpose and structure in more detail.
 
 | Folder        | Description |
@@ -111,10 +250,10 @@ Almost all of the subdirectories contain further READMEs that explain their purp
 | `tools`       | Provides different other utilities that are not directly concerned with specific database systems, but rather with common problems encoutered when benchmarking query optimizers |
 
 
-## Package Structure
+## 📑 Package Structure
 
-The `postbound` directory contains the actual source code of the framework. On a high-level, the PostBOUND framework is
-structured as follows:
+The `postbound` directory contains the actual source code of the framework.
+On a high-level, the PostBOUND framework is structured as follows:
 
 ![Overview of the major PostBOUND packages](docs/figures/postbound-package-overview.png)
 
@@ -127,64 +266,8 @@ structured as follows:
 | `util`        | contains algorithms and types that do not belong to specific parts of PostBOUND and are more general in nature |
 | `vis`         | contains utilities to visualize different concepts in query optimization (join orders, join graphs, query execution plans, ...) |
 
-The actual optimization pipelines is defined in the `postbound` module at the package root. Depending on the specific
-use-case, different pipelines are available.
+The actual optimization pipelines are defined in the `postbound` module at the package root.
+Depending on the specific use-case, different pipelines are available.
 
-
-## Dockerfile
-
-You can install your own PostBOUND library along with a local Postgres instance using the Dockerfile. See an example below.
-Depending on your specific use case, databases for different workloads can be imported. The image can also directly run an
-instance of [pg_lab](https://github.com/rbergm/pg_lab) instead of vanilla Postgres. pg_lab provides advanced hinting support
-(e.g. for materialization or cardinality hints for base tables) and offers additional extension points for the query optimizer
-(e.g. hooks for the different cost functions).
-
-The Dockerfile can be considered a blueprint of the target system design for PostBOUND, i.e. including a local database server.
-You can adjust the build process with the following arguments:
-
-| Argument | Allowed values | Description |
-|----------|----------------|-------------|
-| `TIMEZONE` | Any valid timezone identifier, defaults to `UTC` | Timezone of the Docker container (and hence the Postgres server). It is probably best to just use the value of `cat /etc/timezone` |
-| `USERNAME` | Any valid UNIX username, defaults to `postbound`. | The username within the Docker container. This will also be the Postgres user. |
-| `SETUP_IMDB` | `true` or `false` (default) | Whether an [IMDB](https://doi.org/10.14778/2850583.2850594) instance should be created as part of the Postgres setup. |
-| `SETUP_STATS` | `true` or `false` (default) | Whether a [Stats](https://doi.org/10.14778/3503585.3503586) instance should be created as part of the Postgres setup. |
-| `SETUP_STACK` | `true` or `false` (default) | Whether a [Stack](https://doi.org/10.1145/3448016.3452838) instance should be created as part of the Postgres setup. |
-| `OPTIMIZE_PG_CONFIG` |  `true` or `false` (default) | Whether the Postgres configuration parameters should be automatically set based on your hardware platform. Rules are based on [PGTune](https://pgtune.leopard.in.ua/) by [le0pard](https://github.com/le0pard). |
-| `PG_DISK_TYPE` | `SSD` (default) or `HDD` | In case the Postgres server is automatically configured (see `OPTIMIZE_PG_CONFIG`) this indicates the kind of storage for the actual database. In turn, this influences the relative cost of sequential access and index-based access for the query optimizer. |
-| `PG_VER` | 16, 17, ... | The Postgres version to use. Notice that pg_lab supports fewer versions. This value is passed to the `postgres-setup.sh` script of the Postgres tooling (either under `db-support` or from pg_lab), which provides the most up to date list of supported versions. |
-| `USE_PGLAB` | `true` or `false` (default) | Whether to initialize a [pg_lab](https://github.com/rbergm/pg_lab) server instead of a normal Postgres server. pg_lab provides advanced hinting capabilities and offers additional extension points for the query optimizer. |
-
-The PostBOUND source code is located at `/postbound`. If pg_lab is being used, the corresponding files are located at `/pg_lab`.
-The container automatically exposes the Postgres port 5432 and provides a volume mountpoint at `/postbound/public`. This
-mountpoint can be used to easily get experiment scripts into the container and to export results back out again.
-
-Example setup:
-
-```bash
-$ docker build \
-    --build-arg TIMEZONE=$(cat /etc/timezone) \
-    --build-arg USE_PGLAB=true \
-    --build-arg OPTIMIZE_PG_CONFIG=true \
-    --build-arg SETUP_STATS=true \
-    -t postbound \
-    .
-$ docker run -dt \
-    --shm-size 4G \
-    --name postbound \
-    --volume $PWD/postbound-docker:/postbound/public \
-    --publish 5432:5432 \
-    postbound
-$ docker exec -it postbound /bin/bash
-```
-
-This also makes the Postgres server available outside of the Docker container (using user _postbound_ with password
-_postbound_).
-
-
----
-
-## Literature
-
-[^1]: Bergmann et al.: "PostBOUND: PostgreSQL with Upper Bound SPJ Query Optimization", BTW'2023 ([paper](https://dl.gi.de/handle/20.500.12116/40318))
-[^2]: Hertzschuch et al.: "Simplicity Done Right for Join Ordering", CIDR'21 ([paper](https://www.cidrdb.org/cidr2021/papers/cidr2021_paper01.pdf), [GitHub](https://github.com/axhertz/SimplicityDoneRight))
-[^3]: Leis et al.: "How Good are Query Optimizers, Really?", PVLDB'15 ([paper](https://dl.acm.org/doi/10.14778/2850583.2850594))
+> [!TIP]
+> The [Documentation](https://postbound.readthedocs.io/en/latest/) provides a more detailed overview of the different packages and their purpose.
