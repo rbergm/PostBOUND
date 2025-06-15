@@ -113,8 +113,8 @@ Specifically, the Join Order Benchmark (JOB), the Stats Benchmark and the Stack 
 
 .. ipython:: python
 
-    job = pb.workloads.job()
-    job
+    stats = pb.workloads.stats()
+    stats
 
 You can also load your own workloads by using :func:`read_workload() <postbound.experiments.workloads.read_workload>` or
 :func:`read_csv_workload() <postbound.experiments.workloads.read_csv_workload>`.
@@ -130,7 +130,7 @@ Both take provide a pandas DataFrame with the results of the executed queries:
 
 .. ipython:: python
 
-    results = pb.execute_workload(job.first(3), pg_instance)
+    results = pb.execute_workload(stats.first(3), pg_instance)
     results
 
 If you want to export the results to a CSV file, you can use
