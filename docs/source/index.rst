@@ -123,7 +123,7 @@ Documentation overview
   ceb
   examples
   cookbook
-  generated/modules
+  API <generated/modules>
 
 
 Indices and tables
