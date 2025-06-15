@@ -21,6 +21,7 @@ build:
       - git
       - unzip
       - zstd
+      - lsof
    jobs:
       pre_create_environment:
          - tools/rtd-setup.sh
