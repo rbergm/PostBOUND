@@ -21,7 +21,13 @@ release = pb.__version__
 # -- General configuration ---------------------------------------------------
 # https://www.sphinx-doc.org/en/master/usage/configuration.html#general-configuration
 
-extensions = ["sphinx.ext.autosummary", "sphinx.ext.autodoc", "sphinx.ext.napoleon"]
+extensions = [
+    "sphinx.ext.autosummary",
+    "sphinx.ext.autodoc",
+    "sphinx.ext.napoleon",
+    "IPython.sphinxext.ipython_directive",
+    "IPython.sphinxext.ipython_console_highlighting",
+]
 
 templates_path = ["_templates"]
 exclude_patterns = []
@@ -29,14 +35,10 @@ exclude_patterns = []
 # -- Options for HTML output -------------------------------------------------
 # https://www.sphinx-doc.org/en/master/usage/configuration.html#options-for-html-output
 
+html_favicon = "favicon.ico"
 html_theme = "sphinx_book_theme"
-html_theme_options = {
-    "body_min_width": 0,
-    "body_max_width": "none",
-    "sidebarwidth": "30%",
-}
 
 # -- Options for API documentation -------------------------------------------------
 
-autodoc_default_options = {"member_order": "bysource", "special-members": "__init__"}
+autodoc_default_options = {"member_order": "bysource"}
 autodoc_member_order = "bysource"

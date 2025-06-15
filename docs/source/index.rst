@@ -3,8 +3,23 @@
    You can adapt this file completely to your liking, but it should at least
    contain the root `toctree` directive.
 
-Welcome to PostBOUND's documentation!
-=====================================
+PostBOUND documentation
+=======================
+
+PostBOUND is a Python framework for research in query optimization.
+It provides a high-level interface to implement novel optimization algorithms and to analyze their performance.
+
+New users should start by reading the :doc:`10 minutes to PostBOUND <10minutes>` tutorial and the
+:doc:`Setup Guide <setup>`.
+The remainder of the documentation describe the different parts of the framework in more detail.
+
+
+.. _hinting-intro:
+
+Hinting
+-------
+
+TODO
 
 **PostBOUND** is a Python framework that tries to make research in query optimization for relational database systems easier.
 At its core it provides *optimization pipelines* that can be customized to implement and analyze different optimization
@@ -96,16 +111,19 @@ Documentation overview
 ======================
 
 .. toctree::
-   :maxdepth: 1
+  :maxdepth: 1
 
-   setup
-   optimization_process
-   qal
-   databases
-   infrastructure
-   ceb
-   examples
-   API documentation <generated/modules>
+  10minutes
+  setup
+  optimization_process
+  qal
+  databases
+  postgres
+  infrastructure
+  ceb
+  examples
+  cookbook
+  generated/modules
 
 
 Indices and tables

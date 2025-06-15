@@ -1,6 +1,10 @@
 Setup
 =====
 
+Manual installation
+-------------------
+
+
 A complete setup of PostBOUND includes the following steps:
 
 1. Setting up a database system and loading an actual database
