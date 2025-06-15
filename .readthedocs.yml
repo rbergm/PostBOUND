@@ -23,12 +23,7 @@ build:
       - zstd
    jobs:
       pre_create_environment:
-         - cd db-support/postgres
-         - ./postgres-setup.sh --stop
-         - . ./postgres-start.sh
-         - ./workload-job-setup.sh
-         - ./postgres-psycopg-setup.sh job imdb
-         - cp .psycopg_connection_job ../../.pscyopg_connection
+         - tools/rtd-setup.sh
 
 # Build documentation in the "docs/" directory with Sphinx
 sphinx:
