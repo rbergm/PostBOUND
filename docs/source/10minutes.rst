@@ -129,6 +129,7 @@ Once you have implemented you own optimization algorithm, you can benchmark it u
 Both take provide a pandas DataFrame with the results of the executed queries:
 
 .. ipython:: python
+    :okwarning:
 
     results = pb.execute_workload(stats.first(3), pg_instance)
     results
