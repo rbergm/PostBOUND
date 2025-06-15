@@ -5,7 +5,7 @@ set -e  # exit on error
 DB_NAME=stack
 WD=$(pwd)
 TARGET_DIR=$WD/../stack_data
-PG_CONN="-U $USER"
+PG_CONN="-U $(whoami)"
 CORES=$(($(nproc --all) / 2))
 FORCE_CREATION="false"
 SKIP_EXTENSIONS="false"
