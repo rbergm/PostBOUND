@@ -7,4 +7,4 @@ cd db-support/postgres
 . ./postgres-start.sh
 ./workload-stats-setup.sh
 ./postgres-psycopg-setup.sh stats stats
-cp .psycopg_connection_stats ../../.psycopg_connection
+cp .psycopg_connection_stats ../../docs/source/.psycopg_connection
