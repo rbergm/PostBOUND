@@ -64,7 +64,7 @@ By default, PostBOUND tries to guess the location of the workloads directory by 
 
 if pathlib.Path("workloads").is_dir():
     workloads_base_dir = pathlib.Path("workloads").absolute()
-elif pathlib.Path("../workloads").is_dir():
+elif (pathlib.Path().parent / "workloads").is_dir():
     workloads_base_dir = pathlib.Path("../workloads").resolve()
 elif (pathlib.Path(__file__).parent.parent / "workloads").is_dir():  # file into directory into parent
     # venv installation

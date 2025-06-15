@@ -45,7 +45,8 @@ stability. Since we are not ready for the 1.0 release yet, this does not matter 
 - 🐘 Migrated the `cooldown_tables()` method to pg_temperature
 
 ### 🏥 Fixes
-- _None_
+- 🍏 Hardened much of the system interaction to support MacOS much better. PostBOUND should now work on MacOS without any
+  issues (we hope so at least)
 
 ### 🪲 Known bugs
 - 🐘 `PostgresConfiguration` cannot be passed directly to `execute_query()` or a manual psycopg cursor. It seems that psycopg

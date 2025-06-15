@@ -29,38 +29,63 @@ from typing import Any, Literal, Optional
 import psycopg
 import psycopg.rows
 
-from ._db import (
-    ResultSet,
-    Database,
-    DatabaseSchema,
-    DatabaseStatistics,
-    HintService,
-    OptimizerInterface,
-    DatabasePool,
-    HintWarning,
-    DatabaseServerError,
-    DatabaseUserError,
-    UnsupportedDatabaseFeatureError
-)
 from .. import qal, util
-from .._core import JoinOperator, ScanOperator, IntermediateOperator, PhysicalOperator, Cardinality
+from .._core import (
+    Cardinality,
+    IntermediateOperator,
+    JoinOperator,
+    PhysicalOperator,
+    ScanOperator,
+)
 from .._qep import QueryPlan, SortKey
-from ..qal import (
-    TableReference, ColumnReference,
-    UnboundColumnError, VirtualTableError,
-    CompoundOperator,
-    SqlExpression, StaticValueExpression, ColumnExpression, StarExpression, SubqueryExpression, CaseExpression, CastExpression,
-    MathExpression, FunctionExpression, ArrayAccessExpression, WindowExpression, OrderByExpression, OrderBy,
-    AbstractPredicate, BinaryPredicate, UnaryPredicate, InPredicate, BetweenPredicate, CompoundPredicate,
-    transform
+from ..optimizer._hints import (
+    HintType,
+    PhysicalOperatorAssignment,
+    PlanParameterization,
+    operators_from_plan,
 )
 from ..optimizer._jointree import JoinTree, jointree_from_plan, parameters_from_plan
-from ..optimizer._hints import (
-    PhysicalOperatorAssignment,
-    PlanParameterization, HintType,
-    operators_from_plan
+from ..qal import (
+    AbstractPredicate,
+    ArrayAccessExpression,
+    BetweenPredicate,
+    BinaryPredicate,
+    CaseExpression,
+    CastExpression,
+    ColumnExpression,
+    ColumnReference,
+    CompoundOperator,
+    CompoundPredicate,
+    FunctionExpression,
+    InPredicate,
+    MathExpression,
+    OrderBy,
+    OrderByExpression,
+    SqlExpression,
+    StarExpression,
+    StaticValueExpression,
+    SubqueryExpression,
+    TableReference,
+    UnaryPredicate,
+    UnboundColumnError,
+    VirtualTableError,
+    WindowExpression,
+    transform,
 )
-from ..util import Version, StateError
+from ..util import StateError, Version
+from ._db import (
+    Database,
+    DatabasePool,
+    DatabaseSchema,
+    DatabaseServerError,
+    DatabaseStatistics,
+    DatabaseUserError,
+    HintService,
+    HintWarning,
+    OptimizerInterface,
+    ResultSet,
+    UnsupportedDatabaseFeatureError,
+)
 
 # TODO: find a nice way to support index nested-loop join hints.
 # Probably inspired by the join order/join direction handling?
@@ -1903,8 +1928,12 @@ class PostgresHintService(HintService):
         # the assumption that the Postgres server is running on the same (virtual) machine as our PostBOUND process and can
         # rely on the operating system to determine open files of the backend process (which will include the shared libaries)
 
-        pg_candidates = subprocess.run(["ps -aux | awk '/" + str(backend_pid) + "/{print $11}'"],
-                                       capture_output=True, shell=True, text=True)
+        if sys.platform == "darwin":
+            pg_candidates = subprocess.run(["lsof -p " + str(backend_pid) + " | awk '/postgres/{print $1}'"],
+                                           capture_output=True, shell=True, text=True)
+        else:
+            pg_candidates = subprocess.run(["ps -aux | awk '/" + str(backend_pid) + "/{print $11}'"],
+                                           capture_output=True, shell=True, text=True)
         found_pg = any(candidate.lower().startswith("postgres") for candidate in pg_candidates.stdout.split())
 
         # There are some rare edge cases where our heuristics fail. We have to accept them for now, but should improve the
@@ -1922,12 +1951,13 @@ class PostgresHintService(HintService):
             self._inactive = False
             return
 
+        lib_ext = "dylib" if sys.platform == "darwin" else "so"
         active_extensions = util.system.open_files(backend_pid)
-        if any(ext.endswith("pg_lab.so") for ext in active_extensions):
+        if any(ext.endswith(f"pg_lab.{lib_ext}") for ext in active_extensions):
             util.logging.print_if(self._postgres_db.debug, "Using pg_lab hinting backend", file=sys.stderr)
             self._inactive = False
             self._backend = "pg_lab"
-        elif any(ext.endswith("pg_hint_plan.so") for ext in active_extensions):
+        elif any(ext.endswith(f"pg_hint_plan.{lib_ext}") for ext in active_extensions):
             util.logging.print_if(self._postgres_db.debug, "Using pg_hint_plan hinting backend", file=sys.stderr)
             self._inactive = False
             self._backend = "pg_hint_plan"

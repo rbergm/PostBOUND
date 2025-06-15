@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import os
+import sys
+import warnings
 from typing import Optional
 
 from . import proc
@@ -20,7 +22,12 @@ def open_files(pid: Optional[int] = None) -> list[str]:
     list[str]
         All opened files
     """
+    if not os.name == "posix":
+        warnings.warn("Can only check for open files on POSIX systems.")
+        return []
+    
     pid = os.getpid() if pid is None else pid
+    ext = ".dylib" if sys.platform == "darwin" else ".so"
 
     # lsof -p produces some "weird" (or rather impractical) output from time to time (and depending on the lsof version)
     # we do the following:
@@ -32,6 +39,6 @@ def open_files(pid: Optional[int] = None) -> list[str]:
     # how to interpret this output nor how to get rid of it. The second cut removes this suffix.
     # Lastly, the final grep filters for shared objects. Notice that we don't grep for '.so$' in order to keep files like
     # loibc.so.6
-    res = proc.run_cmd(f"lsof -Fn -p {pid}" + "| grep '^n' | cut -c2- | cut -d' ' -f1 | grep '.so'", shell=True)
+    res = proc.run_cmd(f"lsof -Fn -p {pid} | grep '^n' | cut -c2- | cut -d' ' -f1 | grep '{ext}'", shell=True)
 
     return res.splitlines()
