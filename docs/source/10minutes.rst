@@ -1,4 +1,4 @@
-10 minutes to PostBOUND
+10 Minutes to PostBOUND
 =======================
 
 Inspired by the `10 minutes to Pandas <https://pandas.pydata.org/docs/user_guide/10min.html>`__ tutorial, this is a quick
@@ -67,7 +67,7 @@ See the :ref:`10min-db-connection` for how this actually works under the hood.
 
 .. _10min-db-connection:
 
-Database connection
+Database Connection
 -------------------
 
 A key philosophy of PostBOUND is to always execute queries on real database systems instead of research prototypes or
@@ -97,7 +97,7 @@ Here, the ``config_file`` parameter points to a file that contains the connectio
     hinting capabilities and additional extension points for optimizer research.
 
 
-Workload handling
+Workload Handling
 -----------------
 
 A :class:`Workload <postbound.experiments.Workload>` is a collection of queries that can be used to benchmark the
@@ -108,7 +108,7 @@ obtain a test set.
 
 Following the *batteries included* philosophy, PostBOUND already ships some of the commonly used workloads in query
 optimization.
-These can be accessed from the :mod:`postbound.workloads` module.
+These can be accessed from the :mod:`workloads <postbound.experiments.workloads>` module.
 Specifically, the Join Order Benchmark (JOB), the Stats Benchmark and the Stack Benchmark are available out-of-the-box:
 
 .. ipython:: python

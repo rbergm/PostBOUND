@@ -31,8 +31,9 @@ show_help() {
   echo -e "\n--skip-doc"
   echo -e "\tDon't build the documentation."
   echo -e "\n--skip-pull"
-  echo -e "\tDon't pull the latest version of the repository before building. Notice that a pull will not update this script."
-  echo -e "\tIf there should be any issues with the setup script, please pull the latest version manually and try again."
+  echo -e "\tDon't pull the latest version of the repository before building. Notice that a pull will not update this script"
+  echo -e "\twhile it is running. If there should be any issues with the setup script, please pull the latest version "
+  echo -e "\tmanually and try again."
   echo -e "\n--help"
   echo -e "\tShow this help message."
   exit $RET
