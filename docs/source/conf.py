@@ -14,8 +14,8 @@ sys.path.insert(0, os.path.abspath("../.."))
 import postbound as pb
 
 project = "PostBOUND"
-copyright = "2025, Database Group @ TU Dresden"
-author = "Database Group @ TU Dresden"
+copyright = "2025, Dresden Database Research Group"
+author = "Dresden Database Research Group"
 release = pb.__version__
 
 # -- General configuration ---------------------------------------------------
@@ -35,8 +35,18 @@ exclude_patterns = []
 # -- Options for HTML output -------------------------------------------------
 # https://www.sphinx-doc.org/en/master/usage/configuration.html#options-for-html-output
 
-html_favicon = "favicon.ico"
+html_favicon = "_static/favicon.ico"
+html_logo = "../figures/postbound-logo.svg"
 html_theme = "sphinx_book_theme"
+html_static_path = ["_static"]
+html_css_files = ["custom.css"]
+
+html_theme_options = {
+    "logo": {
+        "text": f"PostBOUND {pb.__version__}",
+        "height": "150px",
+    }
+}
 
 # -- Options for API documentation -------------------------------------------------
 
