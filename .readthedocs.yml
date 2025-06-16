@@ -11,13 +11,18 @@ build:
       python: "3.13"
    apt_packages:
       - build-essential
-      - bison
       - flex
+      - bison
       - curl
       - pkg-config
-      - libicu-dev
+      - llvm
+      - clang
       - libreadline-dev
       - libssl-dev
+      - libicu-dev
+      - liblz4-dev
+      - libossp-uuid-dev
+      - python3-dev
       - git
       - unzip
       - zstd

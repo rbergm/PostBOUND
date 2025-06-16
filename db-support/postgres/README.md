@@ -30,7 +30,7 @@ On Ubuntu-based systems, the requirements can be installed like so:
 
 ```sh
 sudo apt install -y \
-    build-essential \
-    bison flex curl pkg-config libicu-dev libreadline-dev libssl-dev \
+    build-essential flex bison curl pkg-config llvm clang \
+    libreadline-dev libssl-dev libicu-dev liblz4-dev libossp-uuid-dev python3-dev \
     git unzip zstd
 ```
