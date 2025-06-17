@@ -1,6 +1,6 @@
 build==1.2.1
 graphviz==0.20.3
-ipython==9.3.0
+ipython==8.37.0
 levenshtein==0.27.1
 matplotlib==3.10.1
 mysql-connector-python==9.0.0
@@ -11,7 +11,7 @@ pandas==2.2.3
 pglast==7.2
 psycopg[binary]==3.2.9
 setuptools==59.6.0
-sphinx==8.2.3
+sphinx==8.0.2
 sphinx-book-theme==1.1.4
 tomli==2.0.1
 wheel==0.43.0
