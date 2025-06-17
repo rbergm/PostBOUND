@@ -134,7 +134,6 @@ pip install --force-reinstall --no-deps "$LATEST_WHEEL$EXTRAS"  # this always fo
 if [ "$BUILD_DOC" == "true" ] ; then
   echo ".. Building documentation"
   cd $WD/docs
-  pip install -r requirements.txt
   sphinx-apidoc --force \
                 --ext-autodoc \
                 --maxdepth 4 \
