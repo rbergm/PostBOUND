@@ -1,13 +1,13 @@
 """Utilities to optimize and execute queries and workloads in a reproducible and transparent manner."""
 from __future__ import annotations
 
-import json
 import functools
+import json
 import math
 import time
 import warnings
-from dataclasses import dataclass
 from collections.abc import Callable, Iterable
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal, Optional
 
@@ -15,11 +15,11 @@ import natsort
 import numpy as np
 import pandas as pd
 
-from . import workloads
 from .. import db, qal, util
 from .._pipelines import OptimizationPipeline
-from ..optimizer import validation
 from ..db import postgres
+from ..optimizer import validation
+from . import workloads
 
 COL_LABEL = "label"
 COL_QUERY = "query"
@@ -96,6 +96,10 @@ class QueryPreparationService:
         For database systems that support prewarming, this inflates the buffer pool with pages from the prepared query.
     preparatory_statements : Optional[list[str]], optional
         Statements that are executed as-is on the database connection before running the query, by default *None*
+
+    See Also
+    --------
+    db.PrewarmingSupport : Technical details on how prewarming is implemented in PostBOUND
     """
 
     def __init__(self, *, explain: bool = False, count_star: bool = False, analyze: bool = False, prewarm: bool = False,

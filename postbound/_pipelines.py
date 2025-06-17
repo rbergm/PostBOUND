@@ -9,17 +9,21 @@ from __future__ import annotations
 import abc
 from typing import Optional, Protocol
 
-from .optimizer import validation
-from .optimizer.validation import OptimizationPreCheck
-from .optimizer._hints import PhysicalOperatorAssignment, PlanParameterization
-from .db import Database, DatabasePool
-from ._stages import (
-    CompleteOptimizationAlgorithm,
-    CardinalityEstimator, CostModel, PlanEnumerator,
-    JoinOrderOptimization, PhysicalOperatorSelection, ParameterGeneration,
-    IncrementalOptimizationStep
-)
 from ._qep import QueryPlan
+from ._stages import (
+    CardinalityEstimator,
+    CompleteOptimizationAlgorithm,
+    CostModel,
+    IncrementalOptimizationStep,
+    JoinOrderOptimization,
+    ParameterGeneration,
+    PhysicalOperatorSelection,
+    PlanEnumerator,
+)
+from .db import Database, DatabasePool
+from .optimizer import validation
+from .optimizer._hints import PhysicalOperatorAssignment, PlanParameterization
+from .optimizer.validation import OptimizationPreCheck
 from .qal import SqlQuery
 from .util import StateError
 
@@ -283,8 +287,7 @@ class TextBookOptimizationPipeline(OptimizationPipeline):
     quantifies how expensive specific access paths for the intermediates are, and an enumerator that generates the
     intermediates in the first place.
 
-    To configure the pipeline, specific strategies for each of the three components have to be assigned. Notice that it is
-    currently not possible to leave any component empty.
+    To configure the pipeline, specific strategies for each of the three components have to be assigned.
 
     Parameters
     ----------
@@ -294,8 +297,14 @@ class TextBookOptimizationPipeline(OptimizationPipeline):
 
     def __init__(self, target_db: Database) -> None:
         from .db.postgres import PostgresInterface
-        from .optimizer.strategies.dynprog import DynamicProgrammingEnumerator, PostgresDynProg
-        from .optimizer.strategies.native import NativeCardinalityEstimator, NativeCostModel
+        from .optimizer.strategies.dynprog import (
+            DynamicProgrammingEnumerator,
+            PostgresDynProg,
+        )
+        from .optimizer.strategies.native import (
+            NativeCardinalityEstimator,
+            NativeCostModel,
+        )
 
         self._target_db = target_db
         self._card_est: CardinalityEstimator = NativeCardinalityEstimator()
