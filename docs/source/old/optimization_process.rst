@@ -5,7 +5,7 @@ This chapter highlights the different steps that need to be executed in order to
 PostBOUND. It tries supply a mental model of the different steps to aid a tailored search for errors in case something goes
 wrong. The entire optimization process is summarized in the below figure:
 
-.. figure:: ../figures/postbound-workflow.svg
+.. figure:: ../../figures/postbound-workflow.svg
 
     Query optimization process in PostBOUND.
 

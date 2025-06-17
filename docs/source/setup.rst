@@ -106,6 +106,7 @@ After your server is setup and running, you can populate it with some well-known
 PostBOUND provides simple setup scripts for these out-of-the-box:
 
 .. code-block:: bash
+    
     ./workload-job-setup.sh
 
 These scripts assume that your Postgres server is running and you can simply use *psql* to connect to it.
@@ -116,8 +117,10 @@ One last question is how to connect to the database server from within PostBOUND
 Internally, PostBOUND uses the `psycopg <https://www.psycopg.org/>`__ library to connect to Postgres.
 You can use the ``postgres-psycopg-setup.sh`` script to create a connection file with the necessary parameters to connect
 to the Postgres.
+See the documentation of :func:`postgres.connect() <postbound.db.postgres.connect>` for more details on the config file
+and alternative ways to establish a connection.
 
-Now, you should be able to connect to the Postgres server like so:
+Now, you should be able to connect to the Postgres server using the following code:
 
 .. ipython:: python
 
@@ -138,3 +141,83 @@ Putting things together, you can create an entirely new Postgres server like so:
 
 Docker Installation
 -------------------
+
+The Docker-based installation essentially automates the manual installation process described above.
+The resulting Docker container contains a virtual environment-based installation of PostBOUND and a Postgres (or pg_lab)
+server completely configured and ready to use.
+Optionally, you can also obtain an optimized Postgres server configuration and setup different benchmarks.
+
+.. note::
+
+    Right now, the Docker setup creates a tailored image for PostBOUND and Postgres.
+    Sadly, this prevents us from using volumes to persist the Postgres data or to make the complete PostBOUND framework
+    available on the host.
+    This situation is not ideal and we will probably use a different approach in the (near) future.
+    But for now, this is the best that we have.
+
+To create the Docker image, simply run ``docker build`` in the main PostBOUND directory.
+The build process will take a while, since it has to download and compile Postgres from source.
+You can customize the build process with the following ``--build-arg`` options:
+
++------------------------+-------------------------------+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+---------------+
+| Argument               | Allowed values                | Description                                                                                                                                                                                                                                                            | Default       |
++========================+===============================+========================================================================================================================================================================================================================================================================+===============+
+| ``TIMEZONE``           | Any valid timezone identifier | Timezone of the Docker container (and hence the Postgres server). It is probably best to just use the value of ``cat /etc/timezone``.                                                                                                                                  | ``UTC``       |
++------------------------+-------------------------------+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+---------------+
+| ``USERNAME``           | Any valid UNIX username       | The username within the Docker container. This will also be the Postgres user and password.                                                                                                                                                                            | ``postbound`` |
++------------------------+-------------------------------+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+---------------+
+| ``SETUP_IMDB``         | *true* or *false*             | Whether an `IMDB <https://doi.org/10.14778/2850583.2850594>`__ instance should be created as part of the Postgres setup. PostBOUND can connect to the database using the ``.psycopg_connection_job`` config file.                                                      | *false*       |
++------------------------+-------------------------------+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+---------------+
+| ``SETUP_STATS``        | *true* or *false*             | Whether a `Stats <https://doi.org/10.14778/3503585.3503586>`__ instance should be created as part of the Postgres setup. PostBOUND can connect to the database using the ``.psycopg_connection_stats`` config file.                                                    | *false*       |
++------------------------+-------------------------------+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+---------------+
+| ``SETUP_STACK``        | *true* or *false*             | Whether a `Stack <https://doi.org/10.1145/3448016.3452838>`__ instance should be created as part of the Postgres setup. PostBOUND can connect to the database using the ``.psycopg_connection_stack`` config file.                                                     | *false*       |
++------------------------+-------------------------------+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+---------------+
+| ``OPTIMIZE_PG_CONFIG`` | *true* or *false*             | Whether the Postgres configuration parameters should be automatically set based on your hardware platform. Rules are based on `PGTune <https://pgtune.leopard.in.ua/>`__ by `le0pard <https://github.com/le0pard>`__. See :ref:`pg-server-config` for more details.    | *false*       |
++------------------------+-------------------------------+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+---------------+
+| ``PG_DISK_TYPE``.      | *SSD* or *HDD*                | In case the Postgres server is automatically configured (see ``OPTIMIZE_PG_CONFIG``) this indicates the kind of storage for the actual database. In turn, this influences the relative cost of sequential access and index-based access for the query optimizer.       | *SSD*         |
++------------------------+-------------------------------+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+---------------+
+| ``PG_VER``             | 16, 17, ...                   | The Postgres version to use. Notice that pg_lab supports fewer versions. This value is passed to the ``postgres-setup.sh`` script of the Postgres tooling (either under ``db-support`` or from pg_lab), which provides the most up to date list of supported versions. | *17*          |
++------------------------+-------------------------------+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+---------------+
+| ``USE_PGLAB``          | *true* or *false*             | Whether to initialize a `pg_lab <https://github.com/rbergm/pg_lab>`__ server instead of a normal Postgres server. pg_lab provides advanced hinting capabilities and offers additional extension points for the query optimizer.                                        | *false*       |
++------------------------+-------------------------------+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+---------------+
+
+The Docker container makes port 5432 available to bind on the system.
+This enables you to connect to the Postgres server from outside.
+Likewise, a volume is created at ``/postbound/public`` to easily copy experiment scripts into the container and to export
+results back out.
+The PostBOUND installation itself is located at ``/postbound``.
+If a vanilla Postgres server is used, it is installed at ``/postbound/db-support/postgres/postgres-server``.
+pg_lab servers are installed at ``/pg_lab``.
+
+Once you log in to the container, the PostBOUND virtual environment will be activated automatically.
+Likewise, all Postgres binaries are available on the *PATH*.
+
+Putting things together, you can create a Docker container with PostBOUND and Postgres like so:
+
+.. code-block:: bash
+
+    docker build -t postbound \
+        --build-arg TIMEZONE=$(cat /etc/timezone) \
+        --build-arg SETUP_IMDB=true \
+        --build-arg SETUP_STATS=true \
+        --build-arg OPTIMIZE_PG_CONFIG=true \
+        --build-arg PG_DISK_TYPE=SSD \
+        --build-arg PG_VER=17 \
+        --build-arg USE_PGLAB=true \
+        .
+    
+    docker run -dt \
+        --shm-size 4G \
+        --name postbound \
+        --volume $PWD/postbound-docker:/postbound/public \
+        --publish 5432:5432 \
+        postbound
+
+    docker exec -it postbound /bin/bash
+
+.. tip::
+
+    Building the Docker image will take a while.
+    This is expected and nothing to worry about.
+    The build process involves downloading and compiling Postgres from source, as well as optionally setting up the
+    databases for JOB, Stats and the like (which also includes downloading and importing them).

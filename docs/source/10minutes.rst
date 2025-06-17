@@ -141,3 +141,9 @@ The :class:`QueryPreparationService <postbound.experiments.executor.QueryPrepara
 execution of the queries.
 For example, you can ensure that all queries are executed as *EXPLAIN ANALYZE* to capture their query plans, or you can
 prewarm the shared buffer before execution to ensure that timing measurements are not affected by I/O activity.
+
+.. hint::
+
+    Ready to get started?
+    Head over to the :doc:`setup` guide to learn how to install PostBOUND.
+    If you want to learn more about the different parts of PostBOUND, take a look at the :doc:`core/index` section.

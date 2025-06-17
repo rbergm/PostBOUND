@@ -36,8 +36,8 @@ docker build -t postbound \
     --build-arg USE_PGLAB=true \
     --build-arg OPTIMIZE_PG_CONFIG=true \
     --build-arg SETUP_STATS=true \
-    --build-arg SETUP_JOB=true \
-    --build-arg SETUP_STACK=true \
+    --build-arg SETUP_JOB=false \
+    --build-arg SETUP_STACK=false \
     .
 ```
 
@@ -226,9 +226,9 @@ A detailed documentation of PostBOUND is available [here](https://postbound.read
 |----------|----------------|-------------|---------|
 | `TIMEZONE` | Any valid timezone identifier | Timezone of the Docker container (and hence the Postgres server). It is probably best to just use the value of `cat /etc/timezone` | `UTC` |
 | `USERNAME` | Any valid UNIX username. | The username within the Docker container. This will also be the Postgres user and password. | `postbound` |
-| `SETUP_IMDB` | `true` or `false` | Whether an [IMDB](https://doi.org/10.14778/2850583.2850594) instance should be created as part of the Postgres setup. | `false` |
-| `SETUP_STATS` | `true` or `false` | Whether a [Stats](https://doi.org/10.14778/3503585.3503586) instance should be created as part of the Postgres setup. | `false` |
-| `SETUP_STACK` | `true` or `false`| Whether a [Stack](https://doi.org/10.1145/3448016.3452838) instance should be created as part of the Postgres setup. | `false` |
+| `SETUP_IMDB` | `true` or `false` | Whether an [IMDB](https://doi.org/10.14778/2850583.2850594) instance should be created as part of the Postgres setup. PostBOUND can connect to the database using the `.psycopg_connection_job` config file. | `false` |
+| `SETUP_STATS` | `true` or `false` | Whether a [Stats](https://doi.org/10.14778/3503585.3503586) instance should be created as part of the Postgres setup. PostBOUND can connect to the database using the `.psycopg_connection_stats` config file. | `false` |
+| `SETUP_STACK` | `true` or `false`| Whether a [Stack](https://doi.org/10.1145/3448016.3452838) instance should be created as part of the Postgres setup. PostBOUND can connect to the database using the `.psycopg_connection_stack` config file. | `false` |
 | `OPTIMIZE_PG_CONFIG` |  `true` or `false` | Whether the Postgres configuration parameters should be automatically set based on your hardware platform. Rules are based on [PGTune](https://pgtune.leopard.in.ua/) by [le0pard](https://github.com/le0pard). | `false` |
 | `PG_DISK_TYPE` | `SSD` or `HDD` | In case the Postgres server is automatically configured (see `OPTIMIZE_PG_CONFIG`) this indicates the kind of storage for the actual database. In turn, this influences the relative cost of sequential access and index-based access for the query optimizer. | `SSD` |
 | `PG_VER` | 16, 17, ... | The Postgres version to use. Notice that pg_lab supports fewer versions. This value is passed to the `postgres-setup.sh` script of the Postgres tooling (either under `db-support` or from pg_lab), which provides the most up to date list of supported versions. | 17 |
@@ -243,6 +243,7 @@ mountpoint can be used to easily get experiment scripts into the container and t
 > additional extension points for the query optimizer (e.g. hooks for the different cost functions).
 > If pg_lab is not used, the Postgres server will setup pg_hint_plan instead.
 
+---
 
 ## 📑 Repo Structure
 
