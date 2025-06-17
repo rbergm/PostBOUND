@@ -847,6 +847,9 @@ class DatabaseSchema(abc.ABC):
         all_columns: set[ColumnReference] = set()
 
         for table in self.tables():
+            if self.is_view(table):
+                continue
+
             cols = self.columns(table)
             dtypes = {col: self.datatype(col) for col in cols}
             pkey = self.primary_key_column(table)
