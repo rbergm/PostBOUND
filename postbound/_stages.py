@@ -135,6 +135,12 @@ class CardinalityEstimator(abc.ABC):
         """
         return validation.EmptyPreCheck()
 
+    def __repr__(self) -> str:
+        return str(self)
+
+    def __str__(self) -> str:
+        return type(self).__name__
+
 
 class CostModel(abc.ABC):
     """The cost model estimates how expensive computing a certain query plan is."""
@@ -216,6 +222,12 @@ class CostModel(abc.ABC):
         """
         return validation.EmptyPreCheck()
 
+    def __repr__(self) -> str:
+        return str(self)
+
+    def __str__(self) -> str:
+        return type(self).__name__
+
 
 class PlanEnumerator(abc.ABC):
     """The plan enumerator traverses the space of different candidate plans and ultimately selects the optimal one."""
@@ -274,6 +286,12 @@ class PlanEnumerator(abc.ABC):
             The check instance. Can be an empty check if no specific requirements exist.
         """
         return validation.EmptyPreCheck()
+
+    def __repr__(self) -> str:
+        return str(self)
+
+    def __str__(self) -> str:
+        return type(self).__name__
 
 
 class JoinOrderOptimization(abc.ABC):

@@ -424,6 +424,14 @@ class TextBookOptimizationPipeline(OptimizationPipeline):
             "cardinality_estimator": self._card_est.describe() if self._card_est is not None else None
         }
 
+    def __repr__(self) -> str:
+        return str(self)
+
+    def __str__(self) -> str:
+        components = [self._plan_enumerator, self._cost_model, self._card_est]
+        opt_chain = " + ".join(str(comp) for comp in components)
+        return f"TextBookOptimization [{opt_chain}]"
+
 
 class MultiStageOptimizationPipeline(OptimizationPipeline):
     """This optimization pipeline performs query optimization in separate phases.
