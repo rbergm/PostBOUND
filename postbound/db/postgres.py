@@ -1074,6 +1074,12 @@ class PostgresInterface(Database):
         if not extension_is_active:
             raise StateError(f"Extension '{extension_name}' is not active in database '{self.database_name()}'")
 
+    def __eq__(self, other: object) -> bool:
+        return isinstance(other, type(self)) and self.connect_string == other.connect_string
+
+    def __hash__(self) -> int:
+        return hash(self.connect_string)
+
 
 class PostgresSchemaInterface(DatabaseSchema):
     """Database schema implementation for Postgres systems.
@@ -1271,6 +1277,12 @@ class PostgresSchemaInterface(DatabaseSchema):
         result_set = self._db.cursor().fetchall()
         index_map = dict(result_set)
         return index_map
+
+    def __eq__(self, other: object) -> None:
+        return isinstance(other, type(self)) and self._db == other._db
+
+    def __hash__(self):
+        return hash(self._db)
 
 
 # Postgres stores its array datatypes in a more general array-type structure (anyarray).
