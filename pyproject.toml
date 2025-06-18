@@ -24,6 +24,7 @@ dependencies = [
     "pglast==7.2",
     "psycopg[binary]==3.2.9",
     "tomli==2.0.1",
+    "tqdm==4.66.5",
 ]
 
 [project.optional-dependencies]
