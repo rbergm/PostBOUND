@@ -3,8 +3,7 @@ from __future__ import annotations
 import dataclasses
 from typing import Optional
 
-from postbound.optimizer import _jointree, joingraph
-from .. import db, qal
+from .. import db, opt, qal
 
 
 @dataclasses.dataclass(frozen=True)
@@ -13,9 +12,9 @@ class ManualJoinOrderSelection:
     join_order: tuple[qal.TableReference]
     database: db.Database
 
-    def join_tree(self) -> _jointree.LogicalJoinTree:
+    def join_tree(self) -> opt.LogicalJoinTree:
         base_table, *joined_tables = self.join_order
-        join_tree: _jointree.JoinTree[None] = _jointree.JoinTree.scan(base_table)
+        join_tree: opt.JoinTree[None] = opt.JoinTree.scan(base_table)
         for joined_table in joined_tables:
             join_tree = join_tree.join_with(joined_table)
         return join_tree
@@ -30,9 +29,9 @@ class InteractiveJoinOrderOptimizer:
         self._db = database if database is not None else db.DatabasePool.get_instance().current_database()
 
     def start(self, *, use_predicate_equivalence_classes: bool = False) -> ManualJoinOrderSelection:
-        join_graph = joingraph.JoinGraph(self._query, self._db.schema(),
+        join_graph = opt.JoinGraph(self._query, self._db.schema(),
                                          include_predicate_equivalence_classes=use_predicate_equivalence_classes)
-        join_graph_stack: list[joingraph.JoinGraph] = []
+        join_graph_stack: list[opt.JoinGraph] = []
         join_order: list[qal.TableReference] = []
         n_tables = len(self._query.tables())
 

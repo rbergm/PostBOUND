@@ -8,12 +8,12 @@ from typing import Literal, Optional
 import graphviz as gv
 import networkx as nx
 
-from . import trees
 from .. import db, util
-from ..qal import relalg, transform, SqlQuery
-from ..optimizer import joingraph, JoinTree, LogicalJoinTree
 from .._core import TableReference
 from .._qep import QueryPlan
+from ..optimizer import JoinGraph, JoinTree, LogicalJoinTree
+from ..qal import SqlQuery, relalg, transform
+from . import trees
 
 
 def _join_tree_labels(node: JoinTree) -> tuple[str, dict]:
@@ -84,7 +84,7 @@ def _plot_join_graph_from_query(query: SqlQuery, table_annotations: Optional[Cal
     return gv_graph
 
 
-def _plot_join_graph_directly(join_graph: joingraph.JoinGraph,
+def _plot_join_graph_directly(join_graph: JoinGraph,
                               table_annotations: Optional[Callable[[TableReference], str]] = None) -> gv.Digraph:
     gv_graph = gv.Digraph()
     for table in join_graph:
@@ -102,12 +102,12 @@ def _plot_join_graph_directly(join_graph: joingraph.JoinGraph,
     return gv_graph
 
 
-def plot_join_graph(query_or_join_graph: SqlQuery | joingraph.JoinGraph,
+def plot_join_graph(query_or_join_graph: SqlQuery | JoinGraph,
                     table_annotations: Optional[Callable[[TableReference], str]] = None, *,
                     include_pk_fk_joins: bool = False, out_path: str = "", out_format: str = "svg") -> gv.Graph | gv.Digraph:
     if isinstance(query_or_join_graph, SqlQuery):
         graph = _plot_join_graph_from_query(query_or_join_graph, table_annotations, include_pk_fk_joins)
-    elif isinstance(query_or_join_graph, joingraph.JoinGraph):
+    elif isinstance(query_or_join_graph, JoinGraph):
         graph = _plot_join_graph_directly(query_or_join_graph, table_annotations)
     else:
         raise TypeError("Argument must be either SqlQuery or JoinGraph, not" + str(type(query_or_join_graph)))

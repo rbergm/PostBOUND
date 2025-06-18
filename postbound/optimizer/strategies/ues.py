@@ -34,16 +34,20 @@ from typing import Generic, Optional
 
 import numpy as np
 
-
-from .. import joingraph, validation
-from .._jointree import JoinTree, LogicalJoinTree
-from .._hints import PhysicalOperatorAssignment
-from ..policies import cardinalities as cardpol, jointree as treepol
-from ..._core import JoinOperator, Cardinality
-from ..._stages import JoinOrderOptimization, PhysicalOperatorSelection, JoinOrderOptimizationError
 from ... import db, qal, util
-from ...qal import TableReference, ColumnReference
-
+from ..._core import Cardinality, JoinOperator
+from ..._stages import (
+    JoinOrderOptimization,
+    JoinOrderOptimizationError,
+    PhysicalOperatorSelection,
+)
+from ...qal import ColumnReference, TableReference
+from .. import validation
+from .._hints import PhysicalOperatorAssignment
+from .._joingraph import JoinGraph, JoinPath
+from .._jointree import JoinTree, LogicalJoinTree
+from ..policies import cardinalities as cardpol
+from ..policies import jointree as treepol
 
 ColumnType = typing.TypeVar("ColumnType")
 """The type of the columns for which statistics are generated."""
@@ -338,7 +342,7 @@ class UESJoinBoundEstimator(cardpol.JoinCardinalityEstimator):
         """
         self.stats_container = stats_container
 
-    def estimate_for(self, join_edge: qal.AbstractPredicate, join_graph: joingraph.JoinGraph) -> Cardinality:
+    def estimate_for(self, join_edge: qal.AbstractPredicate, join_graph: JoinGraph) -> Cardinality:
         current_min_bound = np.inf
 
         for base_predicate in join_edge.base_predicates():
@@ -458,7 +462,7 @@ class UESSubqueryGenerationPolicy(treepol.BranchGenerationPolicy):
         """
         self.stats_container = stats_container
 
-    def generate_subquery_for(self, join: qal.AbstractPredicate, join_graph: joingraph.JoinGraph) -> bool:
+    def generate_subquery_for(self, join: qal.AbstractPredicate, join_graph: JoinGraph) -> bool:
         if join_graph.count_consumed_tables() < 2:
             return False
 
@@ -549,7 +553,7 @@ class UESJoinOrderOptimizer(JoinOrderOptimization):
         if "setup_for_stats_container" in dir(self.subquery_policy):
             self.subquery_policy.setup_for_stats_container(self.stats_container)
 
-        join_graph = joingraph.JoinGraph(query, self.database.schema())
+        join_graph = JoinGraph(query, self.database.schema())
 
         if len(query.tables()) == 2:
             final_join_tree = self._binary_join_optimization(query, join_graph)
@@ -595,14 +599,14 @@ class UESJoinOrderOptimizer(JoinOrderOptimization):
         specified_checks.append(UESOptimizationPreCheck)
         return validation.merge_checks(specified_checks)
 
-    def _default_ues_optimizer(self, query: qal.SqlQuery, join_graph: joingraph.JoinGraph) -> LogicalJoinTree:
+    def _default_ues_optimizer(self, query: qal.SqlQuery, join_graph: JoinGraph) -> LogicalJoinTree:
         """Implementation of our take on the UES algorithm for queries with n:m joins.
 
         Parameters
         ----------
         query : qal.SqlQuery
             The query to optimize.
-        join_graph : joingraph.JoinGraph
+        join_graph : JoinGraph
             The join graph of the input query. This structure is mutated during the algorithm.
 
         Returns
@@ -653,9 +657,9 @@ class UESJoinOrderOptimizer(JoinOrderOptimization):
                 self._log_optimization_progress("Initial table selection", lowest_bound_table, pk_joins)
                 continue
 
-            selected_candidate: joingraph.JoinPath | None = None
+            selected_candidate: JoinPath | None = None
             lowest_bound = np.inf
-            bounds_log: dict[joingraph.JoinPath, float] = {}
+            bounds_log: dict[JoinPath, float] = {}
             for candidate_join in join_graph.available_n_m_join_paths():
                 candidate_bound = self.join_estimation.estimate_for(candidate_join.join_condition, join_graph)
                 bounds_log[candidate_join] = candidate_bound
@@ -696,7 +700,7 @@ class UESJoinOrderOptimizer(JoinOrderOptimization):
             raise AssertionError("Join graph still has free tables remaining!")
         return join_tree
 
-    def _binary_join_optimization(self, query: qal.ImplicitSqlQuery, join_graph: joingraph.JoinGraph) -> LogicalJoinTree:
+    def _binary_join_optimization(self, query: qal.ImplicitSqlQuery, join_graph: JoinGraph) -> LogicalJoinTree:
         """Specialized optimization algorithm for queries with just a single join.
 
         The algorithm can still be meaningful to determine the inner and outer relation for the only join that has to be
@@ -731,7 +735,7 @@ class UESJoinOrderOptimizer(JoinOrderOptimization):
         join_tree = join_tree.join_with(small_table, annotation=join_bound, partner_annotation=small_card)
         return join_tree
 
-    def _star_query_optimizer(self, query: qal.ImplicitSqlQuery, join_graph: joingraph.JoinGraph) -> LogicalJoinTree:
+    def _star_query_optimizer(self, query: qal.ImplicitSqlQuery, join_graph: JoinGraph) -> LogicalJoinTree:
         """Join ordering algorithm for star queries (i.e. queries which only consist of primary key/foreign key joins).
 
         The algorithm is inspired by UES and always tries to insert the table next that guarantees the smallest upper bound.
@@ -740,7 +744,7 @@ class UESJoinOrderOptimizer(JoinOrderOptimization):
         ----------
         query : qal.ImplicitSqlQuery
             The query to optimize
-        join_graph : joingraph.JoinGraph
+        join_graph : JoinGraph
             The join graph of the input query. This structure is mutated during the algorithm.
 
         Returns
@@ -805,8 +809,8 @@ class UESJoinOrderOptimizer(JoinOrderOptimization):
         """
         return self.stats_container.base_table_estimates[table]
 
-    def _apply_pk_fk_join(self, query: qal.SqlQuery, pk_fk_join: joingraph.JoinPath, *,
-                          join_bound: int, join_graph: joingraph.JoinGraph,
+    def _apply_pk_fk_join(self, query: qal.SqlQuery, pk_fk_join: JoinPath, *,
+                          join_bound: int, join_graph: JoinGraph,
                           current_join_tree: LogicalJoinTree) -> LogicalJoinTree:
         """Includes a specific pk/fk join into a join tree, taking care of all necessary updates.
 
@@ -814,11 +818,11 @@ class UESJoinOrderOptimizer(JoinOrderOptimization):
         ----------
         query : qal.SqlQuery
             The query that is being optimized
-        pk_fk_join : joingraph.JoinPath
+        pk_fk_join : JoinPath
             The actual join that should be performed
         join_bound : int
             The calculated upper bound of the join
-        join_graph : joingraph.JoinGraph
+        join_graph : JoinGraph
             The join graph of the query. This structure is mutated as part of the update
         current_join_tree : LogicalJoinTree
             The join order that has been determined so far
@@ -836,8 +840,8 @@ class UESJoinOrderOptimizer(JoinOrderOptimization):
         self.stats_container.upper_bounds[updated_join_tree] = join_bound
         return updated_join_tree
 
-    def _insert_pk_joins(self, query: qal.SqlQuery, pk_joins: Iterable[joingraph.JoinPath],
-                         join_tree: LogicalJoinTree, join_graph: joingraph.JoinGraph) -> LogicalJoinTree:
+    def _insert_pk_joins(self, query: qal.SqlQuery, pk_joins: Iterable[JoinPath],
+                         join_tree: LogicalJoinTree, join_graph: JoinGraph) -> LogicalJoinTree:
         """Generalization of `_apply_pk_fk_join` to multiple join paths.
 
         Parameters
@@ -898,7 +902,7 @@ class UESJoinOrderOptimizer(JoinOrderOptimization):
             print(info)
 
     def _log_optimization_progress(self, phase: str, candidate_table: TableReference,
-                                   pk_joins: Iterable[joingraph.JoinPath], *,
+                                   pk_joins: Iterable[JoinPath], *,
                                    join_condition: qal.AbstractPredicate | None = None,
                                    subquery_join: bool | None = None) -> None:
         """Displays the current optimizer state.
@@ -912,7 +916,7 @@ class UESJoinOrderOptimizer(JoinOrderOptimization):
             The phase of the UES algorithm, e.g. initial table selection of n:m join execution
         candidate_table : TableReference
             The table that is considered as the next join partner
-        pk_joins : Iterable[joingraph.JoinPath]
+        pk_joins : Iterable[JoinPath]
             Primary key joins that should be applied to the candidate table
         join_condition : qal.AbstractPredicate | None, optional
             The join condition that was used to find the candidate table. Can be ``None`` to omit this information, e.g. when

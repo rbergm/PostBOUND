@@ -32,13 +32,14 @@ stability. Since we are not ready for the 1.0 release yet, this does not matter 
 ---
 
 
-# ⏳ Version 0.15.5 _(planned)_
+# ⏳ Version 0.16.0 _(planned)_
 
 ### 🐣 New features
 - Introduced a new `SimpleJoin` as a streamlined representation of simple inner equi-join predicates.
 
 ### 💀 Breaking changes
 - Renamed `SimplifiedFilterView` to `SimpleFilter` for more conciseness (and to align with `SimpleJoin`)
+- Made `JoinGraph` and related objects available in the `optimizer` package
 
 ### 📰 Updates
 - Added a `simplify()` method to query predicates to provide all simplified counterparts of the joins and filters

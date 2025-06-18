@@ -16,43 +16,48 @@ plans and basic hinting support. All other modules need to be imported explicitl
 module and the `strategies` package.
 """
 
-from . import _jointree, joingraph
+from .._qep import (
+  PlanEstimates,
+  PlanMeasures,
+  PlanParams,
+  QueryPlan,
+  SortKey,
+  Subplan,
+)
 from ._hints import (
-  ScanOperator,
-  JoinOperator,
-  PhysicalOperator,
-  ScanOperatorAssignment,
-  JoinOperatorAssignment,
   DirectionalJoinOperatorAssignment,
-  read_operator_json,
+  HintType,
+  JoinOperator,
+  JoinOperatorAssignment,
+  PhysicalOperator,
   PhysicalOperatorAssignment,
   PlanParameterization,
-  operators_from_plan, read_operator_assignment_json, read_plan_params_json,
+  ScanOperator,
+  ScanOperatorAssignment,
+  operators_from_plan,
+  read_operator_assignment_json,
+  read_operator_json,
+  read_plan_params_json,
   update_plan,
-  HintType
+)
+from ._joingraph import (
+  IndexInfo,
+  JoinGraph,
+  JoinPath,
+  TableInfo,
 )
 from ._jointree import (
   JoinTree,
   LogicalJoinTree,
+  explode_query_plan,
   jointree_from_plan,
   parameters_from_plan,
   read_jointree_json,
-  to_query_plan,
   read_query_plan_json,
-  explode_query_plan
-)
-from .._qep import (
-  SortKey,
-  PlanParams,
-  PlanEstimates,
-  PlanMeasures,
-  Subplan,
-  QueryPlan,
+  to_query_plan,
 )
 
 __all__ = [
-  "joingraph",
-  "_jointree",
   "policies",
   "ScanOperator",
   "JoinOperator",
@@ -81,5 +86,9 @@ __all__ = [
   "PlanEstimates",
   "PlanMeasures",
   "Subplan",
-  "QueryPlan"
+  "QueryPlan",
+  "JoinGraph",
+  "JoinPath",
+  "IndexInfo",
+  "TableInfo",
 ]

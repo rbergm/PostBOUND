@@ -3,12 +3,12 @@ from __future__ import annotations
 
 import math
 import re
+from collections.abc import Iterable, Sequence
 from enum import Enum
 from numbers import Number
-from typing import Optional, TypeVar
+from typing import Optional, Protocol, TypeVar
 
 from .util.errors import StateError
-
 
 T = TypeVar("T")
 """Typed expressions use this generic type variable."""
@@ -977,3 +977,36 @@ class VirtualTableError(StateError):
     def __init__(self, table: TableReference) -> None:
         super().__init__("Table is virtual: " + str(table))
         self.table = table
+
+
+class DBCatalog(Protocol):
+    """A database catalog provides information about the database schema.
+
+    See Also
+    --------
+    `DatabaseSchema` : The default implementation of a database catalog (we only distinguish between schema and catalog for
+                       technical reasons to prevent circular imports).
+    """
+
+    def lookup_column(self, name: str | ColumnReference, candidates: Iterable[TableReference]) -> Optional[TableReference]:
+        """Provides the table that defines a specific column.
+
+        Returns
+        -------
+        Optional[TableReference]
+            The table that defines the column. If there are multiple tables that could define the column, an arbitrary one
+            is returned. If none of the candidates is the correct table, *None* is returned.
+        """
+        ...
+
+    def columns(self, table: str) -> Sequence[ColumnReference]:
+        """Provides the columns that belong to a specific table."""
+        ...
+
+    def is_primary_key(self, column: ColumnReference) -> bool:
+        """Checks whether a column is a primary key of its table."""
+        ...
+
+    def has_secondary_index(self, column: ColumnReference) -> bool:
+        """Checks whether a column has a secondary index."""
+        ...

@@ -139,7 +139,7 @@ import postbound as pb
 class RandomJoinOrderOptimizer(pb.JoinOrderOptimization):
     def optimize_join_order(self, query: pb.SqlQuery) -> pb.LogicalJoinTree:
         join_tree = pb.LogicalJoinTree()
-        join_graph = pb.opt.joingraph.JoinGraph(query)
+        join_graph = pb.opt.JoinGraph(query)
 
         while join_graph.contains_free_tables():
             candidate_tables = [
@@ -243,7 +243,6 @@ mountpoint can be used to easily get experiment scripts into the container and t
 > additional extension points for the query optimizer (e.g. hooks for the different cost functions).
 > If pg_lab is not used, the Postgres server will setup pg_hint_plan instead.
 
----
 
 ## 📑 Repo Structure
 
@@ -261,26 +260,3 @@ Almost all of the subdirectories contain further READMEs that explain their purp
 | `db-support`  | Contains utilities to setup instances of the respective database systems and contain system-specific scripts to import popular benchmarks for them |
 | `workloads`   | Contains the raw SQL queries of some popular benchmarks |
 | `tools`       | Provides different other utilities that are not directly concerned with specific database systems, but rather with common problems encoutered when benchmarking query optimizers |
-
-
-## 📑 Framework Structure
-
-The `postbound` directory contains the actual source code of the framework.
-On a high-level, the PostBOUND framework is structured as follows:
-
-![Overview of the major PostBOUND packages](docs/figures/postbound-package-overview.png)
-
-| Package       | Description |
-|---------------|-------------|
-| `optimizer`   | provides the different optimization strategies, interfaces and some pre-defined algorithms |
-| `qal`         | provides the query abstraction used throughout PostBOUND, as well as logic to parse and transform query instances |
-| `db`          | contains all parts of PostBOUND that concern database interaction. That includes retrieving data from different database systems, as well as generating optimized queries to execute on the database system |
-| `experiments` | provides tools to conveniently load benchmarks and to measure their execution time for different optimization settings |
-| `util`        | contains algorithms and types that do not belong to specific parts of PostBOUND and are more general in nature |
-| `vis`         | contains utilities to visualize different concepts in query optimization (join orders, join graphs, query execution plans, ...) |
-
-The actual optimization pipelines are defined in the `postbound` module at the package root.
-Depending on the specific use-case, different pipelines are available.
-
-> [!TIP]
-> The [Documentation](https://postbound.readthedocs.io/en/latest/) provides a more detailed overview of the different packages and their purpose.

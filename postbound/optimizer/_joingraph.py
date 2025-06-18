@@ -10,7 +10,8 @@ from typing import Literal, Optional
 import networkx as nx
 
 from .. import qal, util
-from ..qal import TableReference, ColumnReference, AbstractPredicate
+from .._core import DBCatalog
+from ..qal import AbstractPredicate, ColumnReference, TableReference
 
 
 @dataclass(frozen=True)
@@ -160,14 +161,14 @@ class IndexInfo:
         return IndexInfo(column, "none")
 
     @staticmethod
-    def generate_for(column: ColumnReference, db_schema: "DatabaseSchema") -> IndexInfo:  # type: ignore # noqa: F821
+    def generate_for(column: ColumnReference, db_schema: DBCatalog) -> IndexInfo:
         """Determines available indexes for a specific column.
 
         Parameters
         ----------
         column : ColumnReference
             The column. It has to be connected to a valid, non-virtual table reference
-        db_schema : db.DatabaseSchema
+        db_schema : DBCatalog
             The schema of the database to which the column belongs.
 
         Returns
@@ -368,7 +369,7 @@ class JoinGraph(Mapping[TableReference, TableInfo]):
     ----------
     query : qal.ImplicitSqlQuery
         The query for which the join graph should be generated
-    db_schema : Optional[db.DatabaseSchema], optional
+    db_schema : Optional[DBCatalog], optional
         The schema of the database on which the query should be executed. If this is ``None``, the database schema is inferred
         based on the `DatabasePool`.
     include_predicate_equivalence_classes : bool, optional
@@ -384,12 +385,13 @@ class JoinGraph(Mapping[TableReference, TableInfo]):
     """
 
     def __init__(self, query: qal.ImplicitSqlQuery,
-                 db_schema: Optional["DatabaseSchema"] = None, *,  # type: ignore # noqa: F821
+                 db_schema: Optional[DBCatalog] = None, *,
                  include_predicate_equivalence_classes: bool = False) -> None:
 
-        from .. import db  # local import to avoid circular dependencies
+        if db_schema is None:
+            from .. import db  # local import to avoid circular dependencies
+            db_schema = db.DatabasePool.get_instance().current_database().schema()
 
-        db_schema = db_schema if db_schema else db.DatabasePool.get_instance().current_database().schema()
         self.query = query
         self._db_schema = db_schema
         self._index_structures: dict[ColumnReference, IndexInfo] = {}

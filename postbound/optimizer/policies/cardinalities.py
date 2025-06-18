@@ -19,12 +19,13 @@ from typing import Literal, Optional
 
 import pandas as pd
 
-from .. import joingraph, validation
+from ... import db, qal, util
 from ..._core import Cardinality
 from ..._stages import CardinalityGenerator
-from ... import db, qal, util
-from ...qal import parser, TableReference
 from ...experiments import workloads
+from ...optimizer import JoinGraph
+from ...qal import TableReference, parser
+from .. import validation
 
 
 class NativeCardinalityHintGenerator(CardinalityGenerator):
@@ -536,14 +537,14 @@ class JoinCardinalityEstimator(abc.ABC):
         raise NotImplementedError
 
     @abc.abstractmethod
-    def estimate_for(self, join_edge: qal.AbstractPredicate, join_graph: joingraph.JoinGraph) -> Cardinality:
+    def estimate_for(self, join_edge: qal.AbstractPredicate, join_graph: JoinGraph) -> Cardinality:
         """Calculates the cardinality estimate for a specific join predicate, given the current state in the join graph.
 
         Parameters
         ----------
         join_edge : qal.AbstractPredicate
             The predicate that should be estimated.
-        join_graph : joingraph.JoinGraph
+        join_graph : JoinGraph
             A graph describing the currently joined relations as well as the join types (e.g. primary key/foreign key or n:m
             joins).
 

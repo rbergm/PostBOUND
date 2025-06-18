@@ -31,55 +31,69 @@ from __future__ import annotations
 import collections
 import json
 import warnings
-from collections.abc import Iterable, Sequence
-from typing import Literal, Optional, Protocol, overload
+from collections.abc import Iterable
+from typing import Literal, Optional, overload
 
 import pglast
 
-from ._qal import (
-    JoinType,
-    CompoundOperator, MathOperator, LogicalOperator, SqlOperator, SetOperator,
-    BaseProjection, OrderByExpression,
-    WithQuery, TableSource, DirectTableSource, JoinTableSource, SubqueryTableSource, FunctionTableSource,
-    ValuesList, ValuesTableSource, ValuesWithQuery,
-    SqlQuery, SetQuery, SelectStatement, BaseClause,
-    Select, Where, From, GroupBy, Having, OrderBy, Limit, CommonTableExpression, ImplicitFromClause, ExplicitFromClause,
-    Hint, Explain,
-    AbstractPredicate, BinaryPredicate, InPredicate, BetweenPredicate, CompoundPredicate, UnaryPredicate,
-    SqlExpression, StarExpression, StaticValueExpression, ColumnExpression, SubqueryExpression, CastExpression,
-    MathExpression, FunctionExpression, WindowExpression, CaseExpression, ArrayAccessExpression,
-    build_query
-)
-from .._core import TableReference, ColumnReference
 from .. import util
+from .._core import ColumnReference, DBCatalog, TableReference
+from ._qal import (
+    AbstractPredicate,
+    ArrayAccessExpression,
+    BaseClause,
+    BaseProjection,
+    BetweenPredicate,
+    BinaryPredicate,
+    CaseExpression,
+    CastExpression,
+    ColumnExpression,
+    CommonTableExpression,
+    CompoundOperator,
+    CompoundPredicate,
+    DirectTableSource,
+    Explain,
+    ExplicitFromClause,
+    From,
+    FunctionExpression,
+    FunctionTableSource,
+    GroupBy,
+    Having,
+    Hint,
+    ImplicitFromClause,
+    InPredicate,
+    JoinTableSource,
+    JoinType,
+    Limit,
+    LogicalOperator,
+    MathExpression,
+    MathOperator,
+    OrderBy,
+    OrderByExpression,
+    Select,
+    SelectStatement,
+    SetOperator,
+    SetQuery,
+    SqlExpression,
+    SqlOperator,
+    SqlQuery,
+    StarExpression,
+    StaticValueExpression,
+    SubqueryExpression,
+    SubqueryTableSource,
+    TableSource,
+    UnaryPredicate,
+    ValuesList,
+    ValuesTableSource,
+    ValuesWithQuery,
+    Where,
+    WindowExpression,
+    WithQuery,
+    build_query,
+)
 
 auto_bind_columns: bool = True
 """Indicates whether the parser should use the database catalog to obtain column bindings."""
-
-
-class DBCatalog(Protocol):
-    """A simplified model of a database catalog that is used to resolve column bindings.
-
-    See Also
-    --------
-    `DatabaseSchema` : The default implementation of a database catalog (we only distinguish between schema and catalog for
-                       technical reasons to prevent circular imports).
-    """
-
-    def lookup_column(self, name: str | ColumnReference, candidates: Iterable[TableReference]) -> Optional[TableReference]:
-        """Provides the table that defines a specific column.
-
-        Returns
-        -------
-        Optional[TableReference]
-            The table that defines the column. If there are multiple tables that could define the column, an arbitrary one
-            is returned. If none of the candidates is the correct table, *None* is returned.
-        """
-        ...
-
-    def columns(self, table: str) -> Sequence[ColumnReference]:
-        """Provides the columns that belong to a specific table."""
-        ...
 
 
 class SchemaCache:

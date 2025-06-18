@@ -12,7 +12,7 @@ import warnings
 from typing import Optional
 
 import postbound as pb
-from postbound.optimizer import joingraph, validation
+from postbound.optimizer import validation
 
 warnings.simplefilter("ignore")
 
@@ -36,7 +36,7 @@ class RandomJoinOrderOptimizer(pb.JoinOrderOptimization):
         # In our optimizer we must maintain two data structures:
         # The join graph stores which tables have already been joined and which joins are available next
         # The join tree stores the join order that we have constructed so far
-        join_graph = joingraph.JoinGraph(query)
+        join_graph = pb.opt.JoinGraph(query)
         join_tree = pb.opt.LogicalJoinTree.empty()
 
         # Our algorithm simply joins one table after another, until all tables have inserted into the join order
