@@ -198,7 +198,7 @@ class CostModel(abc.ABC):
         """
         pass
 
-    def cleanup() -> None:
+    def cleanup(self) -> None:
         """Hook method that is called after the optimization process has finished.
 
         This method can be overwritten to remove any temporary state that was specific to the last query being optimized
