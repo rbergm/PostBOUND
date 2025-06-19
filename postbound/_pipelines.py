@@ -279,6 +279,12 @@ class IntegratedOptimizationPipeline(OptimizationPipeline):
                 "database_system": self._target_db.describe(),
                 "optimization_algorithm": algorithm_description}
 
+    def __repr__(self) -> str:
+        return str(self)
+
+    def __str__(self) -> str:
+        return f"IntegratedOptimization [{self._optimization_algorithm}]"
+
 
 class TextBookOptimizationPipeline(OptimizationPipeline):
     """This pipeline is modelled after the traditional approach to query optimization as used in most real-world systems.
@@ -926,6 +932,13 @@ class IncrementalOptimizationPipeline(OptimizationPipeline):
             if incremental_step.pre_check() is None:
                 continue
             incremental_step.pre_check().check_supported_query(query).ensure_all_passed(query)
+
+    def __repr__(self) -> str:
+        return str(self)
+
+    def __str__(self) -> str:
+        opt_chain = " -> ".join(str(comp) for comp in self._optimization_steps)
+        return f"MultiStageOptimization [{opt_chain}]"
 
 
 class OptimizationSettings(Protocol):

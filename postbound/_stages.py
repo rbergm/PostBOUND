@@ -65,6 +65,12 @@ class CompleteOptimizationAlgorithm(abc.ABC):
         """
         return validation.EmptyPreCheck()
 
+    def __repr__(self) -> str:
+        return str(self)
+
+    def __str__(self) -> str:
+        return type(self).__name__
+
 
 class CardinalityEstimator(abc.ABC):
     """The cardinality estimator calculates how many tuples specific operators will produce."""
@@ -562,6 +568,12 @@ class IncrementalOptimizationStep(abc.ABC):
             The check instance. Can be an empty check if no specific requirements exist.
         """
         return validation.EmptyPreCheck()
+
+    def __repr__(self) -> str:
+        return str(self)
+
+    def __str__(self) -> str:
+        return type(self).__name__
 
 
 class _CompleteAlgorithmEmulator(CompleteOptimizationAlgorithm):
