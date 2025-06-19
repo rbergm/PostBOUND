@@ -10,24 +10,31 @@ Throughout the examples, we use the following setup:
     pg_instance = pb.postgres.connect(config_file=".psycopg_connection")
     stats = pb.workloads.stats()
 
-.. _cardinality-estimation:
+
+.. _cookbook-cardinality-estimation:
 
 Cardinality estimation
 ----------------------
 
 TODO
 
+
+.. _cookbook-partial-hinting:
+
 Manual hinting
 --------------
 
 TODO
+
+
+.. _cookbook-postgres-plans:
 
 Postgres Query Plans
 --------------------
 
 When working with Postgres, there are three basic ways to access query plans:
 
-1. You can retrieve the raw plan JSON using a plain :method:`execute_query() <postbound.db.postgres.PostgresInterface.execute_query()>`
+1. You can retrieve the raw plan JSON using a plain :meth:`execute_query() <postbound.db.postgres.PostgresInterface.execute_query>`
 2. You can parse a raw plan into a :class:`PostgresExplainPlan <postbound.db.postgres.PostgresExplainPlan>`, which is pretty
    much a 1:1 model of the raw plan with more expressive attribute access and some high-level access methods
 3. You can convert an explain into a proper normalized :class:`QueryPlan <postbound.optimizer.QueryPlan>` object
@@ -44,3 +51,8 @@ The conversion between the different formats works as follows:
     print(postgres_plan.inspect())
     qep = postgres_plan.as_qep()
     print(qep.inspect())
+
+.. _jsonize:
+
+JSON export
+-----------

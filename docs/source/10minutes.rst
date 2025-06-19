@@ -42,7 +42,7 @@ rows produced by each operator in the plan.
     If you are only concerned with cardinality estimation, it is best to implement the
     :class:`CardinalityGenerator <postbound.CardinalityGenerator>` instead of the
     :class:`CardinalityEstimator <postbound.CardinalityEstimator>`.
-    The reasoning is explained in the the :ref:`Cookbook <cardinality-estimation>`.
+    The reasoning is explained in the the :ref:`Cookbook <cookbook-cardinality-estimation>`.
 
 The :class:`MultiStageOptimizationPipeline <postbound.MultiStageOptimizationPipeline>` performs the query optimization in
 multiple sequential steps.
@@ -168,6 +168,7 @@ Specifically, the Join Order Benchmark (JOB), the Stats Benchmark and the Stack 
 
 You can also load your own workloads by using :func:`read_workload() <postbound.experiments.workloads.read_workload>` or
 :func:`read_csv_workload() <postbound.experiments.workloads.read_csv_workload>`.
+See the separate :doc:`core/benchmarking` documentation for more details.
 
 Benchmarking
 ------------
@@ -191,6 +192,7 @@ The :class:`QueryPreparationService <postbound.experiments.executor.QueryPrepara
 execution of the queries.
 For example, you can ensure that all queries are executed as *EXPLAIN ANALYZE* to capture their query plans, or you can
 prewarm the shared buffer before execution to ensure that timing measurements are not affected by I/O activity.
+See the separate :doc:`core/benchmarking` documentation for more details.
 
 .. hint::
 

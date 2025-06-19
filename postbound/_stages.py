@@ -6,14 +6,13 @@ import math
 from collections.abc import Generator, Iterable
 from typing import Optional
 
-
+from . import db, util
+from ._core import Cardinality, Cost
+from ._qep import QueryPlan
 from .optimizer import validation
+from .optimizer._hints import PhysicalOperatorAssignment, PlanParameterization
 from .optimizer._jointree import JoinTree
 from .optimizer.validation import OptimizationPreCheck
-from .optimizer._hints import PhysicalOperatorAssignment, PlanParameterization
-from . import db, util
-from ._core import Cost, Cardinality
-from ._qep import QueryPlan
 from .qal import SqlQuery, TableReference
 from .util import jsondict
 
@@ -73,7 +72,12 @@ class CompleteOptimizationAlgorithm(abc.ABC):
 
 
 class CardinalityEstimator(abc.ABC):
-    """The cardinality estimator calculates how many tuples specific operators will produce."""
+    """The cardinality estimator calculates how many tuples specific operators will produce.
+
+    See Also
+    --------
+    postbound.TextBookOptimizationPipeline
+    """
 
     @abc.abstractmethod
     def calculate_estimate(self, query: SqlQuery, intermediate: TableReference | Iterable[TableReference]) -> Cardinality:
@@ -149,7 +153,12 @@ class CardinalityEstimator(abc.ABC):
 
 
 class CostModel(abc.ABC):
-    """The cost model estimates how expensive computing a certain query plan is."""
+    """The cost model estimates how expensive computing a certain query plan is.
+
+    See Also
+    --------
+    postbound.TextBookOptimizationPipeline
+    """
 
     @abc.abstractmethod
     def estimate_cost(self, query: SqlQuery, plan: QueryPlan) -> Cost:
@@ -236,7 +245,12 @@ class CostModel(abc.ABC):
 
 
 class PlanEnumerator(abc.ABC):
-    """The plan enumerator traverses the space of different candidate plans and ultimately selects the optimal one."""
+    """The plan enumerator traverses the space of different candidate plans and ultimately selects the optimal one.
+
+    See Also
+    --------
+    postbound.TextBookOptimizationPipeline
+    """
 
     @abc.abstractmethod
     def generate_execution_plan(self, query: SqlQuery, *, cost_model: CostModel,
@@ -304,6 +318,10 @@ class JoinOrderOptimization(abc.ABC):
     """The join order optimization generates a complete join order for an input query.
 
     This is the first step in a multi-stage optimizer design.
+
+    See Also
+    --------
+    postbound.MultiStageOptimizationPipeline
     """
 
     @abc.abstractmethod
@@ -384,6 +402,10 @@ class PhysicalOperatorSelection(abc.ABC):
     """The physical operator selection assigns scan and join operators to the tables of the input query.
 
     This is the second stage in the two-phase optimization process, and takes place after the join order has been determined.
+
+    See Also
+    --------
+    postbound.MultiStageOptimizationPipeline
     """
 
     @abc.abstractmethod
@@ -449,6 +471,10 @@ class ParameterGeneration(abc.ABC):
 
     Such parameters do not influence the previous choice of join order and physical operators directly, but affect their
     specific implementation. Therefore, this is an optional final step in a multi-stage optimization process.
+
+    See Also
+    --------
+    postbound.MultiStageOptimizationPipeline
     """
 
     @abc.abstractmethod

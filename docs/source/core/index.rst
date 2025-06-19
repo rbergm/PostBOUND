@@ -15,6 +15,7 @@ Contents
    qal
    databases
    optimization
+   benchmarking
 
 
 Package structure

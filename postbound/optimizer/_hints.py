@@ -8,9 +8,16 @@ from enum import Enum
 from typing import Any, Optional
 
 from .. import util
-from .._core import ScanOperator, JoinOperator, IntermediateOperator, PhysicalOperator, Cardinality, T
-from .._qep import QueryPlan, PlanParams, PlanEstimates
-from ..qal import parser, TableReference
+from .._core import (
+    Cardinality,
+    IntermediateOperator,
+    JoinOperator,
+    PhysicalOperator,
+    ScanOperator,
+    T,
+)
+from .._qep import PlanEstimates, PlanParams, QueryPlan
+from ..qal import TableReference, parser
 from ..util import jsondict
 
 
@@ -475,6 +482,12 @@ class PhysicalOperatorAssignment:
         tables : Iterable[TableReference], optional
             The tables to join. This parameter is only used if only a join operator without a proper assignment is supplied in
             the `join_operator` parameter. Otherwise it is ignored.
+
+        Notes
+        -----
+        
+        You can also pass a `DirectionalJoinOperatorAssignment` to this method. In contrast to the normal assignment, this
+        one also distinguishes between inner and outer relations of the join.
         """
         if isinstance(operator, JoinOperator):
             operator = JoinOperatorAssignment(operator, tables)
