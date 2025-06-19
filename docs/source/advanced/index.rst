@@ -5,4 +5,4 @@ Advanced usage
     :maxdepth: 2
 
     query-generation
-    ceb
+    existing-strategies

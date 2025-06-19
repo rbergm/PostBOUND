@@ -9,6 +9,12 @@ each other. Therefore, we ship our own generator implementation inspired by the 
 addition to the actual implementation, we also provide a detailed specification of the templates and their properties in the
 following section.
 
+.. tip::
+
+    To use the CEB generator, you can either use the ``tools/ceb-generator.py`` script for a high-level interface, or
+    you can manually call :func:`generate_workload() <postbound.experiments.ceb.generate_workload>` from the
+    :mod:`ceb <postbound.experiments.ceb>` module.
+
 Generator Templates
 -------------------
 

@@ -55,7 +55,9 @@ This stage is especially well-suited for optimization scenarios where only part 
 are overridden.
 For example, you can implement your own join ordering and cardinality estimator and leave the operator selection to the
 database system (given your cardinality estimates).
-See the :ref:`10min-db-connection` for how this actually works under the hood.
+See the documentation on :doc:`core/hinting` for how this actually works under the hood.
+
+To learn more about optimization pipelines, take a look at the separate :doc:`core/optimization` documentation.
 
 .. note::
 
@@ -65,7 +67,51 @@ See the :ref:`10min-db-connection` for how this actually works under the hood.
     For example, if you want to implement a new cardinality estimator in the textbook pipeline, PostBOUND will
     automatically use the cost model and plan enumerator of the target database system.
 
-.. _10min-db-connection:
+Query Abstraction
+-----------------
+
+PostBOUND provides a powerful query abstraction centered around the :class:`SqlQuery <postbound.qal.SqlQuery>`.
+Pretty much all other parts of the framework operate on this abstraction.
+You can obtain an instance of this class by parsing a raw SQL query string using
+:func:`parse_query() <postbound.qal.parse_query>`:
+
+.. ipython:: python
+
+    raw_query = "SELECT p.creationdate, min(p.score) FROM posts p GROUP BY p.creationdate"
+    query = pb.parse_query(raw_query)
+    query
+
+Alternatively, you can use the :ref:`workload functionality <10minutes-workloads>` to load an entire set of queries at
+once.
+All query-related functionality is provided by the :mod:`qal <postbound.qal>` module (short for *query abstraction layer*).
+For example, use :func:`qal.format_quick() <postbound.qal.formatter.format_quick>` to obtain a nicely formatted string for
+a query.
+
+Once you have a query object, you can access different properties, such as the tables that are referenced in the query,
+or the raw clauses:
+
+.. ipython:: python
+
+    query.tables()
+    query.select_clause
+
+For more details on the query abstraction, see the separate :doc:`core/qal` documentation.
+
+.. note::
+
+    The :class:`SqlQuery <postbound.qal.SqlQuery>` is only used to represent ``SELECT`` queries and PostBOUND currently
+    does not support DDL or DML queries.
+    Set operations such as ``UNION`` are modelled in a separate :class:`SetQuery <postbound.qal.SetQuery>` class, for
+    reasons that are explained in the :doc:`core/qal` documentation.
+    To indicate that some interface accepts both plain ``SELECT`` queries as well as set operations, the
+    :type:`SelectStatement <postbound.qal.SelectStatement>` type is used.
+    
+    We might add support for DDL and DML queries in the future, if there is actual demand for it.
+    For now, such statements have to be represented as raw SQL strings.
+    To indicate that an interface would also accept queries beyond ``SELECT``, the
+    :type:`SqlStatement <postbound.qal.SqlStatement>` type exists.
+    But this is currently rarely used.
+
 
 Database Connection
 -------------------
@@ -88,6 +134,8 @@ For Postgres, you can connect to the database like so:
 Here, the ``config_file`` parameter points to a file that contains the connection parameters as a
 `psycopg-compatible <https://www.psycopg.org/psycopg3/docs/api/connections.html#psycopg.Connection.connect>`__ string.
 
+See the separate :doc:`core/databases` documentation for more details on the database abstraction.
+
 .. note::
 
     PostgreSQL does not provide hinting support out-of-the-box.
@@ -96,6 +144,8 @@ Here, the ``config_file`` parameter points to a file that contains the connectio
     As an alternative, you can use `pg_lab <https://github.com/rbergm/pg_lab>`__, which extends Postgres with more advanced
     hinting capabilities and additional extension points for optimizer research.
 
+
+.. _10minutes-workloads:
 
 Workload Handling
 -----------------

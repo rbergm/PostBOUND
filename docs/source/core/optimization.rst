@@ -24,8 +24,22 @@ You can create a textbook pipeline by simply supplying the target database:
 
     pipeline = pb.TextBookOptimizationPipeline(pg_instance)
 
-See the :class:`TextBookOptimizationPipeline <postbound.TextBookOptimizationPipeline>` for
-a full rundown of all available methods.
+See the :class:`TextBookOptimizationPipeline <postbound.TextBookOptimizationPipeline>` for a full rundown of all available
+methods. Essentially, you can provide any combination of plan enumerator, cost model, and cardinality estimator:
+
+- the :class:`PlanEnumerator <postbound.PlanEnumerator>` is responsible for constructing and returning the final plan to
+  be executed. It can use any algorithm it sees fit, such as traditional dynamic programming, greedy algorithms, or
+  cascades-style enumeration. The enumerator also controls when to ask the cost model and cardinality estimator for their
+  estimates.
+- the :class:`CostModel <postbound.CostModel>` estimates the cost of a plan. It receives the current plan along with the
+  query as input and computes the execution cost of the plan. The plan must not compute the entire query, but can also be
+  responsible for a smaller part of it. The cost model can query the cardinality estimator as it sees fit. By convention,
+  if the cost model cannot estimate a plan or if a plan is otherwise invalid, *inf* costs should be returned.
+- the :class:`CardinalityEstimator <postbound.CardinalityEstimator>` takes care of estimating the number of rows that an
+  (intermediate) relation will contain. It receives the tables that form the intermediate along with the query as input.
+  Similar to the cost model, the intermediate will typically be a subset of the entire query. The estimator can assume that
+  all applicable filters and join conditions have already been applied to the intermediate.
+
 
 .. tip::
 

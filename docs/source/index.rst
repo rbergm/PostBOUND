@@ -14,6 +14,7 @@ It provides a high-level interface to implement novel optimization algorithms an
   :doc:`setup` guide.
   The remainder of the documentation describes the different parts of the framework in more detail.
 
+
 Contents
 ========
 
@@ -37,9 +38,125 @@ Contents
   User experience is very important to us, and we are happy to help you get started.
 
 
+Example
+=======
+
+The following example shows how PostBOUND can be used to implement a simple join order "optimization" algorithm.
+The algorithm computes a random linear join order without considering any statistics or cost estimates.
+The implementation is compared to the native PostgreSQL optimizer on the Stats benchmark.
+
+.. code-block:: python
+  :caption: End-to-end experiment with PostBOUND
+
+  
+  import random
+
+  import postbound as pb
+
+
+  class RandomJoinOrder(pb.JoinOrderOptimization):
+      def optimize_join_order(self, query: pb.SqlQuery) -> pb.LogicalJoinTree:
+          join_graph = pb.opt.JoinGraph(query)
+          join_tree = pb.LogicalJoinTree()
+
+          while join_graph.contains_free_tables():
+              candidate_tables = [
+                  join.target_table for join in join_graph.available_join_paths()
+              ]
+              next_table = random.choice(candidate_tables)
+
+              join_tree = join_tree.join_with(next_table)
+              join_graph.mark_joined(next_table)
+
+          return join_tree
+
+      def describe(self) -> pb.util.jsondict:
+          return {"name": "random-join-order"}
+
+
+  pg_instance = pb.postgres.connect(config_file=".psycopg_connection")
+  stats = pb.workloads.stats()
+
+  pipeline = (
+      pb.MultiStageOptimizationPipeline(pg_instance)
+      .setup_join_order_optimization(RandomJoinOrder())
+      .build()
+  )
+
+  query_prep = pb.executor.QueryPreparationService(analyze=True, prewarm=True)
+  native_results = pb.execute_workload(
+      stats, pg_instance, workload_repetitions=3, query_preparation=query_prep
+  )
+  optimized_results = pb.optimize_and_execute_workload(
+      stats, pipeline, workload_repetitions=3, query_preparation=query_prep
+  )
+
+  pb.executor.prepare_export(native_results).to_csv("results-native.csv")
+  pb.executor.prepare_export(optimized_results).to_csv("results-optimized.csv")
+
+
+
+History
+=======
+
+.. note::
+
+  If you are looking for new features or bug fixes, please check out the
+  `Changelog <https://github.com/rbergm/PostBOUND/blob/main/CHANGELOG.md>`_.
+
+PostBOUND was initially created as framework to study pessimistic (or *upper bound-driven*) query optimization techniques
+in PostgreSQL (hence the name).
+An early version of the framework was presented at the BTW 2023 conference [Bergmann23]_.
+Community feedback has been positive, but the focus on pessimistic query optimization was called into question.
+Especially the idea of offering a general infrastructure to quickly test new ideas in query optimization was well received.
+As a result, we decided to extend PostBOUND beyond the original scope and to provide truly general-purpose framework for
+research in query optimization.
+This revamped version of PostBOUND was presented as part of a SIGMOD 2025 research paper [Bergmann25]_.
+
+
+Citation
+========
+
+If you found PostBOUND to be useful in your research, please cite the following paper.
+Thank you!
+
+.. code-block:: bibtex
+
+   @article{DBLP:journals/pacmmod/BergmannHHL25,
+      author       = {Rico Bergmann and
+                      Claudio Hartmann and
+                      Dirk Habich and
+                      Wolfgang Lehner},
+      title        = {An Elephant Under the Microscope: Analyzing the Interaction of Optimizer
+                      Components in PostgreSQL},
+      journal      = {Proc. {ACM} Manag. Data},
+      volume       = {3},
+      number       = {1},
+      pages        = {9:1--9:28},
+      year         = {2025},
+      url          = {https://doi.org/10.1145/3709659},
+      doi          = {10.1145/3709659},
+      timestamp    = {Tue, 01 Apr 2025 19:03:19 +0200}
+    }
+
+
 Indices and tables
 ==================
 
 * :ref:`genindex`
 * :ref:`modindex`
 * :ref:`search`
+
+
+References
+==========
+
+.. [Bergmann23]
+  Rico Bergmann, Axel Hertzschuch, Claudio Hartmann, Dirk Habich, and Wolfgang Lehner:
+  "*PostBOUND: PostgreSQL with Upper Bound SPJ Query Optimization.*"
+  BTW 2023 (DOI: https://doi.org/10.18420/BTW2023-14)
+
+.. [Bergmann25]
+  Rico Bergmann, Claudio Hartmann, Dirk Habich, and Wolfgang Lehner:
+  "*An Elephant Under the Microscope: Analyzing the Interaction of Optimizer Components in PostgreSQL.*"
+  SIGMOD 2025 (DOI: https://doi.org/10.1145/3709659)
