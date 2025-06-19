@@ -3,8 +3,17 @@ from __future__ import annotations
 
 import itertools
 import typing
-from collections.abc import Callable, Collection, Container, Generator, Iterator, Iterable, Sequence, Sized
-from typing import Any, Optional
+from collections.abc import (
+    Callable,
+    Collection,
+    Container,
+    Generator,
+    Iterable,
+    Iterator,
+    Sequence,
+    Sized,
+)
+from typing import Any, Optional, overload
 
 from .dicts import HashableDict
 
@@ -39,8 +48,31 @@ def flatten(deep_list: Iterable[Iterable[T] | T]) -> list[T]:
             flattened.append(nested)
     return flattened
 
+@overload
+def enlist(obj: list[T]) -> list[T]:
+    ...
 
-def enlist(obj: T | ContainerType[T], *, enlist_tuples: bool = False) -> ContainerType[T] | list[T]:
+@overload
+def enlist(obj: tuple[T, ...], *, enlist_tuples: bool = False) -> list[tuple[T, ...]]:
+    ...
+
+@overload
+def enlist(obj: tuple[T, ...]) -> tuple[T, ...]:
+    ...
+
+@overload
+def enlist(obj: set[T]) -> set[T]:
+    ...
+
+@overload
+def enlist(obj: frozenset[T]) -> frozenset[T]:
+    ...
+
+@overload
+def enlist(obj: T) -> list[T]:
+    ...
+
+def enlist(obj: T | Iterable[T], *, enlist_tuples: bool = False) -> Iterable[T]:
     """Transforms any object into a singular list of that object, if it is not a container already.
 
     Specifically, the following types are treated as container-like and will not be transformed: lists, tuples, sets
@@ -50,14 +82,14 @@ def enlist(obj: T | ContainerType[T], *, enlist_tuples: bool = False) -> Contain
 
     Parameters
     ----------
-    obj : T | ContainerType[T]
+    obj : T | Iterable[T]
         The object or list to wrap
     enlist_tuples : bool, optional
         Whether a tuple `obj` should be enlisted. This is ``False`` by default
 
     Returns
     -------
-    ContainerType[T] | list[T]
+    Iterable[T]
         The object, wrapped into a list if necessary
     """
     if isinstance(obj, str):
@@ -88,20 +120,22 @@ def get_any(elems: Iterable[T]) -> T:
     return next(iter(elems))
 
 
-def simplify(obj: Collection[T] | T) -> T | Collection[T]:
+def simplify(obj: Iterable[T]) -> T:
     """Unwraps containers containing just a single element.
 
     This can be thought of as the inverse operation to `enlist`. If the object contains multiple elements, nothing happens.
 
     Parameters
     ----------
-    obj : Collection[T] | T
+    obj : Iterable[T]
         The object to simplify
 
     Returns
     -------
-    T | Collection[T]
-        For a singular list, the object that was contained in that list. Otherwise `obj` is returned unmodified.
+    T
+        For a singular list, the object that was contained in that list. Otherwise `obj` is returned unmodified. Since this
+        method is mainly intended for lists which are known to contain exactly one element, we use *T* as a return type to
+        assist the type checker.
 
     Examples
     --------

@@ -45,6 +45,7 @@ stability. Since we are not ready for the 1.0 release yet, this does not matter 
 - Added a `simplify()` method to query predicates to provide all simplified counterparts of the joins and filters
 - Postgres database classes now have hashing and equality comparison support
 - Added _str_ support for all pipelines and stages
+- Improved type hints for `simplify()` and `enlist()`
 - tqdm is now a default dependency
 - 🐘 Migrated the `cooldown_tables()` method to pg_temperature
 
