@@ -123,11 +123,12 @@ expressivity, it makes extracting specific bits of information a bit cumbersome.
 
 .. ipython:: python
 
-    full_pred = pb.util.collections.get_any(query.predicates().filters())
+    full_pred = pb.util.collections.get_any(query.predicates().joins())
     full_pred.join_partners()
     single_pred = pb.util.simplify(full_pred.join_partners())
     single_pred
     any_table = single_pred[0]
+    any_table
 
 This is because the query abstraction needs to handle cases of complex conjunctiontive or disjunctive predicates accross
 multiple tables such as ``R.a = S.b OR R.a = T.c``. However, such complicated structures do not occur in the commonly used
@@ -150,11 +151,13 @@ Once you have obtained a simplified predicate, its components can be accessed in
     simple_filters = pb.qal.SimpleFilter.wrap_all(query.predicates().filters())
     filter_pred = pb.util.collections.get_any(simple_filters)
     filter_pred.column
-    filter_pred.operator
+    filter_pred.operation
     filter_pred.value
     simple_joins = pb.qal.SimpleJoin.wrap_all(query.predicates().joins())
     join_pred = pb.util.simplify(simple_joins)
     join_pred.lhs, join_pred.rhs
+
+Compare this output to the listing of the full AST above.
 
 .. attention::
 
@@ -189,7 +192,7 @@ Relational algebra
 
 PostBOUND also provides a simple version of relational algebra. Check out the :mod:`postbound.qal.relalg` module for more
 details. In short, use :func:`~postbound.qal.relalg.parse_relalg` to convert an :class:`~postbound.qal.SqlQuery` to an
-equivalent tree of :class:`~postbound.qal.relalg.RelNode`s.
+equivalent tree of :class:`~postbound.qal.relalg.RelNode` instances.
 
 .. note::
 
