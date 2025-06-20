@@ -56,3 +56,12 @@ The conversion between the different formats works as follows:
 
 JSON export
 -----------
+
+
+Miscellaneous utilities
+-----------------------
+
+simplify
+
+enlist
+

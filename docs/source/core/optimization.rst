@@ -16,24 +16,24 @@ and cardinality estimator.
 The plan enumerator generates a set of candidate plans.
 They are evaluated by the cost model and ultimately the plan with the lowest cost is selected.
 The cost model uses cardinality estimates as its principal input to assess how much work each plan will require.
-See the :class:`TextBookOptimizationPipeline <postbound.TextBookOptimizationPipeline>` for a full rundown of all available
+See the :class:`~postbound.TextBookOptimizationPipeline` for a full rundown of all available
 methods.
 Essentially, you can provide any combination of plan enumerator, cost model, and cardinality estimator:
 
-- the :class:`PlanEnumerator <postbound.PlanEnumerator>` is responsible for constructing and returning the final plan to
+- the :class:`~postbound.PlanEnumerator` is responsible for constructing and returning the final plan to
   be executed. It can use any algorithm it sees fit, such as traditional dynamic programming, greedy algorithms, or
   cascades-style enumeration. The enumerator also controls when to ask the cost model and cardinality estimator for their
-  estimates. The main artifact of the enumerator is the plain :class:`QueryPlan <postbound.QueryPlan>`.
-- the :class:`CostModel <postbound.CostModel>` estimates the cost of a plan. It receives the current plan along with the
+  estimates. The main artifact of the enumerator is the plain :class:`~postbound.QueryPlan`.
+- the :class:`~postbound.CostModel` estimates the cost of a plan. It receives the current plan along with the
   query as input and computes the execution cost of the plan. The plan must not compute the entire query, but can also be
   responsible for a smaller part of it. The cost model can query the cardinality estimator as it sees fit. By convention,
   if the cost model cannot estimate a plan or if a plan is otherwise invalid, *inf* costs should be returned. Currently,
   costs are expressed as plain Python floats.
-- the :class:`CardinalityEstimator <postbound.CardinalityEstimator>` takes care of estimating the number of rows that an
+- the :class:`~postbound.CardinalityEstimator` takes care of estimating the number of rows that an
   (intermediate) relation will contain. It receives the tables that form the intermediate along with the query as input.
   Similar to the cost model, the intermediate will typically be a subset of the entire query. The estimator can assume that
   all applicable filters and join conditions have already been applied to the intermediate. Cardinalities are modelled
-  using the :class:`Cardinality <postbound.Cardinality>` class, which also allows to express unknown and infinite
+  using the :class:`~postbound.Cardinality` class, which also allows to express unknown and infinite
   cardinalities.
 
 .. _default-enumerator:
@@ -41,10 +41,10 @@ Essentially, you can provide any combination of plan enumerator, cost model, and
 .. tip::
 
     If you do not implement your own plan enumerator, PostBOUND will select a dynamic programming-based algorithm (see
-    :class:`DynamicProgrammingEnumerator <postbound.optimizer.strategies.dynprog.DynamicProgrammingEnumerator>`) by
+    :class:`~postbound.optimizer.strategies.dynprog.DynamicProgrammingEnumerator`) by
     default.
     If your target database happens to be a Postgres system, a DP algorithm specifically designed to mimic the Postgres
-    algorithm will be used (see :class:`PostgresDynProg <postbound.optimizer.strategies.dynprog.PostgresDynProg>`).
+    algorithm will be used (see :class:`~postbound.optimizer.strategies.dynprog.PostgresDynProg`).
 
     In contrast to the :ref:`multi-stage pipeline <multistage-optimizer>`, we cannot simply let the target database system
     supply its own enumerator, because it is typically the enumerators job to request cost and cardinality estimates.
@@ -69,19 +69,19 @@ To further support this use-case, you can also generate additional parameters in
 These are used to restrict the native optimizer, e.g. by providing cardinality estimates for (some of the) relations.
 These estimates would then overwrite the native cardinality estimator.
 
-See the :class:`MultiStageOptimizationPipeline <postbound.MultiStageOptimizationPipeline>` for a full rundown of all
+See the :class:`~postbound.MultiStageOptimizationPipeline` for a full rundown of all
 available methods.
 Essentially, you can provide any combination of join ordering, operator selection and plan parameterization:
 
-1. The :class:`JoinOrderOptimization <postbound.JoinOrderOptimization>` is responsible for computing the
-   :class:`JoinTree <postbound..optimizerJoinTree>` of the query. If this stage is skipped, the native optimizer has to
+1. The :class:`~postbound.JoinOrderOptimization` is responsible for computing the
+   :class:`~postbound.optimizer.JoinTree` of the query. If this stage is skipped, the native optimizer has to
    perform its own join ordering.
-2. The :class:`PhysicalOperatorSelection <postbound.PhysicalOperatorSelection>` determines the scan and join operators for
+2. The :class:`~postbound.PhysicalOperatorSelection` determines the scan and join operators for
    each intermediate of the query. Those are encoded in the
-   :class:`PhysicalOperatorAssignment <postbound.optimizer.PhysicalOperatorAssignment>`. If this stage is skipped, the
+   :class:`~postbound.optimizer.PhysicalOperatorAssignment`. If this stage is skipped, the
    native optimizer has to select its own physical operators. If the join order stage is skipped, the selected operators
    will only be used if their corresponding intermediates are actually calculated.
-3. The :class:`PlanParameterization <postbound.PlanParameterization>` allows to generate metadata for the query plan.
+3. The :class:`~postbound.PlanParameterization` allows to generate metadata for the query plan.
    Currently, this includes cardinality estimates and parallel workers. How these parameters are used heavily depends on
    which other stages are used:
 
@@ -98,8 +98,8 @@ Essentially, you can provide any combination of join ordering, operator selectio
     If your research area is cardinality estimation, both the textbook pipeline as well as the multi-stage pipeline can
     be used to implement prototypes. However, if you are not interested in plan enumeration or cost model, it might be
     a better idea to test your cardinality estimator using the
-    :class:`MultiStageOptimizationPipeline <postbound.MultiStageOptimizationPipeline>`.
-    
+    :class:`~postbound.MultiStageOptimizationPipeline`.
+
     The reasoning behind this recommendation is that the textbook pipeline requires a plan enumerator which currently
     cannot be re-used from the target database system (because it is the enumerator's job to request cost and cardinality
     estimates, see :ref:`the textbook pipeline <default-enumerator>` for details).
@@ -125,43 +125,43 @@ Fundamental data structures
 Query plans
 -----------
 
-The :class:`QueryPlan <postbound.QueryPlan>` is the central artifact of the optimizer. It represents the physical execution
+The :class:`~postbound.QueryPlan` is the central artifact of the optimizer. It represents the physical execution
 plan of a query (or a part of it). There are three main ways to obtain a query plan:
 
 1. query plans can be created manually just like any other Python object
 2. query plans are the main output of the optimization pipelines.
-3. the :class:`Database <postbound.db.Database>` provides an :class:`OptimizerInterface <postbound.db.OptimizerInterface>`
-   which in turn has a :meth:`query_plan() <postbound.db.OptimizerInterface.query_plan>` (and
-   :meth:`analyze_plan() <postbound.db.OptimizerInterface.analyze_plan>`) method to the query plan that the database system
+3. the :class:`~postbound.db.Database` provides an :class:`~postbound.db.OptimizerInterface`
+   which in turn has a :meth:`~postbound.db.OptimizerInterface.query_plan` (and
+   :meth:`~postbound.db.OptimizerInterface.analyze_plan`) method to the query plan that the database system
    would use to execute a specific query
 4. query plans can be constructed from the optimizer artifacts (see below) using
-   :func:`to_query_plan() <postbound.optimizer.to_query_plan>`
+   :func:`~postbound.optimizer.to_query_plan`
 
 Use the normal :ref:`jsonize` tools to export query plans as JSON.
-:func:`read_query_plan_json() <postbound.optimizer.read_query_plan_json>` can be used to load a plan back from its JSON
+:func:`~postbound.optimizer.read_query_plan_json` can be used to load a plan back from its JSON
 representation.
 
 Optimizer artifacts
 -------------------
 
-The :class:`JoinTree <postbound.optimizer.JoinTree>` is used to represent the join order of a query. Nodes can be annotated
+The :class:`~postbound.optimizer.JoinTree` is used to represent the join order of a query. Nodes can be annotated
 to keep track of additional information. Other than constructing a tree manually, trees can be extracted from query plans
-via :func:`jointree_from_plan() <postbound.optimizer.jointree_from_plan>`. Use the normal :ref:`jsonize` tools to export
-join trees as JSON. :func:`read_jointree_json() <postbound.optimizer.read_jointree_json>` can be used to load a tree back
+via :func:`~postbound.optimizer.jointree_from_plan`. Use the normal :ref:`jsonize` tools to export
+join trees as JSON. :func:`~postbound.optimizer.read_jointree_json` can be used to load a tree back
 from its JSON representation.
 
-:class:`PhysicalOperatorAssignment <postbound.optimizer.PhysicalOperatorAssignment>` and
-:class:`PlanParameterization <postbound.PlanParameterization>` can be used to reperesent (partial) optimizer decisions.
+:class:`~postbound.optimizer.PhysicalOperatorAssignment` and
+:class:`~postbound.optimizer.PlanParameterization` can be used to reperesent (partial) optimizer decisions.
 Similar to join trees, these artifacts can be either constructed manually or extracted from query plans using
-:func:`operators_from_plan() <postbound.optimizer.operators_from_plan>` or
-:func:`parameters_from_plan() <postbound.optimizer.parameters_from_plan>`. Use the normal :ref:`jsonize` tools to export
-them as JSON and :func:`read_operator_assignment_json() <postbound.optimizer.read_operator_assignment_json>` or
-:func:`read_plan_params_json() <postbound.optimizer.read_plan_params_json>` to load them from their JSON representation.
+:func:`~postbound.optimizer.operators_from_plan` or
+:func:`~postbound.optimizer.parameters_from_plan`. Use the normal :ref:`jsonize` tools to export
+them as JSON and :func:`~postbound.optimizer.read_operator_assignment_json` or
+:func:`~postbound.optimizer.read_plan_params_json` to load them from their JSON representation.
 
 .. tip::
 
     If you want to convert a query plan into all artifacts, you can use
-    :func:`explode_query_plan() <postbound.optimizer.explode_query_plan>` as a convenience function.
+    :func:`~postbound.optimizer.explode_query_plan` as a convenience function.
 
 Join tree, operator assignment and plan parameterization can also be used to generate hinted queries. See the
 :ref:`Cookbook <cookbook-partial-hinting>` for details.
@@ -171,7 +171,7 @@ Optimizer utilities
 
 To aid the implementation of new optimizers, PostBOUND provides a number of commonly used data structures:
 
-The :class:`JoinGraph <postbound.optimizer.JoinGraph>` can be used to keep track of relations that have already been joined
+The :class:`~postbound.optimizer.JoinGraph` can be used to keep track of relations that have already been joined
 or that can be integrated into a join tree.
 
 Other utilities are implemented as pre-defined optimization stages, see :doc:`../advanced/existing-strategies` for
