@@ -15,7 +15,7 @@ from typing import Any, Generic, Literal, Optional, Type, TypeVar, Union, overlo
 import networkx as nx
 
 from .. import util
-from .._core import TableReference, ColumnReference, quote, T, VisitorResult
+from .._core import ColumnReference, T, TableReference, VisitorResult, quote
 from ..util import StateError, jsondict
 
 
@@ -3869,6 +3869,18 @@ class QueryPredicates:
         filters = SimpleFilter.wrap_all(self.filters())
         joins = SimpleJoin.wrap_all(self.joins())
         return filters + joins
+
+    def all_simple(self) -> bool:
+        """Checks, whether all predicates in the hierarchy can be represented as simplified views.
+        
+        See Also
+        --------
+        SimpleFilter : The simplified representation of predicates
+        SimpleJoin : The simplified representation of join predicates
+        """
+        if not all(SimpleFilter.can_wrap(pred) for pred in self.filters()):
+            return False
+        return all(SimpleJoin.can_wrap(pred) for pred in self.joins())
 
     def and_(self, other_predicate: QueryPredicates | AbstractPredicate) -> QueryPredicates:
         """Combines the current predicates with additional predicates, creating a conjunction of the two predicates.
