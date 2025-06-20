@@ -94,6 +94,8 @@ The implementation is compared to the native PostgreSQL optimizer on the Stats b
   pb.executor.prepare_export(native_results).to_csv("results-native.csv")
   pb.executor.prepare_export(optimized_results).to_csv("results-optimized.csv")
 
+Need more? There are a lot of `basic examples <https://github.com/rbergm/PostBOUND/tree/main/examples>`_ in the PostBOUND
+repository!
 
 
 History
