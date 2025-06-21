@@ -1,7 +1,7 @@
 # PostBOUND
 
 ![GitHub License](https://img.shields.io/github/license/rbergm/PostBOUND)
-![Static Badge](https://img.shields.io/badge/version-0.15.4-blue)
+![Static Badge](https://img.shields.io/badge/version-0.16.0-blue)
 
 <p align="center">
     <img src="docs/figures/postbound-logo.svg" style="width: 150px; margin: 15px;">

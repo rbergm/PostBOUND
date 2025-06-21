@@ -8,33 +8,11 @@ stability. Since we are not ready for the 1.0 release yet, this does not matter 
 
 ---
 
-# ➡ Version 0.15.4 _(current)_
+
+# ➡ Version 0.16.0 _(planned)_
 
 ### 🐣 New features
-- Added [tqdm](https://tqdm.github.io/)-support for the benchmark utilities like `execute_workload()`
-
-### 💀 Breaking changes
-- _None_
-
-### 📰 Updates
-- The data frames returned by `execute_workload()` and related methods have proper indexes now.
-
-### 🏥 Fixes
-- Pre-defined workloads (`workloads.job()`, etc.) are now supported when running as a pip module.
-- Fixed being unable to compare cardinalities to ints or floats when used as a second argument.
-- Fixed typo in relalg module preventing parsing of any queries to relational algebra
-
-### 🪲 Known bugs
-- 🐘 `PostgresConfiguration` cannot be passed directly to `execute_query()` or a manual psycopg cursor. It seems that psycopg
-  does not recognize *UserString* as a valid string and raises an error. As a workaround, make sure to call *str()* on the
-  configuration before trying to execute it. `apply_configuration()` does so automatically.
-
----
-
-
-# ⏳ Version 0.16.0 _(planned)_
-
-### 🐣 New features
+- Added a proper high-level documentation available at https://postbound.readthedocs.io/en/latest/
 - Introduced a new `SimpleJoin` as a streamlined representation of simple inner equi-join predicates.
 
 ### 💀 Breaking changes
@@ -54,6 +32,30 @@ stability. Since we are not ready for the 1.0 release yet, this does not matter 
 - 🍏 Hardened much of the system interaction to support MacOS much better. PostBOUND should now work on MacOS without any
   issues (we hope so at least)
 - Add missing _self_ parameter to cost model cleanup
+
+### 🪲 Known bugs
+- 🐘 `PostgresConfiguration` cannot be passed directly to `execute_query()` or a manual psycopg cursor. It seems that psycopg
+  does not recognize *UserString* as a valid string and raises an error. As a workaround, make sure to call *str()* on the
+  configuration before trying to execute it. `apply_configuration()` does so automatically.
+
+---
+
+
+# 🕑 Version 0.15.4 _(current)_
+
+### 🐣 New features
+- Added [tqdm](https://tqdm.github.io/)-support for the benchmark utilities like `execute_workload()`
+
+### 💀 Breaking changes
+- _None_
+
+### 📰 Updates
+- The data frames returned by `execute_workload()` and related methods have proper indexes now.
+
+### 🏥 Fixes
+- Pre-defined workloads (`workloads.job()`, etc.) are now supported when running as a pip module.
+- Fixed being unable to compare cardinalities to ints or floats when used as a second argument.
+- Fixed typo in relalg module preventing parsing of any queries to relational algebra
 
 ### 🪲 Known bugs
 - 🐘 `PostgresConfiguration` cannot be passed directly to `execute_query()` or a manual psycopg cursor. It seems that psycopg

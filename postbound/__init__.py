@@ -95,48 +95,51 @@ some require user input):
 
 """
 
-from . import (
-  db,
-  optimizer as opt,
-  qal,
-  experiments,
-  util
-)
+from . import db, experiments, qal, util
+from . import optimizer as opt
 from ._core import (
-  Cost, Cardinality,
-  TableReference, ColumnReference,
-  PhysicalOperator, ScanOperator, JoinOperator, IntermediateOperator
+  Cardinality,
+  ColumnReference,
+  Cost,
+  IntermediateOperator,
+  JoinOperator,
+  PhysicalOperator,
+  ScanOperator,
+  TableReference,
 )
 from ._pipelines import (
-  OptimizationPipeline,
-  IntegratedOptimizationPipeline,
-  TextBookOptimizationPipeline,
-  MultiStageOptimizationPipeline,
   IncrementalOptimizationPipeline,
-  OptimizationSettings
-)
-from ._stages import (
-  CompleteOptimizationAlgorithm,
-  CardinalityEstimator, CostModel, PlanEnumerator,
-  JoinOrderOptimization, PhysicalOperatorSelection, ParameterGeneration,
-  IncrementalOptimizationStep,
-  as_complete_algorithm,
-  CardinalityGenerator
+  IntegratedOptimizationPipeline,
+  MultiStageOptimizationPipeline,
+  OptimizationPipeline,
+  OptimizationSettings,
+  TextBookOptimizationPipeline,
 )
 from ._qep import QueryPlan
-from .db import Database
-from .qal import relalg, transform, SqlQuery, parse_query
+from ._stages import (
+  CardinalityEstimator,
+  CardinalityGenerator,
+  CompleteOptimizationAlgorithm,
+  CostModel,
+  IncrementalOptimizationStep,
+  JoinOrderOptimization,
+  ParameterGeneration,
+  PhysicalOperatorSelection,
+  PlanEnumerator,
+  as_complete_algorithm,
+)
+from .db import Database, postgres
+from .experiments import analysis, executor, workloads
+from .experiments.executor import execute_workload, optimize_and_execute_workload
 from .optimizer import (
   LogicalJoinTree,
   PhysicalOperatorAssignment,
   PlanParameterization,
-  validation
+  validation,
 )
-from .experiments import analysis, executor, workloads
-from .experiments.executor import execute_workload, optimize_and_execute_workload
-from .db import postgres
+from .qal import SqlQuery, parse_query, relalg, transform
 
-__version__ = "0.15.4"
+__version__ = "0.16.0"
 
 __all__ = [
   "db", "opt", "qal", "experiments", "util",
