@@ -14,6 +14,24 @@ It provides a high-level interface to implement novel optimization algorithms an
   :doc:`setup` guide.
   The remainder of the documentation describes the different parts of the framework in more detail.
 
+In general, using the PostBOUND framework for optimizer research uses a workflow similar to the following:
+
+.. figure:: ../figures/postbound-workflow-detailed.svg
+   :align: center
+
+   Typical workflow for using PostBOUND for optimizer research.
+
+For an input query, PostBOUND provides a large set of infrastructure tools to prepare and analyze the query to limit the
+boilerplate parts of the optimizer. This includes :doc:`query parsing <core/qal>`,
+:ref:`join graph analysis <optimizer-utilities>`, and :ref:`others <database-infrastructure>`.
+Rearchers specify their optimizer prototypes in terms of :doc:`optimization pipelines <core/optimization>`. Essentially,
+these are mental models for different optimizer architectures that provide different interfaces to be implemented.
+Since PostBOUND is implemented as a Python framework that runs on top of an actual database system, it needs to ensure that
+the optimization decisions made within the framework are retained when the query is executed on the database system.
+This is achieved by using :doc:`query hints <core/hinting>`, which restrict the search space of the native optimizer.
+Hints are generated automatically depending on the target database system.
+Finally, the :doc:`benchmarking tools <core/benchmarking>` allow to easily compare the performance of different
+optimization strategies.
 
 Contents
 ========

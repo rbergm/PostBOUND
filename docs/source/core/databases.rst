@@ -83,6 +83,7 @@ The optimizer functionality can be accessed by calling :meth:`~postbound.db.Data
     optimizer interface. This can be further combined with :func:`~postbound.qal.transform.extract_query_fragment` to
     get estimates or plans for subqueries.
 
+.. _database-infrastructure:
 
 Schema access
 -------------

@@ -170,6 +170,8 @@ You can also load your own workloads by using :func:`read_workload() <postbound.
 :func:`read_csv_workload() <postbound.experiments.workloads.read_csv_workload>`.
 See the separate :doc:`core/benchmarking` documentation for more details.
 
+.. _10minutes-benchmarking:
+
 Benchmarking
 ------------
 

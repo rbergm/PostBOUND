@@ -178,6 +178,8 @@ them as JSON and :func:`~postbound.optimizer.read_operator_assignment_json` or
 Join tree, operator assignment and plan parameterization can also be used to generate hinted queries. See the
 :ref:`Cookbook <cookbook-partial-hinting>` for details.
 
+.. _optimizer-utilities:
+
 Optimizer utilities
 ===================
 
