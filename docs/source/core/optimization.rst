@@ -18,18 +18,24 @@ They are evaluated by the cost model and ultimately the plan with the lowest cos
 The cost model uses cardinality estimates as its principal input to assess how much work each plan will require.
 See the :class:`~postbound.TextBookOptimizationPipeline` for a full rundown of all available
 methods.
-Essentially, you can provide any combination of plan enumerator, cost model, and cardinality estimator:
+Essentially, you can provide any combination of plan enumerator, cost model, and cardinality estimator.
 
-- the :class:`~postbound.PlanEnumerator` is responsible for constructing and returning the final plan to
+.. figure:: ../../figures/textbook-optimizer-architecture.svg
+   :align: center
+   :width: 50%
+
+   Architecture of a traditional textbook query optimizer.
+
+- The :class:`~postbound.PlanEnumerator` is responsible for constructing and returning the final plan to
   be executed. It can use any algorithm it sees fit, such as traditional dynamic programming, greedy algorithms, or
   cascades-style enumeration. The enumerator also controls when to ask the cost model and cardinality estimator for their
   estimates. The main artifact of the enumerator is the plain :class:`~postbound.QueryPlan`.
-- the :class:`~postbound.CostModel` estimates the cost of a plan. It receives the current plan along with the
+- The :class:`~postbound.CostModel` estimates the cost of a plan. It receives the current plan along with the
   query as input and computes the execution cost of the plan. The plan must not compute the entire query, but can also be
   responsible for a smaller part of it. The cost model can query the cardinality estimator as it sees fit. By convention,
   if the cost model cannot estimate a plan or if a plan is otherwise invalid, *inf* costs should be returned. Currently,
   costs are expressed as plain Python floats.
-- the :class:`~postbound.CardinalityEstimator` takes care of estimating the number of rows that an
+- The :class:`~postbound.CardinalityEstimator` takes care of estimating the number of rows that an
   (intermediate) relation will contain. It receives the tables that form the intermediate along with the query as input.
   Similar to the cost model, the intermediate will typically be a subset of the entire query. The estimator can assume that
   all applicable filters and join conditions have already been applied to the intermediate. Cardinalities are modelled
@@ -68,6 +74,12 @@ In this case, the native optimizer has to select the best physical operators for
 To further support this use-case, you can also generate additional parameters in the pipeline.
 These are used to restrict the native optimizer, e.g. by providing cardinality estimates for (some of the) relations.
 These estimates would then overwrite the native cardinality estimator.
+
+.. figure:: ../../figures/multistage-optimizer-architecture.svg
+   :align: center
+   :width: 35%
+
+   Architecture of a multi-stage query optimizer.
 
 See the :class:`~postbound.MultiStageOptimizationPipeline` for a full rundown of all
 available methods.
