@@ -26,8 +26,10 @@ boilerplate parts of the optimizer. This includes :doc:`query parsing <core/qal>
 :ref:`join graph analysis <optimizer-utilities>`, and :ref:`others <database-infrastructure>`.
 Rearchers specify their optimizer prototypes in terms of :doc:`optimization pipelines <core/optimization>`. Essentially,
 these are mental models for different optimizer architectures that provide different interfaces to be implemented.
+Each pipeline produces an abstract representation of optimization decisions, such as the join order or custom cardinality
+estimates.
 Since PostBOUND is implemented as a Python framework that runs on top of an actual database system, it needs to ensure that
-the optimization decisions made within the framework are retained when the query is executed on the database system.
+these optimization decisions are retained when the query is executed on the database system.
 This is achieved by using :doc:`query hints <core/hinting>`, which restrict the search space of the native optimizer.
 Hints are generated automatically depending on the target database system.
 Finally, the :doc:`benchmarking tools <core/benchmarking>` allow to easily compare the performance of different
@@ -66,7 +68,7 @@ The implementation is compared to the native PostgreSQL optimizer on the Stats b
 .. code-block:: python
   :caption: End-to-end experiment with PostBOUND
 
-  
+
   import random
 
   import postbound as pb
@@ -127,11 +129,12 @@ History
 PostBOUND was initially created as framework to study pessimistic (or *upper bound-driven*) query optimization techniques
 in PostgreSQL (hence the name).
 An early version of the framework was presented at the BTW 2023 conference [Bergmann23]_.
-Community feedback has been positive, but the focus on pessimistic query optimization was called into question.
-Especially the idea of offering a general infrastructure to quickly test new ideas in query optimization was well received.
+Community feedback has been positive and especially the idea of offering a general infrastructure to quickly test new ideas in
+query optimization was well received.
+However, the focus on pessimistic query optimization called the applicability for other optimization techniques into question.
 As a result, we decided to extend PostBOUND beyond the original scope and to provide truly general-purpose framework for
 research in query optimization.
-This revamped version of PostBOUND was presented as part of a SIGMOD 2025 research paper [Bergmann25]_.
+This revamped version of PostBOUND was introduced as part of a SIGMOD 2025 research paper [Bergmann25]_.
 
 
 Citation

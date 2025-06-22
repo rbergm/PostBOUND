@@ -100,7 +100,7 @@ Essentially, you can provide any combination of join ordering, operator selectio
     - If a join ordering is performed, the cardinality estimates affect the operator selection (unless the operator
       selection is also used). Otherwise, cardinality estimates are used to determine the best join tree.
     - If an operator selection is performed, the cardinality estimates can be used to determine whether a parallel
-      computation of the operator is beneficial (unless parallel workers are selected explicitly). Otherwise, the 
+      computation of the operator is beneficial (unless parallel workers are selected explicitly). Otherwise, the
       cardinality estimates directly influence the operator selection.
     - If neither join ordering nor operator selection is performed, the supplied cardinalities overwrite the native
       cardinality estimator.
@@ -116,7 +116,7 @@ Essentially, you can provide any combination of join ordering, operator selectio
     cannot be re-used from the target database system (because it is the enumerator's job to request cost and cardinality
     estimates, see :ref:`the textbook pipeline <default-enumerator>` for details).
     While this default enumerator can mimic the actual enumerator pretty well for PostgreSQL, it is still a simplification.
-    
+
     On the other hand, the multi-stage pipeline would just pass the cardinality estimates from the plan parameterization
     to the native optimizer. Therefore, the key idea is to use a multi-stage pipeline that does not perform any join
     ordering or operator selection. During the plan parameterization stage, estimates for all potential intermediates
@@ -128,6 +128,8 @@ Integrated optimization pipeline
 ================================
 
 TODO
+
+.. _optimizer-data-structures:
 
 Fundamental data structures
 ===========================
