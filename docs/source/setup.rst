@@ -4,6 +4,13 @@ Setup
 PostBOUND can be installed either directly on the system using a manual setup, or as a Docker container.
 Both installation methods are described in the following sections.
 
+.. tip::
+
+    If you want to update an existing (virtual environment-based) installation of PostBOUND, you can just
+    use the ``tools/setup-py-venv.sh`` script. It takes care of loading the latest PostBOUND release and
+    updating all required packages. This also works within the Docker-based installation.
+
+
 Manual Installation
 -------------------
 
@@ -96,7 +103,7 @@ To do so, all scripts accept an optional installation path as parameter:
     ./postgres-setup.sh --pg-ver 16 --stop --dir /my/path
     . ./postgres-start.sh /my/path
 
-.. tip:: 
+.. tip::
 
     We recommend to always setup the Postgres server with the ``--stop`` option and not source this script directly.
     This ensures that your shell does not terminate in case the setup runs into any issues.
@@ -106,7 +113,7 @@ After your server is setup and running, you can populate it with some well-known
 PostBOUND provides simple setup scripts for these out-of-the-box:
 
 .. code-block:: bash
-    
+
     ./workload-job-setup.sh
 
 These scripts assume that your Postgres server is running and you can simply use *psql* to connect to it.
@@ -138,6 +145,7 @@ Putting things together, you can create an entirely new Postgres server like so:
     ./workload-job-setup.sh
     ./postgres-psycopg-setup.sh job imdb
     cp .psycopg_connect_job ../..
+
 
 Docker Installation
 -------------------
@@ -205,7 +213,7 @@ Putting things together, you can create a Docker container with PostBOUND and Po
         --build-arg PG_VER=17 \
         --build-arg USE_PGLAB=true \
         .
-    
+
     docker run -dt \
         --shm-size 4G \
         --name postbound \
