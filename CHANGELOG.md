@@ -9,7 +9,7 @@ stability. Since we are not ready for the 1.0 release yet, this does not matter 
 ---
 
 
-# ➡ Version 0.16.0 _(planned)_
+# ➡ Version 0.16.0 _(current)_
 
 ### 🐣 New features
 - Added a proper high-level documentation available at https://postbound.readthedocs.io/en/latest/
@@ -41,7 +41,20 @@ stability. Since we are not ready for the 1.0 release yet, this does not matter 
 ---
 
 
-# 🕑 Version 0.15.4 _(current)_
+# 🛣 Roadmap
+
+Currently, we plan to implement the following features in the future (in no particular order):
+
+- DuckDB backend, propably using the Substrait extension at first
+- Better benchmarking setup, mostly focused on comparing one or multiple optimization pipelines and creating better experiment
+  logs and the ability to cancel/resume long-running benchmarks
+- Adding popular optimization algorithms to the collection of pre-defined optimizers
+
+---
+
+# 🕑 Past versions
+
+## 🕑 Version 0.15.4
 
 ### 🐣 New features
 - Added [tqdm](https://tqdm.github.io/)-support for the benchmark utilities like `execute_workload()`
@@ -65,7 +78,7 @@ stability. Since we are not ready for the 1.0 release yet, this does not matter 
 ---
 
 
-# 🕑 Version 0.15.3
+## 🕑 Version 0.15.3
 
 
 ### 🐣 New features
@@ -94,7 +107,7 @@ stability. Since we are not ready for the 1.0 release yet, this does not matter 
 ---
 
 
-# 🕑 Version 0.15.2
+## 🕑 Version 0.15.2
 
 
 ### 🐣 New features
@@ -131,7 +144,7 @@ stability. Since we are not ready for the 1.0 release yet, this does not matter 
 ---
 
 
-# 🕑 Version 0.15.1
+## 🕑 Version 0.15.1
 
 _Since this is the direct completion of work started in v0.15.0, we include the 0.15.0 changelog in addition to the_
 _0.15.1 changes._
@@ -173,7 +186,7 @@ _0.15.1 changes._
 ---
 
 
-# 🕑 Version 0.15.0
+## 🕑 Version 0.15.0
 
 ### 🐣 New features
 - 🐘 Added a Postgres-style dynamic programming enumerator. This enumerator is used as the default for the textbook
@@ -208,7 +221,7 @@ _0.15.1 changes._
 ---
 
 
-# 🕑 Version 0.14.2
+## 🕑 Version 0.14.2
 
 ### 🐣 New features
 - Moved the main data structures for the optimizer pipelines to be available as top-level imports, i.e. instead of typing
@@ -241,7 +254,7 @@ _0.15.1 changes._
 ---
 
 
-# 🕑 Version 0.14.1
+## 🕑 Version 0.14.1
 
 ### 🐣 New features
 - _None_
@@ -279,7 +292,7 @@ _0.15.1 changes._
 ---
 
 
-# 🕑 Version 0.14.0
+## 🕑 Version 0.14.0
 
 ### 🐣 New features
 - `PostgresSetting` and `PostgresConfiguration` can now be updated
@@ -310,7 +323,7 @@ _0.15.1 changes._
 ---
 
 
-# 🕑 Version 0.13.3
+## 🕑 Version 0.13.3
 
 ### 🐣 New features
 - Added support for `len()` (providing the plan depth) and `iter()` (iterating over all nodes, including subplans) on
@@ -341,7 +354,7 @@ _0.15.1 changes._
 ---
 
 
-# 🕑 Version 0.13.2
+## 🕑 Version 0.13.2
 
 ### 🐣 New features
 - `format_quick` now supports different SQL flavors (defaulting to standard SQL and also supporting Postgres)
@@ -368,7 +381,7 @@ _None_
 ---
 
 
-# 🕑 Version 0.13.1
+## 🕑 Version 0.13.1
 
 ### 🐣 New features
 - Added an `expect_match` keyword parameter to `DatabaseSchema.lookup_column`. If this is true, an error is raised if no
@@ -404,7 +417,7 @@ _None_
 ---
 
 
-# 🕑 Version 0.13.0
+## 🕑 Version 0.13.0
 
 ### 🐣 New features
 - Table references can now be localized to a schema
@@ -445,7 +458,7 @@ _None_
 ---
 
 
-# 🕑 Version 0.12.1
+## 🕑 Version 0.12.1
 
 ### 🐣 New features
 - Added a bunch of convenience methods to parts of the QAL, e.g. the `CommonTableExpression` supports `len` now and its CTEs
@@ -477,7 +490,7 @@ _None_
 ---
 
 
-# 🕑 Version 0.12.0
+## 🕑 Version 0.12.0
 
 ### 🐣 New features
 - Added a new `QueryPlan` class that combines the old `PhysicalQueryPlan` created by the optimizer modules and the old
