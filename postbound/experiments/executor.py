@@ -1,4 +1,5 @@
 """Utilities to optimize and execute queries and workloads in a reproducible and transparent manner."""
+
 from __future__ import annotations
 
 import functools
@@ -102,16 +103,27 @@ class QueryPreparationService:
     db.PrewarmingSupport : Technical details on how prewarming is implemented in PostBOUND
     """
 
-    def __init__(self, *, explain: bool = False, count_star: bool = False, analyze: bool = False, prewarm: bool = False,
-                 preparatory_statements: Optional[list[str]] = None):
+    def __init__(
+        self,
+        *,
+        explain: bool = False,
+        count_star: bool = False,
+        analyze: bool = False,
+        prewarm: bool = False,
+        preparatory_statements: Optional[list[str]] = None,
+    ):
         self.explain = explain
         self.analyze = analyze
         self.count_star = count_star
-        self.preparatory_stmts = preparatory_statements if preparatory_statements else []
+        self.preparatory_stmts = (
+            preparatory_statements if preparatory_statements else []
+        )
 
         if explain and not analyze:
             if prewarm:
-                warnings.warn("Ignoring prewarm setting since queries are only explained. Set prewarm manually to overwrite.")
+                warnings.warn(
+                    "Ignoring prewarm setting since queries are only explained. Set prewarm manually to overwrite."
+                )
             self.prewarm = False
         else:
             self.prewarm = prewarm
@@ -141,7 +153,9 @@ class QueryPreparationService:
 
         if self.prewarm:
             if not isinstance(on, db.PrewarmingSupport):
-                warnings.warn("Ignoring prewarm setting since the database does not support prewarming")
+                warnings.warn(
+                    "Ignoring prewarm setting since the database does not support prewarming"
+                )
             else:
                 on.prewarm_tables(query.tables())
 
@@ -151,7 +165,9 @@ class QueryPreparationService:
         return query
 
 
-def _standard_executor(query: qal.SqlQuery, *, target: db.Database) -> tuple[Any, float]:
+def _standard_executor(
+    query: qal.SqlQuery, *, target: db.Database
+) -> tuple[Any, float]:
     """Default executor that delegates to `execute_query`."""
     start = time.perf_counter_ns()
     result_set = target.execute_query(query, cache_enabled=False)
@@ -160,7 +176,9 @@ def _standard_executor(query: qal.SqlQuery, *, target: db.Database) -> tuple[Any
     return result_set, runtime
 
 
-def _timeout_executor(query: qal.SqlQuery, *, target: postgres.PostgresInterface, timeout: float) -> tuple[Any, float]:
+def _timeout_executor(
+    query: qal.SqlQuery, *, target: postgres.PostgresInterface, timeout: float
+) -> tuple[Any, float]:
     """Executor that automatically cancels the query if it exceeds a specific timeout.
 
     Timed-out queries are not retried, they produce a result of *(None, inf)*.
@@ -176,7 +194,9 @@ def _timeout_executor(query: qal.SqlQuery, *, target: postgres.PostgresInterface
         return None, math.inf
 
 
-def _failed_execution_result(query: qal.SqlQuery, database: db.Database, repetitions: int = 1) -> pd.DataFrame:
+def _failed_execution_result(
+    query: qal.SqlQuery, database: db.Database, repetitions: int = 1
+) -> pd.DataFrame:
     """Constructs a dummy data frame / row for queries that failed the execution.
 
     This data frame can be included in the overall result data frame as a replacement of the original data frame that would
@@ -197,18 +217,22 @@ def _failed_execution_result(query: qal.SqlQuery, database: db.Database, repetit
     pd.DataFrame
         The data frame for the failed query
     """
-    return pd.DataFrame({
-        COL_QUERY: [qal.transform.drop_hints(query)] * repetitions,
-        COL_QUERY_HINTS: [query.hints] * repetitions,
-        COL_T_EXEC: [np.nan] * repetitions,
-        COL_RESULT: [np.nan] * repetitions,
-        COL_REP: list(range(1, repetitions + 1)),
-        COL_DB_CONFIG: [database.describe()] * repetitions
-    })
+    return pd.DataFrame(
+        {
+            COL_QUERY: [qal.transform.drop_hints(query)] * repetitions,
+            COL_QUERY_HINTS: [query.hints] * repetitions,
+            COL_T_EXEC: [np.nan] * repetitions,
+            COL_RESULT: [np.nan] * repetitions,
+            COL_REP: list(range(1, repetitions + 1)),
+            COL_DB_CONFIG: [database.describe()] * repetitions,
+        }
+    )
 
 
-def _invoke_post_process(execution_result: ExecutionResult,
-                         action: Optional[Callable[[ExecutionResult], None]] = None) -> None:
+def _invoke_post_process(
+    execution_result: ExecutionResult,
+    action: Optional[Callable[[ExecutionResult], None]] = None,
+) -> None:
     """Handler to run arbitrary post-process actions after a query was executed.
 
     Parameters
@@ -224,14 +248,18 @@ def _invoke_post_process(execution_result: ExecutionResult,
     action(execution_result)
 
 
-def execute_query(query: qal.SqlQuery, database: db.Database, *,
-                  repetitions: int = 1,
-                  query_preparation: Optional[QueryPreparationService] = None,
-                  post_process: Optional[Callable[[ExecutionResult], None]] = None,
-                  timeout: Optional[float] = None,
-                  label: str = "",
-                  logger: Optional[PredefLogger] = None,
-                  optimization_time: float = math.nan) -> pd.DataFrame:
+def execute_query(
+    query: qal.SqlQuery,
+    database: db.Database,
+    *,
+    repetitions: int = 1,
+    query_preparation: Optional[QueryPreparationService] = None,
+    post_process: Optional[Callable[[ExecutionResult], None]] = None,
+    timeout: Optional[float] = None,
+    label: str = "",
+    logger: Optional[PredefLogger] = None,
+    optimization_time: float = math.nan,
+) -> pd.DataFrame:
     """Runs the given query on the provided database.
 
     The query execution will be repeated for a total of `repetitions` times. Before the first repetition, the
@@ -291,6 +319,7 @@ def execute_query(query: qal.SqlQuery, database: db.Database, *,
 
     if logger == "tqdm":
         from tqdm import tqdm
+
         label = label if label else "query"
         iterations = tqdm(range(repetitions), desc=label, unit="rep", leave=False)
     else:
@@ -301,8 +330,12 @@ def execute_query(query: qal.SqlQuery, database: db.Database, *,
 
     if timeout is not None:
         if not isinstance(database, postgres.PostgresInterface):
-            raise ValueError("Timeouts are currently only supported for PostgreSQL databases")
-        query_executor = functools.partial(_timeout_executor, target=database, timeout=timeout)
+            raise ValueError(
+                "Timeouts are currently only supported for PostgreSQL databases"
+            )
+        query_executor = functools.partial(
+            _timeout_executor, target=database, timeout=timeout
+        )
     else:
         query_executor = functools.partial(_standard_executor, target=database)
 
@@ -313,20 +346,26 @@ def execute_query(query: qal.SqlQuery, database: db.Database, *,
         current_result, exec_time = query_executor(query)
         query_results.append(current_result)
         execution_times.append(exec_time)
-        execution_result = ExecutionResult(query, current_result, optimization_time, exec_time)
+        execution_result = ExecutionResult(
+            query, current_result, optimization_time, exec_time
+        )
         _invoke_post_process(execution_result, post_process)
 
-    return pd.DataFrame({
-        COL_QUERY: [qal.transform.drop_hints(original_query)] * repetitions,
-        COL_QUERY_HINTS: [original_query.hints] * repetitions,
-        COL_T_EXEC: execution_times,
-        COL_RESULT: query_results,
-        COL_REP: list(range(1, repetitions + 1)),
-        COL_DB_CONFIG: [database.describe()] * repetitions
-    })
+    return pd.DataFrame(
+        {
+            COL_QUERY: [qal.transform.drop_hints(original_query)] * repetitions,
+            COL_QUERY_HINTS: [original_query.hints] * repetitions,
+            COL_T_EXEC: execution_times,
+            COL_RESULT: query_results,
+            COL_REP: list(range(1, repetitions + 1)),
+            COL_DB_CONFIG: [database.describe()] * repetitions,
+        }
+    )
 
 
-def _wrap_workload(queries: Iterable[qal.SqlQuery] | workloads.Workload) -> workloads.Workload:
+def _wrap_workload(
+    queries: Iterable[qal.SqlQuery] | workloads.Workload,
+) -> workloads.Workload:
     """Transforms an iterable of queries into a proper workload object to enable execution by the runner methods.
 
     Parameters
@@ -339,18 +378,28 @@ def _wrap_workload(queries: Iterable[qal.SqlQuery] | workloads.Workload) -> work
     workloads.Workload
         A workload of the given queries.
     """
-    return queries if isinstance(queries, workloads.Workload) else workloads.generate_workload(queries)
+    return (
+        queries
+        if isinstance(queries, workloads.Workload)
+        else workloads.generate_workload(queries)
+    )
 
 
-def execute_workload(queries: Iterable[qal.SqlQuery] | workloads.Workload, database: db.Database, *,
-                     workload_repetitions: int = 1, per_query_repetitions: int = 1, shuffled: bool = False,
-                     query_preparation: Optional[QueryPreparationService] = None,
-                     timeout: Optional[float] = None,
-                     include_labels: bool = False,
-                     post_process: Optional[Callable[[ExecutionResult], None]] = None,
-                     post_repetition_callback: Optional[Callable[[int], None]] = None,
-                     progressive_output: Optional[str | Path] = None,
-                     logger: Optional[Callable[[str], None] | PredefLogger] = None) -> pd.DataFrame:
+def execute_workload(
+    queries: Iterable[qal.SqlQuery] | workloads.Workload,
+    database: db.Database,
+    *,
+    workload_repetitions: int = 1,
+    per_query_repetitions: int = 1,
+    shuffled: bool = False,
+    query_preparation: Optional[QueryPreparationService] = None,
+    timeout: Optional[float] = None,
+    include_labels: bool = False,
+    post_process: Optional[Callable[[ExecutionResult], None]] = None,
+    post_repetition_callback: Optional[Callable[[int], None]] = None,
+    progressive_output: Optional[str | Path] = None,
+    logger: Optional[Callable[[str], None] | PredefLogger] = None,
+) -> pd.DataFrame:
     """Executes all the given queries on the provided database.
 
     Most of this process delegates to the `execute_query` method, so refer to its documentation for more details.
@@ -436,17 +485,36 @@ def execute_workload(queries: Iterable[qal.SqlQuery] | workloads.Workload, datab
         if shuffled:
             queries = queries.shuffle()
 
-        workload_entries = (tqdm(queries.entries(), desc=f"Repetition {i + 1}/{workload_repetitions}", unit="q") if use_tqdm
-                            else queries.entries())
+        workload_entries = (
+            tqdm(
+                queries.entries(),
+                desc=f"Repetition {i + 1}/{workload_repetitions}",
+                unit="q",
+            )
+            if use_tqdm
+            else queries.entries()
+        )
 
         for label, query in workload_entries:
-            logger(f"Now benchmarking query {label} (repetition {i+1}/{workload_repetitions})")
-            execution_result = execute_query(query, database, repetitions=per_query_repetitions,
-                                             timeout=timeout,
-                                             query_preparation=query_preparation, post_process=post_process,
-                                             label=label, logger="tqdm" if use_tqdm else None)
-            execution_result[COL_EXEC_IDX] = list(range(current_execution_index,
-                                                        current_execution_index + per_query_repetitions))
+            logger(
+                f"Now benchmarking query {label} (repetition {i + 1}/{workload_repetitions})"
+            )
+            execution_result = execute_query(
+                query,
+                database,
+                repetitions=per_query_repetitions,
+                timeout=timeout,
+                query_preparation=query_preparation,
+                post_process=post_process,
+                label=label,
+                logger="tqdm" if use_tqdm else None,
+            )
+            execution_result[COL_EXEC_IDX] = list(
+                range(
+                    current_execution_index,
+                    current_execution_index + per_query_repetitions,
+                )
+            )
             if include_labels:
                 execution_result[COL_LABEL] = label
 
@@ -459,7 +527,9 @@ def execute_workload(queries: Iterable[qal.SqlQuery] | workloads.Workload, datab
 
         if progressive_output and progressive_output.is_file():
             current_output = prepare_export(current_df)
-            current_output.to_csv(progressive_output, mode="a", index=False, header=False)
+            current_output.to_csv(
+                progressive_output, mode="a", index=False, header=False
+            )
         elif progressive_output:
             current_output = prepare_export(current_df)
             current_output.to_csv(progressive_output, index=False, mode="w")
@@ -469,19 +539,28 @@ def execute_workload(queries: Iterable[qal.SqlQuery] | workloads.Workload, datab
 
     result_df = pd.concat(results)
     target_labels = [COL_LABEL] if include_labels else []
-    target_labels += [COL_EXEC_IDX, COL_QUERY,
-                      COL_WORKLOAD_ITER, COL_REP,
-                      COL_T_EXEC, COL_RESULT]
+    target_labels += [
+        COL_EXEC_IDX,
+        COL_QUERY,
+        COL_WORKLOAD_ITER,
+        COL_REP,
+        COL_T_EXEC,
+        COL_RESULT,
+    ]
     return result_df[target_labels].reset_index(drop=True)
 
 
-def optimize_and_execute_query(query: qal.SqlQuery, optimization_pipeline: OptimizationPipeline, *,
-                               repetitions: int = 1,
-                               query_preparation: Optional[QueryPreparationService] = None,
-                               post_process: Optional[Callable[[ExecutionResult], None]] = None,
-                               timeout: Optional[float] = None,
-                               label: str = "",
-                               logger: Optional[PredefLogger] = None) -> pd.DataFrame:
+def optimize_and_execute_query(
+    query: qal.SqlQuery,
+    optimization_pipeline: OptimizationPipeline,
+    *,
+    repetitions: int = 1,
+    query_preparation: Optional[QueryPreparationService] = None,
+    post_process: Optional[Callable[[ExecutionResult], None]] = None,
+    timeout: Optional[float] = None,
+    label: str = "",
+    logger: Optional[PredefLogger] = None,
+) -> pd.DataFrame:
     """Optimizes the a query according to the settings of an optimization pipeline and executes it afterwards.
 
     This function delegates most of its work to `execute_query`. In addition, the resulting data frame contains the
@@ -531,39 +610,54 @@ def optimize_and_execute_query(query: qal.SqlQuery, optimization_pipeline: Optim
         start_time = time.perf_counter_ns()
         optimized_query = optimization_pipeline.optimize_query(query)
         end_time = time.perf_counter_ns()
-        optimization_time = (end_time - start_time) / 1_000_000_000  # convert to seconds
+        optimization_time = (
+            end_time - start_time
+        ) / 1_000_000_000  # convert to seconds
 
-        execution_result = execute_query(optimized_query, repetitions=repetitions, query_preparation=query_preparation,
-                                         database=optimization_pipeline.target_database(),
-                                         post_process=post_process, timeout=timeout,
-                                         optimization_time=optimization_time,
-                                         label=label, logger=logger)
+        execution_result = execute_query(
+            optimized_query,
+            repetitions=repetitions,
+            query_preparation=query_preparation,
+            database=optimization_pipeline.target_database(),
+            post_process=post_process,
+            timeout=timeout,
+            optimization_time=optimization_time,
+            label=label,
+            logger=logger,
+        )
         execution_result[COL_T_OPT] = optimization_time
         execution_result[COL_OPT_SUCCESS] = True
         execution_result[COL_OPT_FAILURE_REASON] = None
     except validation.UnsupportedQueryError as e:
-        execution_result = _failed_execution_result(query, optimization_pipeline.target_database(), repetitions)
+        execution_result = _failed_execution_result(
+            query, optimization_pipeline.target_database(), repetitions
+        )
         execution_result[COL_T_OPT] = np.nan
         execution_result[COL_OPT_SUCCESS] = False
         execution_result[COL_OPT_FAILURE_REASON] = e.features
 
     execution_result[COL_ORIG_QUERY] = query
-    execution_result[COL_OPT_SETTINGS] = [optimization_pipeline.describe()] * repetitions
+    execution_result[COL_OPT_SETTINGS] = [
+        optimization_pipeline.describe()
+    ] * repetitions
     return execution_result
 
 
-def optimize_and_execute_workload(queries: Iterable[qal.SqlQuery] | workloads.Workload,
-                                  optimization_pipeline: OptimizationPipeline, *,
-                                  workload_repetitions: int = 1,
-                                  per_query_repetitions: int = 1,
-                                  shuffled: bool = False,
-                                  query_preparation: Optional[QueryPreparationService] = None,
-                                  timeout: Optional[float] = None,
-                                  include_labels: bool = False,
-                                  post_process: Optional[Callable[[ExecutionResult], None]] = None,
-                                  post_repetition_callback: Optional[Callable[[int], None]] = None,
-                                  progressive_output: Optional[str | Path] = None,
-                                  logger: Optional[Callable[[str], None] | PredefLogger] = None) -> pd.DataFrame:
+def optimize_and_execute_workload(
+    queries: Iterable[qal.SqlQuery] | workloads.Workload,
+    optimization_pipeline: OptimizationPipeline,
+    *,
+    workload_repetitions: int = 1,
+    per_query_repetitions: int = 1,
+    shuffled: bool = False,
+    query_preparation: Optional[QueryPreparationService] = None,
+    timeout: Optional[float] = None,
+    include_labels: bool = False,
+    post_process: Optional[Callable[[ExecutionResult], None]] = None,
+    post_repetition_callback: Optional[Callable[[int], None]] = None,
+    progressive_output: Optional[str | Path] = None,
+    logger: Optional[Callable[[str], None] | PredefLogger] = None,
+) -> pd.DataFrame:
     """This function combines the functionality of `execute_workload` and `optimize_query` in one utility.
 
     Each workload iteration starts "from scratch", i.e. with the raw, un-optimized queries. If the post-process actions mutated
@@ -640,19 +734,36 @@ def optimize_and_execute_workload(queries: Iterable[qal.SqlQuery] | workloads.Wo
         if shuffled:
             queries = queries.shuffle()
 
-        workload_entries = (tqdm(queries.entries(), desc=f"Repetition {i + 1}/{workload_repetitions}", unit="q") if use_tqdm
-                            else queries.entries())
+        workload_entries = (
+            tqdm(
+                queries.entries(),
+                desc=f"Repetition {i + 1}/{workload_repetitions}",
+                unit="q",
+            )
+            if use_tqdm
+            else queries.entries()
+        )
 
         for label, query in workload_entries:
-            logger(f"Now benchmarking query {label} (repetition {i+1}/{workload_repetitions})")
-            execution_result = optimize_and_execute_query(query, optimization_pipeline,
-                                                          repetitions=per_query_repetitions,
-                                                          timeout=timeout,
-                                                          query_preparation=query_preparation,
-                                                          post_process=post_process,
-                                                          label=label, logger="tqdm" if use_tqdm else None)
-            execution_result[COL_EXEC_IDX] = list(range(current_execution_index,
-                                                        current_execution_index + per_query_repetitions))
+            logger(
+                f"Now benchmarking query {label} (repetition {i + 1}/{workload_repetitions})"
+            )
+            execution_result = optimize_and_execute_query(
+                query,
+                optimization_pipeline,
+                repetitions=per_query_repetitions,
+                timeout=timeout,
+                query_preparation=query_preparation,
+                post_process=post_process,
+                label=label,
+                logger="tqdm" if use_tqdm else None,
+            )
+            execution_result[COL_EXEC_IDX] = list(
+                range(
+                    current_execution_index,
+                    current_execution_index + per_query_repetitions,
+                )
+            )
             if include_labels:
                 execution_result[COL_LABEL] = label
 
@@ -665,7 +776,9 @@ def optimize_and_execute_workload(queries: Iterable[qal.SqlQuery] | workloads.Wo
 
         if progressive_output and progressive_output.is_file():
             current_output = prepare_export(current_df)
-            current_output.to_csv(progressive_output, mode="a", index=False, header=False)
+            current_output.to_csv(
+                progressive_output, mode="a", index=False, header=False
+            )
         elif progressive_output:
             current_output = prepare_export(current_df)
             current_output.to_csv(progressive_output, index=False, mode="w")
@@ -675,11 +788,20 @@ def optimize_and_execute_workload(queries: Iterable[qal.SqlQuery] | workloads.Wo
 
     result_df = pd.concat(results)
     target_labels = [COL_LABEL] if include_labels else []
-    target_labels += [COL_EXEC_IDX, COL_QUERY,
-                      COL_WORKLOAD_ITER, COL_REP,
-                      COL_T_OPT, COL_T_EXEC, COL_RESULT,
-                      COL_OPT_SUCCESS, COL_OPT_FAILURE_REASON,
-                      COL_ORIG_QUERY, COL_OPT_SETTINGS, COL_DB_CONFIG]
+    target_labels += [
+        COL_EXEC_IDX,
+        COL_QUERY,
+        COL_WORKLOAD_ITER,
+        COL_REP,
+        COL_T_OPT,
+        COL_T_EXEC,
+        COL_RESULT,
+        COL_OPT_SUCCESS,
+        COL_OPT_FAILURE_REASON,
+        COL_ORIG_QUERY,
+        COL_OPT_SETTINGS,
+        COL_DB_CONFIG,
+    ]
     return result_df[target_labels].reset_index(drop=True)
 
 
@@ -715,19 +837,26 @@ def prepare_export(results_df: pd.DataFrame) -> pd.DataFrame:
     prepared_df = results_df.copy()
 
     example_result = prepared_df[COL_RESULT].iloc[0]
-    if isinstance(example_result, list) or isinstance(example_result, tuple) or isinstance(example_result, dict):
+    if (
+        isinstance(example_result, list)
+        or isinstance(example_result, tuple)
+        or isinstance(example_result, dict)
+    ):
         prepared_df[COL_RESULT] = prepared_df[COL_RESULT].apply(json.dumps)
 
     if COL_OPT_SETTINGS in prepared_df:
-        prepared_df[COL_OPT_SETTINGS] = prepared_df[COL_OPT_SETTINGS].apply(util.to_json)
+        prepared_df[COL_OPT_SETTINGS] = prepared_df[COL_OPT_SETTINGS].apply(
+            util.to_json
+        )
     if COL_DB_CONFIG in prepared_df:
         prepared_df[COL_DB_CONFIG] = prepared_df[COL_DB_CONFIG].apply(util.to_json)
 
     return prepared_df
 
 
-def sort_results(results_df: pd.DataFrame,
-                 by_column: str | tuple[str] = (COL_LABEL, COL_EXEC_IDX)) -> pd.DataFrame:
+def sort_results(
+    results_df: pd.DataFrame, by_column: str | tuple[str] = (COL_LABEL, COL_EXEC_IDX)
+) -> pd.DataFrame:
     """Provides a better sorting of the benchmark results in a data frame.
 
     By default, the entries in the result data frame will be sorted either sequentially, or by a lexicographic ordering on the
@@ -749,5 +878,6 @@ def sort_results(results_df: pd.DataFrame,
     pd.DataFrame
         A reordered data frame. The original data frame is not modified
     """
-    return results_df.sort_values(by=by_column,
-                                  key=lambda series: np.argsort(natsort.index_natsorted(series)))
+    return results_df.sort_values(
+        by=by_column, key=lambda series: np.argsort(natsort.index_natsorted(series))
+    )

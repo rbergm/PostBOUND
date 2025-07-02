@@ -24,22 +24,38 @@ class ManualJoinOrderSelection:
 
 
 class InteractiveJoinOrderOptimizer:
-    def __init__(self, query: qal.ImplicitSqlQuery, *, database: Optional[db.Database] = None) -> None:
+    def __init__(
+        self, query: qal.ImplicitSqlQuery, *, database: Optional[db.Database] = None
+    ) -> None:
         self._query = query
-        self._db = database if database is not None else db.DatabasePool.get_instance().current_database()
+        self._db = (
+            database
+            if database is not None
+            else db.DatabasePool.get_instance().current_database()
+        )
 
-    def start(self, *, use_predicate_equivalence_classes: bool = False) -> ManualJoinOrderSelection:
-        join_graph = opt.JoinGraph(self._query, self._db.schema(),
-                                         include_predicate_equivalence_classes=use_predicate_equivalence_classes)
+    def start(
+        self, *, use_predicate_equivalence_classes: bool = False
+    ) -> ManualJoinOrderSelection:
+        join_graph = opt.JoinGraph(
+            self._query,
+            self._db.schema(),
+            include_predicate_equivalence_classes=use_predicate_equivalence_classes,
+        )
         join_graph_stack: list[opt.JoinGraph] = []
         join_order: list[qal.TableReference] = []
         n_tables = len(self._query.tables())
 
         while n_tables > len(join_order):
-            intermediate_str = (" ⋈ ".join(str(tab.identifier()) for tab in join_graph.joined_tables()) if join_order
-                                else "∅")
+            intermediate_str = (
+                " ⋈ ".join(str(tab.identifier()) for tab in join_graph.joined_tables())
+                if join_order
+                else "∅"
+            )
             if join_order:
-                query_fragment = qal.transform.extract_query_fragment(self._query, join_order)
+                query_fragment = qal.transform.extract_query_fragment(
+                    self._query, join_order
+                )
                 query_fragment = qal.transform.as_count_star_query(query_fragment)
                 current_card = self._db.execute_query(query_fragment)
                 intermediate_str += f" (card = {current_card})"
@@ -48,7 +64,9 @@ class InteractiveJoinOrderOptimizer:
             print("> Available actions:")
             available_joins = dict(enumerate(join_graph.available_join_paths()))
             for join_idx, join in available_joins.items():
-                print(f"[{join_idx}]\tJoin {join.start_table.identifier()} ⋈ {join.target_table.identifier()}")
+                print(
+                    f"[{join_idx}]\tJoin {join.start_table.identifier()} ⋈ {join.target_table.identifier()}"
+                )
             print(" b\tbacktrack to last graph")
             action = input("> Select next join:")
 
@@ -74,7 +92,11 @@ class InteractiveJoinOrderOptimizer:
             join_order.append(next_join.target_table)
             print()
 
-        final_card = self._db.execute_query(qal.transform.as_count_star_query(self._query))
+        final_card = self._db.execute_query(
+            qal.transform.as_count_star_query(self._query)
+        )
         print(f"> Done. (final card = {final_card})")
         print("> Final join order: ", [tab.identifier() for tab in join_order])
-        return ManualJoinOrderSelection(query=self._query, join_order=tuple(join_order), database=self._db)
+        return ManualJoinOrderSelection(
+            query=self._query, join_order=tuple(join_order), database=self._db
+        )

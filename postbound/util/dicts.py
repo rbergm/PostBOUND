@@ -1,4 +1,5 @@
 """Contains utilities to access and modify dictionaries more conveniently."""
+
 from __future__ import annotations
 
 import numpy as np
@@ -43,7 +44,9 @@ def key(dictionary: dict[K, V]) -> K:
     """
     if not len(dictionary) == 1:
         nvals = len(dictionary)
-        raise ValueError(f"Dictionary must contain exactly 1 entry, not {nvals}: {dictionary}")
+        raise ValueError(
+            f"Dictionary must contain exactly 1 entry, not {nvals}: {dictionary}"
+        )
     return next(iter(dictionary.keys()))
 
 
@@ -53,7 +56,9 @@ def value(dictionary: dict[K, V]) -> V:
     `value({'a': 1}) = 1`
     """
     if not len(dictionary) == 1:
-        raise ValueError("Dictionary must contain exactly 1 entry, not " + str(len(dictionary)))
+        raise ValueError(
+            "Dictionary must contain exactly 1 entry, not " + str(len(dictionary))
+        )
     return next(iter(dictionary.values()))
 
 
@@ -93,7 +98,9 @@ def intersection(a: dict[K, V], b: dict[K, V]) -> dict[K, V]:
     return {k: v for k, v in a.items() if k in b}
 
 
-def merge(a: dict[K, V], b: dict[K, V], *, updater: Optional[Callable[[K, V, V], V]] = None) -> dict[K, V]:
+def merge(
+    a: dict[K, V], b: dict[K, V], *, updater: Optional[Callable[[K, V, V], V]] = None
+) -> dict[K, V]:
     """Creates a new dict containing all key/values pairs from both argument dictionaries.
 
     If keys overlap, entries from dictionary `b` will take priority, unless an `update` method is given.
@@ -158,7 +165,9 @@ def generate_multi(entries: list[tuple[K, V]]) -> dict[K, list[V]]:
     return dict(collector)
 
 
-def reduce_multi(multi_dict: dict[K, list[V]], reduction: Callable[[K, list[V]], V]) -> dict[K, V]:
+def reduce_multi(
+    multi_dict: dict[K, list[V]], reduction: Callable[[K, list[V]], V]
+) -> dict[K, V]:
     """Ungroups a multi-dict by aggregating the values based on key and values."""
     return {k: reduction(k, vs) for k, vs in multi_dict.items()}
 
@@ -274,6 +283,7 @@ class DynamicDefaultDict(collections.UserDict[K, V]):
     factory : Callable[[K], V]
         A function that generates the value based on a missing key. It receives the key as input and must return the value.
     """
+
     def __init__(self, factory: Callable[[K], V]) -> None:
         super().__init__()
         self.factory = factory
@@ -296,6 +306,7 @@ class frozendict(collections.UserDict[K, V]):
         Supports the same argument types as the normal dictionary. If no items are supplied, an empty frozen dictionary is
         returned.
     """
+
     def __init__(self, items=None) -> None:
         self._frozen = False
         super().__init__(items)

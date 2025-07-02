@@ -17,9 +17,11 @@ job_workload = pb.workloads.job()
 # Take a look at the native module for other strategies.
 # If we were to use a different database in our NativeOptimizer than in our pipeline, we would optimize queries using that
 # database, but execute them on a different system (e.g. calling NativeOptimizer(db_a) but creating OptimizationPipeline(db_b))
-predef_pipeline = (pb.IntegratedOptimizationPipeline(postgres_db)
-                   .setup_optimization_algorithm(native.NativeOptimizer(postgres_db))
-                   .build())
+predef_pipeline = (
+    pb.IntegratedOptimizationPipeline(postgres_db)
+    .setup_optimization_algorithm(native.NativeOptimizer(postgres_db))
+    .build()
+)
 
 
 # Nevertheless, native optimization (or parts of it) can still be implemented using only a couple lines of code:
@@ -37,9 +39,11 @@ class OurNativeOptimizer(pb.CompleteOptimizationAlgorithm):
         return {"name": "native_plans"}
 
 
-custom_pipeline = (pb.IntegratedOptimizationPipeline(postgres_db)
-                   .setup_optimization_algorithm(OurNativeOptimizer(postgres_db))
-                   .build())
+custom_pipeline = (
+    pb.IntegratedOptimizationPipeline(postgres_db)
+    .setup_optimization_algorithm(OurNativeOptimizer(postgres_db))
+    .build()
+)
 
 # We can use both pipelines exactly as exepected and they should also provide the same results (except if the native optimizer
 # changes its mind between two optimizations of the same query)

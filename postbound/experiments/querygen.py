@@ -1,4 +1,5 @@
 """Simple randomized query generator."""
+
 from __future__ import annotations
 
 import random
@@ -11,16 +12,23 @@ from .. import util
 from ..db import DatabasePool, Database, postgres
 from ..qal import (
     SqlQuery,
-    LogicalOperator, CompoundOperator,
-    AbstractPredicate, CompoundPredicate,
-    Select, ImplicitFromClause, Where,
-    build_query, as_predicate
+    LogicalOperator,
+    CompoundOperator,
+    AbstractPredicate,
+    CompoundPredicate,
+    Select,
+    ImplicitFromClause,
+    Where,
+    build_query,
+    as_predicate,
 )
 from ..util import networkx as nx_utils
 from .._core import TableReference, ColumnReference
 
 
-def _generate_join_predicates(tables: list[TableReference], *, schema: nx.DiGraph) -> AbstractPredicate:
+def _generate_join_predicates(
+    tables: list[TableReference], *, schema: nx.DiGraph
+) -> AbstractPredicate:
     """Generates equi-join predicates for specific tables.
 
     Between each pair of tables, a join predicate is generated if there is a foreign key relationship between the two tables.
@@ -46,10 +54,8 @@ def _generate_join_predicates(tables: list[TableReference], *, schema: nx.DiGrap
     predicates: list[AbstractPredicate] = []
 
     for i, outer_tab in enumerate(tables):
-
         # Make sure to check each pair of tables only once
-        for inner_tab in tables[i + 1:]:
-
+        for inner_tab in tables[i + 1 :]:
             # Since we are working with a directed graph, we need to check for both FK reference "directions"
             fk_edge = schema.get_edge_data(outer_tab, inner_tab)
             if not fk_edge:
@@ -62,11 +68,15 @@ def _generate_join_predicates(tables: list[TableReference], *, schema: nx.DiGrap
             predicates.append(join_predicate)
 
     if not predicates:
-        raise ValueError(f"Found no suitable edges in the schema graph for tables {tables}.")
+        raise ValueError(
+            f"Found no suitable edges in the schema graph for tables {tables}."
+        )
     return CompoundPredicate.create_and(predicates)
 
 
-def _generate_filter(column: ColumnReference, *, target_db: Database) -> Optional[AbstractPredicate]:
+def _generate_filter(
+    column: ColumnReference, *, target_db: Database
+) -> Optional[AbstractPredicate]:
     """Generates a random filter predicate for a specific column.
 
     The predicate will be a simple binary predicate using one of the following operators: equality, inequality, greater than,
@@ -87,7 +97,12 @@ def _generate_filter(column: ColumnReference, *, target_db: Database) -> Optiona
     """
 
     # TODO: for text columns we should also generate LIKE predicates
-    candidate_operators = [LogicalOperator.Equal, LogicalOperator.NotEqual, LogicalOperator.Greater, LogicalOperator.Less]
+    candidate_operators = [
+        LogicalOperator.Equal,
+        LogicalOperator.NotEqual,
+        LogicalOperator.Greater,
+        LogicalOperator.Less,
+    ]
 
     # We need to compute the unique values for the column
     # For Postgres, we can use the TABLESAMPLE clause to reduce the number of rows to materialize by a large number.
@@ -96,12 +111,16 @@ def _generate_filter(column: ColumnReference, *, target_db: Database) -> Optiona
     # sampling of queries. The reason is that the number of distinct values can be huge and we don't want to overload the cache
     estimated_n_rows = target_db.statistics().total_rows(column.table, emulated=False)
     if isinstance(target_db, postgres.PostgresInterface) and estimated_n_rows > 1000:
-        distinct_template = """SELECT DISTINCT {col} FROM {tab} TABLESAMPLE BERNOULLI(1)"""
+        distinct_template = (
+            """SELECT DISTINCT {col} FROM {tab} TABLESAMPLE BERNOULLI(1)"""
+        )
     else:
         distinct_template = """SELECT DISTINCT {col} FROM {tab}"""
 
-    candidate_values = target_db.execute_query(distinct_template.format(col=column.name, tab=column.table.full_name),
-                                               cache_enabled=False)
+    candidate_values = target_db.execute_query(
+        distinct_template.format(col=column.name, tab=column.table.full_name),
+        cache_enabled=False,
+    )
     if not candidate_values:
         return None
 
@@ -113,15 +132,30 @@ def _generate_filter(column: ColumnReference, *, target_db: Database) -> Optiona
 
 def _is_numeric(data_type: str) -> bool:
     """Checks, whether a data type is numeric."""
-    return (data_type in {"integer", "smallint", "bigint", "date", "double precision", "real", "numeric", "decimal"}
-            or data_type.startswith("time"))
+    return data_type in {
+        "integer",
+        "smallint",
+        "bigint",
+        "date",
+        "double precision",
+        "real",
+        "numeric",
+        "decimal",
+    } or data_type.startswith("time")
 
 
-def generate_query(target_db: Optional[Database], *,
-                   count_star: bool = False, ignore_tables: Optional[set[TableReference]] = None,
-                   min_tables: Optional[int] = None, max_tables: Optional[int] = None,
-                   min_filters: Optional[int] = None, max_filters: Optional[int] = None,
-                   filter_key_columns: bool = True, numeric_filters: bool = False) -> Generator[SqlQuery, None, None]:
+def generate_query(
+    target_db: Optional[Database],
+    *,
+    count_star: bool = False,
+    ignore_tables: Optional[set[TableReference]] = None,
+    min_tables: Optional[int] = None,
+    max_tables: Optional[int] = None,
+    min_filters: Optional[int] = None,
+    max_filters: Optional[int] = None,
+    filter_key_columns: bool = True,
+    numeric_filters: bool = False,
+) -> Generator[SqlQuery, None, None]:
     """A simple randomized query generator.
 
     The generator selects a random subset of (connected) tables from the schema graph of the target database and builds a
@@ -192,7 +226,9 @@ def generate_query(target_db: Optional[Database], *,
         nodes_to_remove = [node for node in schema_graph.nodes if node in ignore_tables]
         schema_graph.remove_nodes_from(nodes_to_remove)
     if isinstance(target_db, postgres.PostgresInterface):
-        nodes_to_remove = [node for node in schema_graph.nodes if node.full_name.startswith("pg_")]
+        nodes_to_remove = [
+            node for node in schema_graph.nodes if node.full_name.startswith("pg_")
+        ]
         schema_graph.remove_nodes_from(nodes_to_remove)
 
     min_tables = min_tables or 1
@@ -201,9 +237,13 @@ def generate_query(target_db: Optional[Database], *,
     max_tables = max_tables or len(schema_graph.nodes)
     max_tables = min(max_tables, len(schema_graph.nodes))
     if max_tables < min_tables:
-        raise ValueError(f"max_tables must be at least as large as min_tables. Got {max_tables} (max) and {min_tables} (min).")
+        raise ValueError(
+            f"max_tables must be at least as large as min_tables. Got {max_tables} (max) and {min_tables} (min)."
+        )
 
-    filter_columns = util.flatten(cols for __, cols in schema_graph.nodes(data="columns"))
+    filter_columns = util.flatten(
+        cols for __, cols in schema_graph.nodes(data="columns")
+    )
     min_filters = min_filters or 0
     max_filters = max_filters or len(filter_columns)
 
@@ -216,19 +256,37 @@ def generate_query(target_db: Optional[Database], *,
         # We ensure that we always generate a connected join graph by performing a random walk through the schema graph.
         # This way, we can terminate the walk at any point if we have visited enough tables.
         table_walk = nx_utils.nx_random_walk(schema_graph.to_undirected())
-        joined_tables: list[TableReference] = [next(table_walk) for _ in range(n_tables)]
+        joined_tables: list[TableReference] = [
+            next(table_walk) for _ in range(n_tables)
+        ]
 
-        available_columns: list[ColumnReference] = util.flatten([cols for tab, cols in schema_graph.nodes(data="columns")
-                                                                 if tab in set(joined_tables)])
+        available_columns: list[ColumnReference] = util.flatten(
+            [
+                cols
+                for tab, cols in schema_graph.nodes(data="columns")
+                if tab in set(joined_tables)
+            ]
+        )
         if not filter_key_columns:
-            available_columns = [col for col in available_columns
-                                 if not db_schema.is_primary_key(col) and not db_schema.foreign_keys_on(col)]
+            available_columns = [
+                col
+                for col in available_columns
+                if not db_schema.is_primary_key(col)
+                and not db_schema.foreign_keys_on(col)
+            ]
         if numeric_filters:
-            available_columns = [col for col in available_columns
-                                 if _is_numeric(schema_graph.nodes[col.table]["data_type"][col])]
+            available_columns = [
+                col
+                for col in available_columns
+                if _is_numeric(schema_graph.nodes[col.table]["data_type"][col])
+            ]
 
         from_clause = ImplicitFromClause.create_for(joined_tables)
-        join_predicates = _generate_join_predicates(joined_tables, schema=schema_graph) if n_tables > 1 else None
+        join_predicates = (
+            _generate_join_predicates(joined_tables, schema=schema_graph)
+            if n_tables > 1
+            else None
+        )
 
         current_max_filters = min(max_filters, len(available_columns))
         if current_max_filters <= min_filters:
@@ -239,9 +297,17 @@ def generate_query(target_db: Optional[Database], *,
 
         if n_filters > 0 and available_columns:
             cols_to_filter = random.sample(available_columns, n_filters)
-            individual_filters = [_generate_filter(col, target_db=target_db) for col in cols_to_filter]
-            individual_filters = [pred for pred in individual_filters if pred is not None]
-            filter_predicates = CompoundPredicate.create_and(individual_filters) if individual_filters else None
+            individual_filters = [
+                _generate_filter(col, target_db=target_db) for col in cols_to_filter
+            ]
+            individual_filters = [
+                pred for pred in individual_filters if pred is not None
+            ]
+            filter_predicates = (
+                CompoundPredicate.create_and(individual_filters)
+                if individual_filters
+                else None
+            )
         else:
             filter_predicates = None
 
@@ -256,7 +322,9 @@ def generate_query(target_db: Optional[Database], *,
                 case _:
                     where_parts.append(join_predicates)
 
-        where_clause = Where(CompoundPredicate.create_and(where_parts)) if where_parts else None
+        where_clause = (
+            Where(CompoundPredicate.create_and(where_parts)) if where_parts else None
+        )
 
         query = build_query([select_clause, from_clause, where_clause])
         yield query

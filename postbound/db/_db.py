@@ -13,6 +13,7 @@ More specifically, this includes
 Take a look at the central `Database` class for more details. All concrete database systems need to implement this
 interface.
 """
+
 from __future__ import annotations
 
 import abc
@@ -30,11 +31,18 @@ import networkx as nx
 from .. import util
 from .._core import Cardinality
 from .._qep import QueryPlan
-from ..qal import TableReference, ColumnReference, SqlQuery, VirtualTableError, UnboundColumnError
+from ..qal import (
+    TableReference,
+    ColumnReference,
+    SqlQuery,
+    VirtualTableError,
+    UnboundColumnError,
+)
 from ..optimizer import (
     PhysicalOperator,
-    PhysicalOperatorAssignment, PlanParameterization,
-    HintType
+    PhysicalOperatorAssignment,
+    PlanParameterization,
+    HintType,
 )
 from ..optimizer._jointree import JoinTree
 
@@ -64,7 +72,9 @@ class Cursor(typing.Protocol):
         raise NotImplementedError
 
     @abc.abstractmethod
-    def execute(self, operation: str, parameters: Optional[dict | Sequence] = None) -> Optional[Cursor]:
+    def execute(
+        self, operation: str, parameters: Optional[dict | Sequence] = None
+    ) -> Optional[Cursor]:
         raise NotImplementedError
 
     @abc.abstractmethod
@@ -106,9 +116,14 @@ class PrewarmingSupport(typing.Protocol):
     """
 
     @abc.abstractmethod
-    def prewarm_tables(self, tables: Optional[TableReference | Iterable[TableReference]] = None,
-                       *more_tables: TableReference, exclude_table_pages: bool = False,
-                       include_primary_index: bool = True, include_secondary_indexes: bool = True) -> None:
+    def prewarm_tables(
+        self,
+        tables: Optional[TableReference | Iterable[TableReference]] = None,
+        *more_tables: TableReference,
+        exclude_table_pages: bool = False,
+        include_primary_index: bool = True,
+        include_secondary_indexes: bool = True,
+    ) -> None:
         """Prepares the database buffer pool with tuples from specific tables.
 
         Parameters
@@ -146,7 +161,9 @@ class PrewarmingSupport(typing.Protocol):
 class TimeoutSupport(typing.Protocol):
     """Marks database systems that support executing queries with a timeout."""
 
-    def execute_with_timeout(self, query: SqlQuery | str, *, timeout: float = 60.0) -> Optional[ResultSet]:
+    def execute_with_timeout(
+        self, query: SqlQuery | str, *, timeout: float = 60.0
+    ) -> Optional[ResultSet]:
         """Executes a query with a specific timeout.
 
         For query execution, we use the following rules in contrast to `Database.execute_query`:
@@ -174,6 +191,7 @@ class TimeoutSupport(typing.Protocol):
 
 class QueryCacheWarning(UserWarning):
     """Warning to indicate that the query result cache was not found."""
+
     def __init__(self, msg: str) -> None:
         super().__init__(msg)
 
@@ -289,7 +307,13 @@ class Database(abc.ABC):
         raise NotImplementedError
 
     @abc.abstractmethod
-    def execute_query(self, query: SqlQuery | str, *, cache_enabled: Optional[bool] = None, raw: bool = False) -> Any:
+    def execute_query(
+        self,
+        query: SqlQuery | str,
+        *,
+        cache_enabled: Optional[bool] = None,
+        raw: bool = False,
+    ) -> Any:
         """Executes the given query and returns the associated result set.
 
         Parameters
@@ -469,10 +493,16 @@ class Database(abc.ABC):
                 try:
                     self._query_cache = json.load(cache_file)
                 except json.JSONDecodeError as e:
-                    warnings.warn("Could not read query cache: " + str(e), category=QueryCacheWarning)
+                    warnings.warn(
+                        "Could not read query cache: " + str(e),
+                        category=QueryCacheWarning,
+                    )
                     self._query_cache = {}
         else:
-            warnings.warn(f"Could not read query cache: File {query_cache_name} does not exist", category=QueryCacheWarning)
+            warnings.warn(
+                f"Could not read query cache: File {query_cache_name} does not exist",
+                category=QueryCacheWarning,
+            )
             self._query_cache = {}
         atexit.register(self._store_query_cache, query_cache_name)
 
@@ -495,16 +525,23 @@ class Database(abc.ABC):
         str
             The cache file name. It consists of the database system name, system version and the name of the database
         """
-        identifier = "_".join([self.database_system_name(),
-                               self.database_system_version().formatted(prefix="v", separator="_"),
-                               self.database_name()])
+        identifier = "_".join(
+            [
+                self.database_system_name(),
+                self.database_system_version().formatted(prefix="v", separator="_"),
+                self.database_name(),
+            ]
+        )
         return f".query_cache_{identifier}.json"
 
     def __hash__(self) -> int:
         return hash(self._query_cache_name())
 
     def __eq__(self, other: object) -> bool:
-        return isinstance(other, type(self)) and self._query_cache_name() == other._query_cache_name()
+        return (
+            isinstance(other, type(self))
+            and self._query_cache_name() == other._query_cache_name()
+        )
 
     def __repr__(self) -> str:
         return str(self)
@@ -540,7 +577,9 @@ class DatabaseSchema(abc.ABC):
         set[TableReference]
             All tables in the current schema, including materialized views, etc.
         """
-        query_template = "SELECT table_name FROM information_schema.tables WHERE table_catalog = %s"
+        query_template = (
+            "SELECT table_name FROM information_schema.tables WHERE table_catalog = %s"
+        )
         self._db.cursor().execute(query_template, (self._db.database_name(),))
         result_set = self._db.cursor().fetchall()
         assert result_set is not None
@@ -615,8 +654,13 @@ class DatabaseSchema(abc.ABC):
         return table_type == "VIEW"
 
     @abc.abstractmethod
-    def lookup_column(self, column: ColumnReference | str, candidate_tables: Iterable[TableReference], *,
-                      expect_match: bool = False) -> Optional[TableReference]:
+    def lookup_column(
+        self,
+        column: ColumnReference | str,
+        candidate_tables: Iterable[TableReference],
+        *,
+        expect_match: bool = False,
+    ) -> Optional[TableReference]:
         """Searches for a table that owns the given column.
 
         Parameters
@@ -735,7 +779,9 @@ class DatabaseSchema(abc.ABC):
         """
         raise NotImplementedError
 
-    def primary_key_column(self, table: TableReference | str) -> Optional[ColumnReference]:
+    def primary_key_column(
+        self, table: TableReference | str
+    ) -> Optional[ColumnReference]:
         """Determines the primary key column of a specific table.
 
         Parameters
@@ -748,7 +794,9 @@ class DatabaseSchema(abc.ABC):
         Optional[ColumnReference]
             The primary key if it exists, or *None* otherwise.
         """
-        return next((col for col in self.columns(table) if self.is_primary_key(col)), None)
+        return next(
+            (col for col in self.columns(table) if self.is_primary_key(col)), None
+        )
 
     @abc.abstractmethod
     def foreign_keys_on(self, column: ColumnReference) -> set[ColumnReference]:
@@ -860,7 +908,9 @@ class DatabaseSchema(abc.ABC):
         for col in all_columns:
             foreign_keys = self.foreign_keys_on(col)
             for fk_target in foreign_keys:
-                g.add_edge(col.table, fk_target.table, referenced_col=fk_target, fk_col=col)
+                g.add_edge(
+                    col.table, fk_target.table, referenced_col=fk_target, fk_col=col
+                )
 
         return g
 
@@ -931,15 +981,26 @@ class DatabaseStatistics(abc.ABC):
     postbound.postbound.OptimizationPipeline : The basic optimization process applied by PostBOUND
     """
 
-    def __init__(self, db: Database, *, emulated: bool = True, enable_emulation_fallback: bool = True,
-                 cache_enabled: Optional[bool] = True) -> None:
+    def __init__(
+        self,
+        db: Database,
+        *,
+        emulated: bool = True,
+        enable_emulation_fallback: bool = True,
+        cache_enabled: Optional[bool] = True,
+    ) -> None:
         self.emulated = emulated
         self.enable_emulation_fallback = enable_emulation_fallback
         self.cache_enabled = cache_enabled
         self._db = db
 
-    def total_rows(self, table: TableReference, *, emulated: Optional[bool] = None,
-                   cache_enabled: Optional[bool] = None) -> Optional[int]:
+    def total_rows(
+        self,
+        table: TableReference,
+        *,
+        emulated: Optional[bool] = None,
+        cache_enabled: Optional[bool] = None,
+    ) -> Optional[int]:
         """Provides (an estimate of) the total number of rows in a table.
 
         Parameters
@@ -969,13 +1030,19 @@ class DatabaseStatistics(abc.ABC):
         if table.virtual:
             raise VirtualTableError(table)
         if emulated or (emulated is None and self.emulated):
-            return self._calculate_total_rows(table,
-                                              cache_enabled=self._determine_caching_behavior(cache_enabled))
+            return self._calculate_total_rows(
+                table, cache_enabled=self._determine_caching_behavior(cache_enabled)
+            )
         else:
             return self._retrieve_total_rows_from_stats(table)
 
-    def distinct_values(self, column: ColumnReference, *, emulated: Optional[bool] = None,
-                        cache_enabled: Optional[bool] = None) -> Optional[int]:
+    def distinct_values(
+        self,
+        column: ColumnReference,
+        *,
+        emulated: Optional[bool] = None,
+        cache_enabled: Optional[bool] = None,
+    ) -> Optional[int]:
         """Provides (an estimate of) the total number of different column values of a specific column.
 
         Parameters
@@ -1009,13 +1076,19 @@ class DatabaseStatistics(abc.ABC):
         elif column.table.virtual:
             raise VirtualTableError(column.table)
         if emulated or (emulated is None and self.emulated):
-            return self._calculate_distinct_values(column,
-                                                   cache_enabled=self._determine_caching_behavior(cache_enabled))
+            return self._calculate_distinct_values(
+                column, cache_enabled=self._determine_caching_behavior(cache_enabled)
+            )
         else:
             return self._retrieve_distinct_values_from_stats(column)
 
-    def min_max(self, column: ColumnReference, *, emulated: Optional[bool] = None,
-                cache_enabled: Optional[bool] = None) -> Optional[tuple[Any, Any]]:
+    def min_max(
+        self,
+        column: ColumnReference,
+        *,
+        emulated: Optional[bool] = None,
+        cache_enabled: Optional[bool] = None,
+    ) -> Optional[tuple[Any, Any]]:
         """Provides (an estimate of) the minimum and maximum values in a column.
 
         Parameters
@@ -1048,13 +1121,20 @@ class DatabaseStatistics(abc.ABC):
         elif column.table.virtual:
             raise VirtualTableError(column.table)
         if emulated or (emulated is None and self.emulated):
-            return self._calculate_min_max_values(column,
-                                                  cache_enabled=self._determine_caching_behavior(cache_enabled))
+            return self._calculate_min_max_values(
+                column, cache_enabled=self._determine_caching_behavior(cache_enabled)
+            )
         else:
             return self._retrieve_min_max_values_from_stats(column)
 
-    def most_common_values(self, column: ColumnReference, *, k: int = 10, emulated: Optional[bool] = None,
-                           cache_enabled: Optional[bool] = None) -> Sequence[tuple[Any, int]]:
+    def most_common_values(
+        self,
+        column: ColumnReference,
+        *,
+        k: int = 10,
+        emulated: Optional[bool] = None,
+        cache_enabled: Optional[bool] = None,
+    ) -> Sequence[tuple[Any, int]]:
         """Provides (an estimate of) the total number of occurrences of the `k` most frequent values of a column.
 
         Parameters
@@ -1092,12 +1172,15 @@ class DatabaseStatistics(abc.ABC):
         elif column.table.virtual:
             raise VirtualTableError(column.table)
         if emulated or (emulated is None and self.emulated):
-            return self._calculate_most_common_values(column, k,
-                                                      cache_enabled=self._determine_caching_behavior(cache_enabled))
+            return self._calculate_most_common_values(
+                column, k, cache_enabled=self._determine_caching_behavior(cache_enabled)
+            )
         else:
             return self._retrieve_most_common_values_from_stats(column, k)
 
-    def _calculate_total_rows(self, table: TableReference, *, cache_enabled: Optional[bool] = None) -> int:
+    def _calculate_total_rows(
+        self, table: TableReference, *, cache_enabled: Optional[bool] = None
+    ) -> int:
         """Retrieves the total number of rows of a table by issuing a ``COUNT(*)`` query against the live database.
 
         The table is assumed to be non-virtual.
@@ -1116,9 +1199,14 @@ class DatabaseStatistics(abc.ABC):
             The total number of rows in the table.
         """
         query_template = "SELECT COUNT(*) FROM {tab}".format(tab=table.full_name)
-        return self._db.execute_query(query_template, cache_enabled=self._determine_caching_behavior(cache_enabled))
+        return self._db.execute_query(
+            query_template,
+            cache_enabled=self._determine_caching_behavior(cache_enabled),
+        )
 
-    def _calculate_distinct_values(self, column: ColumnReference, *, cache_enabled: Optional[bool] = None) -> int:
+    def _calculate_distinct_values(
+        self, column: ColumnReference, *, cache_enabled: Optional[bool] = None
+    ) -> int:
         """Retrieves the number of distinct column values by issuing a ``COUNT(*)`` / ``GROUP BY`` query over that
         column against the live database.
 
@@ -1137,11 +1225,17 @@ class DatabaseStatistics(abc.ABC):
         int
             The number of distinct values in the column
         """
-        query_template = "SELECT COUNT(DISTINCT {col}) FROM {tab}".format(col=column.name, tab=column.table.full_name)
-        return self._db.execute_query(query_template, cache_enabled=self._determine_caching_behavior(cache_enabled))
+        query_template = "SELECT COUNT(DISTINCT {col}) FROM {tab}".format(
+            col=column.name, tab=column.table.full_name
+        )
+        return self._db.execute_query(
+            query_template,
+            cache_enabled=self._determine_caching_behavior(cache_enabled),
+        )
 
-    def _calculate_min_max_values(self, column: ColumnReference, *,
-                                  cache_enabled: Optional[bool] = None) -> tuple[Any, Any]:
+    def _calculate_min_max_values(
+        self, column: ColumnReference, *, cache_enabled: Optional[bool] = None
+    ) -> tuple[Any, Any]:
         """Retrieves the minimum/maximum values in a column by issuing an aggregation query for that column against the
         live database.
 
@@ -1160,11 +1254,17 @@ class DatabaseStatistics(abc.ABC):
         tuple[Any, Any]
             A tuple of ``(min val, max val)``
         """
-        query_template = "SELECT MIN({col}), MAX({col}) FROM {tab}".format(col=column.name, tab=column.table.full_name)
-        return self._db.execute_query(query_template, cache_enabled=self._determine_caching_behavior(cache_enabled))
+        query_template = "SELECT MIN({col}), MAX({col}) FROM {tab}".format(
+            col=column.name, tab=column.table.full_name
+        )
+        return self._db.execute_query(
+            query_template,
+            cache_enabled=self._determine_caching_behavior(cache_enabled),
+        )
 
-    def _calculate_most_common_values(self, column: ColumnReference, k: int, *,
-                                      cache_enabled: Optional[bool] = None) -> Sequence[tuple[Any, int]]:
+    def _calculate_most_common_values(
+        self, column: ColumnReference, k: int, *, cache_enabled: Optional[bool] = None
+    ) -> Sequence[tuple[Any, int]]:
         """Retrieves the `k` most frequent values of a column along with their frequencies by issuing a query over that
         column against the live database.
 
@@ -1190,13 +1290,18 @@ class DatabaseStatistics(abc.ABC):
             The most common values in ``(value, frequency)`` pairs, ordered by largest frequency first. Can be smaller
             than the requested `k` value if the column contains less distinct values.
         """
-        query_template = textwrap.dedent("""
+        query_template = textwrap.dedent(
+            """
             SELECT {col}, COUNT(*) AS n
             FROM {tab}
             GROUP BY {col}
             ORDER BY n DESC, {col}
-            LIMIT {k}""".format(col=column.name, tab=column.table.full_name, k=k))
-        return self._db.execute_query(query_template, cache_enabled=self._determine_caching_behavior(cache_enabled))
+            LIMIT {k}""".format(col=column.name, tab=column.table.full_name, k=k)
+        )
+        return self._db.execute_query(
+            query_template,
+            cache_enabled=self._determine_caching_behavior(cache_enabled),
+        )
 
     @abc.abstractmethod
     def _retrieve_total_rows_from_stats(self, table: TableReference) -> Optional[int]:
@@ -1220,7 +1325,9 @@ class DatabaseStatistics(abc.ABC):
         raise NotImplementedError
 
     @abc.abstractmethod
-    def _retrieve_distinct_values_from_stats(self, column: ColumnReference) -> Optional[int]:
+    def _retrieve_distinct_values_from_stats(
+        self, column: ColumnReference
+    ) -> Optional[int]:
         """Queries the DBMS-internal metadata for the number of distinct values of the column.
 
         The column is assumed to be bound to a (non-virtual) table.
@@ -1241,7 +1348,9 @@ class DatabaseStatistics(abc.ABC):
         raise NotImplementedError
 
     @abc.abstractmethod
-    def _retrieve_min_max_values_from_stats(self, column: ColumnReference) -> Optional[tuple[Any, Any]]:
+    def _retrieve_min_max_values_from_stats(
+        self, column: ColumnReference
+    ) -> Optional[tuple[Any, Any]]:
         """Queries the DBMS-internal metadata for the minimum / maximum value in a column.
 
         The column is assumed to be bound to a (non-virtual) table.
@@ -1261,8 +1370,9 @@ class DatabaseStatistics(abc.ABC):
         raise NotImplementedError
 
     @abc.abstractmethod
-    def _retrieve_most_common_values_from_stats(self, column: ColumnReference,
-                                                k: int) -> Sequence[tuple[Any, int]]:
+    def _retrieve_most_common_values_from_stats(
+        self, column: ColumnReference, k: int
+    ) -> Sequence[tuple[Any, int]]:
         """Queries the DBMS-internal metadata for the `k` most common values of the `column`.
 
         The column is assumed to be bound to a (non-virtual) table.
@@ -1286,7 +1396,9 @@ class DatabaseStatistics(abc.ABC):
         """
         raise NotImplementedError
 
-    def _determine_caching_behavior(self, local_cache_enabled: Optional[bool]) -> Optional[bool]:
+    def _determine_caching_behavior(
+        self, local_cache_enabled: Optional[bool]
+    ) -> Optional[bool]:
         """Utility to quickly figure out which caching behavior to use.
 
         This method is intended to be called by the top-level methods that provide statistics and enable a selective
@@ -1302,7 +1414,9 @@ class DatabaseStatistics(abc.ABC):
         Optional[bool]
             Whether caching should be enabled or the determined by the actual database interface.
         """
-        return self.cache_enabled if local_cache_enabled is None else local_cache_enabled
+        return (
+            self.cache_enabled if local_cache_enabled is None else local_cache_enabled
+        )
 
     def __repr__(self) -> str:
         return str(self)
@@ -1313,6 +1427,7 @@ class DatabaseStatistics(abc.ABC):
 
 class HintWarning(UserWarning):
     """Custom warning category for hinting-related problems."""
+
     def __init__(self, msg: str) -> None:
         super().__init__(msg)
 
@@ -1332,10 +1447,15 @@ class HintService(abc.ABC):
     """
 
     @abc.abstractmethod
-    def generate_hints(self, query: SqlQuery, plan: Optional[QueryPlan] = None, *,
-                       join_order: Optional[JoinTree] = None,
-                       physical_operators: Optional[PhysicalOperatorAssignment] = None,
-                       plan_parameters: Optional[PlanParameterization] = None) -> SqlQuery:
+    def generate_hints(
+        self,
+        query: SqlQuery,
+        plan: Optional[QueryPlan] = None,
+        *,
+        join_order: Optional[JoinTree] = None,
+        physical_operators: Optional[PhysicalOperatorAssignment] = None,
+        plan_parameters: Optional[PlanParameterization] = None,
+    ) -> SqlQuery:
         """Transforms the input query such that the given optimization decisions are respected during query execution.
 
         In the most common case this involves building a `Hint` clause that encodes the optimization decisions in a
@@ -1438,6 +1558,7 @@ class OptimizerInterface(abc.ABC):
     Each funtionality is available through a dedicated method. Notice that not all database systems necessarily
     support all of this functions.
     """
+
     @abc.abstractmethod
     def query_plan(self, query: SqlQuery | str) -> QueryPlan:
         """Obtains the query execution plan for a specific query.
@@ -1643,7 +1764,9 @@ class UnsupportedDatabaseFeatureError(RuntimeError):
     """
 
     def __init__(self, database: Database, feature: str) -> None:
-        super().__init__(f"Database {database.system_name} does not support feature {feature}")
+        super().__init__(
+            f"Database {database.system_name} does not support feature {feature}"
+        )
         self.database = database
         self.feature = feature
 

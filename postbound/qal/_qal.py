@@ -1,4 +1,3 @@
-
 from __future__ import annotations
 
 import abc
@@ -21,6 +20,7 @@ from ..util import StateError, jsondict
 
 class MathOperator(enum.Enum):
     """The supported mathematical operators."""
+
     Add = "+"
     Subtract = "-"
     Multiply = "*"
@@ -34,6 +34,7 @@ class LogicalOperator(enum.Enum):
 
     Notice that the predicates which make heavy use of these operators are specified in the `predicates` module.
     """
+
     Equal = "="
     NotEqual = "<>"
     Less = "<"
@@ -51,7 +52,9 @@ class LogicalOperator(enum.Enum):
     Between = "BETWEEN"
 
 
-UnarySqlOperators = frozenset({LogicalOperator.Exists, LogicalOperator.Is, LogicalOperator.IsNot})
+UnarySqlOperators = frozenset(
+    {LogicalOperator.Exists, LogicalOperator.Is, LogicalOperator.IsNot}
+)
 """The `LogicalSqlOperators` that can be used as unary operators."""
 
 
@@ -60,6 +63,7 @@ class CompoundOperator(enum.Enum):
 
     Notice that predicates which make heavy use of these operators are specified in the `predicates` module.
     """
+
     And = "AND"
     Or = "OR"
     Not = "NOT"
@@ -71,6 +75,7 @@ SqlOperator = Union[MathOperator, LogicalOperator, CompoundOperator]
 
 class SetOperator(enum.Enum):
     """The supported set operators."""
+
     Union = "UNION"
     UnionAll = "UNION ALL"
     Intersect = "INTERSECT"
@@ -163,7 +168,9 @@ class SqlExpression(abc.ABC):
         raise NotImplementedError
 
     @abc.abstractmethod
-    def accept_visitor(self, visitor: SqlExpressionVisitor[VisitorResult], *args, **kwargs) -> VisitorResult:
+    def accept_visitor(
+        self, visitor: SqlExpressionVisitor[VisitorResult], *args, **kwargs
+    ) -> VisitorResult:
         """Enables processing of the current expression by an expression visitor.
 
         Parameters
@@ -178,7 +185,11 @@ class SqlExpression(abc.ABC):
         raise NotImplementedError
 
     def __json__(self) -> jsondict:
-        return {"node_type": "expression", "tables": self.tables(), "expression": str(self)}
+        return {
+            "node_type": "expression",
+            "tables": self.tables(),
+            "expression": str(self),
+        }
 
     def __hash__(self) -> int:
         return self._hash_val
@@ -260,7 +271,9 @@ class StaticValueExpression(SqlExpression, Generic[T]):
     def iterchildren(self) -> Iterable[SqlExpression]:
         return []
 
-    def accept_visitor(self, visitor: SqlExpressionVisitor[VisitorResult], *args, **kwargs) -> VisitorResult:
+    def accept_visitor(
+        self, visitor: SqlExpressionVisitor[VisitorResult], *args, **kwargs
+    ) -> VisitorResult:
         return visitor.visit_static_value_expr(self, *args, **kwargs)
 
     __hash__ = SqlExpression.__hash__
@@ -302,8 +315,13 @@ class CastExpression(SqlExpression):
         If the `target_type` is empty.
     """
 
-    def __init__(self, expression: SqlExpression, target_type: str, *,
-                 type_params: Optional[Sequence[SqlExpression]] = None) -> None:
+    def __init__(
+        self,
+        expression: SqlExpression,
+        target_type: str,
+        *,
+        type_params: Optional[Sequence[SqlExpression]] = None,
+    ) -> None:
         if not expression or not target_type:
             raise ValueError("Expression and target type are required")
         self._casted_expression = expression
@@ -353,27 +371,37 @@ class CastExpression(SqlExpression):
         return self._type_params
 
     def tables(self) -> set[TableReference]:
-        return self._casted_expression.tables() | util.set_union(expr.tables() for expr in self._type_params)
+        return self._casted_expression.tables() | util.set_union(
+            expr.tables() for expr in self._type_params
+        )
 
     def columns(self) -> set[ColumnReference]:
-        return self.casted_expression.columns() | util.set_union(expr.columns() for expr in self.type_params)
+        return self.casted_expression.columns() | util.set_union(
+            expr.columns() for expr in self.type_params
+        )
 
     def itercolumns(self) -> Iterable[ColumnReference]:
-        return self.casted_expression.itercolumns() + util.flatten(expr.itercolumns() for expr in self.type_params)
+        return self.casted_expression.itercolumns() + util.flatten(
+            expr.itercolumns() for expr in self.type_params
+        )
 
     def iterchildren(self) -> Iterable[SqlExpression]:
         return [self.casted_expression] + list(self.type_params)
 
-    def accept_visitor(self, visitor: SqlExpressionVisitor[VisitorResult], *args, **kwargs) -> VisitorResult:
+    def accept_visitor(
+        self, visitor: SqlExpressionVisitor[VisitorResult], *args, **kwargs
+    ) -> VisitorResult:
         return visitor.visit_cast_expr(self, *args, **kwargs)
 
     __hash__ = SqlExpression.__hash__
 
     def __eq__(self, other) -> bool:
-        return (isinstance(other, type(self))
-                and self.casted_expression == other.casted_expression
-                and self.target_type == other.target_type
-                and self.type_params == other.type_params)
+        return (
+            isinstance(other, type(self))
+            and self.casted_expression == other.casted_expression
+            and self.target_type == other.target_type
+            and self.type_params == other.type_params
+        )
 
     def __str__(self) -> str:
         if self.type_params:
@@ -381,9 +409,13 @@ class CastExpression(SqlExpression):
             type_str = f"{self.target_type}({type_args})"
         else:
             type_str = self.target_type
-        casted_str = (str(self.casted_expression)
-                      if isinstance(self.casted_expression, (ColumnExpression, StaticValueExpression))
-                      else f"({self.casted_expression})")
+        casted_str = (
+            str(self.casted_expression)
+            if isinstance(
+                self.casted_expression, (ColumnExpression, StaticValueExpression)
+            )
+            else f"({self.casted_expression})"
+        )
         return f"CAST({casted_str} AS {type_str})"
 
 
@@ -407,8 +439,12 @@ class MathExpression(SqlExpression):
         Defaults to *None* to accomodate for unary expressions.
     """
 
-    def __init__(self, operator: MathOperator, first_argument: SqlExpression,
-                 second_argument: SqlExpression | Sequence[SqlExpression] | None = None) -> None:
+    def __init__(
+        self,
+        operator: MathOperator,
+        first_argument: SqlExpression,
+        second_argument: SqlExpression | Sequence[SqlExpression] | None = None,
+    ) -> None:
         if not operator or not first_argument:
             raise ValueError("Operator and first argument are required!")
         self._operator = operator
@@ -422,8 +458,10 @@ class MathExpression(SqlExpression):
             case Sequence():
                 self._second_arg = util.simplify(second_argument)
             case _:
-                raise ValueError("Second argument must be a single expression or a sequence of expressions, "
-                                 f"not '{second_argument}'")
+                raise ValueError(
+                    "Second argument must be a single expression or a sequence of expressions, "
+                    f"not '{second_argument}'"
+                )
 
         if isinstance(self._second_arg, tuple) and len(self._second_arg) == 1:
             self._second_arg = self._second_arg[0]
@@ -495,14 +533,19 @@ class MathExpression(SqlExpression):
         first_columns = list(self.first_arg.itercolumns())
         if not self.second_arg:
             return first_columns
-        second_columns = (util.flatten(sub_arg.itercolumns() for sub_arg in self.second_arg)
-                          if isinstance(self.second_arg, tuple) else list(self.second_arg.itercolumns()))
+        second_columns = (
+            util.flatten(sub_arg.itercolumns() for sub_arg in self.second_arg)
+            if isinstance(self.second_arg, tuple)
+            else list(self.second_arg.itercolumns())
+        )
         return first_columns + second_columns
 
     def iterchildren(self) -> Iterable[SqlExpression]:
         return [self.first_arg, self.second_arg]
 
-    def accept_visitor(self, visitor: SqlExpressionVisitor[VisitorResult], *args, **kwargs) -> VisitorResult:
+    def accept_visitor(
+        self, visitor: SqlExpressionVisitor[VisitorResult], *args, **kwargs
+    ) -> VisitorResult:
         return visitor.visit_math_expr(self, *args, **kwargs)
 
     def _requires_brackets(self, child: SqlExpression) -> bool:
@@ -511,7 +554,10 @@ class MathExpression(SqlExpression):
             return False
         if child.operator == self.operator:
             return False
-        if self.operator == MathOperator.Concatenate or child.operator == MathOperator.Concatenate:
+        if (
+            self.operator == MathOperator.Concatenate
+            or child.operator == MathOperator.Concatenate
+        ):
             return True
 
         lazy_ops = {MathOperator.Add, MathOperator.Multiply, MathOperator.Modulo}
@@ -527,10 +573,12 @@ class MathExpression(SqlExpression):
     __hash__ = SqlExpression.__hash__
 
     def __eq__(self, other) -> bool:
-        return (isinstance(other, type(self))
-                and self.operator == other.operator
-                and self.first_arg == other.first_arg
-                and self.second_arg == other.second_arg)
+        return (
+            isinstance(other, type(self))
+            and self.operator == other.operator
+            and self.first_arg == other.first_arg
+            and self.second_arg == other.second_arg
+        )
 
     def __str__(self) -> str:
         operator_str = self.operator.value
@@ -539,8 +587,16 @@ class MathExpression(SqlExpression):
         if isinstance(self.second_arg, tuple):
             all_args = [self.first_arg] + list(self.second_arg)
             return operator_str.join(f"({arg})" for arg in all_args)
-        first_str = f"({self.first_arg})" if self._requires_brackets(self.first_arg) else str(self.first_arg)
-        second_str = f"({self.second_arg})" if self._requires_brackets(self.second_arg) else str(self.second_arg)
+        first_str = (
+            f"({self.first_arg})"
+            if self._requires_brackets(self.first_arg)
+            else str(self.first_arg)
+        )
+        second_str = (
+            f"({self.second_arg})"
+            if self._requires_brackets(self.second_arg)
+            else str(self.second_arg)
+        )
         return f"{first_str} {operator_str} {second_str}"
 
 
@@ -590,7 +646,9 @@ class ColumnExpression(SqlExpression):
     def iterchildren(self) -> Iterable[SqlExpression]:
         return []
 
-    def accept_visitor(self, visitor: SqlExpressionVisitor[VisitorResult], *args, **kwargs) -> VisitorResult:
+    def accept_visitor(
+        self, visitor: SqlExpressionVisitor[VisitorResult], *args, **kwargs
+    ) -> VisitorResult:
         return visitor.visit_column_expr(self)
 
     __hash__ = SqlExpression.__hash__
@@ -604,13 +662,26 @@ class ColumnExpression(SqlExpression):
 
 AggregateFunctions = {
     # SQL standard aggregates
-    "COUNT", "SUM", "MIN", "MAX", "AVG", "EVERY", "CORR", "STDDEV",
-
+    "COUNT",
+    "SUM",
+    "MIN",
+    "MAX",
+    "AVG",
+    "EVERY",
+    "CORR",
+    "STDDEV",
     # Postgres additions
-    "ANY_VALUE", "ARRAY_AGG",
-    "BIT_AND", "BIT_OR", "BIT_XOR",
-    "BOOL_AND", "BOOL_OR", "BOOL_XOR",
-    "STRING_AGG", "JSON_AGG", "XML_AGG"
+    "ANY_VALUE",
+    "ARRAY_AGG",
+    "BIT_AND",
+    "BIT_OR",
+    "BIT_XOR",
+    "BOOL_AND",
+    "BOOL_OR",
+    "BOOL_XOR",
+    "STRING_AGG",
+    "JSON_AGG",
+    "XML_AGG",
 }
 """All aggregate functions specified in standard SQL and Postgres."""
 
@@ -662,7 +733,11 @@ class FunctionExpression(SqlExpression):
         FunctionExpression
             The *ALL* function expression
         """
-        subquery = SubqueryExpression(subquery) if not isinstance(subquery, SubqueryExpression) else subquery
+        subquery = (
+            SubqueryExpression(subquery)
+            if not isinstance(subquery, SubqueryExpression)
+            else subquery
+        )
         return FunctionExpression("ALL", (subquery,))
 
     @staticmethod
@@ -679,22 +754,38 @@ class FunctionExpression(SqlExpression):
         FunctionExpression
             The *ANY* function expression
         """
-        subquery = SubqueryExpression(subquery) if not isinstance(subquery, SubqueryExpression) else subquery
+        subquery = (
+            SubqueryExpression(subquery)
+            if not isinstance(subquery, SubqueryExpression)
+            else subquery
+        )
         return FunctionExpression("ANY", (subquery,))
 
-    def __init__(self, function: str, arguments: Optional[Sequence[SqlExpression]] = None, *,
-                 distinct: bool = False, filter_where: Optional[AbstractPredicate] = None) -> None:
+    def __init__(
+        self,
+        function: str,
+        arguments: Optional[Sequence[SqlExpression]] = None,
+        *,
+        distinct: bool = False,
+        filter_where: Optional[AbstractPredicate] = None,
+    ) -> None:
         if not function:
             raise ValueError("Function is required")
         if function.upper() not in AggregateFunctions and (distinct or filter_where):
-            raise ValueError("DISTINCT keyword or FILTER expressions are only valid for aggregate functions")
+            raise ValueError(
+                "DISTINCT keyword or FILTER expressions are only valid for aggregate functions"
+            )
 
         self._function = function.upper()
-        self._arguments: tuple[SqlExpression] = () if arguments is None else tuple(arguments)
+        self._arguments: tuple[SqlExpression] = (
+            () if arguments is None else tuple(arguments)
+        )
         self._distinct = distinct
         self._filter_expr = filter_where
 
-        hash_val = hash((self._function, self._distinct, self._arguments, self._filter_expr))
+        hash_val = hash(
+            (self._function, self._distinct, self._arguments, self._filter_expr)
+        )
         super().__init__(hash_val)
 
     __slots__ = ("_function", "_arguments", "_distinct", "_filter_expr")
@@ -831,22 +922,30 @@ class FunctionExpression(SqlExpression):
     def iterchildren(self) -> Iterable[SqlExpression]:
         return list(self.arguments)
 
-    def accept_visitor(self, visitor: SqlExpressionVisitor[VisitorResult], *args, **kwargs) -> VisitorResult:
+    def accept_visitor(
+        self, visitor: SqlExpressionVisitor[VisitorResult], *args, **kwargs
+    ) -> VisitorResult:
         return visitor.visit_function_expr(self, *args, **kwargs)
 
     __hash__ = SqlExpression.__hash__
 
     def __eq__(self, other) -> bool:
-        return (isinstance(other, type(self))
-                and self.function == other.function
-                and self.arguments == other.arguments
-                and self.distinct == other.distinct
-                and self.filter_where == other.filter_where)
+        return (
+            isinstance(other, type(self))
+            and self.function == other.function
+            and self.arguments == other.arguments
+            and self.distinct == other.distinct
+            and self.filter_where == other.filter_where
+        )
 
     def __str__(self) -> str:
         args_str = ", ".join(str(arg) for arg in self._arguments)
         distinct_str = "DISTINCT " if self._distinct else ""
-        parameterization = f" {args_str}" if self.is_all() or self.is_any() else f"({distinct_str}{args_str})"
+        parameterization = (
+            f" {args_str}"
+            if self.is_all() or self.is_any()
+            else f"({distinct_str}{args_str})"
+        )
         filter_str = f" FILTER (WHERE {self._filter_expr})" if self._filter_expr else ""
         return f"{self._function}{parameterization}{filter_str}"
 
@@ -878,8 +977,14 @@ class ArrayAccessExpression(FunctionExpression):
         For slice-based access, the upper boundary of the slice. Defaults to *None*.
     """
 
-    def __init__(self, array_expr: SqlExpression, *, idx: Optional[SqlExpression] = None,
-                 lower_idx: Optional[SqlExpression] = None, upper_idx: Optional[SqlExpression] = None) -> None:
+    def __init__(
+        self,
+        array_expr: SqlExpression,
+        *,
+        idx: Optional[SqlExpression] = None,
+        lower_idx: Optional[SqlExpression] = None,
+        upper_idx: Optional[SqlExpression] = None,
+    ) -> None:
         if idx is None and lower_idx is None and upper_idx is None:
             raise ValueError("At least one index has to be specified")
         if idx is not None and (lower_idx is not None or upper_idx is not None):
@@ -889,9 +994,13 @@ class ArrayAccessExpression(FunctionExpression):
         self._idx = idx
         self._lower_idx = lower_idx
         self._upper_idx = upper_idx
-        self._hash_val = hash((self._array, self._idx, self._lower_idx, self._upper_idx))
+        self._hash_val = hash(
+            (self._array, self._idx, self._lower_idx, self._upper_idx)
+        )
 
-        args = [arg for arg in (array_expr, idx, lower_idx, upper_idx) if arg is not None]
+        args = [
+            arg for arg in (array_expr, idx, lower_idx, upper_idx) if arg is not None
+        ]
         super().__init__("ARRAY_GET", args)
 
     __slots__ = ("_array", "_idx", "_lower_idx", "_upper_idx", "_hash_val")
@@ -942,7 +1051,9 @@ class ArrayAccessExpression(FunctionExpression):
         return self._upper_idx
 
     @property
-    def index_slice(self) -> Optional[tuple[Optional[SqlExpression], Optional[SqlExpression]]]:
+    def index_slice(
+        self,
+    ) -> Optional[tuple[Optional[SqlExpression], Optional[SqlExpression]]]:
         """Get the boundaries of the slice.
 
         Returns
@@ -955,15 +1066,19 @@ class ArrayAccessExpression(FunctionExpression):
             return None
         return self._lower_idx, self._upper_idx
 
-    def accept_visitor(self, visitor: SqlExpressionVisitor[VisitorResult], *args, **kwargs) -> VisitorResult:
+    def accept_visitor(
+        self, visitor: SqlExpressionVisitor[VisitorResult], *args, **kwargs
+    ) -> VisitorResult:
         return visitor.visit_array_access_expr(self, *args, **kwargs)
 
     def __eq__(self, other):
-        return (isinstance(other, type(self))
-                and self._array == other._array
-                and self._idx == other._idx
-                and self._lower_idx == other._lower_idx
-                and self._upper_idx == other._upper_idx)
+        return (
+            isinstance(other, type(self))
+            and self._array == other._array
+            and self._idx == other._idx
+            and self._lower_idx == other._lower_idx
+            and self._upper_idx == other._upper_idx
+        )
 
     def __hash__(self):
         return self._hash_val
@@ -1029,7 +1144,9 @@ class SubqueryExpression(SqlExpression):
     def iterchildren(self) -> Iterable[SqlExpression]:
         return []
 
-    def accept_visitor(self, visitor: SqlExpressionVisitor[VisitorResult], *args, **kwargs) -> VisitorResult:
+    def accept_visitor(
+        self, visitor: SqlExpressionVisitor[VisitorResult], *args, **kwargs
+    ) -> VisitorResult:
         return visitor.visit_subquery_expr(self, *args, **kwargs)
 
     __hash__ = SqlExpression.__hash__
@@ -1086,7 +1203,9 @@ class StarExpression(SqlExpression):
     def iterchildren(self) -> Iterable[SqlExpression]:
         return []
 
-    def accept_visitor(self, visitor: SqlExpressionVisitor[VisitorResult], *args, **kwargs) -> VisitorResult:
+    def accept_visitor(
+        self, visitor: SqlExpressionVisitor[VisitorResult], *args, **kwargs
+    ) -> VisitorResult:
         return visitor.visit_star_expr(self, *args, **kwargs)
 
     __hash__ = SqlExpression.__hash__
@@ -1115,16 +1234,27 @@ class WindowExpression(SqlExpression):
         The filter condition for the window. Defaults to None.
     """
 
-    def __init__(self, window_function: FunctionExpression, *,
-                 partitioning: Optional[Sequence[SqlExpression]] = None,
-                 ordering: Optional[OrderBy] = None,
-                 filter_condition: Optional[AbstractPredicate] = None) -> None:
+    def __init__(
+        self,
+        window_function: FunctionExpression,
+        *,
+        partitioning: Optional[Sequence[SqlExpression]] = None,
+        ordering: Optional[OrderBy] = None,
+        filter_condition: Optional[AbstractPredicate] = None,
+    ) -> None:
         self._window_function = window_function
         self._partitioning = tuple(partitioning) if partitioning else tuple()
         self._ordering = ordering
         self._filter_condition = filter_condition
 
-        hash_val = hash((self._window_function, self._partitioning, self._ordering, self._filter_condition))
+        hash_val = hash(
+            (
+                self._window_function,
+                self._partitioning,
+                self._ordering,
+                self._filter_condition,
+            )
+        )
         super().__init__(hash_val)
 
     __slots__ = ("_window_function", "_partitioning", "_ordering", "_filter_condition")
@@ -1184,29 +1314,46 @@ class WindowExpression(SqlExpression):
 
     def iterchildren(self) -> Iterable[SqlExpression]:
         function_children = list(self.window_function.iterchildren())
-        partitioning_children = util.flatten(expr.iterchildren() for expr in self.partitioning)
+        partitioning_children = util.flatten(
+            expr.iterchildren() for expr in self.partitioning
+        )
         ordering_children = self.ordering.iterexpressions() if self.ordering else []
-        filter_children = self.filter_condition.iterexpressions() if self.filter_condition else []
-        return function_children + partitioning_children + ordering_children + filter_children
+        filter_children = (
+            self.filter_condition.iterexpressions() if self.filter_condition else []
+        )
+        return (
+            function_children
+            + partitioning_children
+            + ordering_children
+            + filter_children
+        )
 
-    def accept_visitor(self, visitor: SqlExpressionVisitor[VisitorResult], *args, **kwargs) -> VisitorResult:
+    def accept_visitor(
+        self, visitor: SqlExpressionVisitor[VisitorResult], *args, **kwargs
+    ) -> VisitorResult:
         return visitor.visit_window_expr(self)
 
     __hash__ = SqlExpression.__hash__
 
     def __eq__(self, other: object) -> bool:
-        return (isinstance(other, type(self))
-                and self.window_function == other.window_function
-                and self.partitioning == other.partitioning
-                and self.ordering == other.ordering
-                and self.filter_condition == other.filter_condition)
+        return (
+            isinstance(other, type(self))
+            and self.window_function == other.window_function
+            and self.partitioning == other.partitioning
+            and self.ordering == other.ordering
+            and self.filter_condition == other.filter_condition
+        )
 
     def __str__(self) -> str:
-        filter_str = f" FILTER (WHERE {self.filter_condition})" if self.filter_condition else ""
+        filter_str = (
+            f" FILTER (WHERE {self.filter_condition})" if self.filter_condition else ""
+        )
         function_str = f"{self.window_function}{filter_str} OVER"
         window_grouping: list[str] = []
         if self.partitioning:
-            partitioning_str = ", ".join(str(partition) for partition in self.partitioning)
+            partitioning_str = ", ".join(
+                str(partition) for partition in self.partitioning
+            )
             window_grouping.append(f"PARTITION BY {partitioning_str}")
         if self.ordering:
             window_grouping.append(str(self.ordering))
@@ -1228,8 +1375,13 @@ class CaseExpression(SqlExpression):
         The expression to be evaluated if none of the cases match. If no case matches and no else expression is provided, the
         entire case expression should evaluate to NULL.
     """
-    def __init__(self, cases: Sequence[tuple[AbstractPredicate, SqlExpression]], *,
-                 else_expr: Optional[SqlExpression] = None) -> None:
+
+    def __init__(
+        self,
+        cases: Sequence[tuple[AbstractPredicate, SqlExpression]],
+        *,
+        else_expr: Optional[SqlExpression] = None,
+    ) -> None:
         if not cases:
             raise ValueError("At least one case is required")
         self._cases = tuple(cases)
@@ -1273,12 +1425,18 @@ class CaseExpression(SqlExpression):
         return util.flatten(expr.itercolumns() for expr in self.iterchildren())
 
     def iterchildren(self) -> Iterable[SqlExpression]:
-        case_children = util.flatten(list(pred.iterexpressions()) + list(expr.iterchildren())
-                                     for pred, expr in self.cases)
-        else_children = self.else_expression.iterchildren() if self.else_expression else []
+        case_children = util.flatten(
+            list(pred.iterexpressions()) + list(expr.iterchildren())
+            for pred, expr in self.cases
+        )
+        else_children = (
+            self.else_expression.iterchildren() if self.else_expression else []
+        )
         return case_children + else_children
 
-    def accept_visitor(self, visitor: SqlExpressionVisitor[VisitorResult], *args, **kwargs) -> VisitorResult:
+    def accept_visitor(
+        self, visitor: SqlExpressionVisitor[VisitorResult], *args, **kwargs
+    ) -> VisitorResult:
         return visitor.visit_case_expr(self, *args, **kwargs)
 
     def _braketify(self, expression: SqlExpression) -> str:
@@ -1290,13 +1448,21 @@ class CaseExpression(SqlExpression):
     __hash__ = SqlExpression.__hash__
 
     def __eq__(self, other: object) -> bool:
-        return (isinstance(other, type(self))
-                and self.cases == other.cases
-                and self.else_expression == other.else_expression)
+        return (
+            isinstance(other, type(self))
+            and self.cases == other.cases
+            and self.else_expression == other.else_expression
+        )
 
     def __str__(self) -> str:
-        cases_str = " ".join(f"WHEN {pred} THEN {self._braketify(expr)}" for pred, expr in self.cases)
-        else_str = f" ELSE {self._braketify(self.else_expression)}" if self.else_expression else ""
+        cases_str = " ".join(
+            f"WHEN {pred} THEN {self._braketify(expr)}" for pred, expr in self.cases
+        )
+        else_str = (
+            f" ELSE {self._braketify(self.else_expression)}"
+            if self.else_expression
+            else ""
+        )
         return f"CASE {cases_str}{else_str} END"
 
 
@@ -1314,7 +1480,9 @@ class SqlExpressionVisitor(abc.ABC, Generic[VisitorResult]):
     """
 
     @abc.abstractmethod
-    def visit_static_value_expr(self, expr: StaticValueExpression, *args, **kwargs) -> VisitorResult:
+    def visit_static_value_expr(
+        self, expr: StaticValueExpression, *args, **kwargs
+    ) -> VisitorResult:
         raise NotImplementedError
 
     @abc.abstractmethod
@@ -1326,15 +1494,21 @@ class SqlExpressionVisitor(abc.ABC, Generic[VisitorResult]):
         raise NotImplementedError
 
     @abc.abstractmethod
-    def visit_column_expr(self, expr: ColumnExpression, *args, **kwargs) -> VisitorResult:
+    def visit_column_expr(
+        self, expr: ColumnExpression, *args, **kwargs
+    ) -> VisitorResult:
         raise NotImplementedError
 
     @abc.abstractmethod
-    def visit_function_expr(self, expr: FunctionExpression, *args, **kwargs) -> VisitorResult:
+    def visit_function_expr(
+        self, expr: FunctionExpression, *args, **kwargs
+    ) -> VisitorResult:
         raise NotImplementedError
 
     @abc.abstractmethod
-    def visit_subquery_expr(self, expr: SubqueryExpression, *args, **kwargs) -> VisitorResult:
+    def visit_subquery_expr(
+        self, expr: SubqueryExpression, *args, **kwargs
+    ) -> VisitorResult:
         raise NotImplementedError
 
     @abc.abstractmethod
@@ -1342,7 +1516,9 @@ class SqlExpressionVisitor(abc.ABC, Generic[VisitorResult]):
         raise NotImplementedError
 
     @abc.abstractmethod
-    def visit_window_expr(self, expr: WindowExpression, *args, **kwargs) -> VisitorResult:
+    def visit_window_expr(
+        self, expr: WindowExpression, *args, **kwargs
+    ) -> VisitorResult:
         raise NotImplementedError
 
     @abc.abstractmethod
@@ -1350,10 +1526,14 @@ class SqlExpressionVisitor(abc.ABC, Generic[VisitorResult]):
         raise NotImplementedError
 
     @abc.abstractmethod
-    def visit_predicate_expr(self, expr: AbstractPredicate, *args, **kwargs) -> VisitorResult:
+    def visit_predicate_expr(
+        self, expr: AbstractPredicate, *args, **kwargs
+    ) -> VisitorResult:
         raise NotImplementedError
 
-    def visit_array_access_expr(self, expr: ArrayAccessExpression, *args, **kwargs) -> VisitorResult:
+    def visit_array_access_expr(
+        self, expr: ArrayAccessExpression, *args, **kwargs
+    ) -> VisitorResult:
         return self.visit_function_expr(expr, *args, **kwargs)
 
 
@@ -1370,7 +1550,13 @@ class ExpressionCollector(SqlExpressionVisitor[set[SqlExpression]]):
         collection predicate. By default, traversal is stopped for the current element (but other branches in the expression
         tree could still produce more matches).
     """
-    def __init__(self, matcher: Callable[[SqlExpression], bool], *, continue_after_match: bool = False) -> None:
+
+    def __init__(
+        self,
+        matcher: Callable[[SqlExpression], bool],
+        *,
+        continue_after_match: bool = False,
+    ) -> None:
         self.matcher = matcher
         self.continue_after_match = continue_after_match
 
@@ -1389,7 +1575,9 @@ class ExpressionCollector(SqlExpressionVisitor[set[SqlExpression]]):
     def visit_star_expr(self, expression: StarExpression) -> set[SqlExpression]:
         return self._check_match(expression)
 
-    def visit_static_value_expr(self, expression: StaticValueExpression) -> set[SqlExpression]:
+    def visit_static_value_expr(
+        self, expression: StaticValueExpression
+    ) -> set[SqlExpression]:
         return self._check_match(expression)
 
     def visit_subquery_expr(self, expression: SubqueryExpression) -> set[SqlExpression]:
@@ -1420,7 +1608,9 @@ class ExpressionCollector(SqlExpressionVisitor[set[SqlExpression]]):
         own_match = {expression} if self.matcher(expression) else set()
         if own_match and not self.continue_after_match:
             return own_match
-        return own_match | util.set_union(child.accept_visitor(self) for child in expression.iterchildren())
+        return own_match | util.set_union(
+            child.accept_visitor(self) for child in expression.iterchildren()
+        )
 
 
 def as_expression(value: object) -> SqlExpression:
@@ -1457,8 +1647,9 @@ def as_expression(value: object) -> SqlExpression:
     return StaticValueExpression(value)
 
 
-def _normalize_join_pair(columns: tuple[ColumnReference, ColumnReference]
-                         ) -> tuple[ColumnReference, ColumnReference]:
+def _normalize_join_pair(
+    columns: tuple[ColumnReference, ColumnReference],
+) -> tuple[ColumnReference, ColumnReference]:
     """Normalizes the given join such that a pair ``(R.a, S.b)`` and ``(S.b, R.a)`` can be recognized as equal.
 
     Normalization in this context means that the order in which two appear is always the same. Therefore, this method
@@ -1525,12 +1716,19 @@ def _collect_base_expressions(expression: SqlExpression) -> Iterable[BaseExpress
     Iterable[BaseExpression]
         The base expressions
     """
-    if isinstance(expression, (ColumnExpression, StaticValueExpression, SubqueryExpression)):
+    if isinstance(
+        expression, (ColumnExpression, StaticValueExpression, SubqueryExpression)
+    ):
         return [expression]
-    return util.flatten(_collect_base_expressions(child_expr) for child_expr in expression.iterchildren())
+    return util.flatten(
+        _collect_base_expressions(child_expr)
+        for child_expr in expression.iterchildren()
+    )
 
 
-def _collect_subquery_expressions(expression: SqlExpression) -> Iterable[SubqueryExpression]:
+def _collect_subquery_expressions(
+    expression: SqlExpression,
+) -> Iterable[SubqueryExpression]:
     """Provides all subquery expressions that are contained in a specific expression.
 
     This method is a shorthand to take care of the necessary traversal of the expression tree.
@@ -1545,11 +1743,16 @@ def _collect_subquery_expressions(expression: SqlExpression) -> Iterable[Subquer
     Iterable[SubqueryExpression]
         All subqueries that are contained in some level in the expression
     """
-    return [child_expr for child_expr in _collect_base_expressions(expression)
-            if isinstance(child_expr, SubqueryExpression)]
+    return [
+        child_expr
+        for child_expr in _collect_base_expressions(expression)
+        if isinstance(child_expr, SubqueryExpression)
+    ]
 
 
-def _collect_column_expression_columns(expression: SqlExpression) -> set[ColumnReference]:
+def _collect_column_expression_columns(
+    expression: SqlExpression,
+) -> set[ColumnReference]:
     """Provides all columns that are directly contained in `ColumnExpression` instances with a specific expression.
 
     This method is a shorthand to take care of the necessary traversal of the expression tree. Notice that it ignores all
@@ -1565,8 +1768,11 @@ def _collect_column_expression_columns(expression: SqlExpression) -> set[ColumnR
     set[ColumnReference]
         All columns that are referenced in `ColumnExpression`s
     """
-    return util.set_union(base_expr.columns() for base_expr in _collect_base_expressions(expression)
-                          if isinstance(base_expr, ColumnExpression))
+    return util.set_union(
+        base_expr.columns()
+        for base_expr in _collect_base_expressions(expression)
+        if isinstance(base_expr, ColumnExpression)
+    )
 
 
 def _collect_column_expression_tables(expression: SqlExpression) -> set[TableReference]:
@@ -1585,11 +1791,16 @@ def _collect_column_expression_tables(expression: SqlExpression) -> set[TableRef
     set[TableReference]
         All tables that are referenced in the columns of `ColumnExpression`s
     """
-    return {column.table for column in _collect_column_expression_columns(expression) if column.is_bound()}
+    return {
+        column.table
+        for column in _collect_column_expression_columns(expression)
+        if column.is_bound()
+    }
 
 
-def _generate_join_pairs(first_columns: Iterable[ColumnReference], second_columns: Iterable[ColumnReference]
-                         ) -> set[tuple[ColumnReference, ColumnReference]]:
+def _generate_join_pairs(
+    first_columns: Iterable[ColumnReference], second_columns: Iterable[ColumnReference]
+) -> set[tuple[ColumnReference, ColumnReference]]:
     """Provides all possible pairs of columns where each column comes from a different iterable.
 
     Essentially, this produces the cross product of the two column sets. The join pairs are normalized and duplicate
@@ -1608,8 +1819,11 @@ def _generate_join_pairs(first_columns: Iterable[ColumnReference], second_column
     set[tuple[ColumnReference, ColumnReference]]
         All normalized join pairs
     """
-    return {_normalize_join_pair((first_col, second_col)) for first_col, second_col
-            in itertools.product(first_columns, second_columns) if first_col.table != second_col.table}
+    return {
+        _normalize_join_pair((first_col, second_col))
+        for first_col, second_col in itertools.product(first_columns, second_columns)
+        if first_col.table != second_col.table
+    }
 
 
 class AbstractPredicate(SqlExpression, abc.ABC):
@@ -1800,8 +2014,10 @@ class AbstractPredicate(SqlExpression, abc.ABC):
         """
         if not self.is_join():
             return False
-        return any(first_col.belongs_to(table) or second_col.belongs_to(table)
-                   for first_col, second_col in self.join_partners())
+        return any(
+            first_col.belongs_to(table) or second_col.belongs_to(table)
+            for first_col, second_col in self.join_partners()
+        )
 
     def columns_of(self, table: TableReference) -> set[ColumnReference]:
         """Retrieves all columns of a specific table that are referenced by this predicate.
@@ -1898,15 +2114,23 @@ class AbstractPredicate(SqlExpression, abc.ABC):
         set[TableReference]
             The tables that need to be provided by the query execution engine in order to run this predicate
         """
-        subqueries = util.flatten(_collect_subquery_expressions(child_expr)
-                                  for child_expr in self.iterexpressions())
-        subquery_tables = util.set_union(subquery.query.unbound_tables() for subquery in subqueries)
-        column_tables = util.set_union(_collect_column_expression_tables(child_expr)
-                                       for child_expr in self.iterexpressions())
+        subqueries = util.flatten(
+            _collect_subquery_expressions(child_expr)
+            for child_expr in self.iterexpressions()
+        )
+        subquery_tables = util.set_union(
+            subquery.query.unbound_tables() for subquery in subqueries
+        )
+        column_tables = util.set_union(
+            _collect_column_expression_tables(child_expr)
+            for child_expr in self.iterexpressions()
+        )
         return column_tables | subquery_tables
 
     @abc.abstractmethod
-    def accept_visitor(self, visitor: PredicateVisitor[VisitorResult], *args, **kwargs) -> VisitorResult:
+    def accept_visitor(
+        self, visitor: PredicateVisitor[VisitorResult], *args, **kwargs
+    ) -> VisitorResult:
         """Enables processing of the current predicate by a predicate visitor.
 
         Parameters
@@ -1941,7 +2165,11 @@ class AbstractPredicate(SqlExpression, abc.ABC):
             raise NoFilterPredicateError(self)
 
     def __json__(self) -> str:
-        return {"node_type": "predicate", "tables": self.tables(), "predicate": str(self)}
+        return {
+            "node_type": "predicate",
+            "tables": self.tables(),
+            "predicate": str(self),
+        }
 
     def __hash__(self) -> int:
         return self._hash_val
@@ -2020,12 +2248,18 @@ class BinaryPredicate(BasePredicate):
     """
 
     @staticmethod
-    def equal(first_argument: SqlExpression, second_argument: SqlExpression) -> BinaryPredicate:
+    def equal(
+        first_argument: SqlExpression, second_argument: SqlExpression
+    ) -> BinaryPredicate:
         """Generates an equality predicate between two arguments."""
         return BinaryPredicate(LogicalOperator.Equal, first_argument, second_argument)
 
-    def __init__(self, operation: SqlOperator, first_argument: SqlExpression,
-                 second_argument: SqlExpression) -> None:
+    def __init__(
+        self,
+        operation: SqlOperator,
+        first_argument: SqlExpression,
+        second_argument: SqlExpression,
+    ) -> None:
         if not first_argument or not second_argument:
             raise ValueError("First argument and second argument are required")
         self._first_argument = first_argument
@@ -2074,7 +2308,9 @@ class BinaryPredicate(BasePredicate):
         return self.first_argument.columns() | self.second_argument.columns()
 
     def itercolumns(self) -> Iterable[ColumnReference]:
-        return list(self.first_argument.itercolumns()) + list(self.second_argument.itercolumns())
+        return list(self.first_argument.itercolumns()) + list(
+            self.second_argument.itercolumns()
+        )
 
     def iterexpressions(self) -> Iterable[SqlExpression]:
         return [self.first_argument, self.second_argument]
@@ -2089,16 +2325,20 @@ class BinaryPredicate(BasePredicate):
         partners |= _generate_join_pairs(first_columns, second_columns)
         return partners
 
-    def accept_visitor(self, visitor: PredicateVisitor[VisitorResult], *args, **kwargs) -> VisitorResult:
+    def accept_visitor(
+        self, visitor: PredicateVisitor[VisitorResult], *args, **kwargs
+    ) -> VisitorResult:
         return visitor.visit_binary_predicate(self, *args, **kwargs)
 
     __hash__ = AbstractPredicate.__hash__
 
     def __eq__(self, other: object) -> bool:
-        return (isinstance(other, type(self))
-                and self.operation == other.operation
-                and self.first_argument == other.first_argument
-                and self.second_argument == other.second_argument)
+        return (
+            isinstance(other, type(self))
+            and self.operation == other.operation
+            and self.first_argument == other.first_argument
+            and self.second_argument == other.second_argument
+        )
 
     def __str__(self) -> str:
         return f"{self.first_argument} {self.operation.value} {self.second_argument}"
@@ -2139,14 +2379,23 @@ class BetweenPredicate(BasePredicate):
         WHERE 42 BETWEEN R.c AND S.d
     """
 
-    def __init__(self, column: SqlExpression, interval: tuple[SqlExpression, SqlExpression]) -> None:
+    def __init__(
+        self, column: SqlExpression, interval: tuple[SqlExpression, SqlExpression]
+    ) -> None:
         if not column or not interval or len(interval) != 2:
             raise ValueError("Column and interval must be set")
         self._column = column
         self._interval = interval
         self._interval_start, self._interval_end = self._interval
 
-        hash_val = hash((LogicalOperator.Between, self._column, self._interval_start, self._interval_end))
+        hash_val = hash(
+            (
+                LogicalOperator.Between,
+                self._column,
+                self._interval_start,
+                self._interval_end,
+            )
+        )
         super().__init__(LogicalOperator.Between, hash_val=hash_val)
 
     __slots__ = ("_column", "_interval", "_interval_start", "_interval_end")
@@ -2200,17 +2449,25 @@ class BetweenPredicate(BasePredicate):
         column_tables = _collect_column_expression_tables(self.column)
         interval_start_tables = _collect_column_expression_tables(self.interval_start)
         interval_end_tables = _collect_column_expression_tables(self.interval_end)
-        return (len(column_tables) > 1
-                or len(column_tables | interval_start_tables) > 1
-                or len(column_tables | interval_end_tables) > 1)
+        return (
+            len(column_tables) > 1
+            or len(column_tables | interval_start_tables) > 1
+            or len(column_tables | interval_end_tables) > 1
+        )
 
     def columns(self) -> set[ColumnReference]:
-        return self.column.columns() | self.interval_start.columns() | self.interval_end.columns()
+        return (
+            self.column.columns()
+            | self.interval_start.columns()
+            | self.interval_end.columns()
+        )
 
     def itercolumns(self) -> Iterable[ColumnReference]:
-        return (list(self.column.itercolumns())
-                + list(self.interval_start.itercolumns())
-                + list(self.interval_end.itercolumns()))
+        return (
+            list(self.column.itercolumns())
+            + list(self.interval_start.itercolumns())
+            + list(self.interval_end.itercolumns())
+        )
 
     def iterexpressions(self) -> Iterable[SqlExpression]:
         return [self.column, self.interval_start, self.interval_end]
@@ -2226,13 +2483,19 @@ class BetweenPredicate(BasePredicate):
         partners |= _generate_join_pairs(predicate_columns, end_columns)
         return set(partners)
 
-    def accept_visitor(self, visitor: PredicateVisitor[VisitorResult], *args, **kwargs) -> VisitorResult:
+    def accept_visitor(
+        self, visitor: PredicateVisitor[VisitorResult], *args, **kwargs
+    ) -> VisitorResult:
         return visitor.visit_between_predicate(self, *args, **kwargs)
 
     __hash__ = AbstractPredicate.__hash__
 
     def __eq__(self, other: object) -> bool:
-        return isinstance(other, type(self)) and self.column == other.column and self.interval == other.interval
+        return (
+            isinstance(other, type(self))
+            and self.column == other.column
+            and self.interval == other.interval
+        )
 
     def __str__(self) -> str:
         interval_start, interval_end = self.interval
@@ -2273,7 +2536,9 @@ class InPredicate(BasePredicate):
     """
 
     @staticmethod
-    def subquery(column: SqlExpression, subquery: SubqueryExpression | SqlQuery) -> InPredicate:
+    def subquery(
+        column: SqlExpression, subquery: SubqueryExpression | SqlQuery
+    ) -> InPredicate:
         """Generates an *IN* predicate that is based on a subquery.
 
         Such a predicate is of the form ``R.a IN (SELECT S.b FROM S)``.
@@ -2290,7 +2555,11 @@ class InPredicate(BasePredicate):
         InPredicate
             The predicate
         """
-        subquery = subquery if isinstance(subquery, SubqueryExpression) else SubqueryExpression(subquery)
+        subquery = (
+            subquery
+            if isinstance(subquery, SubqueryExpression)
+            else SubqueryExpression(subquery)
+        )
         return InPredicate(column, (subquery,))
 
     def __init__(self, column: SqlExpression, values: Sequence[SqlExpression]) -> None:
@@ -2336,7 +2605,9 @@ class InPredicate(BasePredicate):
         bool
             Whether this predicate is based on a subquery
         """
-        return len(self._values) == 1 and isinstance(self._values[0], SubqueryExpression)
+        return len(self._values) == 1 and isinstance(
+            self._values[0], SubqueryExpression
+        )
 
     def is_join(self) -> bool:
         column_tables = _collect_column_expression_tables(self.column)
@@ -2355,7 +2626,9 @@ class InPredicate(BasePredicate):
         return all_columns
 
     def itercolumns(self) -> Iterable[ColumnReference]:
-        return list(self.column.itercolumns()) + util.flatten(val.itercolumns() for val in self.values)
+        return list(self.column.itercolumns()) + util.flatten(
+            val.itercolumns() for val in self.values
+        )
 
     def iterexpressions(self) -> Iterable[SqlExpression]:
         return [self.column] + list(self.values)
@@ -2370,7 +2643,9 @@ class InPredicate(BasePredicate):
             partners |= _generate_join_pairs(predicate_columns, value_columns)
         return partners
 
-    def accept_visitor(self, visitor: PredicateVisitor[VisitorResult], *args, **kwargs) -> VisitorResult:
+    def accept_visitor(
+        self, visitor: PredicateVisitor[VisitorResult], *args, **kwargs
+    ) -> VisitorResult:
         return visitor.visit_in_predicate(self, *args, **kwargs)
 
     def _stringify_values(self) -> str:
@@ -2387,7 +2662,11 @@ class InPredicate(BasePredicate):
     __hash__ = AbstractPredicate.__hash__
 
     def __eq__(self, other: object) -> bool:
-        return isinstance(other, type(self)) and self.column == other.column and set(self.values) == set(other.values)
+        return (
+            isinstance(other, type(self))
+            and self.column == other.column
+            and set(self.values) == set(other.values)
+        )
 
     def __str__(self) -> str:
         vals = self._stringify_values()
@@ -2431,7 +2710,11 @@ class UnaryPredicate(BasePredicate):
         UnaryPredicate
             The *EXISTS* predicate
         """
-        subquery = subquery if isinstance(subquery, SubqueryExpression) else SubqueryExpression(subquery)
+        subquery = (
+            subquery
+            if isinstance(subquery, SubqueryExpression)
+            else SubqueryExpression(subquery)
+        )
         return UnaryPredicate(subquery, LogicalOperator.Exists)
 
     def __init__(self, column: SqlExpression, operation: Optional[SqlOperator] = None):
@@ -2482,13 +2765,19 @@ class UnaryPredicate(BasePredicate):
         columns = _collect_column_expression_columns(self.column)
         return _generate_join_pairs(columns, columns)
 
-    def accept_visitor(self, visitor: PredicateVisitor[VisitorResult], *args, **kwargs) -> VisitorResult:
+    def accept_visitor(
+        self, visitor: PredicateVisitor[VisitorResult], *args, **kwargs
+    ) -> VisitorResult:
         return visitor.visit_unary_predicate(self, *args, **kwargs)
 
     __hash__ = AbstractPredicate.__hash__
 
     def __eq__(self, other: object) -> bool:
-        return isinstance(other, type(self)) and self.operation == other.operation and self.column == other.column
+        return (
+            isinstance(other, type(self))
+            and self.operation == other.operation
+            and self.column == other.column
+        )
 
     def __str__(self) -> str:
         if not self.operation:
@@ -2498,8 +2787,11 @@ class UnaryPredicate(BasePredicate):
             assert isinstance(self.column, SubqueryExpression)
             return f"EXISTS {self.column}"
 
-        col_str = (str(self.column) if isinstance(self.column, (StaticValueExpression, ColumnExpression))
-                   else f"({self.column})")
+        col_str = (
+            str(self.column)
+            if isinstance(self.column, (StaticValueExpression, ColumnExpression))
+            else f"({self.column})"
+        )
         return f"{self.operation.value}{col_str}"
 
 
@@ -2526,7 +2818,9 @@ class CompoundPredicate(AbstractPredicate):
     """
 
     @staticmethod
-    def create(operation: CompoundOperator, parts: Collection[AbstractPredicate]) -> AbstractPredicate:
+    def create(
+        operation: CompoundOperator, parts: Collection[AbstractPredicate]
+    ) -> AbstractPredicate:
         """Creates an arbitrary compound predicate for a number of child predicates.
 
         If just a single child predicate is provided, but the operation requires multiple children, that child is returned
@@ -2552,7 +2846,9 @@ class CompoundPredicate(AbstractPredicate):
             a conjunction or disjunction is requested, but no child predicates are supplied.
         """
         if operation == CompoundOperator.Not and len(parts) != 1:
-            raise ValueError(f"Can only create negations for exactly one predicate but received: '{parts}'")
+            raise ValueError(
+                f"Can only create negations for exactly one predicate but received: '{parts}'"
+            )
         elif operation != CompoundOperator.Not and not parts:
             raise ValueError("Conjunctions/disjunctions require at least one predicate")
 
@@ -2643,8 +2939,11 @@ class CompoundPredicate(AbstractPredicate):
             return parts[0]
         return CompoundPredicate(CompoundOperator.Or, parts)
 
-    def __init__(self, operation: CompoundOperator,
-                 children: AbstractPredicate | Sequence[AbstractPredicate]) -> None:
+    def __init__(
+        self,
+        operation: CompoundOperator,
+        children: AbstractPredicate | Sequence[AbstractPredicate],
+    ) -> None:
         if not operation or not children:
             raise ValueError("Operation and children must be set")
         if operation == CompoundOperator.Not and len(util.enlist(children)) > 1:
@@ -2682,7 +2981,11 @@ class CompoundPredicate(AbstractPredicate):
             The sequence of child predicates for *AND* and *OR* predicates, or the negated predicate for *NOT*
             predicates.
         """
-        return self._children[0] if self.operation == CompoundOperator.Not else self._children
+        return (
+            self._children[0]
+            if self.operation == CompoundOperator.Not
+            else self._children
+        )
 
     def is_compound(self) -> bool:
         return True
@@ -2718,7 +3021,9 @@ class CompoundPredicate(AbstractPredicate):
     def base_predicates(self) -> Iterable[AbstractPredicate]:
         return util.set_union(set(child.base_predicates()) for child in self._children)
 
-    def accept_visitor(self, visitor: PredicateVisitor[VisitorResult], *args, **kwargs) -> VisitorResult:
+    def accept_visitor(
+        self, visitor: PredicateVisitor[VisitorResult], *args, **kwargs
+    ) -> VisitorResult:
         match self.operation:
             case CompoundOperator.Not:
                 return visitor.visit_not_predicate(self, self.children, *args, **kwargs)
@@ -2737,7 +3042,11 @@ class CompoundPredicate(AbstractPredicate):
     __hash__ = AbstractPredicate.__hash__
 
     def __eq__(self, other: object) -> bool:
-        return isinstance(other, type(self)) and self.operation == other.operation and self.children == other.children
+        return (
+            isinstance(other, type(self))
+            and self.operation == other.operation
+            and self.children == other.children
+        )
 
     def __repr__(self) -> str:
         return super().__repr__()
@@ -2746,8 +3055,14 @@ class CompoundPredicate(AbstractPredicate):
         if self.operation == CompoundOperator.Not:
             return self._stringify_not()
         elif self.operation == CompoundOperator.Or:
-            return "(" + " OR ".join(f"({child})" if child.is_compound() else str(child)
-                                     for child in self.iterchildren()) + ")"
+            return (
+                "("
+                + " OR ".join(
+                    f"({child})" if child.is_compound() else str(child)
+                    for child in self.iterchildren()
+                )
+                + ")"
+            )
         elif self.operation == CompoundOperator.And:
             return " AND ".join(str(child) for child in self.children)
         else:
@@ -2772,39 +3087,63 @@ class PredicateVisitor(abc.ABC, Generic[VisitorResult]):
     """
 
     @abc.abstractmethod
-    def visit_binary_predicate(self, predicate: BinaryPredicate, *args, **kwargs) -> VisitorResult:
+    def visit_binary_predicate(
+        self, predicate: BinaryPredicate, *args, **kwargs
+    ) -> VisitorResult:
         raise NotImplementedError
 
     @abc.abstractmethod
-    def visit_between_predicate(self, predicate: BetweenPredicate, *args, **kwargs) -> VisitorResult:
+    def visit_between_predicate(
+        self, predicate: BetweenPredicate, *args, **kwargs
+    ) -> VisitorResult:
         raise NotImplementedError
 
     @abc.abstractmethod
-    def visit_in_predicate(self, predicate: InPredicate, *args, **kwargs) -> VisitorResult:
+    def visit_in_predicate(
+        self, predicate: InPredicate, *args, **kwargs
+    ) -> VisitorResult:
         raise NotImplementedError
 
     @abc.abstractmethod
-    def visit_unary_predicate(self, predicate: UnaryPredicate, *args, **kwargs) -> VisitorResult:
+    def visit_unary_predicate(
+        self, predicate: UnaryPredicate, *args, **kwargs
+    ) -> VisitorResult:
         raise NotImplementedError
 
     @abc.abstractmethod
-    def visit_not_predicate(self, predicate: CompoundPredicate, child_predicate: AbstractPredicate, *args,
-                            **kwargs) -> VisitorResult:
+    def visit_not_predicate(
+        self,
+        predicate: CompoundPredicate,
+        child_predicate: AbstractPredicate,
+        *args,
+        **kwargs,
+    ) -> VisitorResult:
         raise NotImplementedError
 
     @abc.abstractmethod
-    def visit_or_predicate(self, predicate: CompoundPredicate, components: Sequence[AbstractPredicate], *args,
-                           **kwargs) -> VisitorResult:
+    def visit_or_predicate(
+        self,
+        predicate: CompoundPredicate,
+        components: Sequence[AbstractPredicate],
+        *args,
+        **kwargs,
+    ) -> VisitorResult:
         raise NotImplementedError
 
     @abc.abstractmethod
-    def visit_and_predicate(self, predicate: CompoundPredicate, components: Sequence[AbstractPredicate], *args,
-                            **kwargs) -> VisitorResult:
+    def visit_and_predicate(
+        self,
+        predicate: CompoundPredicate,
+        components: Sequence[AbstractPredicate],
+        *args,
+        **kwargs,
+    ) -> VisitorResult:
         raise NotImplementedError
 
 
-def as_predicate(column: ColumnReference, operation: LogicalOperator,
-                 *arguments) -> BasePredicate:
+def as_predicate(
+    column: ColumnReference, operation: LogicalOperator, *arguments
+) -> BasePredicate:
     """Utility method to quickly construct instances of base predicates.
 
     The given arguments are transformed into appropriate expression objects as necessary.
@@ -2855,7 +3194,9 @@ def as_predicate(column: ColumnReference, operation: LogicalOperator,
     return BinaryPredicate(operation, column, as_expression(argument))
 
 
-def determine_join_equivalence_classes(predicates: Iterable[BinaryPredicate]) -> set[frozenset[ColumnReference]]:
+def determine_join_equivalence_classes(
+    predicates: Iterable[BinaryPredicate],
+) -> set[frozenset[ColumnReference]]:
     """Calculates all equivalence classes of equijoin predicates.
 
     Columns are in an equivalence class if they can all be compared with matching equality predicates. For example, consider
@@ -2873,9 +3214,13 @@ def determine_join_equivalence_classes(predicates: Iterable[BinaryPredicate]) ->
     set[frozenset[ColumnReference]]
         The equivalence classes. Each element of the set describes a complete equivalence class.
     """
-    join_predicates = {pred for pred in predicates
-                       if isinstance(pred, BinaryPredicate) and pred.is_join()
-                       and pred.operation == LogicalOperator.Equal}
+    join_predicates = {
+        pred
+        for pred in predicates
+        if isinstance(pred, BinaryPredicate)
+        and pred.is_join()
+        and pred.operation == LogicalOperator.Equal
+    }
 
     equivalence_graph = nx.Graph()
     for predicate in join_predicates:
@@ -2891,7 +3236,9 @@ def determine_join_equivalence_classes(predicates: Iterable[BinaryPredicate]) ->
     return equivalence_classes
 
 
-def generate_predicates_for_equivalence_classes(equivalence_classes: set[frozenset[ColumnReference]]) -> set[BinaryPredicate]:
+def generate_predicates_for_equivalence_classes(
+    equivalence_classes: set[frozenset[ColumnReference]],
+) -> set[BinaryPredicate]:
     """Provides all possible equijoin predicates for a set of equivalence classes.
 
     This function can be used in combination with `determine_join_equivalence_classes` to expand join predicates to also
@@ -2918,7 +3265,9 @@ def generate_predicates_for_equivalence_classes(equivalence_classes: set[frozens
     equivalence_predicates: set[BinaryPredicate] = set()
     for equivalence_class in equivalence_classes:
         for first_col, second_col in util.collections.pairs(equivalence_class):
-            equivalence_predicates.add(as_predicate(first_col, LogicalOperator.Equal, second_col))
+            equivalence_predicates.add(
+                as_predicate(first_col, LogicalOperator.Equal, second_col)
+            )
     return equivalence_predicates
 
 
@@ -2975,13 +3324,16 @@ def _attempt_filter_unwrap(predicate: AbstractPredicate) -> UnwrappedFilter:
         If `predicate` is not a base predicate
     """
     if not predicate.is_filter() or not predicate.is_base():
-        raise ValueError("Only base filter predicates can be unwrapped, not " + str(predicate))
+        raise ValueError(
+            "Only base filter predicates can be unwrapped, not " + str(predicate)
+        )
 
     match predicate:
-
         case BinaryPredicate(op, lhs, rhs):
             left, right = _unwrap_expression(lhs), _unwrap_expression(rhs)
-            left, right = (left, right) if isinstance(left, ColumnReference) else (right, left)
+            left, right = (
+                (left, right) if isinstance(left, ColumnReference) else (right, left)
+            )
             return left, op, right
 
         case BetweenPredicate(lhs, lower, upper):
@@ -3089,7 +3441,9 @@ class SimpleFilter(AbstractPredicate):
         except ValueError:
             return False
         except Exception as e:
-            warnings.warn("Unexpected error during filter unwrapping: " + str(e), RuntimeWarning)
+            warnings.warn(
+                "Unexpected error during filter unwrapping: " + str(e), RuntimeWarning
+            )
             return False
 
     @staticmethod
@@ -3296,7 +3650,10 @@ class SimpleJoin(AbstractPredicate):
             return False
         if not predicate.operation == LogicalOperator.Equal:
             return False
-        lhs, rhs = _unwrap_expression(predicate.first_argument), _unwrap_expression(predicate.second_argument)
+        lhs, rhs = (
+            _unwrap_expression(predicate.first_argument),
+            _unwrap_expression(predicate.second_argument),
+        )
         return isinstance(lhs, ColumnReference) and isinstance(rhs, ColumnReference)
 
     @staticmethod
@@ -3328,13 +3685,22 @@ class SimpleJoin(AbstractPredicate):
 
     def __init__(self, predicate: AbstractPredicate) -> None:
         if not isinstance(predicate, BinaryPredicate) or not predicate.is_join():
-            raise ValueError("Only join predicates can be wrapped in a simple join view")
+            raise ValueError(
+                "Only join predicates can be wrapped in a simple join view"
+            )
         if not predicate.operation == LogicalOperator.Equal:
-            raise ValueError("Only equi inner joins can be wrapped in a simple join view")
+            raise ValueError(
+                "Only equi inner joins can be wrapped in a simple join view"
+            )
 
-        lhs, rhs = _unwrap_expression(predicate.first_argument), _unwrap_expression(predicate.second_argument)
+        lhs, rhs = (
+            _unwrap_expression(predicate.first_argument),
+            _unwrap_expression(predicate.second_argument),
+        )
         if not isinstance(lhs, ColumnReference) or not isinstance(rhs, ColumnReference):
-            raise ValueError("Join predicates can only be wrapped if both sides are column references")
+            raise ValueError(
+                "Join predicates can only be wrapped if both sides are column references"
+            )
 
         self._lhs = lhs
         self._rhs = rhs
@@ -3379,7 +3745,9 @@ class SimpleJoin(AbstractPredicate):
         """Provides the join partner of the given column. If the column is not joined, *None* is returned."""
         ...
 
-    def partner_of(self, other: TableReference | ColumnReference) -> Optional[TableReference | ColumnReference]:
+    def partner_of(
+        self, other: TableReference | ColumnReference
+    ) -> Optional[TableReference | ColumnReference]:
         """Provides the join partner of the given column or table. If the column or table is not joined, *None* is returned."""
         if not self.joins(other):
             return None
@@ -3464,18 +3832,26 @@ def _collect_filter_predicates(predicate: AbstractPredicate) -> set[AbstractPred
         return {predicate} if predicate.is_filter() else set()
     elif isinstance(predicate, CompoundPredicate):
         if predicate.operation == CompoundOperator.Or:
-            or_filter_children = [child_pred for child_pred in predicate.children if child_pred.is_filter()]
+            or_filter_children = [
+                child_pred
+                for child_pred in predicate.children
+                if child_pred.is_filter()
+            ]
             if len(or_filter_children) < 2:
                 return set(or_filter_children)
             or_filters = CompoundPredicate(CompoundOperator.Or, or_filter_children)
             return {or_filters}
         elif predicate.operation == CompoundOperator.Not:
-            not_filter_children = predicate.children if predicate.children.is_filter() else None
+            not_filter_children = (
+                predicate.children if predicate.children.is_filter() else None
+            )
             if not not_filter_children:
                 return set()
             return {predicate}
         elif predicate.operation == CompoundOperator.And:
-            return util.set_union([_collect_filter_predicates(child) for child in predicate.children])
+            return util.set_union(
+                [_collect_filter_predicates(child) for child in predicate.children]
+            )
         else:
             raise ValueError(f"Unknown operation: '{predicate.operation}'")
     else:
@@ -3520,18 +3896,24 @@ def _collect_join_predicates(predicate: AbstractPredicate) -> set[AbstractPredic
         return {predicate} if predicate.is_join() else set()
     elif isinstance(predicate, CompoundPredicate):
         if predicate.operation == CompoundOperator.Or:
-            or_join_children = [child_pred for child_pred in predicate.children if child_pred.is_join()]
+            or_join_children = [
+                child_pred for child_pred in predicate.children if child_pred.is_join()
+            ]
             if len(or_join_children) < 2:
                 return set(or_join_children)
             or_joins = CompoundPredicate(CompoundOperator.Or, or_join_children)
             return {or_joins}
         elif predicate.operation == CompoundOperator.Not:
-            not_join_children = predicate.children if predicate.children.is_join() else None
+            not_join_children = (
+                predicate.children if predicate.children.is_join() else None
+            )
             if not not_join_children:
                 return set()
             return {predicate}
         elif predicate.operation == CompoundOperator.And:
-            return util.set_union([_collect_join_predicates(child) for child in predicate.children])
+            return util.set_union(
+                [_collect_join_predicates(child) for child in predicate.children]
+            )
         else:
             raise ValueError(f"Unknown operation: '{predicate.operation}'")
     else:
@@ -3706,8 +4088,16 @@ class QueryPredicates:
         """
         if self.is_empty():
             return None
-        applicable_filters = [filter_pred for filter_pred in self.filters() if filter_pred.contains_table(table)]
-        return CompoundPredicate.create_and(applicable_filters) if applicable_filters else None
+        applicable_filters = [
+            filter_pred
+            for filter_pred in self.filters()
+            if filter_pred.contains_table(table)
+        ]
+        return (
+            CompoundPredicate.create_and(applicable_filters)
+            if applicable_filters
+            else None
+        )
 
     @functools.cache
     def joins_for(self, table: TableReference) -> Collection[AbstractPredicate]:
@@ -3733,11 +4123,16 @@ class QueryPredicates:
         if self.is_empty():
             return []
 
-        applicable_joins: list[AbstractPredicate] = [join_pred for join_pred in self.joins()
-                                                     if join_pred.contains_table(table)]
-        distinct_joins: dict[frozenset[TableReference], list[AbstractPredicate]] = collections.defaultdict(list)
+        applicable_joins: list[AbstractPredicate] = [
+            join_pred for join_pred in self.joins() if join_pred.contains_table(table)
+        ]
+        distinct_joins: dict[frozenset[TableReference], list[AbstractPredicate]] = (
+            collections.defaultdict(list)
+        )
         for join_predicate in applicable_joins:
-            partners = {column.table for column in join_predicate.join_partners_of(table)}
+            partners = {
+                column.table for column in join_predicate.join_partners_of(table)
+            }
             distinct_joins[frozenset(partners)].append(join_predicate)
 
         aggregated_predicates = []
@@ -3745,9 +4140,13 @@ class QueryPredicates:
             aggregated_predicates.append(CompoundPredicate.create_and(join_group))
         return aggregated_predicates
 
-    def joins_between(self, first_table: TableReference | Iterable[TableReference],
-                      second_table: TableReference | Iterable[TableReference], *,
-                      _computation: Literal["legacy", "graph", "map"] = "map") -> Optional[AbstractPredicate]:
+    def joins_between(
+        self,
+        first_table: TableReference | Iterable[TableReference],
+        second_table: TableReference | Iterable[TableReference],
+        *,
+        _computation: Literal["legacy", "graph", "map"] = "map",
+    ) -> Optional[AbstractPredicate]:
         """Provides the (conjunctive) join predicate that joins specific tables.
 
         The precise behaviour of this method depends on the provided parameters: If `first_table` or `second_table` contain
@@ -3801,11 +4200,16 @@ class QueryPredicates:
         elif _computation == "map":
             return self._map_based_joins_between(first_table, second_table)
         else:
-            raise ValueError("Unknown computation method. Allowed values are 'legacy', 'graph', or 'map', ",
-                             f"not '{_computation}'")
+            raise ValueError(
+                "Unknown computation method. Allowed values are 'legacy', 'graph', or 'map', ",
+                f"not '{_computation}'",
+            )
 
-    def joins_tables(self, tables: TableReference | Iterable[TableReference],
-                     *more_tables: TableReference) -> bool:
+    def joins_tables(
+        self,
+        tables: TableReference | Iterable[TableReference],
+        *more_tables: TableReference,
+    ) -> bool:
         """Checks, whether specific tables are all joined with each other.
 
         This does not mean that there has to be a join predicate between each pair of tables, but rather that all pairs
@@ -3872,7 +4276,7 @@ class QueryPredicates:
 
     def all_simple(self) -> bool:
         """Checks, whether all predicates in the hierarchy can be represented as simplified views.
-        
+
         See Also
         --------
         SimpleFilter : The simplified representation of predicates
@@ -3882,7 +4286,9 @@ class QueryPredicates:
             return False
         return all(SimpleJoin.can_wrap(pred) for pred in self.joins())
 
-    def and_(self, other_predicate: QueryPredicates | AbstractPredicate) -> QueryPredicates:
+    def and_(
+        self, other_predicate: QueryPredicates | AbstractPredicate
+    ) -> QueryPredicates:
         """Combines the current predicates with additional predicates, creating a conjunction of the two predicates.
 
         The input predicates, as well as the current predicates object are not modified. All changes are applied to the
@@ -3899,12 +4305,22 @@ class QueryPredicates:
         QueryPredicates
             The merged predicates wrapper. Its root is roughly equivalent to ``self.root AND other_predicate.root``.
         """
-        if self.is_empty() and isinstance(other_predicate, QueryPredicates) and other_predicate.is_empty():
+        if (
+            self.is_empty()
+            and isinstance(other_predicate, QueryPredicates)
+            and other_predicate.is_empty()
+        ):
             return self
-        elif isinstance(other_predicate, QueryPredicates) and other_predicate.is_empty():
+        elif (
+            isinstance(other_predicate, QueryPredicates) and other_predicate.is_empty()
+        ):
             return self
 
-        other_predicate = other_predicate._root if isinstance(other_predicate, QueryPredicates) else other_predicate
+        other_predicate = (
+            other_predicate._root
+            if isinstance(other_predicate, QueryPredicates)
+            else other_predicate
+        )
         if self.is_empty():
             return QueryPredicates(other_predicate)
 
@@ -3929,7 +4345,9 @@ class QueryPredicates:
         join_graph.add_nodes_from(tables)
         for table in tables:
             for join in self.joins_for(table):
-                partner_tables = set(col.table for col in join.join_partners_of(table)) & tables
+                partner_tables = (
+                    set(col.table for col in join.join_partners_of(table)) & tables
+                )
                 join_graph.add_edges_from(itertools.product([table], partner_tables))
         return nx.is_connected(join_graph)
 
@@ -3944,7 +4362,9 @@ class QueryPredicates:
         if self._root is None:
             raise StateError("No query predicates!")
 
-    def _init_join_predicate_map(self) -> dict[frozenset[TableReference], AbstractPredicate]:
+    def _init_join_predicate_map(
+        self,
+    ) -> dict[frozenset[TableReference], AbstractPredicate]:
         """Generates the necessary mapping for `_map_based_joins_between`.
 
         This is a static data structure and hence can be pre-computed.
@@ -3962,16 +4382,20 @@ class QueryPredicates:
         for table in self._root.tables():
             join_partners = self.joins_for(table)
             for join_predicate in join_partners:
-                partner_tables = {partner.table for partner in join_predicate.join_partners_of(table)}
+                partner_tables = {
+                    partner.table for partner in join_predicate.join_partners_of(table)
+                }
                 map_key = frozenset(partner_tables | {table})
                 if map_key in predicate_map:
                     continue
                 predicate_map[map_key] = join_predicate
         return predicate_map
 
-    def _legacy_joins_between(self, first_table: TableReference | Iterable[TableReference],
-                              second_table: TableReference | Iterable[TableReference]
-                              ) -> Optional[AbstractPredicate]:
+    def _legacy_joins_between(
+        self,
+        first_table: TableReference | Iterable[TableReference],
+        second_table: TableReference | Iterable[TableReference],
+    ) -> Optional[AbstractPredicate]:
         """Determines how two (sets of) tables can be joined using the legacy recursive structure.
 
         .. deprecated::
@@ -3991,12 +4415,18 @@ class QueryPredicates:
             A conjunction of all the individual join predicates between the two sets of candidate tables. If there is no join
             predicate between any of the tables, *None* is returned.
         """
-        if isinstance(first_table, TableReference) and isinstance(second_table, TableReference):
+        if isinstance(first_table, TableReference) and isinstance(
+            second_table, TableReference
+        ):
             if first_table == second_table:
                 return None
             first_joins: Collection[AbstractPredicate] = self.joins_for(first_table)
-            matching_joins = {join for join in first_joins if join.joins_table(second_table)}
-            return CompoundPredicate.create_and(matching_joins) if matching_joins else None
+            matching_joins = {
+                join for join in first_joins if join.joins_table(second_table)
+            }
+            return (
+                CompoundPredicate.create_and(matching_joins) if matching_joins else None
+            )
 
         matching_joins = set()
         first_table, second_table = util.enlist(first_table), util.enlist(second_table)
@@ -4008,9 +4438,11 @@ class QueryPredicates:
                 matching_joins.add(join_predicate)
         return CompoundPredicate.create_and(matching_joins) if matching_joins else None
 
-    def _graph_based_joins_between(self, first_table: TableReference | Iterable[TableReference],
-                                   second_table: TableReference | Iterable[TableReference]
-                                   ) -> Optional[AbstractPredicate]:
+    def _graph_based_joins_between(
+        self,
+        first_table: TableReference | Iterable[TableReference],
+        second_table: TableReference | Iterable[TableReference],
+    ) -> Optional[AbstractPredicate]:
         """Determines how two (sets of) tables can be joined using a graph-based approach.
 
         Parameters
@@ -4033,7 +4465,9 @@ class QueryPredicates:
         if len(first_table) > 1:
             first_first_table, *remaining_first_tables = first_table
             for remaining_first_table in remaining_first_tables:
-                join_graph = nx.contracted_nodes(join_graph, first_first_table, remaining_first_table)
+                join_graph = nx.contracted_nodes(
+                    join_graph, first_first_table, remaining_first_table
+                )
             first_hook = first_first_table
         else:
             first_hook = util.simplify(first_table)
@@ -4041,7 +4475,9 @@ class QueryPredicates:
         if len(second_table) > 1:
             first_second_table, *remaining_second_tables = second_table
             for remaining_second_table in remaining_second_tables:
-                join_graph = nx.contracted_nodes(join_graph, first_second_table, remaining_second_table)
+                join_graph = nx.contracted_nodes(
+                    join_graph, first_second_table, remaining_second_table
+                )
             second_hook = first_second_table
         else:
             second_hook = util.simplify(second_table)
@@ -4050,9 +4486,11 @@ class QueryPredicates:
             return None
         return join_graph.edges[first_hook, second_hook]["predicate"]
 
-    def _map_based_joins_between(self, first_table: TableReference | Iterable[TableReference],
-                                 second_table: TableReference | Iterable[TableReference]
-                                 ) -> Optional[AbstractPredicate]:
+    def _map_based_joins_between(
+        self,
+        first_table: TableReference | Iterable[TableReference],
+        second_table: TableReference | Iterable[TableReference],
+    ) -> Optional[AbstractPredicate]:
         """Determines how two (sets of) tables can be joined together using a map-based approach.
 
         This method is the preferred way of inferring the join predicate from the two candidate sets. It is based on static
@@ -4144,7 +4582,9 @@ class BaseClause(abc.ABC):
         set[TableReference]
             All tables. This includes virtual tables if such tables are present in the clause
         """
-        return util.set_union(expression.tables() for expression in self.iterexpressions())
+        return util.set_union(
+            expression.tables() for expression in self.iterexpressions()
+        )
 
     @abc.abstractmethod
     def columns(self) -> set[ColumnReference]:
@@ -4187,7 +4627,9 @@ class BaseClause(abc.ABC):
         raise NotImplementedError
 
     @abc.abstractmethod
-    def accept_visitor(self, visitor: ClauseVisitor[VisitorResult], *args, **kwargs) -> VisitorResult:
+    def accept_visitor(
+        self, visitor: ClauseVisitor[VisitorResult], *args, **kwargs
+    ) -> VisitorResult:
         """Enables processing of the current clause by a visitor.
 
         Parameters
@@ -4301,15 +4743,19 @@ class Hint(BaseClause):
     def itercolumns(self) -> Iterable[ColumnReference]:
         return []
 
-    def accept_visitor(self, visitor: ClauseVisitor[VisitorResult], *args, **kwargs) -> VisitorResult:
+    def accept_visitor(
+        self, visitor: ClauseVisitor[VisitorResult], *args, **kwargs
+    ) -> VisitorResult:
         return visitor.visit_hint_clause(self, *args, **kwargs)
 
     __hash__ = BaseClause.__hash__
 
     def __eq__(self, other) -> bool:
-        return (isinstance(other, type(self))
-                and self.preparatory_statements == other.preparatory_statements
-                and self.query_hints == other.query_hints)
+        return (
+            isinstance(other, type(self))
+            and self.preparatory_statements == other.preparatory_statements
+            and self.query_hints == other.query_hints
+        )
 
     def __str__(self) -> str:
         if self.preparatory_statements and self.query_hints:
@@ -4429,15 +4875,19 @@ class Explain(BaseClause):
     def itercolumns(self) -> Iterable[ColumnReference]:
         return []
 
-    def accept_visitor(self, visitor: ClauseVisitor[VisitorResult], *args, **kwargs) -> VisitorResult:
+    def accept_visitor(
+        self, visitor: ClauseVisitor[VisitorResult], *args, **kwargs
+    ) -> VisitorResult:
         return visitor.visit_explain_clause(self)
 
     __hash__ = BaseClause.__hash__
 
     def __eq__(self, other) -> bool:
-        return (isinstance(other, type(self))
-                and self.analyze == other.analyze
-                and self.target_format == other.target_format)
+        return (
+            isinstance(other, type(self))
+            and self.analyze == other.analyze
+            and self.target_format == other.target_format
+        )
 
     def __str__(self) -> str:
         explain_prefix = "EXPLAIN"
@@ -4475,7 +4925,14 @@ class WithQuery:
     ValueError
         If the `target_name` is empty
     """
-    def __init__(self, query: SqlQuery, target_name: str | TableReference, *, materialized: Optional[bool] = None) -> None:
+
+    def __init__(
+        self,
+        query: SqlQuery,
+        target_name: str | TableReference,
+        *,
+        materialized: Optional[bool] = None,
+    ) -> None:
         if not target_name:
             raise ValueError("Target name is required")
 
@@ -4483,11 +4940,19 @@ class WithQuery:
 
         self._query = query
         self._subquery_expression = SubqueryExpression(query)
-        self._target_name = target_name if isinstance(target_name, str) else target_name.identifier()
+        self._target_name = (
+            target_name if isinstance(target_name, str) else target_name.identifier()
+        )
         self._materialized = materialized
         self._hash_val = hash((query, target_name))
 
-    __slots__ = ("_query", "_subquery_expression", "_target_name", "_materialized", "_hash_val")
+    __slots__ = (
+        "_query",
+        "_subquery_expression",
+        "_target_name",
+        "_materialized",
+        "_hash_val",
+    )
 
     @property
     def query(self) -> SqlQuery:
@@ -4583,9 +5048,11 @@ class WithQuery:
         return self._hash_val
 
     def __eq__(self, other: object) -> bool:
-        return (isinstance(other, type(self))
-                and self._target_name == other._target_name
-                and self._query == other._query)
+        return (
+            isinstance(other, type(self))
+            and self._target_name == other._target_name
+            and self._query == other._query
+        )
 
     def __repr__(self) -> str:
         return str(self)
@@ -4617,16 +5084,23 @@ class ValuesWithQuery(WithQuery):
         identity.
     """
 
-    def __init__(self, values: ValuesList, *, target_name: str | TableReference = "",
-                 columns: Optional[Iterable[str | ColumnReference]] = None,
-                 materialized: Optional[bool] = None) -> None:
+    def __init__(
+        self,
+        values: ValuesList,
+        *,
+        target_name: str | TableReference = "",
+        columns: Optional[Iterable[str | ColumnReference]] = None,
+        materialized: Optional[bool] = None,
+    ) -> None:
         self._values = values
         self._materialized = materialized
 
         if isinstance(target_name, TableReference):
             self._table = target_name
         else:
-            self._table = TableReference.create_virtual(target_name) if target_name else None
+            self._table = (
+                TableReference.create_virtual(target_name) if target_name else None
+            )
 
         parsed_columns: list[ColumnReference] = []
         for col in columns if columns else []:
@@ -4636,7 +5110,9 @@ class ValuesWithQuery(WithQuery):
             parsed_columns.append(ColumnReference(col, self._table))
         self._columns = tuple(parsed_columns)
 
-        table_source = ValuesTableSource(values, alias=self._table, columns=self._columns)
+        table_source = ValuesTableSource(
+            values, alias=self._table, columns=self._columns
+        )
         self._query = SqlQuery(
             select_clause=Select.star(),
             from_clause=From([table_source]),
@@ -4685,7 +5161,9 @@ class ValuesWithQuery(WithQuery):
         """
         if self._columns:
             return self._columns
-        return [ColumnExpression(f"column_{i + 1}") for i in range(len(self._values[0]))]
+        return [
+            ColumnExpression(f"column_{i + 1}") for i in range(len(self._values[0]))
+        ]
 
     def iterexpressions(self) -> Iterable[SqlExpression]:
         return util.flatten(row for row in self._values)
@@ -4694,10 +5172,12 @@ class ValuesWithQuery(WithQuery):
         return [ColumnReference(col, self.target_table) for col in self._columns]
 
     def __eq__(self, other: object) -> bool:
-        return (isinstance(other, type(self))
-                and self._values == other._values
-                and self._columns == other._columns
-                and self._table == other._table)
+        return (
+            isinstance(other, type(self))
+            and self._values == other._values
+            and self._columns == other._columns
+            and self._table == other._table
+        )
 
     __hash__ = WithQuery.__hash__
 
@@ -4743,6 +5223,7 @@ class CommonTableExpression(BaseClause):
     The `referenced_tables()` method does not include the CTE aliases. Likewise, the `aliases()` method provides all the
     aliases, but not the tables that are referenced within the CTEs.
     """
+
     def __init__(self, with_queries: Iterable[WithQuery], *, recursive: bool = False):
         self._with_queries = tuple(with_queries)
         if not self._with_queries:
@@ -4806,12 +5287,18 @@ class CommonTableExpression(BaseClause):
         return util.set_union(with_query.columns() for with_query in self._with_queries)
 
     def iterexpressions(self) -> Iterable[SqlExpression]:
-        return util.flatten(with_query.iterexpressions() for with_query in self._with_queries)
+        return util.flatten(
+            with_query.iterexpressions() for with_query in self._with_queries
+        )
 
     def itercolumns(self) -> Iterable[ColumnReference]:
-        return util.flatten(with_query.itercolumns() for with_query in self._with_queries)
+        return util.flatten(
+            with_query.itercolumns() for with_query in self._with_queries
+        )
 
-    def accept_visitor(self, visitor: ClauseVisitor[VisitorResult], *args, **kwargs) -> VisitorResult:
+    def accept_visitor(
+        self, visitor: ClauseVisitor[VisitorResult], *args, **kwargs
+    ) -> VisitorResult:
         return visitor.visit_cte_clause(self, *args, **kwargs)
 
     def __len__(self) -> int:
@@ -4823,9 +5310,11 @@ class CommonTableExpression(BaseClause):
     __hash__ = BaseClause.__hash__
 
     def __eq__(self, other: object) -> bool:
-        return (isinstance(other, type(self))
-                and self._with_queries == other._with_queries
-                and self._recursive == other._recursive)
+        return (
+            isinstance(other, type(self))
+            and self._with_queries == other._with_queries
+            and self._recursive == other._recursive
+        )
 
     def __str__(self) -> str:
         query_str = ", ".join(str(with_query) for with_query in self._with_queries)
@@ -4944,8 +5433,11 @@ class BaseProjection:
         return self._hash_val
 
     def __eq__(self, other) -> bool:
-        return (isinstance(other, type(self))
-                and self.expression == other.expression and self.target_name == other.target_name)
+        return (
+            isinstance(other, type(self))
+            and self.expression == other.expression
+            and self.target_name == other.target_name
+        )
 
     def __repr__(self) -> str:
         return str(self)
@@ -5025,8 +5517,11 @@ class Select(BaseClause):
         return Select(BaseProjection.star(), distinct=distinct)
 
     @staticmethod
-    def create_for(columns: Iterable[ColumnReference], *,
-                   distinct: Iterable[SqlExpression] | bool = False) -> Select:
+    def create_for(
+        columns: Iterable[ColumnReference],
+        *,
+        distinct: Iterable[SqlExpression] | bool = False,
+    ) -> Select:
         """Full factory method to accompany `star` and `count_star` factory methods.
 
         This is basically the same as calling the `__init__` method directly.
@@ -5048,8 +5543,12 @@ class Select(BaseClause):
         target_columns = [BaseProjection.column(column) for column in columns]
         return Select(target_columns, distinct=distinct)
 
-    def __init__(self, targets: BaseProjection | Sequence[BaseProjection], *,
-                 distinct: Iterable[SqlExpression] | bool = False) -> None:
+    def __init__(
+        self,
+        targets: BaseProjection | Sequence[BaseProjection],
+        *,
+        distinct: Iterable[SqlExpression] | bool = False,
+    ) -> None:
         if not targets:
             raise ValueError("At least one target must be specified")
         self._targets = tuple(util.enlist(targets))
@@ -5167,7 +5666,9 @@ class Select(BaseClause):
             output[projection.target_name] = util.simplify(source_columns)
         return output
 
-    def accept_visitor(self, visitor: ClauseVisitor[VisitorResult], *args, **kwargs) -> VisitorResult:
+    def accept_visitor(
+        self, visitor: ClauseVisitor[VisitorResult], *args, **kwargs
+    ) -> VisitorResult:
         return visitor.visit_select_clause(self, *args, **kwargs)
 
     def __len__(self) -> int:
@@ -5179,15 +5680,21 @@ class Select(BaseClause):
     __hash__ = BaseClause.__hash__
 
     def __eq__(self, other) -> bool:
-        return (isinstance(other, type(self))
-                and self._distinct_type == other._distinct_type
-                and self._targets == other._targets
-                and self._distinct_cols == other._distinct_cols)
+        return (
+            isinstance(other, type(self))
+            and self._distinct_type == other._distinct_type
+            and self._targets == other._targets
+            and self._distinct_cols == other._distinct_cols
+        )
 
     def __str__(self) -> str:
         if self.is_distinct():
             distinct_cols = ", ".join(str(col) for col in self.distinct_on)
-            select_str = f"SELECT DISTINCT ON ({distinct_cols})" if distinct_cols else "SELECT DISTINCT"
+            select_str = (
+                f"SELECT DISTINCT ON ({distinct_cols})"
+                if distinct_cols
+                else "SELECT DISTINCT"
+            )
         else:
             select_str = "SELECT"
         parts_str = ", ".join(str(target) for target in self.targets)
@@ -5287,6 +5794,7 @@ class DirectTableSource(TableSource):
     table : TableReference
         The table that is sourced
     """
+
     def __init__(self, table: TableReference) -> None:
         self._table = table
 
@@ -5355,13 +5863,25 @@ class SubqueryTableSource(TableSource):
         If the `target_name` is empty
     """
 
-    def __init__(self, query: SqlQuery | SubqueryExpression, target_name: str | TableReference = "", *,
-                 lateral: bool = False) -> None:
-        self._subquery_expression = (query if isinstance(query, SubqueryExpression)
-                                     else SubqueryExpression(query))
-        self._target_name = target_name if isinstance(target_name, str) else target_name.identifier()
+    def __init__(
+        self,
+        query: SqlQuery | SubqueryExpression,
+        target_name: str | TableReference = "",
+        *,
+        lateral: bool = False,
+    ) -> None:
+        self._subquery_expression = (
+            query
+            if isinstance(query, SubqueryExpression)
+            else SubqueryExpression(query)
+        )
+        self._target_name = (
+            target_name if isinstance(target_name, str) else target_name.identifier()
+        )
         self._lateral = lateral
-        self._hash_val = hash((self._subquery_expression, self._target_name, self._lateral))
+        self._hash_val = hash(
+            (self._subquery_expression, self._target_name, self._lateral)
+        )
 
     __slots__ = ("_subquery_expression", "_target_name", "_lateral", "_hash_val")
     __match_args__ = ("query", "target_name", "lateral")
@@ -5400,7 +5920,11 @@ class SubqueryTableSource(TableSource):
         Optional[TableReference]
             The table. This will always be a virtual table. Can be **None** for an anonymous subquery.
         """
-        return TableReference.create_virtual(self._target_name) if self.target_name else None
+        return (
+            TableReference.create_virtual(self._target_name)
+            if self.target_name
+            else None
+        )
 
     @property
     def expression(self) -> SubqueryExpression:
@@ -5440,7 +5964,10 @@ class SubqueryTableSource(TableSource):
         """
         if not self.target_name:
             return self._subquery_expression.query.output_columns()
-        return [col.bind_to(self.target_table) for col in self._subquery_expression.query.output_columns()]
+        return [
+            col.bind_to(self.target_table)
+            for col in self._subquery_expression.query.output_columns()
+        ]
 
     def tables(self) -> set[TableReference]:
         return self._subquery_expression.tables() | {self.target_table}
@@ -5461,8 +5988,11 @@ class SubqueryTableSource(TableSource):
         return self._hash_val
 
     def __eq__(self, other: object) -> bool:
-        return (isinstance(other, type(self)) and self._subquery_expression == other._subquery_expression
-                and self._target_name == other._target_name)
+        return (
+            isinstance(other, type(self))
+            and self._subquery_expression == other._subquery_expression
+            and self._target_name == other._target_name
+        )
 
     def __repr__(self) -> str:
         return str(self)
@@ -5494,8 +6024,13 @@ class ValuesTableSource(TableSource):
         be named automatically.
     """
 
-    def __init__(self, values: ValuesList, *, alias: str | TableReference = "",
-                 columns: Optional[Iterable[str | ColumnReference]] = None) -> None:
+    def __init__(
+        self,
+        values: ValuesList,
+        *,
+        alias: str | TableReference = "",
+        columns: Optional[Iterable[str | ColumnReference]] = None,
+    ) -> None:
         self._values = tuple(values)
 
         if isinstance(alias, TableReference):
@@ -5577,7 +6112,10 @@ class ValuesTableSource(TableSource):
         """
         if self._columns:
             return self._columns
-        return [ColumnReference(f"column_{i}", self._table) for i in range(len(self._values[0]))]
+        return [
+            ColumnReference(f"column_{i}", self._table)
+            for i in range(len(self._values[0]))
+        ]
 
     def iterexpressions(self) -> Iterable[SqlExpression]:
         return util.flatten(row for row in self._values)
@@ -5592,10 +6130,12 @@ class ValuesTableSource(TableSource):
         return self._hash_val
 
     def __eq__(self, other: object) -> bool:
-        return (isinstance(other, type(self))
-                and self._table == other._table
-                and self._columns == other._columns
-                and self._values == other._values)
+        return (
+            isinstance(other, type(self))
+            and self._table == other._table
+            and self._columns == other._columns
+            and self._values == other._values
+        )
 
     def __repr__(self) -> str:
         return str(self)
@@ -5609,7 +6149,9 @@ class ValuesTableSource(TableSource):
         complete_vals_str = ", ".join(vals)
         cols = ", ".join(quote(col.name) for col in self._columns)
         cols_str = f" ({cols})" if cols else ""
-        tab_str = f" AS {quote(self._table.identifier())}{cols_str}" if self._table else ""
+        tab_str = (
+            f" AS {quote(self._table.identifier())}{cols_str}" if self._table else ""
+        )
 
         return f"(VALUES {complete_vals_str}){tab_str}"
 
@@ -5626,7 +6168,9 @@ class FunctionTableSource(TableSource):
         created.
     """
 
-    def __init__(self, function: FunctionExpression, *, alias: str | TableReference = "") -> None:
+    def __init__(
+        self, function: FunctionExpression, *, alias: str | TableReference = ""
+    ) -> None:
         self._function = function
 
         if isinstance(alias, TableReference):
@@ -5685,7 +6229,11 @@ class FunctionTableSource(TableSource):
         return self._hash_val
 
     def __eq__(self, other: object) -> bool:
-        return (isinstance(other, type(self)) and self._function == other._function and self._alias == other._alias)
+        return (
+            isinstance(other, type(self))
+            and self._function == other._function
+            and self._alias == other._alias
+        )
 
     def __repr__(self) -> str:
         return str(self)
@@ -5702,6 +6250,7 @@ class JoinType(enum.Enum):
     The names of the individual values should be pretty self-explanatory and correspond entirely to the names in the
     SQL standard.
     """
+
     InnerJoin = "JOIN"
     OuterJoin = "FULL OUTER JOIN"
     LeftJoin = "LEFT OUTER JOIN"
@@ -5720,11 +6269,13 @@ class JoinType(enum.Enum):
         return self.value
 
 
-AutoJoins = {JoinType.CrossJoin,
-             JoinType.NaturalInnerJoin,
-             JoinType.NaturalOuterJoin,
-             JoinType.NaturalLeftJoin,
-             JoinType.NaturalRightJoin}
+AutoJoins = {
+    JoinType.CrossJoin,
+    JoinType.NaturalInnerJoin,
+    JoinType.NaturalOuterJoin,
+    JoinType.NaturalLeftJoin,
+    JoinType.NaturalRightJoin,
+}
 """Automatic joins are those joins that use the *JOIN* syntax, but do not require a predicate to work.
 
 Examples include *CROSS JOIN* and *NATURAL JOIN*.
@@ -5755,17 +6306,26 @@ class JoinTableSource(TableSource):
         The specific join that should be performed. Defaults to `JoinType.InnerJoin`.
     """
 
-    def __init__(self, left: TableSource, right: TableSource, *,
-                 join_condition: Optional[AbstractPredicate] = None,
-                 join_type: JoinType = JoinType.InnerJoin) -> None:
+    def __init__(
+        self,
+        left: TableSource,
+        right: TableSource,
+        *,
+        join_condition: Optional[AbstractPredicate] = None,
+        join_type: JoinType = JoinType.InnerJoin,
+    ) -> None:
         if join_condition is None and join_type not in AutoJoins:
-            raise ValueError("Join condition is required for this join type: " + str(join_type))
+            raise ValueError(
+                "Join condition is required for this join type: " + str(join_type)
+            )
 
         self._left = left
         self._right = right
         self._join_condition = join_condition
         self._join_type = join_type if join_condition else JoinType.CrossJoin
-        self._hash_val = hash((self._left, self._right, self._join_condition, self._join_type))
+        self._hash_val = hash(
+            (self._left, self._right, self._join_condition, self._join_type)
+        )
 
     __slots__ = ("_left", "_right", "_join_condition", "_join_type", "_hash_val")
     __match_args__ = ("left", "right", "join_condition", "join_type")
@@ -5875,19 +6435,25 @@ class JoinTableSource(TableSource):
         return self._left.tables() | self._right.tables()
 
     def columns(self) -> set[ColumnReference]:
-        condition_columns = self._join_condition.columns() if self._join_condition else set()
+        condition_columns = (
+            self._join_condition.columns() if self._join_condition else set()
+        )
         return self._left.columns() | self._right.columns() | condition_columns
 
     def iterexpressions(self) -> Iterable[SqlExpression]:
         left_expressions = list(self._left.iterexpressions())
         right_expressions = list(self._right.iterexpressions())
-        condition_expressions = list(self._join_condition.iterexpressions()) if self._join_condition else []
+        condition_expressions = (
+            list(self._join_condition.iterexpressions()) if self._join_condition else []
+        )
         return left_expressions + right_expressions + condition_expressions
 
     def itercolumns(self) -> Iterable[ColumnReference]:
         left_columns = list(self._left.itercolumns())
         right_columns = list(self._right.itercolumns())
-        condition_columns = list(self._join_condition.itercolumns()) if self._join_condition else []
+        condition_columns = (
+            list(self._join_condition.itercolumns()) if self._join_condition else []
+        )
         return left_columns + right_columns + condition_columns
 
     def predicates(self) -> Optional[QueryPredicates]:
@@ -5902,16 +6468,23 @@ class JoinTableSource(TableSource):
         if self._join_condition:
             all_predicates.append(self._join_condition)
 
-        return QueryPredicates(CompoundPredicate.create_and(all_predicates)) if all_predicates else None
+        return (
+            QueryPredicates(CompoundPredicate.create_and(all_predicates))
+            if all_predicates
+            else None
+        )
 
     def __hash__(self) -> int:
         return self._hash_val
 
     def __eq__(self, other: object) -> bool:
-        return (isinstance(other, type(self)) and self._left == other._left
-                and self._right == other._right
-                and self._join_condition == other._join_condition
-                and self._join_type == other._join_type)
+        return (
+            isinstance(other, type(self))
+            and self._left == other._left
+            and self._right == other._right
+            and self._join_condition == other._join_condition
+            and self._join_type == other._join_type
+        )
 
     def __repr__(self) -> str:
         return str(self)
@@ -5946,6 +6519,7 @@ class From(BaseClause, Generic[TableType]):
     ValueError
         If no items are specified
     """
+
     def __init__(self, items: TableSource | Iterable[TableSource]):
         items = util.enlist(items)
         if not items:
@@ -5983,11 +6557,15 @@ class From(BaseClause, Generic[TableType]):
         source_predicates = [src.predicates() for src in self._items]
         if not any(source_predicates):
             return None
-        actual_predicates = [src_pred.root for src_pred in source_predicates if src_pred]
+        actual_predicates = [
+            src_pred.root for src_pred in source_predicates if src_pred
+        ]
         merged_predicate = CompoundPredicate.create_and(actual_predicates)
         return QueryPredicates(merged_predicate)
 
-    def accept_visitor(self, visitor: ClauseVisitor[VisitorResult], *args, **kwargs) -> VisitorResult:
+    def accept_visitor(
+        self, visitor: ClauseVisitor[VisitorResult], *args, **kwargs
+    ) -> VisitorResult:
         return visitor.visit_from_clause(self, *args, **kwargs)
 
     def __len__(self) -> int:
@@ -6022,7 +6600,9 @@ class ImplicitFromClause(From[DirectTableSource]):
     """
 
     @staticmethod
-    def create_for(tables: TableReference | Iterable[TableReference]) -> ImplicitFromClause:
+    def create_for(
+        tables: TableReference | Iterable[TableReference],
+    ) -> ImplicitFromClause:
         """Shorthand method to create a *FROM* clause for a set of table references.
 
         This saves the user from creating the `DirectTableSource` instances before instantiating a implicit *FROM*
@@ -6154,7 +6734,9 @@ class Where(BaseClause):
     def itercolumns(self) -> Iterable[ColumnReference]:
         return self.predicate.itercolumns()
 
-    def accept_visitor(self, visitor: ClauseVisitor[VisitorResult], *args, **kwargs) -> VisitorResult:
+    def accept_visitor(
+        self, visitor: ClauseVisitor[VisitorResult], *args, **kwargs
+    ) -> VisitorResult:
         return visitor.visit_where_clause(self, *args, **kwargs)
 
     __hash__ = BaseClause.__hash__
@@ -6185,7 +6767,9 @@ class GroupBy(BaseClause):
         If `group_columns` is empty.
     """
 
-    def __init__(self, group_columns: Sequence[SqlExpression], distinct: bool = False) -> None:
+    def __init__(
+        self, group_columns: Sequence[SqlExpression], distinct: bool = False
+    ) -> None:
         if not group_columns:
             raise ValueError("At least one group column must be specified")
         self._group_columns = tuple(group_columns)
@@ -6228,7 +6812,9 @@ class GroupBy(BaseClause):
     def itercolumns(self) -> Iterable[ColumnReference]:
         return util.flatten(column.itercolumns() for column in self.group_columns)
 
-    def accept_visitor(self, visitor: ClauseVisitor[VisitorResult], *args, **kwargs) -> VisitorResult:
+    def accept_visitor(
+        self, visitor: ClauseVisitor[VisitorResult], *args, **kwargs
+    ) -> VisitorResult:
         return visitor.visit_groupby_clause(self, *args, **kwargs)
 
     def __len__(self) -> int:
@@ -6240,8 +6826,11 @@ class GroupBy(BaseClause):
     __hash__ = BaseClause.__hash__
 
     def __eq__(self, other) -> bool:
-        return (isinstance(other, type(self))
-                and self.group_columns == other.group_columns and self.distinct == other.distinct)
+        return (
+            isinstance(other, type(self))
+            and self.group_columns == other.group_columns
+            and self.distinct == other.distinct
+        )
 
     def __str__(self) -> str:
         columns_str = ", ".join(str(col) for col in self.group_columns)
@@ -6294,7 +6883,9 @@ class Having(BaseClause):
     def itercolumns(self) -> Iterable[ColumnReference]:
         return self.condition.itercolumns()
 
-    def accept_visitor(self, visitor: ClauseVisitor[VisitorResult], *args, **kwargs) -> VisitorResult:
+    def accept_visitor(
+        self, visitor: ClauseVisitor[VisitorResult], *args, **kwargs
+    ) -> VisitorResult:
         return visitor.visit_having_clause(self, *args, **kwargs)
 
     __hash__ = BaseClause.__hash__
@@ -6325,8 +6916,12 @@ class OrderByExpression:
         which indicates that the system-default behaviour should be used.
     """
 
-    def __init__(self, column: SqlExpression, ascending: Optional[bool] = None,
-                 nulls_first: Optional[bool] = None) -> None:
+    def __init__(
+        self,
+        column: SqlExpression,
+        ascending: Optional[bool] = None,
+        nulls_first: Optional[bool] = None,
+    ) -> None:
         if not column:
             raise ValueError("Column must be specified")
         self._column = column
@@ -6378,17 +6973,25 @@ class OrderByExpression:
         return self._hash_val
 
     def __eq__(self, other) -> bool:
-        return (isinstance(other, type(self))
-                and self.column == other.column
-                and self.ascending == other.ascending
-                and self.nulls_first == other.nulls_first)
+        return (
+            isinstance(other, type(self))
+            and self.column == other.column
+            and self.ascending == other.ascending
+            and self.nulls_first == other.nulls_first
+        )
 
     def __repr__(self) -> str:
         return str(self)
 
     def __str__(self) -> str:
-        ascending_str = "" if self.ascending is None else (" ASC" if self.ascending else " DESC")
-        nulls_first = "" if self.nulls_first is None else (" NULLS FIRST " if self.nulls_first else " NULLS LAST")
+        ascending_str = (
+            "" if self.ascending is None else (" ASC" if self.ascending else " DESC")
+        )
+        nulls_first = (
+            ""
+            if self.nulls_first is None
+            else (" NULLS FIRST " if self.nulls_first else " NULLS LAST")
+        )
         return f"{self.column}{ascending_str}{nulls_first}"
 
 
@@ -6414,7 +7017,9 @@ class OrderBy(BaseClause):
         """Shorthand method to create an *ORDER BY* clause for a set of column references."""
         return OrderBy([OrderByExpression(col) for col in columns])
 
-    def __init__(self, expressions: Iterable[OrderByExpression] | OrderByExpression) -> None:
+    def __init__(
+        self, expressions: Iterable[OrderByExpression] | OrderByExpression
+    ) -> None:
         if not expressions:
             raise ValueError("At least one ORDER BY expression required")
         self._expressions = tuple(util.enlist(expressions))
@@ -6436,15 +7041,21 @@ class OrderBy(BaseClause):
         return self._expressions
 
     def columns(self) -> set[ColumnReference]:
-        return util.set_union(expression.column.columns() for expression in self.expressions)
+        return util.set_union(
+            expression.column.columns() for expression in self.expressions
+        )
 
     def iterexpressions(self) -> Iterable[SqlExpression]:
         return [expression.column for expression in self.expressions]
 
     def itercolumns(self) -> Iterable[ColumnReference]:
-        return util.flatten(expression.itercolumns() for expression in self.iterexpressions())
+        return util.flatten(
+            expression.itercolumns() for expression in self.iterexpressions()
+        )
 
-    def accept_visitor(self, visitor: ClauseVisitor[VisitorResult], *args, **kwargs) -> VisitorResult:
+    def accept_visitor(
+        self, visitor: ClauseVisitor[VisitorResult], *args, **kwargs
+    ) -> VisitorResult:
         return visitor.visit_orderby_clause(self)
 
     def __len__(self) -> int:
@@ -6459,7 +7070,9 @@ class OrderBy(BaseClause):
         return isinstance(other, type(self)) and self.expressions == other.expressions
 
     def __str__(self) -> str:
-        return "ORDER BY " + ", ".join(str(order_expr) for order_expr in self.expressions)
+        return "ORDER BY " + ", ".join(
+            str(order_expr) for order_expr in self.expressions
+        )
 
 
 FetchDirection = Literal["first", "next", "prior", "last"]
@@ -6489,8 +7102,13 @@ class Limit(BaseClause):
         If neither a `limit`, nor an `offset` are specified
     """
 
-    def __init__(self, *, limit: Optional[int] = None, offset: Optional[int] = None,
-                 fetch_direction: FetchDirection = "first") -> None:
+    def __init__(
+        self,
+        *,
+        limit: Optional[int] = None,
+        offset: Optional[int] = None,
+        fetch_direction: FetchDirection = "first",
+    ) -> None:
         if limit is None and offset is None:
             raise ValueError("Limit and offset cannot be both unspecified")
         self._limit = limit
@@ -6539,18 +7157,28 @@ class Limit(BaseClause):
     def itercolumns(self) -> Iterable[ColumnReference]:
         return []
 
-    def accept_visitor(self, visitor: ClauseVisitor[VisitorResult], *args, **kwargs) -> VisitorResult:
+    def accept_visitor(
+        self, visitor: ClauseVisitor[VisitorResult], *args, **kwargs
+    ) -> VisitorResult:
         return visitor.visit_limit_clause(self, *args, **kwargs)
 
     __hash__ = BaseClause.__hash__
 
     def __eq__(self, other) -> bool:
-        return isinstance(other, type(self)) and self.limit == other.limit and self.offset == other.offset
+        return (
+            isinstance(other, type(self))
+            and self.limit == other.limit
+            and self.offset == other.offset
+        )
 
     def __str__(self) -> str:
         offset_str = f"OFFSET {self.offset} ROWS" if self.offset is not None else ""
         fetch_direction = self.fetch_direction.upper()
-        limit_str = f"FETCH {fetch_direction} {self.limit} ROWS ONLY" if self.limit is not None else ""
+        limit_str = (
+            f"FETCH {fetch_direction} {self.limit} ROWS ONLY"
+            if self.limit is not None
+            else ""
+        )
         if offset_str and limit_str:
             return offset_str + " " + limit_str
         elif offset_str:
@@ -6576,7 +7204,13 @@ class UnionClause(BaseClause):
         duplicates should be eliminated.
     """
 
-    def __init__(self, left_query: SelectStatement, right_query: SelectStatement, *, union_all: bool = False) -> None:
+    def __init__(
+        self,
+        left_query: SelectStatement,
+        right_query: SelectStatement,
+        *,
+        union_all: bool = False,
+    ) -> None:
         self._lhs = left_query
         self._rhs = right_query
         self._union_all = union_all
@@ -6660,16 +7294,20 @@ class UnionClause(BaseClause):
     def itercolumns(self) -> Iterable[ColumnReference]:
         return list(self._lhs.itercolumns()) + list(self._rhs.itercolumns())
 
-    def accept_visitor(self, visitor: ClauseVisitor[VisitorResult], *args, **kwargs) -> VisitorResult:
+    def accept_visitor(
+        self, visitor: ClauseVisitor[VisitorResult], *args, **kwargs
+    ) -> VisitorResult:
         return visitor.visit_union_clause(self, *args, **kwargs)
 
     __hash__ = BaseClause.__hash__
 
     def __eq__(self, other: object) -> bool:
-        return (isinstance(other, type(self))
-                and self._lhs == other._lhs
-                and self._rhs == other._rhs
-                and self._union_all == other._union_all)
+        return (
+            isinstance(other, type(self))
+            and self._lhs == other._lhs
+            and self._rhs == other._rhs
+            and self._union_all == other._union_all
+        )
 
     def __str__(self) -> str:
         lhs_str = self._lhs.stringify(trailing_delimiter=False)
@@ -6689,7 +7327,9 @@ class ExceptClause(BaseClause):
         The right query that is part of the *EXCEPT* operation. This is the result set of the tuples that should be removed.
     """
 
-    def __init__(self, left_query: SelectStatement, right_query: SelectStatement) -> None:
+    def __init__(
+        self, left_query: SelectStatement, right_query: SelectStatement
+    ) -> None:
         self._lhs = left_query
         self._rhs = right_query
         super().__init__(hash((self._lhs, self._rhs)))
@@ -6735,13 +7375,18 @@ class ExceptClause(BaseClause):
     def itercolumns(self) -> Iterable[ColumnReference]:
         return list(self._lhs.itercolumns()) + list(self._rhs.itercolumns())
 
-    def accept_visitor(self, visitor: ClauseVisitor[VisitorResult], *args, **kwargs) -> VisitorResult:
+    def accept_visitor(
+        self, visitor: ClauseVisitor[VisitorResult], *args, **kwargs
+    ) -> VisitorResult:
         return visitor.visit_except_clause(self, *args, **kwargs)
 
     __hash__ = BaseClause.__hash__
 
     def __eq__(self, other: object) -> bool:
-        return isinstance(other, type(self)) and self._partner_query == other._partner_query
+        return (
+            isinstance(other, type(self))
+            and self._partner_query == other._partner_query
+        )
 
     def __str__(self) -> str:
         lhs_str = self._lhs.stringify(trailing_delimiter=False)
@@ -6762,7 +7407,9 @@ class IntersectClause(BaseClause):
         and right does not really matter.
     """
 
-    def __init__(self, left_query: SelectStatement, right_query: SelectStatement) -> None:
+    def __init__(
+        self, left_query: SelectStatement, right_query: SelectStatement
+    ) -> None:
         self._lhs = left_query
         self._rhs = right_query
         super().__init__(hash((self._lhs, self._rhs)))
@@ -6823,13 +7470,18 @@ class IntersectClause(BaseClause):
     def itercolumns(self) -> Iterable[ColumnReference]:
         return list(self._lhs.itercolumns()) + list(self._rhs.itercolumns())
 
-    def accept_visitor(self, visitor: ClauseVisitor[VisitorResult], *args, **kwargs) -> VisitorResult:
+    def accept_visitor(
+        self, visitor: ClauseVisitor[VisitorResult], *args, **kwargs
+    ) -> VisitorResult:
         return visitor.visit_intersect_clause(self, *args, **kwargs)
 
     __hash__ = BaseClause.__hash__
 
     def __eq__(self, other: object) -> bool:
-        return isinstance(other, type(self)) and self._partner_query == other._partner_query
+        return (
+            isinstance(other, type(self))
+            and self._partner_query == other._partner_query
+        )
 
     def __str__(self) -> str:
         lhs_str = self._lhs.stringify(trailing_delimiter=False)
@@ -6899,11 +7551,15 @@ class ClauseVisitor(abc.ABC, Generic[VisitorResult]):
         raise NotImplementedError
 
     @abc.abstractmethod
-    def visit_except_clause(self, clause: ExceptClause, *args, **kwargs) -> VisitorResult:
+    def visit_except_clause(
+        self, clause: ExceptClause, *args, **kwargs
+    ) -> VisitorResult:
         raise NotImplementedError
 
     @abc.abstractmethod
-    def visit_intersect_clause(self, clause: IntersectClause, *args, **kwargs) -> VisitorResult:
+    def visit_intersect_clause(
+        self, clause: IntersectClause, *args, **kwargs
+    ) -> VisitorResult:
         raise NotImplementedError
 
 
@@ -6947,8 +7603,10 @@ def collect_subqueries_in_expression(expression: SqlExpression) -> set[SqlQuery]
     """
     if isinstance(expression, SubqueryExpression):
         return {expression.query}
-    return util.set_union(collect_subqueries_in_expression(child_expr)
-                          for child_expr in expression.iterchildren())
+    return util.set_union(
+        collect_subqueries_in_expression(child_expr)
+        for child_expr in expression.iterchildren()
+    )
 
 
 def _collect_subqueries_in_table_source(table_source: TableSource) -> set[SqlQuery]:
@@ -6975,11 +7633,18 @@ def _collect_subqueries_in_table_source(table_source: TableSource) -> set[SqlQue
         return {table_source.query}
     elif isinstance(table_source, JoinTableSource):
         source_subqueries = _collect_subqueries_in_table_source(table_source.source)
-        nested_subqueries = util.set_union(_collect_subqueries_in_table_source(nested_join)
-                                           for nested_join in table_source.joined_table)
-        condition_subqueries = (util.set_union(collect_subqueries_in_expression(cond_expr) for cond_expr
-                                               in table_source.join_condition.iterexpressions())
-                                if table_source.join_condition else set())
+        nested_subqueries = util.set_union(
+            _collect_subqueries_in_table_source(nested_join)
+            for nested_join in table_source.joined_table
+        )
+        condition_subqueries = (
+            util.set_union(
+                collect_subqueries_in_expression(cond_expr)
+                for cond_expr in table_source.join_condition.iterexpressions()
+            )
+            if table_source.join_condition
+            else set()
+        )
         return source_subqueries | nested_subqueries | condition_subqueries
     else:
         return set()
@@ -7011,28 +7676,47 @@ def _collect_subqueries(clause: BaseClause) -> set[SqlQuery]:
     --------
     SqlQuery.subqueries
     """
-    if isinstance(clause, Hint) or isinstance(clause, Limit) or isinstance(clause, Explain):
+    if (
+        isinstance(clause, Hint)
+        or isinstance(clause, Limit)
+        or isinstance(clause, Explain)
+    ):
         return set()
 
     if isinstance(clause, CommonTableExpression):
         return set()
     elif isinstance(clause, Select):
-        return util.set_union(collect_subqueries_in_expression(target.expression) for target in clause.targets)
+        return util.set_union(
+            collect_subqueries_in_expression(target.expression)
+            for target in clause.targets
+        )
     elif isinstance(clause, ImplicitFromClause):
         return set()
     elif isinstance(clause, From):
-        return util.set_union(_collect_subqueries_in_table_source(src) for src in clause.items)
+        return util.set_union(
+            _collect_subqueries_in_table_source(src) for src in clause.items
+        )
     elif isinstance(clause, Where):
         where_predicate = clause.predicate
-        return util.set_union(collect_subqueries_in_expression(expression) for expression in where_predicate.iterexpressions())
+        return util.set_union(
+            collect_subqueries_in_expression(expression)
+            for expression in where_predicate.iterexpressions()
+        )
     elif isinstance(clause, GroupBy):
-        return util.set_union(collect_subqueries_in_expression(column) for column in clause.group_columns)
+        return util.set_union(
+            collect_subqueries_in_expression(column) for column in clause.group_columns
+        )
     elif isinstance(clause, Having):
         having_predicate = clause.condition
-        return util.set_union(collect_subqueries_in_expression(expression)
-                              for expression in having_predicate.iterexpressions())
+        return util.set_union(
+            collect_subqueries_in_expression(expression)
+            for expression in having_predicate.iterexpressions()
+        )
     elif isinstance(clause, OrderBy):
-        return util.set_union(collect_subqueries_in_expression(expression.column) for expression in clause.expressions)
+        return util.set_union(
+            collect_subqueries_in_expression(expression.column)
+            for expression in clause.expressions
+        )
     elif isinstance(clause, UnionClause):
         return clause.left_query.subqueries() | clause.right_query.subqueries()
     elif isinstance(clause, ExceptClause):
@@ -7070,8 +7754,10 @@ def _collect_bound_tables_from_source(table_source: TableSource) -> set[TableRef
         return _collect_bound_tables(table_source.query.from_clause)
     elif isinstance(table_source, JoinTableSource):
         direct_tables = _collect_bound_tables_from_source(table_source.source)
-        nested_tables = util.set_union(_collect_bound_tables_from_source(nested_join)
-                                       for nested_join in table_source.joined_table)
+        nested_tables = util.set_union(
+            _collect_bound_tables_from_source(nested_join)
+            for nested_join in table_source.joined_table
+        )
         return direct_tables | nested_tables
 
 
@@ -7099,7 +7785,9 @@ def _collect_bound_tables(from_clause: From) -> set[TableReference]:
     if isinstance(from_clause, ImplicitFromClause):
         return from_clause.tables()
     else:
-        return util.set_union(_collect_bound_tables_from_source(src) for src in from_clause.items)
+        return util.set_union(
+            _collect_bound_tables_from_source(src) for src in from_clause.items
+        )
 
 
 FromClauseType = TypeVar("FromClauseType", bound=From)
@@ -7113,15 +7801,26 @@ def _create_ast(item: Any, *, indentation: int = 0) -> str:
         case ColumnExpression():
             return f"{prefix}+ {item_str} [{item.column}]"
         case SqlExpression():
-            expressions = [_create_ast(e, indentation=indentation + 2) for e in item.iterchildren()]
+            expressions = [
+                _create_ast(e, indentation=indentation + 2) for e in item.iterchildren()
+            ]
             expression_str = "\n".join(expressions)
-            return f"{prefix}+-{item_str}\n{expression_str}" if expressions else f"{prefix}+-{item_str} [{item}]"
+            return (
+                f"{prefix}+-{item_str}\n{expression_str}"
+                if expressions
+                else f"{prefix}+-{item_str} [{item}]"
+            )
         case CompoundPredicate():
-            children = [_create_ast(c, indentation=indentation + 2) for c in item.children]
+            children = [
+                _create_ast(c, indentation=indentation + 2) for c in item.children
+            ]
             child_str = "\n".join(children)
             return f"{prefix}+-{item_str}\n{child_str}"
         case AbstractPredicate():
-            expressions = [_create_ast(e, indentation=indentation + 2) for e in item.iterexpressions()]
+            expressions = [
+                _create_ast(e, indentation=indentation + 2)
+                for e in item.iterexpressions()
+            ]
             expression_str = "\n".join(expressions)
             return f"{prefix}+-{item_str}\n{expression_str}"
         case Where() | Having():
@@ -7144,7 +7843,10 @@ def _create_ast(item: Any, *, indentation: int = 0) -> str:
             cte_str = "\n".join(ctes)
             return f"{prefix}+-{item_str}\n{cte_str}"
         case BaseClause():
-            expressions = [_create_ast(e, indentation=indentation + 2) for e in item.iterexpressions()]
+            expressions = [
+                _create_ast(e, indentation=indentation + 2)
+                for e in item.iterexpressions()
+            ]
             expression_str = "\n".join(expressions)
             return f"{prefix}+-{item_str}\n{expression_str}"
         case ValuesWithQuery():
@@ -7153,11 +7855,16 @@ def _create_ast(item: Any, *, indentation: int = 0) -> str:
             child_expression = _create_ast(item.query, indentation=indentation + 2)
             return f"{prefix}+-{item_str}\n{child_expression}"
         case SetQuery():
-            subqueries = [_create_ast(q, indentation=indentation + 2) for q in (item.left_query, item.right_query)]
+            subqueries = [
+                _create_ast(q, indentation=indentation + 2)
+                for q in (item.left_query, item.right_query)
+            ]
             subquery_str = "\n".join(subqueries)
             return f"{prefix}+-{item_str}\n{subquery_str}"
         case SqlQuery():
-            clauses = [_create_ast(c, indentation=indentation + 2) for c in item.clauses()]
+            clauses = [
+                _create_ast(c, indentation=indentation + 2) for c in item.clauses()
+            ]
             clause_str = "\n".join(clauses)
             return f"{prefix}+-{item_str}\n{clause_str}"
         case _:
@@ -7248,12 +7955,20 @@ class SqlQuery:
     See the `Limitations` section for unsupported SQL features.
     """
 
-    def __init__(self, *, select_clause: Select,
-                 from_clause: Optional[From] = None, where_clause: Optional[Where] = None,
-                 groupby_clause: Optional[GroupBy] = None, having_clause: Optional[Having] = None,
-                 orderby_clause: Optional[OrderBy] = None, limit_clause: Optional[Limit] = None,
-                 cte_clause: Optional[CommonTableExpression] = None,
-                 hints: Optional[Hint] = None, explain: Optional[Explain] = None) -> None:
+    def __init__(
+        self,
+        *,
+        select_clause: Select,
+        from_clause: Optional[From] = None,
+        where_clause: Optional[Where] = None,
+        groupby_clause: Optional[GroupBy] = None,
+        having_clause: Optional[Having] = None,
+        orderby_clause: Optional[OrderBy] = None,
+        limit_clause: Optional[Limit] = None,
+        cte_clause: Optional[CommonTableExpression] = None,
+        hints: Optional[Hint] = None,
+        explain: Optional[Explain] = None,
+    ) -> None:
         self._cte_clause = cte_clause
         self._select_clause = select_clause
         self._from_clause = from_clause
@@ -7265,11 +7980,20 @@ class SqlQuery:
         self._hints = hints
         self._explain = explain
 
-        self._hash_val = hash((self._hints, self._explain,
-                               self._cte_clause,
-                               self._select_clause, self._from_clause, self._where_clause,
-                               self._groupby_clause, self._having_clause,
-                               self._orderby_clause, self._limit_clause))
+        self._hash_val = hash(
+            (
+                self._hints,
+                self._explain,
+                self._cte_clause,
+                self._select_clause,
+                self._from_clause,
+                self._where_clause,
+                self._groupby_clause,
+                self._having_clause,
+                self._orderby_clause,
+                self._limit_clause,
+            )
+        )
 
     __slots__ = (
         "_cte_clause",
@@ -7282,7 +8006,7 @@ class SqlQuery:
         "_limit_clause",
         "_hints",
         "_explain",
-        "_hash_val"
+        "_hash_val",
     )
 
     @property
@@ -7466,10 +8190,15 @@ class SqlQuery:
         set[TableReference]
             All tables that are referenced in the query.
         """
-        relevant_clauses: list[BaseClause] = [self._select_clause,
-                                              self._from_clause,
-                                              self._where_clause, self._groupby_clause, self._having_clause,
-                                              self._orderby_clause, self._limit_clause]
+        relevant_clauses: list[BaseClause] = [
+            self._select_clause,
+            self._from_clause,
+            self._where_clause,
+            self._groupby_clause,
+            self._having_clause,
+            self._orderby_clause,
+            self._limit_clause,
+        ]
 
         tabs = set()
         tabs |= self.cte_clause.referenced_tables() if self.cte_clause else set()
@@ -7508,8 +8237,10 @@ class SqlQuery:
                 case ColumnExpression(column):
                     cols.append(column.as_unbound())
                 case StarExpression():
-                    warnings.warn("Cannot compute the output columns for SELECT * queries. Please use the database schema "
-                                  "to infer the columns. The result of this method is likely not what you want.")
+                    warnings.warn(
+                        "Cannot compute the output columns for SELECT * queries. Please use the database schema "
+                        "to infer the columns. The result of this method is likely not what you want."
+                    )
                 case _:
                     cols.append(ColumnReference(f"column_{anon_idx}"))
                     anon_idx += 1
@@ -7566,7 +8297,9 @@ class SqlQuery:
 
         if self.cte_clause:
             for with_query in self.cte_clause.queries:
-                current_predicate = current_predicate.and_(with_query.query.predicates())
+                current_predicate = current_predicate.and_(
+                    with_query.query.predicates()
+                )
 
         if self.where_clause:
             current_predicate = current_predicate.and_(self.where_clause.predicate)
@@ -7590,7 +8323,9 @@ class SqlQuery:
         # the implementation of subqueries() on SetQuery relies on this being a set, both methods should be changed together
         return util.set_union(_collect_subqueries(clause) for clause in self.clauses())
 
-    def clauses(self, *, skip: Optional[Type | Iterable[Type]] = NoneType) -> Sequence[BaseClause]:
+    def clauses(
+        self, *, skip: Optional[Type | Iterable[Type]] = NoneType
+    ) -> Sequence[BaseClause]:
         """Provides all the clauses that are defined (i.e. not *None*) in this query.
 
         Parameters
@@ -7605,11 +8340,23 @@ class SqlQuery:
             having, order by, limit. Notice however, that this order is not strictly standardized and may change in the future.
             All clauses that are not specified on the query will be skipped.
         """
-        all_clauses = [self.hints, self.explain, self.cte_clause,
-                       self.select_clause, self.from_clause, self.where_clause,
-                       self.groupby_clause, self.having_clause,
-                       self.orderby_clause, self.limit_clause]
-        return [clause for clause in all_clauses if clause is not None and not isinstance(clause, skip)]
+        all_clauses = [
+            self.hints,
+            self.explain,
+            self.cte_clause,
+            self.select_clause,
+            self.from_clause,
+            self.where_clause,
+            self.groupby_clause,
+            self.having_clause,
+            self.orderby_clause,
+            self.limit_clause,
+        ]
+        return [
+            clause
+            for clause in all_clauses
+            if clause is not None and not isinstance(clause, skip)
+        ]
 
     def bound_tables(self) -> set[TableReference]:
         """Provides all tables that can be assigned to a physical or virtual table reference in this query.
@@ -7626,8 +8373,9 @@ class SqlQuery:
         set[TableReference]
             All tables that are bound (i.e. listed in the *FROM* clause or a CTE) of the query.
         """
-        subquery_produced_tables = util.set_union(subquery.bound_tables()
-                                                  for subquery in self.subqueries())
+        subquery_produced_tables = util.set_union(
+            subquery.bound_tables() for subquery in self.subqueries()
+        )
         cte_produced_tables = self.cte_clause.tables() if self.cte_clause else set()
         own_produced_tables = _collect_bound_tables(self.from_clause)
         return own_produced_tables | subquery_produced_tables | cte_produced_tables
@@ -7645,17 +8393,27 @@ class SqlQuery:
             The unbound tables that have to be supplied as part of an outer query
         """
         if self.from_clause:
-            virtual_subquery_targets = {subquery_source.target_table for subquery_source in self.from_clause.items
-                                        if isinstance(subquery_source, SubqueryTableSource)}
+            virtual_subquery_targets = {
+                subquery_source.target_table
+                for subquery_source in self.from_clause.items
+                if isinstance(subquery_source, SubqueryTableSource)
+            }
         else:
             virtual_subquery_targets = set()
 
         if self.cte_clause:
-            virtual_cte_targets = {with_query.target_table for with_query in self.cte_clause.queries}
+            virtual_cte_targets = {
+                with_query.target_table for with_query in self.cte_clause.queries
+            }
         else:
             virtual_cte_targets = set()
 
-        return self.tables() - self.bound_tables() - virtual_subquery_targets - virtual_cte_targets
+        return (
+            self.tables()
+            - self.bound_tables()
+            - virtual_subquery_targets
+            - virtual_cte_targets
+        )
 
     def is_ordered(self) -> bool:
         """Checks, whether this query produces its result tuples in order.
@@ -7696,7 +8454,11 @@ class SqlQuery:
         if not len(self.select_clause.targets) == 1 or self.select_clause.is_distinct():
             return False
         target: SqlExpression = util.simplify(self.select_clause.targets).expression
-        return isinstance(target, FunctionExpression) and target.is_aggregate() and not self._groupby_clause
+        return (
+            isinstance(target, FunctionExpression)
+            and target.is_aggregate()
+            and not self._groupby_clause
+        )
 
     def is_set_query(self) -> bool:
         """Checks, whether this query is a set query.
@@ -7776,7 +8538,10 @@ class SqlQuery:
             A string representation of this query
         """
         delim = ";" if trailing_delimiter else ""
-        return "".join(_stringify_clause(clause) for clause in self.clauses()).rstrip() + delim
+        return (
+            "".join(_stringify_clause(clause) for clause in self.clauses()).rstrip()
+            + delim
+        )
 
     def ast(self) -> str:
         """Provides a human-readable representation of the abstract syntax tree for this query.
@@ -7790,7 +8555,9 @@ class SqlQuery:
         """
         return _create_ast(self)
 
-    def accept_visitor(self, clause_visitor: ClauseVisitor[VisitorResult], *args, **kwargs) -> dict[BaseClause, VisitorResult]:
+    def accept_visitor(
+        self, clause_visitor: ClauseVisitor[VisitorResult], *args, **kwargs
+    ) -> dict[BaseClause, VisitorResult]:
         """Applies a visitor over all clauses in the current query.
 
         Notice that since the visitor is applied to all clauses, it returns the results for each of them.
@@ -7800,7 +8567,10 @@ class SqlQuery:
         clause_visitor : ClauseVisitor
             The visitor algorithm to use.
         """
-        return {clause: clause.accept_visitor(clause_visitor, *args, **kwargs) for clause in self.clauses()}
+        return {
+            clause: clause.accept_visitor(clause_visitor, *args, **kwargs)
+            for clause in self.clauses()
+        }
 
     def __json__(self) -> str:
         return str(self)
@@ -7854,21 +8624,32 @@ class ImplicitSqlQuery(SqlQuery):
             AND R.a = (SELECT MIN(R.a) FROM R)
     """
 
-    def __init__(self, *, select_clause: Select,
-                 from_clause: Optional[ImplicitFromClause] = None,
-                 where_clause: Optional[Where] = None,
-                 groupby_clause: Optional[GroupBy] = None,
-                 having_clause: Optional[Having] = None,
-                 orderby_clause: Optional[OrderBy] = None,
-                 limit_clause: Optional[Limit] = None,
-                 cte_clause: Optional[CommonTableExpression] = None,
-                 explain_clause: Optional[Explain] = None,
-                 hints: Optional[Hint] = None) -> None:
-        super().__init__(select_clause=select_clause, from_clause=from_clause, where_clause=where_clause,
-                         groupby_clause=groupby_clause, having_clause=having_clause,
-                         orderby_clause=orderby_clause, limit_clause=limit_clause,
-                         cte_clause=cte_clause,
-                         explain=explain_clause, hints=hints)
+    def __init__(
+        self,
+        *,
+        select_clause: Select,
+        from_clause: Optional[ImplicitFromClause] = None,
+        where_clause: Optional[Where] = None,
+        groupby_clause: Optional[GroupBy] = None,
+        having_clause: Optional[Having] = None,
+        orderby_clause: Optional[OrderBy] = None,
+        limit_clause: Optional[Limit] = None,
+        cte_clause: Optional[CommonTableExpression] = None,
+        explain_clause: Optional[Explain] = None,
+        hints: Optional[Hint] = None,
+    ) -> None:
+        super().__init__(
+            select_clause=select_clause,
+            from_clause=from_clause,
+            where_clause=where_clause,
+            groupby_clause=groupby_clause,
+            having_clause=having_clause,
+            orderby_clause=orderby_clause,
+            limit_clause=limit_clause,
+            cte_clause=cte_clause,
+            explain=explain_clause,
+            hints=hints,
+        )
 
     @property
     def from_clause(self) -> Optional[ImplicitFromClause]:
@@ -7920,21 +8701,32 @@ class ExplicitSqlQuery(SqlQuery):
             JOIN T ON S.b = T.c
     """
 
-    def __init__(self, *, select_clause: Select,
-                 from_clause: Optional[ExplicitFromClause] = None,
-                 where_clause: Optional[Where] = None,
-                 groupby_clause: Optional[GroupBy] = None,
-                 having_clause: Optional[Having] = None,
-                 orderby_clause: Optional[OrderBy] = None,
-                 limit_clause: Optional[Limit] = None,
-                 cte_clause: Optional[CommonTableExpression] = None,
-                 explain_clause: Optional[Explain] = None,
-                 hints: Optional[Hint] = None) -> None:
-        super().__init__(select_clause=select_clause, from_clause=from_clause, where_clause=where_clause,
-                         groupby_clause=groupby_clause, having_clause=having_clause,
-                         orderby_clause=orderby_clause, limit_clause=limit_clause,
-                         cte_clause=cte_clause,
-                         explain=explain_clause, hints=hints)
+    def __init__(
+        self,
+        *,
+        select_clause: Select,
+        from_clause: Optional[ExplicitFromClause] = None,
+        where_clause: Optional[Where] = None,
+        groupby_clause: Optional[GroupBy] = None,
+        having_clause: Optional[Having] = None,
+        orderby_clause: Optional[OrderBy] = None,
+        limit_clause: Optional[Limit] = None,
+        cte_clause: Optional[CommonTableExpression] = None,
+        explain_clause: Optional[Explain] = None,
+        hints: Optional[Hint] = None,
+    ) -> None:
+        super().__init__(
+            select_clause=select_clause,
+            from_clause=from_clause,
+            where_clause=where_clause,
+            groupby_clause=groupby_clause,
+            having_clause=having_clause,
+            orderby_clause=orderby_clause,
+            limit_clause=limit_clause,
+            cte_clause=cte_clause,
+            explain=explain_clause,
+            hints=hints,
+        )
 
     @property
     def from_clause(self) -> Optional[ExplicitFromClause]:
@@ -7967,23 +8759,39 @@ class MixedSqlQuery(SqlQuery):
     ValueError
         If the given `from_clause` is either an implicit *FROM* clause or an explicit one.
     """
-    def __init__(self, *, select_clause: Select,
-                 from_clause: Optional[From] = None,
-                 where_clause: Optional[Where] = None,
-                 groupby_clause: Optional[GroupBy] = None,
-                 having_clause: Optional[Having] = None,
-                 orderby_clause: Optional[OrderBy] = None,
-                 limit_clause: Optional[Limit] = None,
-                 cte_clause: Optional[CommonTableExpression] = None,
-                 explain_clause: Optional[Explain] = None,
-                 hints: Optional[Hint] = None) -> None:
-        if isinstance(from_clause, ExplicitFromClause) or isinstance(from_clause, ImplicitFromClause):
-            raise ValueError("MixedSqlQuery cannot be combined with explicit/implicit FROM clause")
-        super().__init__(select_clause=select_clause, from_clause=from_clause, where_clause=where_clause,
-                         groupby_clause=groupby_clause, having_clause=having_clause,
-                         orderby_clause=orderby_clause, limit_clause=limit_clause,
-                         cte_clause=cte_clause,
-                         explain=explain_clause, hints=hints)
+
+    def __init__(
+        self,
+        *,
+        select_clause: Select,
+        from_clause: Optional[From] = None,
+        where_clause: Optional[Where] = None,
+        groupby_clause: Optional[GroupBy] = None,
+        having_clause: Optional[Having] = None,
+        orderby_clause: Optional[OrderBy] = None,
+        limit_clause: Optional[Limit] = None,
+        cte_clause: Optional[CommonTableExpression] = None,
+        explain_clause: Optional[Explain] = None,
+        hints: Optional[Hint] = None,
+    ) -> None:
+        if isinstance(from_clause, ExplicitFromClause) or isinstance(
+            from_clause, ImplicitFromClause
+        ):
+            raise ValueError(
+                "MixedSqlQuery cannot be combined with explicit/implicit FROM clause"
+            )
+        super().__init__(
+            select_clause=select_clause,
+            from_clause=from_clause,
+            where_clause=where_clause,
+            groupby_clause=groupby_clause,
+            having_clause=having_clause,
+            orderby_clause=orderby_clause,
+            limit_clause=limit_clause,
+            cte_clause=cte_clause,
+            explain=explain_clause,
+            hints=hints,
+        )
 
     def is_implicit(self) -> bool:
         return False
@@ -8036,20 +8844,32 @@ class SetQuery:
     --------
     SqlQuery
     """
-    def __init__(self, left_query: SelectStatement, right_query: SelectStatement, *,
-                 set_operation: SetOperator,
-                 cte_clause: Optional[CommonTableExpression] = None,
-                 orderby_clause: Optional[OrderBy] = None,
-                 limit_clause: Optional[Limit] = None,
-                 hints: Optional[Hint] = None,
-                 explain_clause: Optional[Explain] = None) -> None:
+
+    def __init__(
+        self,
+        left_query: SelectStatement,
+        right_query: SelectStatement,
+        *,
+        set_operation: SetOperator,
+        cte_clause: Optional[CommonTableExpression] = None,
+        orderby_clause: Optional[OrderBy] = None,
+        limit_clause: Optional[Limit] = None,
+        hints: Optional[Hint] = None,
+        explain_clause: Optional[Explain] = None,
+    ) -> None:
         if left_query.is_ordered() or right_query.is_ordered():
-            raise ValueError("SQL does not allow ORDER BY in the inner queries of a set operation")
+            raise ValueError(
+                "SQL does not allow ORDER BY in the inner queries of a set operation"
+            )
         if left_query.is_explain():
-            warnings.warn("Left query is an EXPLAIN query. Ignoring the EXPLAIN clause.")
+            warnings.warn(
+                "Left query is an EXPLAIN query. Ignoring the EXPLAIN clause."
+            )
             left_query = build_query(left_query.clauses(skip=Explain))
         if right_query.is_explain():
-            warnings.warn("Right query is an EXPLAIN query. Ignoring the EXPLAIN clause.")
+            warnings.warn(
+                "Right query is an EXPLAIN query. Ignoring the EXPLAIN clause."
+            )
             right_query = build_query(right_query.clauses(skip=Explain))
 
         self._lhs = left_query
@@ -8060,7 +8880,17 @@ class SetQuery:
         self._limit = limit_clause
         self._hints = hints
         self._explain = explain_clause
-        self._hash_val = hash((self._lhs, self._rhs, self._op, self._cte, self._limit, self._hints, self._explain))
+        self._hash_val = hash(
+            (
+                self._lhs,
+                self._rhs,
+                self._op,
+                self._cte,
+                self._limit,
+                self._hints,
+                self._explain,
+            )
+        )
 
     __slots__ = (
         "_lhs",
@@ -8071,7 +8901,7 @@ class SetQuery:
         "_limit",
         "_hints",
         "_explain",
-        "_hash_val"
+        "_hash_val",
     )
     __match_args__ = ("set_operation", "left_query", "right_query")
 
@@ -8122,8 +8952,10 @@ class SetQuery:
             case SetOperator.Except:
                 return ExceptClause(self._lhs, self._rhs)
             case _:
-                raise RuntimeError("Unknown set operation. This is likely a bug in the PostBOUND query abstraction. "
-                                   "Please consider filing a bug report.")
+                raise RuntimeError(
+                    "Unknown set operation. This is likely a bug in the PostBOUND query abstraction. "
+                    "Please consider filing a bug report."
+                )
 
     @property
     def cte_clause(self) -> Optional[CommonTableExpression]:
@@ -8189,44 +9021,58 @@ class SetQuery:
     @property
     def select_clause(self) -> Select:
         """Placeholder method to ensure compatibility with the `SqlQuery` interface. Raises a `QueryTypeError`."""
-        raise QueryTypeError("You are trying to access the SELECT clause on a set query. "
-                             "Make sure to check the actual query type before accessing specific clauses.")
+        raise QueryTypeError(
+            "You are trying to access the SELECT clause on a set query. "
+            "Make sure to check the actual query type before accessing specific clauses."
+        )
 
     @property
     def from_clause(self) -> Optional[From]:
         """Placeholder method to ensure compatibility with the `SqlQuery` interface. Raises a `QueryTypeError`."""
-        raise QueryTypeError("You are trying to access the FROM clause on a set query. "
-                             "Make sure to check the actual query type before accessing specific clauses.")
+        raise QueryTypeError(
+            "You are trying to access the FROM clause on a set query. "
+            "Make sure to check the actual query type before accessing specific clauses."
+        )
 
     @property
     def where_clause(self) -> Optional[Where]:
         """Placeholder method to ensure compatibility with the `SqlQuery` interface. Raises a `QueryTypeError`."""
-        raise QueryTypeError("You are trying to access the WHERE clause on a set query. "
-                             "Make sure to check the actual query type before accessing specific clauses.")
+        raise QueryTypeError(
+            "You are trying to access the WHERE clause on a set query. "
+            "Make sure to check the actual query type before accessing specific clauses."
+        )
 
     @property
     def groupby_clause(self) -> Optional[GroupBy]:
         """Placeholder method to ensure compatibility with the `SqlQuery` interface. Raises a `QueryTypeError`."""
-        raise QueryTypeError("You are trying to access the GROUP BY clause on a set query. "
-                             "Make sure to check the actual query type before accessing specific clauses.")
+        raise QueryTypeError(
+            "You are trying to access the GROUP BY clause on a set query. "
+            "Make sure to check the actual query type before accessing specific clauses."
+        )
 
     @property
     def having_clause(self) -> Optional[Having]:
         """Placeholder method to ensure compatibility with the `SqlQuery` interface. Raises a `QueryTypeError`."""
-        raise QueryTypeError("You are trying to access the HAVING clause on a set query. "
-                             "Make sure to check the actual query type before accessing specific clauses.")
+        raise QueryTypeError(
+            "You are trying to access the HAVING clause on a set query. "
+            "Make sure to check the actual query type before accessing specific clauses."
+        )
 
     def is_implicit(self) -> bool:
         """Placeholder method to ensure compatibility with the `SqlQuery` interface. Raises a `QueryTypeError`."""
-        raise QueryTypeError("You are accessing a set query. "
-                             "Set queries are neither explicit nor implicit. "
-                             "Make sure to check the actual query type before accessing specific clauses.")
+        raise QueryTypeError(
+            "You are accessing a set query. "
+            "Set queries are neither explicit nor implicit. "
+            "Make sure to check the actual query type before accessing specific clauses."
+        )
 
     def is_explicit(self) -> bool:
         """Placeholder method to ensure compatibility with the `SqlQuery` interface. Raises a `QueryTypeError`."""
-        raise QueryTypeError("You are accessing a set query. "
-                             "Set queries are neither explicit nor implicit. "
-                             "Make sure to check the actual query type before accessing specific clauses.")
+        raise QueryTypeError(
+            "You are accessing a set query. "
+            "Set queries are neither explicit nor implicit. "
+            "Make sure to check the actual query type before accessing specific clauses."
+        )
 
     def is_explain(self) -> bool:
         """Checks, whether this query is an **EXPLAIN** query rather than a normal SQL query.
@@ -8295,7 +9141,9 @@ class SetQuery:
 
         lhs_cols, rhs_cols = self._lhs.output_columns(), self._rhs.output_columns()
         if len(lhs_cols) != len(rhs_cols):
-            raise ValueError("The left and right queries of a set operation must have the same number of columns")
+            raise ValueError(
+                "The left and right queries of a set operation must have the same number of columns"
+            )
 
         for i in range(len(lhs_cols)):
             lhs_col = lhs_cols[i]
@@ -8315,9 +9163,11 @@ class SetQuery:
 
     def predicates(self) -> QueryPredicates:
         """Placeholder method to ensure compatibility with the `SqlQuery` interface. Raises a `QueryTypeError`."""
-        raise QueryTypeError("You are trying to access the predicates on a set query. "
-                             "Set queries do not have predicates by themselves, since they combine other queries. "
-                             "Make sure to check the actual query type before accessing specific clauses.")
+        raise QueryTypeError(
+            "You are trying to access the predicates on a set query. "
+            "Set queries do not have predicates by themselves, since they combine other queries. "
+            "Make sure to check the actual query type before accessing specific clauses."
+        )
 
     def subqueries(self) -> Collection[SqlQuery]:
         """Provides all subqueries that are referenced in this query.
@@ -8332,7 +9182,9 @@ class SetQuery:
         # as an implementation detail we know for a fact that SqlQuery always returns a set
         return self._lhs.subqueries() | self._rhs.subqueries()
 
-    def clauses(self, *, skip: Optional[Type | Iterable[Type]] = NoneType) -> Sequence[BaseClause]:
+    def clauses(
+        self, *, skip: Optional[Type | Iterable[Type]] = NoneType
+    ) -> Sequence[BaseClause]:
         """Provides all the clauses that are defined (i.e. not *None*) in this query.
 
         Parameters
@@ -8519,7 +9371,12 @@ class SetQuery:
             A string representation of this query
         """
         delim = ";" if trailing_delimiter else ""
-        return "".join(_stringify_clause(clause).rstrip("; ") for clause in self.clauses()).rstrip() + delim
+        return (
+            "".join(
+                _stringify_clause(clause).rstrip("; ") for clause in self.clauses()
+            ).rstrip()
+            + delim
+        )
 
     def ast(self) -> str:
         """Provides a human-readable representation of the abstract syntax tree for this query.
@@ -8533,7 +9390,9 @@ class SetQuery:
         """
         return _create_ast(self)
 
-    def accept_visitor(self, clause_visitor: ClauseVisitor, *args, **kwargs) -> dict[BaseClause, VisitorResult]:
+    def accept_visitor(
+        self, clause_visitor: ClauseVisitor, *args, **kwargs
+    ) -> dict[BaseClause, VisitorResult]:
         """Applies a visitor over all clauses in the current query.
 
         Notice that since the visitor is applied to all clauses, it returns the results for each of them.
@@ -8543,7 +9402,10 @@ class SetQuery:
         clause_visitor : ClauseVisitor
             The visitor algorithm to use.
         """
-        return {clause: clause.accept_visitor(clause_visitor, *args, **kwargs) for clause in self.clauses()}
+        return {
+            clause: clause.accept_visitor(clause_visitor, *args, **kwargs)
+            for clause in self.clauses()
+        }
 
     def __json__(self) -> str:
         return str(self)
@@ -8552,15 +9414,17 @@ class SetQuery:
         return self._hash_val
 
     def __eq__(self, other) -> bool:
-        return (isinstance(other, type(self))
-                and self._lhs == other._lhs
-                and self._rhs == other._rhs
-                and self._op == other._op
-                and self._cte == other._cte
-                and self._orderby == other._orderby
-                and self._limit == other._limit
-                and self._hints == other._hints
-                and self._explain == other._explain)
+        return (
+            isinstance(other, type(self))
+            and self._lhs == other._lhs
+            and self._rhs == other._rhs
+            and self._op == other._op
+            and self._cte == other._cte
+            and self._orderby == other._orderby
+            and self._limit == other._limit
+            and self._hints == other._hints
+            and self._explain == other._explain
+        )
 
     def __repr__(self) -> str:
         return str(self)
@@ -8680,7 +9544,9 @@ def build_query(query_clauses: Iterable[BaseClause]) -> SqlQuery:
 
     if build_set_query:
         if union_clause is not None:
-            setop = SetOperator.UnionAll if union_clause.union_all else SetOperator.Union
+            setop = (
+                SetOperator.UnionAll if union_clause.union_all else SetOperator.Union
+            )
         elif except_clause is not None:
             setop = SetOperator.Except
         elif intersect_clause is not None:
@@ -8688,33 +9554,69 @@ def build_query(query_clauses: Iterable[BaseClause]) -> SqlQuery:
         else:
             raise ValueError("Unknown set operation")
 
-        misplaced_clauses = [select_clause, from_clause, where_clause, groupby_clause, having_clause]
+        misplaced_clauses = [
+            select_clause,
+            from_clause,
+            where_clause,
+            groupby_clause,
+            having_clause,
+        ]
         if any(clause for clause in misplaced_clauses if clause is not None):
-            raise ValueError("Set operation specified but illegal clauses found. "
-                             "Set clauses do not support SELECT, FROM, WHERE, GROUP BY or HAVING clauses.")
+            raise ValueError(
+                "Set operation specified but illegal clauses found. "
+                "Set clauses do not support SELECT, FROM, WHERE, GROUP BY or HAVING clauses."
+            )
 
-        return SetQuery(union_clause.left_query, union_clause.right_query, set_operation=setop,
-                        cte_clause=cte_clause, orderby_clause=orderby_clause, limit_clause=limit_clause,
-                        hints=hints_clause, explain_clause=explain_clause)
+        return SetQuery(
+            union_clause.left_query,
+            union_clause.right_query,
+            set_operation=setop,
+            cte_clause=cte_clause,
+            orderby_clause=orderby_clause,
+            limit_clause=limit_clause,
+            hints=hints_clause,
+            explain_clause=explain_clause,
+        )
 
     if select_clause is None:
         raise ValueError("No SELECT clause detected")
 
     if build_implicit_query:
-        return ImplicitSqlQuery(select_clause=select_clause, from_clause=from_clause, where_clause=where_clause,
-                                groupby_clause=groupby_clause, having_clause=having_clause,
-                                orderby_clause=orderby_clause, limit_clause=limit_clause,
-                                cte_clause=cte_clause,
-                                hints=hints_clause, explain_clause=explain_clause)
+        return ImplicitSqlQuery(
+            select_clause=select_clause,
+            from_clause=from_clause,
+            where_clause=where_clause,
+            groupby_clause=groupby_clause,
+            having_clause=having_clause,
+            orderby_clause=orderby_clause,
+            limit_clause=limit_clause,
+            cte_clause=cte_clause,
+            hints=hints_clause,
+            explain_clause=explain_clause,
+        )
     elif build_explicit_query:
-        return ExplicitSqlQuery(select_clause=select_clause, from_clause=from_clause, where_clause=where_clause,
-                                groupby_clause=groupby_clause, having_clause=having_clause,
-                                orderby_clause=orderby_clause, limit_clause=limit_clause,
-                                cte_clause=cte_clause,
-                                hints=hints_clause, explain_clause=explain_clause)
+        return ExplicitSqlQuery(
+            select_clause=select_clause,
+            from_clause=from_clause,
+            where_clause=where_clause,
+            groupby_clause=groupby_clause,
+            having_clause=having_clause,
+            orderby_clause=orderby_clause,
+            limit_clause=limit_clause,
+            cte_clause=cte_clause,
+            hints=hints_clause,
+            explain_clause=explain_clause,
+        )
     else:
-        return MixedSqlQuery(select_clause=select_clause, from_clause=from_clause, where_clause=where_clause,
-                             groupby_clause=groupby_clause, having_clause=having_clause,
-                             orderby_clause=orderby_clause, limit_clause=limit_clause,
-                             cte_clause=cte_clause,
-                             hints=hints_clause, explain_clause=explain_clause)
+        return MixedSqlQuery(
+            select_clause=select_clause,
+            from_clause=from_clause,
+            where_clause=where_clause,
+            groupby_clause=groupby_clause,
+            having_clause=having_clause,
+            orderby_clause=orderby_clause,
+            limit_clause=limit_clause,
+            cte_clause=cte_clause,
+            hints=hints_clause,
+            explain_clause=explain_clause,
+        )

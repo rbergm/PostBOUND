@@ -1,4 +1,5 @@
 """Contains various utilities that did not fit any other category."""
+
 from __future__ import annotations
 
 import collections
@@ -17,7 +18,7 @@ def current_timestamp() -> str:
     return datetime.now().strftime("%y-%m-%d %H:%M")
 
 
-_CamelCasePattern = re.compile(r'(?<!^)(?=[A-Z])')
+_CamelCasePattern = re.compile(r"(?<!^)(?=[A-Z])")
 
 
 def camel_case2snake_case(camel_case: str) -> str:

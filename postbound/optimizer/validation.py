@@ -5,6 +5,7 @@ as well as the usage of optimization algorithms that make decisions that the tar
 
 The `OptimizationPreCheck` defines the abstract interface that all checks should adhere to.
 """
+
 from __future__ import annotations
 
 import abc
@@ -18,11 +19,23 @@ from ._hints import HintType
 from .. import util
 from .._core import PhysicalOperator
 from ..qal import (
-    SqlQuery, ImplicitSqlQuery,
-    AbstractPredicate, BasePredicate, CompoundPredicate, BinaryPredicate,
-    ColumnExpression, LogicalOperator, CompoundOperator,
-    ExplicitFromClause, ImplicitFromClause, From,
-    TableSource, DirectTableSource, SubqueryTableSource, JoinTableSource, ValuesTableSource
+    SqlQuery,
+    ImplicitSqlQuery,
+    AbstractPredicate,
+    BasePredicate,
+    CompoundPredicate,
+    BinaryPredicate,
+    ColumnExpression,
+    LogicalOperator,
+    CompoundOperator,
+    ExplicitFromClause,
+    ImplicitFromClause,
+    From,
+    TableSource,
+    DirectTableSource,
+    SubqueryTableSource,
+    JoinTableSource,
+    ValuesTableSource,
 )
 from ..db import Database
 
@@ -53,6 +66,7 @@ class PreCheckResult:
     failure_reason : str | list[str], optional
         Gives details about the problem(s) that were detected
     """
+
     passed: bool = True
     failure_reason: str | list[str] = ""
 
@@ -89,7 +103,11 @@ class PreCheckResult:
             if check.passed:
                 continue
             failures.extend(util.enlist(check.failure_reason))
-        return PreCheckResult.with_all_passed() if not failures else PreCheckResult.with_failure(failures)
+        return (
+            PreCheckResult.with_all_passed()
+            if not failures
+            else PreCheckResult.with_failure(failures)
+        )
 
     def with_failure(failure: str | list[str]) -> PreCheckResult:
         """Generates a check result for a specific failure.
@@ -151,7 +169,9 @@ class PreCheckResult:
         elif isinstance(self.failure_reason, Iterable):
             inner_contents = " | ".join(reason for reason in self.failure_reason)
         else:
-            raise ValueError("Unexpected failure reason type: " + str(self.failure_reason))
+            raise ValueError(
+                "Unexpected failure reason type: " + str(self.failure_reason)
+            )
         return f"[{inner_contents}]"
 
 
@@ -189,7 +209,9 @@ class OptimizationPreCheck(abc.ABC):
         """
         return PreCheckResult.with_all_passed()
 
-    def check_supported_database_system(self, database_instance: Database) -> PreCheckResult:
+    def check_supported_database_system(
+        self, database_instance: Database
+    ) -> PreCheckResult:
         """Validates that a specific database system provides all features that are required by an optimization strategy.
 
         Examples of such features can be support for cardinality hints or specific operators.
@@ -250,22 +272,34 @@ class CompoundCheck(OptimizationPreCheck):
 
     def __init__(self, checks: Iterable[OptimizationPreCheck]) -> None:
         super().__init__("compound-check")
-        checks = util.flatten([check.checks if isinstance(check, CompoundCheck) else [check]
-                               for check in checks if not isinstance(check, EmptyPreCheck)])
-        self.checks = [check for check in checks if not isinstance(check, EmptyPreCheck)]
+        checks = util.flatten(
+            [
+                check.checks if isinstance(check, CompoundCheck) else [check]
+                for check in checks
+                if not isinstance(check, EmptyPreCheck)
+            ]
+        )
+        self.checks = [
+            check for check in checks if not isinstance(check, EmptyPreCheck)
+        ]
 
     def check_supported_query(self, query: SqlQuery) -> PreCheckResult:
         check_results = [check.check_supported_query(query) for check in self.checks]
         aggregated_passed = all(check_result.passed for check_result in check_results)
-        aggregated_failures = (util.flatten(check_result.failure_reason for check_result in check_results)
-                               if not aggregated_passed else [])
+        aggregated_failures = (
+            util.flatten(check_result.failure_reason for check_result in check_results)
+            if not aggregated_passed
+            else []
+        )
         return PreCheckResult(aggregated_passed, aggregated_failures)
 
     def describe(self) -> dict:
         return {"multiple_checks": [check.describe() for check in self.checks]}
 
     def __contains__(self, item: object) -> bool:
-        return super().__contains__(item) or any(item in child_check for child_check in self.checks)
+        return super().__contains__(item) or any(
+            item in child_check for child_check in self.checks
+        )
 
     def __hash__(self) -> int:
         return hash(tuple(self.checks))
@@ -278,7 +312,9 @@ class CompoundCheck(OptimizationPreCheck):
         return f"CompoundCheck [{child_checks_str}]"
 
 
-def merge_checks(checks: OptimizationPreCheck | Iterable[OptimizationPreCheck], *more_checks) -> OptimizationPreCheck:
+def merge_checks(
+    checks: OptimizationPreCheck | Iterable[OptimizationPreCheck], *more_checks
+) -> OptimizationPreCheck:
     """Combines all of the supplied checks into one compound check.
 
     This method is smarter than creating a compound check directly. It eliminates duplicate checks as far as possible and
@@ -300,16 +336,30 @@ def merge_checks(checks: OptimizationPreCheck | Iterable[OptimizationPreCheck], 
     """
     if not checks:
         return EmptyPreCheck()
-    all_checks = ({checks} if isinstance(checks, OptimizationPreCheck) else set(checks)) | set(more_checks)
+    all_checks = (
+        {checks} if isinstance(checks, OptimizationPreCheck) else set(checks)
+    ) | set(more_checks)
     all_checks = {check for check in all_checks if check}
-    compound_checks = [check for check in all_checks if isinstance(check, CompoundCheck)]
-    atomic_checks = {check for check in all_checks if not isinstance(check, CompoundCheck)}
-    compound_check_children = util.set_union(set(check.checks) for check in compound_checks)
+    compound_checks = [
+        check for check in all_checks if isinstance(check, CompoundCheck)
+    ]
+    atomic_checks = {
+        check for check in all_checks if not isinstance(check, CompoundCheck)
+    }
+    compound_check_children = util.set_union(
+        set(check.checks) for check in compound_checks
+    )
     merged_checks = atomic_checks | compound_check_children
-    merged_checks = {check for check in merged_checks if not isinstance(check, EmptyPreCheck)}
+    merged_checks = {
+        check for check in merged_checks if not isinstance(check, EmptyPreCheck)
+    }
     if not merged_checks:
         return EmptyPreCheck()
-    return CompoundCheck(merged_checks) if len(merged_checks) > 1 else util.simplify(merged_checks)
+    return (
+        CompoundCheck(merged_checks)
+        if len(merged_checks) > 1
+        else util.simplify(merged_checks)
+    )
 
 
 class EmptyPreCheck(OptimizationPreCheck):
@@ -376,14 +426,18 @@ class EquiJoinPreCheck(OptimizationPreCheck):
     This does not restrict the filters in any way. The determination of joins is based on `QueryPredicates.joins`.
     """
 
-    def __init__(self, *, allow_conjunctions: bool = False, allow_nesting: bool = False) -> None:
+    def __init__(
+        self, *, allow_conjunctions: bool = False, allow_nesting: bool = False
+    ) -> None:
         super().__init__("equi-joins-only")
         self._allow_conjunctions = allow_conjunctions
         self._allow_nesting = allow_nesting
 
     def check_supported_query(self, query: SqlQuery) -> PreCheckResult:
         join_predicates = query.predicates().joins()
-        all_passed = all(self._perform_predicate_check(join_pred) for join_pred in join_predicates)
+        all_passed = all(
+            self._perform_predicate_check(join_pred) for join_pred in join_predicates
+        )
         failure_reason = "" if all_passed else EquiJoinFailure
         return PreCheckResult(all_passed, failure_reason)
 
@@ -391,7 +445,7 @@ class EquiJoinPreCheck(OptimizationPreCheck):
         return {
             "name": "equi_joins_only",
             "allow_conjunctions": self._allow_conjunctions,
-            "allow_nesting": self._allow_nesting
+            "allow_nesting": self._allow_nesting,
         }
 
     def _perform_predicate_check(self, predicate: AbstractPredicate) -> bool:
@@ -455,12 +509,17 @@ class EquiJoinPreCheck(OptimizationPreCheck):
             return False
         elif predicate.operation != CompoundOperator.And:
             return False
-        return all(self._perform_predicate_check(child_pred) for child_pred in predicate.children)
+        return all(
+            self._perform_predicate_check(child_pred)
+            for child_pred in predicate.children
+        )
 
     def __eq__(self, other: object) -> bool:
-        return (isinstance(other, type(self))
-                and self._allow_conjunctions == other._allow_conjunctions
-                and self._allow_nesting == other._allow_nesting)
+        return (
+            isinstance(other, type(self))
+            and self._allow_conjunctions == other._allow_conjunctions
+            and self._allow_nesting == other._allow_nesting
+        )
 
     def __hash__(self) -> int:
         return hash((self.name, self._allow_conjunctions, self._allow_nesting))
@@ -498,8 +557,14 @@ class InnerJoinPreCheck(OptimizationPreCheck):
             case SubqueryTableSource(subquery):
                 return self.check_supported_query(subquery)
             case JoinTableSource(left, right, _, join_type):
-                checks = [PreCheckResult.with_failure(InnerJoinFailure)] if join_type != "INNER" else []
-                checks.extend([self._check_table_source(left), self._check_table_source(right)])
+                checks = (
+                    [PreCheckResult.with_failure(InnerJoinFailure)]
+                    if join_type != "INNER"
+                    else []
+                )
+                checks.extend(
+                    [self._check_table_source(left), self._check_table_source(right)]
+                )
                 return PreCheckResult.merge(checks)
             case _:
                 raise ValueError(f"Unknown table source type: {source}")
@@ -512,7 +577,11 @@ class SubqueryPreCheck(OptimizationPreCheck):
         super().__init__("no-subqueries")
 
     def check_supported_query(self, query: SqlQuery) -> PreCheckResult:
-        return PreCheckResult.with_all_passed() if not query.subqueries() else PreCheckResult.with_failure(SubqueryFailure)
+        return (
+            PreCheckResult.with_all_passed()
+            if not query.subqueries()
+            else PreCheckResult.with_failure(SubqueryFailure)
+        )
 
     def describe(self) -> dict:
         return {"name": "no_subqueries"}
@@ -562,12 +631,20 @@ class SupportedHintCheck(OptimizationPreCheck):
     HintService.supports_hint
     """
 
-    def __init__(self, hints: HintType | PhysicalOperator | Iterable[HintType | PhysicalOperator]) -> None:
+    def __init__(
+        self, hints: HintType | PhysicalOperator | Iterable[HintType | PhysicalOperator]
+    ) -> None:
         super().__init__("database-check")
         self._features = util.enlist(hints)
 
-    def check_supported_database_system(self, database_instance: Database) -> PreCheckResult:
-        failures = [hint for hint in self._features if not database_instance.hinting().supports_hint(hint)]
+    def check_supported_database_system(
+        self, database_instance: Database
+    ) -> PreCheckResult:
+        failures = [
+            hint
+            for hint in self._features
+            if not database_instance.hinting().supports_hint(hint)
+        ]
         passed = not failures
         return PreCheckResult(passed, failures)
 
@@ -592,9 +669,13 @@ class CustomCheck(OptimizationPreCheck):
         Check to apply to the database
     """
 
-    def __init__(self, name: str = "custom-check", *,
-                 query_check: Optional[Callable[[SqlQuery], PreCheckResult]] = None,
-                 db_check: Optional[Callable[[Database], PreCheckResult]] = None) -> None:
+    def __init__(
+        self,
+        name: str = "custom-check",
+        *,
+        query_check: Optional[Callable[[SqlQuery], PreCheckResult]] = None,
+        db_check: Optional[Callable[[Database], PreCheckResult]] = None,
+    ) -> None:
         super().__init__(name)
         self._query_check = query_check
         self._db_check = db_check
@@ -604,7 +685,9 @@ class CustomCheck(OptimizationPreCheck):
             return PreCheckResult.with_all_passed()
         return self._query_check(query)
 
-    def check_supported_database_system(self, database_instance: Database) -> PreCheckResult:
+    def check_supported_database_system(
+        self, database_instance: Database
+    ) -> PreCheckResult:
         if self._db_check is None:
             return PreCheckResult.with_all_passed()
         return self._db_check(database_instance)

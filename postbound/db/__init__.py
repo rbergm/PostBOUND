@@ -43,7 +43,7 @@ from ._db import (
     DatabasePool,
     UnsupportedDatabaseFeatureError,
     DatabaseServerError,
-    DatabaseUserError
+    DatabaseUserError,
 )
 
 __all__ = [
@@ -62,7 +62,7 @@ __all__ = [
     "DatabasePool",
     "UnsupportedDatabaseFeatureError",
     "DatabaseServerError",
-    "DatabaseUserError"
+    "DatabaseUserError",
 ]
 
 

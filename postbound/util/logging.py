@@ -1,4 +1,5 @@
 """Contains utilities to conveniently log different information."""
+
 from __future__ import annotations
 
 import atexit
@@ -22,8 +23,13 @@ def timestamp() -> str:
     return datetime.now().strftime("%y-%m-%d %H:%M:%S")
 
 
-def make_logger(enabled: bool = True, *, file: IO[str] = sys.stderr, pretty: bool = False,
-                prefix: str | Callable[[], str] = "") -> Logger:
+def make_logger(
+    enabled: bool = True,
+    *,
+    file: IO[str] = sys.stderr,
+    pretty: bool = False,
+    prefix: str | Callable[[], str] = "",
+) -> Logger:
     """Creates a new logging utility.
 
     The generated method can be used like a regular `print`, but with defaults that are better suited for logging purposes.
@@ -55,6 +61,7 @@ def make_logger(enabled: bool = True, *, file: IO[str] = sys.stderr, pretty: boo
     Callable
         _description_
     """
+
     def _log(*args, **kwargs) -> None:
         if prefix and isinstance(prefix, str):
             args = [prefix] + list(args)

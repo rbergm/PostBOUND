@@ -5,6 +5,7 @@ References
 
 .. [1] A. Hertzschuch et al.: "Turbo-Charging SPJ Query Plans with Learned Physical Join Operator Selections.", VLDB'2022
 """
+
 from __future__ import annotations
 
 import collections
@@ -96,9 +97,15 @@ def _iterate_query_plan(current_node: QueryPlan) -> Sequence[QueryPlan]:
     if not current_node.is_join():
         assert current_node.input_node is not None
         return _iterate_query_plan(current_node.input_node)
-    left_child, right_child = _left_query_plan_child(current_node), _right_query_plan_child(current_node)
-    left_child, right_child = ((right_child, left_child) if right_child.plan_depth() < left_child.plan_depth()
-                               else (left_child, right_child))
+    left_child, right_child = (
+        _left_query_plan_child(current_node),
+        _right_query_plan_child(current_node),
+    )
+    left_child, right_child = (
+        (right_child, left_child)
+        if right_child.plan_depth() < left_child.plan_depth()
+        else (left_child, right_child)
+    )
     return list(_iterate_query_plan(right_child)) + [current_node]
 
 
@@ -119,14 +126,18 @@ def _iterate_join_tree(current_node: JoinTree) -> Sequence[JoinTree]:
         return []
     assert current_node.is_join()
     left_child, right_child = current_node.outer_child, current_node.inner_child
-    left_child, right_child = ((right_child, left_child) if right_child.plan_depth() < left_child.plan_depth()
-                               else (left_child, right_child))
+    left_child, right_child = (
+        (right_child, left_child)
+        if right_child.plan_depth() < left_child.plan_depth()
+        else (left_child, right_child)
+    )
     return list(_iterate_join_tree(right_child)) + [current_node]
 
 
-def _normalize_filter_predicate(tables: TableReference | Iterable[TableReference],
-                                filter_predicate: Optional[qal.AbstractPredicate]
-                                ) -> Optional[qal.AbstractPredicate]:
+def _normalize_filter_predicate(
+    tables: TableReference | Iterable[TableReference],
+    filter_predicate: Optional[qal.AbstractPredicate],
+) -> Optional[qal.AbstractPredicate]:
     """Removes all alias information from a specific set of tables in a predicate.
 
     Parameters
@@ -147,12 +158,17 @@ def _normalize_filter_predicate(tables: TableReference | Iterable[TableReference
     tables: set[TableReference] = set(util.enlist(tables))
     referenced_tables = tables & filter_predicate.tables()
     renamed_tables = {table: table.drop_alias() for table in referenced_tables}
-    renamed_columns = {col: ColumnReference(col.name, renamed_tables[col.table])
-                       for col in filter_predicate.columns() if col.table in renamed_tables}
+    renamed_columns = {
+        col: ColumnReference(col.name, renamed_tables[col.table])
+        for col in filter_predicate.columns()
+        if col.table in renamed_tables
+    }
     return qal.transform.rename_columns_in_predicate(filter_predicate, renamed_columns)
 
 
-def _tables_in_qeps_path(qeps_path: Sequence[QepsIdentifier]) -> frozenset[TableReference]:
+def _tables_in_qeps_path(
+    qeps_path: Sequence[QepsIdentifier],
+) -> frozenset[TableReference]:
     """Extracts all tables along a QEP-S path
 
     Parameters
@@ -193,8 +209,11 @@ class QepsIdentifier:
         If no table is supplied (either as a ``None`` argument, or as an empty iterable).
     """
 
-    def __init__(self, tables: TableReference | Iterable[TableReference],
-                 filter_predicate: Optional[qal.AbstractPredicate] = None) -> None:
+    def __init__(
+        self,
+        tables: TableReference | Iterable[TableReference],
+        filter_predicate: Optional[qal.AbstractPredicate] = None,
+    ) -> None:
         if not tables:
             raise ValueError("Tables required")
         self._tables = frozenset(tab.drop_alias() for tab in util.enlist(tables))
@@ -264,15 +283,21 @@ class QepsIdentifier:
         return self._hash_val
 
     def __eq__(self, other: object) -> bool:
-        return (isinstance(other, type(self)) and self.tables == other.tables
-                and self.filter_predicate == other.filter_predicate)
+        return (
+            isinstance(other, type(self))
+            and self.tables == other.tables
+            and self.filter_predicate == other.filter_predicate
+        )
 
     def __repr__(self) -> str:
         return str(self)
 
     def __str__(self) -> str:
-        table_str = (self.table.identifier() if len(self.tables) == 1
-                     else "#" + "#".join(tab.identifier() for tab in self.tables))
+        table_str = (
+            self.table.identifier()
+            if len(self.tables) == 1
+            else "#" + "#".join(tab.identifier() for tab in self.tables)
+        )
         filter_str = f"[{self.filter_predicate}]" if self.filter_predicate else ""
         return table_str + filter_str
 
@@ -316,8 +341,15 @@ class QEPsNode:
 
     .. A. Hertzschuch et al.: "Turbo-Charging SPJ Query Plans with Learned Physical Join Operator Selections.", VLDB'2022
     """
-    def __init__(self, filter_aware: bool, gamma: float, *,
-                 identifier: Optional[QepsIdentifier] = None, parent: Optional[QEPsNode] = None) -> None:
+
+    def __init__(
+        self,
+        filter_aware: bool,
+        gamma: float,
+        *,
+        identifier: Optional[QepsIdentifier] = None,
+        parent: Optional[QEPsNode] = None,
+    ) -> None:
         self.filter_aware = filter_aware
         self.gamma = gamma
         self.operator_costs: dict[JoinOperator, float] = collections.defaultdict(float)
@@ -380,9 +412,14 @@ class QEPsNode:
         """
         return frozenset(util.set_union(qeps_id.tables for qeps_id in self.path()))
 
-    def recommend_operators(self, query: qal.SqlQuery, join_order: Sequence[JoinTree],
-                            current_assignment: PhysicalOperatorAssignment, *,
-                            _skip_first_table: bool = False) -> None:
+    def recommend_operators(
+        self,
+        query: qal.SqlQuery,
+        join_order: Sequence[JoinTree],
+        current_assignment: PhysicalOperatorAssignment,
+        *,
+        _skip_first_table: bool = False,
+    ) -> None:
         """Inserts the operator with the minimum cost into an operator assignment.
 
         This method consumes the join order step-by-step, navigating the QEP-S tree along its path. The recommendation
@@ -411,41 +448,66 @@ class QEPsNode:
         next_join, *remaining_joins = join_order
         recommendation = self.current_recommendation()
         if recommendation:
-            current_assignment.set_join_operator(JoinOperatorAssignment(recommendation, self.tables()))
+            current_assignment.set_join_operator(
+                JoinOperatorAssignment(recommendation, self.tables())
+            )
 
         if next_join.is_bushy():
-            subquery_child = (next_join.outer_child if next_join.outer_child.plan_depth() >= next_join.inner_child.plan_depth()
-                              else next_join.inner_child)
+            subquery_child = (
+                next_join.outer_child
+                if next_join.outer_child.plan_depth()
+                >= next_join.inner_child.plan_depth()
+                else next_join.inner_child
+            )
             qeps_subquery_id = QepsIdentifier(subquery_child.tables())
             qeps_subquery_node = self.child_nodes[qeps_subquery_id]
-            qeps_subquery_node.subquery_root.recommend_operators(query, _iterate_join_tree(subquery_child),
-                                                                 current_assignment)
-            qeps_subquery_node.recommend_operators(query, remaining_joins, current_assignment)
+            qeps_subquery_node.subquery_root.recommend_operators(
+                query, _iterate_join_tree(subquery_child), current_assignment
+            )
+            qeps_subquery_node.recommend_operators(
+                query, remaining_joins, current_assignment
+            )
             return
 
         if next_join.is_base_join():
-            first_table, second_table = next_join.outer_child.base_table, next_join.inner_child.base_table
-            first_table, second_table = ((second_table, first_table) if second_table < first_table
-                                         else (first_table, second_table))
+            first_table, second_table = (
+                next_join.outer_child.base_table,
+                next_join.inner_child.base_table,
+            )
+            first_table, second_table = (
+                (second_table, first_table)
+                if second_table < first_table
+                else (first_table, second_table)
+            )
 
             if not _skip_first_table:
                 qeps_child_id = self._make_identifier(query, first_table)
                 qeps_child_node = self.child_nodes[qeps_child_id]
-                qeps_child_node.recommend_operators(query, join_order, current_assignment, _skip_first_table=True)
+                qeps_child_node.recommend_operators(
+                    query, join_order, current_assignment, _skip_first_table=True
+                )
                 return
             else:
                 next_table = second_table
         else:
             # join between intermediate (our current QEP-S path) and a base table (next node in our QEP-S path)
-            next_table = (next_join.inner_child.base_table if next_join.inner_child.is_scan()
-                          else next_join.inner_child.outer_child.base_table)
+            next_table = (
+                next_join.inner_child.base_table
+                if next_join.inner_child.is_scan()
+                else next_join.inner_child.outer_child.base_table
+            )
 
         qeps_child_id = self._make_identifier(query, next_table)
         qeps_child_node = self.child_nodes[qeps_child_id]
         qeps_child_node.recommend_operators(query, remaining_joins, current_assignment)
 
-    def integrate_costs(self, query: qal.SqlQuery, query_plan: Sequence[QueryPlan], *,
-                        _skip_first_table: bool = False) -> None:
+    def integrate_costs(
+        self,
+        query: qal.SqlQuery,
+        query_plan: Sequence[QueryPlan],
+        *,
+        _skip_first_table: bool = False,
+    ) -> None:
         """Updates the internal cost model with the costs of the execution plan nodes.
 
         Notice that the costs of the plan nodes can be calculated using arbitrary strategies and do not need to originate from
@@ -483,31 +545,46 @@ class QEPsNode:
         if not next_node.is_join:
             self.integrate_costs(query, remaining_nodes)
 
-        first_child, second_child = _left_query_plan_child(next_node), _right_query_plan_child(next_node)
+        first_child, second_child = (
+            _left_query_plan_child(next_node),
+            _right_query_plan_child(next_node),
+        )
         if next_node.is_bushy():
-            first_child, second_child = ((second_child, first_child)
-                                         if second_child.plan_depth() < first_child.plan_depth()
-                                         else (first_child, second_child))
+            first_child, second_child = (
+                (second_child, first_child)
+                if second_child.plan_depth() < first_child.plan_depth()
+                else (first_child, second_child)
+            )
             qeps_subquery_id = QepsIdentifier(first_child.tables())
             qeps_subquery_node = self.child_nodes[qeps_subquery_id]
-            qeps_subquery_node.update_costs(next_node.operator, next_node.estimated_cost)
-            qeps_subquery_node.subquery_root.integrate_costs(query, _iterate_query_plan(first_child))
+            qeps_subquery_node.update_costs(
+                next_node.operator, next_node.estimated_cost
+            )
+            qeps_subquery_node.subquery_root.integrate_costs(
+                query, _iterate_query_plan(first_child)
+            )
             qeps_subquery_node.integrate_costs(query, remaining_nodes)
             return
         elif next_node.is_base_join():
-            first_child, second_child = ((second_child, first_child)
-                                         if second_child.fetch_base_table() < first_child.fetch_base_table()
-                                         else (first_child, second_child))
+            first_child, second_child = (
+                (second_child, first_child)
+                if second_child.fetch_base_table() < first_child.fetch_base_table()
+                else (first_child, second_child)
+            )
             if not _skip_first_table:
-                qeps_child_id = self._make_identifier(query, first_child.fetch_base_table())
+                qeps_child_id = self._make_identifier(
+                    query, first_child.fetch_base_table()
+                )
                 qeps_child_node = self.child_nodes[qeps_child_id]
-                qeps_child_node.integrate_costs(query, query_plan, _skip_first_table=True)
+                qeps_child_node.integrate_costs(
+                    query, query_plan, _skip_first_table=True
+                )
                 return
             else:
                 child_node = second_child
         else:
             # join between intermediate (our current QEP-S path) and a base table (next node in our QEP-S path)
-            child_node = (first_child if first_child.is_scan_branch() else second_child)
+            child_node = first_child if first_child.is_scan_branch() else second_child
 
         child_table = child_node.fetch_base_table()
         qeps_child_id = self._make_identifier(query, child_table)
@@ -515,10 +592,14 @@ class QEPsNode:
         qeps_child_node.update_costs(next_node.operator, next_node.estimated_cost)
         qeps_child_node.integrate_costs(query, remaining_nodes)
 
-    def detect_unknown_costs(self, query: qal.SqlQuery, join_order: Sequence[JoinTree],
-                             allowed_operators: frozenset[JoinOperator],
-                             unknown_ops: dict[frozenset[TableReference], frozenset[JoinOperator]],
-                             _skip_first_table: bool = False) -> None:
+    def detect_unknown_costs(
+        self,
+        query: qal.SqlQuery,
+        join_order: Sequence[JoinTree],
+        allowed_operators: frozenset[JoinOperator],
+        unknown_ops: dict[frozenset[TableReference], frozenset[JoinOperator]],
+        _skip_first_table: bool = False,
+    ) -> None:
         """Collects all joins in the QEP-S that do not have cost information for all possible operators.
 
         The missing operators are stored in the `unknown_ops` parameter which is inflated as part of the method execution and
@@ -543,40 +624,73 @@ class QEPsNode:
             return
 
         if not self.is_root_node() and not self._parent.is_root_node():
-            own_unknown_ops = frozenset([operator for operator in allowed_operators if operator not in self.operator_costs])
+            own_unknown_ops = frozenset(
+                [
+                    operator
+                    for operator in allowed_operators
+                    if operator not in self.operator_costs
+                ]
+            )
             unknown_ops[_tables_in_qeps_path(self.path())] = own_unknown_ops
 
         next_join, *remaining_joins = join_order
         if next_join.is_bushy():
-            subquery_child = (next_join.outer_child if next_join.outer_child.plan_depth() >= next_join.inner_child.plan_depth()
-                              else next_join.inner_child)
+            subquery_child = (
+                next_join.outer_child
+                if next_join.outer_child.plan_depth()
+                >= next_join.inner_child.plan_depth()
+                else next_join.inner_child
+            )
             qeps_subquery_id = QepsIdentifier(subquery_child.tables())
             qeps_subquery_node = self.child_nodes[qeps_subquery_id]
-            qeps_subquery_node.subquery_root.detect_unknown_costs(query, _iterate_join_tree(subquery_child), allowed_operators,
-                                                                  unknown_ops)
-            qeps_subquery_node.detect_unknown_costs(query, remaining_joins, allowed_operators, unknown_ops)
+            qeps_subquery_node.subquery_root.detect_unknown_costs(
+                query,
+                _iterate_join_tree(subquery_child),
+                allowed_operators,
+                unknown_ops,
+            )
+            qeps_subquery_node.detect_unknown_costs(
+                query, remaining_joins, allowed_operators, unknown_ops
+            )
             return
 
         if next_join.is_base_join():
-            first_table, second_table = next_join.outer_child.base_table, next_join.inner_child.base_table
-            first_table, second_table = ((second_table, first_table) if second_table < first_table
-                                         else (first_table, second_table))
+            first_table, second_table = (
+                next_join.outer_child.base_table,
+                next_join.inner_child.base_table,
+            )
+            first_table, second_table = (
+                (second_table, first_table)
+                if second_table < first_table
+                else (first_table, second_table)
+            )
 
             if not _skip_first_table:
                 qeps_child_id = self._make_identifier(query, first_table)
                 qeps_child_node = self.child_nodes[qeps_child_id]
-                qeps_child_node.detect_unknown_costs(query, join_order, allowed_operators, unknown_ops, _skip_first_table=True)
+                qeps_child_node.detect_unknown_costs(
+                    query,
+                    join_order,
+                    allowed_operators,
+                    unknown_ops,
+                    _skip_first_table=True,
+                )
                 return
             else:
                 next_table = second_table
         else:
             # join between intermediate (our current QEP-S path) and a base table (next node in our QEP-S path)
-            next_table = (next_join.inner_child.base_table if next_join.inner_child.is_scan()
-                          else next_join.outer_child.base_table)
+            next_table = (
+                next_join.inner_child.base_table
+                if next_join.inner_child.is_scan()
+                else next_join.outer_child.base_table
+            )
 
         qeps_child_id = self._make_identifier(query, next_table)
         qeps_child_node = self.child_nodes[qeps_child_id]
-        qeps_child_node.detect_unknown_costs(query, remaining_joins, allowed_operators, unknown_ops)
+        qeps_child_node.detect_unknown_costs(
+            query, remaining_joins, allowed_operators, unknown_ops
+        )
 
     def current_recommendation(self) -> Optional[JoinOperator]:
         """Provides the operator with the minimum cost.
@@ -586,7 +700,9 @@ class QEPsNode:
         Optional[JoinOperators]
             The best operator, or ``None`` if not enough information exists to make a good decision.
         """
-        return util.argmin(self.operator_costs) if len(self.operator_costs) > 1 else None
+        return (
+            util.argmin(self.operator_costs) if len(self.operator_costs) > 1 else None
+        )
 
     def update_costs(self, operator: JoinOperator, cost: float) -> None:
         """Updates the cost of a specific operator for this node.
@@ -632,11 +748,20 @@ class QEPsNode:
         prefix = " " * _current_indentation
 
         cost_str = prefix + self._cost_str()
-        subquery_content = (self.subquery_root.inspect(_current_indentation=_current_indentation + 2)
-                            if self._subquery_root else "")
-        subquery_str = f"{prefix}[SQ] ->\n{subquery_content}" if subquery_content else ""
+        subquery_content = (
+            self.subquery_root.inspect(_current_indentation=_current_indentation + 2)
+            if self._subquery_root
+            else ""
+        )
+        subquery_str = (
+            f"{prefix}[SQ] ->\n{subquery_content}" if subquery_content else ""
+        )
         child_content = self._child_inspect(_current_indentation)
-        child_str = f"{prefix}[CHILD] ->\n{child_content}" if child_content else f"{prefix}[no children]"
+        child_str = (
+            f"{prefix}[CHILD] ->\n{child_content}"
+            if child_content
+            else f"{prefix}[no children]"
+        )
 
         inspect_entries = [cost_str, subquery_str, child_str]
         return "\n".join(entry for entry in inspect_entries if entry)
@@ -657,10 +782,13 @@ class QEPsNode:
         QepsNode
             The new node
         """
-        return QEPsNode(self.filter_aware, self.gamma, parent=self, identifier=identifier)
+        return QEPsNode(
+            self.filter_aware, self.gamma, parent=self, identifier=identifier
+        )
 
-    def _make_identifier(self, query: qal.SqlQuery,
-                         table: TableReference | Iterable[TableReference]) -> QepsIdentifier:
+    def _make_identifier(
+        self, query: qal.SqlQuery, table: TableReference | Iterable[TableReference]
+    ) -> QepsIdentifier:
         """Generates an identifier for a specific table(s).
 
         The concrete identifier information depends on the configuration of this node, e.g. regarding the filter behavior.
@@ -680,7 +808,9 @@ class QEPsNode:
             The identifier
         """
         table = util.simplify(table)
-        filter_predicate = query.predicates().filters_for(table) if self.filter_aware else None
+        filter_predicate = (
+            query.predicates().filters_for(table) if self.filter_aware else None
+        )
         return QepsIdentifier(table, filter_predicate)
 
     def _child_inspect(self, indentation: int) -> str:
@@ -711,13 +841,24 @@ class QEPsNode:
         str
             The cost information
         """
-        cost_content = ", ".join(f"{operator.value}={cost}" for operator, cost in self.operator_costs.items())
+        cost_content = ", ".join(
+            f"{operator.value}={cost}" for operator, cost in self.operator_costs.items()
+        )
         return f"[{cost_content}]" if self.operator_costs else "[no cost]"
 
     def __json__(self) -> dict:
-        cost_json = {operator.value: cost for operator, cost in self.operator_costs.items()}
-        children_json = [{"identifier": qeps_id, "node": node} for qeps_id, node in self.child_nodes.items()]
-        return {"costs": cost_json, "children": children_json, "subquery": self._subquery_root}
+        cost_json = {
+            operator.value: cost for operator, cost in self.operator_costs.items()
+        }
+        children_json = [
+            {"identifier": qeps_id, "node": node}
+            for qeps_id, node in self.child_nodes.items()
+        ]
+        return {
+            "costs": cost_json,
+            "children": children_json,
+            "subquery": self._subquery_root,
+        }
 
     def __bool__(self) -> bool:
         return len(self.child_nodes) > 0 or len(self.operator_costs) > 0
@@ -727,7 +868,11 @@ class QEPsNode:
 
     def __str__(self) -> str:
         qeps_path = self.path()
-        identifier = " -> ".join(str(qeps_id) for qeps_id in qeps_path) if qeps_path else "[ROOT]"
+        identifier = (
+            " -> ".join(str(qeps_id) for qeps_id in qeps_path)
+            if qeps_path
+            else "[ROOT]"
+        )
         costs = self._cost_str()
         return f"{identifier} {costs}"
 
@@ -769,7 +914,9 @@ class QEPSynopsis:
     def __init__(self, root: QEPsNode) -> None:
         self.root = root
 
-    def recommend_operators(self, query: qal.SqlQuery, join_order: JoinTree) -> PhysicalOperatorAssignment:
+    def recommend_operators(
+        self, query: qal.SqlQuery, join_order: JoinTree
+    ) -> PhysicalOperatorAssignment:
         """Provides the optimal operators according to the current QEP-S for a specific join order.
 
         Parameters
@@ -785,7 +932,9 @@ class QEPSynopsis:
             The best operators as learned by the QEP-S
         """
         current_assignment = PhysicalOperatorAssignment()
-        self.root.recommend_operators(query, _iterate_join_tree(join_order), current_assignment)
+        self.root.recommend_operators(
+            query, _iterate_join_tree(join_order), current_assignment
+        )
         return current_assignment
 
     def integrate_costs(self, query: qal.SqlQuery, query_plan: QueryPlan) -> None:
@@ -801,8 +950,12 @@ class QEPSynopsis:
         """
         self.root.integrate_costs(query, _iterate_query_plan(query_plan))
 
-    def detect_unknown_costs(self, query: qal.SqlQuery, join_order: JoinTree,
-                             allowed_operators: set[JoinOperator]) -> dict[frozenset[TableReference], frozenset[JoinOperator]]:
+    def detect_unknown_costs(
+        self,
+        query: qal.SqlQuery,
+        join_order: JoinTree,
+        allowed_operators: set[JoinOperator],
+    ) -> dict[frozenset[TableReference], frozenset[JoinOperator]]:
         """Collects all joins in the QEP-S that do not have cost information for all possible operators.
 
         Parameters
@@ -822,7 +975,9 @@ class QEPSynopsis:
             not contained in the `join_order`, or it has cost information for all operators.
         """
         unknown_costs: dict[frozenset[TableReference], frozenset[JoinOperator]] = {}
-        self.root.detect_unknown_costs(query, _iterate_join_tree(join_order), allowed_operators, unknown_costs)
+        self.root.detect_unknown_costs(
+            query, _iterate_join_tree(join_order), allowed_operators, unknown_costs
+        )
         return unknown_costs
 
     def reset(self) -> None:
@@ -846,7 +1001,11 @@ class QEPSynopsis:
         return self.root.inspect()
 
     def __json__(self) -> dict:
-        return {"root": self.root, "gamma": self.root.gamma, "filter_aware": self.root.filter_aware}
+        return {
+            "root": self.root,
+            "gamma": self.root.gamma,
+            "filter_aware": self.root.filter_aware,
+        }
 
 
 def _load_qeps_id_from_json(json_data: dict) -> QepsIdentifier:
@@ -871,13 +1030,23 @@ def _load_qeps_id_from_json(json_data: dict) -> QepsIdentifier:
     ValueError
         If the encoding does not contain any tables
     """
-    tables = [query_parser.load_table_json(json_table) for json_table in json_data.get("tables", [])]
-    filter_pred = query_parser.load_predicate_json(json_data.get("filter_predicate"), {})
+    tables = [
+        query_parser.load_table_json(json_table)
+        for json_table in json_data.get("tables", [])
+    ]
+    filter_pred = query_parser.load_predicate_json(
+        json_data.get("filter_predicate"), {}
+    )
     return QepsIdentifier(tables, filter_pred)
 
 
-def _load_qeps_from_json(json_data: dict, qeps_id: Optional[QepsIdentifier], parent: Optional[QEPsNode],
-                         filter_aware: bool, gamma: float) -> QEPsNode:
+def _load_qeps_from_json(
+    json_data: dict,
+    qeps_id: Optional[QepsIdentifier],
+    parent: Optional[QEPsNode],
+    filter_aware: bool,
+    gamma: float,
+) -> QEPsNode:
     """Creates a QEP-S node from its JSON representation.
 
     Parameters
@@ -907,13 +1076,21 @@ def _load_qeps_from_json(json_data: dict, qeps_id: Optional[QepsIdentifier], par
     """
     node = QEPsNode(filter_aware, gamma, identifier=qeps_id, parent=parent)
 
-    cost_info = {JoinOperator(operator_str): cost for operator_str, cost in json_data.get("costs", {}).items()}
-    subquery = (_load_qeps_from_json(json_data["subquery"], None, None, filter_aware, gamma)
-                if "subquery" in json_data else None)
+    cost_info = {
+        JoinOperator(operator_str): cost
+        for operator_str, cost in json_data.get("costs", {}).items()
+    }
+    subquery = (
+        _load_qeps_from_json(json_data["subquery"], None, None, filter_aware, gamma)
+        if "subquery" in json_data
+        else None
+    )
     children: dict[QepsIdentifier, QEPsNode] = {}
     for child_json in json_data.get("children", []):
         child_id = _load_qeps_id_from_json(child_json["identifier"])
-        child_node = _load_qeps_from_json(json_data["node"], child_id, node, filter_aware, gamma)
+        child_node = _load_qeps_from_json(
+            json_data["node"], child_id, node, filter_aware, gamma
+        )
         children[child_id] = child_node
 
     node.operator_costs = cost_info
@@ -922,7 +1099,12 @@ def _load_qeps_from_json(json_data: dict, qeps_id: Optional[QepsIdentifier], par
     return node
 
 
-def make_qeps(path: Iterable[TableReference], root: Optional[QEPsNode] = None, *, gamma: float = 0.8) -> QEPsNode:
+def make_qeps(
+    path: Iterable[TableReference],
+    root: Optional[QEPsNode] = None,
+    *,
+    gamma: float = 0.8,
+) -> QEPsNode:
     """Generates a QEP-S for the given join path.
 
     Parameters
@@ -947,7 +1129,9 @@ def make_qeps(path: Iterable[TableReference], root: Optional[QEPsNode] = None, *
     return root
 
 
-def _obtain_accurate_cost_estimate(query: qal.SqlQuery, database: db.Database) -> QueryPlan:
+def _obtain_accurate_cost_estimate(
+    query: qal.SqlQuery, database: db.Database
+) -> QueryPlan:
     """Determines the cost information for a query based on the actual cardinalities of the execution plan.
 
     This simulates a cost model with perfect input data.
@@ -966,13 +1150,18 @@ def _obtain_accurate_cost_estimate(query: qal.SqlQuery, database: db.Database) -
         The execution plan with cost information
     """
     query_plan = database.optimizer().analyze_plan(query)
-    query_with_true_hints = database.hinting().generate_hints(query, query_plan.with_actual_card())
+    query_with_true_hints = database.hinting().generate_hints(
+        query, query_plan.with_actual_card()
+    )
     return database.optimizer().query_plan(query_with_true_hints)
 
 
-def _generate_all_cost_estimates(query: qal.SqlQuery, join_order: JoinTree,
-                                 available_operators: dict[frozenset[TableReference], frozenset[JoinOperator]],
-                                 database: db.Database) -> Iterable[QueryPlan]:
+def _generate_all_cost_estimates(
+    query: qal.SqlQuery,
+    join_order: JoinTree,
+    available_operators: dict[frozenset[TableReference], frozenset[JoinOperator]],
+    database: db.Database,
+) -> Iterable[QueryPlan]:
     """Provides all cost estimates based on plans with specific operator combinations.
 
     The cost estimates are based on the true cardinalities of all intermediate results, i.e. the method first determines the
@@ -996,21 +1185,29 @@ def _generate_all_cost_estimates(query: qal.SqlQuery, join_order: JoinTree,
         All query plans with the actual costs.
     """
     plans = []
-    joins, operators = list(available_operators.keys()), list(available_operators.values())
+    joins, operators = (
+        list(available_operators.keys()),
+        list(available_operators.values()),
+    )
     for current_operator_selection in itertools.product(*operators):
         current_join_pairs = zip(joins, current_operator_selection)
         current_assignment = PhysicalOperatorAssignment()
         for join, operator in current_join_pairs:
             current_assignment.set_join_operator(JoinOperatorAssignment(operator, join))
-        optimized_query = database.hinting().generate_hints(query, join_order=join_order,
-                                                            physical_operators=current_assignment)
+        optimized_query = database.hinting().generate_hints(
+            query, join_order=join_order, physical_operators=current_assignment
+        )
         plans.append(_obtain_accurate_cost_estimate(optimized_query, database))
     return plans
 
 
-def _sample_cost_estimates(query: qal.SqlQuery, join_order: JoinTree,
-                           available_operators: dict[frozenset[TableReference], frozenset[JoinOperator]],
-                           n_samples: int, database: db.Database) -> Iterable[QueryPlan]:
+def _sample_cost_estimates(
+    query: qal.SqlQuery,
+    join_order: JoinTree,
+    available_operators: dict[frozenset[TableReference], frozenset[JoinOperator]],
+    n_samples: int,
+    database: db.Database,
+) -> Iterable[QueryPlan]:
     """Generates cost estimates based on sampled plans with specific operator combinations.
 
     The samples are generated based on random operator selections.
@@ -1049,14 +1246,17 @@ def _sample_cost_estimates(query: qal.SqlQuery, join_order: JoinTree,
         current_assignment = PhysicalOperatorAssignment()
         for join, operators in available_operators.items():
             selected_operator = random.choice(list(operators))
-            current_assignment.set_join_operator(JoinOperatorAssignment(selected_operator, join))
+            current_assignment.set_join_operator(
+                JoinOperatorAssignment(selected_operator, join)
+            )
         current_hash = hash(current_assignment)
         if current_hash in sampled_assignments:
             continue
         else:
             sampled_assignments.add(current_hash)
-        optimized_query = database.hinting().generate_hints(query, join_order=join_order,
-                                                            physical_operators=current_assignment)
+        optimized_query = database.hinting().generate_hints(
+            query, join_order=join_order, physical_operators=current_assignment
+        )
         plans.append(_obtain_accurate_cost_estimate(optimized_query, database))
     return plans
 
@@ -1083,8 +1283,12 @@ class TonicOperatorSelection(PhysicalOperatorSelection):
     """
 
     @staticmethod
-    def load_model(filename: str, database: Optional[db.Database] = None, *,
-                   encoding: str = "utf-8") -> TonicOperatorSelection:
+    def load_model(
+        filename: str,
+        database: Optional[db.Database] = None,
+        *,
+        encoding: str = "utf-8",
+    ) -> TonicOperatorSelection:
         """Re-generates a pre-trained TONIC QEP-S model from disk.
 
         The model has to be encoded in a JSON file as generated by the jsonize utility
@@ -1110,22 +1314,33 @@ class TonicOperatorSelection(PhysicalOperatorSelection):
 
         filter_aware = json_data.get("filter_aware", False)
         gamma = json_data.get("gamma", 0.8)
-        qeps_root = _load_qeps_from_json(json_data["root"], None, None, filter_aware, gamma)
+        qeps_root = _load_qeps_from_json(
+            json_data["root"], None, None, filter_aware, gamma
+        )
         qeps = QEPSynopsis(qeps_root)
 
         tonic_model = TonicOperatorSelection(filter_aware, gamma, database=database)
         tonic_model.qeps = qeps
         return tonic_model
 
-    def __init__(self, filter_aware: bool = False, gamma: float = 0.8, *,
-                 database: Optional[db.Database] = None) -> None:
+    def __init__(
+        self,
+        filter_aware: bool = False,
+        gamma: float = 0.8,
+        *,
+        database: Optional[db.Database] = None,
+    ) -> None:
         super().__init__()
         self.filter_aware = filter_aware
         self.gamma = gamma
         self.qeps = QEPSynopsis.create(filter_aware, gamma)
-        self._db = database if database else db.DatabasePool.get_instance().current_database()
+        self._db = (
+            database if database else db.DatabasePool.get_instance().current_database()
+        )
 
-    def integrate_cost(self, query: qal.SqlQuery, query_plan: Optional[QueryPlan] = None) -> None:
+    def integrate_cost(
+        self, query: qal.SqlQuery, query_plan: Optional[QueryPlan] = None
+    ) -> None:
         """Uses cost information from a query plan to update the QEP-S costs.
 
         Notice that the costs stored in the query plan do not need to correspond to native costs. Instead, the costs can be
@@ -1140,7 +1355,9 @@ class TonicOperatorSelection(PhysicalOperatorSelection):
             `database` will be queried to obtain the costs of the input query. Notice that is enables the integration of costs
             for arbitrary query plans by setting the hint block of the query.
         """
-        query_plan = self._db.optimizer().query_plan(query) if query_plan is None else query_plan
+        query_plan = (
+            self._db.optimizer().query_plan(query) if query_plan is None else query_plan
+        )
         self.qeps.integrate_costs(query, query_plan)
 
     def simulate_feedback(self, query: qal.SqlQuery) -> None:
@@ -1160,12 +1377,19 @@ class TonicOperatorSelection(PhysicalOperatorSelection):
             The query to obtain the cost for
         """
         query_plan = self._db.optimizer().analyze_plan(query)
-        hinted_query = self._db.hinting().generate_hints(query, query_plan.with_actual_card())
+        hinted_query = self._db.hinting().generate_hints(
+            query, query_plan.with_actual_card()
+        )
         self.integrate_cost(hinted_query)
 
-    def explore_costs(self, query: qal.SqlQuery, join_order: Optional[JoinTree] = None, *,
-                      allowed_operators: Optional[Iterable[JoinOperator]] = None,
-                      max_combinations: Optional[int] = None) -> None:
+    def explore_costs(
+        self,
+        query: qal.SqlQuery,
+        join_order: Optional[JoinTree] = None,
+        *,
+        allowed_operators: Optional[Iterable[JoinOperator]] = None,
+        max_combinations: Optional[int] = None,
+    ) -> None:
         """Generates cost information along a specific path in the QEP-S.
 
         The cost information is generated based on the native optimizer of the database system while using the true
@@ -1190,18 +1414,39 @@ class TonicOperatorSelection(PhysicalOperatorSelection):
             The maximum number of operator combinations that should be explored. If more combinations are available, a random
             subset of `max_combinations` many samples is explored.
         """
-        join_order = join_order if join_order is not None else self._obtain_native_join_order(query)
+        join_order = (
+            join_order
+            if join_order is not None
+            else self._obtain_native_join_order(query)
+        )
 
-        allowed_operators = set(allowed_operators) if allowed_operators else set(JoinOperator)
-        supported_operators = {join_op for join_op in JoinOperator if self._db.hinting().supports_hint(join_op)}
+        allowed_operators = (
+            set(allowed_operators) if allowed_operators else set(JoinOperator)
+        )
+        supported_operators = {
+            join_op
+            for join_op in JoinOperator
+            if self._db.hinting().supports_hint(join_op)
+        }
         allowed_operators = frozenset(allowed_operators & supported_operators)
 
-        unknown_costs = {intermediate.tables(): allowed_operators for intermediate in join_order.iterjoins()}
-        total_unknown_combinations = math.prod([len(unknown_ops) for unknown_ops in unknown_costs.values()])
+        unknown_costs = {
+            intermediate.tables(): allowed_operators
+            for intermediate in join_order.iterjoins()
+        }
+        total_unknown_combinations = math.prod(
+            [len(unknown_ops) for unknown_ops in unknown_costs.values()]
+        )
 
-        query_plans = (_sample_cost_estimates(query, join_order, unknown_costs, max_combinations, self._db)
-                       if total_unknown_combinations > max_combinations
-                       else _generate_all_cost_estimates(query, join_order, unknown_costs, self._db))
+        query_plans = (
+            _sample_cost_estimates(
+                query, join_order, unknown_costs, max_combinations, self._db
+            )
+            if total_unknown_combinations > max_combinations
+            else _generate_all_cost_estimates(
+                query, join_order, unknown_costs, self._db
+            )
+        )
         for plan in query_plans:
             self.integrate_cost(query, plan)
 
@@ -1209,7 +1454,9 @@ class TonicOperatorSelection(PhysicalOperatorSelection):
         """Generates a brand new QEP-S."""
         self.qeps.reset()
 
-    def select_physical_operators(self, query: qal.SqlQuery, join_order: Optional[JoinTree]) -> PhysicalOperatorAssignment:
+    def select_physical_operators(
+        self, query: qal.SqlQuery, join_order: Optional[JoinTree]
+    ) -> PhysicalOperatorAssignment:
         if not join_order or join_order.is_empty():
             join_order = self._obtain_native_join_order(query)
         return self.qeps.recommend_operators(query, join_order)

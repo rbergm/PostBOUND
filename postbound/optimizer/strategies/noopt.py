@@ -1,11 +1,16 @@
 """Provides empty (dummy) strategies for the individual optimization stages."""
+
 from __future__ import annotations
 
 from typing import Optional
 
 from .._jointree import JoinTree
 from .._hints import PhysicalOperatorAssignment, PlanParameterization
-from ..._stages import JoinOrderOptimization, PhysicalOperatorSelection, ParameterGeneration
+from ..._stages import (
+    JoinOrderOptimization,
+    PhysicalOperatorSelection,
+    ParameterGeneration,
+)
 from ... import qal
 
 
@@ -25,7 +30,9 @@ class EmptyJoinOrderOptimizer(JoinOrderOptimization):
 class EmptyPhysicalOperatorSelection(PhysicalOperatorSelection):
     """Dummy implementation of operator optimization that does not actually optimize anything."""
 
-    def select_physical_operators(self, query: qal.SqlQuery, join_order: Optional[JoinTree]) -> PhysicalOperatorAssignment:
+    def select_physical_operators(
+        self, query: qal.SqlQuery, join_order: Optional[JoinTree]
+    ) -> PhysicalOperatorAssignment:
         return PhysicalOperatorAssignment()
 
     def describe(self) -> dict:
@@ -35,8 +42,12 @@ class EmptyPhysicalOperatorSelection(PhysicalOperatorSelection):
 class EmptyParameterization(ParameterGeneration):
     """Dummy implementation of the plan parameterization that does not actually generate any parameters."""
 
-    def generate_plan_parameters(self, query: qal.SqlQuery, join_order: Optional[JoinTree],
-                                 operator_assignment: Optional[PhysicalOperatorAssignment]) -> Optional[PlanParameterization]:
+    def generate_plan_parameters(
+        self,
+        query: qal.SqlQuery,
+        join_order: Optional[JoinTree],
+        operator_assignment: Optional[PhysicalOperatorAssignment],
+    ) -> Optional[PlanParameterization]:
         return None
 
     def describe(self) -> dict:

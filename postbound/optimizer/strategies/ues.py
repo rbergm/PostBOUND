@@ -22,6 +22,7 @@ References
 
 .. [1] A. Hertzschuch et al.: "Simplicity Done Right for Join Ordering", CIDR'2021
 """
+
 from __future__ import annotations
 
 import abc
@@ -99,8 +100,11 @@ class StatisticsContainer(abc.ABC, Generic[StatsType]):
         self.attribute_frequencies: dict[ColumnReference, StatsType] = {}
         self.query: Optional[qal.SqlQuery] = None
 
-    def setup_for_query(self, query: qal.SqlQuery,
-                        base_table_estimator: cardpol.BaseTableCardinalityEstimator) -> None:
+    def setup_for_query(
+        self,
+        query: qal.SqlQuery,
+        base_table_estimator: cardpol.BaseTableCardinalityEstimator,
+    ) -> None:
         """Initializes the internal data of the statistics container for a specific query.
 
         Parameters
@@ -124,11 +128,18 @@ class StatisticsContainer(abc.ABC, Generic[StatsType]):
         dict[jointree.LogicalJoinTree, int]
             The bounds for all intermediate results
         """
-        return {join_tree: bound for join_tree, bound in self.upper_bounds.items()
-                if isinstance(join_tree, JoinTree)}
+        return {
+            join_tree: bound
+            for join_tree, bound in self.upper_bounds.items()
+            if isinstance(join_tree, JoinTree)
+        }
 
-    def trigger_frequency_update(self, join_tree: LogicalJoinTree, joined_table: TableReference,
-                                 join_condition: qal.AbstractPredicate) -> None:
+    def trigger_frequency_update(
+        self,
+        join_tree: LogicalJoinTree,
+        joined_table: TableReference,
+        join_condition: qal.AbstractPredicate,
+    ) -> None:
         """Updates the `attribute_frequencies` according to a new n:m join.
 
         The update procedure distinguishes between two different types of column statistics and uses different
@@ -161,20 +172,28 @@ class StatisticsContainer(abc.ABC, Generic[StatsType]):
         third_party_columns: set[ColumnReference] = set()
         for third_party_table in partner_tables:
             potential_partners = partner_tables - {third_party_table}
-            join_pred = self.query.predicates().joins_between(third_party_table, potential_partners)
+            join_pred = self.query.predicates().joins_between(
+                third_party_table, potential_partners
+            )
             if not join_pred:
                 continue
             third_party_columns |= join_pred.columns()
 
         for col1, col2 in join_condition.join_partners():
-            joined_column, partner_column = (col1, col2) if col1.table == joined_table else (col2, col1)
+            joined_column, partner_column = (
+                (col1, col2) if col1.table == joined_table else (col2, col1)
+            )
             self._update_partner_column_frequency(joined_column, partner_column)
 
-        joined_columns_frequencies = {joined_col: self.attribute_frequencies[joined_col] for joined_col
-                                      in join_condition.columns_of(joined_table)}
+        joined_columns_frequencies = {
+            joined_col: self.attribute_frequencies[joined_col]
+            for joined_col in join_condition.columns_of(joined_table)
+        }
         lowest_joined_column_frequency = util.argmin(joined_columns_frequencies)
         for third_party_column in third_party_columns:
-            self._update_third_party_column_frequency(lowest_joined_column_frequency, third_party_column)
+            self._update_third_party_column_frequency(
+                lowest_joined_column_frequency, third_party_column
+            )
 
     @abc.abstractmethod
     def describe(self) -> dict:
@@ -194,7 +213,9 @@ class StatisticsContainer(abc.ABC, Generic[StatsType]):
         self.attribute_frequencies = {}
         self.query = None
 
-    def _inflate_base_table_estimates(self, base_table_estimator: cardpol.BaseTableCardinalityEstimator):
+    def _inflate_base_table_estimates(
+        self, base_table_estimator: cardpol.BaseTableCardinalityEstimator
+    ):
         """Retrieves the base table estimate for each table in the current query.
 
         Parameters
@@ -216,8 +237,9 @@ class StatisticsContainer(abc.ABC, Generic[StatsType]):
         raise NotImplementedError
 
     @abc.abstractmethod
-    def _update_partner_column_frequency(self, joined_column: ColumnReference,
-                                         partner_column: ColumnReference) -> None:
+    def _update_partner_column_frequency(
+        self, joined_column: ColumnReference, partner_column: ColumnReference
+    ) -> None:
         """Performs the frequency update for a partner column.
 
         This implies that there is a join between the joined column and the partner column, and the partner column is already
@@ -234,8 +256,9 @@ class StatisticsContainer(abc.ABC, Generic[StatsType]):
         raise NotImplementedError
 
     @abc.abstractmethod
-    def _update_third_party_column_frequency(self, joined_column: ColumnReference,
-                                             third_party_column: ColumnReference) -> None:
+    def _update_third_party_column_frequency(
+        self, joined_column: ColumnReference, third_party_column: ColumnReference
+    ) -> None:
         """Performs the frequency update for a third party column (see `trigger_frequency_update`).
 
         This implies that there is a join between the joined column and some other column from the intermediate result. The
@@ -285,16 +308,20 @@ class MaxFrequencyStatsContainer(StatisticsContainer[MaxFrequency]):
                 _, mcv_frequency = util.simplify(top1_list)
             self.attribute_frequencies[column] = mcv_frequency
 
-    def _update_partner_column_frequency(self, joined_column: ColumnReference,
-                                         partner_column: ColumnReference) -> None:
+    def _update_partner_column_frequency(
+        self, joined_column: ColumnReference, partner_column: ColumnReference
+    ) -> None:
         joined_frequency = self.attribute_frequencies[joined_column]
         partner_frequency = self.attribute_frequencies[partner_column]
         self.attribute_frequencies[joined_column] *= partner_frequency
         self.attribute_frequencies[partner_column] *= joined_frequency
 
-    def _update_third_party_column_frequency(self, joined_column: ColumnReference,
-                                             third_party_column: ColumnReference) -> None:
-        self.attribute_frequencies[third_party_column] *= self.attribute_frequencies[joined_column]
+    def _update_third_party_column_frequency(
+        self, joined_column: ColumnReference, third_party_column: ColumnReference
+    ) -> None:
+        self.attribute_frequencies[third_party_column] *= self.attribute_frequencies[
+            joined_column
+        ]
 
     def _uniform_frequency(self, column: ColumnReference) -> float:
         """Calculates the value frequency for a column, assuming that all values are uniformly distributed.
@@ -332,7 +359,9 @@ class UESJoinBoundEstimator(cardpol.JoinCardinalityEstimator):
     def setup_for_query(self, query: qal.SqlQuery) -> None:
         self.query = query
 
-    def setup_for_stats(self, stats_container: StatisticsContainer[MaxFrequency]) -> None:
+    def setup_for_stats(
+        self, stats_container: StatisticsContainer[MaxFrequency]
+    ) -> None:
         """Configures the statistics container that contains the actual frequencies and cardinalities to use.
 
         Parameters
@@ -342,7 +371,9 @@ class UESJoinBoundEstimator(cardpol.JoinCardinalityEstimator):
         """
         self.stats_container = stats_container
 
-    def estimate_for(self, join_edge: qal.AbstractPredicate, join_graph: JoinGraph) -> Cardinality:
+    def estimate_for(
+        self, join_edge: qal.AbstractPredicate, join_graph: JoinGraph
+    ) -> Cardinality:
         current_min_bound = np.inf
 
         for base_predicate in join_edge.base_predicates():
@@ -367,7 +398,9 @@ class UESJoinBoundEstimator(cardpol.JoinCardinalityEstimator):
         # It suffices to check that there are only conjunctive equi joins.
         return UESOptimizationPreCheck
 
-    def _estimate_pk_fk_join(self, fk_column: ColumnReference, pk_column: ColumnReference) -> Cardinality:
+    def _estimate_pk_fk_join(
+        self, fk_column: ColumnReference, pk_column: ColumnReference
+    ) -> Cardinality:
         """Estimation formula for primary key/foreign key joins.
 
         Parameters
@@ -382,11 +415,15 @@ class UESJoinBoundEstimator(cardpol.JoinCardinalityEstimator):
         Cardinality
             An upper bound of the primary key/foreign key join cardinality.
         """
-        pk_cardinality = Cardinality(self.stats_container.base_table_estimates[pk_column.table])
+        pk_cardinality = Cardinality(
+            self.stats_container.base_table_estimates[pk_column.table]
+        )
         fk_frequency = self.stats_container.attribute_frequencies[fk_column]
         return math.ceil(fk_frequency * pk_cardinality)
 
-    def _estimate_n_m_join(self, first_column: ColumnReference, second_column: ColumnReference) -> Cardinality:
+    def _estimate_n_m_join(
+        self, first_column: ColumnReference, second_column: ColumnReference
+    ) -> Cardinality:
         """Estimation formula for n:m joins.
 
         Parameters
@@ -401,17 +438,24 @@ class UESJoinBoundEstimator(cardpol.JoinCardinalityEstimator):
         Cardinality
             An upper bound of the n:m join cardinality.
         """
-        first_bound, second_bound = self._fetch_bound(first_column), self._fetch_bound(second_column)
+        first_bound, second_bound = (
+            self._fetch_bound(first_column),
+            self._fetch_bound(second_column),
+        )
         first_freq = self.stats_container.attribute_frequencies[first_column]
         second_freq = self.stats_container.attribute_frequencies[second_column]
 
-        if any(var == 0 for var in [first_bound, second_bound, first_freq, second_freq]):
+        if any(
+            var == 0 for var in [first_bound, second_bound, first_freq, second_freq]
+        ):
             return 0
 
         first_distinct_vals = first_bound / first_freq
         second_distinct_vals = second_bound / second_freq
 
-        n_m_bound = min(first_distinct_vals, second_distinct_vals) * first_freq * second_freq
+        n_m_bound = (
+            min(first_distinct_vals, second_distinct_vals) * first_freq * second_freq
+        )
         return Cardinality(math.ceil(n_m_bound))
 
     def _fetch_bound(self, column: ColumnReference) -> Cardinality:
@@ -432,8 +476,11 @@ class UESJoinBoundEstimator(cardpol.JoinCardinalityEstimator):
             An upper bound on the cardinality of the table
         """
         table = column.table
-        card = (self.stats_container.upper_bounds[table] if table in self.stats_container.upper_bounds
-                else self.stats_container.base_table_estimates[table])
+        card = (
+            self.stats_container.upper_bounds[table]
+            if table in self.stats_container.upper_bounds
+            else self.stats_container.base_table_estimates[table]
+        )
         return Cardinality(card)
 
 
@@ -462,7 +509,9 @@ class UESSubqueryGenerationPolicy(treepol.BranchGenerationPolicy):
         """
         self.stats_container = stats_container
 
-    def generate_subquery_for(self, join: qal.AbstractPredicate, join_graph: JoinGraph) -> bool:
+    def generate_subquery_for(
+        self, join: qal.AbstractPredicate, join_graph: JoinGraph
+    ) -> bool:
         if join_graph.count_consumed_tables() < 2:
             return False
 
@@ -476,7 +525,10 @@ class UESSubqueryGenerationPolicy(treepol.BranchGenerationPolicy):
             else:
                 continue
 
-            generate_subquery = stats_container.upper_bounds[joined_table] < stats_container.base_table_estimates[joined_table]
+            generate_subquery = (
+                stats_container.upper_bounds[joined_table]
+                < stats_container.base_table_estimates[joined_table]
+            )
             if generate_subquery:
                 return True
 
@@ -522,20 +574,39 @@ class UESJoinOrderOptimizer(JoinOrderOptimization):
     .. A. Hertzschuch et al.: "Simplicity Done Right for Join Ordering", CIDR'2021
     """
 
-    def __init__(self, *, base_table_estimation: Optional[cardpol.BaseTableCardinalityEstimator] = None,
-                 join_estimation: Optional[cardpol.JoinCardinalityEstimator] = None,
-                 subquery_policy: Optional[treepol.BranchGenerationPolicy] = None,
-                 stats_container: Optional[StatisticsContainer] = None,
-                 pull_eager_pk_tables: bool = False,
-                 database: Optional[db.Database] = None, verbose: bool = False) -> None:
+    def __init__(
+        self,
+        *,
+        base_table_estimation: Optional[cardpol.BaseTableCardinalityEstimator] = None,
+        join_estimation: Optional[cardpol.JoinCardinalityEstimator] = None,
+        subquery_policy: Optional[treepol.BranchGenerationPolicy] = None,
+        stats_container: Optional[StatisticsContainer] = None,
+        pull_eager_pk_tables: bool = False,
+        database: Optional[db.Database] = None,
+        verbose: bool = False,
+    ) -> None:
         super().__init__()
-        self.database = database if database else db.DatabasePool().get_instance().current_database()
-        self.base_table_estimation = (base_table_estimation if base_table_estimation
-                                      else cardpol.NativeCardinalityEstimator(self.database))
-        self.join_estimation = join_estimation if join_estimation else UESJoinBoundEstimator()
-        self.subquery_policy = subquery_policy if subquery_policy else UESSubqueryGenerationPolicy()
-        self.stats_container = (stats_container if stats_container
-                                else MaxFrequencyStatsContainer(self.database.statistics()))
+        self.database = (
+            database
+            if database
+            else db.DatabasePool().get_instance().current_database()
+        )
+        self.base_table_estimation = (
+            base_table_estimation
+            if base_table_estimation
+            else cardpol.NativeCardinalityEstimator(self.database)
+        )
+        self.join_estimation = (
+            join_estimation if join_estimation else UESJoinBoundEstimator()
+        )
+        self.subquery_policy = (
+            subquery_policy if subquery_policy else UESSubqueryGenerationPolicy()
+        )
+        self.stats_container = (
+            stats_container
+            if stats_container
+            else MaxFrequencyStatsContainer(self.database.statistics())
+        )
         self._pull_eager_pk_tables = pull_eager_pk_tables
         self._logging_enabled = verbose
 
@@ -571,8 +642,12 @@ class UESJoinOrderOptimizer(JoinOrderOptimization):
             sorted(optimized_components, key=operator.attrgetter("annotation"))
             final_join_tree, *remaining_joins = optimized_components
             for remaining_join in remaining_joins:
-                output_cardinality = final_join_tree.annotation * remaining_join.annotation
-                final_join_tree = final_join_tree.join_with(remaining_join, annotation=output_cardinality)
+                output_cardinality = (
+                    final_join_tree.annotation * remaining_join.annotation
+                )
+                final_join_tree = final_join_tree.join_with(
+                    remaining_join, annotation=output_cardinality
+                )
         elif join_graph.contains_free_n_m_joins():
             final_join_tree = self._default_ues_optimizer(query, join_graph)
         else:
@@ -587,19 +662,26 @@ class UESJoinOrderOptimizer(JoinOrderOptimization):
                 "base_table_estimation": self.base_table_estimation.describe(),
                 "join_estimation": self.join_estimation.describe(),
                 "subqueries": self.subquery_policy.describe(),
-                "statistics": self.stats_container.describe()
-            }
+                "statistics": self.stats_container.describe(),
+            },
         }
 
     def pre_check(self) -> validation.OptimizationPreCheck:
-        specified_checks = [check for check in [self.base_table_estimation.pre_check(),
-                                                self.join_estimation.pre_check(),
-                                                self.subquery_policy.pre_check()]
-                            if check]
+        specified_checks = [
+            check
+            for check in [
+                self.base_table_estimation.pre_check(),
+                self.join_estimation.pre_check(),
+                self.subquery_policy.pre_check(),
+            ]
+            if check
+        ]
         specified_checks.append(UESOptimizationPreCheck)
         return validation.merge_checks(specified_checks)
 
-    def _default_ues_optimizer(self, query: qal.SqlQuery, join_graph: JoinGraph) -> LogicalJoinTree:
+    def _default_ues_optimizer(
+        self, query: qal.SqlQuery, join_graph: JoinGraph
+    ) -> LogicalJoinTree:
         """Implementation of our take on the UES algorithm for queries with n:m joins.
 
         Parameters
@@ -624,83 +706,138 @@ class UESJoinOrderOptimizer(JoinOrderOptimization):
         join_tree = LogicalJoinTree.empty()
 
         while join_graph.contains_free_n_m_joins():
-
             # Update the current upper bounds
             lowest_bound = np.inf
             lowest_bound_table = None
-            for candidate_join in join_graph.available_n_m_join_paths(both_directions_on_initial=True):
+            for candidate_join in join_graph.available_n_m_join_paths(
+                both_directions_on_initial=True
+            ):
                 candidate_table = candidate_join.target_table
-                filter_estimate = self.stats_container.base_table_estimates[candidate_table]
-                pk_fk_bounds = [self.join_estimation.estimate_for(join_path.join_condition, join_graph) for join_path
-                                in join_graph.available_pk_fk_joins_for(candidate_table)]
+                filter_estimate = self.stats_container.base_table_estimates[
+                    candidate_table
+                ]
+                pk_fk_bounds = [
+                    self.join_estimation.estimate_for(
+                        join_path.join_condition, join_graph
+                    )
+                    for join_path in join_graph.available_pk_fk_joins_for(
+                        candidate_table
+                    )
+                ]
                 candidate_min_bound = min([filter_estimate] + pk_fk_bounds)
                 self.stats_container.upper_bounds[candidate_table] = candidate_min_bound
 
                 if candidate_min_bound < lowest_bound:
                     lowest_bound = candidate_min_bound
                     lowest_bound_table = candidate_table
-            self._log_information(".. Current bounds: " + util.dicts.stringify(self.stats_container.upper_bounds))
+            self._log_information(
+                ".. Current bounds: "
+                + util.dicts.stringify(self.stats_container.upper_bounds)
+            )
 
             if join_tree.is_empty():
-                join_tree = LogicalJoinTree.scan(lowest_bound_table, annotation=lowest_bound)
+                join_tree = LogicalJoinTree.scan(
+                    lowest_bound_table, annotation=lowest_bound
+                )
                 join_graph.mark_joined(lowest_bound_table)
                 self.stats_container.upper_bounds[join_tree] = lowest_bound
-                pk_joins = join_graph.available_deep_pk_join_paths_for(lowest_bound_table,
-                                                                       self._table_base_cardinality_ordering)
+                pk_joins = join_graph.available_deep_pk_join_paths_for(
+                    lowest_bound_table, self._table_base_cardinality_ordering
+                )
                 for pk_join in pk_joins:
                     target_table = pk_join.target_table
-                    base_cardinality = self.stats_container.base_table_estimates[target_table]
-                    join_bound = self.join_estimation.estimate_for(pk_join.join_condition, join_graph)
+                    base_cardinality = self.stats_container.base_table_estimates[
+                        target_table
+                    ]
+                    join_bound = self.join_estimation.estimate_for(
+                        pk_join.join_condition, join_graph
+                    )
                     join_graph.mark_joined(target_table, pk_join.join_condition)
-                    join_tree = join_tree.join_with(pk_join.target_table, annotation=join_bound,
-                                                    partner_annotation=base_cardinality)
-                self._log_optimization_progress("Initial table selection", lowest_bound_table, pk_joins)
+                    join_tree = join_tree.join_with(
+                        pk_join.target_table,
+                        annotation=join_bound,
+                        partner_annotation=base_cardinality,
+                    )
+                self._log_optimization_progress(
+                    "Initial table selection", lowest_bound_table, pk_joins
+                )
                 continue
 
             selected_candidate: JoinPath | None = None
             lowest_bound = np.inf
             bounds_log: dict[JoinPath, float] = {}
             for candidate_join in join_graph.available_n_m_join_paths():
-                candidate_bound = self.join_estimation.estimate_for(candidate_join.join_condition, join_graph)
+                candidate_bound = self.join_estimation.estimate_for(
+                    candidate_join.join_condition, join_graph
+                )
                 bounds_log[candidate_join] = candidate_bound
                 if candidate_bound < lowest_bound:
                     selected_candidate = candidate_join
                     lowest_bound = candidate_bound
             self._log_information(f".. n:m join bounds: {bounds_log}")
 
-            direct_pk_joins = join_graph.available_pk_fk_joins_for(selected_candidate.target_table)
-            create_subquery = any(self.subquery_policy.generate_subquery_for(pk_join.join_condition, join_graph)
-                                  for pk_join in direct_pk_joins)
+            direct_pk_joins = join_graph.available_pk_fk_joins_for(
+                selected_candidate.target_table
+            )
+            create_subquery = any(
+                self.subquery_policy.generate_subquery_for(
+                    pk_join.join_condition, join_graph
+                )
+                for pk_join in direct_pk_joins
+            )
             candidate_table = selected_candidate.target_table
-            all_pk_joins = (join_graph.available_deep_pk_join_paths_for(candidate_table) if self._pull_eager_pk_tables
-                            else join_graph.available_pk_fk_joins_for(candidate_table))
-            candidate_base_cardinality = self.stats_container.base_table_estimates[candidate_table]
-            self._log_optimization_progress("n:m join", candidate_table, all_pk_joins,
-                                            join_condition=selected_candidate.join_condition,
-                                            subquery_join=create_subquery)
+            all_pk_joins = (
+                join_graph.available_deep_pk_join_paths_for(candidate_table)
+                if self._pull_eager_pk_tables
+                else join_graph.available_pk_fk_joins_for(candidate_table)
+            )
+            candidate_base_cardinality = self.stats_container.base_table_estimates[
+                candidate_table
+            ]
+            self._log_optimization_progress(
+                "n:m join",
+                candidate_table,
+                all_pk_joins,
+                join_condition=selected_candidate.join_condition,
+                subquery_join=create_subquery,
+            )
             if create_subquery:
-                subquery_tree = JoinTree.scan(candidate_table, annotation=candidate_base_cardinality)
+                subquery_tree = JoinTree.scan(
+                    candidate_table, annotation=candidate_base_cardinality
+                )
                 join_graph.mark_joined(candidate_table)
-                subquery_tree = self._insert_pk_joins(query, all_pk_joins, subquery_tree, join_graph)
+                subquery_tree = self._insert_pk_joins(
+                    query, all_pk_joins, subquery_tree, join_graph
+                )
 
                 join_tree = join_tree.join_with(subquery_tree, annotation=lowest_bound)
                 self.stats_container.upper_bounds[join_tree] = lowest_bound
 
             else:
-                join_tree = join_tree.join_with(candidate_table, annotation=lowest_bound,
-                                                partner_annotation=candidate_base_cardinality)
-                join_graph.mark_joined(candidate_table, selected_candidate.join_condition)
+                join_tree = join_tree.join_with(
+                    candidate_table,
+                    annotation=lowest_bound,
+                    partner_annotation=candidate_base_cardinality,
+                )
+                join_graph.mark_joined(
+                    candidate_table, selected_candidate.join_condition
+                )
                 self.stats_container.upper_bounds[join_tree] = lowest_bound
-                join_tree = self._insert_pk_joins(query, all_pk_joins, join_tree, join_graph)
+                join_tree = self._insert_pk_joins(
+                    query, all_pk_joins, join_tree, join_graph
+                )
 
-            self.stats_container.trigger_frequency_update(join_tree, candidate_table,
-                                                          selected_candidate.join_condition)
+            self.stats_container.trigger_frequency_update(
+                join_tree, candidate_table, selected_candidate.join_condition
+            )
 
         if join_graph.contains_free_tables():
             raise AssertionError("Join graph still has free tables remaining!")
         return join_tree
 
-    def _binary_join_optimization(self, query: qal.ImplicitSqlQuery, join_graph: JoinGraph) -> LogicalJoinTree:
+    def _binary_join_optimization(
+        self, query: qal.ImplicitSqlQuery, join_graph: JoinGraph
+    ) -> LogicalJoinTree:
         """Specialized optimization algorithm for queries with just a single join.
 
         The algorithm can still be meaningful to determine the inner and outer relation for the only join that has to be
@@ -721,9 +858,13 @@ class UESJoinOrderOptimizer(JoinOrderOptimization):
             The resulting join tree
         """
         table1, table2 = query.tables()
-        table1_smaller = (self.stats_container.base_table_estimates[table1]
-                          < self.stats_container.base_table_estimates[table2])
-        small_table, large_table = (table1, table2) if table1_smaller else (table2, table1)
+        table1_smaller = (
+            self.stats_container.base_table_estimates[table1]
+            < self.stats_container.base_table_estimates[table2]
+        )
+        small_table, large_table = (
+            (table1, table2) if table1_smaller else (table2, table1)
+        )
 
         large_card = self.stats_container.base_table_estimates[large_table]
         small_card = self.stats_container.base_table_estimates[small_table]
@@ -732,10 +873,14 @@ class UESJoinOrderOptimizer(JoinOrderOptimization):
         join_bound = self.join_estimation.estimate_for(join_predicate, join_graph)
 
         join_tree = LogicalJoinTree.scan(large_table, annotation=large_card)
-        join_tree = join_tree.join_with(small_table, annotation=join_bound, partner_annotation=small_card)
+        join_tree = join_tree.join_with(
+            small_table, annotation=join_bound, partner_annotation=small_card
+        )
         return join_tree
 
-    def _star_query_optimizer(self, query: qal.ImplicitSqlQuery, join_graph: JoinGraph) -> LogicalJoinTree:
+    def _star_query_optimizer(
+        self, query: qal.ImplicitSqlQuery, join_graph: JoinGraph
+    ) -> LogicalJoinTree:
         """Join ordering algorithm for star queries (i.e. queries which only consist of primary key/foreign key joins).
 
         The algorithm is inspired by UES and always tries to insert the table next that guarantees the smallest upper bound.
@@ -757,7 +902,9 @@ class UESJoinOrderOptimizer(JoinOrderOptimization):
         lowest_bound = np.inf
         lowest_bound_join = None
         for candidate_join in join_graph.available_join_paths():
-            current_bound = self.join_estimation.estimate_for(candidate_join.join_condition, join_graph)
+            current_bound = self.join_estimation.estimate_for(
+                candidate_join.join_condition, join_graph
+            )
             if current_bound < lowest_bound:
                 lowest_bound = current_bound
                 lowest_bound_join = candidate_join
@@ -766,25 +913,39 @@ class UESJoinOrderOptimizer(JoinOrderOptimization):
         start_card = self.stats_container.base_table_estimates[start_table]
         join_tree = LogicalJoinTree.scan(start_table, annotation=start_card)
         join_graph.mark_joined(start_table)
-        join_tree = self._apply_pk_fk_join(query, lowest_bound_join, join_bound=lowest_bound, join_graph=join_graph,
-                                           current_join_tree=join_tree)
+        join_tree = self._apply_pk_fk_join(
+            query,
+            lowest_bound_join,
+            join_bound=lowest_bound,
+            join_graph=join_graph,
+            current_join_tree=join_tree,
+        )
 
         # join partner selection
         while join_graph.contains_free_tables():
             lowest_bound = np.inf
             lowest_bound_join = None
             for candidate_join in join_graph.available_join_paths():
-                current_bound = self.join_estimation.estimate_for(candidate_join.join_condition, join_graph)
+                current_bound = self.join_estimation.estimate_for(
+                    candidate_join.join_condition, join_graph
+                )
                 if current_bound < lowest_bound:
                     lowest_bound = current_bound
                     lowest_bound_join = candidate_join
 
-            join_tree = self._apply_pk_fk_join(query, lowest_bound_join, join_bound=lowest_bound,
-                                               join_graph=join_graph, current_join_tree=join_tree)
+            join_tree = self._apply_pk_fk_join(
+                query,
+                lowest_bound_join,
+                join_bound=lowest_bound,
+                join_graph=join_graph,
+                current_join_tree=join_tree,
+            )
 
         return join_tree
 
-    def _table_base_cardinality_ordering(self, table: TableReference, join_edge: dict) -> int:
+    def _table_base_cardinality_ordering(
+        self, table: TableReference, join_edge: dict
+    ) -> int:
         """Utility method to impose an ordering of multiple primary key tables for a foreign key join.
 
         The actual ordering sorts the primary key tables according to their upper bounds and is used internally by the join
@@ -809,9 +970,15 @@ class UESJoinOrderOptimizer(JoinOrderOptimization):
         """
         return self.stats_container.base_table_estimates[table]
 
-    def _apply_pk_fk_join(self, query: qal.SqlQuery, pk_fk_join: JoinPath, *,
-                          join_bound: int, join_graph: JoinGraph,
-                          current_join_tree: LogicalJoinTree) -> LogicalJoinTree:
+    def _apply_pk_fk_join(
+        self,
+        query: qal.SqlQuery,
+        pk_fk_join: JoinPath,
+        *,
+        join_bound: int,
+        join_graph: JoinGraph,
+        current_join_tree: LogicalJoinTree,
+    ) -> LogicalJoinTree:
         """Includes a specific pk/fk join into a join tree, taking care of all necessary updates.
 
         Parameters
@@ -834,14 +1001,20 @@ class UESJoinOrderOptimizer(JoinOrderOptimization):
         """
         target_table = pk_fk_join.target_table
         target_cardinality = self.stats_container.base_table_estimates[target_table]
-        updated_join_tree = current_join_tree.join_with(target_table, annotation=join_bound,
-                                                        partner_annotation=target_cardinality)
+        updated_join_tree = current_join_tree.join_with(
+            target_table, annotation=join_bound, partner_annotation=target_cardinality
+        )
         join_graph.mark_joined(target_table, pk_fk_join.join_condition)
         self.stats_container.upper_bounds[updated_join_tree] = join_bound
         return updated_join_tree
 
-    def _insert_pk_joins(self, query: qal.SqlQuery, pk_joins: Iterable[JoinPath],
-                         join_tree: LogicalJoinTree, join_graph: JoinGraph) -> LogicalJoinTree:
+    def _insert_pk_joins(
+        self,
+        query: qal.SqlQuery,
+        pk_joins: Iterable[JoinPath],
+        join_tree: LogicalJoinTree,
+        join_graph: JoinGraph,
+    ) -> LogicalJoinTree:
         """Generalization of `_apply_pk_fk_join` to multiple join paths.
 
         Parameters
@@ -866,9 +1039,15 @@ class UESJoinOrderOptimizer(JoinOrderOptimization):
             pk_table = pk_join.target_table
             if not join_graph.is_free_table(pk_table):
                 continue
-            pk_join_bound = self.join_estimation.estimate_for(pk_join.join_condition, join_graph)
+            pk_join_bound = self.join_estimation.estimate_for(
+                pk_join.join_condition, join_graph
+            )
             pk_base_cardinality = self.stats_container.base_table_estimates[pk_table]
-            join_tree = join_tree.join_with(pk_table, annotation=pk_join_bound, partner_annotation=pk_base_cardinality)
+            join_tree = join_tree.join_with(
+                pk_table,
+                annotation=pk_join_bound,
+                partner_annotation=pk_base_cardinality,
+            )
             join_graph.mark_joined(pk_table, pk_join.join_condition)
             self.stats_container.upper_bounds[join_tree] = pk_join_bound
         return join_tree
@@ -881,11 +1060,13 @@ class UESJoinOrderOptimizer(JoinOrderOptimization):
         UESJoinOrderOptimizer
             The cloned optimizer
         """
-        return UESJoinOrderOptimizer(base_table_estimation=copy.copy(self.base_table_estimation),
-                                     join_estimation=copy.copy(self.join_estimation),
-                                     subquery_policy=copy.copy(self.subquery_policy),
-                                     stats_container=copy.copy(self.stats_container),
-                                     database=self.database)
+        return UESJoinOrderOptimizer(
+            base_table_estimation=copy.copy(self.base_table_estimation),
+            join_estimation=copy.copy(self.join_estimation),
+            subquery_policy=copy.copy(self.subquery_policy),
+            stats_container=copy.copy(self.stats_container),
+            database=self.database,
+        )
 
     def _log_information(self, info: str) -> None:
         """Displays arbitrary information.
@@ -901,10 +1082,15 @@ class UESJoinOrderOptimizer(JoinOrderOptimization):
         if self._logging_enabled:
             print(info)
 
-    def _log_optimization_progress(self, phase: str, candidate_table: TableReference,
-                                   pk_joins: Iterable[JoinPath], *,
-                                   join_condition: qal.AbstractPredicate | None = None,
-                                   subquery_join: bool | None = None) -> None:
+    def _log_optimization_progress(
+        self,
+        phase: str,
+        candidate_table: TableReference,
+        pk_joins: Iterable[JoinPath],
+        *,
+        join_condition: qal.AbstractPredicate | None = None,
+        subquery_join: bool | None = None,
+    ) -> None:
         """Displays the current optimizer state.
 
         The current implementation of this method writes to *stdout* directly. If logging is disabled, no information is
@@ -928,11 +1114,19 @@ class UESJoinOrderOptimizer(JoinOrderOptimization):
         # TODO: use proper logging instead of print() calls
         if not self._logging_enabled:
             return
-        log_components = [phase, "::", str(candidate_table), "with PK joins", str(pk_joins)]
+        log_components = [
+            phase,
+            "::",
+            str(candidate_table),
+            "with PK joins",
+            str(pk_joins),
+        ]
         if join_condition:
             log_components.extend(["on condition", str(join_condition)])
         if subquery_join is not None:
-            log_components.append("with subquery" if subquery_join else "without subquery")
+            log_components.append(
+                "with subquery" if subquery_join else "without subquery"
+            )
         log_message = " ".join(log_components)
         print(log_message)
 
@@ -962,23 +1156,29 @@ class UESOperatorSelection(PhysicalOperatorSelection):
         super().__init__()
         self.database = database
 
-    def select_physical_operators(self, query: qal.SqlQuery,
-                                  join_order: Optional[JoinTree]) -> PhysicalOperatorAssignment:
+    def select_physical_operators(
+        self, query: qal.SqlQuery, join_order: Optional[JoinTree]
+    ) -> PhysicalOperatorAssignment:
         assignment = PhysicalOperatorAssignment()
         if self.database.hinting().supports_hint(JoinOperator.NestedLoopJoin):
-            assignment.set_operator_enabled_globally(JoinOperator.NestedLoopJoin, False,
-                                                     overwrite_fine_grained_selection=True)
+            assignment.set_operator_enabled_globally(
+                JoinOperator.NestedLoopJoin,
+                False,
+                overwrite_fine_grained_selection=True,
+            )
         return assignment
 
     def describe(self) -> dict:
         return {"name": "ues"}
 
 
-UESOptimizationPreCheck = validation.merge_checks(validation.ImplicitQueryPreCheck(),
-                                                  validation.EquiJoinPreCheck(),
-                                                  validation.DependentSubqueryPreCheck(),
-                                                  validation.SetOperationsPreCheck(),
-                                                  validation.VirtualTablesPreCheck())
+UESOptimizationPreCheck = validation.merge_checks(
+    validation.ImplicitQueryPreCheck(),
+    validation.EquiJoinPreCheck(),
+    validation.DependentSubqueryPreCheck(),
+    validation.SetOperationsPreCheck(),
+    validation.VirtualTablesPreCheck(),
+)
 """Check for all query features that UES does (not) support.
 
 This check asserts that the following criteria are met:

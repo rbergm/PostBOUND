@@ -28,7 +28,9 @@ class RandomJoinOrderOptimizer(pb.JoinOrderOptimization):
         # However, we might also develop a more adaptive algorithm that checks which hints are supported by the target
         # database. If it also supports bushy join orders, we might generate such join orders instead.
         # Therefore, we store the target database here and demonstrate how we can easily access it using the DatabasePool
-        self.target_db = target_db if target_db is not None else pb.db.current_database()
+        self.target_db = (
+            target_db if target_db is not None else pb.db.current_database()
+        )
 
     def optimize_join_order(self, query: pb.SqlQuery) -> pb.opt.LogicalJoinTree:
         # This is the most important method that handles the actual join order optimization
@@ -41,7 +43,6 @@ class RandomJoinOrderOptimizer(pb.JoinOrderOptimization):
 
         # Our algorithm simply joins one table after another, until all tables have inserted into the join order
         while join_graph.contains_free_tables():
-
             # Figure out which joins are available right now. In an actual optimization scenario, these would be candidate
             # joins and the algorithm would need to figure out which join is the best one.
             candidate_joins = join_graph.available_join_paths()
@@ -86,7 +87,7 @@ pipeline.build()
 # Run a couple of optimizations. Hopefully, they each contain a different join order
 query = job_workload["1a"]
 for i in range(3):
-    print("Run", i+1, "::")
+    print("Run", i + 1, "::")
     optimized_query = pipeline.optimize_query(query)
     query_plan = postgres_db.optimizer().query_plan(optimized_query)
     print(query_plan.inspect())

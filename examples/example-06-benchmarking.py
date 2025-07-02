@@ -18,7 +18,9 @@ job_workload = pb.workloads.job()
 
 # Configure the optimization pipeline for UES
 ues_settings = presets.fetch("ues")
-ues_pipeline = pb.MultiStageOptimizationPipeline(postgres_db).load_settings(ues_settings).build()
+ues_pipeline = (
+    pb.MultiStageOptimizationPipeline(postgres_db).load_settings(ues_settings).build()
+)
 
 # Execute the benchmarks: each query should be repeated 3 times and each workload should be repeated 3 times as well
 # After each workload repetition, the execution order of all queries should be changed. Finally, all queries should be executed
@@ -26,11 +28,23 @@ ues_pipeline = pb.MultiStageOptimizationPipeline(postgres_db).load_settings(ues_
 query_preparation = pb.executor.QueryPreparationService(count_star=True)
 
 # Benchmark the native workload
-native_results = pb.execute_workload(job_workload, postgres_db,
-                                     workload_repetitions=3, per_query_repetitions=3, shuffled=True,
-                                     query_preparation=query_preparation, include_labels=True)
+native_results = pb.execute_workload(
+    job_workload,
+    postgres_db,
+    workload_repetitions=3,
+    per_query_repetitions=3,
+    shuffled=True,
+    query_preparation=query_preparation,
+    include_labels=True,
+)
 
 # Benchmark the UES workload
-ues_results = pb.optimize_and_execute_workload(job_workload, ues_pipeline,
-                                               workload_repetitions=3, per_query_repetitions=3, shuffled=True,
-                                               query_preparation=query_preparation, include_labels=True)
+ues_results = pb.optimize_and_execute_workload(
+    job_workload,
+    ues_pipeline,
+    workload_repetitions=3,
+    per_query_repetitions=3,
+    shuffled=True,
+    query_preparation=query_preparation,
+    include_labels=True,
+)

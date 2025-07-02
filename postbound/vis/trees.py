@@ -1,4 +1,5 @@
 """Provides generic utilities to transform arbitrary graph-like structures into Graphviz objects."""
+
 from __future__ import annotations
 
 import typing
@@ -27,10 +28,18 @@ def _gv_escape(node: T, node_id_generator: Callable[[T], int] = hash) -> str:
     return str(node_id_generator(node))
 
 
-def plot_tree(node: T, label_generator: Callable[[T], tuple[str, dict]], child_supplier: Callable[[T], Sequence[T]], *,
-              escape_labels: bool = True, out_path: str = "", out_format: str = "svg",
-              node_id_generator: Callable[[T], int] = hash,
-              _graph: Optional[gv.Graph] = None, **kwargs) -> gv.Graph:
+def plot_tree(
+    node: T,
+    label_generator: Callable[[T], tuple[str, dict]],
+    child_supplier: Callable[[T], Sequence[T]],
+    *,
+    escape_labels: bool = True,
+    out_path: str = "",
+    out_format: str = "svg",
+    node_id_generator: Callable[[T], int] = hash,
+    _graph: Optional[gv.Graph] = None,
+    **kwargs,
+) -> gv.Graph:
     """Transforms an arbitrary tree into a Graphviz graph. The tree traversal is achieved via callback functions.
 
     Start the traversal at the root node.
@@ -84,8 +93,14 @@ def plot_tree(node: T, label_generator: Callable[[T], tuple[str, dict]], child_s
     for child in child_supplier(node):
         child_key = _gv_escape(child, node_id_generator=node_id_generator)
         _graph.edge(node_key, child_key)
-        _graph = plot_tree(child, label_generator, child_supplier, escape_labels=escape_labels,
-                           node_id_generator=node_id_generator, _graph=_graph)
+        _graph = plot_tree(
+            child,
+            label_generator,
+            child_supplier,
+            escape_labels=escape_labels,
+            node_id_generator=node_id_generator,
+            _graph=_graph,
+        )
 
     if initial and out_path:
         _graph.render(out_path, format=out_format, cleanup=True)

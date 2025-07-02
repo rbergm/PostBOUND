@@ -8,7 +8,15 @@ from numbers import Number
 from typing import Any, Literal, Optional
 
 from . import util
-from ._core import Cardinality, Cost, ScanOperator, JoinOperator, PhysicalOperator, TableReference, ColumnReference
+from ._core import (
+    Cardinality,
+    Cost,
+    ScanOperator,
+    JoinOperator,
+    PhysicalOperator,
+    TableReference,
+    ColumnReference,
+)
 from .qal import SqlExpression, ColumnExpression, AbstractPredicate
 from .util import jsondict, StateError
 
@@ -42,7 +50,9 @@ class SortKey:
     """
 
     @staticmethod
-    def of(column: SqlExpression | ColumnReference, *, ascending: bool = True) -> SortKey:
+    def of(
+        column: SqlExpression | ColumnReference, *, ascending: bool = True
+    ) -> SortKey:
         """Creates a new sort key for a single column.
 
         Parameters
@@ -63,7 +73,9 @@ class SortKey:
         return SortKey([column], ascending=ascending)
 
     @staticmethod
-    def for_equivalence_class(members: Iterable[SqlExpression | ColumnReference], *, ascending: bool = True) -> SortKey:
+    def for_equivalence_class(
+        members: Iterable[SqlExpression | ColumnReference], *, ascending: bool = True
+    ) -> SortKey:
         """Creates a new sort key for an equivalence class of columns.
 
         This is just a more expressive alias for calling the constructor directly. This method assumes that the values for
@@ -83,10 +95,15 @@ class SortKey:
         SortKey
             The sort key with an equivalence class for the columns.
         """
-        members = [ColumnExpression(mem) if isinstance(mem, ColumnReference) else mem for mem in members]
+        members = [
+            ColumnExpression(mem) if isinstance(mem, ColumnReference) else mem
+            for mem in members
+        ]
         return SortKey(members, ascending=ascending)
 
-    def __init__(self, columns: Iterable[SqlExpression], *, ascending: bool = True) -> None:
+    def __init__(
+        self, columns: Iterable[SqlExpression], *, ascending: bool = True
+    ) -> None:
         self._members = frozenset(columns)
         if not self._members:
             raise ValueError("Sort key must contain at least one column")
@@ -136,10 +153,18 @@ class SortKey:
         return len(self._members)
 
     def __contains__(self, item: object) -> bool:
-        return self.is_compatible_with(item) if isinstance(item, (ColumnReference, SortKey)) else False
+        return (
+            self.is_compatible_with(item)
+            if isinstance(item, (ColumnReference, SortKey))
+            else False
+        )
 
     def __eq__(self, other: object) -> bool:
-        return isinstance(other, type(self)) and self._members == other._members and self._ascending == other._ascending
+        return (
+            isinstance(other, type(self))
+            and self._members == other._members
+            and self._ascending == other._ascending
+        )
 
     def __hash__(self) -> int:
         return hash((self._members, self._ascending))
@@ -194,13 +219,17 @@ class PlanParams:
         Additional metadata that should be attached to the plan parameters.
     """
 
-    def __init__(self, *, base_table: Optional[TableReference] = None,
-                 filter_predicate: Optional[AbstractPredicate] = None,
-                 sort_keys: Optional[Sequence[SortKey]] = None,
-                 parallel_workers: Optional[int] = None,
-                 index: Optional[str] = None,
-                 lookup_key: Optional[SqlExpression] = None,
-                 **kwargs) -> None:
+    def __init__(
+        self,
+        *,
+        base_table: Optional[TableReference] = None,
+        filter_predicate: Optional[AbstractPredicate] = None,
+        sort_keys: Optional[Sequence[SortKey]] = None,
+        parallel_workers: Optional[int] = None,
+        index: Optional[str] = None,
+        lookup_key: Optional[SqlExpression] = None,
+        **kwargs,
+    ) -> None:
         self._params: dict[str, Any] = {
             "base_table": base_table,
             "filter_predicate": filter_predicate,
@@ -208,7 +237,7 @@ class PlanParams:
             "parallel_workers": parallel_workers if parallel_workers else 0,
             "index": index if index else "",
             "lookup_key": lookup_key if lookup_key else None,
-            **kwargs
+            **kwargs,
         }
 
     @property
@@ -379,14 +408,16 @@ class PlanEstimates:
     took to execute the entire operator (which just happened to include parallel processing), **not** an average of the
     worker execution time or some other measure.
     """
-    def __init__(self, *,
-                 cardinality: Cardinality = Cardinality.unknown(),
-                 cost: Cost = math.nan) -> None:
-        cardinality = cardinality if isinstance(cardinality, Cardinality) else Cardinality(cardinality)
-        self._params = {
-            "cardinality": cardinality,
-            "cost": cost
-        }
+
+    def __init__(
+        self, *, cardinality: Cardinality = Cardinality.unknown(), cost: Cost = math.nan
+    ) -> None:
+        cardinality = (
+            cardinality
+            if isinstance(cardinality, Cardinality)
+            else Cardinality(cardinality)
+        )
+        self._params = {"cardinality": cardinality, "cost": cost}
 
     @property
     def cardinality(self) -> Cardinality:
@@ -480,17 +511,24 @@ class PlanMeasures:
     worker execution time or some other measure.
     """
 
-    def __init__(self, *,
-                 cardinality: Cardinality = Cardinality.unknown(),
-                 execution_time: float = math.nan,
-                 cache_hits: Optional[int] = None,
-                 cache_misses: Optional[int] = None) -> None:
-        cardinality = cardinality if isinstance(cardinality, Cardinality) else Cardinality(cardinality)
+    def __init__(
+        self,
+        *,
+        cardinality: Cardinality = Cardinality.unknown(),
+        execution_time: float = math.nan,
+        cache_hits: Optional[int] = None,
+        cache_misses: Optional[int] = None,
+    ) -> None:
+        cardinality = (
+            cardinality
+            if isinstance(cardinality, Cardinality)
+            else Cardinality(cardinality)
+        )
         self._params = {
             "cardinality": cardinality,
             "execution_time": execution_time,
             "cache_hits": cache_hits,
-            "cache_misses": cache_misses
+            "cache_misses": cache_misses,
         }
 
     @property
@@ -570,7 +608,10 @@ class PlanMeasures:
         self._params[key] = value
 
     def __bool__(self) -> bool:
-        return any(not math.isnan(v) if isinstance(v, Number) else (v is not None) for v in self._params.values())
+        return any(
+            not math.isnan(v) if isinstance(v, Number) else (v is not None)
+            for v in self._params.values()
+        )
 
 
 @dataclass(frozen=True)
@@ -738,43 +779,91 @@ class QueryPlan:
     OptimizerInterface.query_plan
     OptimizationPipeline.query_execution_plan
     """
-    def __init__(self, node_type: str | PhysicalOperator, *,
-                 operator: Optional[PhysicalOperator] = None, children: Optional[QueryPlan | Iterable[QueryPlan]] = None,
-                 plan_params: Optional[PlanParams] = None, subplan: Optional[Subplan] = None,
-                 estimates: Optional[PlanEstimates] = None, measures: Optional[PlanMeasures] = None,
-                 base_table: Optional[TableReference] = None, filter_predicate: Optional[AbstractPredicate] = None,
-                 parallel_workers: Optional[int] = None, index: Optional[str] = None,
-                 sort_keys: Optional[Sequence[SortKey]] = None, lookup_key: Optional[SqlExpression] = None,
-                 estimated_cardinality: Cardinality = Cardinality.unknown(), estimated_cost: Cost = math.nan,
-                 actual_cardinality: Cardinality = Cardinality.unknown(), execution_time: float = math.nan,
-                 cache_hits: Optional[int] = None, cache_misses: Optional[int] = None,
-                 subplan_root: Optional[QueryPlan] = None, subplan_target_name: str = "",
-                 **kwargs) -> None:
+
+    def __init__(
+        self,
+        node_type: str | PhysicalOperator,
+        *,
+        operator: Optional[PhysicalOperator] = None,
+        children: Optional[QueryPlan | Iterable[QueryPlan]] = None,
+        plan_params: Optional[PlanParams] = None,
+        subplan: Optional[Subplan] = None,
+        estimates: Optional[PlanEstimates] = None,
+        measures: Optional[PlanMeasures] = None,
+        base_table: Optional[TableReference] = None,
+        filter_predicate: Optional[AbstractPredicate] = None,
+        parallel_workers: Optional[int] = None,
+        index: Optional[str] = None,
+        sort_keys: Optional[Sequence[SortKey]] = None,
+        lookup_key: Optional[SqlExpression] = None,
+        estimated_cardinality: Cardinality = Cardinality.unknown(),
+        estimated_cost: Cost = math.nan,
+        actual_cardinality: Cardinality = Cardinality.unknown(),
+        execution_time: float = math.nan,
+        cache_hits: Optional[int] = None,
+        cache_misses: Optional[int] = None,
+        subplan_root: Optional[QueryPlan] = None,
+        subplan_target_name: str = "",
+        **kwargs,
+    ) -> None:
         if not node_type:
             raise ValueError("Node type must be provided")
 
-        custom_params = (base_table, filter_predicate, parallel_workers, index, sort_keys, lookup_key)
+        custom_params = (
+            base_table,
+            filter_predicate,
+            parallel_workers,
+            index,
+            sort_keys,
+            lookup_key,
+        )
         has_custom_params = any(v is not None for v in custom_params) or bool(kwargs)
         if plan_params is not None and has_custom_params:
-            raise ValueError("PlanParams and individual parameters/kwargs cannot be provided at the same time")
+            raise ValueError(
+                "PlanParams and individual parameters/kwargs cannot be provided at the same time"
+            )
         if plan_params is None:
-            plan_params = PlanParams(base_table=base_table, filter_predicate=filter_predicate, sort_keys=sort_keys,
-                                     lookup_key=lookup_key, parallel_workers=parallel_workers, index=index, **kwargs)
+            plan_params = PlanParams(
+                base_table=base_table,
+                filter_predicate=filter_predicate,
+                sort_keys=sort_keys,
+                lookup_key=lookup_key,
+                parallel_workers=parallel_workers,
+                index=index,
+                **kwargs,
+            )
 
-        if estimates is not None and any(not math.isnan(v) for v in (estimated_cardinality, estimated_cost)):
-            raise ValueError("PlanEstimates and individual estimates cannot be provided at the same time")
+        if estimates is not None and any(
+            not math.isnan(v) for v in (estimated_cardinality, estimated_cost)
+        ):
+            raise ValueError(
+                "PlanEstimates and individual estimates cannot be provided at the same time"
+            )
         if estimates is None:
-            estimates = PlanEstimates(cardinality=estimated_cardinality, cost=estimated_cost)
+            estimates = PlanEstimates(
+                cardinality=estimated_cardinality, cost=estimated_cost
+            )
 
-        has_custom_measures = any(v is not None and not math.isnan(v) for v in (execution_time, cache_hits, cache_misses))
+        has_custom_measures = any(
+            v is not None and not math.isnan(v)
+            for v in (execution_time, cache_hits, cache_misses)
+        )
         if measures is not None and has_custom_measures:
-            raise ValueError("PlanMeasures and individual measures cannot be provided at the same time")
+            raise ValueError(
+                "PlanMeasures and individual measures cannot be provided at the same time"
+            )
         if measures is None:
-            measures = PlanMeasures(execution_time=execution_time, cardinality=actual_cardinality,
-                                    cache_hits=cache_hits, cache_misses=cache_misses)
+            measures = PlanMeasures(
+                execution_time=execution_time,
+                cardinality=actual_cardinality,
+                cache_hits=cache_hits,
+                cache_misses=cache_misses,
+            )
 
         if subplan is not None and (subplan_root is not None or subplan_target_name):
-            raise ValueError("Subplan and individual subplan components cannot be provided at the same time")
+            raise ValueError(
+                "Subplan and individual subplan components cannot be provided at the same time"
+            )
         if subplan is None and (subplan_root is not None or subplan_target_name):
             subplan = Subplan(subplan_root, subplan_target_name)
 
@@ -1112,8 +1201,14 @@ class QueryPlan:
 
         Notice that tables that are only accessed as part of user-specific metadata are not considered.
         """
-        subplan_tabs: set[TableReference] = self._subplan.tables() if self._subplan else set()
-        return self._plan_params.tables() | util.set_union(c.tables() for c in self._children) | subplan_tabs
+        subplan_tabs: set[TableReference] = (
+            self._subplan.tables() if self._subplan else set()
+        )
+        return (
+            self._plan_params.tables()
+            | util.set_union(c.tables() for c in self._children)
+            | subplan_tabs
+        )
 
     def columns(self) -> set[ColumnReference]:
         """Provides all columns that are accessed at some point in the plan.
@@ -1121,13 +1216,19 @@ class QueryPlan:
         Notice that columns that are only accessed as part of user-specific metadata are not considered.
         """
         subplan_cols = self._subplan.root.columns() if self._subplan else set()
-        return self._plan_params.columns() | util.set_union(c.columns() for c in self._children) | subplan_cols
+        return (
+            self._plan_params.columns()
+            | util.set_union(c.columns() for c in self._children)
+            | subplan_cols
+        )
 
     def iternodes(self) -> Iterable[QueryPlan]:
         """Provides all nodes that are contained in the plan in depth-first order, prioritizing outer child nodes."""
         return util.flatten(child.iternodes() for child in self._children) + [self]
 
-    def lookup(self, tables: TableReference | Iterable[TableReference]) -> Optional[QueryPlan]:
+    def lookup(
+        self, tables: TableReference | Iterable[TableReference]
+    ) -> Optional[QueryPlan]:
         """Traverse the plan to find a specific intermediate node.
 
         If two nodes compute the same intermediate (i.e. provide the same tables), the node that is higher up in the plan is
@@ -1160,8 +1261,13 @@ class QueryPlan:
 
         return None
 
-    def find_first_node(self, predicate: Callable[[QueryPlan], bool], *args,
-                        direction: JoinDirection = "outer", **kwargs) -> Optional[QueryPlan]:
+    def find_first_node(
+        self,
+        predicate: Callable[[QueryPlan], bool],
+        *args,
+        direction: JoinDirection = "outer",
+        **kwargs,
+    ) -> Optional[QueryPlan]:
         """Recursively searches for the first node that matches a specific predicate.
 
         Parameters
@@ -1188,21 +1294,38 @@ class QueryPlan:
             return None
 
         if len(self.children) == 1:
-            return self.input_node.find_first_node(predicate, *args, direction=direction, **kwargs)
+            return self.input_node.find_first_node(
+                predicate, *args, direction=direction, **kwargs
+            )
 
-        first_candidate, second_candidate = ((self.outer_child, self.inner_child) if direction == "outer"
-                                             else (self.inner_child, self.outer_child))
-        first_match = first_candidate.find_first_node(predicate, *args, direction=direction, **kwargs)
+        first_candidate, second_candidate = (
+            (self.outer_child, self.inner_child)
+            if direction == "outer"
+            else (self.inner_child, self.outer_child)
+        )
+        first_match = first_candidate.find_first_node(
+            predicate, *args, direction=direction, **kwargs
+        )
         if first_match:
             return first_match
 
-        second_match = second_candidate.find_first_node(predicate, *args, direction=direction, **kwargs)
+        second_match = second_candidate.find_first_node(
+            predicate, *args, direction=direction, **kwargs
+        )
         if second_match:
             return second_match
 
-        return self._subplan.root.find_first_node(predicate, *args, direction=direction, **kwargs) if self._subplan else None
+        return (
+            self._subplan.root.find_first_node(
+                predicate, *args, direction=direction, **kwargs
+            )
+            if self._subplan
+            else None
+        )
 
-    def find_all_nodes(self, predicate: Callable[[QueryPlan], bool], *args, **kwargs) -> Iterable[QueryPlan]:
+    def find_all_nodes(
+        self, predicate: Callable[[QueryPlan], bool], *args, **kwargs
+    ) -> Iterable[QueryPlan]:
         """Recursively searches for all nodes that match a specific predicate.
 
         The order in which the matching nodes appear is an implementation detail and should not be relied upon.
@@ -1226,7 +1349,9 @@ class QueryPlan:
         for child in self._children:
             matches.extend(child.find_all_nodes(predicate, *args, **kwargs))
         if self._subplan:
-            matches.extend(self._subplan.root.find_all_nodes(predicate, *args, **kwargs))
+            matches.extend(
+                self._subplan.root.find_all_nodes(predicate, *args, **kwargs)
+            )
         return matches
 
     def cout(self, *, include_auxiliaries: bool = True) -> float:
@@ -1245,8 +1370,14 @@ class QueryPlan:
         """
         if not self.is_analyze():
             return math.nan
-        own_card = self.actual_cardinality if include_auxiliaries or not self.is_auxiliary() else 0
-        return own_card + sum(c.cout(include_auxiliaries=include_auxiliaries) for c in self.children)
+        own_card = (
+            self.actual_cardinality
+            if include_auxiliaries or not self.is_auxiliary()
+            else 0
+        )
+        return own_card + sum(
+            c.cout(include_auxiliaries=include_auxiliaries) for c in self.children
+        )
 
     def qerror(self) -> float:
         """Computes the *Q-error* of the operator.
@@ -1271,8 +1402,13 @@ class QueryPlan:
         smaller = min(self.estimated_cardinality, self.actual_cardinality) + 1
         return larger / smaller
 
-    def with_estimates(self, *, cardinality: Optional[Cardinality] = None, cost: Optional[Cost] = None,
-                       keep_measures: bool = False) -> QueryPlan:
+    def with_estimates(
+        self,
+        *,
+        cardinality: Optional[Cardinality] = None,
+        cost: Optional[Cost] = None,
+        keep_measures: bool = False,
+    ) -> QueryPlan:
         """Replaces the current estimates of the operator with new ones.
 
         Parameters
@@ -1292,12 +1428,22 @@ class QueryPlan:
         cost = self.estimated_cost if cost is None else cost
         updated_estimates = PlanEstimates(cardinality=cardinality, cost=cost)
         updated_measures = self._measures if keep_measures else None
-        return QueryPlan(self.node_type, operator=self.operator, children=self.children,
-                         plan_params=self.params, estimates=updated_estimates, measures=updated_measures,
-                         subplan=self.subplan)
+        return QueryPlan(
+            self.node_type,
+            operator=self.operator,
+            children=self.children,
+            plan_params=self.params,
+            estimates=updated_estimates,
+            measures=updated_measures,
+            subplan=self.subplan,
+        )
 
-    def with_actual_card(self, *, cost_estimator: Optional[Callable[[QueryPlan, Cardinality], Cost]] = None,
-                         ignore_nan: bool = True) -> QueryPlan:
+    def with_actual_card(
+        self,
+        *,
+        cost_estimator: Optional[Callable[[QueryPlan, Cardinality], Cost]] = None,
+        ignore_nan: bool = True,
+    ) -> QueryPlan:
         """Replaces the current estimates of the operator with the actual measurements.
 
         The updated plan will not contain any measurements anymore and the costs will be set to *Nan* unless an explicit cost
@@ -1320,28 +1466,46 @@ class QueryPlan:
             estimated cost. The current plan is not changed.
         """
         if self.actual_cardinality:
-            updated_cardinality = (self.estimated_cardinality if ignore_nan and self.actual_cardinality.isnan()
-                                   else self.actual_cardinality)
-            updated_cost = cost_estimator(self, updated_cardinality) if cost_estimator else math.nan
-            updated_estimates = PlanEstimates(cardinality=updated_cardinality, cost=updated_cost)
+            updated_cardinality = (
+                self.estimated_cardinality
+                if ignore_nan and self.actual_cardinality.isnan()
+                else self.actual_cardinality
+            )
+            updated_cost = (
+                cost_estimator(self, updated_cardinality)
+                if cost_estimator
+                else math.nan
+            )
+            updated_estimates = PlanEstimates(
+                cardinality=updated_cardinality, cost=updated_cost
+            )
             updated_measures = None
         else:
             updated_estimates = self._estimates
             updated_measures = None
 
-        updated_children = [child.with_actual_card(cost_estimator=cost_estimator, ignore_nan=ignore_nan)
-                            for child in self.children]
+        updated_children = [
+            child.with_actual_card(cost_estimator=cost_estimator, ignore_nan=ignore_nan)
+            for child in self.children
+        ]
 
         if self.subplan:
-            updated_subplan_root = self.subplan.root.with_actual_card(cost_estimator=cost_estimator,
-                                                                      ignore_nan=ignore_nan)
+            updated_subplan_root = self.subplan.root.with_actual_card(
+                cost_estimator=cost_estimator, ignore_nan=ignore_nan
+            )
             updated_subplan = Subplan(updated_subplan_root, self.subplan.target_name)
         else:
             updated_subplan = None
 
-        return QueryPlan(self.node_type, operator=self.operator, children=updated_children,
-                         plan_params=self.params, estimates=updated_estimates, measures=updated_measures,
-                         subplan=updated_subplan)
+        return QueryPlan(
+            self.node_type,
+            operator=self.operator,
+            children=updated_children,
+            plan_params=self.params,
+            estimates=updated_estimates,
+            measures=updated_measures,
+            subplan=updated_subplan,
+        )
 
     def canonical(self) -> QueryPlan:
         """Creates a normalized version of the query plan.
@@ -1366,19 +1530,31 @@ class QueryPlan:
 
         if self.is_scan():
             # we remove all child nodes from scans to prevent any bitmap-scan shenanigans
-            return QueryPlan(self.node_type, operator=self.operator,
-                             base_table=self.base_table, children=[],
-                             plan_params=self.params, estimates=self.estimates, measures=self.measures,
-                             subplan=updated_subplan)
+            return QueryPlan(
+                self.node_type,
+                operator=self.operator,
+                base_table=self.base_table,
+                children=[],
+                plan_params=self.params,
+                estimates=self.estimates,
+                measures=self.measures,
+                subplan=updated_subplan,
+            )
 
         if not self.is_scan() and not self.is_join():
             # skip over auxiliary nodes
             return self.input_node.canonical()
 
         children = [child.canonical() for child in self.children]
-        return QueryPlan(self.node_type, operator=self.operator, children=children,
-                         plan_params=self.params, estimates=self.estimates, measures=self.measures,
-                         subplan=updated_subplan)
+        return QueryPlan(
+            self.node_type,
+            operator=self.operator,
+            children=children,
+            plan_params=self.params,
+            estimates=self.estimates,
+            measures=self.measures,
+            subplan=updated_subplan,
+        )
 
     def inspect(self, *, fields: Optional[Iterable[str]] = None) -> str:
         """Provides a human-readable representation of the query plan, inspired by Postgre's *EXPLAIN* output.
@@ -1405,8 +1581,10 @@ class QueryPlan:
             "estimated_cost": round(self.estimated_cost, 3),
             "c_out": self.cout(),
             "max_qerror": round(max(node.qerror() for node in all_nodes), 3),
-            "avg_qerror": round(sum(node.qerror() for node in all_nodes) / len(all_nodes), 3),
-            "phys_ops": collections.Counter(child.node_type for child in all_nodes)
+            "avg_qerror": round(
+                sum(node.qerror() for node in all_nodes) / len(all_nodes), 3
+            ),
+            "phys_ops": collections.Counter(child.node_type for child in all_nodes),
         }
         return summary
 
@@ -1422,7 +1600,7 @@ class QueryPlan:
             "plan_params": self._plan_params,
             "estimates": self._estimates,
             "measures": self._measures,
-            "subplan": self._subplan
+            "subplan": self._subplan,
         }
 
     def __len__(self) -> int:
@@ -1436,10 +1614,12 @@ class QueryPlan:
             yield from self.subplan.root
 
     def __eq__(self, other: object) -> bool:
-        return (isinstance(other, type(self))
-                and self._node_type == other._node_type
-                and self.base_table == other.base_table
-                and self._children == other._children)
+        return (
+            isinstance(other, type(self))
+            and self._node_type == other._node_type
+            and self.base_table == other.base_table
+            and self._children == other._children
+        )
 
     def __hash__(self) -> int:
         return hash((self.node_type, self.base_table, self._children))
@@ -1465,22 +1645,34 @@ def _default_explain(plan: QueryPlan, *, padding: str) -> str:
 
     estimated_card = round(plan.estimated_cardinality, 3)
     estimated_cost = round(plan.estimated_cost, 3)
-    components.append(f"{padding}{metadata_indent}Estimated Cardinality={estimated_card}, Estimated Cost={estimated_cost}")
+    components.append(
+        f"{padding}{metadata_indent}Estimated Cardinality={estimated_card}, Estimated Cost={estimated_cost}"
+    )
 
     if plan.is_analyze():
         actual_card = round(plan.actual_cardinality, 3)
         exec_time = round(plan.execution_time, 3)
-        components.append(f"{padding}{metadata_indent}Actual Cardinality={actual_card}, Actual Time={exec_time}s")
+        components.append(
+            f"{padding}{metadata_indent}Actual Cardinality={actual_card}, Actual Time={exec_time}s"
+        )
 
     measures = plan.measures
     if measures.cache_hits is not None or measures.cache_misses is not None:
-        cache_hits = measures.cache_hits if measures.cache_hits is not None else math.nan
-        cache_misses = measures.cache_misses if measures.cache_misses is not None else math.nan
-        components.append(f"{padding}{metadata_indent}Cache Hits={cache_hits}, Cache Misses={cache_misses}")
+        cache_hits = (
+            measures.cache_hits if measures.cache_hits is not None else math.nan
+        )
+        cache_misses = (
+            measures.cache_misses if measures.cache_misses is not None else math.nan
+        )
+        components.append(
+            f"{padding}{metadata_indent}Cache Hits={cache_hits}, Cache Misses={cache_misses}"
+        )
 
     params = plan.params
     if params.parallel_workers:
-        components.append(f"{padding}{metadata_indent}Parallel Workers={params.parallel_workers}")
+        components.append(
+            f"{padding}{metadata_indent}Parallel Workers={params.parallel_workers}"
+        )
     if params.lookup_key:
         components.append(f"{padding}{metadata_indent}Lookup Key={params.lookup_key}")
 
@@ -1507,22 +1699,39 @@ def _custom_explain(plan: QueryPlan, *, fields: list[str], padding: str) -> str:
         else:
             value = getattr(plan, attr)
 
-        attr_values[attr] = str(round(value, 3)) if isinstance(value, Number) else str(value)
+        attr_values[attr] = (
+            str(round(value, 3)) if isinstance(value, Number) else str(value)
+        )
 
     attr_str = " ".join(f"{attr}={val}" for attr, val in attr_values.items())
     explain_data = f"{padding}   [{attr_str}]"
     return explain_data
 
 
-def _explainify(plan: QueryPlan, *, fields: list[str], level: int = _starting_indentation) -> str:
+def _explainify(
+    plan: QueryPlan, *, fields: list[str], level: int = _starting_indentation
+) -> str:
     """Handler method to generate the *EXPLAIN* output for the current node and its children."""
-    padding = "" if not level else "  " + "      " * (level-1)
+    padding = "" if not level else "  " + "      " * (level - 1)
     prefix = f"{padding}->  " if padding else ""
 
-    header = f"{plan.node_type}({plan.base_table})" if plan.is_scan() else plan.node_type
-    explain_data = _custom_explain(plan, fields=fields, padding=padding) if fields else _default_explain(plan, padding=padding)
-    child_explains = "\n".join(f"{_explainify(child, fields=fields, level=level + 1)}" for child in plan.children)
-    subplan_explains = _explainify(plan.subplan.root, fields=fields, level=level + 1) if plan.subplan else ""
+    header = (
+        f"{plan.node_type}({plan.base_table})" if plan.is_scan() else plan.node_type
+    )
+    explain_data = (
+        _custom_explain(plan, fields=fields, padding=padding)
+        if fields
+        else _default_explain(plan, padding=padding)
+    )
+    child_explains = "\n".join(
+        f"{_explainify(child, fields=fields, level=level + 1)}"
+        for child in plan.children
+    )
+    subplan_explains = (
+        _explainify(plan.subplan.root, fields=fields, level=level + 1)
+        if plan.subplan
+        else ""
+    )
     if subplan_explains:
         child_explains = f"{child_explains}\n{subplan_explains}"
 
@@ -1539,5 +1748,7 @@ def _astify(plan: QueryPlan, *, indentation: int = _starting_indentation) -> str
         item_str = f"{prefix}{plan.node_type}({plan.base_table})"
     else:
         item_str = f"{prefix}{plan.node_type}"
-    child_str = "\n".join(_astify(child, indentation=indentation + 2) for child in plan.children)
+    child_str = "\n".join(
+        _astify(child, indentation=indentation + 2) for child in plan.children
+    )
     return f"{item_str}\n{child_str}" if child_str else item_str

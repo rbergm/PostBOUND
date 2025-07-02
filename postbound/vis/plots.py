@@ -12,11 +12,20 @@ from matplotlib.gridspec import GridSpec, GridSpecFromSubplotSpec
 Plotter = Callable[[str, pd.DataFrame, Axis], None]
 
 
-def make_grid_plot(data: pd.DataFrame, *, plot_func: Plotter,
-                   label_col: str = "label", ncols: int = 4, base_widht: int = 5, base_height: int = 3) -> tuple[Figure, Axis]:
+def make_grid_plot(
+    data: pd.DataFrame,
+    *,
+    plot_func: Plotter,
+    label_col: str = "label",
+    ncols: int = 4,
+    base_widht: int = 5,
+    base_height: int = 3,
+) -> tuple[Figure, Axis]:
     labels = data[label_col].unique()
     nrows = math.ceil(len(labels) / ncols)
-    fig, ax = plt.subplots(ncols=ncols, nrows=nrows, figsize=(ncols * base_widht, nrows * base_height))
+    fig, ax = plt.subplots(
+        ncols=ncols, nrows=nrows, figsize=(ncols * base_widht, nrows * base_height)
+    )
     current_col, current_row = 0, 0
 
     for label in labels:  # label is accessed using @ syntax
@@ -35,17 +44,31 @@ def make_grid_plot(data: pd.DataFrame, *, plot_func: Plotter,
     return fig, ax
 
 
-def make_facetted_grid_plot(data: pd.DataFrame, *, upper_plotter: Plotter, lower_plotter: Plotter,
-                            label_col: str = "label", ncols: int = 4,
-                            base_width: int = 5, base_height: int = 3,
-                            grid_wspace: float = 0.4, grid_hspace: float = 0.6) -> Figure:
+def make_facetted_grid_plot(
+    data: pd.DataFrame,
+    *,
+    upper_plotter: Plotter,
+    lower_plotter: Plotter,
+    label_col: str = "label",
+    ncols: int = 4,
+    base_width: int = 5,
+    base_height: int = 3,
+    grid_wspace: float = 0.4,
+    grid_hspace: float = 0.6,
+) -> Figure:
     labels = data[label_col].unique()
     nrows = math.ceil(len(labels) / ncols)
-    fig = plt.figure(constrained_layout=True, figsize=(ncols * base_width, nrows * base_height))
-    parent_gridspec = GridSpec(nrows, ncols, figure=fig, wspace=grid_wspace, hspace=grid_hspace)
+    fig = plt.figure(
+        constrained_layout=True, figsize=(ncols * base_width, nrows * base_height)
+    )
+    parent_gridspec = GridSpec(
+        nrows, ncols, figure=fig, wspace=grid_wspace, hspace=grid_hspace
+    )
 
     for i, label in enumerate(labels):
-        current_gridspec = GridSpecFromSubplotSpec(2, 1, subplot_spec=parent_gridspec[i], wspace=0.1, hspace=0.1)
+        current_gridspec = GridSpecFromSubplotSpec(
+            2, 1, subplot_spec=parent_gridspec[i], wspace=0.1, hspace=0.1
+        )
         current_samples = data.query(f"{label_col} == @label")
 
         upper_ax = plt.Subplot(fig, current_gridspec[0])

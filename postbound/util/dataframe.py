@@ -1,4 +1,5 @@
 """Utilities to work with Pandas data frames"""
+
 from __future__ import annotations
 
 from collections.abc import Collection, Iterable
@@ -7,8 +8,11 @@ from typing import Any, Optional
 import pandas as pd
 
 
-def _df_from_dict(data: dict[Any, Collection[Any]], key_name: Optional[str] = None,
-                  column_names: Optional[Iterable[str]] = None) -> pd.DataFrame:
+def _df_from_dict(
+    data: dict[Any, Collection[Any]],
+    key_name: Optional[str] = None,
+    column_names: Optional[Iterable[str]] = None,
+) -> pd.DataFrame:
     data_template = next(iter(data.values()))
     if column_names is None:
         column_name_map = {i: str(i) for i in range(len(data_template))}
@@ -36,8 +40,12 @@ def _df_from_list(data: Collection[dict[Any, Any]]) -> pd.DataFrame:
     return pd.DataFrame(df_container)
 
 
-def as_df(data: dict[Any, Collection[Any]] | Collection[dict[Any, Any]], *, key_name: Optional[str] = None,
-          column_names: Optional[Iterable[str]] = None) -> pd.DataFrame:
+def as_df(
+    data: dict[Any, Collection[Any]] | Collection[dict[Any, Any]],
+    *,
+    key_name: Optional[str] = None,
+    column_names: Optional[Iterable[str]] = None,
+) -> pd.DataFrame:
     """Generates a new Pandas `DataFrame`.
 
     The contents of the dataframe can be supplied in one of two forms: a collection of dictionaries will be transformed

@@ -11,15 +11,23 @@ from typing import Optional
 from .. import validation
 from ..validation import OptimizationPreCheck
 from ... import db, util
-from ..._core import TableReference, ScanOperator, JoinOperator, IntermediateOperator, Cardinality
+from ..._core import (
+    TableReference,
+    ScanOperator,
+    JoinOperator,
+    IntermediateOperator,
+    Cardinality,
+)
 from ..._qep import QueryPlan, SortKey
 from ..._stages import PlanEnumerator, CostModel, CardinalityEstimator
 from ...qal import (
     ColumnReference,
     SqlQuery,
     ColumnExpression,
-    CompoundOperator, AbstractPredicate, CompoundPredicate,
-    transform
+    CompoundOperator,
+    AbstractPredicate,
+    CompoundPredicate,
+    transform,
 )
 from ...db import DatabaseSchema
 from ...db.postgres import PostgresScanHints, PostgresJoinHints
@@ -29,8 +37,13 @@ from ...util import jsondict, LogicError
 DPTable = dict[frozenset[TableReference], QueryPlan]
 
 
-def _calc_plan_estimates(query: SqlQuery, plan: QueryPlan, *,
-                         cost_model: CostModel, cardinality_estimator: CardinalityEstimator) -> QueryPlan:
+def _calc_plan_estimates(
+    query: SqlQuery,
+    plan: QueryPlan,
+    *,
+    cost_model: CostModel,
+    cardinality_estimator: CardinalityEstimator,
+) -> QueryPlan:
     """Handler method to update the cost and cardinality estimates of a given plan."""
     card_est = cardinality_estimator.calculate_estimate(query, plan.tables())
     plan = plan.with_estimates(cardinality=card_est)
@@ -38,7 +51,9 @@ def _calc_plan_estimates(query: SqlQuery, plan: QueryPlan, *,
     return plan.with_estimates(cost=cost_est)
 
 
-def _collect_used_columns(query: SqlQuery, table: TableReference, *, schema: DatabaseSchema) -> set[ColumnReference]:
+def _collect_used_columns(
+    query: SqlQuery, table: TableReference, *, schema: DatabaseSchema
+) -> set[ColumnReference]:
     columns = query.columns_of(table)
     for star_expression in query.select_clause.star_expressions():
         if table not in star_expression.tables():
@@ -91,30 +106,53 @@ class DynamicProgrammingEnumerator(PlanEnumerator):
         from the `DatabasePool`.
     """
 
-    def __init__(self, *, supported_scan_ops: Optional[set[ScanOperator]] = None,
-                 supported_join_ops: Optional[set[JoinOperator]] = None,
-                 target_db: Optional[db.Database] = None) -> None:
-        target_db = target_db if target_db is not None else db.DatabasePool.get_instance().current_database()
+    def __init__(
+        self,
+        *,
+        supported_scan_ops: Optional[set[ScanOperator]] = None,
+        supported_join_ops: Optional[set[JoinOperator]] = None,
+        target_db: Optional[db.Database] = None,
+    ) -> None:
+        target_db = (
+            target_db
+            if target_db is not None
+            else db.DatabasePool.get_instance().current_database()
+        )
 
-        supported_scan_ops = supported_scan_ops if supported_scan_ops is not None else set(ScanOperator)
-        supported_join_ops = supported_join_ops if supported_join_ops is not None else set(JoinOperator)
+        supported_scan_ops = (
+            supported_scan_ops if supported_scan_ops is not None else set(ScanOperator)
+        )
+        supported_join_ops = (
+            supported_join_ops if supported_join_ops is not None else set(JoinOperator)
+        )
 
         if target_db is not None:
-            supported_scan_ops = {op for op in supported_scan_ops if target_db.hinting().supports_hint(op)}
-            supported_join_ops = {op for op in supported_join_ops if target_db.hinting().supports_hint(op)}
+            supported_scan_ops = {
+                op for op in supported_scan_ops if target_db.hinting().supports_hint(op)
+            }
+            supported_join_ops = {
+                op for op in supported_join_ops if target_db.hinting().supports_hint(op)
+            }
 
         self._target_db = target_db
         self._scan_ops = supported_scan_ops
         self._join_ops = supported_join_ops
 
-    def generate_execution_plan(self, query, *, cost_model, cardinality_estimator) -> QueryPlan:
+    def generate_execution_plan(
+        self, query, *, cost_model, cardinality_estimator
+    ) -> QueryPlan:
         cost_model.initialize(self._target_db, query)
         cardinality_estimator.initialize(self._target_db, query)
 
-        dp_table = self._determine_base_access_paths(query, cost_model=cost_model,
-                                                     cardinality_estimator=cardinality_estimator)
-        final_plan = self._build_join_paths(query, dp_table=dp_table, cost_model=cost_model,
-                                            cardinality_estimator=cardinality_estimator)
+        dp_table = self._determine_base_access_paths(
+            query, cost_model=cost_model, cardinality_estimator=cardinality_estimator
+        )
+        final_plan = self._build_join_paths(
+            query,
+            dp_table=dp_table,
+            cost_model=cost_model,
+            cardinality_estimator=cardinality_estimator,
+        )
 
         cost_model.cleanup()
         cardinality_estimator.cleanup()
@@ -127,7 +165,7 @@ class DynamicProgrammingEnumerator(PlanEnumerator):
             validation.EquiJoinPreCheck(),
             validation.InnerJoinPreCheck(),
             validation.SubqueryPreCheck(),
-            validation.SetOperationsPreCheck()
+            validation.SetOperationsPreCheck(),
         )
 
     def describe(self) -> jsondict:
@@ -136,11 +174,16 @@ class DynamicProgrammingEnumerator(PlanEnumerator):
             "flavor": "default",
             "scan_ops": [op.name for op in self._scan_ops],
             "join_ops": [op.name for op in self._join_ops],
-            "database_system": self._target_db.describe()
+            "database_system": self._target_db.describe(),
         }
 
-    def _determine_base_access_paths(self, query: SqlQuery, *, cost_model: CostModel,
-                                     cardinality_estimator: CardinalityEstimator) -> DPTable:
+    def _determine_base_access_paths(
+        self,
+        query: SqlQuery,
+        *,
+        cost_model: CostModel,
+        cardinality_estimator: CardinalityEstimator,
+    ) -> DPTable:
         """Initializes a new dynamic programming table which includes the cheapest access paths for each base table.
 
         The base tables are directly inferred from the query.
@@ -148,32 +191,48 @@ class DynamicProgrammingEnumerator(PlanEnumerator):
         dp_table: DPTable = {}
 
         for table in query.tables():
-
             # We determine access paths in two phases: initially, we just gather all possible access paths to a specific table.
             # Aftewards, we evaluate these candidates according to our cost model and select the cheapest one.
             candidate_plans: list[QueryPlan] = []
 
             if ScanOperator.SequentialScan in self._scan_ops:
-                candidate_plans.append(QueryPlan(ScanOperator.SequentialScan, base_table=table))
+                candidate_plans.append(
+                    QueryPlan(ScanOperator.SequentialScan, base_table=table)
+                )
             candidate_plans += self._determine_index_paths(query, table)
 
-            candidate_plans = [_calc_plan_estimates(query, candidate,
-                                                    cost_model=cost_model, cardinality_estimator=cardinality_estimator)
-                               for candidate in candidate_plans]
+            candidate_plans = [
+                _calc_plan_estimates(
+                    query,
+                    candidate,
+                    cost_model=cost_model,
+                    cardinality_estimator=cardinality_estimator,
+                )
+                for candidate in candidate_plans
+            ]
 
             cheapest_plan = min(candidate_plans, key=lambda plan: plan.estimated_cost)
             dp_table[frozenset([table])] = cheapest_plan
 
         return dp_table
 
-    def _determine_index_paths(self, query: SqlQuery, table: TableReference) -> Iterable[QueryPlan]:
+    def _determine_index_paths(
+        self, query: SqlQuery, table: TableReference
+    ) -> Iterable[QueryPlan]:
         """Gathers all possible index access paths for a specific table.
 
         The access paths do not contain a cost or cardinality estimates, yet. These information must be added by the caller.
         """
-        required_columns = _collect_used_columns(query, table, schema=self._target_db.schema())
-        can_idx_only_scan = len(required_columns) <= 1  # check for <= 1 to include cross products with select star
-        candidate_indexes = {column: self._target_db.schema().indexes_on(column) for column in required_columns}
+        required_columns = _collect_used_columns(
+            query, table, schema=self._target_db.schema()
+        )
+        can_idx_only_scan = (
+            len(required_columns) <= 1
+        )  # check for <= 1 to include cross products with select star
+        candidate_indexes = {
+            column: self._target_db.schema().indexes_on(column)
+            for column in required_columns
+        }
 
         if not candidate_indexes:
             return []
@@ -186,22 +245,44 @@ class DynamicProgrammingEnumerator(PlanEnumerator):
 
             for index in available_indexes:
                 if ScanOperator.IndexScan in self._scan_ops:
-                    candidate_plans.append(QueryPlan(ScanOperator.IndexScan, base_table=table,
-                                                     index=index, sort_keys=sorting))
+                    candidate_plans.append(
+                        QueryPlan(
+                            ScanOperator.IndexScan,
+                            base_table=table,
+                            index=index,
+                            sort_keys=sorting,
+                        )
+                    )
                 if can_idx_only_scan and ScanOperator.IndexOnlyScan in self._scan_ops:
-                    candidate_plans.append(QueryPlan(ScanOperator.IndexOnlyScan, base_table=table,
-                                                     index=index, sort_keys=sorting))
+                    candidate_plans.append(
+                        QueryPlan(
+                            ScanOperator.IndexOnlyScan,
+                            base_table=table,
+                            index=index,
+                            sort_keys=sorting,
+                        )
+                    )
 
         if ScanOperator.BitmapScan in self._scan_ops:
             # The target DB/cost model is responsible for figuring out good bitmap index hierarchies.
             # Since bitmap scans combine multiple indexes, we do not consider bitmap scans in the above loop.
             # Furthermore, bitmap scans are partial sequential scans and thus do not provide a sort key.
-            candidate_plans.append(QueryPlan(ScanOperator.BitmapScan, base_table=table, indexes=candidate_indexes))
+            candidate_plans.append(
+                QueryPlan(
+                    ScanOperator.BitmapScan, base_table=table, indexes=candidate_indexes
+                )
+            )
 
         return candidate_plans
 
-    def _build_join_paths(self, query: SqlQuery, *, dp_table: DPTable, cost_model: CostModel,
-                          cardinality_estimator: CardinalityEstimator) -> QueryPlan:
+    def _build_join_paths(
+        self,
+        query: SqlQuery,
+        *,
+        dp_table: DPTable,
+        cost_model: CostModel,
+        cardinality_estimator: CardinalityEstimator,
+    ) -> QueryPlan:
         """Main optimization loop for the dynamic programmer.
 
         In this loop we construct increasingly large join paths by combining the optimal access paths of their input relations.
@@ -220,15 +301,21 @@ class DynamicProgrammingEnumerator(PlanEnumerator):
         candidate_tables = query.tables()
 
         for current_level in range(2, len(candidate_tables) + 1):
-
             # The current level describes how large the intermediate join paths that we are considering next are going to be.
             # For each potential intermediate that matches the current level, we determine the cheapest access path. This path
             # is going to re-use the cheapest access paths that we determined as part of an earlier iteration.
 
-            current_intermediates = itertools.combinations(candidate_tables, current_level)
+            current_intermediates = itertools.combinations(
+                candidate_tables, current_level
+            )
             access_paths = {
-                frozenset(join): self._determine_cheapest_path(query, join, dp_table=dp_table, cost_model=cost_model,
-                                                               cardinality_estimator=cardinality_estimator)
+                frozenset(join): self._determine_cheapest_path(
+                    query,
+                    join,
+                    dp_table=dp_table,
+                    cost_model=cost_model,
+                    cardinality_estimator=cardinality_estimator,
+                )
                 for join in current_intermediates
                 if predicates.joins_tables(join)  # we do not consider cross products
             }
@@ -236,8 +323,15 @@ class DynamicProgrammingEnumerator(PlanEnumerator):
 
         return dp_table[frozenset(candidate_tables)]
 
-    def _determine_cheapest_path(self, query: SqlQuery, intermediate: Iterable[TableReference], *, dp_table: DPTable,
-                                 cost_model: CostModel, cardinality_estimator: CardinalityEstimator) -> QueryPlan:
+    def _determine_cheapest_path(
+        self,
+        query: SqlQuery,
+        intermediate: Iterable[TableReference],
+        *,
+        dp_table: DPTable,
+        cost_model: CostModel,
+        cardinality_estimator: CardinalityEstimator,
+    ) -> QueryPlan:
         """DP subroutine that selects the cheapest access path for a specific intermediate."""
         intermediate = frozenset(intermediate)
         candidate_plans: list[QueryPlan] = []
@@ -270,18 +364,33 @@ class DynamicProgrammingEnumerator(PlanEnumerator):
                 continue
 
             if JoinOperator.NestedLoopJoin in self._join_ops:
-                candidate_plans.append(QueryPlan(JoinOperator.NestedLoopJoin, children=[outer_plan, inner_plan]))
+                candidate_plans.append(
+                    QueryPlan(
+                        JoinOperator.NestedLoopJoin, children=[outer_plan, inner_plan]
+                    )
+                )
 
             if JoinOperator.HashJoin in self._join_ops:
-                candidate_plans.append(QueryPlan(JoinOperator.HashJoin, children=[outer_plan, inner_plan]))
+                candidate_plans.append(
+                    QueryPlan(JoinOperator.HashJoin, children=[outer_plan, inner_plan])
+                )
 
             if JoinOperator.SortMergeJoin in self._join_ops:
                 # The target DB is utimately responsible for figuring out whether it needs explicit sorts or whether it can
                 # just merge directly.
-                candidate_plans.append(QueryPlan(JoinOperator.SortMergeJoin, children=[outer_plan, inner_plan]))
+                candidate_plans.append(
+                    QueryPlan(
+                        JoinOperator.SortMergeJoin, children=[outer_plan, inner_plan]
+                    )
+                )
 
         candidate_plans = [
-            _calc_plan_estimates(query, candidate, cost_model=cost_model, cardinality_estimator=cardinality_estimator)
+            _calc_plan_estimates(
+                query,
+                candidate,
+                cost_model=cost_model,
+                cardinality_estimator=cardinality_estimator,
+            )
             for candidate in candidate_plans
         ]
 
@@ -408,19 +517,37 @@ class PostgresDynProg(PlanEnumerator):
 
     """
 
-    def __init__(self, *, supported_scan_ops: Optional[set[ScanOperator]] = None,
-                 supported_join_ops: Optional[set[JoinOperator]] = None,
-                 enable_materialize: bool = True, enable_memoize: bool = True, enable_sort: bool = True,
-                 add_path_hook: Optional[AddPathHook] = None,
-                 target_db: Optional[db.Database] = None) -> None:
-        target_db = target_db if target_db is not None else db.DatabasePool.get_instance().current_database()
+    def __init__(
+        self,
+        *,
+        supported_scan_ops: Optional[set[ScanOperator]] = None,
+        supported_join_ops: Optional[set[JoinOperator]] = None,
+        enable_materialize: bool = True,
+        enable_memoize: bool = True,
+        enable_sort: bool = True,
+        add_path_hook: Optional[AddPathHook] = None,
+        target_db: Optional[db.Database] = None,
+    ) -> None:
+        target_db = (
+            target_db
+            if target_db is not None
+            else db.DatabasePool.get_instance().current_database()
+        )
 
-        supported_scan_ops = supported_scan_ops if supported_scan_ops is not None else PostgresScanHints
-        supported_join_ops = supported_join_ops if supported_join_ops is not None else PostgresJoinHints
+        supported_scan_ops = (
+            supported_scan_ops if supported_scan_ops is not None else PostgresScanHints
+        )
+        supported_join_ops = (
+            supported_join_ops if supported_join_ops is not None else PostgresJoinHints
+        )
 
         if target_db is not None:
-            supported_scan_ops = {op for op in supported_scan_ops if target_db.hinting().supports_hint(op)}
-            supported_join_ops = {op for op in supported_join_ops if target_db.hinting().supports_hint(op)}
+            supported_scan_ops = {
+                op for op in supported_scan_ops if target_db.hinting().supports_hint(op)
+            }
+            supported_join_ops = {
+                op for op in supported_join_ops if target_db.hinting().supports_hint(op)
+            }
 
         self.query: SqlQuery = None
         self.cost_model: CostModel = None
@@ -435,7 +562,9 @@ class PostgresDynProg(PlanEnumerator):
         self._enable_sort = enable_sort
         self._add_path_hook = add_path_hook
 
-    def generate_execution_plan(self, query, *, cost_model, cardinality_estimator) -> QueryPlan:
+    def generate_execution_plan(
+        self, query, *, cost_model, cardinality_estimator
+    ) -> QueryPlan:
         self.query = transform.add_ec_predicates(query)
 
         cardinality_estimator.initialize(self.target_db, query)
@@ -447,7 +576,9 @@ class PostgresDynProg(PlanEnumerator):
         self._set_base_rel_pathlists(base_rels)
 
         final_rel = self._standard_join_search(initial_rels=base_rels)
-        assert final_rel.cheapest_path is not None, "No valid plan found for the given query."
+        assert final_rel.cheapest_path is not None, (
+            "No valid plan found for the given query."
+        )
 
         cost_model.cleanup()
         cardinality_estimator.cleanup()
@@ -463,7 +594,7 @@ class PostgresDynProg(PlanEnumerator):
             "flavor": "postgres",
             "scan_ops": [op.name for op in self._scan_ops],
             "join_ops": [op.name for op in self._join_ops],
-            "database_system": self.target_db.describe()
+            "database_system": self.target_db.describe(),
         }
 
     def pre_check(self) -> OptimizationPreCheck:
@@ -472,7 +603,7 @@ class PostgresDynProg(PlanEnumerator):
             validation.EquiJoinPreCheck(),
             validation.InnerJoinPreCheck(),
             validation.VirtualTablesPreCheck(),
-            validation.SetOperationsPreCheck()
+            validation.SetOperationsPreCheck(),
         )
 
     def standard_add_path(self, rel: RelOptInfo, path: QueryPlan) -> None:
@@ -498,15 +629,20 @@ class PostgresDynProg(PlanEnumerator):
         new_cost = path.estimated_cost
 
         for i, old_path in enumerate(rel.pathlist):
-            if not self._sorting_subsumes(path.sort_keys, other=old_path.params.sort_keys):
+            if not self._sorting_subsumes(
+                path.sort_keys, other=old_path.params.sort_keys
+            ):
                 result_paths.append(old_path)
                 continue
 
             # Postgres uses a fuzzy cost comparison (compare_path_costs_fuzzily() from pathnode.c) and evicts old paths even
             # if there cost is slightly better than the new path, if the new path is better sorted.
             old_cost = old_path.estimated_cost
-            new_dominates = (new_cost < old_cost if self._same_sorting(path.sort_keys, other=old_path.sort_keys)
-                             else new_cost <= 1.01 * old_cost)
+            new_dominates = (
+                new_cost < old_cost
+                if self._same_sorting(path.sort_keys, other=old_path.sort_keys)
+                else new_cost <= 1.01 * old_cost
+            )
 
             if new_dominates:
                 # the new path is better (or at least equally) sorted and cheaper, we can evict the old path
@@ -533,15 +669,19 @@ class PostgresDynProg(PlanEnumerator):
             paths = []
             partial_paths = []
             cheapest_path = None
-            cardinality = self.cardinality_estimator.calculate_estimate(self.query, intermediate)
+            cardinality = self.cardinality_estimator.calculate_estimate(
+                self.query, intermediate
+            )
 
-            initial_rels.append(RelOptInfo(
-                intermediate=intermediate,
-                pathlist=paths,
-                partial_paths=partial_paths,
-                cheapest_path=cheapest_path,
-                cardinality=cardinality
-            ))
+            initial_rels.append(
+                RelOptInfo(
+                    intermediate=intermediate,
+                    pathlist=paths,
+                    partial_paths=partial_paths,
+                    cheapest_path=cheapest_path,
+                    cardinality=cardinality,
+                )
+            )
 
         return initial_rels
 
@@ -580,7 +720,9 @@ class PostgresDynProg(PlanEnumerator):
             for rel in self.join_rel_level[level]:
                 self._set_cheapest(rel)
 
-        assert len(self.join_rel_level[levels_needed]) == 1, "Final join rel level should only contain one relation."
+        assert len(self.join_rel_level[levels_needed]) == 1, (
+            "Final join rel level should only contain one relation."
+        )
         final_rel = self.join_rel_level[levels_needed][0]
         self.join_rel_level = None
         return final_rel
@@ -621,19 +763,23 @@ class PostgresDynProg(PlanEnumerator):
             if rel.intermediate == intermediate:
                 return rel
 
-        cardinality = self.cardinality_estimator.calculate_estimate(self.query, intermediate)
+        cardinality = self.cardinality_estimator.calculate_estimate(
+            self.query, intermediate
+        )
         join_rel = RelOptInfo(
             intermediate=intermediate,
             pathlist=[],
             partial_paths=[],
             cheapest_path=None,
-            cardinality=cardinality
+            cardinality=cardinality,
         )
 
         self.join_rel_level[level].append(join_rel)
         return join_rel
 
-    def _add_paths_to_joinrel(self, join_rel: RelOptInfo, *, outer_rel: RelOptInfo, inner_rel: RelOptInfo) -> None:
+    def _add_paths_to_joinrel(
+        self, join_rel: RelOptInfo, *, outer_rel: RelOptInfo, inner_rel: RelOptInfo
+    ) -> None:
         """Builds all possible access paths for a specific join relation.
 
         The build process adheres to the assignment of join directions from the parameters, i.e. the `outer_rel` will always be
@@ -641,16 +787,20 @@ class PostgresDynProg(PlanEnumerator):
         assignment is, this method has to be called twice with inversed parameters.
         """
         if JoinOperator.NestedLoopJoin in self._join_ops:
-            self._match_unsorted_outer(join_rel, outer_rel=outer_rel, inner_rel=inner_rel)
+            self._match_unsorted_outer(
+                join_rel, outer_rel=outer_rel, inner_rel=inner_rel
+            )
         if JoinOperator.SortMergeJoin in self._join_ops:
             self._sort_inner_outer(join_rel, outer_rel=outer_rel, inner_rel=inner_rel)
         if JoinOperator.HashJoin in self._join_ops:
             self._hash_inner_outer(join_rel, outer_rel=outer_rel, inner_rel=inner_rel)
 
-    def _sort_inner_outer(self, join_rel: RelOptInfo, *, outer_rel: RelOptInfo, inner_rel: RelOptInfo) -> None:
+    def _sort_inner_outer(
+        self, join_rel: RelOptInfo, *, outer_rel: RelOptInfo, inner_rel: RelOptInfo
+    ) -> None:
         """Constructs all potential merge join paths for a specific intermediate.
 
-         This method assumes that merge joins are actually enabled.
+        This method assumes that merge joins are actually enabled.
         """
 
         # The implementation of this function is loosely based on sort_inner_outer() of the PG source code.
@@ -675,32 +825,50 @@ class PostgresDynProg(PlanEnumerator):
         # We simply loop over all join keys. For each join key, we try each combination of inner and outer relations and
         # see if we end up with a decent merge join path.
         for join_key in join_keys:
-            outer_col, inner_col = self._extract_join_columns(join_key, outer_rel=outer_rel, inner_rel=inner_rel)
+            outer_col, inner_col = self._extract_join_columns(
+                join_key, outer_rel=outer_rel, inner_rel=inner_rel
+            )
             if not outer_col or not inner_col:
                 continue
 
             for outer_path in outer_rel.pathlist:
-                if not self._is_sorted_by(outer_path, outer_col) and not self._enable_sort:
+                if (
+                    not self._is_sorted_by(outer_path, outer_col)
+                    and not self._enable_sort
+                ):
                     # If the path is not already sorted and we are not allowed to sort it ourselves, there is no point in
                     # merge joining. Just skip the path.
                     continue
 
-                outer_path = (outer_path if self._is_sorted_by(outer_path, outer_col)
-                              else self._create_sort_path(outer_path, sort_key=outer_col))
+                outer_path = (
+                    outer_path
+                    if self._is_sorted_by(outer_path, outer_col)
+                    else self._create_sort_path(outer_path, sort_key=outer_col)
+                )
 
                 for inner_path in inner_rel.pathlist:
-                    if not self._is_sorted_by(inner_path, inner_col) and not self._enable_sort:
+                    if (
+                        not self._is_sorted_by(inner_path, inner_col)
+                        and not self._enable_sort
+                    ):
                         # If the path is not already sorted and we are not allowed to sort it ourselves, there is no point in
                         # merge joining. Just skip the path.
                         continue
 
-                    inner_path = (inner_path if self._is_sorted_by(inner_path, inner_col)
-                                  else self._create_sort_path(inner_path, sort_key=inner_col))
+                    inner_path = (
+                        inner_path
+                        if self._is_sorted_by(inner_path, inner_col)
+                        else self._create_sort_path(inner_path, sort_key=inner_col)
+                    )
 
-                    merge_path = self._create_mergejoin_path(join_rel, outer_path=outer_path, inner_path=inner_path)
+                    merge_path = self._create_mergejoin_path(
+                        join_rel, outer_path=outer_path, inner_path=inner_path
+                    )
                     self._add_path(join_rel, merge_path)
 
-    def _match_unsorted_outer(self, join_rel: RelOptInfo, *, outer_rel: RelOptInfo, inner_rel: RelOptInfo) -> None:
+    def _match_unsorted_outer(
+        self, join_rel: RelOptInfo, *, outer_rel: RelOptInfo, inner_rel: RelOptInfo
+    ) -> None:
         """Constructs all potential nested loop-join paths for a specific intermediate.
 
         This also includes adding paths with memoization or materialization if they are allowed and appear useful.
@@ -719,32 +887,49 @@ class PostgresDynProg(PlanEnumerator):
             raise LogicError("No cheapest paths set")
 
         # Try plain NLJ first, variations (memoization/materialization) afterwards
-        nlj_path = self._create_nestloop_path(join_rel, outer_path=outer_path, inner_path=inner_path)
+        nlj_path = self._create_nestloop_path(
+            join_rel, outer_path=outer_path, inner_path=inner_path
+        )
         self._add_path(join_rel, nlj_path)
 
         if self._enable_memoize:
-
             # For memoization, we attempt to cache each potential join key for the inner relation. Since there might be
             # multiple such keys, especially for larger intermediates, we need to check multiple
 
-            join_predicate = self.query.predicates().joins_between(outer_rel.intermediate, inner_rel.intermediate)
-            assert join_predicate is not None, ("Cross product detected. This should never happen so deep down in the "
-                                                "optimization process")
+            join_predicate = self.query.predicates().joins_between(
+                outer_rel.intermediate, inner_rel.intermediate
+            )
+            assert join_predicate is not None, (
+                "Cross product detected. This should never happen so deep down in the "
+                "optimization process"
+            )
 
             for first_col, second_col in join_predicate.join_partners():
-                cache_key = first_col if first_col.table in inner_rel.intermediate else second_col
-                assert cache_key.table in inner_rel.intermediate, "Cache key must be part of the inner relation"
+                cache_key = (
+                    first_col
+                    if first_col.table in inner_rel.intermediate
+                    else second_col
+                )
+                assert cache_key.table in inner_rel.intermediate, (
+                    "Cache key must be part of the inner relation"
+                )
 
                 memo_inner = self._create_memoize_path(inner_path, cache_key=cache_key)
-                memo_nlj = self._create_nestloop_path(join_rel, outer_path=outer_path, inner_path=memo_inner)
+                memo_nlj = self._create_nestloop_path(
+                    join_rel, outer_path=outer_path, inner_path=memo_inner
+                )
                 self._add_path(join_rel, memo_nlj)
 
         if self._enable_materialize:
             mat_path = self._create_materialize_path(inner_path)
-            mat_nlj = self._create_nestloop_path(join_rel, outer_path=outer_path, inner_path=mat_path)
+            mat_nlj = self._create_nestloop_path(
+                join_rel, outer_path=outer_path, inner_path=mat_path
+            )
             self._add_path(join_rel, mat_nlj)
 
-    def _hash_inner_outer(self, join_rel: RelOptInfo, *, outer_rel: RelOptInfo, inner_rel: RelOptInfo) -> None:
+    def _hash_inner_outer(
+        self, join_rel: RelOptInfo, *, outer_rel: RelOptInfo, inner_rel: RelOptInfo
+    ) -> None:
         """Constructs the hash join path for a specific intermediate.
 
         In contrast to merge joins and nested loop joins, there is really only one way to perform a hash join.
@@ -758,7 +943,9 @@ class PostgresDynProg(PlanEnumerator):
         outer_path, inner_path = outer_rel.cheapest_path, inner_rel.cheapest_path
         if not outer_path or not inner_path:
             raise LogicError("No cheapest paths set")
-        hash_path = self._create_hashjoin_path(join_rel, outer_path=outer_path, inner_path=inner_path)
+        hash_path = self._create_hashjoin_path(
+            join_rel, outer_path=outer_path, inner_path=inner_path
+        )
         self._add_path(join_rel, hash_path)
 
     def _add_path(self, rel: RelOptInfo, path: QueryPlan) -> None:
@@ -799,7 +986,7 @@ class PostgresDynProg(PlanEnumerator):
             ScanOperator.SequentialScan,
             children=[],
             base_table=baserel,
-            estimated_cardinality=rel.cardinality
+            estimated_cardinality=rel.cardinality,
         )
 
         cost = self.cost_model.estimate_cost(self.query, path)
@@ -814,13 +1001,21 @@ class PostgresDynProg(PlanEnumerator):
 
         If both kinds of index scans are disabled, this method does nothing.
         """
-        if ScanOperator.IndexScan not in self._scan_ops and ScanOperator.IndexOnlyScan not in self._scan_ops:
+        if (
+            ScanOperator.IndexScan not in self._scan_ops
+            and ScanOperator.IndexOnlyScan not in self._scan_ops
+        ):
             return
 
         base_table = util.simplify(rel.intermediate)
         required_columns = self.query.columns_of(base_table)
-        idx_only_scan = ScanOperator.IndexOnlyScan in self._scan_ops and len(required_columns) <= 1
-        candidate_indexes = {column: self.target_db.schema().indexes_on(column) for column in required_columns}
+        idx_only_scan = (
+            ScanOperator.IndexOnlyScan in self._scan_ops and len(required_columns) <= 1
+        )
+        candidate_indexes = {
+            column: self.target_db.schema().indexes_on(column)
+            for column in required_columns
+        }
 
         index_paths: list[QueryPlan] = []
         for column, available_indexes in candidate_indexes.items():
@@ -830,10 +1025,20 @@ class PostgresDynProg(PlanEnumerator):
 
             for index in available_indexes:
                 if ScanOperator.IndexScan in self._scan_ops:
-                    idx_path = QueryPlan(ScanOperator.IndexScan, base_table=base_table, index=index, sort_keys=sorting)
+                    idx_path = QueryPlan(
+                        ScanOperator.IndexScan,
+                        base_table=base_table,
+                        index=index,
+                        sort_keys=sorting,
+                    )
                     index_paths.append(idx_path)
                 if idx_only_scan:
-                    idx_path = QueryPlan(ScanOperator.IndexOnlyScan, base_table=base_table, index=index, sort_keys=sorting)
+                    idx_path = QueryPlan(
+                        ScanOperator.IndexOnlyScan,
+                        base_table=base_table,
+                        index=index,
+                        sort_keys=sorting,
+                    )
                     index_paths.append(idx_path)
 
         for path in index_paths:
@@ -859,17 +1064,24 @@ class PostgresDynProg(PlanEnumerator):
 
         base_table = util.simplify(rel.intermediate)
         required_columns = self.query.columns_of(base_table)
-        candidate_indexes = {column: self.target_db.schema().indexes_on(column) for column in required_columns}
+        candidate_indexes = {
+            column: self.target_db.schema().indexes_on(column)
+            for column in required_columns
+        }
         if not candidate_indexes:
             return
 
-        bitmap_path = QueryPlan(ScanOperator.BitmapScan, base_table=base_table, indexes=candidate_indexes)
+        bitmap_path = QueryPlan(
+            ScanOperator.BitmapScan, base_table=base_table, indexes=candidate_indexes
+        )
         cost_estimate = self.cost_model.estimate_cost(self.query, bitmap_path)
         bitmap_path = bitmap_path.with_estimates(cost=cost_estimate)
 
         self._add_path(rel, bitmap_path)
 
-    def _create_memoize_path(self, path: QueryPlan, *, cache_key: ColumnReference) -> QueryPlan:
+    def _create_memoize_path(
+        self, path: QueryPlan, *, cache_key: ColumnReference
+    ) -> QueryPlan:
         """Constructs and initializes a memo path for a specific relation.
 
         The `cache_key` is the column that identifies different entries in the memo table.
@@ -880,7 +1092,7 @@ class PostgresDynProg(PlanEnumerator):
             IntermediateOperator.Memoize,
             children=path,
             lookup_key=ColumnExpression(cache_key),
-            estimated_cardinality=path.estimated_cardinality
+            estimated_cardinality=path.estimated_cardinality,
         )
 
         cost_estimate = self.cost_model.estimate_cost(self.query, memo_path)
@@ -895,14 +1107,16 @@ class PostgresDynProg(PlanEnumerator):
         mat_path = QueryPlan(
             IntermediateOperator.Materialize,
             children=path,
-            estimated_cardinality=path.estimated_cardinality
+            estimated_cardinality=path.estimated_cardinality,
         )
 
         cost_estimate = self.cost_model.estimate_cost(self.query, mat_path)
         mat_path = mat_path.with_estimates(cost=cost_estimate)
         return mat_path
 
-    def _create_sort_path(self, path: QueryPlan, *, sort_key: ColumnReference) -> QueryPlan:
+    def _create_sort_path(
+        self, path: QueryPlan, *, sort_key: ColumnReference
+    ) -> QueryPlan:
         """Constructs and initializes a sort path for a specific relation on a specific column.
 
         The column to sort by is specified by `sort_key`. Notice that the sort path will always be created, even if the path
@@ -921,7 +1135,9 @@ class PostgresDynProg(PlanEnumerator):
         sort_path = sort_path.with_estimates(cost=cost_estimate)
         return sort_path
 
-    def _create_nestloop_path(self, join_rel: RelOptInfo, *, outer_path: QueryPlan, inner_path: QueryPlan) -> QueryPlan:
+    def _create_nestloop_path(
+        self, join_rel: RelOptInfo, *, outer_path: QueryPlan, inner_path: QueryPlan
+    ) -> QueryPlan:
         """Constructs and initializes a nested loop join path for a specific intermediate.
 
         This method assumes that nested loop joins are actually enabled.
@@ -942,14 +1158,16 @@ class PostgresDynProg(PlanEnumerator):
         nlj_path = QueryPlan(
             JoinOperator.NestedLoopJoin,
             children=[outer_path, inner_path],
-            estimated_cardinality=join_rel.cardinality
+            estimated_cardinality=join_rel.cardinality,
         )
 
         cost_estimate = self.cost_model.estimate_cost(self.query, nlj_path)
         nlj_path = nlj_path.with_estimates(cost=cost_estimate)
         return nlj_path
 
-    def _create_mergejoin_path(self, join_rel: RelOptInfo, *, outer_path: QueryPlan, inner_path: QueryPlan) -> QueryPlan:
+    def _create_mergejoin_path(
+        self, join_rel: RelOptInfo, *, outer_path: QueryPlan, inner_path: QueryPlan
+    ) -> QueryPlan:
         """Constructs and initializes a merge join path for a specific intermediate.
 
         This method assumes that merge joins are actually enabled and that the input paths are already sorted by the join key.
@@ -975,14 +1193,16 @@ class PostgresDynProg(PlanEnumerator):
             JoinOperator.SortMergeJoin,
             children=[outer_path, inner_path],
             sort_keys=[merge_key],
-            estimated_cardinality=join_rel.cardinality
+            estimated_cardinality=join_rel.cardinality,
         )
 
         cost_estimate = self.cost_model.estimate_cost(self.query, merge_path)
         merge_path = merge_path.with_estimates(cost=cost_estimate)
         return merge_path
 
-    def _create_hashjoin_path(self, join_rel: RelOptInfo, *, outer_path: QueryPlan, inner_path: QueryPlan) -> QueryPlan:
+    def _create_hashjoin_path(
+        self, join_rel: RelOptInfo, *, outer_path: QueryPlan, inner_path: QueryPlan
+    ) -> QueryPlan:
         """Constructs and initializes a hash join path for a specific intermediate.
 
         This method assumes that hash joins are actually enabled.
@@ -1003,19 +1223,23 @@ class PostgresDynProg(PlanEnumerator):
         hash_path = QueryPlan(
             JoinOperator.HashJoin,
             children=[outer_path, inner_path],
-            estimated_cardinality=join_rel.cardinality
+            estimated_cardinality=join_rel.cardinality,
         )
 
         cost_estimate = self.cost_model.estimate_cost(self.query, hash_path)
         hash_path = hash_path.with_estimates(cost=cost_estimate)
         return hash_path
 
-    def _determine_join_keys(self, *, outer_rel: RelOptInfo, inner_rel: RelOptInfo) -> list[AbstractPredicate]:
+    def _determine_join_keys(
+        self, *, outer_rel: RelOptInfo, inner_rel: RelOptInfo
+    ) -> list[AbstractPredicate]:
         """Determines all available join predicates between two relations.
 
         The predicates are implicitly ANDed together.
         """
-        join_predicates = self.query.predicates().joins_between(outer_rel.intermediate, inner_rel.intermediate)
+        join_predicates = self.query.predicates().joins_between(
+            outer_rel.intermediate, inner_rel.intermediate
+        )
         if not join_predicates:
             # TODO: should we rather raise an error here?
             return
@@ -1028,8 +1252,13 @@ class PostgresDynProg(PlanEnumerator):
 
         return join_keys
 
-    def _extract_join_columns(self, join_key: AbstractPredicate, *, outer_rel: RelOptInfo,
-                              inner_rel: RelOptInfo) -> tuple[ColumnReference, ColumnReference]:
+    def _extract_join_columns(
+        self,
+        join_key: AbstractPredicate,
+        *,
+        outer_rel: RelOptInfo,
+        inner_rel: RelOptInfo,
+    ) -> tuple[ColumnReference, ColumnReference]:
         """Provides the join columns that are joined together in the format (outer_col, inner_col).
 
         This method assumes that we indeed only perform a binary equi-join and will break otherwise.
@@ -1043,9 +1272,15 @@ class PostgresDynProg(PlanEnumerator):
         partner: tuple[ColumnReference, ColumnReference] = util.simplify(partners)
         first_col, second_col = partner
 
-        if first_col.table in outer_rel.intermediate and second_col.table in inner_rel.intermediate:
+        if (
+            first_col.table in outer_rel.intermediate
+            and second_col.table in inner_rel.intermediate
+        ):
             return first_col, second_col
-        elif first_col.table in inner_rel.intermediate and second_col.table in outer_rel.intermediate:
+        elif (
+            first_col.table in inner_rel.intermediate
+            and second_col.table in outer_rel.intermediate
+        ):
             return second_col, first_col
         else:
             raise LogicError()

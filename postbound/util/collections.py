@@ -1,4 +1,5 @@
 """Provides utilities to work with arbitrary collections like lists, sets and tuples."""
+
 from __future__ import annotations
 
 import itertools
@@ -48,29 +49,32 @@ def flatten(deep_list: Iterable[Iterable[T] | T]) -> list[T]:
             flattened.append(nested)
     return flattened
 
-@overload
-def enlist(obj: list[T]) -> list[T]:
-    ...
 
 @overload
-def enlist(obj: tuple[T, ...], *, enlist_tuples: bool = False) -> list[tuple[T, ...]]:
-    ...
+def enlist(obj: list[T]) -> list[T]: ...
+
 
 @overload
-def enlist(obj: tuple[T, ...]) -> tuple[T, ...]:
-    ...
+def enlist(
+    obj: tuple[T, ...], *, enlist_tuples: bool = False
+) -> list[tuple[T, ...]]: ...
+
 
 @overload
-def enlist(obj: set[T]) -> set[T]:
-    ...
+def enlist(obj: tuple[T, ...]) -> tuple[T, ...]: ...
+
 
 @overload
-def enlist(obj: frozenset[T]) -> frozenset[T]:
-    ...
+def enlist(obj: set[T]) -> set[T]: ...
+
 
 @overload
-def enlist(obj: T) -> list[T]:
-    ...
+def enlist(obj: frozenset[T]) -> frozenset[T]: ...
+
+
+@overload
+def enlist(obj: T) -> list[T]: ...
+
 
 def enlist(obj: T | Iterable[T], *, enlist_tuples: bool = False) -> Iterable[T]:
     """Transforms any object into a singular list of that object, if it is not a container already.
@@ -180,11 +184,14 @@ def powerset(lst: Collection[T]) -> Iterable[tuple[T, ...]]:
         The powerset of *S*. Each tuple correponds to a specific subset. The order of the elements within the tuple is not
         significant.
     """
-    return itertools.chain.from_iterable(itertools.combinations(lst, size) for size in range(len(lst) + 1))
+    return itertools.chain.from_iterable(
+        itertools.combinations(lst, size) for size in range(len(lst) + 1)
+    )
 
 
-def sliding_window(lst: Sequence[T], size: int,
-                   step: int = 1) -> Generator[tuple[Sequence[T], Sequence[T], Sequence[T]], None, None]:
+def sliding_window(
+    lst: Sequence[T], size: int, step: int = 1
+) -> Generator[tuple[Sequence[T], Sequence[T], Sequence[T]], None, None]:
     """Iterates over the given sequence using a sliding window.
 
     The window will contain exactly `size` many entries, starting at the beginning of the sequence. After yielding a
@@ -208,8 +215,8 @@ def sliding_window(lst: Sequence[T], size: int,
     """
     for i in range(0, len(lst) - size + 1, step=step):
         prefix = lst[:i]
-        window = lst[i:i + size]
-        suffix = lst[i + size:]
+        window = lst[i : i + size]
+        suffix = lst[i + size :]
         yield prefix, window, suffix
 
 
@@ -447,7 +454,7 @@ class SizedQueue(Collection[T]):
         values : typing.Iterable[T]
             The values to add
         """
-        self.data = (self.data + list(values))[:self.capacity]
+        self.data = (self.data + list(values))[: self.capacity]
 
     def head(self) -> Optional[T]:
         """Provides the current first item of the queue without removing it.

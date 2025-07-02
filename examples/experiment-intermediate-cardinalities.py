@@ -23,11 +23,15 @@ class QueryIntermediate:
     query_fragment: qal.SqlQuery
 
 
-def iter_intermediates(workload: workloads.Workload) -> Generator[QueryIntermediate, None, None]:
+def iter_intermediates(
+    workload: workloads.Workload,
+) -> Generator[QueryIntermediate, None, None]:
     for label, query in workload.entries():
         if not isinstance(query, qal.ImplicitSqlQuery):
-            warnings.warn(f"Skipping query {label} b/c query fragments can currently "
-                          "only be created for implicit queries.")
+            warnings.warn(
+                f"Skipping query {label} b/c query fragments can currently "
+                "only be created for implicit queries."
+            )
             continue
 
         tables = query.tables()
@@ -54,30 +58,46 @@ def simulate_intermediate_generation(out_file: str, workload: workloads.Workload
         unique_intermediates.add(intermediate.query_fragment)
         intermediates_per_query[intermediate.full_query] += 1
 
-    result_df = pd.DataFrame(intermediates_per_query.items(), columns=["query", "n_intermediates"])
+    result_df = pd.DataFrame(
+        intermediates_per_query.items(), columns=["query", "n_intermediates"]
+    )
     result_df.to_csv(out_file, index=False)
-    print("unique", len(unique_intermediates), "total", sum(intermediates_per_query.values()))
+    print(
+        "unique",
+        len(unique_intermediates),
+        "total",
+        sum(intermediates_per_query.values()),
+    )
 
 
-def determine_intermediates(benchmark: workloads.Workload[str], *,
-                            out_file: str,
-                            pg_conf: str = ".psycopg_connection",
-                            timeout: Optional[int] = None,
-                            simulate_only: bool = False) -> None:
+def determine_intermediates(
+    benchmark: workloads.Workload[str],
+    *,
+    out_file: str,
+    pg_conf: str = ".psycopg_connection",
+    timeout: Optional[int] = None,
+    simulate_only: bool = False,
+) -> None:
     postgres_db = postgres.connect(config_file=pg_conf)
 
     if simulate_only:
         simulate_intermediate_generation(out_file, benchmark)
         return
 
-    db_pool = postgres.ParallelQueryExecutor(postgres_db.connect_string, n_threads=12, timeout=timeout)
+    db_pool = postgres.ParallelQueryExecutor(
+        postgres_db.connect_string, n_threads=12, timeout=timeout
+    )
 
     explored_queries: set[qal.SqlQuery] = set()
-    fragment_to_queries_map: dict[qal.SqlQuery, list[qal.SqlQuery]] = collections.defaultdict(list)
+    fragment_to_queries_map: dict[qal.SqlQuery, list[qal.SqlQuery]] = (
+        collections.defaultdict(list)
+    )
     n_queries = 0
 
     for intermediate in iter_intermediates(benchmark):
-        fragment_to_queries_map[intermediate.query_fragment].append(intermediate.full_query)
+        fragment_to_queries_map[intermediate.query_fragment].append(
+            intermediate.full_query
+        )
         if intermediate.query_fragment in explored_queries:
             continue
         explored_queries.add(intermediate.query_fragment)
@@ -98,26 +118,59 @@ def determine_intermediates(benchmark: workloads.Workload[str], *,
             fragment_tables.append(util.to_json(list(result_fragment.tables())))
             cardinalities.append(cardinality)
 
-    result_df = pd.DataFrame({"label": labels, "query": queries,
-                              "query_fragment": fragments, "tables": fragment_tables,
-                              "cardinality": cardinalities})
+    result_df = pd.DataFrame(
+        {
+            "label": labels,
+            "query": queries,
+            "query_fragment": fragments,
+            "tables": fragment_tables,
+            "cardinality": cardinalities,
+        }
+    )
     result_df = executor.sort_results(result_df, "label")
     result_df.to_csv(out_file, index=False)
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Calculates the cardinalities of all possible intermediate results of common "
-                                     "benchmarks")
-    parser.add_argument("--bench", "-b", action="store", choices=["job", "stats"], help="The benchmark to estimate")
-    parser.add_argument("--pg-conf", "-c", action="store", help="Path to the Postgres connection config file")
-    parser.add_argument("--out", "-o", action="store", help="Name and location of the output CSV file")
-    parser.add_argument("--dry", action="store_true", help="Don't actually calculate the intermediates. Instead, determine "
-                        "which intermediates would be calculated")
-    parser.add_argument("--timeout", action="store", type=int, help="Timeout for each query in seconds")
+    parser = argparse.ArgumentParser(
+        description="Calculates the cardinalities of all possible intermediate results of common "
+        "benchmarks"
+    )
+    parser.add_argument(
+        "--bench",
+        "-b",
+        action="store",
+        choices=["job", "stats"],
+        help="The benchmark to estimate",
+    )
+    parser.add_argument(
+        "--pg-conf",
+        "-c",
+        action="store",
+        help="Path to the Postgres connection config file",
+    )
+    parser.add_argument(
+        "--out", "-o", action="store", help="Name and location of the output CSV file"
+    )
+    parser.add_argument(
+        "--dry",
+        action="store_true",
+        help="Don't actually calculate the intermediates. Instead, determine "
+        "which intermediates would be calculated",
+    )
+    parser.add_argument(
+        "--timeout", action="store", type=int, help="Timeout for each query in seconds"
+    )
     args = parser.parse_args()
 
     benchmark = workloads.job() if args.bench == "job" else workloads.stats()
-    determine_intermediates(benchmark, pg_conf=args.pg_conf, out_file=args.out, timeout=args.timeout, simulate_only=args.dry)
+    determine_intermediates(
+        benchmark,
+        pg_conf=args.pg_conf,
+        out_file=args.out,
+        timeout=args.timeout,
+        simulate_only=args.dry,
+    )
 
 
 if __name__ == "__main__":

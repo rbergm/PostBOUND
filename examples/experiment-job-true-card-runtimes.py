@@ -43,8 +43,10 @@ pg_db.cache_enabled = False
 db_config = pg_db.describe()
 
 print("Reading true cardinalities")
-card_df = pd.read_csv("results/job/job-intermediate-cardinalities.csv",
-                      converters={"tables": parse_tables_list})
+card_df = pd.read_csv(
+    "results/job/job-intermediate-cardinalities.csv",
+    converters={"tables": parse_tables_list},
+)
 
 benchmark_results = []
 print("Starting workload execution")
@@ -52,15 +54,22 @@ for label, query in workloads.job().entries():
     print("Now executing query", query)
     pg_db.prewarm_tables(query.tables())
     original_query = query
-    query = pg_db.hinting().generate_hints(query, plan_parameters=true_cardinalities(label))
+    query = pg_db.hinting().generate_hints(
+        query, plan_parameters=true_cardinalities(label)
+    )
     query_start = datetime.now()
     pg_db.execute_query(query)
     query_end = datetime.now()
     execution_time = (query_end - query_start).total_seconds()
     query_plan = pg_db.execute_query(qal.transform.as_explain_analyze(query))
-    result_wrapper = BenchmarkResult(label, str(original_query), query.hints.query_hints,
-                                     execution_time, jsonize.to_json(query_plan),
-                                     jsonize.to_json(db_config))
+    result_wrapper = BenchmarkResult(
+        label,
+        str(original_query),
+        query.hints.query_hints,
+        execution_time,
+        jsonize.to_json(query_plan),
+        jsonize.to_json(db_config),
+    )
     benchmark_results.append(result_wrapper)
 
 df = pd.DataFrame(benchmark_results)

@@ -1,4 +1,3 @@
-
 from __future__ import annotations
 
 import json
@@ -8,10 +7,29 @@ import warnings
 from collections.abc import Container, Iterable
 from typing import Generic, Literal, Optional, Union
 
-from ._hints import PhysicalOperatorAssignment, PlanParameterization, operators_from_plan, read_operator_json
+from ._hints import (
+    PhysicalOperatorAssignment,
+    PlanParameterization,
+    operators_from_plan,
+    read_operator_json,
+)
 from .. import util
-from .._core import Cardinality, ScanOperator, JoinOperator, IntermediateOperator, PhysicalOperator
-from .._qep import JoinDirection, SortKey, QueryPlan, PlanParams, PlanEstimates, PlanMeasures, Subplan
+from .._core import (
+    Cardinality,
+    ScanOperator,
+    JoinOperator,
+    IntermediateOperator,
+    PhysicalOperator,
+)
+from .._qep import (
+    JoinDirection,
+    SortKey,
+    QueryPlan,
+    PlanParams,
+    PlanEstimates,
+    PlanMeasures,
+    Subplan,
+)
 from ..qal import parser, TableReference, SqlQuery
 from ..util import jsondict, StateError
 
@@ -19,7 +37,9 @@ from ..util import jsondict, StateError
 AnnotationType = typing.TypeVar("AnnotationType")
 """The concrete annotation used to augment information stored in the join tree."""
 
-NestedTableSequence = Union[tuple["NestedTableSequence", "NestedTableSequence"], TableReference]
+NestedTableSequence = Union[
+    tuple["NestedTableSequence", "NestedTableSequence"], TableReference
+]
 """Type alias for a convenient format to notate join trees.
 
 The notation is composed of nested lists. These lists can either contain more lists, or references to base tables.
@@ -120,7 +140,9 @@ class JoinTree(Container[TableReference], Generic[AnnotationType]):
     # These methods should also be kept in sync.
 
     @staticmethod
-    def scan(table: TableReference, *, annotation: Optional[AnnotationType] = None) -> JoinTree[AnnotationType]:
+    def scan(
+        table: TableReference, *, annotation: Optional[AnnotationType] = None
+    ) -> JoinTree[AnnotationType]:
         """Creates a new join tree with a single base table.
 
         Parameters
@@ -138,8 +160,12 @@ class JoinTree(Container[TableReference], Generic[AnnotationType]):
         return JoinTree(base_table=table, annotation=annotation)
 
     @staticmethod
-    def join(outer: JoinTree[AnnotationType], inner: JoinTree[AnnotationType], *,
-             annotation: Optional[AnnotationType] = None) -> JoinTree[AnnotationType]:
+    def join(
+        outer: JoinTree[AnnotationType],
+        inner: JoinTree[AnnotationType],
+        *,
+        annotation: Optional[AnnotationType] = None,
+    ) -> JoinTree[AnnotationType]:
         """Creates a new join tree by combining two existing join trees.
 
         Parameters
@@ -169,10 +195,14 @@ class JoinTree(Container[TableReference], Generic[AnnotationType]):
         """
         return JoinTree()
 
-    def __init__(self, *, base_table: TableReference | None = None,
-                 outer_child: JoinTree[AnnotationType] | None = None,
-                 inner_child: JoinTree[AnnotationType] | None = None,
-                 annotation: AnnotationType | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        base_table: TableReference | None = None,
+        outer_child: JoinTree[AnnotationType] | None = None,
+        inner_child: JoinTree[AnnotationType] | None = None,
+        annotation: AnnotationType | None = None,
+    ) -> None:
         self._table = base_table
         self._outer = outer_child
         self._inner = inner_child
@@ -298,7 +328,9 @@ class JoinTree(Container[TableReference], Generic[AnnotationType]):
             return 1
         return 1 + max(self._outer.plan_depth(), self._inner.plan_depth())
 
-    def lookup(self, table: TableReference | Iterable[TableReference]) -> Optional[JoinTree[AnnotationType]]:
+    def lookup(
+        self, table: TableReference | Iterable[TableReference]
+    ) -> Optional[JoinTree[AnnotationType]]:
         """Traverses the join tree to find a specific (intermediate) node.
 
         Parameters
@@ -328,18 +360,30 @@ class JoinTree(Container[TableReference], Generic[AnnotationType]):
 
         return None
 
-    def update_annotation(self, new_annotation: AnnotationType) -> JoinTree[AnnotationType]:
+    def update_annotation(
+        self, new_annotation: AnnotationType
+    ) -> JoinTree[AnnotationType]:
         """Creates a new join tree with the same structure, but a different annotation.
 
         The original join tree is not modified.
         """
         if self.is_empty():
             raise StateError("Cannot update annotation of an empty join tree.")
-        return JoinTree(base_table=self._table, outer_child=self._outer, inner_child=self._inner, annotation=new_annotation)
+        return JoinTree(
+            base_table=self._table,
+            outer_child=self._outer,
+            inner_child=self._inner,
+            annotation=new_annotation,
+        )
 
-    def join_with(self, partner: JoinTree[AnnotationType] | TableReference, *, annotation: Optional[AnnotationType] = None,
-                  partner_annotation: AnnotationType | None = None,
-                  partner_direction: JoinDirection = "inner") -> JoinTree[AnnotationType]:
+    def join_with(
+        self,
+        partner: JoinTree[AnnotationType] | TableReference,
+        *,
+        annotation: Optional[AnnotationType] = None,
+        partner_annotation: AnnotationType | None = None,
+        partner_direction: JoinDirection = "inner",
+    ) -> JoinTree[AnnotationType]:
         """Creates a new join tree by combining the current join tree with another one.
 
         Both input join trees are not modified. If one of the join trees is empty, the other one is returned as-is. As a
@@ -375,7 +419,9 @@ class JoinTree(Container[TableReference], Generic[AnnotationType]):
         elif isinstance(partner, TableReference):
             partner = JoinTree.scan(partner, annotation=partner_annotation)
 
-        outer, inner = (self, partner) if partner_direction == "inner" else (partner, self)
+        outer, inner = (
+            (self, partner) if partner_direction == "inner" else (partner, self)
+        )
         return JoinTree.join(outer, inner, annotation=annotation)
 
     def inspect(self) -> str:
@@ -404,8 +450,12 @@ class JoinTree(Container[TableReference], Generic[AnnotationType]):
             return []
         return self._outer.iterjoins() + self._inner.iterjoins() + [self]
 
-    def _init_empty_join_tree(self, partner: JoinTree[AnnotationType] | TableReference, *,
-                              annotation: Optional[AnnotationType] = None) -> JoinTree[AnnotationType]:
+    def _init_empty_join_tree(
+        self,
+        partner: JoinTree[AnnotationType] | TableReference,
+        *,
+        annotation: Optional[AnnotationType] = None,
+    ) -> JoinTree[AnnotationType]:
         """Handler method to create a new join tree when the current tree is empty."""
         if isinstance(partner, TableReference):
             return JoinTree.scan(partner, annotation=annotation)
@@ -416,8 +466,17 @@ class JoinTree(Container[TableReference], Generic[AnnotationType]):
 
     def __json__(self) -> jsondict:
         if self.is_scan():
-            return {"type": "join_tree_generic", "table": self._table, "annotation": self._annotation}
-        return {"type": "join_tree_generic", "outer": self._outer, "inner": self._inner, "annotation": self._annotation}
+            return {
+                "type": "join_tree_generic",
+                "table": self._table,
+                "annotation": self._annotation,
+            }
+        return {
+            "type": "join_tree_generic",
+            "outer": self._outer,
+            "inner": self._inner,
+            "annotation": self._annotation,
+        }
 
     def __contains__(self, x: object) -> bool:
         return self.lookup(x)
@@ -429,10 +488,12 @@ class JoinTree(Container[TableReference], Generic[AnnotationType]):
         return self._hash_val
 
     def __eq__(self, other: object) -> bool:
-        return (isinstance(other, type(self))
-                and self._table == other._table
-                and self._outer == other._outer
-                and self._inner == other._inner)
+        return (
+            isinstance(other, type(self))
+            and self._table == other._table
+            and self._outer == other._outer
+            and self._inner == other._inner
+        )
 
     def __repr__(self) -> str:
         return str(self)
@@ -451,22 +512,38 @@ class LogicalJoinTree(JoinTree[Cardinality]):
     """
 
     @staticmethod
-    def scan(table: TableReference, *, annotation: Optional[Cardinality] = None) -> LogicalJoinTree:
+    def scan(
+        table: TableReference, *, annotation: Optional[Cardinality] = None
+    ) -> LogicalJoinTree:
         return LogicalJoinTree(table=table, annotation=annotation)
 
     @staticmethod
-    def join(outer: LogicalJoinTree, inner: LogicalJoinTree, *,
-             annotation: Optional[Cardinality] = None) -> LogicalJoinTree:
+    def join(
+        outer: LogicalJoinTree,
+        inner: LogicalJoinTree,
+        *,
+        annotation: Optional[Cardinality] = None,
+    ) -> LogicalJoinTree:
         return LogicalJoinTree(outer=outer, inner=inner, annotation=annotation)
 
     @staticmethod
     def empty() -> LogicalJoinTree:
         return LogicalJoinTree()
 
-    def __init__(self, *, table: TableReference | None = None,
-                 outer: LogicalJoinTree | None = None, inner: LogicalJoinTree | None = None,
-                 annotation: Cardinality | None = None) -> None:
-        super().__init__(base_table=table, outer_child=outer, inner_child=inner, annotation=annotation)
+    def __init__(
+        self,
+        *,
+        table: TableReference | None = None,
+        outer: LogicalJoinTree | None = None,
+        inner: LogicalJoinTree | None = None,
+        annotation: Cardinality | None = None,
+    ) -> None:
+        super().__init__(
+            base_table=table,
+            outer_child=outer,
+            inner_child=inner,
+            annotation=annotation,
+        )
 
     @property
     def cardinality(self) -> Cardinality:
@@ -484,17 +561,28 @@ class LogicalJoinTree(JoinTree[Cardinality]):
     def children(self) -> tuple[LogicalJoinTree, LogicalJoinTree]:
         return super().children
 
-    def lookup(self, table: TableReference | Iterable[TableReference]) -> Optional[LogicalJoinTree]:
+    def lookup(
+        self, table: TableReference | Iterable[TableReference]
+    ) -> Optional[LogicalJoinTree]:
         return super().lookup(table)
 
     def update_annotation(self, new_annotation: Cardinality) -> LogicalJoinTree:
         return super().update_annotation(new_annotation)
 
-    def join_with(self, partner: LogicalJoinTree | TableReference, *, annotation: Optional[Cardinality] = None,
-                  partner_annotation: Cardinality | None = None,
-                  partner_direction: JoinDirection = "inner") -> LogicalJoinTree:
-        return super().join_with(partner, annotation=annotation, partner_annotation=partner_annotation,
-                                 partner_direction=partner_direction)
+    def join_with(
+        self,
+        partner: LogicalJoinTree | TableReference,
+        *,
+        annotation: Optional[Cardinality] = None,
+        partner_annotation: Cardinality | None = None,
+        partner_direction: JoinDirection = "inner",
+    ) -> LogicalJoinTree:
+        return super().join_with(
+            partner,
+            annotation=annotation,
+            partner_annotation=partner_annotation,
+            partner_direction=partner_direction,
+        )
 
     def iternodes(self) -> Iterable[LogicalJoinTree]:
         return super().iternodes()
@@ -504,12 +592,27 @@ class LogicalJoinTree(JoinTree[Cardinality]):
 
     def __json__(self) -> jsondict:
         if self.is_scan():
-            return {"type": "join_tree_logical", "table": self._table, "annotation": self._annotation}
-        return {"type": "join_tree_logical", "outer": self._outer, "inner": self._inner, "annotation": self._annotation}
+            return {
+                "type": "join_tree_logical",
+                "table": self._table,
+                "annotation": self._annotation,
+            }
+        return {
+            "type": "join_tree_logical",
+            "outer": self._outer,
+            "inner": self._inner,
+            "annotation": self._annotation,
+        }
 
 
-def _make_simple_plan(join_tree: JoinTree, *, scan_op: ScanOperator, join_op: JoinOperator,
-                      query: Optional[SqlQuery] = None, plan_params: Optional[PlanParameterization] = None) -> QueryPlan:
+def _make_simple_plan(
+    join_tree: JoinTree,
+    *,
+    scan_op: ScanOperator,
+    join_op: JoinOperator,
+    query: Optional[SqlQuery] = None,
+    plan_params: Optional[PlanParameterization] = None,
+) -> QueryPlan:
     """Handler function to create a query plan with default operators.
 
     (Estimated) cardinalities can still be customized accroding to the plan parameters. However, parallel workers are ignored.
@@ -524,10 +627,20 @@ def _make_simple_plan(join_tree: JoinTree, *, scan_op: ScanOperator, join_op: Jo
 
     if join_tree.is_join():
         operator = join_op
-        outer_plan = _make_simple_plan(join_tree.outer_child, scan_op=scan_op, join_op=join_op, query=query,
-                                       plan_params=plan_params)
-        inner_plan = _make_simple_plan(join_tree.inner_child, scan_op=scan_op, join_op=join_op, query=query,
-                                       plan_params=plan_params)
+        outer_plan = _make_simple_plan(
+            join_tree.outer_child,
+            scan_op=scan_op,
+            join_op=join_op,
+            query=query,
+            plan_params=plan_params,
+        )
+        inner_plan = _make_simple_plan(
+            join_tree.inner_child,
+            scan_op=scan_op,
+            join_op=join_op,
+            query=query,
+            plan_params=plan_params,
+        )
         children = (outer_plan, inner_plan)
     else:
         operator = scan_op
@@ -537,15 +650,30 @@ def _make_simple_plan(join_tree: JoinTree, *, scan_op: ScanOperator, join_op: Jo
         return QueryPlan(operator, children=children, estimated_cardinality=cardinality)
 
     predicates = query.predicates()
-    filter_condition = (predicates.joins_between(join_tree.outer_child.tables(), join_tree.inner_child.tables())
-                        if join_tree.is_join() else predicates.filters_for(join_tree.base_table))
-    return QueryPlan(operator, children=children, estimated_cardinality=cardinality, filter_condition=filter_condition)
+    filter_condition = (
+        predicates.joins_between(
+            join_tree.outer_child.tables(), join_tree.inner_child.tables()
+        )
+        if join_tree.is_join()
+        else predicates.filters_for(join_tree.base_table)
+    )
+    return QueryPlan(
+        operator,
+        children=children,
+        estimated_cardinality=cardinality,
+        filter_condition=filter_condition,
+    )
 
 
-def _make_custom_plan(join_tree: JoinTree, *, physical_ops: PhysicalOperatorAssignment,
-                      query: Optional[SqlQuery] = None, plan_params: Optional[PlanParameterization] = None,
-                      fallback_scan_op: Optional[ScanOperator] = None,
-                      fallback_join_op: Optional[JoinOperator] = None) -> QueryPlan:
+def _make_custom_plan(
+    join_tree: JoinTree,
+    *,
+    physical_ops: PhysicalOperatorAssignment,
+    query: Optional[SqlQuery] = None,
+    plan_params: Optional[PlanParameterization] = None,
+    fallback_scan_op: Optional[ScanOperator] = None,
+    fallback_join_op: Optional[JoinOperator] = None,
+) -> QueryPlan:
     """Handler function to create a query plan with a dynamic assignment of physical operators.
 
     If an operator is not contained in the assignment, the fallback operators are used. If these are also not available,
@@ -562,7 +690,9 @@ def _make_custom_plan(join_tree: JoinTree, *, physical_ops: PhysicalOperatorAssi
     else:
         cardinality = math.nan
 
-    par_workers = plan_params.parallel_worker_hints.get(tables, None) if plan_params else None
+    par_workers = (
+        plan_params.parallel_worker_hints.get(tables, None) if plan_params else None
+    )
 
     operator = physical_ops.get(tables)
     if not operator and len(tables) == 1:
@@ -573,36 +703,62 @@ def _make_custom_plan(join_tree: JoinTree, *, physical_ops: PhysicalOperatorAssi
         raise ValueError("No operator assignment found for join: " + str(tables))
 
     if join_tree.is_join():
-        outer_plan = _make_simple_plan(join_tree.outer_child, physical_ops=physical_ops, plan_params=plan_params)
-        inner_plan = _make_simple_plan(join_tree.inner_child, physical_ops=physical_ops, plan_params=plan_params)
+        outer_plan = _make_simple_plan(
+            join_tree.outer_child, physical_ops=physical_ops, plan_params=plan_params
+        )
+        inner_plan = _make_simple_plan(
+            join_tree.inner_child, physical_ops=physical_ops, plan_params=plan_params
+        )
         children = (outer_plan, inner_plan)
     else:
         children = []
 
     if query is None:
-        plan = QueryPlan(operator, children=children, estimated_cardinality=cardinality, parallel_workers=par_workers)
+        plan = QueryPlan(
+            operator,
+            children=children,
+            estimated_cardinality=cardinality,
+            parallel_workers=par_workers,
+        )
     else:
         predicates = query.predicates()
-        filter_condition = (predicates.joins_between(join_tree.outer_child.tables(), join_tree.inner_child.tables())
-                            if join_tree.is_join() else predicates.filters_for(join_tree.base_table))
-        plan = QueryPlan(operator, children=children, estimated_cardinality=cardinality, filter_condition=filter_condition,
-                         parallel_workers=par_workers)
+        filter_condition = (
+            predicates.joins_between(
+                join_tree.outer_child.tables(), join_tree.inner_child.tables()
+            )
+            if join_tree.is_join()
+            else predicates.filters_for(join_tree.base_table)
+        )
+        plan = QueryPlan(
+            operator,
+            children=children,
+            estimated_cardinality=cardinality,
+            filter_condition=filter_condition,
+            parallel_workers=par_workers,
+        )
 
     intermediate_op = physical_ops.intermediate_operators.get(frozenset(plan.tables()))
     if not intermediate_op:
         return plan
     if intermediate_op in {IntermediateOperator.Sort, IntermediateOperator.Memoize}:
-        warnings.warn("Ignoring intermediate operator for sort/memoize. These require additional information to be inserted.")
+        warnings.warn(
+            "Ignoring intermediate operator for sort/memoize. These require additional information to be inserted."
+        )
         return plan
 
     plan = QueryPlan(intermediate_op, children=plan, estimated_cardinality=cardinality)
     return plan
 
 
-def to_query_plan(join_tree: JoinTree, *, query: Optional[SqlQuery] = None,
-                  physical_ops: Optional[PhysicalOperatorAssignment] = None,
-                  plan_params: Optional[PlanParameterization] = None,
-                  scan_op: Optional[ScanOperator] = None, join_op: Optional[JoinOperator] = None) -> QueryPlan:
+def to_query_plan(
+    join_tree: JoinTree,
+    *,
+    query: Optional[SqlQuery] = None,
+    physical_ops: Optional[PhysicalOperatorAssignment] = None,
+    plan_params: Optional[PlanParameterization] = None,
+    scan_op: Optional[ScanOperator] = None,
+    join_op: Optional[JoinOperator] = None,
+) -> QueryPlan:
     """Creates a query plan from a join tree.
 
     This function operates in two different modes: physical operators can either be assigned to each node of the join tree
@@ -648,12 +804,26 @@ def to_query_plan(join_tree: JoinTree, *, query: Optional[SqlQuery] = None,
         The resulting query plan
     """
     if physical_ops:
-        return _make_custom_plan(join_tree, physical_ops=physical_ops, query=query, plan_params=plan_params,
-                                 fallback_scan_op=scan_op, fallback_join_op=join_op)
+        return _make_custom_plan(
+            join_tree,
+            physical_ops=physical_ops,
+            query=query,
+            plan_params=plan_params,
+            fallback_scan_op=scan_op,
+            fallback_join_op=join_op,
+        )
     elif scan_op is not None and join_op is not None:
-        return _make_simple_plan(join_tree, scan_op=scan_op, join_op=join_op, query=query, plan_params=plan_params)
+        return _make_simple_plan(
+            join_tree,
+            scan_op=scan_op,
+            join_op=join_op,
+            query=query,
+            plan_params=plan_params,
+        )
     else:
-        raise ValueError("Either operator assignment or default operators must be provided")
+        raise ValueError(
+            "Either operator assignment or default operators must be provided"
+        )
 
 
 def read_query_plan_json(json_data: dict | str) -> QueryPlan:
@@ -681,36 +851,63 @@ def read_query_plan_json(json_data: dict | str) -> QueryPlan:
     base_table = parser.load_table_json(base_table_json) if base_table_json else None
 
     predicate_json: dict | None = params_json.get("filter_predicate")
-    filter_predicate = parser.load_predicate_json(predicate_json) if predicate_json else None
+    filter_predicate = (
+        parser.load_predicate_json(predicate_json) if predicate_json else None
+    )
 
     sort_keys: list[SortKey] = []
     for sort_key_json in params_json.get("sort_keys", []):
-        sort_column = [parser.load_expression_json(col) for col in sort_key_json.get("equivalence_class", [])]
+        sort_column = [
+            parser.load_expression_json(col)
+            for col in sort_key_json.get("equivalence_class", [])
+        ]
         ascending = sort_key_json["ascending"]
         sort_keys.append(SortKey.of(sort_column, ascending))
 
     index = params_json.get("index", "")
-    additional_params = {key: value for key, value in params_json.items()
-                         if key not in {"base_table", "filter_predicate", "sort_keys", "index"}}
+    additional_params = {
+        key: value
+        for key, value in params_json.items()
+        if key not in {"base_table", "filter_predicate", "sort_keys", "index"}
+    }
 
-    plan_params = PlanParams(base_table=base_table, filter_predicate=filter_predicate, sort_keys=sort_keys, index=index,
-                             **additional_params)
+    plan_params = PlanParams(
+        base_table=base_table,
+        filter_predicate=filter_predicate,
+        sort_keys=sort_keys,
+        index=index,
+        **additional_params,
+    )
 
     estimates_json: dict = json_data.get("estimates", {})
     cardinality = estimates_json.get("cardinality", math.nan)
     cost = estimates_json.get("cost", math.nan)
-    additional_estimates = {key: value for key, value in estimates_json.items() if key not in {"cardinality", "cost"}}
-    estimates = PlanEstimates(cardinality=cardinality, cost=cost, **additional_estimates)
+    additional_estimates = {
+        key: value
+        for key, value in estimates_json.items()
+        if key not in {"cardinality", "cost"}
+    }
+    estimates = PlanEstimates(
+        cardinality=cardinality, cost=cost, **additional_estimates
+    )
 
     measures_json: dict = json_data.get("measures", {})
     cardinality = measures_json.get("cardinality", math.nan)
     cost = measures_json.get("cost", math.nan)
     cache_hits = measures_json.get("cache_hits")
     cache_misses = measures_json.get("cache_misses")
-    additional_measures = {key: value for key, value in measures_json.items()
-                           if key not in {"cardinality", "cost", "cache_hits", "cache_misses"}}
-    measures = PlanMeasures(cardinality=cardinality, cost=cost, cache_hits=cache_hits, cache_misses=cache_misses,
-                            **additional_measures)
+    additional_measures = {
+        key: value
+        for key, value in measures_json.items()
+        if key not in {"cardinality", "cost", "cache_hits", "cache_misses"}
+    }
+    measures = PlanMeasures(
+        cardinality=cardinality,
+        cost=cost,
+        cache_hits=cache_hits,
+        cache_misses=cache_misses,
+        **additional_measures,
+    )
 
     subplan_json: dict = json_data.get("subplan", {})
     if subplan_json:
@@ -720,18 +917,30 @@ def read_query_plan_json(json_data: dict | str) -> QueryPlan:
     else:
         subplan = None
 
-    return QueryPlan(node_type, operator=operator, children=children,
-                     plan_params=plan_params, estimates=estimates, measures=measures,
-                     subplan=subplan)
+    return QueryPlan(
+        node_type,
+        operator=operator,
+        children=children,
+        plan_params=plan_params,
+        estimates=estimates,
+        measures=measures,
+        subplan=subplan,
+    )
 
 
-def jointree_from_plan(plan: QueryPlan, *, card_source: Literal["estimates", "actual"] = "estimates") -> LogicalJoinTree:
+def jointree_from_plan(
+    plan: QueryPlan, *, card_source: Literal["estimates", "actual"] = "estimates"
+) -> LogicalJoinTree:
     """Extracts the join tree encoded in a query plan.
 
     The cardinality estimates of the join tree can be inferred from either the estimated cardinalities or from the measured
     actual cardinalities of the query plan.
     """
-    card = plan.estimated_cardinality if card_source == "estimates" else plan.actual_cardinality
+    card = (
+        plan.estimated_cardinality
+        if card_source == "estimates"
+        else plan.actual_cardinality
+    )
     if plan.is_scan():
         return JoinTree.scan(plan.base_table, annotation=card)
     elif plan.is_join():
@@ -782,8 +991,11 @@ def read_jointree_json(json_data: dict | str) -> JoinTree:
     return JoinTree.join(outer_child, inner_child, annotation=annotation)
 
 
-def parameters_from_plan(query_plan: QueryPlan | LogicalJoinTree, *,
-                         target_cardinality: Literal["estimated", "actual"] = "estimated") -> PlanParameterization:
+def parameters_from_plan(
+    query_plan: QueryPlan | LogicalJoinTree,
+    *,
+    target_cardinality: Literal["estimated", "actual"] = "estimated",
+) -> PlanParameterization:
     """Extracts the cardinality estimates from a join tree.
 
     The join tree can be either a logical representation, in which case the cardinalities are extracted directly. Or, it can be
@@ -796,7 +1008,11 @@ def parameters_from_plan(query_plan: QueryPlan | LogicalJoinTree, *,
         card = query_plan.annotation
         parallel_workers = None
     else:
-        card = query_plan.estimated_cardinality if target_cardinality == "estimated" else query_plan.actual_cardinality
+        card = (
+            query_plan.estimated_cardinality
+            if target_cardinality == "estimated"
+            else query_plan.actual_cardinality
+        )
         parallel_workers = query_plan.params.parallel_workers
 
     if not math.isnan(card):
@@ -805,14 +1021,17 @@ def parameters_from_plan(query_plan: QueryPlan | LogicalJoinTree, *,
         params.add_parallelization_hint(query_plan.tables(), parallel_workers)
 
     for child in query_plan.children:
-        child_params = parameters_from_plan(child, target_cardinality=target_cardinality)
+        child_params = parameters_from_plan(
+            child, target_cardinality=target_cardinality
+        )
         params = params.merge_with(child_params)
 
     return params
 
 
-def explode_query_plan(query_plan: QueryPlan, *, card_source: Literal["estimated", "actual"] = "estimated"
-                       ) -> tuple[LogicalJoinTree, PhysicalOperatorAssignment, PlanParameterization]:
+def explode_query_plan(
+    query_plan: QueryPlan, *, card_source: Literal["estimated", "actual"] = "estimated"
+) -> tuple[LogicalJoinTree, PhysicalOperatorAssignment, PlanParameterization]:
     """Extracts the join tree, physical operators, and plan parameters from a query plan.
 
     Parameters
@@ -830,7 +1049,7 @@ def explode_query_plan(query_plan: QueryPlan, *, card_source: Literal["estimated
     return (
         jointree_from_plan(query_plan, card_source=card_source),
         operators_from_plan(query_plan),
-        parameters_from_plan(query_plan, target_cardinality=card_source)
+        parameters_from_plan(query_plan, target_cardinality=card_source),
     )
 
 
@@ -843,5 +1062,7 @@ def _inspectify(join_tree: JoinTree[AnnotationType], *, indentation: int = 0) ->
         return f"{padding}{prefix}{join_tree.base_table} ({join_tree.annotation})"
 
     join_node = f"{padding}{prefix}⨝ ({join_tree.annotation})"
-    child_inspections = [_inspectify(child, indentation=indentation + 2) for child in join_tree.children]
+    child_inspections = [
+        _inspectify(child, indentation=indentation + 2) for child in join_tree.children
+    ]
     return f"{join_node}\n" + "\n".join(child_inspections)

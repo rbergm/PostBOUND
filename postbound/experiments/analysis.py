@@ -19,9 +19,12 @@ from ..util import StateError
 from ..optimizer._jointree import JoinTree
 
 
-def possible_plans_bound(query: SqlQuery, *,
-                         join_operators: set[str] = {"nested-loop join", "hash join", "sort-merge join"},
-                         scan_operators: set[str] = {"sequential scan", "index scan"}) -> int:
+def possible_plans_bound(
+    query: SqlQuery,
+    *,
+    join_operators: set[str] = {"nested-loop join", "hash join", "sort-merge join"},
+    scan_operators: set[str] = {"sequential scan", "index scan"},
+) -> int:
     """Computes a quick upper bound on the maximum number of possible query execution plans for a given query.
 
     This upper bound is a very coarse one, based on three assumptions:
@@ -56,7 +59,9 @@ def possible_plans_bound(query: SqlQuery, *,
     return join_orders * joins * scans
 
 
-def actual_plan_cost(query: SqlQuery, analyze_plan: QueryPlan, *, database: Optional[Database] = None) -> float:
+def actual_plan_cost(
+    query: SqlQuery, analyze_plan: QueryPlan, *, database: Optional[Database] = None
+) -> float:
     """Utility to compute the true cost of a query plan based on the actual cardinalities.
 
     Parameters
@@ -76,7 +81,9 @@ def actual_plan_cost(query: SqlQuery, analyze_plan: QueryPlan, *, database: Opti
     if not analyze_plan.is_analyze():
         raise ValueError("The provided plan is not an ANALYZE plan")
     database = database if database is not None else DatabasePool().get_instance()
-    hinted_query = database.hinting().generate_hints(query, analyze_plan.with_actual_card())
+    hinted_query = database.hinting().generate_hints(
+        query, analyze_plan.with_actual_card()
+    )
     return database.optimizer().cost_estimate(hinted_query)
 
 
@@ -105,12 +112,20 @@ def text_diff(left: str, right: str, *, sep: str = " | ") -> str:
     max_left_len = max(len(line) for line in left_lines)
     left_lines_padded = [line.ljust(max_left_len) for line in left_lines]
 
-    merged_lines = [f"{left_line}{sep}{right_line}" for left_line, right_line in zip(left_lines_padded, right_lines)]
+    merged_lines = [
+        f"{left_line}{sep}{right_line}"
+        for left_line, right_line in zip(left_lines_padded, right_lines)
+    ]
     return "\n".join(merged_lines)
 
 
-def star_query_cardinality(query: SqlQuery, fact_table_pk_column: ColumnReference, *,
-                           database: Optional[Database] = None, verbose: bool = False) -> int:
+def star_query_cardinality(
+    query: SqlQuery,
+    fact_table_pk_column: ColumnReference,
+    *,
+    database: Optional[Database] = None,
+    verbose: bool = False,
+) -> int:
     """Utility function to manually compute the cardinality of a star query.
 
     This function is intended for situations where the database is unable to compute the cardinality because the intermediates
@@ -146,11 +161,20 @@ def star_query_cardinality(query: SqlQuery, fact_table_pk_column: ColumnReferenc
     It is the user's responsibility to ensure that the query is well-formed in these regards.
     """
     logger = util.make_logger(verbose, prefix=util.timestamp)
-    database = DatabasePool().get_instance().current_database() if database is None else database
-    fact_table = (fact_table_pk_column.table if fact_table_pk_column.is_bound()
-                  else database.schema().lookup_column(fact_table_pk_column, query.tables()))
+    database = (
+        DatabasePool().get_instance().current_database()
+        if database is None
+        else database
+    )
+    fact_table = (
+        fact_table_pk_column.table
+        if fact_table_pk_column.is_bound()
+        else database.schema().lookup_column(fact_table_pk_column, query.tables())
+    )
     if fact_table is None:
-        raise ValueError(f"Cannot infer fact table from column '{fact_table_pk_column}'")
+        raise ValueError(
+            f"Cannot infer fact table from column '{fact_table_pk_column}'"
+        )
     fact_table_pk_column = fact_table_pk_column.bind_to(fact_table)
 
     id_vals_query = qal.parse_query(f"""
@@ -169,8 +193,12 @@ def star_query_cardinality(query: SqlQuery, fact_table_pk_column: ColumnReferenc
             raise ValueError("Currently only singular joins are supported")
 
         partner_table: ColumnReference = util.simplify(join_partner).table
-        query_fragment = qal.transform.extract_query_fragment(query, [fact_table, partner_table])
-        base_query_fragments[join_pred] = qal.transform.as_count_star_query(query_fragment)
+        query_fragment = qal.transform.extract_query_fragment(
+            query, [fact_table, partner_table]
+        )
+        base_query_fragments[join_pred] = qal.transform.as_count_star_query(
+            query_fragment
+        )
 
     total_cardinality = 0
     total_ids = len(id_vals)
@@ -178,16 +206,23 @@ def star_query_cardinality(query: SqlQuery, fact_table_pk_column: ColumnReferenc
         if value_idx % 1000 == 0:
             logger("--", value_idx, "out of", total_ids, "values processed")
 
-        id_filter = qal.BinaryPredicate.equal(qal.ColumnExpression(fact_table_pk_column), qal.StaticValueExpression(id_value))
+        id_filter = qal.BinaryPredicate.equal(
+            qal.ColumnExpression(fact_table_pk_column),
+            qal.StaticValueExpression(id_value),
+        )
 
         for join_pred, base_query in base_query_fragments.items():
             if current_card == 0:
                 break
 
-            expanded_predicate = qal.CompoundPredicate.create_and([base_query.where_clause.predicate, id_filter])
+            expanded_predicate = qal.CompoundPredicate.create_and(
+                [base_query.where_clause.predicate, id_filter]
+            )
             expanded_where_clause = qal.Where(expanded_predicate)
 
-            dimension_query = qal.transform.replace_clause(base_query, expanded_where_clause)
+            dimension_query = qal.transform.replace_clause(
+                base_query, expanded_where_clause
+            )
             dimension_card = database.execute_query(dimension_query)
 
             current_card *= dimension_card
@@ -197,7 +232,9 @@ def star_query_cardinality(query: SqlQuery, fact_table_pk_column: ColumnReferenc
     return total_cardinality
 
 
-def jointree_similarity_topdown(a: JoinTree, b: JoinTree, *, symmetric: bool = False, gamma: float = 1.1) -> float:
+def jointree_similarity_topdown(
+    a: JoinTree, b: JoinTree, *, symmetric: bool = False, gamma: float = 1.1
+) -> float:
     """Computes the similarity of two join trees using a top-down approach.
 
     Parameters
@@ -235,8 +272,12 @@ def jointree_similarity_topdown(a: JoinTree, b: JoinTree, *, symmetric: bool = F
         leaf_tree = a if len(tables_a) == 1 else b
         intermediate_tree = b if leaf_tree == a else a
 
-        inner_score = util.jaccard(leaf_tree.tables(), intermediate_tree.inner_child.tables())
-        outer_score = util.jaccard(leaf_tree.tables(), intermediate_tree.outer_child.tables())
+        inner_score = util.jaccard(
+            leaf_tree.tables(), intermediate_tree.inner_child.tables()
+        )
+        outer_score = util.jaccard(
+            leaf_tree.tables(), intermediate_tree.outer_child.tables()
+        )
 
         return normalization_factor * max(inner_score, outer_score)
 
@@ -244,19 +285,29 @@ def jointree_similarity_topdown(a: JoinTree, b: JoinTree, *, symmetric: bool = F
     a_inner, a_outer = a.inner_child, a.outer_child
     b_inner, b_outer = b.inner_child, b.outer_child
 
-    symmetric_score = (util.jaccard(a_inner.tables(), b_inner.tables())
-                       + util.jaccard(a_outer.tables(), b_outer.tables()))
-    crossover_score = (util.jaccard(a_inner.tables(), b_outer.tables())
-                       + util.jaccard(a_outer.tables(), b_inner.tables())
-                       if symmetric else 0)
+    symmetric_score = util.jaccard(a_inner.tables(), b_inner.tables()) + util.jaccard(
+        a_outer.tables(), b_outer.tables()
+    )
+    crossover_score = (
+        util.jaccard(a_inner.tables(), b_outer.tables())
+        + util.jaccard(a_outer.tables(), b_inner.tables())
+        if symmetric
+        else 0
+    )
     node_score = normalization_factor * max(symmetric_score, crossover_score)
 
     if symmetric and crossover_score > symmetric_score:
-        child_score = (jointree_similarity_topdown(a_inner, b_outer, symmetric=symmetric, gamma=gamma)
-                       + jointree_similarity_topdown(a_outer, b_inner, symmetric=symmetric, gamma=gamma))
+        child_score = jointree_similarity_topdown(
+            a_inner, b_outer, symmetric=symmetric, gamma=gamma
+        ) + jointree_similarity_topdown(
+            a_outer, b_inner, symmetric=symmetric, gamma=gamma
+        )
     else:
-        child_score = (jointree_similarity_topdown(a_inner, b_inner, symmetric=symmetric, gamma=gamma)
-                       + jointree_similarity_topdown(a_outer, b_outer, symmetric=symmetric, gamma=gamma))
+        child_score = jointree_similarity_topdown(
+            a_inner, b_inner, symmetric=symmetric, gamma=gamma
+        ) + jointree_similarity_topdown(
+            a_outer, b_outer, symmetric=symmetric, gamma=gamma
+        )
 
     return node_score + gamma * child_score
 
@@ -312,7 +363,9 @@ _DepthState = collections.namedtuple("_DepthState", ["current_level", "depths"])
 """Keeps track of the current calculated depths of different base tables."""
 
 
-def _traverse_join_tree_depth(current_node: JoinTree, current_depth: _DepthState) -> _DepthState:
+def _traverse_join_tree_depth(
+    current_node: JoinTree, current_depth: _DepthState
+) -> _DepthState:
     """Calculates a new depth state for the current join tree node based on the current depth.
 
     This is the handler method for `join_depth`.
@@ -349,15 +402,23 @@ def _traverse_join_tree_depth(current_node: JoinTree, current_depth: _DepthState
 
     inner_child, outer_child = current_node.inner_child, current_node.outer_child
     if current_node.is_base_join():
-        return _DepthState(1, current_depth.depths | {inner_child.base_table: 1, outer_child.base_table: 1})
+        return _DepthState(
+            1,
+            current_depth.depths
+            | {inner_child.base_table: 1, outer_child.base_table: 1},
+        )
     elif inner_child.is_scan():
         outer_depth = _traverse_join_tree_depth(outer_child, current_depth)
         updated_depth = outer_depth.current_level + 1
-        return _DepthState(updated_depth, outer_depth.depths | {inner_child.base_table: updated_depth})
+        return _DepthState(
+            updated_depth, outer_depth.depths | {inner_child.base_table: updated_depth}
+        )
     elif outer_child.is_scan():
         inner_depth = _traverse_join_tree_depth(inner_child, current_depth)
         updated_depth = inner_depth.current_level + 1
-        return _DepthState(updated_depth, inner_depth.depths | {outer_child.table: updated_depth})
+        return _DepthState(
+            updated_depth, inner_depth.depths | {outer_child.table: updated_depth}
+        )
     else:
         inner_depth = _traverse_join_tree_depth(inner_child, current_depth)
         outer_depth = _traverse_join_tree_depth(outer_child, current_depth)
@@ -417,7 +478,14 @@ class PlanChangeEntry:
         attribute is unset by default.
     """
 
-    change_type: Literal["tree-structure", "join-direction", "physical-op", "card-est", "cost-est", "actual-card"]
+    change_type: Literal[
+        "tree-structure",
+        "join-direction",
+        "physical-op",
+        "card-est",
+        "cost-est",
+        "actual-card",
+    ]
     left_state: frozenset[TableReference] | PhysicalOperator | float
     right_state: frozenset[TableReference] | PhysicalOperator | float
     context: Optional[frozenset[TableReference]] = None
@@ -442,14 +510,20 @@ class PlanChangeEntry:
             case "physical-op":
                 return f"Different physical operators on node {self.context}: left={self.left_state} right={self.right_state}"
             case "card-est":
-                return (f"Different cardinality estimates on node {self.context}: "
-                        f"left={self.left_state} right={self.right_state}")
+                return (
+                    f"Different cardinality estimates on node {self.context}: "
+                    f"left={self.left_state} right={self.right_state}"
+                )
             case "cost-est":
-                return (f"Different cost estimates on node {self.context}: "
-                        f"left={self.left_state} right={self.right_state}")
+                return (
+                    f"Different cost estimates on node {self.context}: "
+                    f"left={self.left_state} right={self.right_state}"
+                )
             case "actual-card":
-                return (f"Different actual cardinality on node {self.context}: "
-                        f"left={self.left_state} right={self.right_state}")
+                return (
+                    f"Different actual cardinality on node {self.context}: "
+                    f"left={self.left_state} right={self.right_state}"
+                )
             case _:
                 raise StateError(f"Unknown change type '{self.change_type}'")
 
@@ -495,32 +569,77 @@ def compare_query_plans(left: QueryPlan, right: QueryPlan) -> PlanChangeset:
         A diff between the two join trees
     """
     # FIXME: query plans might contain auxiliary nodes that are currently not handled/recognized
-    if left.find_first_node(lambda node: node.is_auxiliary()) or right.find_first_node(lambda node: node.is_auxiliary()):
-        raise ValueError("Comparison of query plans with auxiliary (i.e. non-join and non-scan) operators "
-                         "is currently not supported")
+    if left.find_first_node(lambda node: node.is_auxiliary()) or right.find_first_node(
+        lambda node: node.is_auxiliary()
+    ):
+        raise ValueError(
+            "Comparison of query plans with auxiliary (i.e. non-join and non-scan) operators "
+            "is currently not supported"
+        )
 
     if left.tables() != right.tables():
-        changeset = [PlanChangeEntry("tree-structure", left_state=left.tables(), right_state=right.tables())]
+        changeset = [
+            PlanChangeEntry(
+                "tree-structure", left_state=left.tables(), right_state=right.tables()
+            )
+        ]
         return PlanChangeset(changeset)
 
     changes: list[PlanChangeEntry] = []
 
-    left_card_est, right_card_est = left.estimated_cardinality, right.estimated_cardinality
-    left_card_actual, right_card_actual = left.actual_cardinality, right.actual_cardinality
+    left_card_est, right_card_est = (
+        left.estimated_cardinality,
+        right.estimated_cardinality,
+    )
+    left_card_actual, right_card_actual = (
+        left.actual_cardinality,
+        right.actual_cardinality,
+    )
     left_cost, right_cost = left.estimated_cost, right.estimated_cost
-    if left_card_est != right_card_est and not (math.isnan(left_card_est) and math.isnan(right_card_est)):
-        changes.append(PlanChangeEntry("card-est", left_state=left_card_est, right_state=right_card_est,
-                                       context=left.tables()))
-    if left_card_actual != right_card_actual and not (math.isnan(left_card_actual) and math.isnan(right_card_actual)):
-        changes.append(PlanChangeEntry("actual-card", left_state=left_card_actual, right_state=right_card_actual,
-                                       context=left.tables()))
-    if left_cost != right_cost and not (math.isnan(left_cost) and math.isnan(left_cost)):
-        changes.append(PlanChangeEntry("cost-est", left_state=left_cost, right_state=right_cost,
-                                       context=left.tables()))
+    if left_card_est != right_card_est and not (
+        math.isnan(left_card_est) and math.isnan(right_card_est)
+    ):
+        changes.append(
+            PlanChangeEntry(
+                "card-est",
+                left_state=left_card_est,
+                right_state=right_card_est,
+                context=left.tables(),
+            )
+        )
+    if left_card_actual != right_card_actual and not (
+        math.isnan(left_card_actual) and math.isnan(right_card_actual)
+    ):
+        changes.append(
+            PlanChangeEntry(
+                "actual-card",
+                left_state=left_card_actual,
+                right_state=right_card_actual,
+                context=left.tables(),
+            )
+        )
+    if left_cost != right_cost and not (
+        math.isnan(left_cost) and math.isnan(left_cost)
+    ):
+        changes.append(
+            PlanChangeEntry(
+                "cost-est",
+                left_state=left_cost,
+                right_state=right_cost,
+                context=left.tables(),
+            )
+        )
 
     left_op, right_op = left.node_type, right.node_type
     if left_op != right_op:
-        changes.append(PlanChangeEntry("physical-op", left_state=left_op, right_state=right_op, context=left.tables()))
+        changes.append(
+            PlanChangeEntry(
+                "physical-op",
+                left_state=left_op,
+                right_state=right_op,
+                context=left.tables(),
+            )
+        )
 
     if left.is_join():
         # we can also assume that right is an intermediate node since we know both nodes have the same tables and the left tree
@@ -528,11 +647,21 @@ def compare_query_plans(left: QueryPlan, right: QueryPlan) -> PlanChangeset:
 
         join_direction_swap = left.inner_child.tables() == right.outer_child.tables()
         if join_direction_swap:
-            changes.append(PlanChangeEntry("join-direction", left_state=left, right_state=right))
-            changes.extend(compare_query_plans(left.inner_child, right.outer_child).changes)
-            changes.extend(compare_query_plans(left.outer_child, right.inner_child).changes)
+            changes.append(
+                PlanChangeEntry("join-direction", left_state=left, right_state=right)
+            )
+            changes.extend(
+                compare_query_plans(left.inner_child, right.outer_child).changes
+            )
+            changes.extend(
+                compare_query_plans(left.outer_child, right.inner_child).changes
+            )
         else:
-            changes.extend(compare_query_plans(left.inner_child, right.inner_child).changes)
-            changes.extend(compare_query_plans(left.outer_child, right.inner_child).changes)
+            changes.extend(
+                compare_query_plans(left.inner_child, right.inner_child).changes
+            )
+            changes.extend(
+                compare_query_plans(left.outer_child, right.inner_child).changes
+            )
 
     return PlanChangeset(changes)

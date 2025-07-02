@@ -1,4 +1,3 @@
-
 """relalg provides fundamental building blocks of relational algebra and a converter from SQL to algebra.
 
 The central component of our algebra implementation is the `RelNode` class. All relational operators inherit from this abstract
@@ -29,6 +28,7 @@ Notice that while most algebraic expressions correspond to tree structures, ther
 graph is generated. This is especially the case when a base relation is used as part of subqueries. Nevertheless, there will
 always be only one root (sink) node.
 """
+
 from __future__ import annotations
 
 import abc
@@ -44,15 +44,39 @@ from typing import Optional
 
 from . import transform
 from ._qal import (
-    TableReference, ColumnReference,
-    LogicalOperator, CompoundOperator, SetOperator,
-    SqlExpression, ColumnExpression, StaticValueExpression, MathExpression, CastExpression, FunctionExpression,
-    SubqueryExpression, StarExpression, OrderByExpression,
-    WindowExpression, CaseExpression,
-    AbstractPredicate, BinaryPredicate, InPredicate, BetweenPredicate, UnaryPredicate, CompoundPredicate,
-    TableSource, DirectTableSource, SubqueryTableSource, JoinTableSource,
-    SqlQuery, ImplicitSqlQuery, SetQuery, SelectStatement,
-    SqlExpressionVisitor, PredicateVisitor, ExpressionCollector
+    TableReference,
+    ColumnReference,
+    LogicalOperator,
+    CompoundOperator,
+    SetOperator,
+    SqlExpression,
+    ColumnExpression,
+    StaticValueExpression,
+    MathExpression,
+    CastExpression,
+    FunctionExpression,
+    SubqueryExpression,
+    StarExpression,
+    OrderByExpression,
+    WindowExpression,
+    CaseExpression,
+    AbstractPredicate,
+    BinaryPredicate,
+    InPredicate,
+    BetweenPredicate,
+    UnaryPredicate,
+    CompoundPredicate,
+    TableSource,
+    DirectTableSource,
+    SubqueryTableSource,
+    JoinTableSource,
+    SqlQuery,
+    ImplicitSqlQuery,
+    SetQuery,
+    SelectStatement,
+    SqlExpressionVisitor,
+    PredicateVisitor,
+    ExpressionCollector,
 )
 from .. import util
 
@@ -74,6 +98,7 @@ class RelNode(abc.ABC):
     --------
     parse_relalg
     """
+
     def __init__(self, parent_node: Optional[RelNode]) -> None:
         self._parent = parent_node
         self._sideways_pass: set[RelNode] = set()
@@ -167,7 +192,12 @@ class RelNode(abc.ABC):
         frozenset[TableReference]
             The tables
         """
-        return frozenset(util.set_union(child.tables(ignore_subqueries=ignore_subqueries) for child in self.children()))
+        return frozenset(
+            util.set_union(
+                child.tables(ignore_subqueries=ignore_subqueries)
+                for child in self.children()
+            )
+        )
 
     def provided_expressions(self) -> frozenset[SqlExpression]:
         """Collects all expressions that are available to parent nodes.
@@ -334,7 +364,9 @@ class RelNode(abc.ABC):
             attrs["_left_input"] = children[0]
             attrs["_right_input"] = children[1]
         else:
-            raise NotImplementedError(f"Cannot use the default implementation of _update_child_nodes for node '{self}'.")
+            raise NotImplementedError(
+                f"Cannot use the default implementation of _update_child_nodes for node '{self}'."
+            )
 
     def _clear_parent_links(self, *, recursive: bool = False) -> None:
         """Removes all references to parent nodes from the current operator.
@@ -379,8 +411,10 @@ class RelNode(abc.ABC):
         n_current_children = len(self.children())
         n_new_children = len(children)
         if n_current_children != n_new_children:
-            raise ValueError(f"Cannot update a node containing {n_current_children} child nodes "
-                             f"with {n_new_children} children.")
+            raise ValueError(
+                f"Cannot update a node containing {n_current_children} child nodes "
+                f"with {n_new_children} children."
+            )
 
     @abc.abstractmethod
     def _recalc_hash_val(self) -> int:
@@ -431,8 +465,14 @@ class Selection(RelNode):
 
     .. math:: \\sigma_\\theta(R) := \\{ r \\in R | \\theta(r) \\}
     """
-    def __init__(self, input_node: RelNode, predicate: AbstractPredicate, *,
-                 parent_node: Optional[RelNode] = None) -> None:
+
+    def __init__(
+        self,
+        input_node: RelNode,
+        predicate: AbstractPredicate,
+        *,
+        parent_node: Optional[RelNode] = None,
+    ) -> None:
         self._input_node = input_node
         self._predicate = predicate
         super().__init__(parent_node)
@@ -465,8 +505,13 @@ class Selection(RelNode):
     def accept_visitor(self, visitor: RelNodeVisitor[VisitorResult]) -> VisitorResult:
         return visitor.visit_selection(self)
 
-    def mutate(self, *, input_node: Optional[RelNode] = None, predicate: Optional[AbstractPredicate] = None,
-               as_root: bool = False) -> Selection:
+    def mutate(
+        self,
+        *,
+        input_node: Optional[RelNode] = None,
+        predicate: Optional[AbstractPredicate] = None,
+        as_root: bool = False,
+    ) -> Selection:
         """Creates a new selection with modified attributes.
 
         Parameters
@@ -488,7 +533,11 @@ class Selection(RelNode):
         --------
         RelNode.mutate : for safety considerations and calling conventions
         """
-        params = {param: val for param, val in locals().items() if param != "self" and not param.startswith("__")}
+        params = {
+            param: val
+            for param, val in locals().items()
+            if param != "self" and not param.startswith("__")
+        }
         return super().mutate(**params)
 
     def _recalc_hash_val(self) -> int:
@@ -497,7 +546,11 @@ class Selection(RelNode):
     __hash__ = RelNode.__hash__
 
     def __eq__(self, other: object) -> bool:
-        return isinstance(other, type(self)) and self._input_node == other._input_node and self._predicate == other._predicate
+        return (
+            isinstance(other, type(self))
+            and self._input_node == other._input_node
+            and self._predicate == other._predicate
+        )
 
     def __str__(self) -> str:
         return f"σ ({self._predicate})"
@@ -522,7 +575,14 @@ class CrossProduct(RelNode):
 
     .. math:: R \\times S := \\{ r \\circ s | r \\in R, s \\in S \\}
     """
-    def __init__(self, left_input: RelNode, right_input: RelNode, *, parent_node: Optional[RelNode] = None) -> None:
+
+    def __init__(
+        self,
+        left_input: RelNode,
+        right_input: RelNode,
+        *,
+        parent_node: Optional[RelNode] = None,
+    ) -> None:
         self._left_input = left_input
         self._right_input = right_input
         super().__init__(parent_node)
@@ -555,8 +615,13 @@ class CrossProduct(RelNode):
     def accept_visitor(self, visitor: RelNodeVisitor[VisitorResult]) -> VisitorResult:
         return visitor.visit_cross_product(self)
 
-    def mutate(self, *, left_input: Optional[RelNode] = None, right_input: Optional[RelNode] = None,
-               as_root: bool = False) -> CrossProduct:
+    def mutate(
+        self,
+        *,
+        left_input: Optional[RelNode] = None,
+        right_input: Optional[RelNode] = None,
+        as_root: bool = False,
+    ) -> CrossProduct:
         """Creates a new cross product with modified attributes.
 
         Parameters
@@ -578,7 +643,11 @@ class CrossProduct(RelNode):
         --------
         RelNode.mutate : for safety considerations and calling conventions
         """
-        params = {param: val for param, val in locals().items() if param != "self" and not param.startswith("__")}
+        params = {
+            param: val
+            for param, val in locals().items()
+            if param != "self" and not param.startswith("__")
+        }
         return super().mutate(**params)
 
     def _recalc_hash_val(self) -> int:
@@ -587,9 +656,11 @@ class CrossProduct(RelNode):
     __hash__ = RelNode.__hash__
 
     def __eq__(self, other: object) -> bool:
-        return (isinstance(other, type(self))
-                and self._left_input == other._left_input
-                and self._right_input == other._right_input)
+        return (
+            isinstance(other, type(self))
+            and self._left_input == other._left_input
+            and self._right_input == other._right_input
+        )
 
     def __str__(self) -> str:
         return "⨯"
@@ -616,7 +687,14 @@ class Union(RelNode):
 
     .. math:: R \\cup S := \\{ t | t \\in R \\lor t \\in S \\}
     """
-    def __init__(self, left_input: RelNode, right_input: RelNode, *, parent_node: Optional[RelNode] = None) -> None:
+
+    def __init__(
+        self,
+        left_input: RelNode,
+        right_input: RelNode,
+        *,
+        parent_node: Optional[RelNode] = None,
+    ) -> None:
         self._left_input = left_input
         self._right_input = right_input
         super().__init__(parent_node)
@@ -649,8 +727,13 @@ class Union(RelNode):
     def accept_visitor(self, visitor: RelNodeVisitor[VisitorResult]) -> VisitorResult:
         return visitor.visit_union(visitor)
 
-    def mutate(self, *, left_input: Optional[RelNode] = None, right_input: Optional[RelNode] = None,
-               as_root: bool = False) -> Union:
+    def mutate(
+        self,
+        *,
+        left_input: Optional[RelNode] = None,
+        right_input: Optional[RelNode] = None,
+        as_root: bool = False,
+    ) -> Union:
         """Creates a new union with modified attributes.
 
         Parameters
@@ -671,7 +754,11 @@ class Union(RelNode):
         --------
         RelNode.mutate : for safety considerations and calling conventions
         """
-        params = {param: val for param, val in locals().items() if param != "self" and not param.startswith("__")}
+        params = {
+            param: val
+            for param, val in locals().items()
+            if param != "self" and not param.startswith("__")
+        }
         return super().mutate(**params)
 
     def _recalc_hash_val(self) -> int:
@@ -680,9 +767,11 @@ class Union(RelNode):
     __hash__ = RelNode.__hash__
 
     def __eq__(self, other: object) -> bool:
-        return (isinstance(other, type(self))
-                and self._left_input == other._left_input
-                and self._right_input == other._right_input)
+        return (
+            isinstance(other, type(self))
+            and self._left_input == other._left_input
+            and self._right_input == other._right_input
+        )
 
     def __str__(self) -> str:
         return "∪"
@@ -709,7 +798,14 @@ class Intersection(RelNode):
 
     .. math:: R \\cap S := \\{ t | t \\in R \\land t \\in S \\}
     """
-    def __init__(self, left_input: RelNode, right_input: RelNode, *, parent_node: Optional[RelNode] = None) -> None:
+
+    def __init__(
+        self,
+        left_input: RelNode,
+        right_input: RelNode,
+        *,
+        parent_node: Optional[RelNode] = None,
+    ) -> None:
         self._left_input = left_input
         self._right_input = right_input
         super().__init__(parent_node)
@@ -742,8 +838,13 @@ class Intersection(RelNode):
     def accept_visitor(self, visitor: RelNodeVisitor[VisitorResult]) -> VisitorResult:
         return visitor.visit_intersection(visitor)
 
-    def mutate(self, *, left_input: Optional[RelNode] = None, right_input: Optional[RelNode] = None,
-               as_root: bool = False) -> Intersection:
+    def mutate(
+        self,
+        *,
+        left_input: Optional[RelNode] = None,
+        right_input: Optional[RelNode] = None,
+        as_root: bool = False,
+    ) -> Intersection:
         """Creates a new intersection with modified attributes.
 
         Parameters
@@ -765,7 +866,11 @@ class Intersection(RelNode):
         --------
         RelNode.mutate : for safety considerations and calling conventions
         """
-        params = {param: val for param, val in locals().items() if param != "self" and not param.startswith("__")}
+        params = {
+            param: val
+            for param, val in locals().items()
+            if param != "self" and not param.startswith("__")
+        }
         return super().mutate(**params)
 
     def _recalc_hash_val(self) -> int:
@@ -774,9 +879,11 @@ class Intersection(RelNode):
     __hash__ = RelNode.__hash__
 
     def __eq__(self, other: object) -> bool:
-        return (isinstance(other, type(self))
-                and self._left_input == other._left_input
-                and self._right_input == other._right_input)
+        return (
+            isinstance(other, type(self))
+            and self._left_input == other._left_input
+            and self._right_input == other._right_input
+        )
 
     def __str__(self) -> str:
         return "∩"
@@ -803,7 +910,14 @@ class Difference(RelNode):
 
     .. math:: R \\setminus S := \\{ r \\in R | r \\notin S \\}
     """
-    def __init__(self, left_input: RelNode, right_input: RelNode, *, parent_node: Optional[RelNode] = None) -> None:
+
+    def __init__(
+        self,
+        left_input: RelNode,
+        right_input: RelNode,
+        *,
+        parent_node: Optional[RelNode] = None,
+    ) -> None:
         self._left_input = left_input
         self._right_input = right_input
         super().__init__(parent_node)
@@ -836,8 +950,13 @@ class Difference(RelNode):
     def accept_visitor(self, visitor: RelNodeVisitor[VisitorResult]) -> VisitorResult:
         return visitor.visit_difference(visitor)
 
-    def mutate(self, *, left_input: Optional[RelNode] = None, right_input: Optional[RelNode] = None,
-               as_root: bool = False) -> Difference:
+    def mutate(
+        self,
+        *,
+        left_input: Optional[RelNode] = None,
+        right_input: Optional[RelNode] = None,
+        as_root: bool = False,
+    ) -> Difference:
         """Creates a new difference with modified attributes.
 
         Parameters
@@ -859,7 +978,11 @@ class Difference(RelNode):
         --------
         RelNode.mutate : for safety considerations and calling conventions
         """
-        params = {param: val for param, val in locals().items() if param != "self" and not param.startswith("__")}
+        params = {
+            param: val
+            for param, val in locals().items()
+            if param != "self" and not param.startswith("__")
+        }
         return super().mutate(**params)
 
     def _recalc_hash_val(self) -> int:
@@ -868,9 +991,11 @@ class Difference(RelNode):
     __hash__ = RelNode.__hash__
 
     def __eq__(self, other: object) -> bool:
-        return (isinstance(other, type(self))
-                and self._left_input == other._left_input
-                and self._right_input == other._right_input)
+        return (
+            isinstance(other, type(self))
+            and self._left_input == other._left_input
+            and self._right_input == other._right_input
+        )
 
     def __str__(self) -> str:
         return "\\"
@@ -895,11 +1020,20 @@ class Relation(RelNode):
         The parent node of the operator, if one exists. The parent is the operator that receives the output relation of the
         current operator. If the current operator is the root and (currently) does not have a parent, *None* can be used.
     """
-    def __init__(self, table: TableReference, provided_columns: Iterable[ColumnReference | ColumnExpression], *,
-                 subquery_input: Optional[RelNode] = None, parent_node: Optional[RelNode] = None) -> None:
+
+    def __init__(
+        self,
+        table: TableReference,
+        provided_columns: Iterable[ColumnReference | ColumnExpression],
+        *,
+        subquery_input: Optional[RelNode] = None,
+        parent_node: Optional[RelNode] = None,
+    ) -> None:
         self._table = table
-        self._provided_cols = frozenset(col if isinstance(col, ColumnExpression) else ColumnExpression(col)
-                                        for col in provided_columns)
+        self._provided_cols = frozenset(
+            col if isinstance(col, ColumnExpression) else ColumnExpression(col)
+            for col in provided_columns
+        )
 
         self._subquery_input = subquery_input if subquery_input is not None else None
         if self._subquery_input is not None:
@@ -945,9 +1079,14 @@ class Relation(RelNode):
     def accept_visitor(self, visitor: RelNodeVisitor[VisitorResult]) -> VisitorResult:
         return visitor.visit_base_relation(self)
 
-    def mutate(self, *, table: Optional[TableReference] = None,
-               provided_columns: Optional[Iterable[ColumnReference | ColumnExpression]] = None,
-               subquery_input: Optional[RelNode] = None, as_root: bool = False) -> Relation:
+    def mutate(
+        self,
+        *,
+        table: Optional[TableReference] = None,
+        provided_columns: Optional[Iterable[ColumnReference | ColumnExpression]] = None,
+        subquery_input: Optional[RelNode] = None,
+        as_root: bool = False,
+    ) -> Relation:
         """Creates a new relation with modified attributes.
 
         Parameters
@@ -970,7 +1109,11 @@ class Relation(RelNode):
         --------
         RelNode.mutate : for safety considerations and calling conventions
         """
-        params = {param: val for param, val in locals().items() if param != "self" and not param.startswith("__")}
+        params = {
+            param: val
+            for param, val in locals().items()
+            if param != "self" and not param.startswith("__")
+        }
         return super().mutate(**params)
 
     def _update_child_nodes(self, children: Sequence[RelNode]) -> None:
@@ -1014,8 +1157,15 @@ class ThetaJoin(RelNode):
 
     .. math:: \\bowtie_\\theta(R, S) := \\{ r \\circ s | r \\in R \\land s \\in S \\land \\theta(r, s) \\}
     """
-    def __init__(self, left_input: RelNode, right_input: RelNode, predicate: AbstractPredicate, *,
-                 parent_node: Optional[RelNode] = None) -> None:
+
+    def __init__(
+        self,
+        left_input: RelNode,
+        right_input: RelNode,
+        predicate: AbstractPredicate,
+        *,
+        parent_node: Optional[RelNode] = None,
+    ) -> None:
         self._left_input = left_input
         self._right_input = right_input
         self._predicate = predicate
@@ -1060,8 +1210,14 @@ class ThetaJoin(RelNode):
     def accept_visitor(self, visitor: RelNodeVisitor[VisitorResult]) -> VisitorResult:
         return visitor.visit_theta_join(self)
 
-    def mutate(self, *, left_input: Optional[RelNode] = None, right_input: Optional[RelNode] = None,
-               predicate: Optional[AbstractPredicate] = None, as_root: bool = False) -> ThetaJoin:
+    def mutate(
+        self,
+        *,
+        left_input: Optional[RelNode] = None,
+        right_input: Optional[RelNode] = None,
+        predicate: Optional[AbstractPredicate] = None,
+        as_root: bool = False,
+    ) -> ThetaJoin:
         """Creates a new theta join with modified attributes.
 
         Parameters
@@ -1085,7 +1241,11 @@ class ThetaJoin(RelNode):
         --------
         RelNode.mutate : for safety considerations and calling conventions
         """
-        params = {param: val for param, val in locals().items() if param != "self" and not param.startswith("__")}
+        params = {
+            param: val
+            for param, val in locals().items()
+            if param != "self" and not param.startswith("__")
+        }
         return super().mutate(**params)
 
     def _recalc_hash_val(self) -> int:
@@ -1094,9 +1254,12 @@ class ThetaJoin(RelNode):
     __hash__ = RelNode.__hash__
 
     def __eq__(self, other: object) -> bool:
-        return (isinstance(other, type(self))
-                and self._left_input == other._left_input and self._right_input == other._right_input
-                and self._predicate == other._predicate)
+        return (
+            isinstance(other, type(self))
+            and self._left_input == other._left_input
+            and self._right_input == other._right_input
+            and self._predicate == other._predicate
+        )
 
     def __str__(self) -> str:
         return f"⋈ ϴ=({self._predicate})"
@@ -1118,8 +1281,14 @@ class Projection(RelNode):
         The parent node of the operator, if one exists. The parent is the operator that receives the output relation of the
         current operator. If the current operator is the root and (currently) does not have a parent, *None* can be used.
     """
-    def __init__(self, input_node: RelNode, targets: Sequence[SqlExpression], *,
-                 parent_node: Optional[RelNode] = None) -> None:
+
+    def __init__(
+        self,
+        input_node: RelNode,
+        targets: Sequence[SqlExpression],
+        *,
+        parent_node: Optional[RelNode] = None,
+    ) -> None:
         self._input_node = input_node
         self._targets = tuple(targets)
         super().__init__(parent_node)
@@ -1152,8 +1321,13 @@ class Projection(RelNode):
     def accept_visitor(self, visitor: RelNodeVisitor[VisitorResult]) -> VisitorResult:
         return visitor.visit_projection(self)
 
-    def mutate(self, *, input_node: Optional[RelNode] = None, targets: Optional[Sequence[SqlExpression]] = None,
-               as_root: bool = False) -> Projection:
+    def mutate(
+        self,
+        *,
+        input_node: Optional[RelNode] = None,
+        targets: Optional[Sequence[SqlExpression]] = None,
+        as_root: bool = False,
+    ) -> Projection:
         """Creates a new projection with modified attributes.
 
         Parameters
@@ -1175,7 +1349,11 @@ class Projection(RelNode):
         --------
         RelNode.mutate : for safety considerations and calling conventions
         """
-        params = {param: val for param, val in locals().items() if param != "self" and not param.startswith("__")}
+        params = {
+            param: val
+            for param, val in locals().items()
+            if param != "self" and not param.startswith("__")
+        }
         return super().mutate(**params)
 
     def _recalc_hash_val(self) -> int:
@@ -1184,7 +1362,11 @@ class Projection(RelNode):
     __hash__ = RelNode.__hash__
 
     def __eq__(self, other: object) -> bool:
-        return isinstance(other, type(self)) and self._input_node == other._input_node and self._targets == other._targets
+        return (
+            isinstance(other, type(self))
+            and self._input_node == other._input_node
+            and self._targets == other._targets
+        )
 
     def __str__(self) -> str:
         col_str = ", ".join(str(col) for col in self._targets)
@@ -1208,15 +1390,26 @@ class GroupBy(RelNode):
         The parent node of the operator, if one exists. The parent is the operator that receives the output relation of the
         current operator. If the current operator is the root and (currently) does not have a parent, *None* can be used.
     """
-    def __init__(self, input_node: RelNode, group_columns: Sequence[SqlExpression], *,
-                 aggregates: Optional[dict[frozenset[SqlExpression], frozenset[FunctionExpression]]] = None,
-                 parent_node: Optional[RelNode] = None) -> None:
+
+    def __init__(
+        self,
+        input_node: RelNode,
+        group_columns: Sequence[SqlExpression],
+        *,
+        aggregates: Optional[
+            dict[frozenset[SqlExpression], frozenset[FunctionExpression]]
+        ] = None,
+        parent_node: Optional[RelNode] = None,
+    ) -> None:
         if not group_columns and not aggregates:
-            raise ValueError("Either group columns or aggregation functions must be specified!")
+            raise ValueError(
+                "Either group columns or aggregation functions must be specified!"
+            )
         self._input_node = input_node
         self._group_columns = tuple(group_columns)
-        self._aggregates: util.frozendict[frozenset[SqlExpression], frozenset[FunctionExpression]] = (
-            util.frozendict(aggregates))
+        self._aggregates: util.frozendict[
+            frozenset[SqlExpression], frozenset[FunctionExpression]
+        ] = util.frozendict(aggregates)
         super().__init__(parent_node)
 
     @property
@@ -1264,9 +1457,17 @@ class GroupBy(RelNode):
     def accept_visitor(self, visitor: RelNodeVisitor[VisitorResult]) -> VisitorResult:
         return visitor.visit_groupby(self)
 
-    def mutate(self, *, input_node: Optional[RelNode] = None, group_columns: Optional[Sequence[SqlExpression]] = None,
-               aggregates: Optional[dict[frozenset[SqlExpression], frozenset[FunctionExpression]]] = None,
-               parent: Optional[RelNode] = None, as_root: bool = False) -> GroupBy:
+    def mutate(
+        self,
+        *,
+        input_node: Optional[RelNode] = None,
+        group_columns: Optional[Sequence[SqlExpression]] = None,
+        aggregates: Optional[
+            dict[frozenset[SqlExpression], frozenset[FunctionExpression]]
+        ] = None,
+        parent: Optional[RelNode] = None,
+        as_root: bool = False,
+    ) -> GroupBy:
         """Creates a new group by with modified attributes.
 
         Parameters
@@ -1289,7 +1490,11 @@ class GroupBy(RelNode):
         --------
         RelNode.mutate : for safety considerations and calling conventions
         """
-        params = {param: val for param, val in locals().items() if param != "self" and not param.startswith("__")}
+        params = {
+            param: val
+            for param, val in locals().items()
+            if param != "self" and not param.startswith("__")
+        }
         return super().mutate(**params)
 
     def _recalc_hash_val(self) -> int:
@@ -1298,10 +1503,12 @@ class GroupBy(RelNode):
     __hash__ = RelNode.__hash__
 
     def __eq__(self, other: object) -> bool:
-        return (isinstance(other, type(self))
-                and self._input_node == other._input_node
-                and self._group_columns == other._group_columns
-                and self._aggregates == other._aggregates)
+        return (
+            isinstance(other, type(self))
+            and self._input_node == other._input_node
+            and self._group_columns == other._group_columns
+            and self._aggregates == other._aggregates
+        )
 
     def __str__(self) -> str:
         pretty_aggregations: dict[str, str] = {}
@@ -1316,7 +1523,9 @@ class GroupBy(RelNode):
                 agg_str = "(" + ", ".join(str(agg) for agg in agg_funcs) + ")"
             pretty_aggregations[col_str] = agg_str
 
-        agg_str = ", ".join(f"{col}: {agg_func}" for col, agg_func in pretty_aggregations.items())
+        agg_str = ", ".join(
+            f"{col}: {agg_func}" for col, agg_func in pretty_aggregations.items()
+        )
         if not self._group_columns:
             return f"γ ({agg_str})"
         group_str = ", ".join(str(col) for col in self._group_columns)
@@ -1340,8 +1549,14 @@ class Rename(RelNode):
     --------
     This node is currently not used since we do not support natural joins.
     """
-    def __init__(self, input_node: RelNode, mapping: dict[ColumnReference, ColumnReference], *,
-                 parent_node: Optional[RelNode] = None) -> None:
+
+    def __init__(
+        self,
+        input_node: RelNode,
+        mapping: dict[ColumnReference, ColumnReference],
+        *,
+        parent_node: Optional[RelNode] = None,
+    ) -> None:
         # TODO: check types + add provided / required expressions method
         self._input_node = input_node
         self._mapping = util.frozendict(mapping)
@@ -1370,8 +1585,10 @@ class Rename(RelNode):
         return self._mapping
 
     def provided_expressions(self) -> frozenset[SqlExpression]:
-        return frozenset(transform.rename_columns_in_expression(child_expr, self._mapping)
-                         for child_expr in self._input_node.provided_expressions())
+        return frozenset(
+            transform.rename_columns_in_expression(child_expr, self._mapping)
+            for child_expr in self._input_node.provided_expressions()
+        )
 
     def children(self) -> Sequence[RelNode]:
         return [self._input_node]
@@ -1379,8 +1596,13 @@ class Rename(RelNode):
     def accept_visitor(self, visitor: RelNodeVisitor[VisitorResult]) -> VisitorResult:
         return visitor.visit_rename(self)
 
-    def mutate(self, *, input_node: Optional[RelNode] = None,
-               mapping: Optional[dict[ColumnReference, ColumnReference]] = None, as_root: bool = False) -> Rename:
+    def mutate(
+        self,
+        *,
+        input_node: Optional[RelNode] = None,
+        mapping: Optional[dict[ColumnReference, ColumnReference]] = None,
+        as_root: bool = False,
+    ) -> Rename:
         """Creates a new rename with modified attributes.
 
         Parameters
@@ -1401,7 +1623,11 @@ class Rename(RelNode):
         --------
         RelNode.mutate : for safety considerations and calling conventions
         """
-        params = {param: val for param, val in locals().items() if param != "self" and not param.startswith("__")}
+        params = {
+            param: val
+            for param, val in locals().items()
+            if param != "self" and not param.startswith("__")
+        }
         return super().mutate(**params)
 
     def _recalc_hash_val(self) -> int:
@@ -1410,7 +1636,11 @@ class Rename(RelNode):
     __hash__ = RelNode.__hash__
 
     def __eq__(self, other: object) -> bool:
-        return isinstance(other, type(self)) and self._input_node == other._input_node and self._mapping == other._mapping
+        return (
+            isinstance(other, type(self))
+            and self._input_node == other._input_node
+            and self._mapping == other._mapping
+        )
 
     def __str__(self) -> str:
         map_str = ", ".join(f"{col}: {target}" for col, target in self._mapping.items())
@@ -1443,12 +1673,22 @@ class Sort(RelNode):
 
     However, we do not support special placement of *NULL* column values, i.e. no *ORDER BY R.a NULLS LAST*, etc.
     """
+
     # TODO: support NULLS FIRST/NULLS LAST
-    def __init__(self, input_node: RelNode,
-                 sorting: Sequence[tuple[SqlExpression, SortDirection] | SqlExpression], *,
-                 parent_node: Optional[RelNode] = None) -> None:
+    def __init__(
+        self,
+        input_node: RelNode,
+        sorting: Sequence[tuple[SqlExpression, SortDirection] | SqlExpression],
+        *,
+        parent_node: Optional[RelNode] = None,
+    ) -> None:
         self._input_node = input_node
-        self._sorting = tuple([sort_item if isinstance(sort_item, tuple) else (sort_item, "asc") for sort_item in sorting])
+        self._sorting = tuple(
+            [
+                sort_item if isinstance(sort_item, tuple) else (sort_item, "asc")
+                for sort_item in sorting
+            ]
+        )
         super().__init__(parent_node)
 
     @property
@@ -1482,9 +1722,15 @@ class Sort(RelNode):
     def accept_visitor(self, visitor: RelNodeVisitor[VisitorResult]) -> VisitorResult:
         return visitor.visit_sort(self)
 
-    def mutate(self, *, input_node: Optional[RelNode] = None,
-               sorting: Optional[Sequence[tuple[SqlExpression, SortDirection] | SqlExpression]] = None,
-               as_root: bool = False) -> Sort:
+    def mutate(
+        self,
+        *,
+        input_node: Optional[RelNode] = None,
+        sorting: Optional[
+            Sequence[tuple[SqlExpression, SortDirection] | SqlExpression]
+        ] = None,
+        as_root: bool = False,
+    ) -> Sort:
         """Creates a new sort with modified attributes.
 
         Parameters
@@ -1505,7 +1751,11 @@ class Sort(RelNode):
         --------
         RelNode.mutate : for safety considerations and calling conventions
         """
-        params = {param: val for param, val in locals().items() if param != "self" and not param.startswith("__")}
+        params = {
+            param: val
+            for param, val in locals().items()
+            if param != "self" and not param.startswith("__")
+        }
         return super().mutate(**params)
 
     def _recalc_hash_val(self) -> int:
@@ -1514,10 +1764,17 @@ class Sort(RelNode):
     __hash__ = RelNode.__hash__
 
     def __eq__(self, other: object) -> bool:
-        return isinstance(other, type(self)) and self._input_node == other._input_node and self._sorting == other._sorting
+        return (
+            isinstance(other, type(self))
+            and self._input_node == other._input_node
+            and self._sorting == other._sorting
+        )
 
     def __str__(self) -> str:
-        sorting_str = ", ".join(f"{sort_col}{'↓' if sort_dir == 'asc' else '↑'}" for sort_col, sort_dir in self._sorting)
+        sorting_str = ", ".join(
+            f"{sort_col}{'↓' if sort_dir == 'asc' else '↑'}"
+            for sort_col, sort_dir in self._sorting
+        )
         return f"τ ({sorting_str})"
 
 
@@ -1538,13 +1795,25 @@ class Map(RelNode):
         The parent node of the operator, if one exists. The parent is the operator that receives the output relation of the
         current operator. If the current operator is the root and (currently) does not have a parent, *None* can be used.
     """
-    def __init__(self, input_node: RelNode,
-                 mapping: dict[frozenset[SqlExpression | ColumnReference], frozenset[SqlExpression]], *,
-                 parent_node: Optional[RelNode] = None) -> None:
+
+    def __init__(
+        self,
+        input_node: RelNode,
+        mapping: dict[
+            frozenset[SqlExpression | ColumnReference], frozenset[SqlExpression]
+        ],
+        *,
+        parent_node: Optional[RelNode] = None,
+    ) -> None:
         self._input_node = input_node
         self._mapping = util.frozendict(
-            {ColumnExpression(expression) if isinstance(expression, ColumnReference) else expression: target
-             for expression, target in mapping.items()})
+            {
+                ColumnExpression(expression)
+                if isinstance(expression, ColumnReference)
+                else expression: target
+                for expression, target in mapping.items()
+            }
+        )
         super().__init__(parent_node)
 
     @property
@@ -1559,7 +1828,9 @@ class Map(RelNode):
         return self._input_node
 
     @property
-    def mapping(self) -> util.frozendict[frozenset[SqlExpression], frozenset[SqlExpression]]:
+    def mapping(
+        self,
+    ) -> util.frozendict[frozenset[SqlExpression], frozenset[SqlExpression]]:
         """Get the expressions to compute. Maps from the arguments to the target expressions.
 
         The arguments themselves can be computed during the very same mapping operation. Alternatively, they can be supplied by
@@ -1576,15 +1847,22 @@ class Map(RelNode):
         return [self._input_node]
 
     def provided_expressions(self) -> frozenset[SqlExpression]:
-        return super().provided_expressions() | util.set_union(map_target for map_target in self._mapping.values())
+        return super().provided_expressions() | util.set_union(
+            map_target for map_target in self._mapping.values()
+        )
 
     def accept_visitor(self, visitor: RelNodeVisitor[VisitorResult]) -> VisitorResult:
         return visitor.visit_map(self)
 
-    def mutate(self, *, input_node: Optional[RelNode] = None,
-               mapping: Optional[dict[frozenset[SqlExpression | ColumnReference],
-                                      frozenset[SqlExpression]]] = None,
-               as_root: bool = False) -> Map:
+    def mutate(
+        self,
+        *,
+        input_node: Optional[RelNode] = None,
+        mapping: Optional[
+            dict[frozenset[SqlExpression | ColumnReference], frozenset[SqlExpression]]
+        ] = None,
+        as_root: bool = False,
+    ) -> Map:
         """Creates a new map with modified attributes.
 
         Parameters
@@ -1605,7 +1883,11 @@ class Map(RelNode):
         --------
         RelNode.mutate : for safety considerations and calling conventions
         """
-        params = {param: val for param, val in locals().items() if param != "self" and not param.startswith("__")}
+        params = {
+            param: val
+            for param, val in locals().items()
+            if param != "self" and not param.startswith("__")
+        }
         return super().mutate(**params)
 
     def _recalc_hash_val(self) -> int:
@@ -1614,7 +1896,11 @@ class Map(RelNode):
     __hash__ = RelNode.__hash__
 
     def __eq__(self, other: object) -> bool:
-        return isinstance(other, type(self)) and self._input_node == other._input_node and self._mapping == other._mapping
+        return (
+            isinstance(other, type(self))
+            and self._input_node == other._input_node
+            and self._mapping == other._mapping
+        )
 
     def __str__(self) -> str:
         pretty_mapping: dict[str, str] = {}
@@ -1631,7 +1917,9 @@ class Map(RelNode):
                 expr_str = "(" + ", ".join(str(e) for e in expression) + ")"
             pretty_mapping[target_str] = expr_str
 
-        mapping_str = ", ".join(f"{target_col}: {expr}" for target_col, expr in pretty_mapping.items())
+        mapping_str = ", ".join(
+            f"{target_col}: {expr}" for target_col, expr in pretty_mapping.items()
+        )
         return f"χ ({mapping_str})"
 
 
@@ -1652,7 +1940,10 @@ class DuplicateElimination(RelNode):
     set-semantics which do not supply any ordering. However, due to SQL's usage of multi-sets which allow duplicates, most
     relational algebra dialects support ordering nevertheless.
     """
-    def __init__(self, input_node: RelNode, *, parent_node: Optional[RelNode] = None) -> None:
+
+    def __init__(
+        self, input_node: RelNode, *, parent_node: Optional[RelNode] = None
+    ) -> None:
         self._input_node = input_node
         super().__init__(parent_node)
 
@@ -1666,7 +1957,9 @@ class DuplicateElimination(RelNode):
     def accept_visitor(self, visitor: RelNodeVisitor[VisitorResult]) -> VisitorResult:
         return visitor.visit_duplicate_elim(self)
 
-    def mutate(self, *, input_node: Optional[RelNode] = None, as_root: bool = False) -> DuplicateElimination:
+    def mutate(
+        self, *, input_node: Optional[RelNode] = None, as_root: bool = False
+    ) -> DuplicateElimination:
         """Creates a new duplicate elimination with modified attributes.
 
         Parameters
@@ -1686,7 +1979,11 @@ class DuplicateElimination(RelNode):
         --------
         RelNode.mutate : for safety considerations and calling conventions
         """
-        params = {param: val for param, val in locals().items() if param != "self" and not param.startswith("__")}
+        params = {
+            param: val
+            for param, val in locals().items()
+            if param != "self" and not param.startswith("__")
+        }
         return super().mutate(**params)
 
     def _recalc_hash_val(self) -> int:
@@ -1723,13 +2020,21 @@ class SemiJoin(RelNode):
     .. math:: ⋉_\\theta(R, S) := \\{ r | r \\in R \\land s \\in S \\land \\theta(r, s) \\}
     """
 
-    def __init__(self, input_node: RelNode, subquery_node: SubqueryScan,
-                 predicate: Optional[AbstractPredicate] = None, *, parent_node: Optional[RelNode] = None) -> None:
+    def __init__(
+        self,
+        input_node: RelNode,
+        subquery_node: SubqueryScan,
+        predicate: Optional[AbstractPredicate] = None,
+        *,
+        parent_node: Optional[RelNode] = None,
+    ) -> None:
         # TODO: dependent iff predicate is None
         self._input_node = input_node
 
         self._subquery_node = subquery_node.mutate()
-        self._subquery_node._parent = self  # we need to set the parent manually to prevent infinite recursion
+        self._subquery_node._parent = (
+            self  # we need to set the parent manually to prevent infinite recursion
+        )
 
         self._predicate = predicate
 
@@ -1791,8 +2096,14 @@ class SemiJoin(RelNode):
     def accept_visitor(self, visitor: RelNodeVisitor[VisitorResult]) -> VisitorResult:
         return visitor.visit_semijoin(self)
 
-    def mutate(self, *, input_node: Optional[RelNode] = None, subquery_node: Optional[SubqueryScan] = None,
-               predicate: Optional[AbstractPredicate] = None, as_root: bool = False) -> SemiJoin:
+    def mutate(
+        self,
+        *,
+        input_node: Optional[RelNode] = None,
+        subquery_node: Optional[SubqueryScan] = None,
+        predicate: Optional[AbstractPredicate] = None,
+        as_root: bool = False,
+    ) -> SemiJoin:
         """Creates a new semi join with modified attributes.
 
         Parameters
@@ -1815,7 +2126,11 @@ class SemiJoin(RelNode):
         --------
         RelNode.mutate : for safety considerations and calling conventions
         """
-        params = {param: val for param, val in locals().items() if param != "self" and not param.startswith("__")}
+        params = {
+            param: val
+            for param, val in locals().items()
+            if param != "self" and not param.startswith("__")
+        }
         return super().mutate(**params)
 
     def _update_child_nodes(self, children: Sequence[RelNode]) -> None:
@@ -1829,9 +2144,12 @@ class SemiJoin(RelNode):
     __hash__ = RelNode.__hash__
 
     def __eq__(self, other: object) -> bool:
-        return (isinstance(other, type(self))
-                and self._input_node == other._input_node and self._subquery_node == other._subquery_node
-                and self._predicate == other._predicate)
+        return (
+            isinstance(other, type(self))
+            and self._input_node == other._input_node
+            and self._subquery_node == other._subquery_node
+            and self._predicate == other._predicate
+        )
 
     def __str__(self) -> str:
         return "⋉" if self._predicate is None else f"⋉ ({self._predicate})"
@@ -1859,13 +2177,22 @@ class AntiJoin(RelNode):
     .. math:: ▷_\\theta(R, S) := \\{ r | r \\in R \\land s \\in S \\land \\theta(r, s) \\}
 
     """
-    def __init__(self, input_node: RelNode, subquery_node: SubqueryScan,
-                 predicate: Optional[AbstractPredicate] = None, *, parent_node: Optional[RelNode] = None) -> None:
+
+    def __init__(
+        self,
+        input_node: RelNode,
+        subquery_node: SubqueryScan,
+        predicate: Optional[AbstractPredicate] = None,
+        *,
+        parent_node: Optional[RelNode] = None,
+    ) -> None:
         # TODO: dependent iff predicate is None
         self._input_node = input_node
 
         self._subquery_node = subquery_node.mutate()
-        self._subquery_node._parent = self  # we need to set the parent manually to prevent infinite recursion
+        self._subquery_node._parent = (
+            self  # we need to set the parent manually to prevent infinite recursion
+        )
 
         self._predicate = predicate
 
@@ -1927,8 +2254,14 @@ class AntiJoin(RelNode):
     def accept_visitor(self, visitor: RelNodeVisitor[VisitorResult]) -> VisitorResult:
         return visitor.visit_antijoin(self)
 
-    def mutate(self, *, input_node: Optional[RelNode] = None, subquery_node: Optional[SubqueryScan] = None,
-               predicate: Optional[AbstractPredicate] = None, as_root: bool = False) -> AntiJoin:
+    def mutate(
+        self,
+        *,
+        input_node: Optional[RelNode] = None,
+        subquery_node: Optional[SubqueryScan] = None,
+        predicate: Optional[AbstractPredicate] = None,
+        as_root: bool = False,
+    ) -> AntiJoin:
         """Creates a new anti join with modified attributes.
 
         Parameters
@@ -1951,7 +2284,11 @@ class AntiJoin(RelNode):
         --------
         RelNode.mutate : for safety considerations and calling conventions
         """
-        params = {param: val for param, val in locals().items() if param != "self" and not param.startswith("__")}
+        params = {
+            param: val
+            for param, val in locals().items()
+            if param != "self" and not param.startswith("__")
+        }
         return super().mutate(**params)
 
     def _update_child_nodes(self, children: Sequence[RelNode]) -> None:
@@ -1965,9 +2302,12 @@ class AntiJoin(RelNode):
     __hash__ = RelNode.__hash__
 
     def __eq__(self, other: object) -> bool:
-        return (isinstance(other, type(self))
-                and self._input_node == other._input_node and self._subquery_node == other._subquery_node
-                and self._predicate == other._predicate)
+        return (
+            isinstance(other, type(self))
+            and self._input_node == other._input_node
+            and self._subquery_node == other._subquery_node
+            and self._predicate == other._predicate
+        )
 
     def __str__(self) -> str:
         return "▷" if self._predicate is None else f"▷ ({self._predicate})"
@@ -1992,7 +2332,14 @@ class SubqueryScan(RelNode):
     serves as a marker node to quickly designate subqueries and to operate on the original queries or their algebraic
     representation in a convenient manner.
     """
-    def __init__(self, input_node: RelNode, subquery: SqlQuery, *, parent_node: Optional[RelNode] = None) -> None:
+
+    def __init__(
+        self,
+        input_node: RelNode,
+        subquery: SqlQuery,
+        *,
+        parent_node: Optional[RelNode] = None,
+    ) -> None:
         self._input_node = input_node
         self._subquery = subquery
         super().__init__(parent_node)
@@ -2020,7 +2367,11 @@ class SubqueryScan(RelNode):
         return self._subquery
 
     def tables(self, *, ignore_subqueries: bool = False) -> frozenset[TableReference]:
-        return frozenset() if ignore_subqueries else super().tables(ignore_subqueries=ignore_subqueries)
+        return (
+            frozenset()
+            if ignore_subqueries
+            else super().tables(ignore_subqueries=ignore_subqueries)
+        )
 
     def children(self) -> Sequence[RelNode]:
         return [self._input_node]
@@ -2031,8 +2382,13 @@ class SubqueryScan(RelNode):
     def accept_visitor(self, visitor: RelNodeVisitor[VisitorResult]) -> VisitorResult:
         return visitor.visit_subquery(self)
 
-    def mutate(self, *, input_node: Optional[RelNode] = None, subquery: Optional[SqlQuery] = None,
-               as_root: bool = False) -> SubqueryScan:
+    def mutate(
+        self,
+        *,
+        input_node: Optional[RelNode] = None,
+        subquery: Optional[SqlQuery] = None,
+        as_root: bool = False,
+    ) -> SubqueryScan:
         """Creates a new subquery scan with modified attributes.
 
         Parameters
@@ -2054,7 +2410,11 @@ class SubqueryScan(RelNode):
         --------
         RelNode.mutate : for safety considerations and calling conventions
         """
-        params = {param: val for param, val in locals().items() if param != "self" and not param.startswith("__")}
+        params = {
+            param: val
+            for param, val in locals().items()
+            if param != "self" and not param.startswith("__")
+        }
         return super().mutate(**params)
 
     def _recalc_hash_val(self) -> int:
@@ -2063,10 +2423,18 @@ class SubqueryScan(RelNode):
     __hash__ = RelNode.__hash__
 
     def __eq__(self, other: object) -> bool:
-        return isinstance(other, type(self)) and self._input_node == other._input_node and self._subquery == other._subquery
+        return (
+            isinstance(other, type(self))
+            and self._input_node == other._input_node
+            and self._subquery == other._subquery
+        )
 
     def __str__(self) -> str:
-        return "<<Scalar Subquery Scan>>" if self._subquery.is_scalar() else "<<Subquery Scan>>"
+        return (
+            "<<Scalar Subquery Scan>>"
+            if self._subquery.is_scalar()
+            else "<<Subquery Scan>>"
+        )
 
 
 VisitorResult = typing.TypeVar("VisitorResult")
@@ -2135,7 +2503,9 @@ class RelNodeVisitor(abc.ABC, typing.Generic[VisitorResult]):
         raise NotImplementedError
 
     @abc.abstractmethod
-    def visit_duplicate_elim(self, duplicate_elim: DuplicateElimination) -> VisitorResult:
+    def visit_duplicate_elim(
+        self, duplicate_elim: DuplicateElimination
+    ) -> VisitorResult:
         raise NotImplementedError
 
     @abc.abstractmethod
@@ -2176,6 +2546,7 @@ def _collect_leaf_nodes(root: RelNode) -> set[Relation]:
 @dataclasses.dataclass
 class _RelTreeUpdateSet:
     """Holds the root node of the updated tree and the node that asked for the tree update in the first place."""
+
     updated_root: RelNode
     updated_initiator: RelNode
 
@@ -2190,6 +2561,7 @@ class _RelNodeUpdateManager:
     initiator : RelNode
         The node that asked for the tree update in the first place
     """
+
     def __init__(self, root: RelNode, *, initiator: RelNode) -> None:
         self._root = root
         self._initiator = initiator
@@ -2218,12 +2590,16 @@ class _RelNodeUpdateManager:
             self._update_node_working_set(current_node)
 
             already_updated = current_node in self._updated_nodes
-            pending_child_update = any(child not in self._updated_nodes for child in current_node.children())
+            pending_child_update = any(
+                child not in self._updated_nodes for child in current_node.children()
+            )
             if already_updated or pending_child_update:
                 continue
 
             updated_node = current_node.clone()
-            updated_node._update_child_nodes([self._updated_nodes[child] for child in current_node.children()])
+            updated_node._update_child_nodes(
+                [self._updated_nodes[child] for child in current_node.children()]
+            )
             updated_node._clear_parent_links()
 
             if current_node == self._initiator:
@@ -2295,13 +2671,19 @@ class _RelNodeUpdateManager:
                 updated_child = self._updated_nodes[current_node]
                 break
             if already_updated:
-                self._update_node_working_set(current_node, working_set=internal_node_working_set)
+                self._update_node_working_set(
+                    current_node, working_set=internal_node_working_set
+                )
                 continue
-            if any(child not in self._updated_nodes for child in current_node.children()):
+            if any(
+                child not in self._updated_nodes for child in current_node.children()
+            ):
                 continue
 
             updated_node = current_node.clone()
-            updated_node._update_child_nodes([self._updated_nodes[child] for child in current_node.children()])
+            updated_node._update_child_nodes(
+                [self._updated_nodes[child] for child in current_node.children()]
+            )
             updated_node._clear_parent_links()
 
             self._updated_nodes[current_node] = updated_node
@@ -2309,12 +2691,16 @@ class _RelNodeUpdateManager:
                 updated_child = updated_node
                 break
 
-            self._update_node_working_set(current_node, working_set=internal_node_working_set)
+            self._update_node_working_set(
+                current_node, working_set=internal_node_working_set
+            )
 
         assert updated_child is not None
         return updated_child
 
-    def _update_node_working_set(self, node: RelNode, *, working_set: Optional[list[RelNode]] = None) -> None:
+    def _update_node_working_set(
+        self, node: RelNode, *, working_set: Optional[list[RelNode]] = None
+    ) -> None:
         """Utility method to quickly include all relevant parent nodes into a node working set.
 
         Parameters
@@ -2359,7 +2745,10 @@ def _requires_aggregation(expression: SqlExpression) -> bool:
     bool
         *True* if an aggregation was detected or *False* otherwise.
     """
-    return any(_is_aggregation(child_expr) or _requires_aggregation(child_expr) for child_expr in expression.iterchildren())
+    return any(
+        _is_aggregation(child_expr) or _requires_aggregation(child_expr)
+        for child_expr in expression.iterchildren()
+    )
 
 
 def _needs_mapping(expression: SqlExpression) -> bool:
@@ -2381,8 +2770,9 @@ def _needs_mapping(expression: SqlExpression) -> bool:
     return not isinstance(expression, (StaticValueExpression, StarExpression))
 
 
-def _generate_expression_mapping_dict(expressions: list[SqlExpression]
-                                      ) -> dict[frozenset[SqlExpression], frozenset[SqlExpression]]:
+def _generate_expression_mapping_dict(
+    expressions: list[SqlExpression],
+) -> dict[frozenset[SqlExpression], frozenset[SqlExpression]]:
     """Determines all required expressions and maps them to their dervied expressions.
 
     Consider an expression *CAST(R.a + 42 AS int)*. In order to evaluate the *CAST* statement, *R.a + 42* has to be calculated
@@ -2404,11 +2794,20 @@ def _generate_expression_mapping_dict(expressions: list[SqlExpression]
         A map from arguments to target expressions. If the same set of arguments is used to derive multiple expressions, all
         these target expressions are contained in the dictionary value.
     """
-    mapping: dict[frozenset[SqlExpression], set[SqlExpression]] = collections.defaultdict(set)
+    mapping: dict[frozenset[SqlExpression], set[SqlExpression]] = (
+        collections.defaultdict(set)
+    )
     for expression in expressions:
-        child_expressions = frozenset(child_expr for child_expr in expression.iterchildren() if _needs_mapping(child_expr))
+        child_expressions = frozenset(
+            child_expr
+            for child_expr in expression.iterchildren()
+            if _needs_mapping(child_expr)
+        )
         mapping[child_expressions].add(expression)
-    return {child_expressions: frozenset(derived_expressions) for child_expressions, derived_expressions in mapping.items()}
+    return {
+        child_expressions: frozenset(derived_expressions)
+        for child_expressions, derived_expressions in mapping.items()
+    }
 
 
 class EvaluationPhase(enum.IntEnum):
@@ -2439,6 +2838,7 @@ class _SubquerySet:
     subqueries : frozenset[SqlQuery]
         The subqueries that are currently in the set. Can be empty if there are no subqueries.
     """
+
     subqueries: frozenset[SqlQuery]
 
     @staticmethod
@@ -2463,18 +2863,24 @@ class _SubquerySet:
         return bool(self.subqueries)
 
 
-class _SubqueryDetector(SqlExpressionVisitor[_SubquerySet], PredicateVisitor[_SubquerySet]):
+class _SubqueryDetector(
+    SqlExpressionVisitor[_SubquerySet], PredicateVisitor[_SubquerySet]
+):
     """Collects all subqueries from SQL expressions or predicates."""
-    def visit_and_predicate(self, predicate: CompoundPredicate,
-                            components: Sequence[AbstractPredicate]) -> _SubquerySet:
+
+    def visit_and_predicate(
+        self, predicate: CompoundPredicate, components: Sequence[AbstractPredicate]
+    ) -> _SubquerySet:
         return self._traverse_predicate_expressions(predicate)
 
-    def visit_or_predicate(self, predicate: CompoundPredicate,
-                           components: Sequence[AbstractPredicate]) -> _SubquerySet:
+    def visit_or_predicate(
+        self, predicate: CompoundPredicate, components: Sequence[AbstractPredicate]
+    ) -> _SubquerySet:
         return self._traverse_predicate_expressions(predicate)
 
-    def visit_not_predicate(self, predicate: CompoundPredicate,
-                            child_predicate: AbstractPredicate) -> _SubquerySet:
+    def visit_not_predicate(
+        self, predicate: CompoundPredicate, child_predicate: AbstractPredicate
+    ) -> _SubquerySet:
         return self._traverse_predicate_expressions(predicate)
 
     def visit_binary_predicate(self, predicate: BinaryPredicate) -> _SubquerySet:
@@ -2489,7 +2895,9 @@ class _SubqueryDetector(SqlExpressionVisitor[_SubquerySet], PredicateVisitor[_Su
     def visit_unary_predicate(self, predicate: UnaryPredicate) -> _SubquerySet:
         return self._traverse_predicate_expressions(predicate)
 
-    def visit_static_value_expr(self, expression: StaticValueExpression) -> _SubquerySet:
+    def visit_static_value_expr(
+        self, expression: StaticValueExpression
+    ) -> _SubquerySet:
         return _SubquerySet.empty()
 
     def visit_column_expr(self, expression: ColumnExpression) -> _SubquerySet:
@@ -2519,17 +2927,32 @@ class _SubqueryDetector(SqlExpressionVisitor[_SubquerySet], PredicateVisitor[_Su
     def visit_predicate_expr(self, expression: AbstractPredicate) -> _SubquerySet:
         return self._traverse_nested_expressions(expression)
 
-    def _traverse_predicate_expressions(self, predicate: AbstractPredicate) -> _SubquerySet:
+    def _traverse_predicate_expressions(
+        self, predicate: AbstractPredicate
+    ) -> _SubquerySet:
         """Handler to collect subqueries from predicates."""
-        return functools.reduce(operator.add, [expression.accept_visitor(self) for expression in predicate.iterexpressions()])
+        return functools.reduce(
+            operator.add,
+            [
+                expression.accept_visitor(self)
+                for expression in predicate.iterexpressions()
+            ],
+        )
 
     def _traverse_nested_expressions(self, expression: SqlExpression) -> _SubquerySet:
         """Handler to collect subqueries from SQL expressions."""
-        return functools.reduce(operator.add,
-                                [nested_expression.accept_visitor(self) for nested_expression in expression.iterchildren()])
+        return functools.reduce(
+            operator.add,
+            [
+                nested_expression.accept_visitor(self)
+                for nested_expression in expression.iterchildren()
+            ],
+        )
 
 
-class _BaseTableLookup(SqlExpressionVisitor[Optional[TableReference]], PredicateVisitor[TableReference]):
+class _BaseTableLookup(
+    SqlExpressionVisitor[Optional[TableReference]], PredicateVisitor[TableReference]
+):
     """Handler to determine the base table in an arbitrarily deep predicate or expression hierarchy.
 
     This service is designed to traverse filter predicates or expressions operating on a single base table and provides exactly
@@ -2545,27 +2968,36 @@ class _BaseTableLookup(SqlExpressionVisitor[Optional[TableReference]], Predicate
     optional is returned for expressions.
     """
 
-    def visit_and_predicate(self, predicate: CompoundPredicate,
-                            components: Sequence[AbstractPredicate]) -> TableReference:
+    def visit_and_predicate(
+        self, predicate: CompoundPredicate, components: Sequence[AbstractPredicate]
+    ) -> TableReference:
         base_tables = {child_pred.accept_visitor(self) for child_pred in components}
         return self._fetch_valid_base_tables(base_tables)
 
-    def visit_or_predicate(self, predicate: CompoundPredicate,
-                           components: Sequence[AbstractPredicate]) -> TableReference:
+    def visit_or_predicate(
+        self, predicate: CompoundPredicate, components: Sequence[AbstractPredicate]
+    ) -> TableReference:
         base_tables = {child_pred.accept_visitor(self) for child_pred in components}
         return self._fetch_valid_base_tables(base_tables)
 
-    def visit_not_predicate(self, predicate: CompoundPredicate,
-                            child_predicate: AbstractPredicate) -> TableReference:
+    def visit_not_predicate(
+        self, predicate: CompoundPredicate, child_predicate: AbstractPredicate
+    ) -> TableReference:
         return child_predicate.accept_visitor(self)
 
     def visit_binary_predicate(self, predicate: BinaryPredicate) -> bool:
-        base_tables = (predicate.first_argument.accept_visitor(self), predicate.second_argument.accept_visitor(self))
+        base_tables = (
+            predicate.first_argument.accept_visitor(self),
+            predicate.second_argument.accept_visitor(self),
+        )
         return self._fetch_valid_base_tables(set(base_tables))
 
     def visit_between_predicate(self, predicate: BetweenPredicate) -> bool:
-        base_tables = (predicate.column.accept_visitor(self),
-                       predicate.interval_start.accept_visitor(self), predicate.interval_end.accept_visitor(self))
+        base_tables = (
+            predicate.column.accept_visitor(self),
+            predicate.interval_start.accept_visitor(self),
+            predicate.interval_end.accept_visitor(self),
+        )
         return self._fetch_valid_base_tables(set(base_tables))
 
     def visit_in_predicate(self, predicate: InPredicate) -> bool:
@@ -2576,34 +3008,48 @@ class _BaseTableLookup(SqlExpressionVisitor[Optional[TableReference]], Predicate
     def visit_unary_predicate(self, predicate: UnaryPredicate) -> bool:
         return predicate.column.accept_visitor(self)
 
-    def visit_static_value_expr(self, expression: StaticValueExpression) -> Optional[TableReference]:
+    def visit_static_value_expr(
+        self, expression: StaticValueExpression
+    ) -> Optional[TableReference]:
         return None
 
-    def visit_column_expr(self, expression: ColumnExpression) -> Optional[TableReference]:
+    def visit_column_expr(
+        self, expression: ColumnExpression
+    ) -> Optional[TableReference]:
         return expression.column.table
 
     def visit_cast_expr(self, expression: CastExpression) -> Optional[TableReference]:
         return expression.casted_expression.accept_visitor(self)
 
-    def visit_function_expr(self, expression: FunctionExpression) -> Optional[TableReference]:
-        referenced_tables = {argument.accept_visitor(self) for argument in expression.arguments}
+    def visit_function_expr(
+        self, expression: FunctionExpression
+    ) -> Optional[TableReference]:
+        referenced_tables = {
+            argument.accept_visitor(self) for argument in expression.arguments
+        }
         return self._fetch_valid_base_tables(referenced_tables, accept_empty=True)
 
     def visit_math_expr(self, expression: MathExpression) -> bool:
-        base_tables = {child.accept_visitor(self) for child in expression.iterchildren()}
+        base_tables = {
+            child.accept_visitor(self) for child in expression.iterchildren()
+        }
         return self._fetch_valid_base_tables(base_tables)
 
     def visit_star_expr(self, expression: StarExpression) -> Optional[TableReference]:
         return expression.from_table
 
-    def visit_subquery_expr(self, expression: SubqueryExpression) -> Optional[TableReference]:
+    def visit_subquery_expr(
+        self, expression: SubqueryExpression
+    ) -> Optional[TableReference]:
         subquery = expression.query
         if not subquery.is_dependent():
             return None
         dependent_tables = subquery.unbound_tables()
         return self._fetch_valid_base_tables(dependent_tables, accept_empty=True)
 
-    def visit_window_expr(self, expression: WindowExpression) -> Optional[TableReference]:
+    def visit_window_expr(
+        self, expression: WindowExpression
+    ) -> Optional[TableReference]:
         # base tables can only appear in predicates and window functions are limited to SELECT statements
         return None
 
@@ -2614,8 +3060,9 @@ class _BaseTableLookup(SqlExpressionVisitor[Optional[TableReference]], Predicate
     def visit_predicate_expr(self, expression: AbstractPredicate) -> TableReference:
         return expression.accept_visitor(self)
 
-    def _fetch_valid_base_tables(self, base_tables: set[TableReference | None], *,
-                                 accept_empty: bool = False) -> Optional[TableReference]:
+    def _fetch_valid_base_tables(
+        self, base_tables: set[TableReference | None], *, accept_empty: bool = False
+    ) -> Optional[TableReference]:
         """Handler to extract the actual base table from a set of candidate tables.
 
         Parameters
@@ -2641,7 +3088,9 @@ class _BaseTableLookup(SqlExpressionVisitor[Optional[TableReference]], Predicate
         if None in base_tables:
             base_tables.remove(None)
         if len(base_tables) != 1 or (accept_empty and not base_tables):
-            raise ValueError(f"Expected exactly one base predicate but found {base_tables}")
+            raise ValueError(
+                f"Expected exactly one base predicate but found {base_tables}"
+            )
         return util.simplify(base_tables) if base_tables else None
 
     def __call__(self, elem: AbstractPredicate | SqlExpression) -> TableReference:
@@ -2656,8 +3105,9 @@ class _BaseTableLookup(SqlExpressionVisitor[Optional[TableReference]], Predicate
         return base_table
 
 
-def _collect_all_expressions(expression: SqlExpression, *,
-                             traverse_aggregations: bool = False) -> frozenset[SqlExpression]:
+def _collect_all_expressions(
+    expression: SqlExpression, *, traverse_aggregations: bool = False
+) -> frozenset[SqlExpression]:
     """Provides all expressions in a specific expression tree, including the root expression.
 
     Parameters
@@ -2672,12 +3122,19 @@ def _collect_all_expressions(expression: SqlExpression, *,
     frozenset[SqlExpression]
         The expression as well as all child expressions, including deeply nested children.
     """
-    if not traverse_aggregations and isinstance(expression, FunctionExpression) and expression.is_aggregate():
+    if (
+        not traverse_aggregations
+        and isinstance(expression, FunctionExpression)
+        and expression.is_aggregate()
+    ):
         return frozenset({expression})
-    child_expressions = util.set_union(_collect_all_expressions(child_expr)
-                                       for child_expr in expression.iterchildren())
+    child_expressions = util.set_union(
+        _collect_all_expressions(child_expr) for child_expr in expression.iterchildren()
+    )
     all_expressions = frozenset({expression} | child_expressions)
-    return frozenset({expression for expression in all_expressions if _needs_mapping(expression)})
+    return frozenset(
+        {expression for expression in all_expressions if _needs_mapping(expression)}
+    )
 
 
 def _determine_expression_phase(expression: SqlExpression) -> EvaluationPhase:
@@ -2688,11 +3145,22 @@ def _determine_expression_phase(expression: SqlExpression) -> EvaluationPhase:
         case FunctionExpression() if expression.is_aggregate():
             return EvaluationPhase.PostAggregation
         case FunctionExpression() | MathExpression() | CastExpression():
-            own_phase = EvaluationPhase.Join if len(expression.tables()) > 1 else EvaluationPhase.BaseTable
-            child_phase = max(_determine_expression_phase(child_expr) for child_expr in expression.iterchildren())
+            own_phase = (
+                EvaluationPhase.Join
+                if len(expression.tables()) > 1
+                else EvaluationPhase.BaseTable
+            )
+            child_phase = max(
+                _determine_expression_phase(child_expr)
+                for child_expr in expression.iterchildren()
+            )
             return max(own_phase, child_phase)
         case SubqueryExpression():
-            return EvaluationPhase.BaseTable if len(expression.query.unbound_tables()) < 2 else EvaluationPhase.PostJoin
+            return (
+                EvaluationPhase.BaseTable
+                if len(expression.query.unbound_tables()) < 2
+                else EvaluationPhase.PostJoin
+            )
         case StarExpression() | StaticValueExpression():
             # TODO: should we rather raise an error in this case?
             return EvaluationPhase.BaseTable
@@ -2711,7 +3179,11 @@ def _determine_predicate_phase(predicate: AbstractPredicate) -> EvaluationPhase:
     _determine_expression_phase
     """
     nested_subqueries = predicate.accept_visitor(_SubqueryDetector())
-    subquery_tables = len(util.set_union(subquery.bound_tables() for subquery in nested_subqueries.subqueries))
+    subquery_tables = len(
+        util.set_union(
+            subquery.bound_tables() for subquery in nested_subqueries.subqueries
+        )
+    )
     n_tables = len(predicate.tables()) - subquery_tables
     if n_tables == 1:
         # It could actually be that the number of tables is negative. E.g. HAVING count(*) < (SELECT min(r_a) FROM R)
@@ -2723,16 +3195,24 @@ def _determine_predicate_phase(predicate: AbstractPredicate) -> EvaluationPhase:
         # executed after the join phase.
         return EvaluationPhase.PostJoin
 
-    expression_phase = max(_determine_expression_phase(expression) for expression in predicate.iterexpressions()
-                           if type(expression) not in {StarExpression, StaticValueExpression})
+    expression_phase = max(
+        _determine_expression_phase(expression)
+        for expression in predicate.iterexpressions()
+        if type(expression) not in {StarExpression, StaticValueExpression}
+    )
     if expression_phase > EvaluationPhase.Join:
         return expression_phase
 
-    return EvaluationPhase.Join if isinstance(predicate, BinaryPredicate) else EvaluationPhase.PostJoin
+    return (
+        EvaluationPhase.Join
+        if isinstance(predicate, BinaryPredicate)
+        else EvaluationPhase.PostJoin
+    )
 
 
-def _filter_eval_phase(predicate: AbstractPredicate,
-                       expected_eval_phase: EvaluationPhase) -> Optional[AbstractPredicate]:
+def _filter_eval_phase(
+    predicate: AbstractPredicate, expected_eval_phase: EvaluationPhase
+) -> Optional[AbstractPredicate]:
     """Provides all parts of predicate that can be evaluated during a specific logical query execution phase.
 
     The following rules are used to determine matching (sub-)predicates:
@@ -2763,10 +3243,18 @@ def _filter_eval_phase(predicate: AbstractPredicate,
     if eval_phase < expected_eval_phase:
         return None
 
-    if isinstance(predicate, CompoundPredicate) and predicate.operation == CompoundOperator.And:
-        child_predicates = [child for child in predicate.children
-                            if _determine_predicate_phase(child) == expected_eval_phase]
-        return CompoundPredicate.create_and(child_predicates) if child_predicates else None
+    if (
+        isinstance(predicate, CompoundPredicate)
+        and predicate.operation == CompoundOperator.And
+    ):
+        child_predicates = [
+            child
+            for child in predicate.children
+            if _determine_predicate_phase(child) == expected_eval_phase
+        ]
+        return (
+            CompoundPredicate.create_and(child_predicates) if child_predicates else None
+        )
 
     return predicate if eval_phase == expected_eval_phase else None
 
@@ -2817,16 +3305,27 @@ class _ImplicitRelalgParser:
     .. [eder-sql-eval-oder]_ https://blog.jooq.org/a-beginners-guide-to-the-true-order-of-sql-operations/
 
     """
-    def __init__(self, query: ImplicitSqlQuery, *,
-                 provided_base_tables: Optional[dict[TableReference, RelNode]] = None) -> None:
+
+    def __init__(
+        self,
+        query: ImplicitSqlQuery,
+        *,
+        provided_base_tables: Optional[dict[TableReference, RelNode]] = None,
+    ) -> None:
         self._query = query
         self._base_table_fragments: dict[TableReference, RelNode] = {}
-        self._required_columns: dict[TableReference, set[ColumnReference]] = collections.defaultdict(set)
-        self._provided_base_tables: dict[TableReference, RelNode] = provided_base_tables if provided_base_tables else {}
+        self._required_columns: dict[TableReference, set[ColumnReference]] = (
+            collections.defaultdict(set)
+        )
+        self._provided_base_tables: dict[TableReference, RelNode] = (
+            provided_base_tables if provided_base_tables else {}
+        )
 
         if query:
             query_cols = self._query.columns()
-            util.collections.foreach(query_cols, lambda col: self._required_columns[col.table].add(col))
+            util.collections.foreach(
+                query_cols, lambda col: self._required_columns[col.table].add(col)
+            )
 
     def generate_relnode(self) -> RelNode:
         """Produces a relational algebra tree for the current query.
@@ -2855,22 +3354,32 @@ class _ImplicitRelalgParser:
         util.collections.foreach(self._query.from_clause.items, self._add_table_source)
 
         if self._query.where_clause:
-            self._add_predicate(self._query.where_clause.predicate, eval_phase=EvaluationPhase.BaseTable)
+            self._add_predicate(
+                self._query.where_clause.predicate, eval_phase=EvaluationPhase.BaseTable
+            )
 
         final_fragment = self._generate_initial_join_order()
 
         if self._query.where_clause:
             # add all post-join filters here
-            final_fragment = self._add_predicate(self._query.where_clause.predicate, input_node=final_fragment,
-                                                 eval_phase=EvaluationPhase.PostJoin)
+            final_fragment = self._add_predicate(
+                self._query.where_clause.predicate,
+                input_node=final_fragment,
+                eval_phase=EvaluationPhase.PostJoin,
+            )
 
         final_fragment = self._add_aggregation(final_fragment)
         if self._query.having_clause:
-            final_fragment = self._add_predicate(self._query.having_clause.condition, input_node=final_fragment,
-                                                 eval_phase=EvaluationPhase.PostAggregation)
+            final_fragment = self._add_predicate(
+                self._query.having_clause.condition,
+                input_node=final_fragment,
+                eval_phase=EvaluationPhase.PostAggregation,
+            )
 
         if self._query.orderby_clause:
-            final_fragment = self._add_ordering(self._query.orderby_clause.expressions, input_node=final_fragment)
+            final_fragment = self._add_ordering(
+                self._query.orderby_clause.expressions, input_node=final_fragment
+            )
 
         final_fragment = self._add_final_projection(final_fragment)
         return final_fragment
@@ -2878,7 +3387,9 @@ class _ImplicitRelalgParser:
     def _update_query(self, query: SelectStatement) -> None:
         self._query = query
         query_cols = self._query.columns()
-        util.collections.foreach(query_cols, lambda col: self._required_columns[col.table].add(col))
+        util.collections.foreach(
+            query_cols, lambda col: self._required_columns[col.table].add(col)
+        )
 
     def _parse_set_query(self, query: SetQuery) -> RelNode:
         """Handler method to translate a set query into a relational algebra fragment.
@@ -2924,7 +3435,9 @@ class _ImplicitRelalgParser:
                 raise ValueError(f"Unknown set operation: '{query.set_operation}'")
 
         if query.orderby_clause:
-            final_fragment = self._add_ordering(query.orderby_clause.expressions, input_node=final_fragment)
+            final_fragment = self._add_ordering(
+                query.orderby_clause.expressions, input_node=final_fragment
+            )
 
         return final_fragment
 
@@ -2934,7 +3447,9 @@ class _ImplicitRelalgParser:
             return self._base_table_fragments[table]
         return self._provided_base_tables[table]
 
-    def _add_table(self, table: TableReference, *, input_node: Optional[RelNode] = None) -> RelNode:
+    def _add_table(
+        self, table: TableReference, *, input_node: Optional[RelNode] = None
+    ) -> RelNode:
         """Generates and stores a new base table relation node for a specific table.
 
         The relation will be stored in `self._base_table_fragments`.
@@ -2972,9 +3487,13 @@ class _ImplicitRelalgParser:
             case SubqueryTableSource():
                 subquery_root = self._add_subquery(table_source.query)
                 self._base_table_fragments[table_source.target_table] = subquery_root
-                return self._add_table(table_source.target_table, input_node=subquery_root)
+                return self._add_table(
+                    table_source.target_table, input_node=subquery_root
+                )
             case JoinTableSource():
-                raise ValueError(f"Explicit JOIN syntax is currently not supported: '{table_source}'")
+                raise ValueError(
+                    f"Explicit JOIN syntax is currently not supported: '{table_source}'"
+                )
             case _:
                 raise ValueError(f"Unknown table source: '{table_source}'")
 
@@ -2996,7 +3515,9 @@ class _ImplicitRelalgParser:
             joined_tables |= table_source.tables()
 
         if self._query.where_clause:
-            self._add_predicate(self._query.where_clause.predicate, eval_phase=EvaluationPhase.Join)
+            self._add_predicate(
+                self._query.where_clause.predicate, eval_phase=EvaluationPhase.Join
+            )
 
         head_nodes = set(self._base_table_fragments.values())
         if len(head_nodes) == 1:
@@ -3022,31 +3543,52 @@ class _ImplicitRelalgParser:
         RelNode
             The algebra tree, potentially expanded by grouping, mapping and selection nodes.
         """
-        aggregation_collector = ExpressionCollector(lambda e: isinstance(e, FunctionExpression) and e.is_aggregate())
-        aggregation_functions: set[FunctionExpression] = (
-            util.set_union(select_expr.accept_visitor(aggregation_collector)
-                           for select_expr in self._query.select_clause.iterexpressions()))
+        aggregation_collector = ExpressionCollector(
+            lambda e: isinstance(e, FunctionExpression) and e.is_aggregate()
+        )
+        aggregation_functions: set[FunctionExpression] = util.set_union(
+            select_expr.accept_visitor(aggregation_collector)
+            for select_expr in self._query.select_clause.iterexpressions()
+        )
 
         if self._query.having_clause:
-            aggregation_functions |= util.set_union(having_expr.accept_visitor(aggregation_collector)
-                                                    for having_expr in self._query.having_clause.iterexpressions())
+            aggregation_functions |= util.set_union(
+                having_expr.accept_visitor(aggregation_collector)
+                for having_expr in self._query.having_clause.iterexpressions()
+            )
         if not self._query.groupby_clause and not aggregation_functions:
             return input_node
 
         aggregation_arguments: set[SqlExpression] = set()
         for agg_func in aggregation_functions:
-            aggregation_arguments |= util.set_union(_collect_all_expressions(arg, traverse_aggregations=True)
-                                                    for arg in agg_func.arguments)
+            aggregation_arguments |= util.set_union(
+                _collect_all_expressions(arg, traverse_aggregations=True)
+                for arg in agg_func.arguments
+            )
         missing_expressions = aggregation_arguments - input_node.provided_expressions()
         if missing_expressions:
-            input_node = Map(input_node, _generate_expression_mapping_dict(missing_expressions))
+            input_node = Map(
+                input_node, _generate_expression_mapping_dict(missing_expressions)
+            )
 
-        group_cols = self._query.groupby_clause.group_columns if self._query.groupby_clause else []
-        aggregates: dict[frozenset[SqlExpression], set[FunctionExpression]] = collections.defaultdict(set)
+        group_cols = (
+            self._query.groupby_clause.group_columns
+            if self._query.groupby_clause
+            else []
+        )
+        aggregates: dict[frozenset[SqlExpression], set[FunctionExpression]] = (
+            collections.defaultdict(set)
+        )
         for agg_func in aggregation_functions:
             aggregates[agg_func.arguments].add(agg_func)
-        groupby_node = GroupBy(input_node, group_columns=group_cols,
-                               aggregates={agg_input: frozenset(agg_funcs) for agg_input, agg_funcs in aggregates.items()})
+        groupby_node = GroupBy(
+            input_node,
+            group_columns=group_cols,
+            aggregates={
+                agg_input: frozenset(agg_funcs)
+                for agg_input, agg_funcs in aggregates.items()
+            },
+        )
         return groupby_node
 
     def _add_final_projection(self, input_node: RelNode) -> RelNode:
@@ -3067,26 +3609,43 @@ class _ImplicitRelalgParser:
         # TODO: Sorting, Duplicate elimination, limit
         if self._query.select_clause.is_star():
             return input_node
-        required_expressions = util.set_union(_collect_all_expressions(target.expression)
-                                              for target in self._query.select_clause.targets)
+        required_expressions = util.set_union(
+            _collect_all_expressions(target.expression)
+            for target in self._query.select_clause.targets
+        )
         missing_expressions = required_expressions - input_node.provided_expressions()
-        final_node = (Map(input_node, _generate_expression_mapping_dict(missing_expressions)) if missing_expressions
-                      else input_node)
-        return Projection(final_node, [target.expression for target in self._query.select_clause.targets])
+        final_node = (
+            Map(input_node, _generate_expression_mapping_dict(missing_expressions))
+            if missing_expressions
+            else input_node
+        )
+        return Projection(
+            final_node,
+            [target.expression for target in self._query.select_clause.targets],
+        )
 
-    def _add_ordering(self, ordering: Sequence[OrderByExpression], *, input_node: RelNode) -> RelNode:
+    def _add_ordering(
+        self, ordering: Sequence[OrderByExpression], *, input_node: RelNode
+    ) -> RelNode:
         sorting: list[tuple[SqlExpression, SortDirection]] = []
         final_fragment = input_node
 
         for order in ordering:
-            final_fragment = self._add_expression(order.column, input_node=final_fragment)
+            final_fragment = self._add_expression(
+                order.column, input_node=final_fragment
+            )
             sorting.append((order.column, "asc" if order.ascending else "desc"))
 
         final_fragment = Sort(final_fragment, sorting)
         return final_fragment
 
-    def _add_predicate(self, predicate: AbstractPredicate, *, input_node: Optional[RelNode] = None,
-                       eval_phase: EvaluationPhase = EvaluationPhase.BaseTable) -> RelNode:
+    def _add_predicate(
+        self,
+        predicate: AbstractPredicate,
+        *,
+        input_node: Optional[RelNode] = None,
+        eval_phase: EvaluationPhase = EvaluationPhase.BaseTable,
+    ) -> RelNode:
         """Inserts a selection into the corresponding relational algebra fragment.
 
         Parameters
@@ -3116,9 +3675,12 @@ class _ImplicitRelalgParser:
 
         match eval_phase:
             case EvaluationPhase.BaseTable:
-                for base_table, base_pred in self._split_filter_predicate(predicate).items():
-                    base_table_fragment = self._convert_predicate(base_pred,
-                                                                  input_node=self._base_table_fragments[base_table])
+                for base_table, base_pred in self._split_filter_predicate(
+                    predicate
+                ).items():
+                    base_table_fragment = self._convert_predicate(
+                        base_pred, input_node=self._base_table_fragments[base_table]
+                    )
                     self._base_table_fragments[base_table] = base_table_fragment
                 return base_table_fragment
             case EvaluationPhase.Join:
@@ -3142,12 +3704,18 @@ class _ImplicitRelalgParser:
                         if outer_table not in self._provided_base_tables:
                             # the table will be supplied by a subquery
                             continue
-                        input_node = CrossProduct(input_node, self._provided_base_tables[outer_table])
+                        input_node = CrossProduct(
+                            input_node, self._provided_base_tables[outer_table]
+                        )
                 return self._convert_predicate(predicate, input_node=input_node)
             case _:
-                raise ValueError(f"Unknown evaluation phase '{eval_phase}' for predicate '{predicate}'")
+                raise ValueError(
+                    f"Unknown evaluation phase '{eval_phase}' for predicate '{predicate}'"
+                )
 
-    def _convert_predicate(self, predicate: AbstractPredicate, *, input_node: RelNode) -> RelNode:
+    def _convert_predicate(
+        self, predicate: AbstractPredicate, *, input_node: RelNode
+    ) -> RelNode:
         """Generates the appropriate selection nodes for a specific predicate.
 
         Depending on the specific predicate, operations other than a plain old selection might be required. For example,
@@ -3175,31 +3743,56 @@ class _ImplicitRelalgParser:
         contains_subqueries = _SubqueryDetector()
         final_fragment = input_node
 
-        if isinstance(predicate, UnaryPredicate) and not predicate.accept_visitor(contains_subqueries):
-            final_fragment = self._ensure_predicate_applicability(predicate, final_fragment)
+        if isinstance(predicate, UnaryPredicate) and not predicate.accept_visitor(
+            contains_subqueries
+        ):
+            final_fragment = self._ensure_predicate_applicability(
+                predicate, final_fragment
+            )
             final_fragment = Selection(final_fragment, predicate)
             return final_fragment
         elif isinstance(predicate, UnaryPredicate):
-            subquery_target = ("semijoin" if predicate.operation == LogicalOperator.Exists
-                               else "antijoin")
-            return self._add_expression(predicate.column, input_node=final_fragment, subquery_target=subquery_target)
+            subquery_target = (
+                "semijoin"
+                if predicate.operation == LogicalOperator.Exists
+                else "antijoin"
+            )
+            return self._add_expression(
+                predicate.column,
+                input_node=final_fragment,
+                subquery_target=subquery_target,
+            )
 
-        if isinstance(predicate, BetweenPredicate) and not predicate.accept_visitor(contains_subqueries):
-            final_fragment = self._ensure_predicate_applicability(predicate, final_fragment)
+        if isinstance(predicate, BetweenPredicate) and not predicate.accept_visitor(
+            contains_subqueries
+        ):
+            final_fragment = self._ensure_predicate_applicability(
+                predicate, final_fragment
+            )
             final_fragment = Selection(final_fragment, predicate)
             return final_fragment
         elif isinstance(predicate, BetweenPredicate):
             # BETWEEN predicate with scalar subquery
-            final_fragment = self._add_expression(predicate.column, input_node=final_fragment)
-            final_fragment = self._add_expression(predicate.interval_start, input_node=final_fragment)
-            final_fragment = self._add_expression(predicate.interval_end, input_node=final_fragment)
+            final_fragment = self._add_expression(
+                predicate.column, input_node=final_fragment
+            )
+            final_fragment = self._add_expression(
+                predicate.interval_start, input_node=final_fragment
+            )
+            final_fragment = self._add_expression(
+                predicate.interval_end, input_node=final_fragment
+            )
             final_fragment = Selection(final_fragment, predicate)
             return final_fragment
 
-        if isinstance(predicate, InPredicate) and not predicate.accept_visitor(contains_subqueries):
+        if isinstance(predicate, InPredicate) and not predicate.accept_visitor(
+            contains_subqueries
+        ):
             # we need to determine the required expressions due to IN predicates like "r_a + 42 IN (1, 2, 3)"
             # or "r_a IN (r_b + 42, 42)"
-            final_fragment = self._ensure_predicate_applicability(predicate, final_fragment)
+            final_fragment = self._ensure_predicate_applicability(
+                predicate, final_fragment
+            )
             final_fragment = Selection(final_fragment, predicate)
             return final_fragment
         elif isinstance(predicate, InPredicate):
@@ -3209,39 +3802,60 @@ class _ImplicitRelalgParser:
             subquery_in_values: list[tuple[SqlExpression, _SubquerySet]] = []
             for value in predicate.values:
                 detected_subqueries = value.accept_visitor(contains_subqueries)
-                if detected_subqueries and not all(subquery.is_scalar() for subquery in detected_subqueries.subqueries):
+                if detected_subqueries and not all(
+                    subquery.is_scalar() for subquery in detected_subqueries.subqueries
+                ):
                     subquery_in_values.append((value, detected_subqueries))
                 else:
-                    final_fragment = self._add_expression(value, input_node=final_fragment)
+                    final_fragment = self._add_expression(
+                        value, input_node=final_fragment
+                    )
                     pure_in_values.append(value)
-            final_fragment = self._add_expression(predicate.column, input_node=final_fragment)
+            final_fragment = self._add_expression(
+                predicate.column, input_node=final_fragment
+            )
             if pure_in_values:
                 reduced_predicate = InPredicate(predicate.column, pure_in_values)
                 final_fragment = Selection(final_fragment, reduced_predicate)
             for subquery_value, detected_subqueries in subquery_in_values:
-                final_fragment = self._add_expression(subquery_value, input_node=final_fragment, subquery_target="in",
-                                                      in_column=predicate.column)
+                final_fragment = self._add_expression(
+                    subquery_value,
+                    input_node=final_fragment,
+                    subquery_target="in",
+                    in_column=predicate.column,
+                )
             return final_fragment
 
-        if isinstance(predicate, BinaryPredicate) and not predicate.accept_visitor(contains_subqueries):
-            final_fragment = self._ensure_predicate_applicability(predicate, final_fragment)
+        if isinstance(predicate, BinaryPredicate) and not predicate.accept_visitor(
+            contains_subqueries
+        ):
+            final_fragment = self._ensure_predicate_applicability(
+                predicate, final_fragment
+            )
             final_fragment = Selection(final_fragment, predicate)
             return final_fragment
         elif isinstance(predicate, BinaryPredicate):
             if predicate.first_argument.accept_visitor(contains_subqueries):
-                final_fragment = self._add_expression(predicate.first_argument, input_node=final_fragment,
-                                                      subquery_target="scalar")
+                final_fragment = self._add_expression(
+                    predicate.first_argument,
+                    input_node=final_fragment,
+                    subquery_target="scalar",
+                )
             if predicate.second_argument.accept_visitor(contains_subqueries):
-                final_fragment = self._add_expression(predicate.second_argument, input_node=final_fragment,
-                                                      subquery_target="scalar")
-            final_fragment = self._ensure_predicate_applicability(predicate, final_fragment)
+                final_fragment = self._add_expression(
+                    predicate.second_argument,
+                    input_node=final_fragment,
+                    subquery_target="scalar",
+                )
+            final_fragment = self._ensure_predicate_applicability(
+                predicate, final_fragment
+            )
             final_fragment = Selection(final_fragment, predicate)
             return final_fragment
 
         if not isinstance(predicate, CompoundPredicate):
             raise ValueError(f"Unknown predicate type: '{predicate}'")
         match predicate.operation:
-
             case CompoundOperator.And | CompoundOperator.Or:
                 regular_predicates: list[AbstractPredicate] = []
                 subquery_predicates: list[AbstractPredicate] = []
@@ -3251,28 +3865,42 @@ class _ImplicitRelalgParser:
                     else:
                         regular_predicates.append(child_pred)
                 if regular_predicates:
-                    simplified_composite = CompoundPredicate.create(predicate.operation, regular_predicates)
-                    final_fragment = self._ensure_predicate_applicability(simplified_composite, final_fragment)
+                    simplified_composite = CompoundPredicate.create(
+                        predicate.operation, regular_predicates
+                    )
+                    final_fragment = self._ensure_predicate_applicability(
+                        simplified_composite, final_fragment
+                    )
                     final_fragment = Selection(final_fragment, simplified_composite)
                 for subquery_pred in subquery_predicates:
                     if predicate.operation == CompoundOperator.And:
-                        final_fragment = self._convert_predicate(subquery_pred, input_node=final_fragment)
+                        final_fragment = self._convert_predicate(
+                            subquery_pred, input_node=final_fragment
+                        )
                         continue
-                    subquery_branch = self._convert_predicate(subquery_pred, input_node=input_node)
+                    subquery_branch = self._convert_predicate(
+                        subquery_pred, input_node=input_node
+                    )
                     final_fragment = Union(final_fragment, subquery_branch)
                 return final_fragment
 
             case CompoundOperator.Not:
                 if not predicate.children.accept_visitor(contains_subqueries):
-                    final_fragment = self._ensure_predicate_applicability(predicate, final_fragment)
+                    final_fragment = self._ensure_predicate_applicability(
+                        predicate, final_fragment
+                    )
                     final_fragment = Selection(final_fragment, predicate)
                     return final_fragment
-                subquery_branch = self._convert_predicate(predicate.children, input_node=input_node)
+                subquery_branch = self._convert_predicate(
+                    predicate.children, input_node=input_node
+                )
                 final_fragment = Difference(final_fragment, subquery_branch)
                 return final_fragment
 
             case _:
-                raise ValueError(f"Unknown operation for composite predicate '{predicate}'")
+                raise ValueError(
+                    f"Unknown operation for composite predicate '{predicate}'"
+                )
 
     def _convert_join_predicate(self, predicate: AbstractPredicate) -> RelNode:
         """Generates the appropriate join nodes for a specific predicate.
@@ -3286,31 +3914,46 @@ class _ImplicitRelalgParser:
         """
         contains_subqueries = _SubqueryDetector()
         nested_subqueries = predicate.accept_visitor(contains_subqueries)
-        subquery_tables = util.set_union(subquery.bound_tables() for subquery in nested_subqueries.subqueries)
-        table_fragments = {self._resolve(join_partner) for join_partner in predicate.tables() - subquery_tables}
+        subquery_tables = util.set_union(
+            subquery.bound_tables() for subquery in nested_subqueries.subqueries
+        )
+        table_fragments = {
+            self._resolve(join_partner)
+            for join_partner in predicate.tables() - subquery_tables
+        }
         if len(table_fragments) == 1:
             input_node = util.simplify(table_fragments)
             provided_expressions = self._collect_provided_expressions(input_node)
-            required_expressions = util.set_union(_collect_all_expressions(e) for e in predicate.iterexpressions())
+            required_expressions = util.set_union(
+                _collect_all_expressions(e) for e in predicate.iterexpressions()
+            )
             missing_expressions = required_expressions - provided_expressions
             if missing_expressions:
-                final_fragment = Map(input_node, _generate_expression_mapping_dict(missing_expressions))
+                final_fragment = Map(
+                    input_node, _generate_expression_mapping_dict(missing_expressions)
+                )
             else:
                 final_fragment = input_node
             return Selection(final_fragment, predicate)
         if len(table_fragments) != 2:
-            raise ValueError("Expected exactly two base table fragments for join predicate "
-                             f"'{predicate}', but found {table_fragments}")
+            raise ValueError(
+                "Expected exactly two base table fragments for join predicate "
+                f"'{predicate}', but found {table_fragments}"
+            )
 
-        required_expressions = util.set_union(_collect_all_expressions(e) for e in predicate.iterexpressions())
+        required_expressions = util.set_union(
+            _collect_all_expressions(e) for e in predicate.iterexpressions()
+        )
         if isinstance(predicate, BinaryPredicate):
             first_input, second_input = table_fragments
             first_arg, second_arg = predicate.first_argument, predicate.second_argument
-            if (first_arg.tables() <= first_input.tables(ignore_subqueries=True)
-                    and second_arg.tables() <= second_input.tables(ignore_subqueries=True)):
+            if first_arg.tables() <= first_input.tables(
+                ignore_subqueries=True
+            ) and second_arg.tables() <= second_input.tables(ignore_subqueries=True):
                 left_input, right_input = first_input, second_input
-            elif (first_arg.tables() <= second_input.tables(ignore_subqueries=True)
-                    and second_arg.tables() <= first_input.tables(ignore_subqueries=True)):
+            elif first_arg.tables() <= second_input.tables(
+                ignore_subqueries=True
+            ) and second_arg.tables() <= first_input.tables(ignore_subqueries=True):
                 left_input, right_input = second_input, first_input
             else:
                 raise ValueError(f"Unsupported join predicate '{predicate}'")
@@ -3318,7 +3961,9 @@ class _ImplicitRelalgParser:
             left_input = self._add_expression(first_arg, input_node=left_input)
             right_input = self._add_expression(second_arg, input_node=right_input)
 
-            provided_expressions = self._collect_provided_expressions(left_input, right_input)
+            provided_expressions = self._collect_provided_expressions(
+                left_input, right_input
+            )
             missing_expressions = required_expressions - provided_expressions
             left_mappings: list[SqlExpression] = []
             right_mappings: list[SqlExpression] = []
@@ -3328,19 +3973,26 @@ class _ImplicitRelalgParser:
                 elif missing_expr.tables() <= right_input.tables():
                     right_mappings.append(missing_expr)
                 else:
-                    raise ValueError("Cannot calculate expression on left or right input: "
-                                     f"'{missing_expr}' for predicate '{predicate}'")
+                    raise ValueError(
+                        "Cannot calculate expression on left or right input: "
+                        f"'{missing_expr}' for predicate '{predicate}'"
+                    )
             if left_mappings:
-                left_input = Map(left_input, _generate_expression_mapping_dict(left_mappings))
+                left_input = Map(
+                    left_input, _generate_expression_mapping_dict(left_mappings)
+                )
             if right_mappings:
-                right_input = Map(right_input, _generate_expression_mapping_dict(right_mappings))
+                right_input = Map(
+                    right_input, _generate_expression_mapping_dict(right_mappings)
+                )
             return ThetaJoin(left_input, right_input, predicate)
 
         if not isinstance(predicate, CompoundPredicate):
-            raise ValueError(f"Unsupported join predicate '{predicate}'. Perhaps this should be a post-join filter?")
+            raise ValueError(
+                f"Unsupported join predicate '{predicate}'. Perhaps this should be a post-join filter?"
+            )
 
         match predicate.operation:
-
             case CompoundOperator.And | CompoundOperator.Or:
                 regular_predicates: list[AbstractPredicate] = []
                 subquery_predicates: list[AbstractPredicate] = []
@@ -3350,24 +4002,37 @@ class _ImplicitRelalgParser:
                     else:
                         regular_predicates.append(child_pred)
                 if regular_predicates:
-                    simplified_composite = CompoundPredicate(predicate.operation, regular_predicates)
+                    simplified_composite = CompoundPredicate(
+                        predicate.operation, regular_predicates
+                    )
                     final_fragment = self._convert_join_predicate(simplified_composite)
                 else:
                     first_input, second_input = table_fragments
                     final_fragment = CrossProduct(first_input, second_input)
                 for subquery_pred in subquery_predicates:
-                    final_fragment = self._convert_predicate(subquery_pred, input_node=final_fragment)
+                    final_fragment = self._convert_predicate(
+                        subquery_pred, input_node=final_fragment
+                    )
                 return final_fragment
 
             case CompoundOperator.Not:
                 pass
 
             case _:
-                raise ValueError(f"Unknown operation for composite predicate '{predicate}'")
+                raise ValueError(
+                    f"Unknown operation for composite predicate '{predicate}'"
+                )
 
-    def _add_expression(self, expression: SqlExpression, *, input_node: RelNode,
-                        subquery_target: typing.Literal["semijoin", "antijoin", "scalar", "in"] = "scalar",
-                        in_column: Optional[SqlExpression] = None) -> RelNode:
+    def _add_expression(
+        self,
+        expression: SqlExpression,
+        *,
+        input_node: RelNode,
+        subquery_target: typing.Literal[
+            "semijoin", "antijoin", "scalar", "in"
+        ] = "scalar",
+        in_column: Optional[SqlExpression] = None,
+    ) -> RelNode:
         """Generates the appropriate algebra fragment to execute a specific expression.
 
         Depending on the specific expression, simple mappings or even join nodes might be included in the fragment. If the
@@ -3415,8 +4080,13 @@ class _ImplicitRelalgParser:
                         return CrossProduct(input_node, subquery_root)
                     case "in" if not expression.query.is_scalar():
                         unwrapped_scan = subquery_root.input_node
-                        assert isinstance(unwrapped_scan, Projection) and len(unwrapped_scan.columns) == 1
-                        in_predicate = BinaryPredicate.equal(in_column, unwrapped_scan.columns[0])
+                        assert (
+                            isinstance(unwrapped_scan, Projection)
+                            and len(unwrapped_scan.columns) == 1
+                        )
+                        in_predicate = BinaryPredicate.equal(
+                            in_column, unwrapped_scan.columns[0]
+                        )
                         return SemiJoin(input_node, subquery_root, in_predicate)
             case CastExpression() | FunctionExpression() | MathExpression():
                 return self._ensure_expression_applicability(expression, input_node)
@@ -3427,15 +4097,21 @@ class _ImplicitRelalgParser:
 
     def _add_subquery(self, subquery: SqlQuery) -> SubqueryScan:
         """Generates the appropriate algebra fragment to include a subquery in the current algebra tree."""
-        subquery_parser = _ImplicitRelalgParser(subquery, provided_base_tables=self._base_table_fragments)
+        subquery_parser = _ImplicitRelalgParser(
+            subquery, provided_base_tables=self._base_table_fragments
+        )
         subquery_root = subquery_parser.generate_relnode()
-        self._required_columns = util.dicts.merge(subquery_parser._required_columns, self._required_columns)
+        self._required_columns = util.dicts.merge(
+            subquery_parser._required_columns, self._required_columns
+        )
         # We do not include the subquery base tables in our _base_table_fragments since the subquery base tables are already
         # processed completely and this would contradict the interpretation of the _base_table_fragments in
         # _generate_initial_join_order()
         return SubqueryScan(subquery_root, subquery)
 
-    def _split_filter_predicate(self, pred: AbstractPredicate) -> dict[TableReference, AbstractPredicate]:
+    def _split_filter_predicate(
+        self, pred: AbstractPredicate
+    ) -> dict[TableReference, AbstractPredicate]:
         """Extracts applicable filter predicates for varios base tables.
 
         This method splits conjunctive filters consisting of individual predicates for multiple base tables into an explicit
@@ -3457,15 +4133,21 @@ class _ImplicitRelalgParser:
         if pred.operation != CompoundOperator.And:
             return {_BaseTableLookup()(pred): pred}
 
-        raw_predicate_components: dict[TableReference, set[AbstractPredicate]] = collections.defaultdict(set)
+        raw_predicate_components: dict[TableReference, set[AbstractPredicate]] = (
+            collections.defaultdict(set)
+        )
         for child_pred in pred.children:
             child_split = self._split_filter_predicate(child_pred)
             for tab, pred in child_split.items():
                 raw_predicate_components[tab].add(pred)
-        return {base_table: CompoundPredicate.create_and(predicates)
-                for base_table, predicates in raw_predicate_components.items()}
+        return {
+            base_table: CompoundPredicate.create_and(predicates)
+            for base_table, predicates in raw_predicate_components.items()
+        }
 
-    def _split_join_predicate(self, predicate: AbstractPredicate) -> set[AbstractPredicate]:
+    def _split_join_predicate(
+        self, predicate: AbstractPredicate
+    ) -> set[AbstractPredicate]:
         """Provides all individual join predicates that have to be evaluated.
 
         For conjunctive predicates, these are the actual components of the conjunction, all other predicates are returned
@@ -3473,11 +4155,16 @@ class _ImplicitRelalgParser:
         """
         if not predicate.is_join():
             raise ValueError(f"Not a join predicate: '{predicate}'")
-        if isinstance(predicate, CompoundPredicate) and predicate.operation == CompoundOperator.And:
+        if (
+            isinstance(predicate, CompoundPredicate)
+            and predicate.operation == CompoundOperator.And
+        ):
             return set(predicate.children)
         return {predicate}
 
-    def _ensure_predicate_applicability(self, predicate: AbstractPredicate, input_node: RelNode) -> RelNode:
+    def _ensure_predicate_applicability(
+        self, predicate: AbstractPredicate, input_node: RelNode
+    ) -> RelNode:
         """Computes all required mappings that have to be execute before a predicate can be evaluated.
 
         If such mappings exist, the input relation is expanded with a new mapping operation, otherwise the relation is provided
@@ -3496,14 +4183,20 @@ class _ImplicitRelalgParser:
             An algebra fragment
         """
         provided_expressions = self._collect_provided_expressions(input_node)
-        required_expressions = util.set_union(_collect_all_expressions(expression)
-                                              for expression in predicate.iterexpressions())
+        required_expressions = util.set_union(
+            _collect_all_expressions(expression)
+            for expression in predicate.iterexpressions()
+        )
         missing_expressions = required_expressions - provided_expressions
         if missing_expressions:
-            return Map(input_node, _generate_expression_mapping_dict(missing_expressions))
+            return Map(
+                input_node, _generate_expression_mapping_dict(missing_expressions)
+            )
         return input_node
 
-    def _ensure_expression_applicability(self, expression: SqlExpression, input_node: RelNode) -> RelNode:
+    def _ensure_expression_applicability(
+        self, expression: SqlExpression, input_node: RelNode
+    ) -> RelNode:
         """Computes all required mappings that have to be execute before an expression can be evaluated.
 
         This is pretty much the equivalent to `_ensure_predicate_applicability` but for expressions.
@@ -3521,18 +4214,27 @@ class _ImplicitRelalgParser:
             An algebra fragment
         """
         provided_expressions = self._collect_provided_expressions(input_node)
-        required_expressions = util.set_union(_collect_all_expressions(child_expr)
-                                              for child_expr in expression.iterchildren())
+        required_expressions = util.set_union(
+            _collect_all_expressions(child_expr)
+            for child_expr in expression.iterchildren()
+        )
         missing_expressions = required_expressions - provided_expressions
         if missing_expressions:
-            return Map(input_node, _generate_expression_mapping_dict(missing_expressions))
+            return Map(
+                input_node, _generate_expression_mapping_dict(missing_expressions)
+            )
         return input_node
 
     def _collect_provided_expressions(self, *nodes: RelNode) -> set[SqlExpression]:
         """Collects all expressions that are provided by a set of algebra nodes."""
-        outer_table_expressions = util.set_union(base_table.provided_expressions()
-                                                 for base_table in self._provided_base_tables.values())
-        return util.set_union(node.provided_expressions() for node in nodes) | outer_table_expressions
+        outer_table_expressions = util.set_union(
+            base_table.provided_expressions()
+            for base_table in self._provided_base_tables.values()
+        )
+        return (
+            util.set_union(node.provided_expressions() for node in nodes)
+            | outer_table_expressions
+        )
 
 
 def parse_relalg(query: ImplicitSqlQuery) -> RelNode:

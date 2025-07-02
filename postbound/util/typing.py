@@ -1,4 +1,5 @@
 """Provides additional type hints, type decorators, ..."""
+
 from __future__ import annotations
 
 import functools

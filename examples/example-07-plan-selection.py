@@ -19,16 +19,24 @@ class PlanSelection(pb.CompleteOptimizationAlgorithm):
 
     def __init__(self, target_db: Optional[pb.postgres.PostgresInterface]) -> None:
         super().__init__()
-        self._target_db = target_db or pb.db.DatabasePool.get_instance().current_database()
+        self._target_db = (
+            target_db or pb.db.DatabasePool.get_instance().current_database()
+        )
 
         # We need the default server configuration to make sure that our connection is in a clean state whenever we obtain a
         # new query plan. See the comment in _reset_db_state for more details.
-        self._default_config = self._target_db.current_configuration(runtime_changeable_only=True)
+        self._default_config = self._target_db.current_configuration(
+            runtime_changeable_only=True
+        )
 
         # These are all hints that we are going to use to generate different query plans. There are more hints available, but
         # we don't use them for simplicity (and because we would suffer from combinatorial explosion).
-        self._hints: list[pb.opt.PhysicalOperator] = [pb.opt.ScanOperator.SequentialScan, pb.opt.ScanOperator.IndexScan,
-                                                      pb.opt.JoinOperator.NestedLoopJoin, pb.opt.JoinOperator.HashJoin]
+        self._hints: list[pb.opt.PhysicalOperator] = [
+            pb.opt.ScanOperator.SequentialScan,
+            pb.opt.ScanOperator.IndexScan,
+            pb.opt.JoinOperator.NestedLoopJoin,
+            pb.opt.JoinOperator.HashJoin,
+        ]
 
     def optimize_query(self, query: pb.SqlQuery) -> pb.QueryPlan:
         # This is the only real method that we need to implement. It should generate the entire query plan for the input query.
@@ -61,10 +69,15 @@ class PlanSelection(pb.CompleteOptimizationAlgorithm):
             # Once we obtained the operator configuration, we generate the corresponding query plan.
             # This works using the normal hinting mechanism of PostBOUND, which essentially captures the elements of the
             # assignment and integrates them into the query.
-            hinted_query = self._target_db.hinting().generate_hints(query, physical_operators=assignment)
+            hinted_query = self._target_db.hinting().generate_hints(
+                query, physical_operators=assignment
+            )
             query_plan = self._target_db.optimizer().query_plan(hinted_query)
 
-            if best_plan is None or query_plan.estimated_cost < best_plan.estimated_cost:
+            if (
+                best_plan is None
+                or query_plan.estimated_cost < best_plan.estimated_cost
+            ):
                 best_plan = query_plan
 
         if best_plan is None:
@@ -89,9 +102,11 @@ postgres_db = pb.postgres.connect()
 job_workload = pb.workloads.job()
 
 # Configure the optimization pipeline with our plan selection algorithm
-pipeline = (pb.IntegratedOptimizationPipeline(postgres_db)
-            .setup_optimization_algorithm(PlanSelection(postgres_db))
-            .build())
+pipeline = (
+    pb.IntegratedOptimizationPipeline(postgres_db)
+    .setup_optimization_algorithm(PlanSelection(postgres_db))
+    .build()
+)
 
 # Run a couple of optimizations.
 for label, query in job_workload.first(5).items():

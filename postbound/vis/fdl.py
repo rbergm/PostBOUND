@@ -1,4 +1,5 @@
 """Force-directed layout algorithms"""
+
 from __future__ import annotations
 
 import collections
@@ -17,7 +18,9 @@ if Debug:
     np.random.seed(321)
 
 
-def force_directed_layout(elements: Iterable[T], difference_score: Callable[[T, T], float]) -> dict[T, np.ndarray]:
+def force_directed_layout(
+    elements: Iterable[T], difference_score: Callable[[T, T], float]
+) -> dict[T, np.ndarray]:
     """Lays out the supplied elements in a 2D-space according to the difference score.
 
     Pairs of points with a large difference score are positioned further apart than points with a low difference score.
@@ -27,7 +30,9 @@ def force_directed_layout(elements: Iterable[T], difference_score: Callable[[T, 
     return DefaultLayoutEngine(elements, difference_score)
 
 
-def kamada_kawai_layout(elements: Iterable[T], difference_score: Callable[[T, T], float]) -> dict[T, np.ndarray]:
+def kamada_kawai_layout(
+    elements: Iterable[T], difference_score: Callable[[T, T], float]
+) -> dict[T, np.ndarray]:
     elements = list(elements)
     layout_graph = nx.complete_graph(elements)
 
@@ -39,12 +44,19 @@ def kamada_kawai_layout(elements: Iterable[T], difference_score: Callable[[T, T]
             distance_map[b][a] = current_score
 
     elem_pos_spread = len(elements)
-    initial_pos = {elem: (random.random() * elem_pos_spread, random.random() * elem_pos_spread) for elem in elements}
+    initial_pos = {
+        elem: (random.random() * elem_pos_spread, random.random() * elem_pos_spread)
+        for elem in elements
+    }
     return nx.kamada_kawai_layout(layout_graph, dist=distance_map, pos=initial_pos)
 
 
-def fruchterman_reingold_layout(elements: Iterable[T], similarity_score: Callable[[T, T], float], *,
-                                n_iter: int = 100) -> dict[T, np.ndarray]:
+def fruchterman_reingold_layout(
+    elements: Iterable[T],
+    similarity_score: Callable[[T, T], float],
+    *,
+    n_iter: int = 100,
+) -> dict[T, np.ndarray]:
     elements = list(elements)
     layout_graph = nx.Graph()
     layout_graph.add_nodes_from(elements)

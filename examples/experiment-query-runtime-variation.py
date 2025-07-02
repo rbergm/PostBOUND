@@ -42,7 +42,9 @@ class ExperimentConfig:
     timeout_mode: str = "native"  # allowed values: "native" / "dynamic"
     native_runtimes_df: str = "results/job/job-native-runtimes.csv"
 
-    operator_selection: str = "native"  # allowed values: "native" / "hashjoin" / "optimal"
+    operator_selection: str = (
+        "native"  # allowed values: "native" / "hashjoin" / "optimal"
+    )
     enable_prewarming: bool = True
     true_cardinalities_df: str = "results/job/job-intermediate-cardinalities.csv"
 
@@ -57,8 +59,11 @@ class ExperimentConfig:
         return ExperimentConfig()
 
 
-def skip_existing_results(workload: workloads.Workload, *,
-                          config: ExperimentConfig = ExperimentConfig.default()) -> workloads.Workload:
+def skip_existing_results(
+    workload: workloads.Workload,
+    *,
+    config: ExperimentConfig = ExperimentConfig.default(),
+) -> workloads.Workload:
     if not config.skip_existing_results:
         return workload
     existing_results = set()
@@ -74,14 +79,18 @@ def skip_existing_results(workload: workloads.Workload, *,
 
     if not existing_results:
         return workload
-    skipped_workload = workload.filter_by(lambda label, __: label not in existing_results)
+    skipped_workload = workload.filter_by(
+        lambda label, __: label not in existing_results
+    )
     next_query = skipped_workload.head()
     assert next_query is not None
     logging.info("Skipping existing results until label %s", next_query[0])
     return skipped_workload
 
 
-def filter_for_label(workload: workloads.Workload, labels: Sequence[str]) -> workloads.Workload:
+def filter_for_label(
+    workload: workloads.Workload, labels: Sequence[str]
+) -> workloads.Workload:
     if not len(labels):
         return workload
     if len(labels) == 1:
@@ -103,8 +112,11 @@ def stop_evaluation(sig_num, stack_trace) -> None:
     StopEvaluation = True  # don't evaluate any new queries if the signal is raised
 
 
-def execute_query_handler(query: qal.SqlQuery, database: db.Database,
-                          duration_sender: multiprocessing.connection.Connection) -> None:
+def execute_query_handler(
+    query: qal.SqlQuery,
+    database: db.Database,
+    duration_sender: multiprocessing.connection.Connection,
+) -> None:
     signal.signal(signal.SIGINT, signal.SIG_IGN)
     start_time = datetime.now()
     result_plan = database.execute_query(query, cache_enabled=False)
@@ -113,8 +125,12 @@ def execute_query_handler(query: qal.SqlQuery, database: db.Database,
     duration_sender.send((result_plan, query_duration))
 
 
-def generate_all_join_orders(query: qal.SqlQuery, exhaustive_enumerator: enumeration.ExhaustiveJoinOrderEnumerator, *,
-                             config: ExperimentConfig = ExperimentConfig.default()) -> list[opt.LogicalJoinTree]:
+def generate_all_join_orders(
+    query: qal.SqlQuery,
+    exhaustive_enumerator: enumeration.ExhaustiveJoinOrderEnumerator,
+    *,
+    config: ExperimentConfig = ExperimentConfig.default(),
+) -> list[opt.LogicalJoinTree]:
     exhaustive_join_order_generator = exhaustive_enumerator.all_join_orders_for(query)
     join_order_plans = []
     for __ in range(config.exhaustive_join_ordering_limit):
@@ -129,8 +145,9 @@ def generate_all_join_orders(query: qal.SqlQuery, exhaustive_enumerator: enumera
     return join_order_plans
 
 
-def generate_random_join_orders(query: qal.SqlQuery, *, config: ExperimentConfig = ExperimentConfig.default()
-                                ) -> list[opt.LogicalJoinTree]:
+def generate_random_join_orders(
+    query: qal.SqlQuery, *, config: ExperimentConfig = ExperimentConfig.default()
+) -> list[opt.LogicalJoinTree]:
     random_enumerator = randomized.RandomJoinOrderGenerator()
     join_order_plans = []
     random_plan_hashes = set()
@@ -172,8 +189,13 @@ class EvaluationResult:
     timeout: float
 
 
-def determine_timeout(label: str, total_query_runtime: float, n_executed_plans: int, *,
-                      config: ExperimentConfig = ExperimentConfig.default()) -> float:
+def determine_timeout(
+    label: str,
+    total_query_runtime: float,
+    n_executed_plans: int,
+    *,
+    config: ExperimentConfig = ExperimentConfig.default(),
+) -> float:
     if config.timeout_mode == "native":
         df = pd.read_csv(config.native_runtimes_df)
         native_runtime = df[df.label == label]["execution_time"].iloc[0]
@@ -190,15 +212,21 @@ def determine_timeout(label: str, total_query_runtime: float, n_executed_plans: 
     return max(timeout, config.minimum_query_timeout)
 
 
-def assert_correct_query_plan(label: str, query: qal.SqlQuery, expected_join_order: opt.JoinTree,
-                              actual_query_plan: dict) -> None:
+def assert_correct_query_plan(
+    label: str,
+    query: qal.SqlQuery,
+    expected_join_order: opt.JoinTree,
+    actual_query_plan: dict,
+) -> None:
     parsed_actual_plan = postgres.PostgresExplainPlan(actual_query_plan).as_qep()
     actual_join_order = opt.jointree_from_plan(parsed_actual_plan)
     if expected_join_order != actual_join_order:
         logging.error("Join order was not enforced correctly for label %s", label)
 
 
-OperatorSelection = tuple[Optional[opt.PhysicalOperatorAssignment], Optional[opt.PlanParameterization]]
+OperatorSelection = tuple[
+    Optional[opt.PhysicalOperatorAssignment], Optional[opt.PlanParameterization]
+]
 
 
 def native_operator_selection(join_order: opt.JoinTree) -> OperatorSelection:
@@ -209,8 +237,12 @@ def native_operator_selection(join_order: opt.JoinTree) -> OperatorSelection:
 
 def restrict_to_hash_join(join_order: opt.JoinTree) -> OperatorSelection:
     operator_selection = opt.PhysicalOperatorAssignment()
-    operator_selection.set_operator_enabled_globally(opt.JoinOperators.NestedLoopJoin, False)
-    operator_selection.set_operator_enabled_globally(opt.JoinOperators.SortMergeJoin, False)
+    operator_selection.set_operator_enabled_globally(
+        opt.JoinOperators.NestedLoopJoin, False
+    )
+    operator_selection.set_operator_enabled_globally(
+        opt.JoinOperators.SortMergeJoin, False
+    )
 
     plan_params = opt.PlanParameterization()
     plan_params.set_system_settings(geqo="off")
@@ -238,19 +270,29 @@ class TrueCardinalityGenerator:
         plan_params = opt.PlanParameterization()
         for intermediate_join in join_order.join_sequence():
             joined_tables = intermediate_join.tables()
-            current_cardinality = self._relevant_queries[self._relevant_queries.tables == joined_tables]
+            current_cardinality = self._relevant_queries[
+                self._relevant_queries.tables == joined_tables
+            ]
             if current_cardinality.empty:
-                logging.warning("No cardinality found for intermediate %s at label %s", intermediate_join,
-                                self._current_label)
+                logging.warning(
+                    "No cardinality found for intermediate %s at label %s",
+                    intermediate_join,
+                    self._current_label,
+                )
                 continue
             cardinality = current_cardinality.iloc[0]["cardinality"]
             plan_params.add_cardinality_hint(joined_tables, cardinality)
         for base_table in join_order.table_sequence():
             table = base_table.table
-            current_cardinality = self._relevant_queries[self._relevant_queries.tables == {table}]
+            current_cardinality = self._relevant_queries[
+                self._relevant_queries.tables == {table}
+            ]
             if current_cardinality.empty:
-                logging.warning("No cardinality found for base table %s at label %s", intermediate_join,
-                                self._current_label)
+                logging.warning(
+                    "No cardinality found for base table %s at label %s",
+                    intermediate_join,
+                    self._current_label,
+                )
                 continue
             cardinality = current_cardinality.iloc[0]["cardinality"]
             plan_params.add_cardinality_hint([table], cardinality)
@@ -259,25 +301,38 @@ class TrueCardinalityGenerator:
         return None, plan_params
 
 
-def execute_single_query(label: str, query: qal.SqlQuery, join_order: opt.LogicalJoinTree, *,
-                         n_executed_plans: int = 0, total_query_runtime: float = 0,
-                         db_instance: db.Database,
-                         operator_generator: Callable[[opt.JoinTree], OperatorSelection],
-                         config: ExperimentConfig = ExperimentConfig.default()) -> EvaluationResult:
+def execute_single_query(
+    label: str,
+    query: qal.SqlQuery,
+    join_order: opt.LogicalJoinTree,
+    *,
+    n_executed_plans: int = 0,
+    total_query_runtime: float = 0,
+    db_instance: db.Database,
+    operator_generator: Callable[[opt.JoinTree], OperatorSelection],
+    config: ExperimentConfig = ExperimentConfig.default(),
+) -> EvaluationResult:
     query_generator = db_instance.hinting()
 
     operator_selection, plan_params = operator_generator(join_order)
-    optimized_query = query_generator.generate_hints(query, join_order=join_order,
-                                                     physical_operators=operator_selection,
-                                                     plan_parameters=plan_params)
+    optimized_query = query_generator.generate_hints(
+        query,
+        join_order=join_order,
+        physical_operators=operator_selection,
+        plan_parameters=plan_params,
+    )
     optimized_query = qal.transform.as_explain_analyze(optimized_query)
 
-    query_timeout = determine_timeout(label, total_query_runtime, n_executed_plans, config=config)
+    query_timeout = determine_timeout(
+        label, total_query_runtime, n_executed_plans, config=config
+    )
     query_duration_receiver, query_duration_sender = mp.Pipe(False)
 
     # TODO: what about query repetitions?
-    query_execution_worker = mp.Process(target=execute_query_handler,
-                                        args=(optimized_query, db_instance, query_duration_sender))
+    query_execution_worker = mp.Process(
+        target=execute_query_handler,
+        args=(optimized_query, db_instance, query_duration_sender),
+    )
     query_execution_worker.start()
 
     query_execution_worker.join(query_timeout)
@@ -289,7 +344,9 @@ def execute_single_query(label: str, query: qal.SqlQuery, join_order: opt.Logica
 
         # We cannot use db.optimizer().query_plan() here, b/c we need to JSON-serialize the raw plan later on. This is
         # currently not supported by the QueryExecutionPlan
-        query_plan = db_instance.execute_query(qal.transform.as_explain(optimized_query), cache_enabled=False)
+        query_plan = db_instance.execute_query(
+            qal.transform.as_explain(optimized_query), cache_enabled=False
+        )
         query_runtime = np.inf
     else:
         query_plan, query_runtime = query_duration_receiver.recv()
@@ -299,29 +356,54 @@ def execute_single_query(label: str, query: qal.SqlQuery, join_order: opt.Logica
 
     assert_correct_query_plan(label, query, join_order, query_plan)
 
-    query_hints, planner_options = ((optimized_query.hints.query_hints, optimized_query.hints.preparatory_statements)
-                                    if optimized_query.hints else ("", ""))
-    return EvaluationResult(label=label, query=query, join_order=join_order,
-                            query_hints=query_hints, planner_options=planner_options,
-                            query_plan=query_plan, execution_time=query_runtime,
-                            timeout=query_timeout)
+    query_hints, planner_options = (
+        (
+            optimized_query.hints.query_hints,
+            optimized_query.hints.preparatory_statements,
+        )
+        if optimized_query.hints
+        else ("", "")
+    )
+    return EvaluationResult(
+        label=label,
+        query=query,
+        join_order=join_order,
+        query_hints=query_hints,
+        planner_options=planner_options,
+        query_plan=query_plan,
+        execution_time=query_runtime,
+        timeout=query_timeout,
+    )
 
 
-def prewarm_database(query: qal.SqlQuery, db_instance: postgres.PostgresInterface, *,
-                     config: ExperimentConfig = ExperimentConfig.default()) -> None:
+def prewarm_database(
+    query: qal.SqlQuery,
+    db_instance: postgres.PostgresInterface,
+    *,
+    config: ExperimentConfig = ExperimentConfig.default(),
+) -> None:
     if not config.enable_prewarming:
         return
     db_instance.prewarm_tables(query.tables())
 
 
-def evaluate_query(label: str, query: qal.SqlQuery, *, db_instance: postgres.PostgresInterface,
-                   config: ExperimentConfig = ExperimentConfig.default()) -> Iterable[EvaluationResult]:
+def evaluate_query(
+    label: str,
+    query: qal.SqlQuery,
+    *,
+    db_instance: postgres.PostgresInterface,
+    config: ExperimentConfig = ExperimentConfig.default(),
+) -> Iterable[EvaluationResult]:
     logging.debug("Building all plans for query %s", label)
     exhaustive_enumerator = enumeration.ExhaustiveJoinOrderEnumerator()
-    join_order_plans = generate_all_join_orders(query, exhaustive_enumerator, config=config)
+    join_order_plans = generate_all_join_orders(
+        query, exhaustive_enumerator, config=config
+    )
 
     should_sample_randomly = False
-    reached_exhaustion_limit = len(join_order_plans) == config.exhaustive_join_ordering_limit
+    reached_exhaustion_limit = (
+        len(join_order_plans) == config.exhaustive_join_ordering_limit
+    )
     if reached_exhaustion_limit:
         # Special case: there exist exactly as many join orders for the query as the ExhaustiveJoinOrderingLimit
         # If this situation occurs, we don't want to fall back to random sampling because this would mean we need
@@ -334,7 +416,9 @@ def evaluate_query(label: str, query: qal.SqlQuery, *, db_instance: postgres.Pos
             should_sample_randomly = False
 
     if should_sample_randomly:
-        logging.debug("Falling back to random sampling of join orders for query %s", label)
+        logging.debug(
+            "Falling back to random sampling of join orders for query %s", label
+        )
         join_order_plans = generate_random_join_orders(query, config=config)
 
     if config.operator_selection == "native":
@@ -345,7 +429,9 @@ def evaluate_query(label: str, query: qal.SqlQuery, *, db_instance: postgres.Pos
         operator_generator = TrueCardinalityGenerator(config)
         operator_generator.setup_for_query(label, query)
     else:
-        raise ValueError("Unknown operator selection strategy: " + config.operator_selection)
+        raise ValueError(
+            "Unknown operator selection strategy: " + config.operator_selection
+        )
 
     n_executed_plans = 0
     total_query_runtime = 0.0
@@ -353,13 +439,22 @@ def evaluate_query(label: str, query: qal.SqlQuery, *, db_instance: postgres.Pos
     prewarm_database(query, db_instance, config=config)
     logging.debug("Starting query execution for query %s", label)
     for join_order in join_order_plans:
-        evaluation_result = execute_single_query(label, query, join_order, n_executed_plans=n_executed_plans,
-                                                 total_query_runtime=total_query_runtime,
-                                                 db_instance=db_instance, operator_generator=operator_generator,
-                                                 config=config)
+        evaluation_result = execute_single_query(
+            label,
+            query,
+            join_order,
+            n_executed_plans=n_executed_plans,
+            total_query_runtime=total_query_runtime,
+            db_instance=db_instance,
+            operator_generator=operator_generator,
+            config=config,
+        )
         n_executed_plans += 1
-        total_query_runtime += (evaluation_result.execution_time if math.isfinite(evaluation_result.execution_time)
-                                else evaluation_result.timeout)
+        total_query_runtime += (
+            evaluation_result.execution_time
+            if math.isfinite(evaluation_result.execution_time)
+            else evaluation_result.timeout
+        )
         query_runtimes.append(evaluation_result)
 
         if n_executed_plans % 100 == 0:
@@ -382,64 +477,130 @@ def prepare_for_export(df: pd.DataFrame) -> pd.DataFrame:
 
 def read_config() -> tuple[ExperimentConfig, Sequence[str]]:
     if not Interactive:
-        logging.basicConfig(level=logging_level, format=logging_format, filename="experiment-test.log", filemode="w")
+        logging.basicConfig(
+            level=logging_level,
+            format=logging_format,
+            filename="experiment-test.log",
+            filemode="w",
+        )
         console_logger = logging.StreamHandler()
         console_logger.setLevel(logging.DEBUG)
         console_logger.setFormatter(logging.Formatter(logging_format))
         logging.getLogger().addHandler(console_logger)
         return ExperimentConfig(operator_selection="optimal"), ["1a"]
 
-    arg_parser = argparse.ArgumentParser(description="Determines the difference in query runtime depending on the "
-                                                     "selected join order for queries in the Join Order Benchmark.")
+    arg_parser = argparse.ArgumentParser(
+        description="Determines the difference in query runtime depending on the "
+        "selected join order for queries in the Join Order Benchmark."
+    )
 
-    arg_parser.add_argument("--max-plans", action="store", type=int, default=1000,
-                            help="The maximum number of join orders to evaluate per query.")
-    arg_parser.add_argument("--slowdown-tolerance", action="store", type=float, default=2.5,
-                            help="Maximum factor a query can be slower than the dynamic timeout before being "
-                                 "cancelled.")
-    arg_parser.add_argument("--default-timeout", action="store", type=int, default=120,
-                            help="Default static query timeout.")
-    arg_parser.add_argument("--min-timeout", action="store", type=int, default=15,
-                            help="Minimum dynamic query timeout.")
-    arg_parser.add_argument("--timeout-mode", action="store", default="dynamic", choices=["native", "dynamic"],
-                            help="Calculate timeout based on current average runtime ('dynamic'), or based on the "
-                                 "runtime of a natively optimized query ('native'). The tolerance factor is applied "
-                                 "normally.")
+    arg_parser.add_argument(
+        "--max-plans",
+        action="store",
+        type=int,
+        default=1000,
+        help="The maximum number of join orders to evaluate per query.",
+    )
+    arg_parser.add_argument(
+        "--slowdown-tolerance",
+        action="store",
+        type=float,
+        default=2.5,
+        help="Maximum factor a query can be slower than the dynamic timeout before being "
+        "cancelled.",
+    )
+    arg_parser.add_argument(
+        "--default-timeout",
+        action="store",
+        type=int,
+        default=120,
+        help="Default static query timeout.",
+    )
+    arg_parser.add_argument(
+        "--min-timeout",
+        action="store",
+        type=int,
+        default=15,
+        help="Minimum dynamic query timeout.",
+    )
+    arg_parser.add_argument(
+        "--timeout-mode",
+        action="store",
+        default="dynamic",
+        choices=["native", "dynamic"],
+        help="Calculate timeout based on current average runtime ('dynamic'), or based on the "
+        "runtime of a natively optimized query ('native'). The tolerance factor is applied "
+        "normally.",
+    )
 
-    arg_parser.add_argument("--prewarm", action="store_true", default=False, help="Pre-warm the database buffer pool.")
-    arg_parser.add_argument("--operator-selection", action="store", default="native",
-                            choices=["native", "hashjoin", "optimal"],
-                            help="Modify the operator selection. native for unchanged operators, hashjoin to "
-                                 "restrict all joins or optimal to derive from true cardinalities.")
+    arg_parser.add_argument(
+        "--prewarm",
+        action="store_true",
+        default=False,
+        help="Pre-warm the database buffer pool.",
+    )
+    arg_parser.add_argument(
+        "--operator-selection",
+        action="store",
+        default="native",
+        choices=["native", "hashjoin", "optimal"],
+        help="Modify the operator selection. native for unchanged operators, hashjoin to "
+        "restrict all joins or optimal to derive from true cardinalities.",
+    )
 
-    arg_parser.add_argument("--out-dir", action="store", type=str, default="results/query-runtime-variation/",
-                            help="Directory where to store the experiment results.")
-    arg_parser.add_argument("--log-file", "-l", action="store", type=str, default="query-runtime-variation.log",
-                            help="File to write logging information to")
+    arg_parser.add_argument(
+        "--out-dir",
+        action="store",
+        type=str,
+        default="results/query-runtime-variation/",
+        help="Directory where to store the experiment results.",
+    )
+    arg_parser.add_argument(
+        "--log-file",
+        "-l",
+        action="store",
+        type=str,
+        default="query-runtime-variation.log",
+        help="File to write logging information to",
+    )
 
-    arg_parser.add_argument("--execute-all", action="store_true", default=False,
-                            help="Force evaluation of all benchmark queries.")
+    arg_parser.add_argument(
+        "--execute-all",
+        action="store_true",
+        default=False,
+        help="Force evaluation of all benchmark queries.",
+    )
 
-    arg_parser.add_argument("labels", action="store", nargs="*",
-                            help="Filters the workload for the given query labels: "
-                                 "0 labels means all queries, "
-                                 "1 label filters for exactly that query, "
-                                 "2 labels filter for all queries between (and including) the given labels, "
-                                 "3 or more labels again filter for exactly the given labels")
+    arg_parser.add_argument(
+        "labels",
+        action="store",
+        nargs="*",
+        help="Filters the workload for the given query labels: "
+        "0 labels means all queries, "
+        "1 label filters for exactly that query, "
+        "2 labels filter for all queries between (and including) the given labels, "
+        "3 or more labels again filter for exactly the given labels",
+    )
 
     args = arg_parser.parse_args()
-    config = ExperimentConfig(exhaustive_join_ordering_limit=args.max_plans,
-                              query_slowdown_tolerance_factor=args.slowdown_tolerance,
-                              default_query_timeout=args.default_timeout,
-                              minimum_query_timeout=args.min_timeout,
-                              timeout_mode=args.timeout_mode,
-                              enable_prewarming=args.prewarm,
-                              operator_selection=args.operator_selection,
-                              output_directory=args.out_dir if args.out_dir.endswith("/") else args.out_dir + "/",
-                              skip_existing_results=not args.execute_all)
+    config = ExperimentConfig(
+        exhaustive_join_ordering_limit=args.max_plans,
+        query_slowdown_tolerance_factor=args.slowdown_tolerance,
+        default_query_timeout=args.default_timeout,
+        minimum_query_timeout=args.min_timeout,
+        timeout_mode=args.timeout_mode,
+        enable_prewarming=args.prewarm,
+        operator_selection=args.operator_selection,
+        output_directory=args.out_dir
+        if args.out_dir.endswith("/")
+        else args.out_dir + "/",
+        skip_existing_results=not args.execute_all,
+    )
     labels = list(args.labels)
 
-    logging.basicConfig(level=logging_level, format=logging_format, filename=args.log_file, filemode="w")
+    logging.basicConfig(
+        level=logging_level, format=logging_format, filename=args.log_file, filemode="w"
+    )
     console_logger = logging.StreamHandler()
     console_logger.setLevel(logging_level)
     console_logger.setFormatter(logging.Formatter(logging_format))
@@ -487,7 +648,9 @@ def main():
 
         result_df = pd.DataFrame(query_runtimes)
         result_df["db_config"] = [pg_db.describe()] * len(result_df)
-        out_file = config.output_directory + config.output_file_format.format(label=label)
+        out_file = config.output_directory + config.output_file_format.format(
+            label=label
+        )
         result_df = prepare_for_export(result_df)
         result_df.to_csv(out_file, index=False)
 

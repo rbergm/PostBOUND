@@ -1,4 +1,3 @@
-
 from __future__ import annotations
 
 import math
@@ -78,7 +77,9 @@ class Cardinality(Number):
     def value(self) -> int:
         """Get the value wrapped by this cardinality instance. If the cardinality is invalid, a `StateError` is raised."""
         if not self._valid:
-            raise StateError("Not a valid cardinality. Use is_valid() to check, or get() to handle unknown values yourself.")
+            raise StateError(
+                "Not a valid cardinality. Use is_valid() to check, or get() to handle unknown values yourself."
+            )
         return self._value
 
     def isnan(self) -> bool:
@@ -371,7 +372,9 @@ class Cardinality(Number):
 
     def __int__(self) -> int:
         if not self._valid:
-            raise StateError("Not a valid cardinality. Use is_valid() to check, or get() to handle unknown values yourself.")
+            raise StateError(
+                "Not a valid cardinality. Use is_valid() to check, or get() to handle unknown values yourself."
+            )
         return self.value
 
     def __complex__(self) -> complex:
@@ -424,6 +427,7 @@ class ScanOperator(Enum):
     operators are chosen because they are supported by a wide variety of database systems and they are sufficiently different
     from each other.
     """
+
     SequentialScan = "Seq. Scan"
     IndexScan = "Idx. Scan"
     IndexOnlyScan = "Idx-only Scan"
@@ -445,6 +449,7 @@ class JoinOperator(Enum):
     operators are chosen because they are supported by a wide variety of database systems and they are sufficiently different
     from each other.
     """
+
     NestedLoopJoin = "NLJ"
     HashJoin = "Hash Join"
     SortMergeJoin = "Sort-Merge Join"
@@ -497,17 +502,101 @@ References
 - Regex tester: https://regex101.com/r/TtrNQg/1
 """
 
-SqlKeywords = frozenset({
-    "ALL", "AND", "ANY", "ARRAY", "AS", "ASC", "ASYMMETRIC", "BINARY", "BOTH", "CASE", "CAST", "CHECK", "COLLATE",
-    "COLUMN", "CONSTRAINT", "CREATE", "CROSS", "CURRENT_CATALOG", "CURRENT_DATE", "CURRENT_ROLE", "CURRENT_SCHEMA",
-    "CURRENT_TIME", "CURRENT_TIMESTAMP", "CURRENT_USER", "DEFAULT", "DEFERRABLE", "DESC", "DISTINCT", "DO", "ELSE",
-    "END", "EXCEPT", "FALSE", "FETCH", "FOR", "FOREIGN", "FROM", "FULL", "GRANT", "GROUP", "HAVING", "ILIKE", "IN",
-    "INITIALLY", "INNER", "INTERSECT", "INTO", "IS", "JOIN", "LATERAL", "LEADING", "LEFT", "LIKE", "LIMIT", "LOCALTIME",
-    "LOCALTIMESTAMP", "NATURAL", "NOT", "NULL", "OFFSET", "ON", "ONLY", "OR", "ORDER", "OUTER", "OVERLAPS", "PLACING",
-    "PRIMARY", "REFERENCES", "RETURNING", "RIGHT", "SELECT", "SESSION_USER", "SIMILAR", "SOME", "SYMMETRIC", "TABLE",
-    "THEN", "TO", "TRAILING", "TRUE", "UNION", "UNIQUE", "USER", "USING", "VARIADIC", "VERBOSE", "WHEN", "WHERE",
-    "WINDOW", "WITH"
-})
+SqlKeywords = frozenset(
+    {
+        "ALL",
+        "AND",
+        "ANY",
+        "ARRAY",
+        "AS",
+        "ASC",
+        "ASYMMETRIC",
+        "BINARY",
+        "BOTH",
+        "CASE",
+        "CAST",
+        "CHECK",
+        "COLLATE",
+        "COLUMN",
+        "CONSTRAINT",
+        "CREATE",
+        "CROSS",
+        "CURRENT_CATALOG",
+        "CURRENT_DATE",
+        "CURRENT_ROLE",
+        "CURRENT_SCHEMA",
+        "CURRENT_TIME",
+        "CURRENT_TIMESTAMP",
+        "CURRENT_USER",
+        "DEFAULT",
+        "DEFERRABLE",
+        "DESC",
+        "DISTINCT",
+        "DO",
+        "ELSE",
+        "END",
+        "EXCEPT",
+        "FALSE",
+        "FETCH",
+        "FOR",
+        "FOREIGN",
+        "FROM",
+        "FULL",
+        "GRANT",
+        "GROUP",
+        "HAVING",
+        "ILIKE",
+        "IN",
+        "INITIALLY",
+        "INNER",
+        "INTERSECT",
+        "INTO",
+        "IS",
+        "JOIN",
+        "LATERAL",
+        "LEADING",
+        "LEFT",
+        "LIKE",
+        "LIMIT",
+        "LOCALTIME",
+        "LOCALTIMESTAMP",
+        "NATURAL",
+        "NOT",
+        "NULL",
+        "OFFSET",
+        "ON",
+        "ONLY",
+        "OR",
+        "ORDER",
+        "OUTER",
+        "OVERLAPS",
+        "PLACING",
+        "PRIMARY",
+        "REFERENCES",
+        "RETURNING",
+        "RIGHT",
+        "SELECT",
+        "SESSION_USER",
+        "SIMILAR",
+        "SOME",
+        "SYMMETRIC",
+        "TABLE",
+        "THEN",
+        "TO",
+        "TRAILING",
+        "TRUE",
+        "UNION",
+        "UNIQUE",
+        "USER",
+        "USING",
+        "VARIADIC",
+        "VERBOSE",
+        "WHEN",
+        "WHERE",
+        "WINDOW",
+        "WITH",
+    }
+)
 """An (probably incomplete) list of reserved SQL keywords that must be quoted before being used as identifiers."""
 
 
@@ -529,7 +618,10 @@ def quote(identifier: str) -> str:
     """
     if not identifier:
         return ""
-    valid_identifier = _IdentifierPattern.fullmatch(identifier) and identifier.upper() not in SqlKeywords
+    valid_identifier = (
+        _IdentifierPattern.fullmatch(identifier)
+        and identifier.upper() not in SqlKeywords
+    )
     return identifier if valid_identifier else f'"{identifier}"'
 
 
@@ -586,7 +678,9 @@ class TableReference:
     """
 
     @staticmethod
-    def create_virtual(alias: str, *, full_name: str = "", schema: str = "") -> TableReference:
+    def create_virtual(
+        alias: str, *, full_name: str = "", schema: str = ""
+    ) -> TableReference:
         """Generates a new virtual table reference with the given alias.
 
         Parameters
@@ -606,7 +700,14 @@ class TableReference:
         """
         return TableReference(full_name, alias, virtual=True, schema=schema)
 
-    def __init__(self, full_name: str, alias: str = "", *, virtual: bool = False, schema: str = "") -> None:
+    def __init__(
+        self,
+        full_name: str,
+        alias: str = "",
+        *,
+        virtual: bool = False,
+        schema: str = "",
+    ) -> None:
         if not full_name and not alias:
             raise ValueError("Full name or alias required")
         if schema and not full_name:
@@ -623,9 +724,19 @@ class TableReference:
         self._normalized_full_name = normalize(self._full_name)
         self._normalized_alias = normalize(self._alias)
         self._nomalized_identifier = normalize(self._identifier)
-        self._hash_val = hash((self._normalized_full_name, self._normalized_alias, self._normalized_schema))
+        self._hash_val = hash(
+            (
+                self._normalized_full_name,
+                self._normalized_alias,
+                self._normalized_schema,
+            )
+        )
 
-        table_txt = f"{quote(self._schema)}.{quote(self._full_name)}" if self._schema else quote(self._full_name)
+        table_txt = (
+            f"{quote(self._schema)}.{quote(self._full_name)}"
+            if self._schema
+            else quote(self._full_name)
+        )
         if table_txt and self._alias:
             self._sql_repr = f"{table_txt} AS {quote(self._alias)}"
         elif self._alias:
@@ -712,7 +823,11 @@ class TableReference:
         """
         if self.virtual:
             raise VirtualTableError(f"Table {self} does not have a qualified name.")
-        return f"{quote(self._schema)}.{quote(self._full_name)}" if self._schema else quote(self._full_name)
+        return (
+            f"{quote(self._schema)}.{quote(self._full_name)}"
+            if self._schema
+            else quote(self._full_name)
+        )
 
     def drop_alias(self) -> TableReference:
         """Removes the alias from the current table if there is one. Returns the tabel as-is otherwise.
@@ -762,10 +877,18 @@ class TableReference:
         TableReference
             The updated table reference
         """
-        return TableReference(self.full_name, self.alias, virtual=True, schema=self._schema)
+        return TableReference(
+            self.full_name, self.alias, virtual=True, schema=self._schema
+        )
 
-    def update(self, *, full_name: Optional[str] = None, alias: Optional[str] = None, virtual: Optional[bool] = None,
-               schema: Optional[str] = "") -> TableReference:
+    def update(
+        self,
+        *,
+        full_name: Optional[str] = None,
+        alias: Optional[str] = None,
+        virtual: Optional[bool] = None,
+        schema: Optional[str] = "",
+    ) -> TableReference:
         full_name = self._full_name if full_name is None else full_name
         alias = self._alias if alias is None else alias
         virtual = self._virtual if virtual is None else virtual
@@ -773,7 +896,12 @@ class TableReference:
         return TableReference(full_name, alias, virtual=virtual, schema=schema)
 
     def __json__(self) -> object:
-        return {"full_name": self._full_name, "alias": self._alias, "virtual": self._virtual, "schema": self._schema}
+        return {
+            "full_name": self._full_name,
+            "alias": self._alias,
+            "virtual": self._virtual,
+            "schema": self._schema,
+        }
 
     def __lt__(self, other: object) -> bool:
         if not isinstance(other, TableReference):
@@ -784,14 +912,18 @@ class TableReference:
         return self._hash_val
 
     def __eq__(self, other: object) -> bool:
-        return (isinstance(other, type(self))
-                and self._normalized_full_name == other._normalized_full_name
-                and self._normalized_alias == other._normalized_alias
-                and self._normalized_schema == other._normalized_schema)
+        return (
+            isinstance(other, type(self))
+            and self._normalized_full_name == other._normalized_full_name
+            and self._normalized_alias == other._normalized_alias
+            and self._normalized_schema == other._normalized_schema
+        )
 
     def __repr__(self) -> str:
-        return (f"TableReference(full_name='{self.full_name}', alias='{self.alias}', "
-                f"virtual={self.virtual}, schema='{self.schema}')")
+        return (
+            f"TableReference(full_name='{self.full_name}', alias='{self.alias}', "
+            f"virtual={self.virtual}, schema='{self.schema}')"
+        )
 
     def __str__(self) -> str:
         return self._sql_repr
@@ -942,7 +1074,11 @@ class ColumnReference:
         return self._hash_val
 
     def __eq__(self, other) -> bool:
-        return isinstance(other, type(self)) and self._normalized_name == other._normalized_name and self.table == other.table
+        return (
+            isinstance(other, type(self))
+            and self._normalized_name == other._normalized_name
+            and self.table == other.table
+        )
 
     def __repr__(self) -> str:
         return f"ColumnReference(name='{self.name}', table={repr(self.table)})"
@@ -988,7 +1124,9 @@ class DBCatalog(Protocol):
                        technical reasons to prevent circular imports).
     """
 
-    def lookup_column(self, name: str | ColumnReference, candidates: Iterable[TableReference]) -> Optional[TableReference]:
+    def lookup_column(
+        self, name: str | ColumnReference, candidates: Iterable[TableReference]
+    ) -> Optional[TableReference]:
         """Provides the table that defines a specific column.
 
         Returns

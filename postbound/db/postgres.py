@@ -6,6 +6,7 @@ features cover most of the general aspects of query optimization (i.e. supported
 Secondly, and on a more pragmatic note Potsgres was the first database system that was supported by PostBOUND and therefore
 a lot of the original Postgres interfaces eventually evolved into the more abstract database-independent interfaces.
 """
+
 from __future__ import annotations
 
 import collections
@@ -90,7 +91,9 @@ from ._db import (
 # TODO: find a nice way to support index nested-loop join hints.
 # Probably inspired by the join order/join direction handling?
 
-HintBlock = collections.namedtuple("HintBlock", ["preparatory_statements", "hints", "query"])
+HintBlock = collections.namedtuple(
+    "HintBlock", ["preparatory_statements", "hints", "query"]
+)
 """Type alias to capture relevant info in a hint block under construction."""
 
 
@@ -106,6 +109,7 @@ class _GeQOState:
         The minimum number of tables that need to be joined in order for the GeQO optimizer to be activated. All queries with
         less joined tables are optimized using a traditional dynamic programming-based optimizer.
     """
+
     enabled: bool
     threshold: int
 
@@ -158,44 +162,113 @@ def _escape_setting_value(value: object) -> str:
 _SignificantPostgresSettings = {
     # Resource consumption settings (see https://www.postgresql.org/docs/current/runtime-config-resource.html)
     # Memory
-    "shared_buffers", "huge_pages", "huge_page_size", "temp_buffers", "max_prepared_transactions",
-    "work_mem", "hash_mem_multiplier", "maintenance_work_mem", "autovacuum_work_mem", "vacuum_buffer_usage_limit",
-    "logical_decoding_work_mem", "max_stack_depth",
-    "shared_memory_type", "dynamic_shared_memory_type", "min_dynamic_shared_memory",
+    "shared_buffers",
+    "huge_pages",
+    "huge_page_size",
+    "temp_buffers",
+    "max_prepared_transactions",
+    "work_mem",
+    "hash_mem_multiplier",
+    "maintenance_work_mem",
+    "autovacuum_work_mem",
+    "vacuum_buffer_usage_limit",
+    "logical_decoding_work_mem",
+    "max_stack_depth",
+    "shared_memory_type",
+    "dynamic_shared_memory_type",
+    "min_dynamic_shared_memory",
     # Disk
     "temp_file_limit",
     # Kernel Resource Usage
     "max_files_per_process",
     # Cost-based Vacuum Delay
-    "vacuum_cost_delay", "vacuum_cost_page_hit", "vacuum_cost_page_miss", "vacuum_cost_page_dirty", "vacuum_cost_limit",
+    "vacuum_cost_delay",
+    "vacuum_cost_page_hit",
+    "vacuum_cost_page_miss",
+    "vacuum_cost_page_dirty",
+    "vacuum_cost_limit",
     # Background Writer
-    "bgwriter_delay", "bgwriter_lru_maxpages", "bgwriter_lru_multiplier", "bgwriter_flush_after",
+    "bgwriter_delay",
+    "bgwriter_lru_maxpages",
+    "bgwriter_lru_multiplier",
+    "bgwriter_flush_after",
     # Asynchronous Behavior
-    "backend_flush_after", "effective_io_concurrency", "maintenance_io_concurrency",
-    "max_worker_processes", "max_parallel_workers_per_gather", "max_parallel_maintenance_workers", "max_parallel_workers",
-    "parallel_leader_participation", "old_snapshot_threshold",
-
+    "backend_flush_after",
+    "effective_io_concurrency",
+    "maintenance_io_concurrency",
+    "max_worker_processes",
+    "max_parallel_workers_per_gather",
+    "max_parallel_maintenance_workers",
+    "max_parallel_workers",
+    "parallel_leader_participation",
+    "old_snapshot_threshold",
     # Query Planning Settings (see https://www.postgresql.org/docs/current/runtime-config-query.html)
     # Planner Method Configuration
-    "enable_async_append", "enable_bitmapscan", "enable_gathermerge", "enable_hashagg", "enable_hashjoin",
-    "enable_incremental_sort", "enable_indexscan", "enable_indexonlyscan", "enable_material", "enable_memoize",
-    "enable_mergejoin", "enable_nestloop", "enable_parallel_append", "enable_parallel_hash", "enable_partition_pruning",
-    "enable_partitionwise_join", "enable_partitionwise_aggregate", "enable_presorted_aggregate", "enable_seqscan",
-    "enable_sort", "enable_tidscan",
+    "enable_async_append",
+    "enable_bitmapscan",
+    "enable_gathermerge",
+    "enable_hashagg",
+    "enable_hashjoin",
+    "enable_incremental_sort",
+    "enable_indexscan",
+    "enable_indexonlyscan",
+    "enable_material",
+    "enable_memoize",
+    "enable_mergejoin",
+    "enable_nestloop",
+    "enable_parallel_append",
+    "enable_parallel_hash",
+    "enable_partition_pruning",
+    "enable_partitionwise_join",
+    "enable_partitionwise_aggregate",
+    "enable_presorted_aggregate",
+    "enable_seqscan",
+    "enable_sort",
+    "enable_tidscan",
     # Planner Cost Constants
-    "seq_page_cost", "random_page_cost", "cpu_tuple_cost", "cpu_index_tuple_cost", "cpu_operator_cost", "parallel_setup_cost",
-    "parallel_tuple_cost", "min_parallel_table_scan_size", "min_parallel_index_scan_size", "effective_cache_size",
-    "jit_above_cost", "jit_inline_above_cost", "jit_optimize_above_cost",
+    "seq_page_cost",
+    "random_page_cost",
+    "cpu_tuple_cost",
+    "cpu_index_tuple_cost",
+    "cpu_operator_cost",
+    "parallel_setup_cost",
+    "parallel_tuple_cost",
+    "min_parallel_table_scan_size",
+    "min_parallel_index_scan_size",
+    "effective_cache_size",
+    "jit_above_cost",
+    "jit_inline_above_cost",
+    "jit_optimize_above_cost",
     # Genetic Query Optimizer
-    "geqo", "geqo_threshold", "geqo_effort", "geqo_pool_size", "geqo_generations", "geqo_selection_bias", "geqo_seed",
+    "geqo",
+    "geqo_threshold",
+    "geqo_effort",
+    "geqo_pool_size",
+    "geqo_generations",
+    "geqo_selection_bias",
+    "geqo_seed",
     # Other Planner Options
-    "default_statistics_target", "constraint_exclusion", "cursor_tuple_fraction", "from_collapse_limit", "jit",
-    "join_collapse_limit", "plan_cache_mode", "recursive_worktable_factor"
-
+    "default_statistics_target",
+    "constraint_exclusion",
+    "cursor_tuple_fraction",
+    "from_collapse_limit",
+    "jit",
+    "join_collapse_limit",
+    "plan_cache_mode",
+    "recursive_worktable_factor"
     # Automatic Vacuuming (https://www.postgresql.org/docs/current/runtime-config-autovacuum.html)
-    "autovacuum", "autovacuum_max_workers", "autovacuum_naptime", "autovacuum_threshold", "autovacuum_insert_threshold",
-    "autovacuum_analyze_threshold", "autovacuum_scale_factor", "autovacuum_analyze_scale_factor", "autovacuum_freeze_max_age",
-    "autovacuum_multixact_freeze_max_age", "autovacuum_cost_delay", "autovacuum_cost_limit"
+    "autovacuum",
+    "autovacuum_max_workers",
+    "autovacuum_naptime",
+    "autovacuum_threshold",
+    "autovacuum_insert_threshold",
+    "autovacuum_analyze_threshold",
+    "autovacuum_scale_factor",
+    "autovacuum_analyze_scale_factor",
+    "autovacuum_freeze_max_age",
+    "autovacuum_multixact_freeze_max_age",
+    "autovacuum_cost_delay",
+    "autovacuum_cost_limit",
 }
 """Postgres settings that are relevant to many PostBOUND workflows.
 
@@ -216,17 +289,36 @@ are simulated, these are supposed to be happen strictly before or after a read-o
 All settings are up-to-date as of Postgres version 16.
 """
 
-_RuntimeChangeablePostgresSettings = ({setting for setting in _SignificantPostgresSettings}
-                                      - {"autovacuum_max_workers", "autovacuum_naptime", "autovacuum_threshold",
-                                         "autovacuum_insert_threshold", "autovacuum_analyze_threshold",
-                                         "autovacuum_scale_factor", "autovacuum_analyze_scale_factor",
-                                         "autovacuum_freeze_max_age", "autovacuum_multixact_freeze_max_age",
-                                         "autovacuum_cost_delay", "autovacuum_cost_limit", "autovacuum_work_mem",
-                                         "bgwriter_delay", "bgwriter_lru_maxpages", "bgwriter_lru_multiplier",
-                                         "bgwriter_flush_after", "dynamic_shared_memory_type", "huge_pages", "huge_page_size",
-                                         "max_files_per_process", "max_prepared_transactions", "max_worker_processes",
-                                         "min_dynamic_shared_memory", "old_snapshot_threshold", "shared_buffers",
-                                         "shared_memory_type"})
+_RuntimeChangeablePostgresSettings = {
+    setting for setting in _SignificantPostgresSettings
+} - {
+    "autovacuum_max_workers",
+    "autovacuum_naptime",
+    "autovacuum_threshold",
+    "autovacuum_insert_threshold",
+    "autovacuum_analyze_threshold",
+    "autovacuum_scale_factor",
+    "autovacuum_analyze_scale_factor",
+    "autovacuum_freeze_max_age",
+    "autovacuum_multixact_freeze_max_age",
+    "autovacuum_cost_delay",
+    "autovacuum_cost_limit",
+    "autovacuum_work_mem",
+    "bgwriter_delay",
+    "bgwriter_lru_maxpages",
+    "bgwriter_lru_multiplier",
+    "bgwriter_flush_after",
+    "dynamic_shared_memory_type",
+    "huge_pages",
+    "huge_page_size",
+    "max_files_per_process",
+    "max_prepared_transactions",
+    "max_worker_processes",
+    "min_dynamic_shared_memory",
+    "old_snapshot_threshold",
+    "shared_buffers",
+    "shared_memory_type",
+}
 """These are exactly those settings from `_SignificantPostgresSettings` that can be changed at runtime."""
 
 
@@ -243,12 +335,15 @@ class PostgresSetting(str):
     value : object
         The setting's current or desired value
     """
+
     def __init__(self, parameter: str, value: object) -> None:
         self._param = parameter
         self._val = value
 
     def __new__(cls, parameter: str, value: object):
-        return super().__new__(cls, f"SET {parameter} = {_escape_setting_value(value)};")
+        return super().__new__(
+            cls, f"SET {parameter} = {_escape_setting_value(value)};"
+        )
 
     __match_args__ = ("parameter", "value")
 
@@ -312,6 +407,7 @@ class PostgresConfiguration(collections.UserString):
     first by calling *str* as in ``cursor.execute(str(config))``. This also applies to the `execute_query()` method of the
     `PostgresInterface` class, since it uses psycopg under the hood.
     """
+
     @staticmethod
     def load(*args, **kwargs) -> PostgresConfiguration:
         """Generates a new configuration based on (setting name, value) pairs.
@@ -328,7 +424,9 @@ class PostgresConfiguration(collections.UserString):
         PostgresConfiguration
             The configuration
         """
-        return PostgresConfiguration(list(args) + [PostgresSetting(key, val) for key, val in kwargs.items()])
+        return PostgresConfiguration(
+            list(args) + [PostgresSetting(key, val) for key, val in kwargs.items()]
+        )
 
     def __init__(self, settings: Iterable[PostgresSetting]) -> None:
         self._settings = {setting.parameter: setting for setting in settings}
@@ -355,7 +453,9 @@ class PostgresConfiguration(collections.UserString):
         """
         return list(self._settings.keys())
 
-    def add(self, setting: PostgresSetting | str = None, value: object = None, **kwargs) -> PostgresConfiguration:
+    def add(
+        self, setting: PostgresSetting | str = None, value: object = None, **kwargs
+    ) -> PostgresConfiguration:
         """Creates a new configuration with additional settings.
 
         The setting can be supplied either as a `PostgresSetting` object or as a key-value pair.
@@ -402,12 +502,16 @@ class PostgresConfiguration(collections.UserString):
         PostgresConfiguration
             The updated configuration. The original config is not modified.
         """
-        parameter = setting.parameter if isinstance(setting, PostgresSetting) else setting
+        parameter = (
+            setting.parameter if isinstance(setting, PostgresSetting) else setting
+        )
         target_settings = dict(self._settings)
         target_settings.pop(parameter, None)
         return PostgresConfiguration(target_settings.values())
 
-    def update(self, setting: PostgresSetting | str, value: object) -> PostgresConfiguration:
+    def update(
+        self, setting: PostgresSetting | str, value: object
+    ) -> PostgresConfiguration:
         """Creates a new configuration with an updated setting.
 
         Parameters
@@ -539,7 +643,9 @@ def _simplify_result_set(result_set: list[tuple[Any]]) -> Any:
 
     result_structure = result_set[0]  # what do the result tuples look like?
     if len(result_structure) == 1:  # do we have just one column?
-        result_set = [row[0] for row in result_set]  # if it is just one column, unwrap it
+        result_set = [
+            row[0] for row in result_set
+        ]  # if it is just one column, unwrap it
 
     if len(result_set) == 1:  # if it is just one row, unwrap it
         return result_set[0]
@@ -561,14 +667,23 @@ class PostgresInterface(Database):
         Whether additional debug information should be printed during database interaction. Defaults to *False*.
     """
 
-    def __init__(self, connect_string: str, system_name: str = "Postgres", *,
-                 client_encoding: str = "UTF8",
-                 cache_enabled: bool = False, debug: bool = False) -> None:
+    def __init__(
+        self,
+        connect_string: str,
+        system_name: str = "Postgres",
+        *,
+        client_encoding: str = "UTF8",
+        cache_enabled: bool = False,
+        debug: bool = False,
+    ) -> None:
         self.connect_string = connect_string
         self.debug = debug
-        self._connection: psycopg.Connection = psycopg.connect(connect_string, application_name="PostBOUND",
-                                                               client_encoding=client_encoding,
-                                                               row_factory=psycopg.rows.tuple_row)
+        self._connection: psycopg.Connection = psycopg.connect(
+            connect_string,
+            application_name="PostBOUND",
+            client_encoding=client_encoding,
+            row_factory=psycopg.rows.tuple_row,
+        )
         self._init_connection()
 
         self._db_stats = PostgresStatisticsInterface(self)
@@ -589,10 +704,18 @@ class PostgresInterface(Database):
     def hinting(self) -> PostgresHintService:
         return self._hinting_backend
 
-    def execute_query(self, query: qal.SqlQuery | str, *, cache_enabled: Optional[bool] = None, raw: bool = False,
-                      timeout: Optional[float] = None) -> Any:
+    def execute_query(
+        self,
+        query: qal.SqlQuery | str,
+        *,
+        cache_enabled: Optional[bool] = None,
+        raw: bool = False,
+        timeout: Optional[float] = None,
+    ) -> Any:
         if timeout is not None:
-            return self._timeout_executor.execute_query(query, timeout=timeout, cache_enabled=cache_enabled, raw=raw)
+            return self._timeout_executor.execute_query(
+                query, timeout=timeout, cache_enabled=cache_enabled, raw=raw
+            )
 
         cache_enabled = cache_enabled or (cache_enabled is None and self._cache_enabled)
 
@@ -603,25 +726,47 @@ class PostgresInterface(Database):
                 self._current_geqo_state = self._obtain_geqo_state()
                 prepared_query, deactivated_geqo = self._prepare_query_execution(query)
                 self._cursor.execute(prepared_query)
-                query_result = self._cursor.fetchall() if self._cursor.rowcount >= 0 else None
+                query_result = (
+                    self._cursor.fetchall() if self._cursor.rowcount >= 0 else None
+                )
                 if deactivated_geqo:
                     self._restore_geqo_state()
                 if cache_enabled:
                     self._inflate_query_cache()
                     self._query_cache[prepared_query] = query_result
             except (psycopg.InternalError, psycopg.OperationalError) as e:
-                msg = "\n".join([f"At {util.timestamp()}", "For query:", str(query), "Message:", str(e)])
+                msg = "\n".join(
+                    [
+                        f"At {util.timestamp()}",
+                        "For query:",
+                        str(query),
+                        "Message:",
+                        str(e),
+                    ]
+                )
                 raise DatabaseServerError(msg, e)
             except psycopg.Error as e:
-                msg = "\n".join([f"At {util.timestamp()}", "For query:", str(query), "Message:", str(e)])
+                msg = "\n".join(
+                    [
+                        f"At {util.timestamp()}",
+                        "For query:",
+                        str(query),
+                        "Message:",
+                        str(e),
+                    ]
+                )
                 raise DatabaseUserError(msg, e)
 
         return query_result if raw else _simplify_result_set(query_result)
 
-    def execute_with_timeout(self, query: qal.SqlQuery | str, timeout: float = 60.0) -> Optional[ResultSet]:
+    def execute_with_timeout(
+        self, query: qal.SqlQuery | str, timeout: float = 60.0
+    ) -> Optional[ResultSet]:
         current_config = self.current_configuration(runtime_changeable_only=True)
         try:
-            result = self.execute_query(query, timeout=timeout, cache_enabled=False, raw=True)
+            result = self.execute_query(
+                query, timeout=timeout, cache_enabled=False, raw=True
+            )
             return result
         except TimeoutError:
             self.apply_configuration(current_config)
@@ -640,7 +785,9 @@ class PostgresInterface(Database):
         version_string = self._cursor.fetchone()[0]
         version_match = _PGVersionPattern.match(version_string)
         if not version_match:
-            raise RuntimeError(f"Could not extract Postgres version from string '{version_string}'")
+            raise RuntimeError(
+                f"Could not extract Postgres version from string '{version_string}'"
+            )
         pg_ver = version_match.group("pg_ver")
         return Version(pg_ver)
 
@@ -661,24 +808,33 @@ class PostgresInterface(Database):
             "database": self.database_name(),
             "statistics_settings": {
                 "emulated": self._db_stats.emulated,
-                "cache_enabled": self._db_stats.cache_enabled
+                "cache_enabled": self._db_stats.cache_enabled,
             },
             "hinting_mode": self._hinting_backend.describe(),
-            "query_cache": self.cache_enabled
+            "query_cache": self.cache_enabled,
         }
         self._cursor.execute("SELECT name, setting FROM pg_settings")
         system_settings = self._cursor.fetchall()
-        base_info["system_settings"] = {setting: value for setting, value in system_settings
-                                        if setting in _SignificantPostgresSettings}
+        base_info["system_settings"] = {
+            setting: value
+            for setting, value in system_settings
+            if setting in _SignificantPostgresSettings
+        }
 
         schema_info: list = []
         for table in self.schema().tables():
             column_info: list = []
             for column in self.schema().columns(table):
-                column_info.append({"column": str(column), "indexed": self.schema().has_index(column)})
-            schema_info.append({"table": str(table),
-                                "n_rows": self.statistics().total_rows(table, emulated=True),
-                                "columns": column_info})
+                column_info.append(
+                    {"column": str(column), "indexed": self.schema().has_index(column)}
+                )
+            schema_info.append(
+                {
+                    "table": str(table),
+                    "n_rows": self.statistics().total_rows(table, emulated=True),
+                    "columns": column_info,
+                }
+            )
         base_info["schema_info"] = schema_info
 
         return base_info
@@ -723,9 +879,14 @@ class PostgresInterface(Database):
         self._cursor.close()
         self._connection.close()
 
-    def prewarm_tables(self, tables: Optional[TableReference | Iterable[TableReference]] = None,
-                       *more_tables: TableReference, exclude_table_pages: bool = False,
-                       include_primary_index: bool = True, include_secondary_indexes: bool = True) -> None:
+    def prewarm_tables(
+        self,
+        tables: Optional[TableReference | Iterable[TableReference]] = None,
+        *more_tables: TableReference,
+        exclude_table_pages: bool = False,
+        include_primary_index: bool = True,
+        include_secondary_indexes: bool = True,
+    ) -> None:
         """Prepares the Postgres buffer pool with tuples from specific tables.
 
         Parameters
@@ -760,13 +921,24 @@ class PostgresInterface(Database):
         tables: Iterable[TableReference] = list(util.enlist(tables)) + list(more_tables)
         if not tables:
             return
-        tables = set(tab.full_name for tab in tables)  # eliminate duplicates if tables are selected multiple times
+        tables = set(
+            tab.full_name for tab in tables
+        )  # eliminate duplicates if tables are selected multiple times
 
-        table_indexes = ([self._fetch_index_relnames(tab) for tab in tables]
-                         if include_primary_index or include_secondary_indexes else [])
-        indexes_to_prewarm = {idx for idx, primary in util.flatten(table_indexes)
-                              if (primary and include_primary_index) or (not primary and include_secondary_indexes)}
-        tables = indexes_to_prewarm if exclude_table_pages else tables | indexes_to_prewarm
+        table_indexes = (
+            [self._fetch_index_relnames(tab) for tab in tables]
+            if include_primary_index or include_secondary_indexes
+            else []
+        )
+        indexes_to_prewarm = {
+            idx
+            for idx, primary in util.flatten(table_indexes)
+            if (primary and include_primary_index)
+            or (not primary and include_secondary_indexes)
+        }
+        tables = (
+            indexes_to_prewarm if exclude_table_pages else tables | indexes_to_prewarm
+        )
         if not tables:
             return
 
@@ -776,9 +948,14 @@ class PostgresInterface(Database):
 
         self._cursor.execute(prewarm_query)
 
-    def cooldown_tables(self, tables: Optional[TableReference | Iterable[TableReference]] = None,
-                        *more_tables: TableReference, exclude_table_pages: bool = False,
-                        include_primary_index: bool = True, include_secondary_indexes: bool = True) -> None:
+    def cooldown_tables(
+        self,
+        tables: Optional[TableReference | Iterable[TableReference]] = None,
+        *more_tables: TableReference,
+        exclude_table_pages: bool = False,
+        include_primary_index: bool = True,
+        include_secondary_indexes: bool = True,
+    ) -> None:
         """Removes tuples from specific tables from  the Postgres buffer pool.
 
         This method can be used to simulate a cold start for the next incoming query. It requires the *pg_temperature*
@@ -813,13 +990,24 @@ class PostgresInterface(Database):
         tables: Iterable[TableReference] = list(util.enlist(tables)) + list(more_tables)
         if not tables:
             return
-        tables = set(tab.full_name for tab in tables)  # eliminate duplicates if tables are selected multiple times
+        tables = set(
+            tab.full_name for tab in tables
+        )  # eliminate duplicates if tables are selected multiple times
 
-        table_indexes = ([self._fetch_index_relnames(tab) for tab in tables]
-                         if include_primary_index or include_secondary_indexes else [])
-        indexes_to_cooldown = {idx for idx, primary in util.flatten(table_indexes)
-                               if (primary and include_primary_index) or (not primary and include_secondary_indexes)}
-        tables = indexes_to_cooldown if exclude_table_pages else tables | indexes_to_cooldown
+        table_indexes = (
+            [self._fetch_index_relnames(tab) for tab in tables]
+            if include_primary_index or include_secondary_indexes
+            else []
+        )
+        indexes_to_cooldown = {
+            idx
+            for idx, primary in util.flatten(table_indexes)
+            if (primary and include_primary_index)
+            or (not primary and include_secondary_indexes)
+        }
+        tables = (
+            indexes_to_cooldown if exclude_table_pages else tables | indexes_to_cooldown
+        )
         if not tables:
             return
 
@@ -829,7 +1017,9 @@ class PostgresInterface(Database):
 
         self._cursor.execute(cooldown_query)
 
-    def current_configuration(self, *, runtime_changeable_only: bool = False) -> PostgresConfiguration:
+    def current_configuration(
+        self, *, runtime_changeable_only: bool = False
+    ) -> PostgresConfiguration:
         """Provides all current configuration settings in the current Postgres connection.
 
         Parameters
@@ -844,12 +1034,21 @@ class PostgresInterface(Database):
         """
         self._cursor.execute("SELECT name, setting FROM pg_settings")
         system_settings = self._cursor.fetchall()
-        allowed_settings = _RuntimeChangeablePostgresSettings if runtime_changeable_only else _SignificantPostgresSettings
-        configuration = {setting: value for setting, value in system_settings
-                         if setting in allowed_settings}
+        allowed_settings = (
+            _RuntimeChangeablePostgresSettings
+            if runtime_changeable_only
+            else _SignificantPostgresSettings
+        )
+        configuration = {
+            setting: value
+            for setting, value in system_settings
+            if setting in allowed_settings
+        }
         return PostgresConfiguration.load(**configuration)
 
-    def apply_configuration(self, configuration: PostgresConfiguration | PostgresSetting | str) -> None:
+    def apply_configuration(
+        self, configuration: PostgresConfiguration | PostgresSetting | str
+    ) -> None:
         """Changes specific configuration parameters of the Postgres server or current connection.
 
         Parameters
@@ -858,8 +1057,13 @@ class PostgresInterface(Database):
             The desired setting values. If a string is supplied directly, it already has to be a valid setting update such as
             *SET geqo = FALSE;*.
         """
-        if isinstance(configuration, PostgresSetting) and configuration.parameter not in _RuntimeChangeablePostgresSettings:
-            warnings.warn(f"Cannot apply configuration setting '{configuration.parameter}' at runtime")
+        if (
+            isinstance(configuration, PostgresSetting)
+            and configuration.parameter not in _RuntimeChangeablePostgresSettings
+        ):
+            warnings.warn(
+                f"Cannot apply configuration setting '{configuration.parameter}' at runtime"
+            )
             return
         elif isinstance(configuration, PostgresConfiguration):
             supported_settings: list[PostgresSetting] = []
@@ -870,13 +1074,17 @@ class PostgresInterface(Database):
                 else:
                     unsupported_settings.append(setting.parameter)
             if unsupported_settings:
-                warnings.warn(f"Skipping configuration settings {unsupported_settings} "
-                              "because they cannot be changed at runtime")
+                warnings.warn(
+                    f"Skipping configuration settings {unsupported_settings} "
+                    "because they cannot be changed at runtime"
+                )
             configuration = str(PostgresConfiguration(supported_settings))
 
         self._cursor.execute(configuration)
 
-    def has_extension(self, extension_name: str, *, is_shared_object: bool = True) -> bool:
+    def has_extension(
+        self, extension_name: str, *, is_shared_object: bool = True
+    ) -> bool:
         """Checks, whether the current Postgres database has a specific extension loaded and active.
 
         Extensions can be either created using the *CREATE EXTENSION* command, or by loading the shared object via *LOAD*.
@@ -906,12 +1114,19 @@ class PostgresInterface(Database):
             case "linux":
                 lib_suffix = ".so"
             case _:
-                raise RuntimeError(f"Plaform '{sys.platform}' is not supported by extension check.")
+                raise RuntimeError(
+                    f"Plaform '{sys.platform}' is not supported by extension check."
+                )
 
         if is_shared_object or extension_name in ("pg_hint_plan", "pg_lab"):
-            shared_object_name = (f"{extension_name}{lib_suffix}" if not extension_name.endswith(lib_suffix)
-                                  else extension_name)
-            loaded_shared_objects = util.system.open_files(self._connection.info.backend_pid)
+            shared_object_name = (
+                f"{extension_name}{lib_suffix}"
+                if not extension_name.endswith(lib_suffix)
+                else extension_name
+            )
+            loaded_shared_objects = util.system.open_files(
+                self._connection.info.backend_pid
+            )
             return any(so.endswith(shared_object_name) for so in loaded_shared_objects)
         else:
             self._cursor.execute("SELECT extname FROM pg_extension;")
@@ -930,7 +1145,9 @@ class PostgresInterface(Database):
         self._cursor: psycopg.Cursor = self._connection.cursor()
         return self.backend_pid()
 
-    def _prepare_query_execution(self, query: qal.SqlQuery | str, *, drop_explain: bool = False) -> tuple[str, bool]:
+    def _prepare_query_execution(
+        self, query: qal.SqlQuery | str, *, drop_explain: bool = False
+    ) -> tuple[str, bool]:
         """Handles necessary setup logic that enable an arbitrary query to be executed by the database system.
 
         This setup process involves formatting the query to accomodate deviations from standard SQL by the database
@@ -957,7 +1174,9 @@ class PostgresInterface(Database):
         if not isinstance(query, qal.SqlQuery):
             return query, False
 
-        requires_geqo_deactivation = self._hinting_backend._requires_geqo_deactivation(query)
+        requires_geqo_deactivation = self._hinting_backend._requires_geqo_deactivation(
+            query
+        )
         if requires_geqo_deactivation:
             util.logging.print_if(self.debug, "Disabling GeQO", file=sys.stderr)
             self._cursor.execute("SET geqo = 'off';")
@@ -988,10 +1207,14 @@ class PostgresInterface(Database):
             self._cursor.execute(query)
             return self._cursor.fetchone()[0]
         except (psycopg.InternalError, psycopg.OperationalError) as e:
-            msg = "\n".join([f"At {util.timestamp()}", "For query:", str(query), "Message:", str(e)])
+            msg = "\n".join(
+                [f"At {util.timestamp()}", "For query:", str(query), "Message:", str(e)]
+            )
             raise DatabaseServerError(msg, e)
         except psycopg.Error as e:
-            msg = "\n".join([f"At {util.timestamp()}", "For query:", str(query), "Message:", str(e)])
+            msg = "\n".join(
+                [f"At {util.timestamp()}", "For query:", str(query), "Message:", str(e)]
+            )
             raise DatabaseUserError(msg, e)
 
     def _obtain_geqo_state(self) -> _GeQOState:
@@ -1002,13 +1225,15 @@ class PostgresInterface(Database):
         _GeQOState
             The relevant GeQO config
         """
-        self._cursor.execute("SELECT name, setting FROM pg_settings "
-                             "WHERE name IN ('geqo', 'geqo_threshold') ORDER BY name;")
+        self._cursor.execute(
+            "SELECT name, setting FROM pg_settings "
+            "WHERE name IN ('geqo', 'geqo_threshold') ORDER BY name;"
+        )
         geqo_enabled: bool = False
         geqo_threshold: int = 0
         for name, value in self._cursor.fetchall():
             if name == "geqo":
-                geqo_enabled = (value == "on")
+                geqo_enabled = value == "on"
             elif name == "geqo_threshold":
                 geqo_threshold = int(value)
             else:
@@ -1020,9 +1245,13 @@ class PostgresInterface(Database):
         """Resets the GeQO configuration of the database system to the known `_current_geqo_state`."""
         geqo_enabled = "on" if self._current_geqo_state.enabled else "off"
         self._cursor.execute(f"SET geqo = '{geqo_enabled}';")
-        self._cursor.execute(f"SET geqo_threshold = {self._current_geqo_state.threshold};")
+        self._cursor.execute(
+            f"SET geqo_threshold = {self._current_geqo_state.threshold};"
+        )
 
-    def _fetch_index_relnames(self, table: TableReference | str) -> Iterable[tuple[str, bool]]:
+    def _fetch_index_relnames(
+        self, table: TableReference | str
+    ) -> Iterable[tuple[str, bool]]:
         """Loads all physical index relations for a physical table.
 
         Parameters
@@ -1045,10 +1274,12 @@ class PostgresInterface(Database):
                                          WHERE owner_cls.relname = %s;
                                          """)
         table = table.full_name if isinstance(table, TableReference) else table
-        self._cursor.execute(query_template, (table, ))
+        self._cursor.execute(query_template, (table,))
         return list(self._cursor.fetchall())
 
-    def _assert_active_extension(self, extension_name: str, *, is_shared_object: bool = False) -> None:
+    def _assert_active_extension(
+        self, extension_name: str, *, is_shared_object: bool = False
+    ) -> None:
         """Raises an error if the current postgres database does not have the desired extension.
 
         Extensions can be created using the *CREATE EXTENSION* command, or by loading the shared object via *LOAD*. In either
@@ -1070,12 +1301,19 @@ class PostgresInterface(Database):
         StateError
             If the given extension is not active
         """
-        extension_is_active = self.has_extension(extension_name, is_shared_object=is_shared_object)
+        extension_is_active = self.has_extension(
+            extension_name, is_shared_object=is_shared_object
+        )
         if not extension_is_active:
-            raise StateError(f"Extension '{extension_name}' is not active in database '{self.database_name()}'")
+            raise StateError(
+                f"Extension '{extension_name}' is not active in database '{self.database_name()}'"
+            )
 
     def __eq__(self, other: object) -> bool:
-        return isinstance(other, type(self)) and self.connect_string == other.connect_string
+        return (
+            isinstance(other, type(self))
+            and self.connect_string == other.connect_string
+        )
 
     def __hash__(self) -> int:
         return hash(self.connect_string)
@@ -1103,9 +1341,18 @@ class PostgresSchemaInterface(DatabaseSchema):
         assert result_set is not None
         return set(TableReference(row[0]) for row in result_set)
 
-    def lookup_column(self, column: ColumnReference | str, candidate_tables: Iterable[TableReference], *,
-                      expect_match: bool = False) -> Optional[TableReference]:
-        candidate_tables = set(candidate_tables) if len(candidate_tables) > 5 else list(candidate_tables)
+    def lookup_column(
+        self,
+        column: ColumnReference | str,
+        candidate_tables: Iterable[TableReference],
+        *,
+        expect_match: bool = False,
+    ) -> Optional[TableReference]:
+        candidate_tables = (
+            set(candidate_tables)
+            if len(candidate_tables) > 5
+            else list(candidate_tables)
+        )
         column = column.name if isinstance(column, ColumnReference) else column
         lower_col = column.lower()
 
@@ -1117,7 +1364,9 @@ class PostgresSchemaInterface(DatabaseSchema):
         if not expect_match:
             return None
         candidate_tables = [table.qualified_name() for table in candidate_tables]
-        raise ValueError(f"Column '{column}' not found in candidate tables {candidate_tables}")
+        raise ValueError(
+            f"Column '{column}' not found in candidate tables {candidate_tables}"
+        )
 
     def is_primary_key(self, column: ColumnReference) -> bool:
         if not column.table:
@@ -1159,7 +1408,9 @@ class PostgresSchemaInterface(DatabaseSchema):
                 AND nsp.nspname = %s
         """)
 
-        self._db.cursor().execute(query_template, (column.table.full_name, column.name, schema))
+        self._db.cursor().execute(
+            query_template, (column.table.full_name, column.name, schema)
+        )
         result_set = self._db.cursor().fetchall()
         return {row[0] for row in result_set}
 
@@ -1184,7 +1435,9 @@ class PostgresSchemaInterface(DatabaseSchema):
                 AND all_constraints.constraint_type = 'FOREIGN KEY'
             """)
 
-        self._db.cursor().execute(query_template, (column.table.full_name, column.name, schema))
+        self._db.cursor().execute(
+            query_template, (column.table.full_name, column.name, schema)
+        )
         result_set = self._db.cursor().fetchall()
         return {ColumnReference(row[1], TableReference(row[0])) for row in result_set}
 
@@ -1197,7 +1450,9 @@ class PostgresSchemaInterface(DatabaseSchema):
         query_template = textwrap.dedent("""
             SELECT data_type FROM information_schema.columns
             WHERE table_name = %s AND column_name = %s AND table_schema = %s""")
-        self._db.cursor().execute(query_template, (column.table.full_name, column.name, schema))
+        self._db.cursor().execute(
+            query_template, (column.table.full_name, column.name, schema)
+        )
         result_set = self._db.cursor().fetchone()
         return result_set[0]
 
@@ -1210,7 +1465,9 @@ class PostgresSchemaInterface(DatabaseSchema):
         query_tempalte = textwrap.dedent("""
             SELECT is_nullable = 'YES' FROM information_schema.columns
             WHERE table_name = %s AND column_name = %s AND table_schema = %s""")
-        self._db.cursor().execute(query_tempalte, (column.table.full_name, column.name, schema))
+        self._db.cursor().execute(
+            query_tempalte, (column.table.full_name, column.name, schema)
+        )
         result_set = self._db.cursor().fetchone()
         return result_set[0]
 
@@ -1293,7 +1550,7 @@ class PostgresSchemaInterface(DatabaseSchema):
 _DTypeArrayConverters = {
     "integer": "int[]",
     "text": "text[]",
-    "character varying": "text[]"
+    "character varying": "text[]",
 }
 
 
@@ -1314,14 +1571,30 @@ class PostgresStatisticsInterface(DatabaseStatistics):
         caching behavior of the `db`
     """
 
-    def __init__(self, postgres_db: PostgresInterface, *, emulated: bool = True,
-                 enable_emulation_fallback: bool = True, cache_enabled: Optional[bool] = True) -> None:
-        super().__init__(postgres_db, emulated=emulated, enable_emulation_fallback=enable_emulation_fallback,
-                         cache_enabled=cache_enabled)
+    def __init__(
+        self,
+        postgres_db: PostgresInterface,
+        *,
+        emulated: bool = True,
+        enable_emulation_fallback: bool = True,
+        cache_enabled: Optional[bool] = True,
+    ) -> None:
+        super().__init__(
+            postgres_db,
+            emulated=emulated,
+            enable_emulation_fallback=enable_emulation_fallback,
+            cache_enabled=cache_enabled,
+        )
 
-    def update_statistics(self, columns: Optional[ColumnReference | Iterable[ColumnReference]] = None, *,
-                          tables: Optional[TableReference | Iterable[TableReference]] = None,
-                          perfect_mcv: bool = False, perfect_n_distinct: bool = False, verbose: bool = False) -> None:
+    def update_statistics(
+        self,
+        columns: Optional[ColumnReference | Iterable[ColumnReference]] = None,
+        *,
+        tables: Optional[TableReference | Iterable[TableReference]] = None,
+        perfect_mcv: bool = False,
+        perfect_n_distinct: bool = False,
+        verbose: bool = False,
+    ) -> None:
         """Instructs the Postgres server to update statistics for specific columns.
 
         Notice that is one of the methods of the database interface that explicitly mutates the state of the database system.
@@ -1346,20 +1619,34 @@ class PostgresStatisticsInterface(DatabaseStatistics):
             Whether to print some progress information to standard error.
         """
         if not columns and not tables:
-            tables = [tab for tab in self._db.schema().tables() if not self._db.schema().is_view(tab)]
+            tables = [
+                tab
+                for tab in self._db.schema().tables()
+                if not self._db.schema().is_view(tab)
+            ]
         if not columns and tables:
             tables = util.enlist(tables)
             columns = util.set_union(self._db.schema().columns(tab) for tab in tables)
 
         assert columns is not None
         columns: Iterable[ColumnReference] = util.enlist(columns)
-        columns_map: dict[TableReference, list[str]] = util.dicts.generate_multi((col.table, col.name) for col in columns)
+        columns_map: dict[TableReference, list[str]] = util.dicts.generate_multi(
+            (col.table, col.name) for col in columns
+        )
         distinct_values: dict[ColumnReference, int] = {}
 
         if perfect_mcv or perfect_n_distinct:
             for column in columns:
-                util.logging.print_if(verbose, util.timestamp(), ":: Now preparing column", column, use_stderr=True)
-                n_distinct = round(self.distinct_values(column, emulated=True, cache_enabled=True))
+                util.logging.print_if(
+                    verbose,
+                    util.timestamp(),
+                    ":: Now preparing column",
+                    column,
+                    use_stderr=True,
+                )
+                n_distinct = round(
+                    self.distinct_values(column, emulated=True, cache_enabled=True)
+                )
                 if perfect_n_distinct:
                     distinct_values[column] = n_distinct
                 if not perfect_mcv:
@@ -1376,10 +1663,21 @@ class PostgresStatisticsInterface(DatabaseStatistics):
                 # ourselves.
                 self._db.cursor().execute(stats_target_query)
 
-        columns_str = {table: ", ".join(col for col in columns) for table, columns in columns_map.items()}
-        tables_and_columns = ", ".join(f"{table.full_name}({cols})" for table, cols in columns_str.items())
+        columns_str = {
+            table: ", ".join(col for col in columns)
+            for table, columns in columns_map.items()
+        }
+        tables_and_columns = ", ".join(
+            f"{table.full_name}({cols})" for table, cols in columns_str.items()
+        )
 
-        util.logging.print_if(verbose, util.timestamp(), ":: Now analyzing columns", tables_and_columns, use_stderr=True)
+        util.logging.print_if(
+            verbose,
+            util.timestamp(),
+            ":: Now analyzing columns",
+            tables_and_columns,
+            use_stderr=True,
+        )
         query_template = f"ANALYZE {tables_and_columns}"
         self._db.cursor().execute(query_template)
 
@@ -1392,7 +1690,9 @@ class PostgresStatisticsInterface(DatabaseStatistics):
             self._db.cursor().execute(distinct_update_query)
 
     def _retrieve_total_rows_from_stats(self, table: TableReference) -> Optional[int]:
-        count_query = f"SELECT reltuples FROM pg_class WHERE oid = '{table.full_name}'::regclass"
+        count_query = (
+            f"SELECT reltuples FROM pg_class WHERE oid = '{table.full_name}'::regclass"
+        )
         self._db.cursor().execute(count_query)
         result_set = self._db.cursor().fetchone()
         if not result_set:
@@ -1400,8 +1700,12 @@ class PostgresStatisticsInterface(DatabaseStatistics):
         count = result_set[0]
         return count
 
-    def _retrieve_distinct_values_from_stats(self, column: ColumnReference) -> Optional[int]:
-        dist_query = "SELECT n_distinct FROM pg_stats WHERE tablename = %s and attname = %s"
+    def _retrieve_distinct_values_from_stats(
+        self, column: ColumnReference
+    ) -> Optional[int]:
+        dist_query = (
+            "SELECT n_distinct FROM pg_stats WHERE tablename = %s and attname = %s"
+        )
         self._db.cursor().execute(dist_query, (column.table.full_name, column.name))
         result_set = self._db.cursor().fetchone()
         if not result_set:
@@ -1421,31 +1725,40 @@ class PostgresStatisticsInterface(DatabaseStatistics):
         n_rows = self._retrieve_total_rows_from_stats(column.table)
         return -1 * n_rows * dist_values
 
-    def _retrieve_min_max_values_from_stats(self, column: ColumnReference) -> Optional[tuple[Any, Any]]:
+    def _retrieve_min_max_values_from_stats(
+        self, column: ColumnReference
+    ) -> Optional[tuple[Any, Any]]:
         # Postgres does not keep track of min/max values, so we need to determine them manually
         if not self.enable_emulation_fallback:
             raise UnsupportedDatabaseFeatureError(self._db, "min/max value statistics")
         return self._calculate_min_max_values(column, cache_enabled=True)
 
-    def _retrieve_most_common_values_from_stats(self, column: ColumnReference,
-                                                k: int) -> Sequence[tuple[Any, int]]:
+    def _retrieve_most_common_values_from_stats(
+        self, column: ColumnReference, k: int
+    ) -> Sequence[tuple[Any, int]]:
         # Postgres stores the Most common values in a column of type anyarray (since in this column, many MCVs from
         # many different tables and data types are present). However, this type is not very convenient to work on.
         # Therefore, we first need to convert the anyarray to an array of the actual attribute type.
 
         # determine the attributes data type to figure out how it should be converted
         attribute_query = "SELECT data_type FROM information_schema.columns WHERE table_name = %s AND column_name = %s"
-        self._db.cursor().execute(attribute_query, (column.table.full_name, column.name))
+        self._db.cursor().execute(
+            attribute_query, (column.table.full_name, column.name)
+        )
         attribute_dtype = self._db.cursor().fetchone()[0]
         attribute_converter = _DTypeArrayConverters[attribute_dtype]
 
         # now, load the most frequent values. Since the frequencies are expressed as a fraction of the total number of
         # rows, we need to multiply this number again to obtain the true number of occurrences
-        mcv_query = textwrap.dedent("""
+        mcv_query = textwrap.dedent(
+            """
                 SELECT UNNEST(most_common_vals::text::{conv}),
                     UNNEST(most_common_freqs) * (SELECT reltuples FROM pg_class WHERE oid = '{tab}'::regclass)
                 FROM pg_stats
-                WHERE tablename = %s AND attname = %s""".format(conv=attribute_converter, tab=column.table.full_name))
+                WHERE tablename = %s AND attname = %s""".format(
+                conv=attribute_converter, tab=column.table.full_name
+            )
+        )
         self._db.cursor().execute(mcv_query, (column.table.full_name, column.name))
         return self._db.cursor().fetchall()[:k]
 
@@ -1461,6 +1774,7 @@ class HintParts:
     --------
     qal.Hint
     """
+
     settings: list[str]
     """Settings are global to the current database connection and influence the selection of operators for all queries.
 
@@ -1518,8 +1832,12 @@ class HintParts:
         HintParts
             A new hint parts object that contains the hints from both source objects
         """
-        merged_settings = self.settings + [setting for setting in other.settings if setting not in self.settings]
-        merged_hints = self.hints + [""] + [hint for hint in other.hints if hint not in self.hints]
+        merged_settings = self.settings + [
+            setting for setting in other.settings if setting not in self.settings
+        ]
+        merged_hints = (
+            self.hints + [""] + [hint for hint in other.hints if hint not in self.hints]
+        )
         return HintParts(merged_settings, merged_hints)
 
 
@@ -1533,7 +1851,7 @@ PostgresOptimizerSettings = {
     ScanOperator.BitmapScan: "enable_bitmapscan",
     IntermediateOperator.Memoize: "enable_memoize",
     IntermediateOperator.Materialize: "enable_material",
-    IntermediateOperator.Sort: "enable_sort"
+    IntermediateOperator.Sort: "enable_sort",
 }
 """All (session-global) optimizer settings that modify the allowed physical operators."""
 
@@ -1544,7 +1862,7 @@ PGHintPlanOptimizerHints = {
     ScanOperator.SequentialScan: "SeqScan",
     ScanOperator.IndexScan: "IndexOnlyScan",
     ScanOperator.IndexOnlyScan: "IndexOnlyScan",
-    ScanOperator.BitmapScan: "BitmapScan"
+    ScanOperator.BitmapScan: "BitmapScan",
 }
 """All physical operators that can be enforced by pg_hint_plan.
 
@@ -1565,7 +1883,7 @@ PGLabOptimizerHints = {
     ScanOperator.IndexOnlyScan: "IdxScan",
     ScanOperator.BitmapScan: "IdxScan",
     IntermediateOperator.Materialize: "Material",
-    IntermediateOperator.Memoize: "Memo"
+    IntermediateOperator.Memoize: "Memo",
 }
 """All physical operators that can be enforced by pg_lab.
 
@@ -1626,7 +1944,9 @@ def _escape_setting(setting: Any) -> str:
     return f"'{setting}'"
 
 
-def _apply_hint_block_to_query(query: qal.SqlQuery, hint_block: Optional[qal.Hint]) -> qal.SqlQuery:
+def _apply_hint_block_to_query(
+    query: qal.SqlQuery, hint_block: Optional[qal.Hint]
+) -> qal.SqlQuery:
     """Ensures that a hint block is added to a query.
 
     Since the query abstraction layer consists of immutable data objects, a new query has to be created. This method's
@@ -1647,16 +1967,29 @@ def _apply_hint_block_to_query(query: qal.SqlQuery, hint_block: Optional[qal.Hin
     return qal.transform.add_clause(query, hint_block) if hint_block else query
 
 
-PostgresJoinHints = {JoinOperator.NestedLoopJoin, JoinOperator.HashJoin, JoinOperator.SortMergeJoin}
+PostgresJoinHints = {
+    JoinOperator.NestedLoopJoin,
+    JoinOperator.HashJoin,
+    JoinOperator.SortMergeJoin,
+}
 """All join operators that are supported by Postgres."""
 
-PostgresScanHints = {ScanOperator.SequentialScan, ScanOperator.IndexScan,
-                     ScanOperator.IndexOnlyScan, ScanOperator.BitmapScan}
+PostgresScanHints = {
+    ScanOperator.SequentialScan,
+    ScanOperator.IndexScan,
+    ScanOperator.IndexOnlyScan,
+    ScanOperator.BitmapScan,
+}
 """All scan operators that are supported by Postgres."""
 
-PostgresPlanHints = {HintType.Cardinality, HintType.Parallelization,
-                     HintType.LinearJoinOrder, HintType.BushyJoinOrder,
-                     HintType.JoinDirection, HintType.Operator}
+PostgresPlanHints = {
+    HintType.Cardinality,
+    HintType.Parallelization,
+    HintType.LinearJoinOrder,
+    HintType.BushyJoinOrder,
+    HintType.JoinDirection,
+    HintType.Operator,
+}
 """All non-operator hints supported by Postgres, that can be used to enforce additional optimizer behaviour."""
 
 
@@ -1670,6 +2003,7 @@ class PostgresExplainClause(qal.Explain):
     original_clause : qal.Explain
         The actual *EXPLAIN* clause. The new explain clause acts as a decorator around the original clause.
     """
+
     def __init__(self, original_clause: qal.Explain) -> None:
         super().__init__(original_clause.analyze, original_clause.target_format)
 
@@ -1691,8 +2025,11 @@ class PostgresLimitClause(qal.Limit):
     """
 
     def __init__(self, original_clause: qal.Limit) -> None:
-        super().__init__(limit=original_clause.limit, offset=original_clause.offset,
-                         fetch_direction=original_clause.fetch_direction)
+        super().__init__(
+            limit=original_clause.limit,
+            offset=original_clause.offset,
+            fetch_direction=original_clause.fetch_direction,
+        )
 
     def __str__(self) -> str:
         if self.fetch_direction != "first":
@@ -1733,7 +2070,9 @@ def _replace_postgres_cast_expressions(expression: SqlExpression) -> SqlExpressi
         case StaticValueExpression() | ColumnExpression() | StarExpression():
             return expression
         case SubqueryExpression(query):
-            replaced_subquery = transform.replace_expressions(query, _replace_postgres_cast_expressions)
+            replaced_subquery = transform.replace_expressions(
+                query, _replace_postgres_cast_expressions
+            )
             return target(replaced_subquery)
         case CaseExpression(cases, else_expr):
             replaced_cases: list[tuple[AbstractPredicate, SqlExpression]] = []
@@ -1741,7 +2080,9 @@ def _replace_postgres_cast_expressions(expression: SqlExpression) -> SqlExpressi
                 replaced_condition = _replace_postgres_cast_expressions(condition)
                 replaced_result = _replace_postgres_cast_expressions(result)
                 replaced_cases.append((replaced_condition, replaced_result))
-            replaced_else = _replace_postgres_cast_expressions(else_expr) if else_expr else None
+            replaced_else = (
+                _replace_postgres_cast_expressions(else_expr) if else_expr else None
+            )
             return target(replaced_cases, else_expr=replaced_else)
         case CastExpression(cast, typ, params):
             replaced_cast = _replace_postgres_cast_expressions(cast)
@@ -1754,26 +2095,50 @@ def _replace_postgres_cast_expressions(expression: SqlExpression) -> SqlExpressi
             return target(op, replaced_lhs, replaced_rhs)
         case ArrayAccessExpression(array, ind, lo, hi):
             replaced_arr = _replace_postgres_cast_expressions(array)
-            replaced_ind = _replace_postgres_cast_expressions(ind) if ind is not None else None
-            replaced_lo = _replace_postgres_cast_expressions(lo) if lo is not None else None
-            replaced_hi = _replace_postgres_cast_expressions(hi) if hi is not None else None
-            return target(replaced_arr, idx=replaced_ind, lower_idx=replaced_lo, upper_idx=replaced_hi)
+            replaced_ind = (
+                _replace_postgres_cast_expressions(ind) if ind is not None else None
+            )
+            replaced_lo = (
+                _replace_postgres_cast_expressions(lo) if lo is not None else None
+            )
+            replaced_hi = (
+                _replace_postgres_cast_expressions(hi) if hi is not None else None
+            )
+            return target(
+                replaced_arr,
+                idx=replaced_ind,
+                lower_idx=replaced_lo,
+                upper_idx=replaced_hi,
+            )
         case FunctionExpression(fn, args, distinct, cond):
             replaced_args = [_replace_postgres_cast_expressions(arg) for arg in args]
             replaced_cond = _replace_postgres_cast_expressions(cond) if cond else None
-            return FunctionExpression(fn, replaced_args, distinct=distinct, filter_where=replaced_cond)
+            return FunctionExpression(
+                fn, replaced_args, distinct=distinct, filter_where=replaced_cond
+            )
         case WindowExpression(fn, parts, ordering, cond):
             replaced_fn = _replace_postgres_cast_expressions(fn)
-            replaced_parts = [_replace_postgres_cast_expressions(part) for part in parts]
+            replaced_parts = [
+                _replace_postgres_cast_expressions(part) for part in parts
+            ]
             replaced_cond = _replace_postgres_cast_expressions(cond) if cond else None
 
             replaced_order_exprs: list[OrderByExpression] = []
             for order in ordering or []:
                 replaced_expr = _replace_postgres_cast_expressions(order.column)
-                replaced_order_exprs.append(OrderByExpression(replaced_expr, order.ascending, order.nulls_first))
-            replaced_ordering = OrderBy(replaced_order_exprs) if replaced_order_exprs else None
+                replaced_order_exprs.append(
+                    OrderByExpression(replaced_expr, order.ascending, order.nulls_first)
+                )
+            replaced_ordering = (
+                OrderBy(replaced_order_exprs) if replaced_order_exprs else None
+            )
 
-            return target(replaced_fn, partitioning=replaced_parts, ordering=replaced_ordering, filter_condition=replaced_cond)
+            return target(
+                replaced_fn,
+                partitioning=replaced_parts,
+                ordering=replaced_ordering,
+                filter_condition=replaced_cond,
+            )
         case BinaryPredicate(op, lhs, rhs):
             replaced_lhs = _replace_postgres_cast_expressions(lhs)
             replaced_rhs = _replace_postgres_cast_expressions(rhs)
@@ -1790,14 +2155,21 @@ def _replace_postgres_cast_expressions(expression: SqlExpression) -> SqlExpressi
         case UnaryPredicate(col, op):
             replaced_col = _replace_postgres_cast_expressions(col)
             return target(replaced_col, op)
-        case CompoundPredicate(op, children) if op in {CompoundOperator.And, CompoundOperator.Or}:
-            replaced_children = [_replace_postgres_cast_expressions(child) for child in children]
+        case CompoundPredicate(op, children) if op in {
+            CompoundOperator.And,
+            CompoundOperator.Or,
+        }:
+            replaced_children = [
+                _replace_postgres_cast_expressions(child) for child in children
+            ]
             return target(op, replaced_children)
         case CompoundPredicate(op, child) if op == CompoundOperator.Not:
             replaced_child = _replace_postgres_cast_expressions(child)
             return target(op, replaced_child)
         case _:
-            raise ValueError(f"Unsupported expression type {type(expression)}: {expression}")
+            raise ValueError(
+                f"Unsupported expression type {type(expression)}: {expression}"
+            )
 
 
 PostgresHintingBackend = Literal["pg_hint_plan", "pg_lab", "none"]
@@ -1848,6 +2220,7 @@ class PostgresHintService(HintService):
     .. pg_hint_plan extension: https://github.com/ossc-db/pg_hint_plan
     .. Postgres query planning configuration: https://www.postgresql.org/docs/current/runtime-config-query.html
     """
+
     def __init__(self, postgres_db: PostgresInterface) -> None:
         self._postgres_db = postgres_db
         self._inactive = True
@@ -1863,16 +2236,29 @@ class PostgresHintService(HintService):
 
     backend = property(_get_backend, _set_backend, doc="The hinting backend in use.")
 
-    def generate_hints(self, query: qal.SqlQuery, plan: Optional[QueryPlan] = None, *,
-                       join_order: Optional[JoinTree] = None,
-                       physical_operators: Optional[PhysicalOperatorAssignment] = None,
-                       plan_parameters: Optional[PlanParameterization] = None) -> qal.SqlQuery:
+    def generate_hints(
+        self,
+        query: qal.SqlQuery,
+        plan: Optional[QueryPlan] = None,
+        *,
+        join_order: Optional[JoinTree] = None,
+        physical_operators: Optional[PhysicalOperatorAssignment] = None,
+        plan_parameters: Optional[PlanParameterization] = None,
+    ) -> qal.SqlQuery:
         self._assert_active_backend()
         adapted_query = query
-        if adapted_query.explain and not isinstance(adapted_query.explain, PostgresExplainClause):
-            adapted_query = qal.transform.replace_clause(adapted_query, PostgresExplainClause(adapted_query.explain))
-        if adapted_query.limit_clause and not isinstance(adapted_query.limit_clause, PostgresLimitClause):
-            adapted_query = qal.transform.replace_clause(adapted_query, PostgresLimitClause(adapted_query.limit_clause))
+        if adapted_query.explain and not isinstance(
+            adapted_query.explain, PostgresExplainClause
+        ):
+            adapted_query = qal.transform.replace_clause(
+                adapted_query, PostgresExplainClause(adapted_query.explain)
+            )
+        if adapted_query.limit_clause and not isinstance(
+            adapted_query.limit_clause, PostgresLimitClause
+        ):
+            adapted_query = qal.transform.replace_clause(
+                adapted_query, PostgresLimitClause(adapted_query.limit_clause)
+            )
 
         hint_parts = None
 
@@ -1882,7 +2268,9 @@ class PostgresHintService(HintService):
             plan_parameters = parameters_from_plan(plan)
 
         if join_order is not None:
-            adapted_query, hint_parts = self._generate_pg_join_order_hint(adapted_query, join_order, physical_operators)
+            adapted_query, hint_parts = self._generate_pg_join_order_hint(
+                adapted_query, join_order, physical_operators
+            )
 
         hint_parts = hint_parts if hint_parts else HintParts.empty()
 
@@ -1900,7 +2288,9 @@ class PostgresHintService(HintService):
 
     def format_query(self, query: qal.SqlQuery) -> str:
         if query.explain:
-            query = transform.replace_clause(query, PostgresExplainClause(query.explain))
+            query = transform.replace_clause(
+                query, PostgresExplainClause(query.explain)
+            )
         return qal.format_quick(query, flavor="postgres")
 
     def supports_hint(self, hint: PhysicalOperator | HintType) -> bool:
@@ -1921,12 +2311,14 @@ class PostgresHintService(HintService):
         """Determines the hinting backend that is provided by the current Postgres instance."""
 
         if os.name != "posix":
-            warnings.warn("It seems you are running PostBOUND on a non-POSIX system. "
-                          "Please beware that PostBOUND is currently not intended to run on different systems and "
-                          "there might be (many) dragons. "
-                          "Proceed at your own risk. "
-                          "We assume that the Postgres server has pg_hint_plan enabled. "
-                          "Please set the backend property to pg_lab manually if you are using pg_lab.")
+            warnings.warn(
+                "It seems you are running PostBOUND on a non-POSIX system. "
+                "Please beware that PostBOUND is currently not intended to run on different systems and "
+                "there might be (many) dragons. "
+                "Proceed at your own risk. "
+                "We assume that the Postgres server has pg_hint_plan enabled. "
+                "Please set the backend property to pg_lab manually if you are using pg_lab."
+            )
             self._backend = "pg_hint_plan"
             self._inactive = False
             return
@@ -1941,12 +2333,23 @@ class PostgresHintService(HintService):
         # rely on the operating system to determine open files of the backend process (which will include the shared libaries)
 
         if sys.platform == "darwin":
-            pg_candidates = subprocess.run(["lsof -p " + str(backend_pid) + " | awk '/postgres/{print $1}'"],
-                                           capture_output=True, shell=True, text=True)
+            pg_candidates = subprocess.run(
+                ["lsof -p " + str(backend_pid) + " | awk '/postgres/{print $1}'"],
+                capture_output=True,
+                shell=True,
+                text=True,
+            )
         else:
-            pg_candidates = subprocess.run(["ps -aux | awk '/" + str(backend_pid) + "/{print $11}'"],
-                                           capture_output=True, shell=True, text=True)
-        found_pg = any(candidate.lower().startswith("postgres") for candidate in pg_candidates.stdout.split())
+            pg_candidates = subprocess.run(
+                ["ps -aux | awk '/" + str(backend_pid) + "/{print $11}'"],
+                capture_output=True,
+                shell=True,
+                text=True,
+            )
+        found_pg = any(
+            candidate.lower().startswith("postgres")
+            for candidate in pg_candidates.stdout.split()
+        )
 
         # There are some rare edge cases where our heuristics fail. We have to accept them for now, but should improve the
         # backend detection in the future. Most importantly, the heuristic will pass if we are connected to a remote server
@@ -1954,11 +2357,13 @@ class PostgresHintService(HintService):
         # machine as the PostBOUND process. In this case, our heuristics assume that these are the same servers.
         # In the future, we might want to check the ports as well, but this probably requires superuser privileges.
 
-        if hostname not in ['localhost', '127.0.0.1', '::1'] or not found_pg:
-            warnings.warn("It seems you are connecting to a remote Postgres instance. "
-                          "PostBOUND cannot infer the hinting backend for such connections. "
-                          "We assume that the this server has pg_hint_plan enabled. "
-                          "Please set the backend property to pg_lab manually if you are using pg_lab.")
+        if hostname not in ["localhost", "127.0.0.1", "::1"] or not found_pg:
+            warnings.warn(
+                "It seems you are connecting to a remote Postgres instance. "
+                "PostBOUND cannot infer the hinting backend for such connections. "
+                "We assume that the this server has pg_hint_plan enabled. "
+                "Please set the backend property to pg_lab manually if you are using pg_lab."
+            )
             self._backend = "pg_hint_plan"
             self._inactive = False
             return
@@ -1966,16 +2371,24 @@ class PostgresHintService(HintService):
         lib_ext = "dylib" if sys.platform == "darwin" else "so"
         active_extensions = util.system.open_files(backend_pid)
         if any(ext.endswith(f"pg_lab.{lib_ext}") for ext in active_extensions):
-            util.logging.print_if(self._postgres_db.debug, "Using pg_lab hinting backend", file=sys.stderr)
+            util.logging.print_if(
+                self._postgres_db.debug, "Using pg_lab hinting backend", file=sys.stderr
+            )
             self._inactive = False
             self._backend = "pg_lab"
         elif any(ext.endswith(f"pg_hint_plan.{lib_ext}") for ext in active_extensions):
-            util.logging.print_if(self._postgres_db.debug, "Using pg_hint_plan hinting backend", file=sys.stderr)
+            util.logging.print_if(
+                self._postgres_db.debug,
+                "Using pg_hint_plan hinting backend",
+                file=sys.stderr,
+            )
             self._inactive = False
             self._backend = "pg_hint_plan"
         else:
-            warnings.warn("No supported hinting backend found. "
-                          "Please ensure that either pg_hint_plan or pg_lab is available in your Postgres instance.")
+            warnings.warn(
+                "No supported hinting backend found. "
+                "Please ensure that either pg_hint_plan or pg_lab is available in your Postgres instance."
+            )
             self._inactive = True
             self._backend = "none"
 
@@ -1999,7 +2412,9 @@ class PostgresHintService(HintService):
             # pg_lab can work with GeQO just fine
             return False
 
-        if not _query_contains_geqo_sensible_settings(query) or _modifies_geqo_config(query):
+        if not _query_contains_geqo_sensible_settings(query) or _modifies_geqo_config(
+            query
+        ):
             # If the query does not contain any problematic parts (i.e. hints) that GeQO might interfere with, or if the
             # query takes care of the GeQO configuration itself, we do not need to deactivate GeQO
             return False
@@ -2048,10 +2463,12 @@ class PostgresHintService(HintService):
         outer_hint = self._generate_leading_hint_content(node.outer_child)
         return f"({outer_hint} {inner_hint})"
 
-    def _generate_pg_join_order_hint(self, query: qal.SqlQuery,
-                                     join_order: JoinTree,
-                                     operator_assignment: Optional[PhysicalOperatorAssignment] = None
-                                     ) -> tuple[qal.SqlQuery, Optional[HintParts]]:
+    def _generate_pg_join_order_hint(
+        self,
+        query: qal.SqlQuery,
+        join_order: JoinTree,
+        operator_assignment: Optional[PhysicalOperatorAssignment] = None,
+    ) -> tuple[qal.SqlQuery, Optional[HintParts]]:
         """Builds the entire *Leading* hint to enforce the join order for a specific query.
 
         Using a *Leading* hint, it is possible to generate the an arbitrarily nested join order for an input query.
@@ -2093,11 +2510,17 @@ class PostgresHintService(HintService):
         if len(join_order) < 2:
             return query, None
         leading_hint = self._generate_leading_hint_content(join_order)
-        leading_hint = f"JoinOrder({leading_hint})" if self._backend == "pg_lab" else f"Leading({leading_hint})"
+        leading_hint = (
+            f"JoinOrder({leading_hint})"
+            if self._backend == "pg_lab"
+            else f"Leading({leading_hint})"
+        )
         hints = HintParts([], [leading_hint])
         return query, hints
 
-    def _generate_pg_operator_hints(self, physical_operators: PhysicalOperatorAssignment) -> HintParts:
+    def _generate_pg_operator_hints(
+        self, physical_operators: PhysicalOperatorAssignment
+    ) -> HintParts:
         """Builds the necessary operator-level hints and global settings to enforce a specific operator assignment.
 
         ..TODO: documentation is slightly outdated, update to reflect new pg_lab backend!
@@ -2131,20 +2554,27 @@ class PostgresHintService(HintService):
         hints = []
         for table, scan_assignment in physical_operators.scan_operators.items():
             table_key = table.identifier()
-            scan_assignment = (PGLabOptimizerHints[scan_assignment.operator] if self._backend == "pg_lab"
-                               else PGHintPlanOptimizerHints[scan_assignment.operator])
+            scan_assignment = (
+                PGLabOptimizerHints[scan_assignment.operator]
+                if self._backend == "pg_lab"
+                else PGHintPlanOptimizerHints[scan_assignment.operator]
+            )
             hints.append(f"{scan_assignment}({table_key})")
 
         if hints:
-            hints.append("")  # insert empty hint to force empty line between scan and join operators
+            hints.append(
+                ""
+            )  # insert empty hint to force empty line between scan and join operators
         for join, join_assignment in physical_operators.join_operators.items():
             join_key = _generate_join_key(join)
-            join_assignment = (PGLabOptimizerHints[join_assignment.operator] if self._backend == "pg_lab"
-                               else PGHintPlanOptimizerHints[join_assignment.operator])
+            join_assignment = (
+                PGLabOptimizerHints[join_assignment.operator]
+                if self._backend == "pg_lab"
+                else PGHintPlanOptimizerHints[join_assignment.operator]
+            )
             hints.append(f"{join_assignment}({join_key})")
 
         if self._backend == "pg_lab":
-
             if hints:
                 hints.append("")
             for intermediate, op in physical_operators.intermediate_operators.items():
@@ -2161,7 +2591,9 @@ class PostgresHintService(HintService):
 
         return HintParts(settings, hints)
 
-    def _generate_pg_parameter_hints(self, plan_parameters: PlanParameterization) -> HintParts:
+    def _generate_pg_parameter_hints(
+        self, plan_parameters: PlanParameterization
+    ) -> HintParts:
         """Builds the necessary operator-level hints and global settings to communicate plan parameters to the optimizer.
 
         ..TODO: documentation is slightly outdated, update to reflect new pg_lab backend!
@@ -2194,21 +2626,33 @@ class PostgresHintService(HintService):
         for join, cardinality_hint in plan_parameters.cardinality_hints.items():
             if len(join) < 2 and self._backend == "pg_hint_plan":
                 # pg_hint_plan can only generate cardinality hints for joins
-                warnings.warn(f"Ignoring cardinality hint for base table {join}", category=HintWarning)
+                warnings.warn(
+                    f"Ignoring cardinality hint for base table {join}",
+                    category=HintWarning,
+                )
                 continue
             cardinality_hint = round(cardinality_hint)
             join_key = _generate_join_key(join)
-            hint_text = (f"Card({join_key} #{cardinality_hint})" if self._backend == "pg_lab"
-                         else f"Rows({join_key} #{cardinality_hint})")
+            hint_text = (
+                f"Card({join_key} #{cardinality_hint})"
+                if self._backend == "pg_lab"
+                else f"Rows({join_key} #{cardinality_hint})"
+            )
             hints.append(hint_text)
 
         for join, num_workers in plan_parameters.parallel_worker_hints.items():
             if self._backend == "pg_lab":
-                warnings.warn("pg_lab does not support parallel worker hints", category=HintWarning)
+                warnings.warn(
+                    "pg_lab does not support parallel worker hints",
+                    category=HintWarning,
+                )
                 continue
             if len(join) != 1:
                 # pg_hint_plan can only generate parallelization hints for single tables
-                warnings.warn(f"Ignoring parallel workers hint for join {join}", category=HintWarning)
+                warnings.warn(
+                    f"Ignoring parallel workers hint for join {join}",
+                    category=HintWarning,
+                )
                 continue
 
             table: TableReference = util.simplify(join)
@@ -2243,10 +2687,14 @@ class PostgresHintService(HintService):
         hints = HintParts.empty()
         for aux_node in auxiliaries:
             if aux_node.node_type == "Materialize":
-                table_identifier = ", ".join(tab.identifier() for tab in aux_node.tables())
+                table_identifier = ", ".join(
+                    tab.identifier() for tab in aux_node.tables()
+                )
                 hints.add(f"Material({table_identifier})")
             elif aux_node.node_type == "Memoize":
-                table_identifier = ", ".join(tab.identifier() for tab in aux_node.tables())
+                table_identifier = ", ".join(
+                    tab.identifier() for tab in aux_node.tables()
+                )
                 hints.add(f"Memo({table_identifier})")
         return hints
 
@@ -2270,7 +2718,11 @@ class PostgresHintService(HintService):
         settings_block = "\n".join(settings)
         hint_prefix = "/*=pg_lab=" if self._backend == "pg_lab" else "/*+"
         hint_suffix = "*/"
-        hints_block = "\n".join([hint_prefix] + ["  " + hint for hint in hints] + [hint_suffix]) if hints else ""
+        hints_block = (
+            "\n".join([hint_prefix] + ["  " + hint for hint in hints] + [hint_suffix])
+            if hints
+            else ""
+        )
         return qal.Hint(settings_block, hints_block)
 
     def _assert_active_backend(self) -> None:
@@ -2283,7 +2735,9 @@ class PostgresHintService(HintService):
         """
         if self._inactive:
             connection_pid = self._postgres_db._connection.info.backend_pid
-            raise ValueError(f"No supported hinting backend found for backend with PID {connection_pid}")
+            raise ValueError(
+                f"No supported hinting backend found for backend with PID {connection_pid}"
+            )
 
     def __repr__(self) -> str:
         return f"PostgresHintService(db={self._postgres_db} backend={self._backend})"
@@ -2307,7 +2761,9 @@ class PostgresOptimizer(OptimizerInterface):
     def query_plan(self, query: qal.SqlQuery | str) -> QueryPlan:
         self._pg_instance._current_geqo_state = self._pg_instance._obtain_geqo_state()
         if isinstance(query, qal.SqlQuery):
-            query, deactivated_geqo = self._pg_instance._prepare_query_execution(query, drop_explain=True)
+            query, deactivated_geqo = self._pg_instance._prepare_query_execution(
+                query, drop_explain=True
+            )
         else:
             deactivated_geqo = False
         raw_query_plan = self._pg_instance._obtain_query_plan(query)
@@ -2318,7 +2774,9 @@ class PostgresOptimizer(OptimizerInterface):
 
     def analyze_plan(self, query: qal.SqlQuery) -> QueryPlan:
         self._pg_instance._current_geqo_state = self._pg_instance._obtain_geqo_state()
-        query, deactivated_geqo = self._pg_instance._prepare_query_execution(qal.transform.as_explain_analyze(query))
+        query, deactivated_geqo = self._pg_instance._prepare_query_execution(
+            qal.transform.as_explain_analyze(query)
+        )
         self._pg_instance.cursor().execute(query)
         raw_query_plan = self._pg_instance.cursor().fetchone()[0]
         query_plan = PostgresExplainPlan(raw_query_plan)
@@ -2328,8 +2786,12 @@ class PostgresOptimizer(OptimizerInterface):
 
     def cardinality_estimate(self, query: qal.SqlQuery | str) -> Cardinality:
         if isinstance(query, qal.SqlQuery):
-            self._pg_instance._current_geqo_state = self._pg_instance._obtain_geqo_state()
-            query, deactivated_geqo = self._pg_instance._prepare_query_execution(query, drop_explain=True)
+            self._pg_instance._current_geqo_state = (
+                self._pg_instance._obtain_geqo_state()
+            )
+            query, deactivated_geqo = self._pg_instance._prepare_query_execution(
+                query, drop_explain=True
+            )
         else:
             deactivated_geqo = False
         query_plan = self._pg_instance._obtain_query_plan(query)
@@ -2341,7 +2803,9 @@ class PostgresOptimizer(OptimizerInterface):
     def cost_estimate(self, query: qal.SqlQuery | str) -> float:
         self._pg_instance._current_geqo_state = self._pg_instance._obtain_geqo_state()
         if isinstance(query, qal.SqlQuery):
-            query, deactivated_geqo = self._pg_instance._prepare_query_execution(query, drop_explain=True)
+            query, deactivated_geqo = self._pg_instance._prepare_query_execution(
+                query, drop_explain=True
+            )
         else:
             deactivated_geqo = False
         query_plan = self._pg_instance._obtain_query_plan(query)
@@ -2366,14 +2830,24 @@ class PostgresOptimizer(OptimizerInterface):
         """
         setting_name = PostgresOptimizerSettings.get(operator)
         if not setting_name:
-            raise ValueError(f"Cannot configure operator {operator} as it is not supported by Postgres")
+            raise ValueError(
+                f"Cannot configure operator {operator} as it is not supported by Postgres"
+            )
         status = "on" if enabled else "off"
         self._pg_instance.cursor.execute(f"SET {setting_name} TO {status}")
 
 
-def connect(*, name: str = "postgres", connect_string: str | None = None, config_file: str | None = ".psycopg_connection",
-            encoding: str = "UTF8", cache_enabled: bool = False,
-            refresh: bool = False, private: bool = False, debug: bool = False) -> PostgresInterface:
+def connect(
+    *,
+    name: str = "postgres",
+    connect_string: str | None = None,
+    config_file: str | None = ".psycopg_connection",
+    encoding: str = "UTF8",
+    cache_enabled: bool = False,
+    refresh: bool = False,
+    private: bool = False,
+    debug: bool = False,
+) -> PostgresInterface:
     """Convenience function to seamlessly connect to a Postgres instance.
 
     This function obtains a connect-string to the database according to the following rules:
@@ -2432,19 +2906,28 @@ def connect(*, name: str = "postgres", connect_string: str | None = None, config
     if config_file and not connect_string:
         if not os.path.exists(config_file):
             wdir = os.getcwd()
-            raise ValueError(f"Failed to obtain a database connection. Tried to read the config file '{config_file}' from "
-                             f"your current working directory, but the file was not found. Your working directory is {wdir}. "
-                             "Please either supply the connect string directly to the connect() method, or ensure that the "
-                             "config file exists.")
+            raise ValueError(
+                f"Failed to obtain a database connection. Tried to read the config file '{config_file}' from "
+                f"your current working directory, but the file was not found. Your working directory is {wdir}. "
+                "Please either supply the connect string directly to the connect() method, or ensure that the "
+                "config file exists."
+            )
         with open(config_file, "r") as f:
             connect_string = f.readline().strip()
     elif not connect_string:
-        raise ValueError("Failed to obtain a database connection. Please either supply the connect string directly to the "
-                         "connect() method, or put a configuration file in your working directory. See the documentation of "
-                         "the connect() method for more details.")
+        raise ValueError(
+            "Failed to obtain a database connection. Please either supply the connect string directly to the "
+            "connect() method, or put a configuration file in your working directory. See the documentation of "
+            "the connect() method for more details."
+        )
 
-    postgres_db = PostgresInterface(connect_string, system_name=name, client_encoding=encoding,
-                                    cache_enabled=cache_enabled, debug=debug)
+    postgres_db = PostgresInterface(
+        connect_string,
+        system_name=name,
+        client_encoding=encoding,
+        cache_enabled=cache_enabled,
+        debug=debug,
+    )
     if not private:
         orig_name = name
         instance_idx = 2
@@ -2455,7 +2938,9 @@ def connect(*, name: str = "postgres", connect_string: str | None = None, config
     return postgres_db
 
 
-def _parallel_query_initializer(connect_string: str, local_data: threading.local, verbose: bool = False) -> None:
+def _parallel_query_initializer(
+    connect_string: str, local_data: threading.local, verbose: bool = False
+) -> None:
     """Internal function for the `ParallelQueryExecutor` to setup worker connections.
 
     Parameters
@@ -2475,14 +2960,20 @@ def _parallel_query_initializer(connect_string: str, local_data: threading.local
     """
     log = util.make_logger(verbose)
     tid = threading.get_ident()
-    connection = psycopg.connect(connect_string, application_name=f"PostBOUND parallel worker ID {tid}")
+    connection = psycopg.connect(
+        connect_string, application_name=f"PostBOUND parallel worker ID {tid}"
+    )
     connection.autocommit = True
     local_data.connection = connection
     log(f"[worker id={tid}, ts={util.timestamp()}] Connected")
 
 
-def _parallel_query_worker(query: str | qal.SqlQuery, local_data: threading.local,
-                           timeout: Optional[int] = None, verbose: bool = False) -> tuple[qal.SqlQuery | str, Any]:
+def _parallel_query_worker(
+    query: str | qal.SqlQuery,
+    local_data: threading.local,
+    timeout: Optional[int] = None,
+    verbose: bool = False,
+) -> tuple[qal.SqlQuery | str, Any]:
     """Internal function for the `ParallelQueryExecutor` to run individual queries.
 
     Parameters
@@ -2513,13 +3004,19 @@ def _parallel_query_worker(query: str | qal.SqlQuery, local_data: threading.loca
     if timeout:
         cursor.execute(f"SET statement_timeout = '{timeout}s';")
 
-    log(f"[worker id={threading.get_ident()}, ts={util.timestamp()}] Now executing query {query}")
+    log(
+        f"[worker id={threading.get_ident()}, ts={util.timestamp()}] Now executing query {query}"
+    )
     try:
         cursor.execute(str(query))
-        log(f"[worker id={threading.get_ident()}, ts={util.timestamp()}] Executed query {query}")
+        log(
+            f"[worker id={threading.get_ident()}, ts={util.timestamp()}] Executed query {query}"
+        )
     except psycopg.errors.QueryCanceled as e:
         if "canceling statement due to statement timeout" in e.args:
-            log(f"[worker id={threading.get_ident()}, ts={util.timestamp()}] Query {query} timed out")
+            log(
+                f"[worker id={threading.get_ident()}, ts={util.timestamp()}] Query {query} timed out"
+            )
             return query, None
         else:
             raise e
@@ -2565,17 +3062,30 @@ class ParallelQueryExecutor:
        database
     """
 
-    def __init__(self, connect_string: str, n_threads: Optional[int] = None, *, timeout: Optional[int] = None,
-                 verbose: bool = False) -> None:
-        self._n_threads = n_threads if n_threads is not None and n_threads > 0 else os.cpu_count()
+    def __init__(
+        self,
+        connect_string: str,
+        n_threads: Optional[int] = None,
+        *,
+        timeout: Optional[int] = None,
+        verbose: bool = False,
+    ) -> None:
+        self._n_threads = (
+            n_threads if n_threads is not None and n_threads > 0 else os.cpu_count()
+        )
         self._connect_string = connect_string
         self._timeout = timeout
         self._verbose = verbose
 
         self._thread_data = threading.local()
-        self._thread_pool = concurrent.futures.ThreadPoolExecutor(max_workers=self._n_threads,
-                                                                  initializer=_parallel_query_initializer,
-                                                                  initargs=(self._connect_string, self._thread_data,))
+        self._thread_pool = concurrent.futures.ThreadPoolExecutor(
+            max_workers=self._n_threads,
+            initializer=_parallel_query_initializer,
+            initargs=(
+                self._connect_string,
+                self._thread_data,
+            ),
+        )
         self._tasks: list[concurrent.futures.Future] = []
         self._results: list[Any] = []
 
@@ -2587,7 +3097,13 @@ class ParallelQueryExecutor:
         query : qal.SqlQuery | str
             The query to execute
         """
-        future = self._thread_pool.submit(_parallel_query_worker, query, self._thread_data, self._timeout, self._verbose)
+        future = self._thread_pool.submit(
+            _parallel_query_worker,
+            query,
+            self._thread_data,
+            self._timeout,
+            self._verbose,
+        )
         self._tasks.append(future)
 
     def drain_queue(self, timeout: Optional[float] = None) -> None:
@@ -2628,12 +3144,18 @@ class ParallelQueryExecutor:
         running_workers = [future for future in self._tasks if future.running()]
         completed_workers = [future for future in self._tasks if future.done()]
 
-        return (f"Concurrent query pool of {self._n_threads} workers, {len(self._tasks)} tasks "
-                f"(run={len(running_workers)} fin={len(completed_workers)})")
+        return (
+            f"Concurrent query pool of {self._n_threads} workers, {len(self._tasks)} tasks "
+            f"(run={len(running_workers)} fin={len(completed_workers)})"
+        )
 
 
-def _timeout_query_worker(query: qal.SqlQuery | str, pg_instance: PostgresInterface,
-                          query_result_sender: mp_conn.Connection, **kwargs) -> None:
+def _timeout_query_worker(
+    query: qal.SqlQuery | str,
+    pg_instance: PostgresInterface,
+    query_result_sender: mp_conn.Connection,
+    **kwargs,
+) -> None:
     """Internal function to the `TimeoutQueryExecutor` to run individual queries.
 
     Query results are sent via the pipe, not as a return value.
@@ -2674,9 +3196,13 @@ class TimeoutQueryExecutor:
     When a query gets cancelled due to the timeout being reached, the current cursor as well as database connection might be
     refreshed. Any direct references to these instances should no longer be used.
     """
+
     def __init__(self, postgres_instance: Optional[PostgresInterface] = None) -> None:
-        self._pg_instance = (postgres_instance if postgres_instance is not None
-                             else DatabasePool.get_instance().current_database())
+        self._pg_instance = (
+            postgres_instance
+            if postgres_instance is not None
+            else DatabasePool.get_instance().current_database()
+        )
 
     def execute_query(self, query: qal.SqlQuery | str, timeout: float, **kwargs) -> Any:
         """Runs a query on the database connection, cancelling if it takes longer than a specific timeout.
@@ -2706,8 +3232,11 @@ class TimeoutQueryExecutor:
         PostgresInterface.reset_connection
         """
         query_result_receiver, query_result_sender = mp.Pipe(False)
-        query_execution_worker = mp.Process(target=_timeout_query_worker, args=(query, self._pg_instance, query_result_sender),
-                                            kwargs=kwargs)
+        query_execution_worker = mp.Process(
+            target=_timeout_query_worker,
+            args=(query, self._pg_instance, query_result_sender),
+            kwargs=kwargs,
+        )
 
         query_execution_worker.start()
         query_execution_worker.join(timeout)
@@ -2734,20 +3263,26 @@ class TimeoutQueryExecutor:
         return self.execute_query(query, timeout)
 
 
-PostgresExplainJoinNodes = {"Nested Loop": JoinOperator.NestedLoopJoin,
-                            "Hash Join": JoinOperator.HashJoin,
-                            "Merge Join": JoinOperator.SortMergeJoin}
+PostgresExplainJoinNodes = {
+    "Nested Loop": JoinOperator.NestedLoopJoin,
+    "Hash Join": JoinOperator.HashJoin,
+    "Merge Join": JoinOperator.SortMergeJoin,
+}
 """A mapping from Postgres EXPLAIN node names to the corresponding join operators."""
 
-PostgresExplainScanNodes = {"Seq Scan": ScanOperator.SequentialScan,
-                            "Index Scan": ScanOperator.IndexScan,
-                            "Index Only Scan": ScanOperator.IndexOnlyScan,
-                            "Bitmap Heap Scan": ScanOperator.BitmapScan}
+PostgresExplainScanNodes = {
+    "Seq Scan": ScanOperator.SequentialScan,
+    "Index Scan": ScanOperator.IndexScan,
+    "Index Only Scan": ScanOperator.IndexOnlyScan,
+    "Bitmap Heap Scan": ScanOperator.BitmapScan,
+}
 """A mapping from Postgres EXPLAIN node names to the corresponding scan operators."""
 
-PostgresExplainIntermediateNodes = {"Materialize": IntermediateOperator.Materialize,
-                                    "Memoize": IntermediateOperator.Memoize,
-                                    "Sort": IntermediateOperator.Sort}
+PostgresExplainIntermediateNodes = {
+    "Materialize": IntermediateOperator.Materialize,
+    "Memoize": IntermediateOperator.Memoize,
+    "Sort": IntermediateOperator.Sort,
+}
 """A mapping from Postgres EXPLAIN node names to the corresponding intermediate operators."""
 
 
@@ -2837,6 +3372,7 @@ class PostgresExplainNode:
     children : list[PostgresExplainNode]
         All child / input nodes for the current node
     """
+
     def __init__(self, explain_data: dict) -> None:
         self.node_type = explain_data.get("Node Type", None)
 
@@ -2871,22 +3407,38 @@ class PostgresExplainNode:
         self.temp_blocks_written = explain_data.get("Temp Written Blocks", math.nan)
         self.plan_width = explain_data.get("Plan Width", math.nan)
 
-        self.children = [PostgresExplainNode(child) for child in explain_data.get("Plans", [])]
+        self.children = [
+            PostgresExplainNode(child) for child in explain_data.get("Plans", [])
+        ]
 
         self.explain_data = explain_data
-        self._hash_val = hash((self.node_type,
-                               self.relation_name, self.relation_alias, self.index_name, self.subplan_name, self.cte_name,
-                               self.filter_condition, self.index_condition, self.join_filter, self.hash_condition,
-                               self.recheck_condition,
-                               self.parent_relationship, self.parallel_workers,
-                               tuple(self.children)))
+        self._hash_val = hash(
+            (
+                self.node_type,
+                self.relation_name,
+                self.relation_alias,
+                self.index_name,
+                self.subplan_name,
+                self.cte_name,
+                self.filter_condition,
+                self.index_condition,
+                self.join_filter,
+                self.hash_condition,
+                self.recheck_condition,
+                self.parent_relationship,
+                self.parallel_workers,
+                tuple(self.children),
+            )
+        )
 
     @property
     def true_cardinality(self) -> float:
         if self.node_type in {"BitmapAnd", "BitmapOr"}:
             # For BitmapAnd/BitmapOr nodes, the actual number of rows is always 0.
             # This is due to limitations in the Postgres implementation.
-            warnings.warn("Postgres does not report the actual number of rows for bitmap nodes correctly. Returning NaN.")
+            warnings.warn(
+                "Postgres does not report the actual number of rows for bitmap nodes correctly. Returning NaN."
+            )
             return math.nan
         return self._true_card
 
@@ -2965,7 +3517,9 @@ class PostgresExplainNode:
         assert len(self.children) == 2
 
         first_child, second_child = self.children
-        inner_child = first_child if first_child.parent_relationship == "Inner" else second_child
+        inner_child = (
+            first_child if first_child.parent_relationship == "Inner" else second_child
+        )
         outer_child = first_child if second_child == inner_child else second_child
         return (inner_child, outer_child)
 
@@ -2979,7 +3533,12 @@ class PostgresExplainNode:
         """
         if not self.relation_name:
             return None
-        alias = self.relation_alias if self.relation_alias is not None and self.relation_alias != self.relation_name else ""
+        alias = (
+            self.relation_alias
+            if self.relation_alias is not None
+            and self.relation_alias != self.relation_name
+            else ""
+        )
         return TableReference(self.relation_name, alias)
 
     def as_qep(self) -> QueryPlan:
@@ -3018,7 +3577,9 @@ class PostgresExplainNode:
                 case "Member":
                     child_nodes.append(qep_child)
                 case _:
-                    raise ValueError(f"Unknown parent relationship '{parent_rel}' for child {child}")
+                    raise ValueError(
+                        f"Unknown parent relationship '{parent_rel}' for child {child}"
+                    )
 
         if inner_child and outer_child:
             child_nodes = [outer_child, inner_child] + child_nodes
@@ -3038,17 +3599,38 @@ class PostgresExplainNode:
         else:
             operator = PostgresExplainIntermediateNodes.get(self.node_type, None)
 
-        sort_keys = self._parse_sort_keys() if self.sort_keys else self._infer_sorting_from_children()
-        shared_hits = None if math.isnan(self.shared_blocks_cached) else self.shared_blocks_cached
-        shared_misses = None if math.isnan(self.shared_blocks_read) else self.shared_blocks_read
-        par_workers = None if math.isnan(self.parallel_workers) else self.parallel_workers
+        sort_keys = (
+            self._parse_sort_keys()
+            if self.sort_keys
+            else self._infer_sorting_from_children()
+        )
+        shared_hits = (
+            None if math.isnan(self.shared_blocks_cached) else self.shared_blocks_cached
+        )
+        shared_misses = (
+            None if math.isnan(self.shared_blocks_read) else self.shared_blocks_read
+        )
+        par_workers = (
+            None if math.isnan(self.parallel_workers) else self.parallel_workers
+        )
 
-        return QueryPlan(self.node_type, base_table=table, operator=operator, children=child_nodes,
-                         parallel_workers=par_workers, index=self.index_name, sort_keys=sort_keys,
-                         estimated_cost=self.cost, estimated_cardinality=Cardinality(self.cardinality_estimate),
-                         actual_cardinality=Cardinality(true_card), execution_time=self.execution_time,
-                         cache_hits=shared_hits, cache_misses=shared_misses,
-                         subplan_root=subplan_child, subplan_name=subplan_name)
+        return QueryPlan(
+            self.node_type,
+            base_table=table,
+            operator=operator,
+            children=child_nodes,
+            parallel_workers=par_workers,
+            index=self.index_name,
+            sort_keys=sort_keys,
+            estimated_cost=self.cost,
+            estimated_cardinality=Cardinality(self.cardinality_estimate),
+            actual_cardinality=Cardinality(true_card),
+            execution_time=self.execution_time,
+            cache_hits=shared_hits,
+            cache_misses=shared_misses,
+            subplan_root=subplan_child,
+            subplan_name=subplan_name,
+        )
 
     def inspect(self, *, _indentation: int = 0) -> str:
         """Provides a pretty string representation of the *EXPLAIN* sub-plan that can be printed.
@@ -3073,7 +3655,9 @@ class PostgresExplainNode:
         padding = " " * _indentation
         prefix = f"{padding}<- " if padding else ""
         own_inspection += [prefix + str(self)]
-        child_inspections = [child.inspect(_indentation=_indentation+2) for child in self.children]
+        child_inspections = [
+            child.inspect(_indentation=_indentation + 2) for child in self.children
+        ]
         return "\n".join(own_inspection + child_inspections)
 
     def _infer_sorting_from_children(self) -> list[SortKey]:
@@ -3091,18 +3675,28 @@ class PostgresExplainNode:
         return self._hash_val
 
     def __eq__(self, other: object) -> bool:
-        return (isinstance(other, type(self)) and self.node_type == other.node_type
-                and self.relation_name == other.relation_name and self.relation_alias == other.relation_alias
-                and self.children == other.children)
+        return (
+            isinstance(other, type(self))
+            and self.node_type == other.node_type
+            and self.relation_name == other.relation_name
+            and self.relation_alias == other.relation_alias
+            and self.children == other.children
+        )
 
     def __repr__(self) -> str:
         return str(self)
 
     def __str__(self) -> str:
-        analyze_content = (f" (actual time={self.execution_time}s rows={self.true_cardinality} loops={self.loops})"
-                           if self.is_analyze() else "")
+        analyze_content = (
+            f" (actual time={self.execution_time}s rows={self.true_cardinality} loops={self.loops})"
+            if self.is_analyze()
+            else ""
+        )
         explain_content = f"(cost={self.cost} rows={self.cardinality_estimate})"
-        conditions = " ".join(f"{condition}: {value}" for condition, value in self.filter_conditions().items())
+        conditions = " ".join(
+            f"{condition}: {value}"
+            for condition, value in self.filter_conditions().items()
+        )
         conditions = " " + conditions if conditions else ""
         if self.is_scan():
             scan_info = f" on {self.parse_table().identifier()}"
@@ -3110,7 +3704,9 @@ class PostgresExplainNode:
             scan_info = f" on {self.cte_name}"
         else:
             scan_info = ""
-        return self.node_type + scan_info + explain_content + analyze_content + conditions
+        return (
+            self.node_type + scan_info + explain_content + analyze_content + conditions
+        )
 
 
 class PostgresExplainPlan:
@@ -3138,10 +3734,17 @@ class PostgresExplainPlan:
     query_plan : PostgresExplainNode
         The actual plan
     """
+
     def __init__(self, explain_data: dict) -> None:
-        self.explain_data = explain_data[0] if isinstance(explain_data, list) else explain_data
-        self.planning_time: float = self.explain_data.get("Planning Time", math.nan) / 1000
-        self.execution_time: float = self.explain_data.get("Execution Time", math.nan) / 1000
+        self.explain_data = (
+            explain_data[0] if isinstance(explain_data, list) else explain_data
+        )
+        self.planning_time: float = (
+            self.explain_data.get("Planning Time", math.nan) / 1000
+        )
+        self.execution_time: float = (
+            self.explain_data.get("Execution Time", math.nan) / 1000
+        )
         self.query_plan = PostgresExplainNode(self.explain_data["Plan"])
         self._normalized_plan = self.query_plan.as_qep()
 
@@ -3238,11 +3841,18 @@ class WorkloadShifter:
     pg_instance : PostgresInterface
         The database to manipulate
     """
+
     def __init__(self, pg_instance: PostgresInterface) -> None:
         self.pg_instance = pg_instance
 
-    def remove_random(self, table: TableReference | str, *,
-                      n_rows: Optional[int] = None, row_pct: Optional[float] = None, vacuum: bool = False) -> None:
+    def remove_random(
+        self,
+        table: TableReference | str,
+        *,
+        n_rows: Optional[int] = None,
+        row_pct: Optional[float] = None,
+        vacuum: bool = False,
+    ) -> None:
         """Deletes tuples from a specific tables at random.
 
         Parameters
@@ -3280,13 +3890,21 @@ class WorkloadShifter:
                                            DELETE FROM {table}
                                            WHERE EXISTS (SELECT 1 FROM delete_samples WHERE sample_id = {col})
                                            """)
-        removal_query = removal_template.format(table=table_name, col=pk_column.name, cnt=n_rows)
+        removal_query = removal_template.format(
+            table=table_name, col=pk_column.name, cnt=n_rows
+        )
         self._perform_removal(removal_query, vacuum)
 
-    def remove_ordered(self, column: ColumnReference | str, *,
-                       n_rows: Optional[int] = None, row_pct: Optional[float] = None,
-                       ascending: bool = True, null_placement: Optional[Literal["first", "last"]] = None,
-                       vacuum: bool = False) -> None:
+    def remove_ordered(
+        self,
+        column: ColumnReference | str,
+        *,
+        n_rows: Optional[int] = None,
+        row_pct: Optional[float] = None,
+        ascending: bool = True,
+        null_placement: Optional[Literal["first", "last"]] = None,
+        vacuum: bool = False,
+    ) -> None:
         """Deletes the smallest/largest tuples from a specific table.
 
         Parameters
@@ -3339,12 +3957,25 @@ class WorkloadShifter:
                                            WHERE EXISTS (SELECT 1 FROM delete_entries
                                                          WHERE delete_entries.{pk_col} = t.{pk_col})
                                            """)
-        removal_query = removal_template.format(table=table_name, pk_col=pk_column.name,
-                                                order_col=col_name, order_dir=order_direction, nulls=null_vals, cnt=n_rows)
+        removal_query = removal_template.format(
+            table=table_name,
+            pk_col=pk_column.name,
+            order_col=col_name,
+            order_dir=order_direction,
+            nulls=null_vals,
+            cnt=n_rows,
+        )
         self._perform_removal(removal_query, vacuum)
 
-    def generate_marker_table(self, target_table: str, marker_pct: float = 0.5, *, target_column: str = "id",
-                              marker_table: Optional[str] = None, marker_column: Optional[str] = None) -> None:
+    def generate_marker_table(
+        self,
+        target_table: str,
+        marker_pct: float = 0.5,
+        *,
+        target_column: str = "id",
+        marker_table: Optional[str] = None,
+        marker_column: Optional[str] = None,
+    ) -> None:
         """Generates a new table that can be used to store rows that should be deleted at a later point in time.
 
         The marker table will be created if it does not exist already. It contains exactly two columns: one column for the
@@ -3375,8 +4006,14 @@ class WorkloadShifter:
         remove_marked
         export_marker_table
         """
-        marker_table = f"{target_table}_delete_marker" if marker_table is None else marker_table
-        marker_column = f"{target_table}_{target_column}" if marker_column is None else marker_column
+        marker_table = (
+            f"{target_table}_delete_marker" if marker_table is None else marker_table
+        )
+        marker_column = (
+            f"{target_table}_{target_column}"
+            if marker_column is None
+            else marker_column
+        )
         target_col_ref = ColumnReference(target_column, TableReference(target_table))
         target_column_type = self.pg_instance.schema().datatype(target_col_ref)
         marker_create_query = textwrap.dedent(f"""
@@ -3397,8 +4034,13 @@ class WorkloadShifter:
             cursor.execute(f"DELETE FROM {marker_table};")
             cursor.execute(marker_inflate_query)
 
-    def export_marker_table(self, *, target_table: Optional[str] = None, marker_table: Optional[str] = None,
-                            out_file: Optional[str] = None) -> None:
+    def export_marker_table(
+        self,
+        *,
+        target_table: Optional[str] = None,
+        marker_table: Optional[str] = None,
+        out_file: Optional[str] = None,
+    ) -> None:
         """Stores a marker table in a CSV file on disk.
 
         This allows the marker table to be re-imported later on.
@@ -3426,13 +4068,28 @@ class WorkloadShifter:
         """
         if target_table is None and marker_table is None:
             raise ValueError("Either marker table or target table are required!")
-        marker_table = f"{target_table}_delete_marker" if marker_table is None else marker_table
-        out_file = pathlib.Path(f"{marker_table}.csv").absolute() if out_file is None else out_file
-        self.pg_instance.cursor().execute(f"COPY {marker_table} TO '{out_file}' DELIMITER ',' CSV HEADER;")
+        marker_table = (
+            f"{target_table}_delete_marker" if marker_table is None else marker_table
+        )
+        out_file = (
+            pathlib.Path(f"{marker_table}.csv").absolute()
+            if out_file is None
+            else out_file
+        )
+        self.pg_instance.cursor().execute(
+            f"COPY {marker_table} TO '{out_file}' DELIMITER ',' CSV HEADER;"
+        )
 
-    def import_marker_table(self, *, target_table: Optional[str] = None, marker_table: Optional[str] = None,
-                            target_column: str = "id", marker_column: Optional[str] = None,
-                            target_column_type: Optional[str] = None, in_file: Optional[str] = None) -> None:
+    def import_marker_table(
+        self,
+        *,
+        target_table: Optional[str] = None,
+        marker_table: Optional[str] = None,
+        target_column: str = "id",
+        marker_column: Optional[str] = None,
+        target_column_type: Optional[str] = None,
+        in_file: Optional[str] = None,
+    ) -> None:
         """Loads the contents of a marker table from a CSV file from disk.
 
         The table will be created if it does not exist already. If the marker table exists already, all current markings (but
@@ -3469,12 +4126,24 @@ class WorkloadShifter:
         """
         if not target_table and not marker_table:
             raise ValueError("Either marker table or target table are required!")
-        marker_table = f"{target_table}_delete_marker" if marker_table is None else marker_table
-        marker_column = f"{target_table}_{target_column}" if marker_column is None else marker_column
-        in_file = pathlib.Path(f"{marker_table}.csv").absolute() if in_file is None else in_file
+        marker_table = (
+            f"{target_table}_delete_marker" if marker_table is None else marker_table
+        )
+        marker_column = (
+            f"{target_table}_{target_column}"
+            if marker_column is None
+            else marker_column
+        )
+        in_file = (
+            pathlib.Path(f"{marker_table}.csv").absolute()
+            if in_file is None
+            else in_file
+        )
 
         if target_column_type is None:
-            target_col_ref = ColumnReference(target_column, TableReference(target_table))
+            target_col_ref = ColumnReference(
+                target_column, TableReference(target_table)
+            )
             target_column_type = self.pg_instance.schema().datatype(target_col_ref)
 
         marker_create_query = textwrap.dedent(f"""
@@ -3495,8 +4164,15 @@ class WorkloadShifter:
             cursor.execute(f"DELETE FROM {marker_table}")
             cursor.execute(marker_import_query)
 
-    def remove_marked(self, target_table: str, *, target_column: str = "id",
-                      marker_table: Optional[str] = None, marker_column: Optional[str] = None, vacuum: bool = False) -> None:
+    def remove_marked(
+        self,
+        target_table: str,
+        *,
+        target_column: str = "id",
+        marker_table: Optional[str] = None,
+        marker_column: Optional[str] = None,
+        vacuum: bool = False,
+    ) -> None:
         """Deletes rows according to their primary keys stored in a marker table.
 
         Parameters
@@ -3519,8 +4195,14 @@ class WorkloadShifter:
         generate_marker_table
         """
         # TODO: align parameter types with TableReference and ColumnReference
-        marker_table = f"{target_table}_delete_marker" if marker_table is None else marker_table
-        marker_column = f"{target_table}_{target_column}" if marker_column is None else marker_column
+        marker_table = (
+            f"{target_table}_delete_marker" if marker_table is None else marker_table
+        )
+        marker_column = (
+            f"{target_table}_{target_column}"
+            if marker_column is None
+            else marker_column
+        )
         removal_query = textwrap.dedent(f"""
                                         DELETE FROM {target_table}
                                         WHERE EXISTS (SELECT 1 FROM {marker_table}
@@ -3551,7 +4233,9 @@ class WorkloadShifter:
             cursor.close()
             conn.close()
 
-    def _determine_row_cnt(self, table: str, n_rows: Optional[int], row_pct: Optional[float]) -> int:
+    def _determine_row_cnt(
+        self, table: str, n_rows: Optional[int], row_pct: Optional[float]
+    ) -> int:
         """Calculates the absolute number of rows to delete while also performing sanity checks.
 
         Parameters
@@ -3576,9 +4260,13 @@ class WorkloadShifter:
             range.
         """
         if n_rows is None and row_pct is None:
-            raise ValueError("Either absolute number of rows or row percentage must be given")
+            raise ValueError(
+                "Either absolute number of rows or row percentage must be given"
+            )
         if n_rows is not None and row_pct is not None:
-            raise ValueError("Cannot use both absolute number of rows and row percentage")
+            raise ValueError(
+                "Cannot use both absolute number of rows and row percentage"
+            )
 
         if n_rows is not None and not n_rows > 0:
             raise ValueError("Not a valid row count: " + str(n_rows))
@@ -3588,8 +4276,11 @@ class WorkloadShifter:
         if not 0.0 < row_pct < 1.0:
             raise ValueError("Not a valid row percentage: " + str(row_pct))
 
-        total_n_rows = self.pg_instance.statistics().total_rows(TableReference(table),
-                                                                cache_enabled=False, emulated=True)
+        total_n_rows = self.pg_instance.statistics().total_rows(
+            TableReference(table), cache_enabled=False, emulated=True
+        )
         if total_n_rows is None:
-            raise StateError("Could not determine total number of rows for table " + table)
+            raise StateError(
+                "Could not determine total number of rows for table " + table
+            )
         return round(row_pct * total_n_rows)

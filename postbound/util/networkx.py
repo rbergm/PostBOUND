@@ -7,12 +7,20 @@ References
         NetworkX", in Proceedings of the 7th Python in Science Conference (SciPy2008), Gäel Varoquaux, Travis Vaught, and
         Jarrod Millman (Eds), (Pasadena, CA USA), pp. 11-15, Aug 2008
 """
+
 from __future__ import annotations
 
 import dataclasses
 import random
 import typing
-from collections.abc import Callable, Collection, Generator, Iterable, Iterator, Sequence
+from collections.abc import (
+    Callable,
+    Collection,
+    Generator,
+    Iterable,
+    Iterator,
+    Sequence,
+)
 from typing import Optional
 
 import networkx as nx
@@ -59,15 +67,21 @@ def nx_sources(graph: nx.DiGraph) -> Collection[NodeType]:
     return [n for n in graph.nodes if graph.in_degree(n) == 0]
 
 
-def nx_filter_nodes(graph: nx.Graph, predicate: Callable[[NodeType, dict], bool]) -> Collection[tuple[NodeType, dict]]:
+def nx_filter_nodes(
+    graph: nx.Graph, predicate: Callable[[NodeType, dict], bool]
+) -> Collection[tuple[NodeType, dict]]:
     return [(n, d) for n, d in graph.nodes.data() if predicate(n, d)]
 
 
-def nx_merge_nodes(graph: nx.Graph, nodes: Iterable[NodeType], *, target_node: NodeType) -> nx.Graph:
+def nx_merge_nodes(
+    graph: nx.Graph, nodes: Iterable[NodeType], *, target_node: NodeType
+) -> nx.Graph:
     pass
 
 
-def nx_random_walk(graph: nx.Graph, *, starting_node: Optional[NodeType] = None) -> Generator[NodeType, None, None]:
+def nx_random_walk(
+    graph: nx.Graph, *, starting_node: Optional[NodeType] = None
+) -> Generator[NodeType, None, None]:
     """A modified random walk implementation for NetworkX graphs.
 
     A random walk starts at any of the nodes of the graph. At each iteration, a neighboring node is selected and moved to.
@@ -98,15 +112,21 @@ def nx_random_walk(graph: nx.Graph, *, starting_node: Optional[NodeType] = None)
 
     total_n_nodes = len(graph.nodes)
 
-    current_node = random.choice(list(graph.nodes)) if starting_node is None else starting_node
+    current_node = (
+        random.choice(list(graph.nodes)) if starting_node is None else starting_node
+    )
     visited_nodes.add(current_node)
     yield current_node
 
     while len(visited_nodes) < total_n_nodes:
-        shell_nodes |= set(n for n in graph.adj[current_node].keys() if n not in visited_nodes)
+        shell_nodes |= set(
+            n for n in graph.adj[current_node].keys() if n not in visited_nodes
+        )
         if not shell_nodes:
             # we have multiple connected components and need to jump into the other component
-            current_node = random.choice([n for n in graph.nodes if n not in visited_nodes])
+            current_node = random.choice(
+                [n for n in graph.nodes if n not in visited_nodes]
+            )
             visited_nodes.add(current_node)
             yield current_node
             continue
@@ -117,9 +137,13 @@ def nx_random_walk(graph: nx.Graph, *, starting_node: Optional[NodeType] = None)
         yield current_node
 
 
-def nx_bfs_tree(graph: nx.Graph, start_node: NodeType,
-                condition: Callable[[NodeType, dict], bool], *,
-                node_order: Callable[[NodeType, dict], int] | None = None) -> Generator[tuple[NodeType, dict], None, None]:
+def nx_bfs_tree(
+    graph: nx.Graph,
+    start_node: NodeType,
+    condition: Callable[[NodeType, dict], bool],
+    *,
+    node_order: Callable[[NodeType, dict], int] | None = None,
+) -> Generator[tuple[NodeType, dict], None, None]:
     """Traverses a specific graph in breadth-first manner, yielding its nodes along the way.
 
     The traversal starts at a specific start node. During the traversal all nodes that match a condition are provided. If no
@@ -156,10 +180,16 @@ def nx_bfs_tree(graph: nx.Graph, start_node: NodeType,
         current_node, current_edge = shell_nodes.pop()
         visited_nodes.add(current_node)
         if condition(current_node, current_edge):
-            neighbor_nodes = [(node, edge) for node, edge in graph.adj[current_node].items()
-                              if node not in visited_nodes]
+            neighbor_nodes = [
+                (node, edge)
+                for node, edge in graph.adj[current_node].items()
+                if node not in visited_nodes
+            ]
             if node_order:
-                sorted(neighbor_nodes, key=lambda neighbor: node_order(neighbor[0], neighbor[1]))
+                sorted(
+                    neighbor_nodes,
+                    key=lambda neighbor: node_order(neighbor[0], neighbor[1]),
+                )
             shell_nodes.extend(neighbor_nodes)
             yield current_node, current_edge
 
@@ -191,8 +221,11 @@ class GraphWalk:
         the NetworkX edge data of the edge that has been used to move to the node. This may be ``None`` if the node was
         "jumped to".
     """
+
     start_node: NodeType
-    path: Sequence[tuple[NodeType, Optional[dict]]] = dataclasses.field(default_factory=list)
+    path: Sequence[tuple[NodeType, Optional[dict]]] = dataclasses.field(
+        default_factory=list
+    )
 
     def nodes(self) -> Sequence[NodeType]:
         """Provides all nodes that are visited by this walk, in the sequence in which they are visited.
@@ -214,7 +247,9 @@ class GraphWalk:
         """
         return self.start_node if not self.path else self.path[-1][0]
 
-    def expand(self, next_node: NodeType, edge_data: Optional[dict] = None) -> GraphWalk:
+    def expand(
+        self, next_node: NodeType, edge_data: Optional[dict] = None
+    ) -> GraphWalk:
         """Creates a new walk by prolonging the current one with one more edge at the end.
 
         Parameters
@@ -254,7 +289,11 @@ class GraphWalk:
         return hash((self.start_node, tuple(self.path)))
 
     def __eq__(self, other: object) -> bool:
-        return isinstance(other, type(self)) and self.start_node == other.start_node and self.path == other.path
+        return (
+            isinstance(other, type(self))
+            and self.start_node == other.start_node
+            and self.path == other.path
+        )
 
     def __repr__(self) -> str:
         return str(self)
@@ -263,8 +302,9 @@ class GraphWalk:
         return " -> ".join(str(node) for node in self.nodes())
 
 
-def _walk_frontier(graph: nx.Graph, current_walk: GraphWalk,
-                   current_frontier: set[NodeType]) -> Generator[GraphWalk, None, None]:
+def _walk_frontier(
+    graph: nx.Graph, current_walk: GraphWalk, current_frontier: set[NodeType]
+) -> Generator[GraphWalk, None, None]:
     """Worker method to recursively expand graph traversals to candidate nodes.
 
     This method expands a specific walk by considering all possible traversals to candidate/frontier nodes. Jumps are included
@@ -291,20 +331,28 @@ def _walk_frontier(graph: nx.Graph, current_walk: GraphWalk,
     available_edges = []
     for frontier_node in current_frontier:
         current_edges = graph.adj[frontier_node]
-        current_edges = [(target_node, edge_data) for target_node, edge_data in current_edges.items()
-                         if target_node not in current_walk and target_node not in current_frontier]
+        current_edges = [
+            (target_node, edge_data)
+            for target_node, edge_data in current_edges.items()
+            if target_node not in current_walk and target_node not in current_frontier
+        ]
         available_edges.extend(current_edges)
 
     if not available_edges and len(current_walk) < len(graph):
         jump_nodes = [node for node in graph.nodes if node not in current_frontier]
         for jump_node in jump_nodes:
-            yield from _walk_frontier(graph, current_walk.expand(jump_node), current_frontier | {jump_node})
+            yield from _walk_frontier(
+                graph, current_walk.expand(jump_node), current_frontier | {jump_node}
+            )
     elif not available_edges:
         yield current_walk
     else:
         for target_node, edge_data in available_edges:
-            yield from _walk_frontier(graph, current_walk.expand(target_node, edge_data),
-                                      current_frontier | {target_node})
+            yield from _walk_frontier(
+                graph,
+                current_walk.expand(target_node, edge_data),
+                current_frontier | {target_node},
+            )
 
 
 def nx_frontier_walks(graph: nx.Graph) -> Generator[GraphWalk, None, None]:

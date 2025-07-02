@@ -41,9 +41,11 @@ class JitteringCardinalityEstimator(pb.CardinalityGenerator):
         super().__init__(False)
         self.native_optimizer = native_optimizer
 
-    def calculate_estimate(self, query: pb.SqlQuery,
-                           tables: pb.TableReference | Iterable[pb.TableReference]) -> pb.Cardinality:
-
+    def calculate_estimate(
+        self,
+        query: pb.SqlQuery,
+        tables: pb.TableReference | Iterable[pb.TableReference],
+    ) -> pb.Cardinality:
         # For our current intermediate, we simply ask the native optimizer for its cardinality estimate. Afterwards, we distort
         # the estimate by a random factor.
         # To retrieve the native cardinality estimate, we need to construct a specialized SQL query that only computes the
@@ -61,9 +63,12 @@ class JitteringCardinalityEstimator(pb.CardinalityGenerator):
         estimated_cardinality = round(distortion_factor * native_estimate)
         return estimated_cardinality
 
-    def generate_plan_parameters(self, query: pb.SqlQuery,
-                                 join_order: Optional[pb.LogicalJoinTree],
-                                 operator_assignment: Optional[pb.PhysicalOperatorAssignment]) -> pb.PlanParameterization:
+    def generate_plan_parameters(
+        self,
+        query: pb.SqlQuery,
+        join_order: Optional[pb.LogicalJoinTree],
+        operator_assignment: Optional[pb.PhysicalOperatorAssignment],
+    ) -> pb.PlanParameterization:
         # This method is specific to the MultiStageOptimizationPipeline
         # We actually do not need to implement this method, the CardinalityHintsGenerator interface already provides a decent
         # default implementation, which essentially performs the same steps as we do in this method.
@@ -97,7 +102,9 @@ class JitteringCardinalityEstimator(pb.CardinalityGenerator):
             estimated_cardinality = self.calculate_estimate(query, join)
             if math.isnan(estimated_cardinality):
                 # Make sure to check for *NaN*, rather than just true-ish value. 0 is a valid cardinality estimate!
-                warnings.warn(f"Could not estimate cardinality for intermediate {join} in query {query}.")
+                warnings.warn(
+                    f"Could not estimate cardinality for intermediate {join} in query {query}."
+                )
                 continue
 
             cardinalities.add_cardinality_hint(join, estimated_cardinality)
@@ -114,13 +121,15 @@ job_workload = pb.workloads.job()
 
 # Now let's generate the optimization pipeline with our new cardinality estimator
 pipeline = pb.MultiStageOptimizationPipeline(postgres_db)
-pipeline.setup_plan_parameterization(JitteringCardinalityEstimator(postgres_db.optimizer()))
+pipeline.setup_plan_parameterization(
+    JitteringCardinalityEstimator(postgres_db.optimizer())
+)
 pipeline.build()
 
 # Run a couple of optimizations. Hopefully, they each contain a different query plan with different cardinality estimates
 query = job_workload["1a"]
 for i in range(3):
-    print("Run", i+1, "::")
+    print("Run", i + 1, "::")
     optimized_query = pipeline.optimize_query(query)
     query_plan = postgres_db.optimizer().query_plan(optimized_query)
     print(query_plan.inspect())

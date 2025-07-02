@@ -1,4 +1,5 @@
 """Contains interfaces to influence the structure of a join tree."""
+
 from __future__ import annotations
 
 import abc
@@ -37,7 +38,9 @@ class BranchGenerationPolicy(abc.ABC):
         raise NotImplementedError
 
     @abc.abstractmethod
-    def generate_subquery_for(self, join: qal.AbstractPredicate, join_graph: JoinGraph) -> bool:
+    def generate_subquery_for(
+        self, join: qal.AbstractPredicate, join_graph: JoinGraph
+    ) -> bool:
         """Decides whether the given join should be executed in a subquery.
 
         Parameters
@@ -93,7 +96,9 @@ class LinearJoinTreeGenerationPolicy(BranchGenerationPolicy):
     def setup_for_query(self, query: qal.SqlQuery) -> None:
         pass
 
-    def generate_subquery_for(self, join: qal.AbstractPredicate, join_graph: JoinGraph) -> bool:
+    def generate_subquery_for(
+        self, join: qal.AbstractPredicate, join_graph: JoinGraph
+    ) -> bool:
         return False
 
     def describe(self) -> dict:

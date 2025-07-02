@@ -1,18 +1,8 @@
 """Contains utilities that are not specific to PostBOUND's domain of databases and query optimization."""
 
-from .collections import (
-    flatten,
-    enlist,
-    simplify,
-    set_union,
-    powerset
-)
+from .collections import flatten, enlist, simplify, set_union, powerset
 from . import collections
-from .dicts import (
-    hash_dict,
-    argmin,
-    frozendict
-)
+from .dicts import hash_dict, argmin, frozendict
 from . import dicts
 from .errors import StateError, LogicError, InvariantViolationError
 from . import errors
@@ -57,5 +47,5 @@ __all__ = [
     "stats",
     "open_files",
     "system",
-    "typing"
+    "typing",
 ]

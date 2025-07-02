@@ -1,4 +1,5 @@
 """Utilities centered around numbers."""
+
 from __future__ import annotations
 
 import math
@@ -41,7 +42,9 @@ class AtomicInt(numbers.Integral):
 
     def _assert_integral(self, other: Any):
         if not isinstance(other, numbers.Integral):
-            raise TypeError(f"Cannot add argument of type {type(other)} to object of type AtomicInt")
+            raise TypeError(
+                f"Cannot add argument of type {type(other)} to object of type AtomicInt"
+            )
 
     def _unwrap_atomic(self, other: Any):
         return other._value if isinstance(other, AtomicInt) else other
@@ -130,9 +133,11 @@ class AtomicInt(numbers.Integral):
 
     def __pow__(self, exponent: Any, modulus: Any | None = ...) -> AtomicInt:
         with self._lock:
-            res = self._value ** exponent
+            res = self._value**exponent
             if res != int(res):
-                raise ValueError(f"Power not supported for type AtomicInt with argument {exponent}")
+                raise ValueError(
+                    f"Power not supported for type AtomicInt with argument {exponent}"
+                )
             return AtomicInt(res)
 
     def __radd__(self, other: Any) -> Any:
@@ -177,7 +182,7 @@ class AtomicInt(numbers.Integral):
     def __rpow__(self, base: Any) -> Any:
         base = self._unwrap_atomic(base)
         with self._lock:
-            return base ** self._value
+            return base**self._value
 
     def __rrshift__(self, other: Any) -> Any:
         other = self._unwrap_atomic(other)
@@ -237,10 +242,20 @@ class BoundedInt(numbers.Integral):
     def non_neg(value: int, *, allowed_max: Union[int, None] = None) -> BoundedInt:
         return BoundedInt(value, allowed_min=0, allowed_max=allowed_max)
 
-    def __init__(self, value: int, *, allowed_min: Union[int, None] = None, allowed_max: Union[int, None] = None):
+    def __init__(
+        self,
+        value: int,
+        *,
+        allowed_min: Union[int, None] = None,
+        allowed_max: Union[int, None] = None,
+    ):
         if not isinstance(value, int):
             raise TypeError(f"Only integer values allowed, but {type(value)} given!")
-        if allowed_min is not None and allowed_max is not None and allowed_min > allowed_max:
+        if (
+            allowed_min is not None
+            and allowed_max is not None
+            and allowed_min > allowed_max
+        ):
             raise ValueError("Allowed minimum may not be larger than allowed maximum!")
 
         self._value = value
@@ -275,7 +290,11 @@ class BoundedInt(numbers.Integral):
 
     def __add__(self, other: int | BoundedInt) -> BoundedInt:
         other_value = self._unwrap_atomic(other)
-        return BoundedInt(self._value + other_value, allowed_min=self._allowed_min, allowed_max=self._allowed_max)
+        return BoundedInt(
+            self._value + other_value,
+            allowed_min=self._allowed_min,
+            allowed_max=self._allowed_max,
+        )
 
     def __and__(self, other: Any) -> Any:
         other_value = self._unwrap_atomic(other)
@@ -319,10 +338,16 @@ class BoundedInt(numbers.Integral):
 
     def __mul__(self, other: Any) -> BoundedInt:
         other_value = self._unwrap_atomic(other)
-        return BoundedInt(self._value * other_value, allowed_min=self._allowed_min, allowed_max=self._allowed_max)
+        return BoundedInt(
+            self._value * other_value,
+            allowed_min=self._allowed_min,
+            allowed_max=self._allowed_max,
+        )
 
     def __neg__(self) -> BoundedInt:
-        return BoundedInt(-self._value, allowed_min=self._allowed_min, allowed_max=self._allowed_max)
+        return BoundedInt(
+            -self._value, allowed_min=self._allowed_min, allowed_max=self._allowed_max
+        )
 
     def __or__(self, other: Any) -> Any:
         other_value = self._unwrap_atomic(other)
@@ -332,10 +357,14 @@ class BoundedInt(numbers.Integral):
         return +self._value
 
     def __pow__(self, exponent: Any, modulus: Union[Any, None] = ...) -> BoundedInt:
-        res = self._value ** exponent
+        res = self._value**exponent
         if res != int(res):
-            raise ValueError(f"Power not support for type BoundedInt with argument {exponent}")
-        return BoundedInt(res, allowed_min=self._allowed_min, allowed_max=self._allowed_max)
+            raise ValueError(
+                f"Power not support for type BoundedInt with argument {exponent}"
+            )
+        return BoundedInt(
+            res, allowed_min=self._allowed_min, allowed_max=self._allowed_max
+        )
 
     def __radd__(self, other: Any) -> Any:
         other_value = self._unwrap_atomic(other)
@@ -370,7 +399,7 @@ class BoundedInt(numbers.Integral):
 
     def __rpow__(self, base: Any) -> Any:
         other_value = self._unwrap_atomic(base)
-        return other_value ** self._value
+        return other_value**self._value
 
     def __rrshift__(self, other: Any) -> Any:
         other_value = self._unwrap_atomic(other)

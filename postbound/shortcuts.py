@@ -1,4 +1,5 @@
 """Shortcuts provide simple methods to generate instances of different PostBOUND objects, mostly for REPL contexts."""
+
 from __future__ import annotations
 
 from . import qal

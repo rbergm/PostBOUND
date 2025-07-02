@@ -180,11 +180,18 @@ from ._qal import (
     SetQuery,
     SelectStatement,
     SqlStatement,
-    build_query
+    build_query,
 )
 from .parser import DBCatalog
 from .formatter import format_quick
-from .._core import TableReference, ColumnReference, UnboundColumnError, VirtualTableError, quote, normalize
+from .._core import (
+    TableReference,
+    ColumnReference,
+    UnboundColumnError,
+    VirtualTableError,
+    quote,
+    normalize,
+)
 
 
 __all__ = [
@@ -275,13 +282,17 @@ __all__ = [
     "quote",
     "normalize",
     "parse_query",
-    "parse_full_query"
+    "parse_full_query",
 ]
 
 
-def parse_query(query: str, *, include_hints: bool = True,
-                bind_columns: Optional[bool] = None,
-                db_schema: Optional[DBCatalog] = None) -> SqlQuery:
+def parse_query(
+    query: str,
+    *,
+    include_hints: bool = True,
+    bind_columns: Optional[bool] = None,
+    db_schema: Optional[DBCatalog] = None,
+) -> SqlQuery:
     """Parses a query string into a proper `SqlQuery` object.
 
     During parsing, the appropriate type of SQL query (i.e. with implicit, explicit or mixed *FROM* clause) will be
@@ -315,12 +326,22 @@ def parse_query(query: str, *, include_hints: bool = True,
         The parsed SQL query.
     """
     from .parser import parse_query as parse_worker
-    return parse_worker(query, accept_set_query=False, include_hints=include_hints,
-                        bind_columns=bind_columns, db_schema=db_schema)
+
+    return parse_worker(
+        query,
+        accept_set_query=False,
+        include_hints=include_hints,
+        bind_columns=bind_columns,
+        db_schema=db_schema,
+    )
 
 
-def parse_full_query(statement: str, *, bind_columns: Optional[bool] = None,
-                     db_schema: Optional[DBCatalog] = None) -> SelectStatement:
+def parse_full_query(
+    statement: str,
+    *,
+    bind_columns: Optional[bool] = None,
+    db_schema: Optional[DBCatalog] = None,
+) -> SelectStatement:
     """This method is very similar to `parse_query`, but it also support set queries (i.e. queries with **UNION**, etc.).
 
     See Also
@@ -328,5 +349,11 @@ def parse_full_query(statement: str, *, bind_columns: Optional[bool] = None,
     parse_query : The simpler version of this method that only supports "plain" queries without set operations.
     """
     from .parser import parse_query as parse_worker
-    return parse_worker(statement, accept_set_query=True, include_hints=True,
-                        bind_columns=bind_columns, db_schema=db_schema)
+
+    return parse_worker(
+        statement,
+        accept_set_query=True,
+        include_hints=True,
+        bind_columns=bind_columns,
+        db_schema=db_schema,
+    )

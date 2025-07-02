@@ -38,8 +38,11 @@ pipeline.build()
 # for us. Take a look at the dedicated example for more details on the benchmarking tools.
 # Notice that we use the online-learning capabilities of TONIC to update the underlying QEP-S model once an optimized query has
 # been executed
-result_df = pb.optimize_and_execute_workload(test_queries, pipeline,
-                                             post_process=lambda res: tonic_recommender.simulate_feedback(res.query))
+result_df = pb.optimize_and_execute_workload(
+    test_queries,
+    pipeline,
+    post_process=lambda res: tonic_recommender.simulate_feedback(res.query),
+)
 
 print("Benchmark results:")
 print(result_df)

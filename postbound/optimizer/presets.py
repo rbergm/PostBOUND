@@ -2,6 +2,7 @@
 
 The current design of the presets is targeted at the `MultiStageOptimizationPipeline`, since this one requires the most setup.
 """
+
 from __future__ import annotations
 
 from typing import Literal, Optional
@@ -10,8 +11,9 @@ from .policies import cardinalities
 from .strategies import ues, native
 from .._pipelines import (
     OptimizationSettings,
-    JoinOrderOptimization, PhysicalOperatorSelection,
-    OptimizationPreCheck
+    JoinOrderOptimization,
+    PhysicalOperatorSelection,
+    OptimizationPreCheck,
 )
 from .. import db
 from ..qal import parser
@@ -37,7 +39,9 @@ def apply_standard_system_options(database: Optional[db.Database] = None) -> Non
         The database that should be configured. Defaults to ``None``, in which case the system is loaded from the
         `DatabasePool`.
     """
-    database = database if database else db.DatabasePool.get_instance().current_database()
+    database = (
+        database if database else db.DatabasePool.get_instance().current_database()
+    )
     database.cache_enabled = False
     database.statistics().emulated = True
     database.statistics().cache_enabled = True
@@ -60,7 +64,9 @@ class UESOptimizationSettings(OptimizationSettings):
     """
 
     def __init__(self, database: Optional[db.Database] = None):
-        self.database = database if database else db.DatabasePool.get_instance().current_database()
+        self.database = (
+            database if database else db.DatabasePool.get_instance().current_database()
+        )
 
     def query_pre_check(self) -> Optional[OptimizationPreCheck]:
         return ues.UESOptimizationPreCheck
@@ -70,11 +76,13 @@ class UESOptimizationSettings(OptimizationSettings):
         join_cardinality_estimator = ues.UESJoinBoundEstimator()
         subquery_policy = ues.UESSubqueryGenerationPolicy()
         stats_container = ues.MaxFrequencyStatsContainer(self.database.statistics())
-        enumerator = ues.UESJoinOrderOptimizer(base_table_estimation=base_table_estimator,
-                                               join_estimation=join_cardinality_estimator,
-                                               subquery_policy=subquery_policy,
-                                               stats_container=stats_container,
-                                               database=self.database)
+        enumerator = ues.UESJoinOrderOptimizer(
+            base_table_estimation=base_table_estimator,
+            join_estimation=join_cardinality_estimator,
+            subquery_policy=subquery_policy,
+            stats_container=stats_container,
+            database=self.database,
+        )
         return enumerator
 
     def build_physical_operator_selection(self) -> Optional[PhysicalOperatorSelection]:
@@ -90,6 +98,7 @@ class NativeOptimizationSettings(OptimizationSettings):
         The database from which the query plans should be retrieved. Defaults to ``None``, in which case the database will be
         inferred from the `DatabasePool`.
     """
+
     def __init__(self, database: Optional[db.Database] = None) -> None:
         self.database = database
 
@@ -100,7 +109,9 @@ class NativeOptimizationSettings(OptimizationSettings):
         return native.NativePhysicalOperatorSelection(self.database)
 
 
-def fetch(key: Literal["ues", "native"], *, database: Optional[db.Database] = None) -> OptimizationSettings:
+def fetch(
+    key: Literal["ues", "native"], *, database: Optional[db.Database] = None
+) -> OptimizationSettings:
     """Provides the optimization settings registered under a specific key.
 
     Currently supported settings are:

@@ -1,4 +1,5 @@
 """Provides "optimization" strategies that generate random query plans."""
+
 from __future__ import annotations
 
 import random
@@ -9,16 +10,28 @@ import networkx as nx
 
 from .. import validation
 from .._jointree import JoinTree, to_query_plan
-from .._hints import PhysicalOperatorAssignment, JoinOperatorAssignment, ScanOperatorAssignment
+from .._hints import (
+    PhysicalOperatorAssignment,
+    JoinOperatorAssignment,
+    ScanOperatorAssignment,
+)
 from ..._core import JoinOperator, ScanOperator, PhysicalOperator
 from ..._qep import QueryPlan
-from ..._stages import JoinOrderOptimization, PhysicalOperatorSelection, CompleteOptimizationAlgorithm
+from ..._stages import (
+    JoinOrderOptimization,
+    PhysicalOperatorSelection,
+    CompleteOptimizationAlgorithm,
+)
 from ... import db, qal
 from ...qal import TableReference
 from ...util import networkx as nx_utils
 
 
-def _merge_nodes(query: qal.SqlQuery, start: JoinTree | TableReference, end: JoinTree | TableReference) -> JoinTree:
+def _merge_nodes(
+    query: qal.SqlQuery,
+    start: JoinTree | TableReference,
+    end: JoinTree | TableReference,
+) -> JoinTree:
     """Provides a join tree that combines two specific trees or tables.
 
     This is a shortcut method to merge arbitrary tables or trees without having to check whether a table-based or tree-based
@@ -45,7 +58,12 @@ def _merge_nodes(query: qal.SqlQuery, start: JoinTree | TableReference, end: Joi
     return start.join_with(end)
 
 
-def _sample_join_graph(query: qal.SqlQuery, join_graph: nx.Graph, *, base_table: Optional[TableReference] = None) -> JoinTree:
+def _sample_join_graph(
+    query: qal.SqlQuery,
+    join_graph: nx.Graph,
+    *,
+    base_table: Optional[TableReference] = None,
+) -> JoinTree:
     """Generates a random join order for the given join graph.
 
     Parameters
@@ -77,19 +95,31 @@ def _sample_join_graph(query: qal.SqlQuery, join_graph: nx.Graph, *, base_table:
     if base_table is not None:
         candidate_edges: list[TableReference] = list(join_graph.adj[base_table])
         initial_join_partner = random.choice(candidate_edges)
-        right, left = (base_table, initial_join_partner) if random.random() < 0.5 else (initial_join_partner, base_table)
+        right, left = (
+            (base_table, initial_join_partner)
+            if random.random() < 0.5
+            else (initial_join_partner, base_table)
+        )
         join_tree = _merge_nodes(query, right, left)
-        join_graph = nx.contracted_nodes(join_graph, base_table, initial_join_partner, self_loops=False)
+        join_graph = nx.contracted_nodes(
+            join_graph, base_table, initial_join_partner, self_loops=False
+        )
         join_graph = nx.relabel_nodes(join_graph, {base_table: join_tree})
 
     while len(join_graph.nodes) > 1:
         join_predicates = list(join_graph.edges)
         next_edge = random.choice(join_predicates)
         start_node, target_node = next_edge
-        right, left = (start_node, target_node) if random.random() < 0.5 else (target_node, start_node)
+        right, left = (
+            (start_node, target_node)
+            if random.random() < 0.5
+            else (target_node, start_node)
+        )
         join_tree = _merge_nodes(query, right, left)
 
-        join_graph = nx.contracted_nodes(join_graph, start_node, target_node, self_loops=False)
+        join_graph = nx.contracted_nodes(
+            join_graph, start_node, target_node, self_loops=False
+        )
         join_graph = nx.relabel_nodes(join_graph, {start_node: join_tree})
 
     final_node: JoinTree = list(join_graph.nodes)[0]
@@ -118,13 +148,18 @@ class RandomJoinOrderGenerator:
     For now, the underlying algorithm is limited to queries without cross-products.
     """
 
-    def __init__(self, eliminate_duplicates: bool = False, *,
-                 tree_structure: Literal["bushy", "right-deep", "left-deep"] = "bushy") -> None:
+    def __init__(
+        self,
+        eliminate_duplicates: bool = False,
+        *,
+        tree_structure: Literal["bushy", "right-deep", "left-deep"] = "bushy",
+    ) -> None:
         self._eliminate_duplicates = eliminate_duplicates
         self._tree_structure = tree_structure
 
-    def random_join_orders_for(self, query: qal.SqlQuery, *,
-                               base_table: Optional[TableReference] = None) -> Generator[JoinTree, None, None]:
+    def random_join_orders_for(
+        self, query: qal.SqlQuery, *, base_table: Optional[TableReference] = None
+    ) -> Generator[JoinTree, None, None]:
         """Provides a generator that successively provides join orders at random.
 
         Parameters
@@ -159,11 +194,15 @@ class RandomJoinOrderGenerator:
             while True:
                 yield join_tree
         elif not nx.is_connected(join_graph):
-            raise ValueError("Cross products are not yet supported for random join order generation!")
+            raise ValueError(
+                "Cross products are not yet supported for random join order generation!"
+            )
 
-        join_order_generator = (self._bushy_join_orders(query, join_graph, base_table=base_table)
-                                if self._tree_structure == "bushy"
-                                else self._linear_join_orders(query, join_graph, base_table=base_table))
+        join_order_generator = (
+            self._bushy_join_orders(query, join_graph, base_table=base_table)
+            if self._tree_structure == "bushy"
+            else self._linear_join_orders(query, join_graph, base_table=base_table)
+        )
 
         join_order_hashes = set()
         for current_join_order in join_order_generator:
@@ -176,8 +215,13 @@ class RandomJoinOrderGenerator:
 
             yield current_join_order
 
-    def _linear_join_orders(self, query: qal.SqlQuery, join_graph: nx.Graph, *,
-                            base_table: Optional[TableReference] = None) -> Generator[JoinTree, None, None]:
+    def _linear_join_orders(
+        self,
+        query: qal.SqlQuery,
+        join_graph: nx.Graph,
+        *,
+        base_table: Optional[TableReference] = None,
+    ) -> Generator[JoinTree, None, None]:
         """Handler method to generate left-deep or right-deep join orders.
 
         The specific kind of join orders is inferred based on the `_tree_structure` attribute.
@@ -198,14 +242,24 @@ class RandomJoinOrderGenerator:
         """
         direction = "inner" if self._tree_structure == "left-deep" else "outer"
         while True:
-            join_path = [node for node in nx_utils.nx_random_walk(join_graph, starting_node=base_table)]
+            join_path = [
+                node
+                for node in nx_utils.nx_random_walk(
+                    join_graph, starting_node=base_table
+                )
+            ]
             join_tree = JoinTree()
             for table in join_path:
                 join_tree = join_tree.join_with(table, partner_direction=direction)
             yield join_tree
 
-    def _bushy_join_orders(self, query: qal.SqlQuery, join_graph: nx.Graph, *,
-                           base_table: Optional[TableReference] = None) -> Generator[JoinTree, None, None]:
+    def _bushy_join_orders(
+        self,
+        query: qal.SqlQuery,
+        join_graph: nx.Graph,
+        *,
+        base_table: Optional[TableReference] = None,
+    ) -> Generator[JoinTree, None, None]:
         """Handler method to generate bushy join orders.
 
         Notice that linear join orders are considered a subclass of bushy join trees. Hence, bushy join orders may occasionally
@@ -254,8 +308,11 @@ class RandomJoinOrderOptimizer(JoinOrderOptimization):
         return next(self._generator.random_join_orders_for(query))
 
     def describe(self) -> dict:
-        return {"name": "random", "structure": self._generator._tree_structure,
-                "eliminates_duplicates": self._generator._eliminate_duplicates}
+        return {
+            "name": "random",
+            "structure": self._generator._tree_structure,
+            "eliminates_duplicates": self._generator._eliminate_duplicates,
+        }
 
     def pre_check(self) -> validation.OptimizationPreCheck:
         return validation.CrossProductPreCheck()
@@ -299,23 +356,42 @@ class RandomOperatorGenerator:
         If both scans and joins are disabled
     """
 
-    def __init__(self, scan_operators: Optional[Iterable[ScanOperator]] = None,
-                 join_operators: Optional[Iterable[JoinOperator]] = None, *,
-                 include_scans: bool = True, include_joins: bool = True,
-                 eliminate_duplicates: bool = False, database: Optional[db.Database] = None) -> None:
+    def __init__(
+        self,
+        scan_operators: Optional[Iterable[ScanOperator]] = None,
+        join_operators: Optional[Iterable[JoinOperator]] = None,
+        *,
+        include_scans: bool = True,
+        include_joins: bool = True,
+        eliminate_duplicates: bool = False,
+        database: Optional[db.Database] = None,
+    ) -> None:
         if not include_joins and not include_scans:
             raise ValueError("Cannot exclude both join hints and scan hints")
-        self._db = database if database is not None else db.DatabasePool.get_instance().current_database()
+        self._db = (
+            database
+            if database is not None
+            else db.DatabasePool.get_instance().current_database()
+        )
         self._eliminate_duplicates = eliminate_duplicates
         self._include_scans = include_scans
         self._include_joins = include_joins
         allowed_scan_ops = scan_operators if scan_operators else ScanOperator
         allowed_join_ops = join_operators if join_operators else JoinOperator
-        self.allowed_scan_ops = frozenset(scan_op for scan_op in allowed_scan_ops if self._db.hinting().supports_hint(scan_op))
-        self.allowed_join_ops = frozenset(join_op for join_op in allowed_join_ops if self._db.hinting().supports_hint(join_op))
+        self.allowed_scan_ops = frozenset(
+            scan_op
+            for scan_op in allowed_scan_ops
+            if self._db.hinting().supports_hint(scan_op)
+        )
+        self.allowed_join_ops = frozenset(
+            join_op
+            for join_op in allowed_join_ops
+            if self._db.hinting().supports_hint(join_op)
+        )
 
-    def random_operator_assignments_for(self, query: qal.SqlQuery, join_order: JoinTree
-                                        ) -> Generator[PhysicalOperatorAssignment, None, None]:
+    def random_operator_assignments_for(
+        self, query: qal.SqlQuery, join_order: JoinTree
+    ) -> Generator[PhysicalOperatorAssignment, None, None]:
         """Produces a generator for random operator assignments of the allowed operators.
 
         The precise structure of the operator assignments depends on the service configuration. Take a look at the class
@@ -344,12 +420,16 @@ class RandomOperatorGenerator:
             if self._include_joins:
                 for join in join_order.iterjoins():
                     selected_operator = random.choice(allowed_joins)
-                    current_assignment.set_join_operator(JoinOperatorAssignment(selected_operator, join.tables()))
+                    current_assignment.set_join_operator(
+                        JoinOperatorAssignment(selected_operator, join.tables())
+                    )
 
             if self._include_scans:
                 for table in join_order.tables():
                     selected_operator = random.choice(allowed_scans)
-                    current_assignment.set_scan_operator(ScanOperatorAssignment(selected_operator, table))
+                    current_assignment.set_scan_operator(
+                        ScanOperatorAssignment(selected_operator, table)
+                    )
 
             if self._eliminate_duplicates:
                 current_hash = hash(current_assignment)
@@ -392,14 +472,23 @@ class RandomOperatorOptimizer(PhysicalOperatorSelection):
         generator_args = generator_args if generator_args is not None else {}
         self._generator = RandomOperatorGenerator(**generator_args)
 
-    def select_physical_operators(self, query: qal.SqlQuery, join_order: Optional[JoinTree]) -> PhysicalOperatorAssignment:
+    def select_physical_operators(
+        self, query: qal.SqlQuery, join_order: Optional[JoinTree]
+    ) -> PhysicalOperatorAssignment:
         return next(self._generator.random_operator_assignments_for(query, join_order))
 
     def describe(self) -> dict:
-        allowed_scans = self._generator.allowed_scan_ops if self._generator._include_scans else []
-        allowed_joins = self._generator.allowed_join_ops if self._generator._include_joins else []
-        return {"name": "random", "allowed_operators": {"scans": allowed_scans, "joins": allowed_joins},
-                "eliminates_duplicates": self._generator._eliminate_duplicates}
+        allowed_scans = (
+            self._generator.allowed_scan_ops if self._generator._include_scans else []
+        )
+        allowed_joins = (
+            self._generator.allowed_join_ops if self._generator._include_joins else []
+        )
+        return {
+            "name": "random",
+            "allowed_operators": {"scans": allowed_scans, "joins": allowed_joins},
+            "eliminates_duplicates": self._generator._eliminate_duplicates,
+        }
 
     def pre_check(self) -> validation.OptimizationPreCheck:
         return validation.SupportedHintCheck(self._generator.necessary_hints())
@@ -433,8 +522,14 @@ class RandomPlanGenerator:
     RandomOperatorGenerator
     """
 
-    def __init__(self, *, eliminate_duplicates: bool = False, join_order_args: Optional[dict] = None,
-                 operator_args: Optional[dict] = None, database: Optional[db.Database] = None) -> None:
+    def __init__(
+        self,
+        *,
+        eliminate_duplicates: bool = False,
+        join_order_args: Optional[dict] = None,
+        operator_args: Optional[dict] = None,
+        database: Optional[db.Database] = None,
+    ) -> None:
         join_order_args = dict(join_order_args) if join_order_args is not None else {}
         operator_args = dict(operator_args) if operator_args is not None else {}
         if "database" not in operator_args:
@@ -464,7 +559,11 @@ class RandomPlanGenerator:
         plan_hashes = set()
         while True:
             join_order = next(join_order_generator)
-            operator_generator = self._operator_generator.random_operator_assignments_for(query, join_order)
+            operator_generator = (
+                self._operator_generator.random_operator_assignments_for(
+                    query, join_order
+                )
+            )
             physical_operators = next(operator_generator)
 
             query_plan = to_query_plan(join_order, physical_operators)
@@ -507,22 +606,46 @@ class RandomPlanOptimizer(CompleteOptimizationAlgorithm):
     provide its own duplicate elimination.
     """
 
-    def __init__(self, *, join_order_args: Optional[dict] = None,
-                 operator_args: Optional[dict] = None, database: Optional[db.Database] = None) -> None:
+    def __init__(
+        self,
+        *,
+        join_order_args: Optional[dict] = None,
+        operator_args: Optional[dict] = None,
+        database: Optional[db.Database] = None,
+    ) -> None:
         super().__init__()
-        self._generator = RandomPlanGenerator(join_order_args=join_order_args, operator_args=operator_args, database=database)
+        self._generator = RandomPlanGenerator(
+            join_order_args=join_order_args,
+            operator_args=operator_args,
+            database=database,
+        )
 
     def optimize_query(self, query: qal.SqlQuery) -> QueryPlan:
         return next(self._generator.random_plans_for(query))
 
     def describe(self) -> dict:
-        scan_ops = (self._generator._operator_generator.allowed_scan_ops if self._generator._operator_generator._include_scans
-                    else [])
-        join_ops = (self._generator._operator_generator.allowed_join_ops if self._generator._operator_generator._include_joins
-                    else [])
-        return {"name": "random", "join_order": {"tree_structure": self._generator._join_order_generator._tree_structure},
-                "physical_operators": {"scans": scan_ops, "joins": join_ops}}
+        scan_ops = (
+            self._generator._operator_generator.allowed_scan_ops
+            if self._generator._operator_generator._include_scans
+            else []
+        )
+        join_ops = (
+            self._generator._operator_generator.allowed_join_ops
+            if self._generator._operator_generator._include_joins
+            else []
+        )
+        return {
+            "name": "random",
+            "join_order": {
+                "tree_structure": self._generator._join_order_generator._tree_structure
+            },
+            "physical_operators": {"scans": scan_ops, "joins": join_ops},
+        }
 
     def pre_check(self) -> validation.OptimizationPreCheck:
-        return validation.CompoundCheck(validation.CrossProductPreCheck(),
-                                        validation.SupportedHintCheck(self._generator._operator_generator.necessary_hints()))
+        return validation.CompoundCheck(
+            validation.CrossProductPreCheck(),
+            validation.SupportedHintCheck(
+                self._generator._operator_generator.necessary_hints()
+            ),
+        )

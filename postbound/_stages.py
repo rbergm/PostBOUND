@@ -1,4 +1,3 @@
-
 from __future__ import annotations
 
 import abc
@@ -80,7 +79,9 @@ class CardinalityEstimator(abc.ABC):
     """
 
     @abc.abstractmethod
-    def calculate_estimate(self, query: SqlQuery, intermediate: TableReference | Iterable[TableReference]) -> Cardinality:
+    def calculate_estimate(
+        self, query: SqlQuery, intermediate: TableReference | Iterable[TableReference]
+    ) -> Cardinality:
         """Determines the cardinality of a specific intermediate.
 
         Parameters
@@ -253,8 +254,13 @@ class PlanEnumerator(abc.ABC):
     """
 
     @abc.abstractmethod
-    def generate_execution_plan(self, query: SqlQuery, *, cost_model: CostModel,
-                                cardinality_estimator: CardinalityEstimator) -> QueryPlan:
+    def generate_execution_plan(
+        self,
+        query: SqlQuery,
+        *,
+        cost_model: CostModel,
+        cardinality_estimator: CardinalityEstimator,
+    ) -> QueryPlan:
         """Computes the optimal plan to execute the given query.
 
         Parameters
@@ -394,7 +400,11 @@ class JoinOrderOptimizationError(RuntimeError):
     """
 
     def __init__(self, query: SqlQuery, message: str = "") -> None:
-        super().__init__(f"Join order optimization failed for query {query}" if not message else message)
+        super().__init__(
+            f"Join order optimization failed for query {query}"
+            if not message
+            else message
+        )
         self.query = query
 
 
@@ -409,7 +419,9 @@ class PhysicalOperatorSelection(abc.ABC):
     """
 
     @abc.abstractmethod
-    def select_physical_operators(self, query: SqlQuery, join_order: Optional[JoinTree]) -> PhysicalOperatorAssignment:
+    def select_physical_operators(
+        self, query: SqlQuery, join_order: Optional[JoinTree]
+    ) -> PhysicalOperatorAssignment:
         """Performs the operator assignment.
 
         Parameters
@@ -478,8 +490,12 @@ class ParameterGeneration(abc.ABC):
     """
 
     @abc.abstractmethod
-    def generate_plan_parameters(self, query: SqlQuery, join_order: Optional[JoinTree],
-                                 operator_assignment: Optional[PhysicalOperatorAssignment]) -> PlanParameterization:
+    def generate_plan_parameters(
+        self,
+        query: SqlQuery,
+        join_order: Optional[JoinTree],
+        operator_assignment: Optional[PhysicalOperatorAssignment],
+    ) -> PlanParameterization:
         """Executes the actual parameterization.
 
         Parameters
@@ -549,8 +565,7 @@ class IncrementalOptimizationStep(abc.ABC):
     """
 
     @abc.abstractmethod
-    def optimize_query(self, query: SqlQuery,
-                       current_plan: QueryPlan) -> QueryPlan:
+    def optimize_query(self, query: SqlQuery, current_plan: QueryPlan) -> QueryPlan:
         """Determines the next query plan.
 
         If no further optimization steps are configured in the pipeline, this is also the final query plan.
@@ -627,19 +642,37 @@ class _CompleteAlgorithmEmulator(CompleteOptimizationAlgorithm):
         If all stages are ``None``.
 
     """
-    def __init__(self, database: Optional[db.Database] = None, *,
-                 join_order_optimizer: Optional[JoinOrderOptimization] = None,
-                 operator_selection: Optional[PhysicalOperatorSelection] = None,
-                 plan_parameterization: Optional[ParameterGeneration] = None) -> None:
+
+    def __init__(
+        self,
+        database: Optional[db.Database] = None,
+        *,
+        join_order_optimizer: Optional[JoinOrderOptimization] = None,
+        operator_selection: Optional[PhysicalOperatorSelection] = None,
+        plan_parameterization: Optional[ParameterGeneration] = None,
+    ) -> None:
         super().__init__()
-        self.database = database if database is not None else db.DatabasePool.get_instance().current_database()
-        if all(stage is None for stage in (join_order_optimizer, operator_selection, plan_parameterization)):
+        self.database = (
+            database
+            if database is not None
+            else db.DatabasePool.get_instance().current_database()
+        )
+        if all(
+            stage is None
+            for stage in (
+                join_order_optimizer,
+                operator_selection,
+                plan_parameterization,
+            )
+        ):
             raise ValueError("Exactly one stage has to be given")
         self._join_order_optimizer = join_order_optimizer
         self._operator_selection = operator_selection
         self._plan_parameterization = plan_parameterization
 
-    def stage(self) -> JoinOrderOptimization | PhysicalOperatorSelection | ParameterGeneration:
+    def stage(
+        self,
+    ) -> JoinOrderOptimization | PhysicalOperatorSelection | ParameterGeneration:
         """Provides the actually specified stage.
 
         Returns
@@ -647,20 +680,38 @@ class _CompleteAlgorithmEmulator(CompleteOptimizationAlgorithm):
         JoinOrderOptimization | PhysicalOperatorSelection | ParameterGeneration
             The optimization stage.
         """
-        return (self._join_order_optimizer if self._join_order_optimizer is not None
-                else (self._operator_selection if self._operator_selection is not None
-                      else self._plan_parameterization))
+        return (
+            self._join_order_optimizer
+            if self._join_order_optimizer is not None
+            else (
+                self._operator_selection
+                if self._operator_selection is not None
+                else self._plan_parameterization
+            )
+        )
 
     def optimize_query(self, query: SqlQuery) -> QueryPlan:
-        join_order = (self._join_order_optimizer.optimize_join_order(query)
-                      if self._join_order_optimizer is not None else None)
-        physical_operators = (self._operator_selection.select_physical_operators(query, None)
-                              if self._operator_selection is not None else None)
-        plan_params = (self._plan_parameterization.generate_plan_parameters(query, None, None)
-                       if self._plan_parameterization is not None else None)
-        hinted_query = self.database.hinting().generate_hints(query, join_order=join_order,
-                                                              physical_operators=physical_operators,
-                                                              plan_parameters=plan_params)
+        join_order = (
+            self._join_order_optimizer.optimize_join_order(query)
+            if self._join_order_optimizer is not None
+            else None
+        )
+        physical_operators = (
+            self._operator_selection.select_physical_operators(query, None)
+            if self._operator_selection is not None
+            else None
+        )
+        plan_params = (
+            self._plan_parameterization.generate_plan_parameters(query, None, None)
+            if self._plan_parameterization is not None
+            else None
+        )
+        hinted_query = self.database.hinting().generate_hints(
+            query,
+            join_order=join_order,
+            physical_operators=physical_operators,
+            plan_parameters=plan_params,
+        )
         return self.database.optimizer().query_plan(hinted_query)
 
     def describe(self) -> jsondict:
@@ -670,8 +721,11 @@ class _CompleteAlgorithmEmulator(CompleteOptimizationAlgorithm):
         return self.stage().pre_check()
 
 
-def as_complete_algorithm(stage: JoinOrderOptimization | PhysicalOperatorSelection | ParameterGeneration, *,
-                          database: Optional[db.Database] = None) -> CompleteOptimizationAlgorithm:
+def as_complete_algorithm(
+    stage: JoinOrderOptimization | PhysicalOperatorSelection | ParameterGeneration,
+    *,
+    database: Optional[db.Database] = None,
+) -> CompleteOptimizationAlgorithm:
     """Enables using a partial optimization stage in situations where a complete optimizer is expected.
 
     This emulation is achieved by using the partial stage to obtain a partial query plan. The target database system is then
@@ -697,8 +751,12 @@ def as_complete_algorithm(stage: JoinOrderOptimization | PhysicalOperatorSelecti
     join_order_optimizer = stage if isinstance(stage, JoinOrderOptimization) else None
     operator_selection = stage if isinstance(stage, PhysicalOperatorSelection) else None
     parameter_generation = stage if isinstance(stage, ParameterGeneration) else None
-    return _CompleteAlgorithmEmulator(database, join_order_optimizer=join_order_optimizer,
-                                      operator_selection=operator_selection, plan_parameterization=parameter_generation)
+    return _CompleteAlgorithmEmulator(
+        database,
+        join_order_optimizer=join_order_optimizer,
+        operator_selection=operator_selection,
+        plan_parameterization=parameter_generation,
+    )
 
 
 class CardinalityGenerator(ParameterGeneration, CardinalityEstimator, abc.ABC):
@@ -735,12 +793,15 @@ class CardinalityGenerator(ParameterGeneration, CardinalityEstimator, abc.ABC):
     intend to use if for workloads that contain cross products, you should overwrite the `generate_intermediates` method to
     produce exactly those (partial) joins that you want to allow.
     """
+
     def __init__(self, allow_cross_products: bool) -> None:
         super().__init__()
         self.allow_cross_products = allow_cross_products
 
     @abc.abstractmethod
-    def calculate_estimate(self, query: SqlQuery, tables: TableReference | Iterable[TableReference]) -> Cardinality:
+    def calculate_estimate(
+        self, query: SqlQuery, tables: TableReference | Iterable[TableReference]
+    ) -> Cardinality:
         """Determines the cardinality estimate for a specific intermediate result.
 
         Ideally this is the only functionality-related method that needs to be implemented by developers using the cardinality
@@ -761,7 +822,9 @@ class CardinalityGenerator(ParameterGeneration, CardinalityEstimator, abc.ABC):
         """
         raise NotImplementedError
 
-    def generate_intermediates(self, query: SqlQuery) -> Generator[frozenset[TableReference], None, None]:
+    def generate_intermediates(
+        self, query: SqlQuery
+    ) -> Generator[frozenset[TableReference], None, None]:
         """Provides all intermediate results of a query.
 
         The inclusion of cross-products between arbitrary tables can be configured via the `allow_cross_products` attribute.
@@ -782,9 +845,13 @@ class CardinalityGenerator(ParameterGeneration, CardinalityEstimator, abc.ABC):
         query is passed, no intermediates with tables from different partitions of the join graph are yielded.
         """
         for candidate_join in util.powerset(query.tables()):
-            if not candidate_join:  # skip empty set (which is an artefact of the powerset method)
+            if (
+                not candidate_join
+            ):  # skip empty set (which is an artefact of the powerset method)
                 continue
-            if not self.allow_cross_products and not query.predicates().joins_tables(candidate_join):
+            if not self.allow_cross_products and not query.predicates().joins_tables(
+                candidate_join
+            ):
                 continue
             yield frozenset(candidate_join)
 
@@ -812,8 +879,12 @@ class CardinalityGenerator(ParameterGeneration, CardinalityEstimator, abc.ABC):
                 parameterization.add_cardinality_hint(join, estimate)
         return parameterization
 
-    def generate_plan_parameters(self, query: SqlQuery, join_order: Optional[JoinTree],
-                                 operator_assignment: Optional[PhysicalOperatorAssignment]) -> PlanParameterization:
+    def generate_plan_parameters(
+        self,
+        query: SqlQuery,
+        join_order: Optional[JoinTree],
+        operator_assignment: Optional[PhysicalOperatorAssignment],
+    ) -> PlanParameterization:
         if join_order is None:
             return self.estimate_cardinalities(query)
 

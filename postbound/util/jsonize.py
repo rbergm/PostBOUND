@@ -7,6 +7,7 @@ current instance, e.g. a `dict` or a `list`.
 
 Sadly (or luckily?), the inverse conversion does not work because JSON does not store any type information.
 """
+
 from __future__ import annotations
 
 import abc

@@ -27,6 +27,7 @@ class ProcResult(str):
     exit_code : int
         The exit code of the process.
     """
+
     def __init__(self, out_data: str, err_data: str, exit_code: int) -> None:
         self.out_data = out_data
         self.err_data = err_data
@@ -45,7 +46,9 @@ class ProcResult(str):
     def raise_if_error(self) -> None:
         """Raises an exception if the process exited with a non-zero exit code."""
         if self.exit_code != 0:
-            raise RuntimeError(f"Process exited with code {self.exit_code}: '{self.err_data}'")
+            raise RuntimeError(
+                f"Process exited with code {self.exit_code}: '{self.err_data}'"
+            )
 
     def __bool__(self) -> bool:
         return self.exit_code == 0
@@ -57,7 +60,12 @@ class ProcResult(str):
         return self.out_data
 
 
-def run_cmd(cmd: str | Iterable[Any], *args, work_dir: Optional[str | pathlib.Path] = None, **kwargs) -> ProcResult:
+def run_cmd(
+    cmd: str | Iterable[Any],
+    *args,
+    work_dir: Optional[str | pathlib.Path] = None,
+    **kwargs,
+) -> ProcResult:
     """Executes an arbitrary external command.
 
     The command can be executed in an different working directory. After execution the working directory is restored.
