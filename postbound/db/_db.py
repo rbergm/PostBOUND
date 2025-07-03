@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import abc
 import atexit
+import collections
 import json
 import os
 import textwrap
@@ -31,21 +32,20 @@ import networkx as nx
 from .. import util
 from .._core import Cardinality
 from .._qep import QueryPlan
-from ..qal import (
-    TableReference,
-    ColumnReference,
-    SqlQuery,
-    VirtualTableError,
-    UnboundColumnError,
-)
 from ..optimizer import (
+    HintType,
     PhysicalOperator,
     PhysicalOperatorAssignment,
     PlanParameterization,
-    HintType,
 )
 from ..optimizer._jointree import JoinTree
-
+from ..qal import (
+    ColumnReference,
+    SqlQuery,
+    TableReference,
+    UnboundColumnError,
+    VirtualTableError,
+)
 
 ResultRow = tuple
 """Simple type alias to denote a single tuple from a result set."""
@@ -550,6 +550,13 @@ class Database(abc.ABC):
         return f"{self.database_name()} @ {self.database_system_name()} ({self.database_system_version()})"
 
 
+ForeignKeyRef = collections.namedtuple("ForeignKeyRef", ["fk_col", "referenced_col"])
+"""
+A foreign key references has a foreign key column `fk_col` (the first element) that requires a matching value in the
+`referenced_col` (the second element) of the target table.
+"""
+
+
 class DatabaseSchema(abc.ABC):
     """This interface provides access to different information about the logical structure of a database.
 
@@ -887,9 +894,8 @@ class DatabaseSchema(abc.ABC):
 
         In addition, edges are used to model foreign key constraints. Each edge points from the table that contains the foreign
         key (column *y* in the example in `foreign_keys_on`) to the table that is referenced by the foreign key (*x* in the
-        example in `foreign_keys_on`). Edges contain two attributes:
-        - `referenced_col`: the column in the referenced table
-        - `fk_col`: the column in the table that contains the foreign key
+        example in `foreign_keys_on`). Edges contain an attribute `foreign_keys` with a list of the foreign key
+        relationships. Each such constraint is described by a `ForeignKeyRef`.
         """
         g = nx.DiGraph()
         all_columns: set[ColumnReference] = set()
@@ -908,9 +914,13 @@ class DatabaseSchema(abc.ABC):
         for col in all_columns:
             foreign_keys = self.foreign_keys_on(col)
             for fk_target in foreign_keys:
-                g.add_edge(
-                    col.table, fk_target.table, referenced_col=fk_target, fk_col=col
-                )
+                fk_constraint = ForeignKeyRef(fk_target, col)
+                current_edge = g.edges.get([col.table, fk_target.table])
+
+                if current_edge:
+                    current_edge["foreign_keys"].append(fk_constraint)
+                else:
+                    g.add_edge(col.table, fk_target.table, foreign_keys=[fk_constraint])
 
         return g
 
