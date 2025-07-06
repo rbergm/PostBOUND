@@ -788,6 +788,42 @@ def job(file_encoding: str = "utf-8") -> Workload[str]:
     return job_workload
 
 
+def job_light(file_encoding: str = "utf-8") -> Workload[str]:
+    """Reads the JOB-light benchmark, as shipped with the PostBOUND repository.
+
+    Queries will be read from the JOB directory relative to `workloads_base_dir`. The expected layout is:
+    ``<workloads_base_dir>/JOB-Light-Queries/<queries>``. Labels are inferred from the file names, i.e. queries are
+    accessible as ``1``, ``2``, ``3`` and so on.
+
+    Parameters
+    ----------
+    file_encoding : str, optional
+        The encoding of the query files, by default UTF-8.
+
+    Returns
+    -------
+    Workload[str]
+        The workload
+
+    Raises
+    ------
+    ValueError
+        If the workload could not be loaded from the expected location
+
+    References
+    ----------
+
+    .. Andreas Kipf et al.: "Learned Cardinalities: Estimating Correlated Joinswith Deep Learning" (CIDR'2019)
+    """
+    job_light_dir = os.path.join(workloads_base_dir, "JOB-Light-Queries")
+    # JOB-Light only uses aliases column references, so no need for explicit binding
+    job_light_workload = Workload.read(
+        job_light_dir, name="JOB-Light", file_encoding=file_encoding, bind_columns=False
+    )
+    _assert_workload_loaded(job_light_workload, job_light_dir)
+    return job_light_workload
+
+
 def ssb(
     file_encoding: str = "utf-8", *, bind_columns: Optional[bool] = None
 ) -> Workload[str]:

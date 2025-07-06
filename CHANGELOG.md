@@ -40,6 +40,27 @@ stability. Since we are not ready for the 1.0 release yet, this does not matter 
 
 ---
 
+# ➡ Version 0.16.0 _(current)_
+
+### 🐣 New features
+- Added JOB-light as a pre-defined workload
+
+### 💀 Breaking changes
+- _None_
+
+### 📰 Updates
+- _None_
+
+### 🏥 Fixes
+- _None_
+
+### 🪲 Known bugs
+- 🐘 `PostgresConfiguration` cannot be passed directly to `execute_query()` or a manual psycopg cursor. It seems that psycopg
+  does not recognize *UserString* as a valid string and raises an error. As a workaround, make sure to call *str()* on the
+  configuration before trying to execute it. `apply_configuration()` does so automatically.
+
+---
+
 
 # 🛣 Roadmap
 
