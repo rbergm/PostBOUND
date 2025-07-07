@@ -92,9 +92,9 @@ else
     echo ".. Stats source directory does not exist, re-creating"
     echo ".. Fetching Stats data"
     mkdir $STATS_DIR
-    curl -o $STATS_DIR/csv.zip "https://db4701.inf.tu-dresden.de:8443/index.php/s/JSeYtLidKkaERGR/download?path=%2F&files=csv.zip"
-    curl -o $STATS_DIR/schema.sql "https://db4701.inf.tu-dresden.de:8443/index.php/s/JSeYtLidKkaERGR/download?path=%2F&files=schema.sql"
-    curl -o $STATS_DIR/import.sql "https://db4701.inf.tu-dresden.de:8443/index.php/s/JSeYtLidKkaERGR/download?path=%2F&files=import.sql"
+    curl -o $STATS_DIR/csv.zip "https://db4701.inf.tu-dresden.de:8443/public.php/dav/files/p8eRRMEERQE9nXC"
+    curl -o $STATS_DIR/schema.sql "https://db4701.inf.tu-dresden.de:8443/public.php/dav/files/q7jcDYDSPqsDJ8j"
+    curl -o $STATS_DIR/import.sql "https://db4701.inf.tu-dresden.de:8443/public.php/dav/files/9LPBERBcwtcqg3M"
 
     echo ".. Extracting Stats data"
     unzip $STATS_DIR/csv.zip -d $STATS_DIR
