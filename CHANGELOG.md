@@ -69,6 +69,7 @@ Currently, we plan to implement the following features in the future (in no part
 - Fixed non-deterministic edge annotations in the schema graph. The old implementation implicitly assumed that there could only
   be a single foreign key reference between two tables. If there were multiple such references, the foreign key constraint that
   appears in the edge annotation was "random". To fix this, we now store an explicit list of foreign keys in the edges.
+- Fixed query plan JSON serialization/deserialization not respecting custom data correctly
 
 ### 🪲 Known bugs
 - 🐘 `PostgresConfiguration` cannot be passed directly to `execute_query()` or a manual psycopg cursor. It seems that psycopg

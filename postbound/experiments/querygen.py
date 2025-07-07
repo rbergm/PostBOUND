@@ -125,6 +125,7 @@ def _generate_filter(
     )
     if not candidate_values:
         return None
+    candidate_values = util.enlist(candidate_values)
 
     selected_value = random.choice(candidate_values)
     selected_operator = random.choice(candidate_operators)
