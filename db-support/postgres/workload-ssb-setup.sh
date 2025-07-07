@@ -121,7 +121,12 @@ else
     export DSS_CONFIG="$TARGET_DIR/ssb-kit/dbgen"
     export DSS_QUERY="$DSS_CONFIG/queries"
     export DSS_PATH="$TARGET_DIR/ssb_data_$SF"
-    sed -i "4s#.*#\\\set path '$TARGET_DIR/ssb_data_$SF/'#" ssb-kit/scripts/pg_load.sql
+    
+    if [[ "$OSTYPE" == "darwin"* ]]; then
+        sed -i '' "4s#.*#\\\set path '$TARGET_DIR/ssb_data_$SF/'#" ssb-kit/scripts/pg_load.sql
+    else
+        sed -i "4s#.*#\\\set path '$TARGET_DIR/ssb_data_$SF/'#" ssb-kit/scripts/pg_load.sql
+    fi
 
     echo ".. Generating SSB data (SF = $SF)"
     ssb-kit/dbgen/dbgen -vf -s $SF -T a
