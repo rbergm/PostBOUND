@@ -712,7 +712,7 @@ class PostgresInterface(Database):
         raw: bool = False,
         timeout: Optional[float] = None,
     ) -> Any:
-        if timeout is not None:
+        if timeout is not None and timeout > 0:
             return self._timeout_executor.execute_query(
                 query, timeout=timeout, cache_enabled=cache_enabled, raw=raw
             )
