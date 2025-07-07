@@ -52,6 +52,30 @@ Currently, we plan to implement the following features in the future (in no part
 
 ---
 
+
+# ⏳ Version 0.16.1 _(planned)_
+
+### 🐣 New features
+- _None_
+
+### 💀 Breaking changes
+- _None_
+
+### 📰 Updates
+- Made `Cardinality` objects JSON-serializable
+- Setting a timeout to 0 when executing a query on Postgres now disabled the timeout
+
+### 🏥 Fixes
+- _None_
+
+### 🪲 Known bugs
+- 🐘 `PostgresConfiguration` cannot be passed directly to `execute_query()` or a manual psycopg cursor. It seems that psycopg
+  does not recognize *UserString* as a valid string and raises an error. As a workaround, make sure to call *str()* on the
+  configuration before trying to execute it. `apply_configuration()` does so automatically.
+
+---
+
+
 # 🕑 Past versions
 
 ## 🕑 Version 0.15.4
