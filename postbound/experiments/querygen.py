@@ -9,21 +9,21 @@ from typing import Optional
 import networkx as nx
 
 from .. import util
-from ..db import DatabasePool, Database, postgres
+from .._core import ColumnReference, TableReference
+from ..db import Database, DatabasePool, ForeignKeyRef, postgres
 from ..qal import (
-    SqlQuery,
-    LogicalOperator,
-    CompoundOperator,
     AbstractPredicate,
+    CompoundOperator,
     CompoundPredicate,
-    Select,
     ImplicitFromClause,
+    LogicalOperator,
+    Select,
+    SqlQuery,
     Where,
-    build_query,
     as_predicate,
+    build_query,
 )
 from ..util import networkx as nx_utils
-from .._core import TableReference, ColumnReference
 
 
 def _generate_join_predicates(
@@ -63,7 +63,9 @@ def _generate_join_predicates(
             if not fk_edge:
                 continue
 
-            source_col, target_col = fk_edge["fk_col"], fk_edge["referenced_col"]
+            candidate_keys: list[ForeignKeyRef] = fk_edge["foreign_keys"]
+            selected_key = random.choice(candidate_keys)
+            source_col, target_col = selected_key.referenced_col, selected_key.fk_col
             join_predicate = as_predicate(source_col, LogicalOperator.Equal, target_col)
             predicates.append(join_predicate)
 

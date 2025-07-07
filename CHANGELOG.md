@@ -59,14 +59,16 @@ Currently, we plan to implement the following features in the future (in no part
 - _None_
 
 ### 💀 Breaking changes
-- _None_
+- Edges in the schema graph now contain an explicit list of foreign key references (see _Fixes_)
 
 ### 📰 Updates
 - Made `Cardinality` objects JSON-serializable
 - Setting a timeout to 0 when executing a query on Postgres now disabled the timeout
 
 ### 🏥 Fixes
-- _None_
+- Fixed non-deterministic edge annotations in the schema graph. The old implementation implicitly assumed that there could only
+  be a single foreign key reference between two tables. If there were multiple such references, the foreign key constraint that
+  appears in the edge annotation was "random". To fix this, we now store an explicit list of foreign keys in the edges.
 
 ### 🪲 Known bugs
 - 🐘 `PostgresConfiguration` cannot be passed directly to `execute_query()` or a manual psycopg cursor. It seems that psycopg

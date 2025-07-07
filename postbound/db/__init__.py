@@ -29,21 +29,22 @@ from __future__ import annotations
 
 from . import postgres
 from ._db import (
-    Cursor,
     Connection,
-    PrewarmingSupport,
-    TimeoutSupport,
-    QueryCacheWarning,
+    Cursor,
     Database,
-    DatabaseSchema,
-    DatabaseStatistics,
-    HintWarning,
-    HintService,
-    OptimizerInterface,
     DatabasePool,
-    UnsupportedDatabaseFeatureError,
+    DatabaseSchema,
     DatabaseServerError,
+    DatabaseStatistics,
     DatabaseUserError,
+    ForeignKeyRef,
+    HintService,
+    HintWarning,
+    OptimizerInterface,
+    PrewarmingSupport,
+    QueryCacheWarning,
+    TimeoutSupport,
+    UnsupportedDatabaseFeatureError,
 )
 
 __all__ = [
@@ -63,6 +64,7 @@ __all__ = [
     "UnsupportedDatabaseFeatureError",
     "DatabaseServerError",
     "DatabaseUserError",
+    "ForeignKeyRef",
 ]
 
 
