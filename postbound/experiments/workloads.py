@@ -815,10 +815,10 @@ def job_light(file_encoding: str = "utf-8") -> Workload[str]:
 
     .. Andreas Kipf et al.: "Learned Cardinalities: Estimating Correlated Joinswith Deep Learning" (CIDR'2019)
     """
-    job_light_dir = os.path.join(workloads_base_dir, "JOB-Light-Queries")
-    # JOB-Light only uses aliases column references, so no need for explicit binding
+    job_light_dir = os.path.join(workloads_base_dir, "JOB-light-Queries")
+    # JOB-light only uses aliases column references, so no need for explicit binding
     job_light_workload = Workload.read(
-        job_light_dir, name="JOB-Light", file_encoding=file_encoding, bind_columns=False
+        job_light_dir, name="JOB-light", file_encoding=file_encoding, bind_columns=False
     )
     _assert_workload_loaded(job_light_workload, job_light_dir)
     return job_light_workload
