@@ -139,7 +139,7 @@ from .optimizer import (
 )
 from .qal import SqlQuery, parse_query, relalg, transform
 
-__version__ = "0.16.0"
+__version__ = "0.16.1"
 
 __all__ = [
     "db",
