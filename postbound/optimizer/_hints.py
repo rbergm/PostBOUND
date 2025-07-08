@@ -371,6 +371,8 @@ def read_operator_json(
             return ScanOperator(json_data)
         elif json_data in {op.value for op in JoinOperator}:
             return JoinOperator(json_data)
+        elif json_data in {op.value for op in IntermediateOperator}:
+            return IntermediateOperator(json_data)
         else:
             json_data = json.loads(json_data)
 

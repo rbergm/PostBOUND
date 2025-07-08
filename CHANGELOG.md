@@ -70,6 +70,8 @@ Currently, we plan to implement the following features in the future (in no part
   be a single foreign key reference between two tables. If there were multiple such references, the foreign key constraint that
   appears in the edge annotation was "random". To fix this, we now store an explicit list of foreign keys in the edges.
 - Fixed query plan JSON serialization/deserialization not respecting custom data correctly
+- Fixed `read_operator_json` not re-constructing intermediate operators correctly. Transitively, this fixes
+  `read_query_plan_json` not working for plans with intermediate operators.
 
 ### 🪲 Known bugs
 - 🐘 `PostgresConfiguration` cannot be passed directly to `execute_query()` or a manual psycopg cursor. It seems that psycopg
