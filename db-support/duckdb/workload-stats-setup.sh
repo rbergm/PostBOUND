@@ -83,7 +83,7 @@ fi
 
 echo ".. Creating Stats database"
 cd $TARGET_DIR
-cp $WD/workloads/schema_duckdb.sql schema_duckdb.sql
-cp $WD/workloads/stats-import.sql import_duckdb.sql
+cp $WD/sql/stats-schema.sql schema_duckdb.sql
+cp $WD/sql/stats-import.sql import_duckdb.sql
 duckdb $DB_NAME -f schema_duckdb.sql
 duckdb $DB_NAME -f import_duckdb.sql

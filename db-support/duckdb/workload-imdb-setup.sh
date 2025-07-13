@@ -83,7 +83,7 @@ fi
 
 echo ".. Creating IMDB database"
 cd $TARGET_DIR
-cp $WD/workloads/imdb-schema.sql schema_duckdb.sql
-cp $WD/workloads/imdb-import.sql import_duckdb.sql
+cp $WD/sql/imdb-schema.sql schema_duckdb.sql
+cp $WD/sql/imdb-import.sql import_duckdb.sql
 duckdb $DB_NAME -f schema_duckdb.sql
 duckdb $DB_NAME -f import_duckdb.sql
