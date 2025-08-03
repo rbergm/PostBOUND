@@ -44,6 +44,7 @@ stability. Since we are not ready for the 1.0 release yet, this does not matter 
 
 ### 🐣 New features
 - Added JOB-light as a pre-defined workload
+- When executing a query with a timeout on the Postgres backend, errors will now be properly propagated to the client.
 
 ### 💀 Breaking changes
 - _None_
@@ -52,7 +53,7 @@ stability. Since we are not ready for the 1.0 release yet, this does not matter 
 - _None_
 
 ### 🏥 Fixes
-- 🐘 🍏 Fixed SSB setup for Postgres on MacOS 
+- 🐘 🍏 Fixed SSB setup for Postgres on MacOS
 
 ### 🪲 Known bugs
 - 🐘 `PostgresConfiguration` cannot be passed directly to `execute_query()` or a manual psycopg cursor. It seems that psycopg
