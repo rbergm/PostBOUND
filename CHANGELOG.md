@@ -50,7 +50,9 @@ stability. Since we are not ready for the 1.0 release yet, this does not matter 
 - _None_
 
 ### 📰 Updates
-- _None_
+- Refactored the internals of query execution with timeouts on Postgres. The query is still executed in a separate process, but
+  the process now establishes its own database connection instead of sharing the connection from the main process. This
+  circumvents issues with the connection not being pickle-able on some systems (looking at you, Windows).
 
 ### 🏥 Fixes
 - 🐘 🍏 Fixed SSB setup for Postgres on MacOS

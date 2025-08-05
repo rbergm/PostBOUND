@@ -3160,7 +3160,7 @@ class ParallelQueryExecutor:
 
 def _timeout_query_worker(
     query: qal.SqlQuery | str,
-    pg_instance: PostgresInterface,
+    pg_config: dict,
     result_send: mp_conn.Connection,
     err_send: mp_conn.Connection,
     **kwargs,
@@ -3174,8 +3174,9 @@ def _timeout_query_worker(
     ----------
     query : qal.SqlQuery | str
         Query to execute
-    pg_instance : PostgresInterface
-        Database connection to execute the query on
+    pg_config : dict
+        Pickable representation of the current Postgres connection. This is used to re-establish the connection in the parallel
+        worker.
     result_send : mp_conn.Connection
         Pipe connection to send the query result
     err_send : mp_conn.Connection
@@ -3184,6 +3185,16 @@ def _timeout_query_worker(
         Additional parameters to pass to the `PostgresInterface.execute_query` method.
     """
     try:
+        connect_string = pg_config["connect_string"]
+        cache_enabled = pg_config.get("cache_enabled", False)
+        pg_instance = connect(
+            connect_string=connect_string,
+            cache_enabled=cache_enabled,
+            private=True,
+            refresh=True,
+        )
+        pg_instance.apply_configuration(pg_config["config"])
+
         result = pg_instance.execute_query(query, **kwargs)
         result_send.send(result)
     except Exception as e:
@@ -3248,21 +3259,21 @@ class TimeoutQueryExecutor:
         """
         result_recv, result_send = mp.Pipe(False)
         error_recv, error_send = mp.Pipe(False)
-        query_execution_worker = mp.Process(
+        query_worker = mp.Process(
             target=_timeout_query_worker,
-            args=(query, self._pg_instance, result_send, error_send),
+            args=(query, self._pg_fingerprint(), result_send, error_send),
             kwargs=kwargs,
         )
 
-        query_execution_worker.start()
-        query_execution_worker.join(timeout)
+        query_worker.start()
+        query_worker.join(timeout)
 
         # We perform the timeout check before doing anything else to make sure that the worker process cannot terminate
         # immediately after the timeout has been reached. E.g., suppose that  the query is still running after calling join().
         # If we would now proceed to check the error-pipe, the query would have more time to terminate while we are performing
         # our error checks. This might result in an involuntary increase in the timeout duration. By keeping the timeout check
         # as close to the join() call as possible, we minimize this risk.
-        timed_out = query_execution_worker.is_alive()
+        timed_out = query_worker.is_alive()
 
         # Now that we know whether the worker timed out or not, we need to make sure that it actually terminated properly
         # (or timed out). In case of an error, we just propagate it to the client.
@@ -3274,14 +3285,14 @@ class TimeoutQueryExecutor:
         # is that in case of a timeout, we reset the connection to ensure that there is no dangling or inconsistent state left
         # over.
         if timed_out:
-            query_execution_worker.terminate()
-            query_execution_worker.join()
+            query_worker.terminate()
+            query_worker.join()
             self._pg_instance.reset_connection()
             query_result = None
         else:
             query_result = result_recv.recv()
 
-        query_execution_worker.close()
+        query_worker.close()
         result_send.close()
         result_recv.close()
 
@@ -3289,6 +3300,16 @@ class TimeoutQueryExecutor:
             raise TimeoutError(query)
         else:
             return query_result
+
+    def _pg_fingerprint(self) -> dict:
+        """Generate a pickable representation of the current Postgres connection."""
+        return {
+            "connect_string": self._pg_instance.connect_string,
+            "cache_enabled": self._pg_instance.cache_enabled,
+            "config": self._pg_instance.current_configuration(
+                runtime_changeable_only=True
+            ),
+        }
 
     def __call__(self, query: qal.SqlQuery | str, timeout: float, **kwargs) -> Any:
         return self.execute_query(query, timeout, **kwargs)
