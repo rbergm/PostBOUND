@@ -2,25 +2,27 @@
 
 WD=$(pwd)
 VENV="$WD/../../pb-venv"
+EXPLICIT_VENV="false"
 TARGET_DIR="$WD/duckdb-lab"
 
 function show_help() {
     RET=$1
     echo "Usage: $0 <options>"
     echo "Allowed options:"
-    echo -e "-v | --venv <venv>\tpath to the Python virtual environment to install the DuckDB package into. Defaults to '$VENV'."
+    echo -e "--venv <venv>\tpath to the Python virtual environment to install the DuckDB package into. Defaults to '$VENV'."
     echo -e "-d | --dir <directory>\tthe directory to install the DuckDB binary distribution in. Defaults to '$TARGET_DIR'."
     exit $RET
 }
 
 while [ $# -gt 0 ] ; do
     case $1 in
-        -v|--venv)
+        --venv)
             if [[ "$2" = /* ]] ; then
                 VENV="$2"
             else
                 VENV="$WD/$2"
             fi
+            EXPLICIT_VENV="true"
             shift
             shift
             ;;
@@ -42,9 +44,15 @@ while [ $# -gt 0 ] ; do
     esac
 done
 
-if [ ! -d "$VENV" ] ; then
-    echo ".. Creating new Python virtual environment at $VENV"
-    python3 -m venv "$VENV"
+if [ -z "$VIRTUAL_ENV" ] || [ "$EXPLICIT_VENV" = "true" ] ; then
+
+    if [ -d "$VENV" ] ; then
+        echo ".. Using existing virtual environment at $VENV"
+    else
+        echo ".. Creating new Python virtual environment at $VENV"
+        python3 -m venv "$VENV"
+    fi
+
 fi
 
 echo ".. Setting up hinting-aware DuckDB"
