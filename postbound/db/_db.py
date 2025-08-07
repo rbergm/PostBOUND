@@ -571,6 +571,14 @@ class DatabaseSchema(abc.ABC):
     db : Database
         The database for which the schema information should be read. This is required to obtain cursors that request
         the desired data.
+
+    Notes
+    -----
+    **Hint for implementors:** the database schema contains no abstract methods that need to be overridden. All methods come
+    with a default implementation that uses the *information_schema* to retrieve the necessary information. However, if the
+    target database system does not support specific features of the information_schema, the corresponding methods need to be
+    overridden to provide the necessary functionality. The documentation of each method details which parts of the
+    information_schema it needs.
     """
 
     def __init__(self, db: Database):
@@ -583,10 +591,17 @@ class DatabaseSchema(abc.ABC):
         -------
         set[TableReference]
             All tables in the current schema, including materialized views, etc.
+
+        Notes
+        -----
+        **Hint for implementors:** the default implementation of this method relies on the *information_schema.tables* view.
         """
-        query_template = (
-            "SELECT table_name FROM information_schema.tables WHERE table_catalog = %s"
-        )
+        query_template = textwrap.dedent("""
+            SELECT table_name
+            FROM information_schema.tables
+            WHERE table_catalog = %s
+                AND table_schema = current_schema()
+            """)
         self._db.cursor().execute(query_template, (self._db.database_name(),))
         result_set = self._db.cursor().fetchall()
         assert result_set is not None
@@ -603,24 +618,38 @@ class DatabaseSchema(abc.ABC):
         Returns
         -------
         Sequence[ColumnReference]
-            All columns for the given table. Will be empty if the table is not found or does not contain any columns.
+            All columns for the given table. Columns are ordered according to their position in the table.
+            Will be empty if the table is not found or does not contain any columns.
 
         Raises
         ------
         postbound.qal.VirtualTableError
             If the given table is virtual (e.g. subquery or CTE)
+
+        Notes
+        -----
+        **Hint for implementors:** the default implementation of this method relies on the *information_schema.columns* view.
         """
+
+        # The documentation of lookup_column() reference an implementation detail of this method.
+        # Make sure to keep the two in sync.
+
         table = table if isinstance(table, TableReference) else TableReference(table)
         if table.virtual:
             raise VirtualTableError(table)
-        query_template = textwrap.dedent("""
-                                         SELECT column_name
-                                         FROM information_schema.columns
-                                         WHERE table_catalog = %s AND table_name = %s
-                                         ORDER BY ordinal_position
-                                         """)
-        db_name = self._db.database_name()
-        self._db.cursor().execute(query_template, (db_name, table.full_name))
+        schema_placeholder = "%s" if table.schema else "current_schema()"
+        query_template = textwrap.dedent(f"""
+            SELECT column_name
+            FROM information_schema.columns
+            WHERE table_name = %s
+                AND table_catalog = current_database()
+                AND table_schema = {schema_placeholder}
+            ORDER BY ordinal_position
+            """)
+        params = [table.full_name]
+        if table.schema:
+            params.append(table.schema)
+        self._db.cursor().execute(query_template, params)
         result_set = self._db.cursor().fetchall()
         assert result_set is not None
         return [ColumnReference(row[0], table) for row in result_set]
@@ -642,25 +671,32 @@ class DatabaseSchema(abc.ABC):
         ------
         ValueError
             If the table was not found in the current database
+
+        Notes
+        -----
+        **Hint for implementors:** the default implementation of this method relies on the *information_schema.tables* view.
         """
         if isinstance(table, TableReference) and table.virtual:
             raise VirtualTableError(table)
         table = table if isinstance(table, str) else table.full_name
         db_name = self._db.database_name()
+
         query_template = textwrap.dedent("""
-                                         SELECT table_type
-                                         FROM information_schema.tables
-                                         WHERE table_catalog = %s AND table_name = %s
-                                         """)
+            SELECT table_type
+            FROM information_schema.tables
+            WHERE table_catalog = %s
+                AND table_name = %s
+                AND table_catalog = current_database()
+            """)
         self._db.cursor().execute(query_template, (db_name, table))
         result_set = self._db.cursor().fetchall()
+
         assert result_set is not None
         if not result_set:
             raise ValueError(f"Table '{table}' not found in database '{db_name}'")
         table_type = result_set[0][0]
         return table_type == "VIEW"
 
-    @abc.abstractmethod
     def lookup_column(
         self,
         column: ColumnReference | str,
@@ -689,10 +725,23 @@ class DatabaseSchema(abc.ABC):
         ------
         ValueError
             If `expect_match` is enabled and none of the candidate tables has a column of the given name.
-        """
-        raise NotImplementedError
 
-    @abc.abstractmethod
+        Notes
+        -----
+        **Hint for implementors:** the default implementation of this method (transitively) relies on the
+        *information_schema.columns* view.
+        """
+        for candidate in candidate_tables:
+            candidate_cols = self.columns(candidate)
+            if column in candidate_cols:
+                return candidate
+
+        if expect_match:
+            raise ValueError(
+                f"Column '{column}' not found in any of the candidate tables: {candidate_tables}"
+            )
+        return None
+
     def is_primary_key(self, column: ColumnReference) -> bool:
         """Checks, whether a column is the primary key for its associated table.
 
@@ -713,10 +762,95 @@ class DatabaseSchema(abc.ABC):
             If the column is not associated with any table
         postbound.qal.VirtualTableError
             If the table associated with the column is a virtual table (e.g. subquery or CTE)
-        """
-        raise NotImplementedError
 
-    @abc.abstractmethod
+        Notes
+        -----
+        **Hint for implementors:** the default implementation of this method relies on the
+        *information_schema.table_constraints* and *information_schema.constraint_column_usage* views.
+        """
+        if not column.is_bound():
+            raise UnboundColumnError(
+                f"Cannot check primary key status for column {column}: Column is not bound to any table."
+            )
+
+        schema_placeholder = "%s" if column.table.schema else "current_schema()"
+        query_template = textwrap.dedent(f"""
+            SELECT ccu.column_name
+            FROM information_schema.table_constraints tc
+                JOIN information_schema.constraint_column_usage ccu
+                ON tc.constraint_name = ccu.constraint_name
+                    AND tc.table_catalog = ccu.table_catalog
+                    AND tc.table_schema = ccu.table_schema
+                    AND tc.table_name = ccu.table_name
+                    AND tc.constraint_catalog = ccu.constraint_catalog
+            WHERE tc.table_name = %s
+                AND ccu.column_name = %s
+                AND tc.constraint_type = 'PRIMARY KEY'
+                AND tc.table_catalog = current_database()
+                AND tc.table_schema = {schema_placeholder};
+            """)
+
+        params = [column.table.full_name, column.name]
+        if column.table.schema:
+            params.append(column.table.schema)
+
+        self._db.cursor().execute(query_template, params)
+        result_set = self._db.cursor().fetchone()
+
+        return result_set is not None
+
+    def primary_key_column(
+        self, table: TableReference | str
+    ) -> Optional[ColumnReference]:
+        """Determines the primary key column of a specific table.
+
+        Parameters
+        ----------
+        table : TableReference | str
+            The table to check
+
+        Returns
+        -------
+        Optional[ColumnReference]
+            The primary key if it exists, or *None* otherwise.
+
+        Notes
+        -----
+        **Hint for implementors:** the default implementation of this method relies on the
+        *information_schema.table_constraints* and *information_schema.constraint_column_usage* views.
+        """
+        schema_placeholder = "%s" if table.schema else "current_schema()"
+        query_template = textwrap.dedent(f"""
+            SELECT ccu.column_name
+            FROM information_schema.table_constraints tc
+                JOIN information_schema.constraint_column_usage ccu
+                ON tc.constraint_name = ccu.constraint_name
+                    AND tc.table_catalog = ccu.table_catalog
+                    AND tc.table_schema = ccu.table_schema
+                    AND tc.table_name = ccu.table_name
+                    AND tc.constraint_catalog = ccu.constraint_catalog
+            WHERE tc.table_name = %s
+                AND tc.constraint_type = 'PRIMARY KEY'
+                AND tc.table_catalog = current_database()
+                AND tc.table_schema = {schema_placeholder};
+            """)
+
+        params = [table.full_name]
+        if table.schema:
+            params.append(table.schema)
+
+        self._db.cursor().execute(query_template, params)
+        result_set = self._db.cursor().fetchall()
+
+        if not result_set:
+            return None
+        elif len(result_set) > 1:
+            raise ValueError(
+                f"Table {table} has multiple primary key columns: {result_set}"
+            )
+        col = result_set[0][0]
+        return ColumnReference(col, table)
+
     def has_secondary_index(self, column: ColumnReference) -> bool:
         """Checks, whether a secondary index is available for a specific column.
 
@@ -737,75 +871,74 @@ class DatabaseSchema(abc.ABC):
             If the column is not associated with any table
         postbound.qal.VirtualTableError
             If the table associated with the column is a virtual table (e.g. subquery or CTE)
+
+        Notes
+        -----
+        **Hints for implementors:**
+        The default implementation of this method assumes that each foreign key column and each column with a UNIQUE constraint
+        has an associated index. If this should not be the case, a custom implementation needs to be supplied.
+        Furthermore, the implementation relies on the *information_schema.table_constraints*,
+        *information_schema.constraint_column_usage* and *information_schema.key_column_usage* views.
         """
-        raise NotImplementedError
 
-    def has_index(self, column: ColumnReference) -> bool:
-        """Checks, whether there is any index structure available on a column
+        # The documentation of has_index() references an implementation detail of this method.
+        # Make sure to keep the two in sync.
 
-        Parameters
-        ----------
-        column : ColumnReference
-            The column to check
+        if not column.is_bound():
+            raise UnboundColumnError(
+                f"Cannot check index status for column {column}: Column is not bound to any table."
+            )
 
-        Returns
-        -------
-        bool
-            Whether any kind of index (primary, or secondary) is available for the column. Only compound indexes will
-            fail this test.
+        schema_placeholder = "%s" if column.table.schema else "current_schema()"
 
-        Raises
-        ------
-        postbound.qal.UnboundColumnError
-            If the column is not associated with any table
-        postbound.qal.VirtualTableError
-            If the table associated with the column is a virtual table (e.g. subquery or CTE)
-        """
-        return self.is_primary_key(column) or self.has_secondary_index(column)
+        # The query template is much more complicated here, due to the different semantics of the constraint_column_usage
+        # view. For UNIQUE constraints, the column is the column that is constrained. However, for foreign keys, the column
+        # is the column that is being referenced.
+        query_template = textwrap.dedent(f"""
+            SELECT ccu.column_name
+            FROM information_schema.table_constraints tc
+                JOIN information_schema.constraint_column_usage ccu
+                ON tc.constraint_name = ccu.constraint_name
+                    AND tc.table_catalog = ccu.table_catalog
+                    AND tc.table_schema = ccu.table_schema
+                    AND tc.table_name = ccu.table_name
+                    AND tc.constraint_catalog = ccu.constraint_catalog
+            WHERE tc.table_name = %s
+                AND ccu.column_name = %s
+                AND tc.constraint_type = 'UNIQUE'
+                AND tc.table_catalog = current_database()
+                AND tc.table_schema = {schema_placeholder}
+            UNION
+            SELECT kcu.column_name
+            FROM information_schema.table_constraints tc
+                JOIN information_schema.key_column_usage kcu
+                ON tc.constraint_name = kcu.constraint_name
+                    AND tc.table_catalog = kcu.table_catalog
+                    AND tc.table_schema = kcu.table_schema
+                    AND tc.table_name = kcu.table_name
+                    AND tc.constraint_catalog = kcu.constraint_catalog
+            WHERE tc.table_name = %s
+                AND kcu.column_name = %s
+                AND tc.constraint_type = 'FOREIGN KEY'
+                AND tc.table_catalog = current_database()
+                AND tc.table_schema = {schema_placeholder};
+            """)
 
-    @abc.abstractmethod
-    def indexes_on(self, column: ColumnReference) -> set[str]:
-        """Retrieves the names of all indexes of a specific column.
+        # Due to the UNION query, we need to repeat the placeholders. While the implementation is definitely not elegant,
+        # this solution is arguably better than relying on named parameters which might or might not be supported by the
+        # target database.
+        params = [column.table.full_name, column.name]
+        if column.table.schema:
+            params.append(column.table.schema)
+        params.extend([column.table.full_name, column.name])
+        if column.table.schema:
+            params.append(column.table.schema)
 
-        Parameters
-        ----------
-        column : ColumnReference
-            The column to check.
+        self._db.cursor().execute(query_template, params)
+        result_set = self._db.cursor().fetchone()
 
-        Returns
-        -------
-        set[str]
-            The indexes. If no indexes are available, the set will be empty.
+        return result_set is not None
 
-        Raises
-        ------
-        postbound.qal.UnboundColumnError
-            If the column is not associated with any table
-        postbound.qal.VirtualTableError
-            If the table associated with the column is a virtual table (e.g. subquery or CTE)
-        """
-        raise NotImplementedError
-
-    def primary_key_column(
-        self, table: TableReference | str
-    ) -> Optional[ColumnReference]:
-        """Determines the primary key column of a specific table.
-
-        Parameters
-        ----------
-        table : TableReference | str
-            The table to check
-
-        Returns
-        -------
-        Optional[ColumnReference]
-            The primary key if it exists, or *None* otherwise.
-        """
-        return next(
-            (col for col in self.columns(table) if self.is_primary_key(col)), None
-        )
-
-    @abc.abstractmethod
     def foreign_keys_on(self, column: ColumnReference) -> set[ColumnReference]:
         """Fetches all foreign key constraints that are specified on a specific column.
 
@@ -832,9 +965,153 @@ class DatabaseSchema(abc.ABC):
         postbound.qal.VirtualTableError
             If the table associated with the column is a virtual table (e.g. subquery or CTE)
         """
-        raise NotImplementedError
+        if not column.is_bound():
+            raise UnboundColumnError(
+                f"Cannot check foreign keys for column {column}: Column is not bound to any table."
+            )
 
-    @abc.abstractmethod
+        schema_placeholder = "%s" if column.table.schema else "current_schema()"
+        query_template = textwrap.dedent(f"""
+            SELECT ccu.table_name, ccu.column_name
+            FROM information_schema.table_constraints tc
+                JOIN information_schema.key_column_usage kcu
+                    ON tc.constraint_name = kcu.constraint_name
+                    AND tc.table_schema = kcu.table_schema
+                    AND tc.table_name = kcu.table_name
+                JOIN information_schema.constraint_column_usage ccu
+                    ON tc.constraint_name = ccu.constraint_name
+                    AND tc.table_schema = ccu.table_schema
+                    AND tc.table_catalog = ccu.table_catalog
+            WHERE tc.table_name = %s
+                AND kcu.column_name = %s
+                AND tc.constraint_type = 'FOREIGN KEY'
+                AND tc.table_schema = {schema_placeholder}
+                AND tc.table_catalog = current_database();
+            """)
+        params = [column.table.full_name, column.name]
+        if column.table.schema:
+            params.append(column.table.schema)
+
+        self._db.cursor().execute(query_template, params)
+        result_set = self._db.cursor().fetchall()
+
+        return {
+            ColumnReference(row[1], TableReference(row[0], schema=column.table.schema))
+            for row in result_set
+        }
+
+    def has_index(self, column: ColumnReference) -> bool:
+        """Checks, whether there is any index structure available on a column
+
+        Parameters
+        ----------
+        column : ColumnReference
+            The column to check
+
+        Returns
+        -------
+        bool
+            Whether any kind of index (primary, or secondary) is available for the column. Only compound indexes will
+            fail this test.
+
+        Raises
+        ------
+        postbound.qal.UnboundColumnError
+            If the column is not associated with any table
+        postbound.qal.VirtualTableError
+            If the table associated with the column is a virtual table (e.g. subquery or CTE)
+
+        Notes
+        -----
+        **Hints for implementors:** the default implementation of this method (transitively) relies on the
+        **information_schema.table_constraints** and **information_schema.constraint_column_usage** views. It assumes that
+        primary keys, foreign keys and unique constraints are all associated with an index structure. If this is not the case,
+        a custom implementation needs to be supplied.
+        """
+        return self.is_primary_key(column) or self.has_secondary_index(column)
+
+    def indexes_on(self, column: ColumnReference) -> set[str]:
+        """Retrieves the names of all indexes of a specific column.
+
+        Parameters
+        ----------
+        column : ColumnReference
+            The column to check.
+
+        Returns
+        -------
+        set[str]
+            The indexes. If no indexes are available, the set will be empty.
+
+        Raises
+        ------
+        postbound.qal.UnboundColumnError
+            If the column is not associated with any table
+        postbound.qal.VirtualTableError
+            If the table associated with the column is a virtual table (e.g. subquery or CTE)
+
+        Notes
+        -----
+        **Hints for implementors:** the default implementation of this method assumes that primary keys, foreign keys and
+        unique constraints are all associated with an index structure. It provides the names of the corresponding constraints.
+        The implementation relies on the *information_schema.table_constraints*, *information_schema.constraint_column_usage*
+        and *information_schema.key_column_usage* views.
+        """
+        if not column.is_bound():
+            raise UnboundColumnError(
+                f"Cannot check index status for column {column}: Column is not bound to any table."
+            )
+
+        schema_placeholder = "%s" if column.table.schema else "current_schema()"
+
+        # The query template is much more complicated here, due to the different semantics of the constraint_column_usage
+        # view. For UNIQUE constraints, the column is the column that is constrained. However, for foreign keys, the column
+        # is the column that is being referenced.
+        query_template = textwrap.dedent(f"""
+            SELECT tc.constraint_name
+            FROM information_schema.table_constraints tc
+                JOIN information_schema.constraint_column_usage ccu
+                ON tc.constraint_name = ccu.constraint_name
+                    AND tc.table_catalog = ccu.table_catalog
+                    AND tc.table_schema = ccu.table_schema
+                    AND tc.table_name = ccu.table_name
+                    AND tc.constraint_catalog = ccu.constraint_catalog
+            WHERE tc.table_name = %s
+                AND ccu.column_name = %s
+                AND tc.constraint_type IN ('PRIMARY KEY', 'UNIQUE')
+                AND tc.table_catalog = current_database()
+                AND tc.table_schema = {schema_placeholder}
+            UNION
+            SELECT tc.constraint_name
+            FROM information_schema.table_constraints tc
+                JOIN information_schema.key_column_usage kcu
+                ON tc.constraint_name = kcu.constraint_name
+                    AND tc.table_catalog = kcu.table_catalog
+                    AND tc.table_schema = kcu.table_schema
+                    AND tc.table_name = kcu.table_name
+                    AND tc.constraint_catalog = kcu.constraint_catalog
+            WHERE tc.table_name = %s
+                AND kcu.column_name = %s
+                AND tc.constraint_type = 'FOREIGN KEY'
+                AND tc.table_catalog = current_database()
+                AND tc.table_schema = {schema_placeholder};
+            """)
+
+        # Due to the UNION query, we need to repeat the placeholders. While the implementation is definitely not elegant,
+        # this solution is arguably better than relying on named parameters which might or might not be supported by the
+        # target database.
+        params = [column.table.full_name, column.name]
+        if column.table.schema:
+            params.append(column.table.schema)
+        params.extend([column.table.full_name, column.name])
+        if column.table.schema:
+            params.append(column.table.schema)
+
+        self._db.cursor().execute(query_template, params)
+        result_set = self._db.cursor().fetchall()
+
+        return {row[0] for row in result_set}
+
     def datatype(self, column: ColumnReference) -> str:
         """Retrieves the (physical) data type of a column.
 
@@ -857,10 +1134,36 @@ class DatabaseSchema(abc.ABC):
             If the column is not associated with any table
         postbound.qal.VirtualTableError
             If the table associated with the column is a virtual table (e.g. subquery or CTE)
-        """
-        raise NotImplementedError
 
-    @abc.abstractmethod
+        Notes
+        -----
+        **Hint for implementors:** the default implementation of this method relies on the *information_schema.columns* view.
+        """
+        if not column.is_bound():
+            raise UnboundColumnError(
+                f"Cannot check datatype for column {column}: Column is not bound to any table."
+            )
+
+        schema_placeholder = "%s" if column.table.schema else "current_schema()"
+        query_template = textwrap.dedent(f"""
+            SELECT data_type
+            FROM information_schema.columns
+            WHERE table_name = %s
+                AND column_name = %s
+                AND table_catalog = current_database()
+                AND table_schema = {schema_placeholder};
+            """)
+
+        params = [column.table.full_name, column.name]
+        if column.table.schema:
+            params.append(column.table.schema)
+
+        self._db.cursor().execute(query_template, params)
+        result_set = self._db.cursor().fetchone()
+        assert result_set
+
+        return result_set[0]
+
     def is_nullable(self, column: ColumnReference) -> bool:
         """Checks, whether a specific column may contain NULL values.
 
@@ -880,8 +1183,35 @@ class DatabaseSchema(abc.ABC):
             If the column is not associated with any table
         postbound.qal.VirtualTableError
             If the table associated with the column is a virtual table (e.g. subquery or CTE)
+
+        Notes
+        -----
+        **Hint for implementors:** the default implementation of this method relies on the *information_schema.columns* view.
         """
-        raise NotImplementedError
+        if not column.is_bound():
+            raise UnboundColumnError(
+                f"Cannot check nullability for column {column}: Column is not bound to any table."
+            )
+
+        schema_placeholder = "%s" if column.table.schema else "current_schema()"
+        query_template = textwrap.dedent(f"""
+            SELECT is_nullable
+            FROM information_schema.columns
+            WHERE table_name = %s
+                AND column_name = %s
+                AND table_catalog = current_database()
+                AND table_schema = {schema_placeholder};
+            """)
+
+        params = [column.table.full_name, column.name]
+        if column.table.schema:
+            params.append(column.table.schema)
+
+        self._db.cursor().execute(query_template, params)
+        result_set = self._db.cursor().fetchone()
+        assert result_set
+
+        return result_set[0] == "YES"
 
     def as_graph(self) -> nx.DiGraph:
         """Constructs a compact representation of the database schema.
