@@ -570,6 +570,9 @@ class DatabaseSchema(abc.ABC):
     db : Database
         The database for which the schema information should be read. This is required to obtain cursors that request
         the desired data.
+    prep_placeholder : str, optional
+        The placeholder that is used for prepared statements. Some systems use `?` as a placeholder, while others use *%s*
+        (the default). This needs to be specified to ensure that the information_schema queries are correctly formatted.
 
     Notes
     -----
@@ -580,8 +583,9 @@ class DatabaseSchema(abc.ABC):
     information_schema it needs.
     """
 
-    def __init__(self, db: Database):
+    def __init__(self, db: Database, *, prep_placeholder: str = "%s"):
         self._db = db
+        self._prep_placeholder = prep_placeholder
 
     def tables(self) -> set[TableReference]:
         """Fetches all user-defined tables that are contained in the current database.
@@ -595,10 +599,10 @@ class DatabaseSchema(abc.ABC):
         -----
         **Hint for implementors:** the default implementation of this method relies on the *information_schema.tables* view.
         """
-        query_template = textwrap.dedent("""
+        query_template = textwrap.dedent(f"""
             SELECT table_name
             FROM information_schema.tables
-            WHERE table_catalog = %s
+            WHERE table_catalog = {self._prep_placeholder}
                 AND table_schema = current_schema()
             """)
         self._db.cursor().execute(query_template, (self._db.database_name(),))
@@ -636,11 +640,13 @@ class DatabaseSchema(abc.ABC):
         table = table if isinstance(table, TableReference) else TableReference(table)
         if table.virtual:
             raise VirtualTableError(table)
-        schema_placeholder = "%s" if table.schema else "current_schema()"
+        schema_placeholder = (
+            self._prep_placeholder if table.schema else "current_schema()"
+        )
         query_template = textwrap.dedent(f"""
             SELECT column_name
             FROM information_schema.columns
-            WHERE table_name = %s
+            WHERE table_name = {self._prep_placeholder}
                 AND table_catalog = current_database()
                 AND table_schema = {schema_placeholder}
             ORDER BY ordinal_position
@@ -680,11 +686,11 @@ class DatabaseSchema(abc.ABC):
         table = table if isinstance(table, str) else table.full_name
         db_name = self._db.database_name()
 
-        query_template = textwrap.dedent("""
+        query_template = textwrap.dedent(f"""
             SELECT table_type
             FROM information_schema.tables
-            WHERE table_catalog = %s
-                AND table_name = %s
+            WHERE table_catalog = {self._prep_placeholder}
+                AND table_name = {self._prep_placeholder}
                 AND table_catalog = current_database()
             """)
         self._db.cursor().execute(query_template, (db_name, table))
@@ -771,7 +777,9 @@ class DatabaseSchema(abc.ABC):
                 f"Cannot check primary key status for column {column}: Column is not bound to any table."
             )
 
-        schema_placeholder = "%s" if column.table.schema else "current_schema()"
+        schema_placeholder = (
+            self._prep_placeholder if column.table.schema else "current_schema()"
+        )
         query_template = textwrap.dedent(f"""
             SELECT ccu.column_name
             FROM information_schema.table_constraints tc
@@ -781,8 +789,8 @@ class DatabaseSchema(abc.ABC):
                     AND tc.table_schema = ccu.table_schema
                     AND tc.table_name = ccu.table_name
                     AND tc.constraint_catalog = ccu.constraint_catalog
-            WHERE tc.table_name = %s
-                AND ccu.column_name = %s
+            WHERE tc.table_name = {self._prep_placeholder}
+                AND ccu.column_name = {self._prep_placeholder}
                 AND tc.constraint_type = 'PRIMARY KEY'
                 AND tc.table_catalog = current_database()
                 AND tc.table_schema = {schema_placeholder};
@@ -817,7 +825,9 @@ class DatabaseSchema(abc.ABC):
         **Hint for implementors:** the default implementation of this method relies on the
         *information_schema.table_constraints* and *information_schema.constraint_column_usage* views.
         """
-        schema_placeholder = "%s" if table.schema else "current_schema()"
+        schema_placeholder = (
+            self._prep_placeholder if table.schema else "current_schema()"
+        )
         query_template = textwrap.dedent(f"""
             SELECT ccu.column_name
             FROM information_schema.table_constraints tc
@@ -827,7 +837,7 @@ class DatabaseSchema(abc.ABC):
                     AND tc.table_schema = ccu.table_schema
                     AND tc.table_name = ccu.table_name
                     AND tc.constraint_catalog = ccu.constraint_catalog
-            WHERE tc.table_name = %s
+            WHERE tc.table_name = {self._prep_placeholder}
                 AND tc.constraint_type = 'PRIMARY KEY'
                 AND tc.table_catalog = current_database()
                 AND tc.table_schema = {schema_placeholder};
@@ -887,7 +897,9 @@ class DatabaseSchema(abc.ABC):
                 f"Cannot check index status for column {column}: Column is not bound to any table."
             )
 
-        schema_placeholder = "%s" if column.table.schema else "current_schema()"
+        schema_placeholder = (
+            self._prep_placeholder if column.table.schema else "current_schema()"
+        )
 
         # The query template is much more complicated here, due to the different semantics of the constraint_column_usage
         # view. For UNIQUE constraints, the column is the column that is constrained. However, for foreign keys, the column
@@ -901,8 +913,8 @@ class DatabaseSchema(abc.ABC):
                     AND tc.table_schema = ccu.table_schema
                     AND tc.table_name = ccu.table_name
                     AND tc.constraint_catalog = ccu.constraint_catalog
-            WHERE tc.table_name = %s
-                AND ccu.column_name = %s
+            WHERE tc.table_name = {self._prep_placeholder}
+                AND ccu.column_name = {self._prep_placeholder}
                 AND tc.constraint_type = 'UNIQUE'
                 AND tc.table_catalog = current_database()
                 AND tc.table_schema = {schema_placeholder}
@@ -915,8 +927,8 @@ class DatabaseSchema(abc.ABC):
                     AND tc.table_schema = kcu.table_schema
                     AND tc.table_name = kcu.table_name
                     AND tc.constraint_catalog = kcu.constraint_catalog
-            WHERE tc.table_name = %s
-                AND kcu.column_name = %s
+            WHERE tc.table_name = {self._prep_placeholder}
+                AND kcu.column_name = {self._prep_placeholder}
                 AND tc.constraint_type = 'FOREIGN KEY'
                 AND tc.table_catalog = current_database()
                 AND tc.table_schema = {schema_placeholder};
@@ -968,7 +980,9 @@ class DatabaseSchema(abc.ABC):
                 f"Cannot check foreign keys for column {column}: Column is not bound to any table."
             )
 
-        schema_placeholder = "%s" if column.table.schema else "current_schema()"
+        schema_placeholder = (
+            self._prep_placeholder if column.table.schema else "current_schema()"
+        )
         query_template = textwrap.dedent(f"""
             SELECT ccu.table_name, ccu.column_name
             FROM information_schema.table_constraints tc
@@ -980,8 +994,8 @@ class DatabaseSchema(abc.ABC):
                     ON tc.constraint_name = ccu.constraint_name
                     AND tc.table_schema = ccu.table_schema
                     AND tc.table_catalog = ccu.table_catalog
-            WHERE tc.table_name = %s
-                AND kcu.column_name = %s
+            WHERE tc.table_name = {self._prep_placeholder}
+                AND kcu.column_name = {self._prep_placeholder}
                 AND tc.constraint_type = 'FOREIGN KEY'
                 AND tc.table_schema = {schema_placeholder}
                 AND tc.table_catalog = current_database();
@@ -1060,7 +1074,9 @@ class DatabaseSchema(abc.ABC):
                 f"Cannot retrieve indexes for column {column}: Column is not bound to any table."
             )
 
-        schema_placeholder = "%s" if column.table.schema else "current_schema()"
+        schema_placeholder = (
+            self._prep_placeholder if column.table.schema else "current_schema()"
+        )
 
         # The query template is much more complicated here, due to the different semantics of the constraint_column_usage
         # view. For UNIQUE constraints, the column is the column that is constrained. However, for foreign keys, the column
@@ -1074,8 +1090,8 @@ class DatabaseSchema(abc.ABC):
                     AND tc.table_schema = ccu.table_schema
                     AND tc.table_name = ccu.table_name
                     AND tc.constraint_catalog = ccu.constraint_catalog
-            WHERE tc.table_name = %s
-                AND ccu.column_name = %s
+            WHERE tc.table_name = {self._prep_placeholder}
+                AND ccu.column_name = {self._prep_placeholder}
                 AND tc.constraint_type IN ('PRIMARY KEY', 'UNIQUE')
                 AND tc.table_catalog = current_database()
                 AND tc.table_schema = {schema_placeholder}
@@ -1088,8 +1104,8 @@ class DatabaseSchema(abc.ABC):
                     AND tc.table_schema = kcu.table_schema
                     AND tc.table_name = kcu.table_name
                     AND tc.constraint_catalog = kcu.constraint_catalog
-            WHERE tc.table_name = %s
-                AND kcu.column_name = %s
+            WHERE tc.table_name = {self._prep_placeholder}
+                AND kcu.column_name = {self._prep_placeholder}
                 AND tc.constraint_type = 'FOREIGN KEY'
                 AND tc.table_catalog = current_database()
                 AND tc.table_schema = {schema_placeholder};
@@ -1142,12 +1158,14 @@ class DatabaseSchema(abc.ABC):
                 f"Cannot check datatype for column {column}: Column is not bound to any table."
             )
 
-        schema_placeholder = "%s" if column.table.schema else "current_schema()"
+        schema_placeholder = (
+            self._prep_placeholder if column.table.schema else "current_schema()"
+        )
         query_template = textwrap.dedent(f"""
             SELECT data_type
             FROM information_schema.columns
-            WHERE table_name = %s
-                AND column_name = %s
+            WHERE table_name = {self._prep_placeholder}
+                AND column_name = {self._prep_placeholder}
                 AND table_catalog = current_database()
                 AND table_schema = {schema_placeholder};
             """)
@@ -1191,12 +1209,14 @@ class DatabaseSchema(abc.ABC):
                 f"Cannot check nullability for column {column}: Column is not bound to any table."
             )
 
-        schema_placeholder = "%s" if column.table.schema else "current_schema()"
+        schema_placeholder = (
+            self._prep_placeholder if column.table.schema else "current_schema()"
+        )
         query_template = textwrap.dedent(f"""
             SELECT is_nullable
             FROM information_schema.columns
-            WHERE table_name = %s
-                AND column_name = %s
+            WHERE table_name = {self._prep_placeholder}
+                AND column_name = {self._prep_placeholder}
                 AND table_catalog = current_database()
                 AND table_schema = {schema_placeholder};
             """)
