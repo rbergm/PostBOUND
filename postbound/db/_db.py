@@ -30,7 +30,7 @@ from typing import Any, Optional, runtime_checkable
 import networkx as nx
 
 from .. import util
-from .._core import Cardinality
+from .._core import Cardinality, Cost
 from .._qep import QueryPlan
 from ..optimizer import (
     HintType,
@@ -226,10 +226,9 @@ class Database(abc.ABC):
         The name of the database system for which the connection is established. This is only really important to
         distinguish different instances of the interface in a convenient manner.
     cache_enabled : bool, optional
-        Whether complex queries that are executed against the database system should be cached. This is especially
-        usefull to emulate certain statistics that are not maintained by the specific database system (see
-        `DatabaseStatistics` for details). If this is ``False``, the query cache will not be loaded as well.
-        Defaults to ``True``.
+        Whether complex queries that are executed against the database system should be cached. This is especially useful to
+        emulate certain statistics that are not maintained by the specific database system (see `DatabaseStatistics` for
+        details). If this is *False*, the query cache will not be loaded as well. Defaults to *True*.
 
     Notes
     -----
@@ -322,7 +321,7 @@ class Database(abc.ABC):
             The query to execute. If it contains a `Hint` with `preparatory_statements`, these will be executed
             beforehand. Notice that such statements are never subject to caching.
         cache_enabled : Optional[bool], optional
-            Controls the caching behavior for just this one query. The default value of ``None`` indicates that the
+            Controls the caching behavior for just this one query. The default value of *None* indicates that the
             "global" configuration of the database system should be used. Setting this parameter to a boolean value
             forces or deactivates caching for the specific query for the specific execution no matter what the "global"
             configuration is.
@@ -335,7 +334,7 @@ class Database(abc.ABC):
         Any
             Result set of the input query. This is a list of equal-length tuples in the most general case. Each
             component of the tuple corresponds to a specific column of the result set and each tuple corresponds to a
-            row in the result set. However, many queries do not provide a 2-dimensional result set (e.g. ``COUNT(*)``
+            row in the result set. However, many queries do not provide a 2-dimensional result set (e.g. *COUNT(\\*)*
             queries). In such cases, the nested structure of the result set makes it quite cumbersome to use.
             Therefore, this method tries to simplify the return value of the query for more convenient use (if `raw` mode is
             disabled). More specifically, if the query returns just a single row, this row is returned directly as a tuple.
@@ -369,7 +368,7 @@ class Database(abc.ABC):
         Returns
         -------
         str
-            The database name, e.g. ``"imdb"`` or ``"tpc-h"``
+            The database name, e.g. *imdb* or *tpc-h*
         """
         raise NotImplementedError
 
@@ -379,7 +378,7 @@ class Database(abc.ABC):
         Returns
         -------
         str
-            The database system name, e.g. ``"PostgreSQL"``
+            The database system name, e.g. *PostgreSQL*
         """
         return self.system_name
 
@@ -753,8 +752,7 @@ class DatabaseSchema(abc.ABC):
         Returns
         -------
         bool
-            Whether the column is the primary key of its table. If it is part of a compound primary key, this is
-            ``False``.
+            Whether the column is the primary key of its table. If it is part of a compound primary key, this is *False*.
 
         Raises
         ------
@@ -1059,7 +1057,7 @@ class DatabaseSchema(abc.ABC):
         """
         if not column.is_bound():
             raise UnboundColumnError(
-                f"Cannot check index status for column {column}: Column is not bound to any table."
+                f"Cannot retrieve indexes for column {column}: Column is not bound to any table."
             )
 
         schema_placeholder = "%s" if column.table.schema else "current_schema()"
@@ -1288,12 +1286,12 @@ class DatabaseStatistics(abc.ABC):
     Alternatively, the statistics interface can create the illusion of a normalized and standardized statistics
     catalogue. This so-called *emulated* mode does not rely on the statistics catalogs and issues equivalent SQL
     queries instead. For example, if a statistic on the number of distinct values of a column is requested, this
-    emulated by running a ``SELECT COUNT(DISTINCT column) FROM table`` query.
+    emulated by running a *SELECT COUNT(DISTINCT column) FROM table* query.
 
-    The current mode can be customized using the boolean `emualted` property. If the statistics interface operates in
+    The current mode can be customized using the boolean `emulated` property. If the statistics interface operates in
     native mode (i.e. based on the actual statistics catalog) and the user requests a statistic that is not available
     in the selected database system, the behavior depends on another attribute: `enable_emulation_fallback`. If this
-    boolean attribute is ``True``, an emulated statistic will be calculated instead. Otherwise, an
+    boolean attribute is *True*, an emulated statistic will be calculated instead. Otherwise, an
     `UnsupportedDatabaseFeatureError` is raised.
 
     Since the live computation of emulated statistics can be costly, the statistics interface has its own
@@ -1308,12 +1306,12 @@ class DatabaseStatistics(abc.ABC):
         The database for which the schema information should be read. This is required to hook into the database cache
         and to obtain the cursors to actuall execute queries.
     emulated : bool, optional
-        Whether the statistics interface should operate in emulation mode. To enable reproducibility, this is ``True``
+        Whether the statistics interface should operate in emulation mode. To enable reproducibility, this is *True*
         by default
     enable_emulation_fallback : bool, optional
         Whether emulation should be used for unsupported statistics when running in native mode, by default True
     cache_enabled : Optional[bool], optional
-        Whether emulated statistics queries should be subject to caching, by default True. Set to ``None`` to use the
+        Whether emulated statistics queries should be subject to caching, by default True. Set to *None* to use the
         caching behavior of the `db`
 
     See Also
@@ -1348,17 +1346,17 @@ class DatabaseStatistics(abc.ABC):
         table : TableReference
             The table to check
         emulated : Optional[bool], optional
-            Whether to force emulation mode for this single call. Defaults to ``None`` which indicates that the
+            Whether to force emulation mode for this single call. Defaults to *None* which indicates that the
             emulation setting of the statistics interface should be used.
         cache_enabled : Optional[bool], optional
-            Whether to enable result caching in emulation mode. Defaults to ``None`` which indicates that the caching
+            Whether to enable result caching in emulation mode. Defaults to *None* which indicates that the caching
             setting of the statistics interface should be used.
 
         Returns
         -------
         Optional[int]
             The total number of rows in the table. If no such statistic exists, but the database system in principle
-            maintains the statistic, ``None`` is returned. For example, this situation can occur if the database system
+            maintains the statistic, *None* is returned. For example, this situation can occur if the database system
             only maintains a row count if the table has at least a certain size and the table in question did not reach
             that size yet.
 
@@ -1390,17 +1388,17 @@ class DatabaseStatistics(abc.ABC):
         column : ColumnReference
             The column to check
         emulated : Optional[bool], optional
-            Whether to force emulation mode for this single call. Defaults to ``None`` which indicates that the
+            Whether to force emulation mode for this single call. Defaults to *None* which indicates that the
             emulation setting of the statistics interface should be used.
         cache_enabled : Optional[bool], optional
-            Whether to enable result caching in emulation mode. Defaults to ``None`` which indicates that the caching
+            Whether to enable result caching in emulation mode. Defaults to *None* which indicates that the caching
             setting of the statistics interface should be used.
 
         Returns
         -------
         Optional[int]
             The number of distinct values in the column. If no such statistic exists, but the database system in
-            principle maintains the statistic, ``None`` is returned. For example, this situation can occur if the
+            principle maintains the statistic, *None* is returned. For example, this situation can occur if the
             database system only maintains a distinct value count if the column values are distributed in a
             sufficiently diverse way.
 
@@ -1436,17 +1434,17 @@ class DatabaseStatistics(abc.ABC):
         column : ColumnReference
             The column to check
         emulated : Optional[bool], optional
-            Whether to force emulation mode for this single call. Defaults to ``None`` which indicates that the
+            Whether to force emulation mode for this single call. Defaults to *None* which indicates that the
             emulation setting of the statistics interface should be used.
         cache_enabled : Optional[bool], optional
-            Whether to enable result caching in emulation mode. Defaults to ``None`` which indicates that the caching
+            Whether to enable result caching in emulation mode. Defaults to *None* which indicates that the caching
             setting of the statistics interface should be used.
 
         Returns
         -------
         Optional[tuple[Any, Any]]
             A tuple of minimum and maximum value. If no such statistic exists, but the database system in principle
-            maintains the statistic, ``None`` is returned. For example, this situation can occur if thec database
+            maintains the statistic, *None* is returned. For example, this situation can occur if thec database
             system only maintains the min/max value if they are sufficiently far apart.
 
         Raises
@@ -1485,10 +1483,10 @@ class DatabaseStatistics(abc.ABC):
             The maximum number of most common values to return. Defaults to 10. If there are less values available, all
             of the available values will be returned.
         emulated : Optional[bool], optional
-            Whether to force emulation mode for this single call. Defaults to ``None`` which indicates that the
+            Whether to force emulation mode for this single call. Defaults to *None* which indicates that the
             emulation setting of the statistics interface should be used.
         cache_enabled : Optional[bool], optional
-            Whether to enable result caching in emulation mode. Defaults to ``None`` which indicates that the caching
+            Whether to enable result caching in emulation mode. Defaults to *None* which indicates that the caching
             setting of the statistics interface should be used.
 
         Returns
@@ -1521,7 +1519,7 @@ class DatabaseStatistics(abc.ABC):
     def _calculate_total_rows(
         self, table: TableReference, *, cache_enabled: Optional[bool] = None
     ) -> int:
-        """Retrieves the total number of rows of a table by issuing a ``COUNT(*)`` query against the live database.
+        """Retrieves the total number of rows of a table by issuing a *COUNT(\\*)* query against the live database.
 
         The table is assumed to be non-virtual.
 
@@ -1530,7 +1528,7 @@ class DatabaseStatistics(abc.ABC):
         table : TableReference
             The table to check
         cache_enabled : Optional[bool], optional
-            Whether to enable result caching in emulation mode. Defaults to ``None`` which indicates that the caching
+            Whether to enable result caching in emulation mode. Defaults to *None* which indicates that the caching
             setting of the statistics interface should be used.
 
         Returns
@@ -1547,7 +1545,7 @@ class DatabaseStatistics(abc.ABC):
     def _calculate_distinct_values(
         self, column: ColumnReference, *, cache_enabled: Optional[bool] = None
     ) -> int:
-        """Retrieves the number of distinct column values by issuing a ``COUNT(*)`` / ``GROUP BY`` query over that
+        """Retrieves the number of distinct column values by issuing a *COUNT(\\*)* / *GROUP BY* query over that
         column against the live database.
 
         The column is assumed to be bound to a (non-virtual) table.
@@ -1557,7 +1555,7 @@ class DatabaseStatistics(abc.ABC):
         column : ColumnReference
             The column to check
         cache_enabled : Optional[bool], optional
-            Whether to enable result caching in emulation mode. Defaults to ``None`` which indicates that the caching
+            Whether to enable result caching in emulation mode. Defaults to *None* which indicates that the caching
             setting of the statistics interface should be used.
 
         Returns
@@ -1586,13 +1584,13 @@ class DatabaseStatistics(abc.ABC):
         column : ColumnReference
             The column to check
         cache_enabled : Optional[bool], optional
-            Whether to enable result caching in emulation mode. Defaults to ``None`` which indicates that the caching
+            Whether to enable result caching in emulation mode. Defaults to *None* which indicates that the caching
             setting of the statistics interface should be used.
 
         Returns
         -------
         tuple[Any, Any]
-            A tuple of ``(min val, max val)``
+            A tuple of *(min, max)*
         """
         query_template = "SELECT MIN({col}), MAX({col}) FROM {tab}".format(
             col=column.name, tab=column.table.full_name
@@ -1608,7 +1606,7 @@ class DatabaseStatistics(abc.ABC):
         """Retrieves the `k` most frequent values of a column along with their frequencies by issuing a query over that
         column against the live database.
 
-        The actual query combines a ``COUNT(*)`` aggregation, with a grouping over the column values, followed by a
+        The actual query combines a *COUNT(\\*)* aggregation, with a grouping over the column values, followed by a
         count-based ordering and limit.
 
         The column is assumed to be bound to a (non-virtual) table.
@@ -1621,13 +1619,13 @@ class DatabaseStatistics(abc.ABC):
             The number of most frequent values to retrieve. If less values are available (because there are not as much
             distinct values in the column), the frequencies of all values is returned.
         cache_enabled : Optional[bool], optional
-            Whether to enable result caching in emulation mode. Defaults to ``None`` which indicates that the caching
+            Whether to enable result caching in emulation mode. Defaults to *None* which indicates that the caching
             setting of the statistics interface should be used.
 
         Returns
         -------
         Sequence[tuple[Any, int]]
-            The most common values in ``(value, frequency)`` pairs, ordered by largest frequency first. Can be smaller
+            The most common values in *(value, frequency)* pairs, ordered by largest frequency first. Can be smaller
             than the requested `k` value if the column contains less distinct values.
         """
         query_template = textwrap.dedent(
@@ -1658,7 +1656,7 @@ class DatabaseStatistics(abc.ABC):
         -------
         Optional[int]
             The total number of rows in the table. If no such statistic exists, but the database system in principle
-            maintains the statistic, ``None`` is returned. For example, this situation can occur if the database system
+            maintains the statistic, *None* is returned. For example, this situation can occur if the database system
             only maintains a row count if the table has at least a certain size and the table in question did not reach
             that size yet.
         """
@@ -1681,7 +1679,7 @@ class DatabaseStatistics(abc.ABC):
         -------
         Optional[int]
             The number of distinct values in the column. If no such statistic exists, but the database system in
-            principle maintains the statistic, ``None`` is returned. For example, this situation can occur if the
+            principle maintains the statistic, *None* is returned. For example, this situation can occur if the
             database system only maintains a distinct value count if the column values are distributed in a
             sufficiently diverse way.
         """
@@ -1704,7 +1702,7 @@ class DatabaseStatistics(abc.ABC):
         -------
         Optional[tuple[Any, Any]]
             A tuple of minimum and maximum value. If no such statistic exists, but the database system in principle
-            maintains the statistic, ``None`` is returned. For example, this situation can occur if thec database
+            maintains the statistic, *None* is returned. For example, this situation can occur if thec database
             system only maintains the min/max value if they are sufficiently far apart.
         """
         raise NotImplementedError
@@ -1801,9 +1799,9 @@ class HintService(abc.ABC):
         In the most common case this involves building a `Hint` clause that encodes the optimization decisions in a
         system-specific way. However, depending on the concrete database system, this might also involve a
         restructuring of certain parts of the query, e.g. the usage of specific join statements, the introduction of
-        non-standard SQL statements, or a reordering of the ``FROM`` clause.
+        non-standard SQL statements, or a reordering of the *FROM* clause.
 
-        Notice that all optimization information is optional. If individual parameters are set to ``None``, nothing
+        Notice that all optimization information is optional. If individual parameters are set to *None*, nothing
         has been enforced by PostBOUND's optimization process and the native optimizer of the database system should
         "fill the gaps".
 
@@ -1817,7 +1815,7 @@ class HintService(abc.ABC):
         query : SqlQuery
             The query that should be transformed
         plan : Optional[QueryPlan], optional
-            The query execution plan. If this is given, all other parameters should be ``None``. This essentially
+            The query execution plan. If this is given, all other parameters should be *None*. This essentially
             enforces the given query plan.
         join_order : Optional[JoinTree], optional
             The sequence in which individual joins should be executed.
@@ -1913,7 +1911,7 @@ class OptimizerInterface(abc.ABC):
         Returns
         -------
         QueryPlan
-            The corresponding execution plan. This will never be an ``ANALYZE`` plan, but contain as much meaningful
+            The corresponding execution plan. This will never be an *ANALYZE* plan, but contain as much meaningful
             information as can be derived for the specific database system (e.g. regarding cardinality and cost
             estimates)
         """
@@ -1933,7 +1931,7 @@ class OptimizerInterface(abc.ABC):
         Returns
         -------
         QueryPlan
-            The corresponding execution plan. This plan will be an ``ANALYZE`` plan and contain all information that
+            The corresponding execution plan. This plan will be an *ANALYZE* plan and contain all information that
             can be derived for the specific database system (e.g. cardinality estimates as well as true cardinality
             counts)
         """
@@ -1959,7 +1957,7 @@ class OptimizerInterface(abc.ABC):
         raise NotImplementedError
 
     @abc.abstractmethod
-    def cost_estimate(self, query: SqlQuery | str) -> float:
+    def cost_estimate(self, query: SqlQuery | str) -> Cost:
         """Queries the DBMS query optimizer for the estimated cost of executing the query.
 
         The cost estimate will correspond to the estimate for the final node. Typically, this cost includes the cost
@@ -1972,7 +1970,7 @@ class OptimizerInterface(abc.ABC):
 
         Returns
         -------
-        float
+        Cost
             The cost estimate of the native optimizer for the database system.
         """
         raise NotImplementedError
