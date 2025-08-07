@@ -27,27 +27,29 @@ the `db` package.
 
 from __future__ import annotations
 
+from . import _duckdb as duckdb
 from . import postgres
 from ._db import (
-    Cursor,
     Connection,
-    PrewarmingSupport,
-    TimeoutSupport,
-    QueryCacheWarning,
+    Cursor,
     Database,
-    DatabaseSchema,
-    DatabaseStatistics,
-    HintWarning,
-    HintService,
-    OptimizerInterface,
     DatabasePool,
-    UnsupportedDatabaseFeatureError,
+    DatabaseSchema,
     DatabaseServerError,
+    DatabaseStatistics,
     DatabaseUserError,
+    HintService,
+    HintWarning,
+    OptimizerInterface,
+    PrewarmingSupport,
+    QueryCacheWarning,
+    TimeoutSupport,
+    UnsupportedDatabaseFeatureError,
 )
 
 __all__ = [
     "postgres",
+    "duckdb",
     "Cursor",
     "Connection",
     "PrewarmingSupport",

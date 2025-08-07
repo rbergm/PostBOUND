@@ -128,7 +128,7 @@ from ._stages import (
     PlanEnumerator,
     as_complete_algorithm,
 )
-from .db import Database, postgres
+from .db import Database, duckdb, postgres
 from .experiments import analysis, executor, workloads
 from .experiments.executor import execute_workload, optimize_and_execute_workload
 from .optimizer import (
@@ -172,6 +172,7 @@ __all__ = [
     "OptimizationSettings",
     "Database",
     "postgres",
+    "duckdb",
     "relalg",
     "transform",
     "SqlQuery",
