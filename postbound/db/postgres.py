@@ -1848,6 +1848,9 @@ class HintParts:
         )
         return HintParts(merged_settings, merged_hints)
 
+    def __bool__(self) -> bool:
+        return bool(self.settings or self.hints)
+
 
 PostgresOptimizerSettings = {
     JoinOperator.NestedLoopJoin: "enable_nestloop",
@@ -2269,6 +2272,14 @@ class PostgresHintService(HintService):
             )
 
         hint_parts = None
+
+        if plan is not None and any(
+            param is not None
+            for param in (join_order, physical_operators, plan_parameters)
+        ):
+            raise ValueError(
+                "Can only hint an entire query plan, or individual parts, not both."
+            )
 
         if plan is not None:
             join_order = jointree_from_plan(plan)

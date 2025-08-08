@@ -4,13 +4,27 @@ from __future__ import annotations
 
 import textwrap
 import warnings
-from collections.abc import Sequence
+from collections.abc import Iterable, Sequence
 from pathlib import Path
 from typing import Any, Optional
 
-from .._core import Cardinality, ColumnReference, Cost, PhysicalOperator, TableReference
+from .. import optimizer, qal
+from .._core import (
+    Cardinality,
+    ColumnReference,
+    Cost,
+    JoinOperator,
+    PhysicalOperator,
+    ScanOperator,
+    TableReference,
+)
 from .._qep import QueryPlan
-from ..optimizer import JoinTree, PhysicalOperatorAssignment, PlanParameterization
+from ..optimizer import (
+    HintType,
+    JoinTree,
+    PhysicalOperatorAssignment,
+    PlanParameterization,
+)
 from ..qal import SqlQuery, transform
 from ..util import Version, jsondict
 from ._db import (
@@ -20,11 +34,11 @@ from ._db import (
     DatabaseSchema,
     DatabaseStatistics,
     HintService,
-    HintType,
     OptimizerInterface,
     QueryCacheWarning,
     UnsupportedDatabaseFeatureError,
 )
+from .postgres import HintParts, PostgresExplainClause, PostgresLimitClause
 
 
 def _simplify_result_set(result_set: list[tuple[Any]]) -> Any:
@@ -80,7 +94,7 @@ class DuckDBInterface(Database):
 
         self._schema = DuckDBSchema(self)
         self._optimizer = DuckDBOptimizer(self)
-        self._hinting = DuckDBHintService()
+        self._hinting = DuckDBHintService(self)
 
     def schema(self) -> DuckDBSchema:
         return self._schema
@@ -321,22 +335,18 @@ class DuckDBStatistics(DatabaseStatistics):
         self, column: ColumnReference
     ) -> Optional[int]:
         raise UnsupportedDatabaseFeatureError(
-            "DuckDB does not maintain distinct value count statistics."
+            self._db, "distinct value count statistics."
         )
 
     def _retrieve_min_max_values_from_stats(
         self, column: ColumnReference
     ) -> Optional[tuple[Any, Any]]:
-        raise UnsupportedDatabaseFeatureError(
-            "DuckDB does not maintain min/max value statistics."
-        )
+        raise UnsupportedDatabaseFeatureError(self._db, "min/max value statistics.")
 
     def _retrieve_most_common_values_from_stats(
         self, column: ColumnReference, k: int
     ) -> Sequence[tuple[Any, int]]:
-        raise UnsupportedDatabaseFeatureError(
-            "DuckDB does not maintain most common value statistics."
-        )
+        raise UnsupportedDatabaseFeatureError(self._db, "most common value statistics.")
 
 
 class DuckDBOptimizer(OptimizerInterface):
@@ -357,8 +367,8 @@ class DuckDBOptimizer(OptimizerInterface):
 
 
 class DuckDBHintService(HintService):
-    def __init__(self) -> None:
-        pass
+    def __init__(self, db: DuckDBInterface) -> None:
+        self._db = db
 
     def generate_hints(
         self,
@@ -369,13 +379,190 @@ class DuckDBHintService(HintService):
         physical_operators: Optional[PhysicalOperatorAssignment] = None,
         plan_parameters: Optional[PlanParameterization] = None,
     ) -> SqlQuery:
-        raise NotImplementedError
+        adapted_query = query
+        if adapted_query.explain and not isinstance(
+            adapted_query.explain, PostgresExplainClause
+        ):
+            adapted_query = qal.transform.replace_clause(
+                adapted_query, PostgresExplainClause(adapted_query.explain)
+            )
+        if adapted_query.limit_clause and not isinstance(
+            adapted_query.limit_clause, PostgresLimitClause
+        ):
+            adapted_query = qal.transform.replace_clause(
+                adapted_query, PostgresLimitClause(adapted_query.limit_clause)
+            )
+
+        has_partial_hints = any(
+            param is not None
+            for param in (join_order, physical_operators, plan_parameters)
+        )
+        if plan is not None and has_partial_hints:
+            raise ValueError(
+                "Can only hint an entire query plan, or individual parts, not both."
+            )
+
+        if plan is not None:
+            join_order = optimizer.jointree_from_plan(plan)
+            physical_operators = optimizer.operators_from_plan(plan)
+            plan_parameters = optimizer.parameters_from_plan(plan)
+
+        if join_order is not None:
+            hint_parts = self._generate_join_order_hint(join_order)
+        else:
+            hint_parts = HintParts.empty()
+
+        hint_parts = hint_parts if hint_parts else HintParts.empty()
+
+        if physical_operators:
+            operator_hints = self._generate_operator_hints(physical_operators)
+            hint_parts = hint_parts.merge_with(operator_hints)
+
+        if plan_parameters:
+            plan_hints = self._generate_parameter_hints(plan_parameters)
+            hint_parts = hint_parts.merge_with(plan_hints)
+
+        if hint_parts:
+            adapted_query = self._add_hint_block(adapted_query, hint_parts)
+
+        return adapted_query
 
     def format_query(self, query: SqlQuery) -> str:
-        raise NotImplementedError
+        # DuckDB uses the Postgres SQL dialect, so this part is easy..
+        if query.explain:
+            query = transform.replace_clause(
+                query, PostgresExplainClause(query.explain)
+            )
+        return qal.format_quick(query, flavor="postgres")
 
     def supports_hint(self, hint: PhysicalOperator | HintType) -> bool:
-        raise NotImplementedError
+        return hint in {
+            ScanOperator.SequentialScan,
+            ScanOperator.IndexScan,
+            JoinOperator.NestedLoopJoin,
+            JoinOperator.HashJoin,
+            JoinOperator.SortMergeJoin,
+            HintType.LinearJoinOrder,
+            HintType.BushyJoinOrder,
+            HintType.Cardinality,
+            HintType.Operator,
+        }
+
+    def _generate_join_order_hint(self, join_tree: JoinTree) -> HintParts:
+        if len(join_tree) < 3:
+            # we can't force the join direction anyway, so there's no point in generating a hint if there is just a single join
+            return HintParts.empty()
+
+        def recurse(join_tree: JoinTree) -> str:
+            if join_tree.is_scan():
+                return join_tree.base_table.identifier()
+
+            lhs = recurse(join_tree.outer_child)
+            rhs = recurse(join_tree.inner_child)
+
+            return f"({lhs} {rhs})"
+
+        join_order = recurse(join_tree)
+        hint_parts = HintParts([], [f"JoinOrder({join_order})"])
+        return hint_parts
+
+    def _generate_operator_hints(self, ops: PhysicalOperatorAssignment) -> HintParts:
+        if not ops:
+            return HintParts.empty()
+
+        hints: list[str] = []
+        for tab, scan in ops.scan_operators.items():
+            match scan.operator:
+                case ScanOperator.SequentialScan:
+                    op_txt = "SeqScan"
+                case ScanOperator.IndexScan:
+                    op_txt = "IdxScan"
+                case _:
+                    raise UnsupportedDatabaseFeatureError(self._db, scan.operator)
+            tab_txt = tab.identifier()
+            hints.append(f"{op_txt}({tab_txt})")
+
+        for intermediate, join in ops.join_operators.items():
+            match join.operator:
+                case JoinOperator.NestedLoopJoin:
+                    op_txt = "NestLoop"
+                case JoinOperator.HashJoin:
+                    op_txt = "HashJoin"
+                case JoinOperator.SortMergeJoin:
+                    op_txt = "MergeJoin"
+                case _:
+                    raise UnsupportedDatabaseFeatureError(self._db, join.operator)
+
+            intermediate_txt = self._intermediate_to_hint(intermediate)
+            hints.append(f"{op_txt}({intermediate_txt})")
+
+        if ops.intermediate_operators:
+            raise UnsupportedDatabaseFeatureError(
+                self._db,
+                "intermediate operators",
+            )
+
+        global_settings: list[str] = []
+        for param, val in ops.global_settings.items():
+            match param:
+                case ScanOperator.SequentialScan:
+                    param_txt = "enable_seqscan"
+                case ScanOperator.IndexScan:
+                    param_txt = "enable_indexscan"
+                case JoinOperator.NestedLoopJoin:
+                    param_txt = "enable_nestloop"
+                case JoinOperator.HashJoin:
+                    param_txt = "enable_hashjoin"
+                case JoinOperator.SortMergeJoin:
+                    param_txt = "enable_mergejoin"
+                case _:
+                    raise UnsupportedDatabaseFeatureError(self._db, param)
+
+            val_txt = "on" if val else "off"
+            global_settings.append(f"{param_txt} = {val_txt}")
+
+        return HintParts(global_settings, hints)
+
+    def _generate_parameter_hints(self, parameters: PlanParameterization) -> HintParts:
+        if not parameters:
+            return HintParts.empty()
+
+        hints: list[str] = []
+        for intermediate, card in parameters.cardinality_hints.items():
+            if not card.is_valid():
+                continue
+            intermediate_txt = self._intermediate_to_hint(intermediate)
+            hints.append(f"Card({intermediate_txt} #{card})")
+
+        if parameters.parallel_worker_hints:
+            raise UnsupportedDatabaseFeatureError(self._db, "parallel worker hints")
+
+        global_settings: list[str] = []
+        for param, val in parameters.system_specific_settings.items():
+            if isinstance(val, str):
+                val_txt = f"'{val}'"
+            else:
+                val_txt = str(val)
+
+            global_settings.append(f"{param} = {val_txt};")
+
+        return HintParts(global_settings, hints)
+
+    def _add_hint_block(self, query: SqlQuery, hint_parts: HintParts) -> SqlQuery:
+        if not hint_parts:
+            return query
+
+        local_hints = ["/*=quack_lab="]
+        for local_hint in hint_parts.hints:
+            local_hints.append(f"  {local_hint}")
+        local_hints.append(" */")
+
+        hints = qal.Hint("\n".join(hint_parts.settings), "\n".join(local_hints))
+        return qal.transform.add_clause(query, hints)
+
+    def _intermediate_to_hint(self, intermediate: Iterable[TableReference]) -> str:
+        """Convert an iterable of TableReferences to a string representation."""
+        return " ".join(table.identifier() for table in intermediate)
 
 
 def connect(
