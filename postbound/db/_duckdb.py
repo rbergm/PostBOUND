@@ -2,6 +2,8 @@
 # The module is available in the __init__ of the db package under the duckdb name. This solves our problems for now.
 from __future__ import annotations
 
+import json
+import math
 import textwrap
 import warnings
 from collections.abc import Iterable, Sequence
@@ -38,7 +40,7 @@ from ._db import (
     QueryCacheWarning,
     UnsupportedDatabaseFeatureError,
 )
-from .postgres import HintParts, PostgresExplainClause, PostgresLimitClause
+from .postgres import HintParts, PostgresLimitClause
 
 
 def _simplify_result_set(result_set: list[tuple[Any]]) -> Any:
@@ -354,16 +356,106 @@ class DuckDBOptimizer(OptimizerInterface):
         self._db = db
 
     def query_plan(self, query: SqlQuery | str) -> QueryPlan:
-        raise NotImplementedError
+        if isinstance(query, SqlQuery):
+            query = qal.transform.as_explain(query)
+            query = self._db.hinting().format_query(query)
+        else:
+            normalized = query.strip().upper()
+            if not normalized.startswith("EXPLAIN"):
+                normalized = f"EXPLAIN (FORMAT JSON) {normalized}"
+            query = normalized
+
+        self._db.cursor().execute(query)
+        result_set = self._db.cursor().fetchone()
+        assert len(result_set) == 2
+
+        raw_explain = result_set[1]
+        parsed = json.loads(raw_explain)
+        return self._parse_duckdb_plan(parsed[0])
 
     def analyze_plan(self, query: SqlQuery) -> QueryPlan:
-        raise NotImplementedError
+        query = qal.transform.as_explain_analyze(query, qal.Explain)
+        query = self._db.hinting().format_query(query)
+
+        self._db.cursor().execute(query)
+        result_set = self._db.cursor().fetchone()
+        assert len(result_set) == 2
+
+        raw_explain = result_set[1]
+        return self._parse_duckdb_plan(json.loads(raw_explain))
 
     def cardinality_estimate(self, query: SqlQuery | str) -> Cardinality:
-        raise NotImplementedError
+        plan = self.query_plan(query)
+        if "AGGREGATE" in plan.node_type:
+            warnings.warn(
+                "Plan could have an aggregate node as root. DuckDB does not estimate cardinalities for aggregations."
+            )
+        return plan.estimated_cardinality
 
     def cost_estimate(self, query: SqlQuery | str) -> Cost:
-        raise NotImplementedError
+        raise UnsupportedDatabaseFeatureError(self._db, "cost estimates")
+
+    def _parse_duckdb_plan(self, raw_plan: dict) -> QueryPlan:
+        node_type = raw_plan.get("name") or raw_plan.get("operator_name")
+        if not node_type:
+            assert len(raw_plan["children"]) == 1, (
+                "Expected a single child for the root operator"
+            )
+            return self._parse_duckdb_plan(raw_plan["children"][0])
+
+        if node_type == "EXPLAIN" or node_type == "EXPLAIN_ANALYZE":
+            assert len(raw_plan["children"]) == 1, (
+                "Expected a single child for EXPLAIN operator"
+            )
+            return self._parse_duckdb_plan(raw_plan["children"][0])
+
+        extras: dict = raw_plan.get("extra_info", {})
+        match node_type:
+            case "HASH_JOIN":
+                operator = JoinOperator.HashJoin
+            case (
+                "SEQ_SCAN"
+                | "SEQ_SCAN "  # DuckDB has a weird typo in the SEQ_SCAN label
+            ) if extras.get("Type", "") == "Sequential Scan":
+                operator = ScanOperator.SequentialScan
+            case (
+                "SEQ_SCAN"
+                | "SEQ_SCAN "  # DuckDB has a weird typo in the SEQ_SCAN label
+            ) if extras.get("Type", "") == "Index Scan":
+                operator = ScanOperator.IndexScan
+            case _:
+                warnings.warn(f"Unknown node type: {node_type}, ({extras})")
+                operator = None
+        if operator is not None:
+            node_type = operator
+
+        base_table = None
+        if operator in ScanOperator:
+            tab = extras.get("Table", "")
+            if tab:
+                base_table = TableReference(tab)
+
+        card_est = float(
+            extras.get("Estimated Cardinality", math.nan)
+        )  # Estimated Cardinality is a string for some reason..
+        card_act = raw_plan.get("operator_cardinality", math.nan)
+
+        children = [
+            self._parse_duckdb_plan(child) for child in raw_plan.get("children", [])
+        ]
+
+        own_runtime = extras.get("operator_timing", math.nan)
+        total_runtime = own_runtime + sum(child.execution_time for child in children)
+
+        return QueryPlan(
+            node_type,
+            operator=operator,
+            children=children,
+            base_table=base_table,
+            estimated_cardinality=card_est,
+            actual_cardinality=card_act,
+            execution_time=total_runtime,
+        )
 
 
 class DuckDBHintService(HintService):
@@ -380,12 +472,6 @@ class DuckDBHintService(HintService):
         plan_parameters: Optional[PlanParameterization] = None,
     ) -> SqlQuery:
         adapted_query = query
-        if adapted_query.explain and not isinstance(
-            adapted_query.explain, PostgresExplainClause
-        ):
-            adapted_query = qal.transform.replace_clause(
-                adapted_query, PostgresExplainClause(adapted_query.explain)
-            )
         if adapted_query.limit_clause and not isinstance(
             adapted_query.limit_clause, PostgresLimitClause
         ):
@@ -429,10 +515,6 @@ class DuckDBHintService(HintService):
 
     def format_query(self, query: SqlQuery) -> str:
         # DuckDB uses the Postgres SQL dialect, so this part is easy..
-        if query.explain:
-            query = transform.replace_clause(
-                query, PostgresExplainClause(query.explain)
-            )
         return qal.format_quick(query, flavor="postgres")
 
     def supports_hint(self, hint: PhysicalOperator | HintType) -> bool:
