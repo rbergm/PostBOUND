@@ -3,7 +3,7 @@
 WD=$(pwd)
 VENV="$WD/../../pb-venv"
 EXPLICIT_VENV="false"
-TARGET_DIR="$WD/duckdb-lab"
+TARGET_DIR="$WD/quacklab"
 
 function show_help() {
     RET=$1
@@ -63,7 +63,7 @@ if [ -d "$TARGET_DIR" ] ; then
     git pull
     git fetch --tags
 else
-    git clone https://github.com/rbergm/ducklab.git "$TARGET_DIR"
+    git clone https://github.com/rbergm/quacklab.git "$TARGET_DIR"
     cd "$TARGET_DIR"
     git fetch --tags
 fi

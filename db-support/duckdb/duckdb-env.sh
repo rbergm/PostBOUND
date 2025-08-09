@@ -2,7 +2,7 @@
 
 ACTION="load"
 WD=$(pwd)
-TARGET_DIR="$WD/duckdb-lab"
+TARGET_DIR="$WD/quacklab"
 
 show_help() {
     RET=$1
@@ -48,6 +48,6 @@ DUCKDB_EXEC_PATH="$TARGET_DIR/build/release"
 
 if [ "$ACTION" = "load" ] ; then
     export PATH="$DUCKDB_EXEC_PATH:$PATH"
-else 
+else
     export PATH="${PATH//$DUCKDB_EXEC_PATH:}"
 fi
