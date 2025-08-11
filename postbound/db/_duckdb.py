@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import math
+import multiprocessing
 import textwrap
 import warnings
 from collections.abc import Iterable, Sequence
@@ -37,12 +38,19 @@ from ._db import (
     DatabaseStatistics,
     HintService,
     OptimizerInterface,
-    QueryCacheWarning,
     ResultSet,
     UnsupportedDatabaseFeatureError,
     simplify_result_set,
 )
 from .postgres import HintParts, PostgresLimitClause
+
+
+def _timeout_executor(query: str, *, cursor: Cursor, result_pipe, error_pipe) -> None:
+    try:
+        result_set = cursor.execute(query).fetchall()
+        result_pipe.send(result_set)
+    except Exception as e:
+        error_pipe.send(e)
 
 
 class DuckDBInterface(Database):
@@ -53,12 +61,6 @@ class DuckDBInterface(Database):
 
         super().__init__(system_name=system_name, cache_enabled=cache_enabled)
 
-        if cache_enabled:
-            warnings.warn(
-                "DuckDB interface does not support result caching (yet)",
-                QueryCacheWarning,
-            )
-
         self._dbfile = db
 
         self._db = duck.connect(db)
@@ -67,8 +69,6 @@ class DuckDBInterface(Database):
         self._schema = DuckDBSchema(self)
         self._optimizer = DuckDBOptimizer(self)
         self._hinting = DuckDBHintService(self)
-
-        self._result_cache: dict[str, ResultSet] = {}
 
     def schema(self) -> DuckDBSchema:
         return self._schema
@@ -99,6 +99,7 @@ class DuckDBInterface(Database):
         *,
         cache_enabled: Optional[bool] = None,
         raw: bool = False,
+        timeout: Optional[float] = None,
     ) -> Any:
         if (
             isinstance(query, SqlQuery)
@@ -112,16 +113,62 @@ class DuckDBInterface(Database):
             query = self._hinting.format_query(query)
 
         if cache_enabled:
-            cached_res = self._result_cache.get(query)
+            cached_res = self._query_cache.get(query)
             if cached_res is not None:
                 return cached_res if raw else simplify_result_set(cached_res)
 
-        self._cur.execute(query)
-        raw_result = self._cur.fetchall()
+        if timeout is not None:
+            raw_result = self.execute_with_timeout(query, timeout=timeout)
+            if raw_result is None:
+                raise TimeoutError(query)
+        else:
+            self._cur.execute(query)
+            raw_result = self._cur.fetchall()
+
         if cache_enabled:
-            self._result_cache[query] = raw_result
+            self._query_cache[query] = raw_result
 
         return raw_result if raw else simplify_result_set(raw_result)
+
+    def execute_with_timeout(
+        self, query: SqlQuery | str, *, timeout: float = 60.0
+    ) -> Optional[ResultSet]:
+        cur = self._db.cursor()
+        if isinstance(query, SqlQuery):
+            query = self._hinting.format_query(query)
+
+        result_recv, result_send = multiprocessing.Pipe(duplex=False)
+        error_recv, error_send = multiprocessing.Pipe(duplex=False)
+        worker = multiprocessing.Process(
+            target=_timeout_executor,
+            args=(query,),
+            kwargs={
+                "cursor": cur,
+                "result_pipe": result_send,
+                "error_pipe": error_send,
+            },
+        )
+
+        worker.start()
+        worker.join(timeout)
+
+        timed_out = worker.is_alive()
+        if error_recv.poll():
+            worker.terminate()
+            raise error_recv.recv()
+
+        if timed_out:
+            worker.terminate()
+            worker.join()
+            return None
+
+        result_set = result_recv.recv()
+
+        worker.close()
+        result_send.close()
+        result_recv.close()
+
+        return result_set
 
     def database_name(self) -> str:
         self._cur.execute("SELECT CURRENT_DATABASE();")

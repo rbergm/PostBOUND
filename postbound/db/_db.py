@@ -274,7 +274,7 @@ class Database(abc.ABC):
         self.system_name = system_name
 
         self._cache_enabled = cache_enabled
-        self._query_cache: dict[str, list[tuple]] = {}
+        self._query_cache: dict[str, ResultSet] = {}
         if self._cache_enabled:
             self._inflate_query_cache()
         atexit.register(self.close)

@@ -804,12 +804,13 @@ class PostgresInterface(Database):
                     }
                 )
 
+            pk_col = self._db_schema.primary_key_column(table)
             schema_info.append(
                 {
                     "table": str(table),
                     "n_rows": self.statistics().total_rows(table, emulated=True),
                     "columns": column_info,
-                    "primary_key": self._db_schema.primary_key_column(table).name,
+                    "primary_key": pk_col.name if pk_col else None,
                 }
             )
 
