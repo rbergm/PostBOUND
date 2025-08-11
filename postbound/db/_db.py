@@ -196,6 +196,38 @@ class QueryCacheWarning(UserWarning):
         super().__init__(msg)
 
 
+def simplify_result_set(result_set: list[tuple[Any]]) -> Any:
+    """Default implementation of the result set simplification logic outlined in `Database.execute_query`.
+
+    Parameters
+    ----------
+    result_set : list[tuple[Any]]
+        Result set to simplify: each entry in the list corresponds to one row in the result set and each component of the
+        tuples corresponds to one column in the result set
+
+    Returns
+    -------
+    Any
+        The simplified result set: if the result set consists just of a single row, this row is unwrapped from the list. If the
+        result set contains just a single column, this is unwrapped from the tuple. Both simplifications are also combined,
+        such that a result set of a single row of a single column is turned into the single value.
+    """
+    # simplify the query result as much as possible: [(42, 24)] becomes (42, 24) and [(1,), (2,)] becomes [1, 2]
+    # [(42, 24), (4.2, 2.4)] is left as-is
+    if not result_set:
+        return []
+
+    result_structure = result_set[0]  # what do the result tuples look like?
+    if len(result_structure) == 1:  # do we have just one column?
+        result_set = [
+            row[0] for row in result_set
+        ]  # if it is just one column, unwrap it
+
+    if len(result_set) == 1:  # if it is just one row, unwrap it
+        return result_set[0]
+    return result_set
+
+
 class Database(abc.ABC):
     """A `Database` is PostBOUND's logical abstraction of physical database management systems.
 

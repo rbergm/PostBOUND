@@ -45,6 +45,7 @@ from ._db import (
     QueryCacheWarning,
     TimeoutSupport,
     UnsupportedDatabaseFeatureError,
+    simplify_result_set,
 )
 
 __all__ = [
@@ -65,6 +66,7 @@ __all__ = [
     "UnsupportedDatabaseFeatureError",
     "DatabaseServerError",
     "DatabaseUserError",
+    "simplify_result_set",
 ]
 
 

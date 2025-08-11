@@ -40,40 +40,9 @@ from ._db import (
     QueryCacheWarning,
     ResultSet,
     UnsupportedDatabaseFeatureError,
+    simplify_result_set,
 )
 from .postgres import HintParts, PostgresLimitClause
-
-
-def _simplify_result_set(result_set: list[tuple[Any]]) -> Any:
-    """Implementation of the result set simplification logic outlined in `Database.execute_query`.
-
-    Parameters
-    ----------
-    result_set : list[tuple[Any]]
-        Result set to simplify: each entry in the list corresponds to one row in the result set and each component of the
-        tuples corresponds to one column in the result set
-
-    Returns
-    -------
-    Any
-        The simplified result set: if the result set consists just of a single row, this row is unwrapped from the list. If the
-        result set contains just a single column, this is unwrapped from the tuple. Both simplifications are also combined,
-        such that a result set of a single row of a single column is turned into the single value.
-    """
-    # simplify the query result as much as possible: [(42, 24)] becomes (42, 24) and [(1,), (2,)] becomes [1, 2]
-    # [(42, 24), (4.2, 2.4)] is left as-is
-    if not result_set:
-        return []
-
-    result_structure = result_set[0]  # what do the result tuples look like?
-    if len(result_structure) == 1:  # do we have just one column?
-        result_set = [
-            row[0] for row in result_set
-        ]  # if it is just one column, unwrap it
-
-    if len(result_set) == 1:  # if it is just one row, unwrap it
-        return result_set[0]
-    return result_set
 
 
 class DuckDBInterface(Database):
@@ -145,14 +114,14 @@ class DuckDBInterface(Database):
         if cache_enabled:
             cached_res = self._result_cache.get(query)
             if cached_res is not None:
-                return cached_res if raw else _simplify_result_set(cached_res)
+                return cached_res if raw else simplify_result_set(cached_res)
 
         self._cur.execute(query)
         raw_result = self._cur.fetchall()
         if cache_enabled:
             self._result_cache[query] = raw_result
 
-        return raw_result if raw else _simplify_result_set(raw_result)
+        return raw_result if raw else simplify_result_set(raw_result)
 
     def database_name(self) -> str:
         self._cur.execute("SELECT CURRENT_DATABASE();")

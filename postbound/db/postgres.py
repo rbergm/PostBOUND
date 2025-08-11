@@ -86,6 +86,7 @@ from ._db import (
     OptimizerInterface,
     ResultSet,
     UnsupportedDatabaseFeatureError,
+    simplify_result_set,
 )
 
 # TODO: find a nice way to support index nested-loop join hints.
@@ -620,38 +621,6 @@ def _modifies_geqo_config(query: qal.SqlQuery) -> bool:
     return "geqo" in query.hints.preparatory_statements.lower()
 
 
-def _simplify_result_set(result_set: list[tuple[Any]]) -> Any:
-    """Implementation of the result set simplification logic outlined in `Database.execute_query`.
-
-    Parameters
-    ----------
-    result_set : list[tuple[Any]]
-        Result set to simplify: each entry in the list corresponds to one row in the result set and each component of the
-        tuples corresponds to one column in the result set
-
-    Returns
-    -------
-    Any
-        The simplified result set: if the result set consists just of a single row, this row is unwrapped from the list. If the
-        result set contains just a single column, this is unwrapped from the tuple. Both simplifications are also combined,
-        such that a result set of a single row of a single column is turned into the single value.
-    """
-    # simplify the query result as much as possible: [(42, 24)] becomes (42, 24) and [(1,), (2,)] becomes [1, 2]
-    # [(42, 24), (4.2, 2.4)] is left as-is
-    if not result_set:
-        return []
-
-    result_structure = result_set[0]  # what do the result tuples look like?
-    if len(result_structure) == 1:  # do we have just one column?
-        result_set = [
-            row[0] for row in result_set
-        ]  # if it is just one column, unwrap it
-
-    if len(result_set) == 1:  # if it is just one row, unwrap it
-        return result_set[0]
-    return result_set
-
-
 class PostgresInterface(Database):
     """Database implementation for PostgreSQL backends.
 
@@ -721,7 +690,7 @@ class PostgresInterface(Database):
 
         if cache_enabled and query in self._query_cache:
             query_result = self._query_cache[query]
-            return query_result if raw else _simplify_result_set(query_result)
+            return query_result if raw else simplify_result_set(query_result)
 
         try:
             self._current_geqo_state = self._obtain_geqo_state()
@@ -758,7 +727,7 @@ class PostgresInterface(Database):
             )
             raise DatabaseUserError(msg, e)
 
-        return query_result if raw else _simplify_result_set(query_result)
+        return query_result if raw else simplify_result_set(query_result)
 
     def execute_with_timeout(
         self, query: qal.SqlQuery | str, timeout: float = 60.0
@@ -3043,7 +3012,7 @@ def _parallel_query_worker(
     result_set = cursor.fetchall()
     cursor.close()
 
-    return query, _simplify_result_set(result_set)
+    return query, simplify_result_set(result_set)
 
 
 class ParallelQueryExecutor:
