@@ -38,6 +38,7 @@ from ._db import (
     HintService,
     OptimizerInterface,
     QueryCacheWarning,
+    ResultSet,
     UnsupportedDatabaseFeatureError,
 )
 from .postgres import HintParts, PostgresLimitClause
@@ -98,6 +99,8 @@ class DuckDBInterface(Database):
         self._optimizer = DuckDBOptimizer(self)
         self._hinting = DuckDBHintService(self)
 
+        self._result_cache: dict[str, ResultSet] = {}
+
     def schema(self) -> DuckDBSchema:
         return self._schema
 
@@ -140,13 +143,15 @@ class DuckDBInterface(Database):
             query = self._hinting.format_query(query)
 
         if cache_enabled:
-            warnings.warn(
-                "DuckDB interface does not support result caching (yet)",
-                QueryCacheWarning,
-            )
+            cached_res = self._result_cache.get(query)
+            if cached_res is not None:
+                return cached_res if raw else _simplify_result_set(cached_res)
 
         self._cur.execute(query)
         raw_result = self._cur.fetchall()
+        if cache_enabled:
+            self._result_cache[query] = raw_result
+
         return raw_result if raw else _simplify_result_set(raw_result)
 
     def database_name(self) -> str:
@@ -181,7 +186,7 @@ class DuckDBInterface(Database):
 
     def describe(self) -> jsondict:
         base_info = {
-            "system_name": self.system_name(),
+            "system_name": self.database_system_name(),
             "system_version": self.database_system_version(),
             "database": self.database_name(),
         }
