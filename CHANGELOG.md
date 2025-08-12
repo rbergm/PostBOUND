@@ -55,6 +55,7 @@ stability. Since we are not ready for the 1.0 release yet, this does not matter 
 - Refactored the internals of query execution with timeouts on Postgres. The query is still executed in a separate process, but
   the process now establishes its own database connection instead of sharing the connection from the main process. This
   circumvents issues with the connection not being pickle-able on some systems (looking at you, Windows).
+- Added support for timestamp-based columns in the database query cache.
 
 ### 🏥 Fixes
 - Fixed `PostgresSetting` not being pickle-able. This temporarily broke the refactored timeout query execution logic for

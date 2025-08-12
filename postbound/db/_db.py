@@ -25,6 +25,7 @@ import textwrap
 import typing
 import warnings
 from collections.abc import Iterable, Sequence
+from datetime import date, datetime, time, timedelta
 from typing import Any, Optional, runtime_checkable
 
 import networkx as nx
@@ -226,6 +227,39 @@ def simplify_result_set(result_set: list[tuple[Any]]) -> Any:
     if len(result_set) == 1:  # if it is just one row, unwrap it
         return result_set[0]
     return result_set
+
+
+class _DBCacheJsonEncoder(json.JSONEncoder):
+    def default(self, obj: Any) -> Any:
+        if isinstance(obj, datetime):
+            return {"$datetime": obj.isoformat()}
+        elif isinstance(obj, date):
+            return {"$date": obj.isoformat()}
+        elif isinstance(obj, time):
+            return {"$time": obj.isoformat()}
+        elif isinstance(obj, timedelta):
+            return {"$timedelta": obj.total_seconds()}
+        return super().default(obj)
+
+
+class _DBCacheJsonDecoder(json.JSONDecoder):
+    def __init__(self, *args, **kwargs):
+        self._second_hook = kwargs.get("object_hook")
+        super().__init__(object_hook=self.object_hook, *args, **kwargs)
+
+    def object_hook(self, obj: Any) -> Any:
+        if self._second_hook:
+            return self._second_hook(obj)
+
+        if "$datetime" in obj:
+            return datetime.fromisoformat(obj["$datetime"])
+        elif "$date" in obj:
+            return date.fromisoformat(obj["$date"])
+        elif "$time" in obj:
+            return time.fromisoformat(obj["$time"])
+        elif "$timedelta" in obj:
+            return timedelta(seconds=obj["$timedelta"])
+        return obj
 
 
 class Database(abc.ABC):
@@ -522,7 +556,7 @@ class Database(abc.ABC):
         if os.path.isfile(query_cache_name):
             with open(query_cache_name, "r") as cache_file:
                 try:
-                    self._query_cache = json.load(cache_file)
+                    self._query_cache = json.load(cache_file, cls=_DBCacheJsonDecoder)
                 except json.JSONDecodeError as e:
                     warnings.warn(
                         "Could not read query cache: " + str(e),
@@ -546,7 +580,7 @@ class Database(abc.ABC):
             The path where to write the file to. If it exists, it will be overwritten.
         """
         with open(query_cache_name, "w") as cache_file:
-            json.dump(self._query_cache, cache_file)
+            json.dump(self._query_cache, cache_file, cls=_DBCacheJsonEncoder)
 
     def _query_cache_name(self) -> str:
         """Provides a normalized file name for the query cache.
