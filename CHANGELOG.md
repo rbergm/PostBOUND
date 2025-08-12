@@ -45,6 +45,9 @@ stability. Since we are not ready for the 1.0 release yet, this does not matter 
 ### 🐣 New features
 - Added JOB-light as a pre-defined workload
 - When executing a query with a timeout on the Postgres backend, errors will now be properly propagated to the client.
+- 🐳 Revamped the Docker setup to properly use volumes. Instead of setting up the database, etc. when building the image,
+  this is now delayed until the actual container is created. This process allows to make all of the internals available on the
+  host using volumes.
 
 ### 💀 Breaking changes
 - _None_

@@ -33,11 +33,6 @@ You can build your Docker image with the following command:
 ```sh
 docker build -t postbound \
     --build-arg TIMEZONE=$(cat /etc/timezone) \
-    --build-arg USE_PGLAB=true \
-    --build-arg OPTIMIZE_PG_CONFIG=true \
-    --build-arg SETUP_STATS=true \
-    --build-arg SETUP_JOB=false \
-    --build-arg SETUP_STACK=false \
     .
 ```
 
@@ -53,7 +48,13 @@ Once the image is built, create a container like so:
 docker run -dt \
     --shm-size 4G \
     --name postbound \
-    --volume $PWD/postbound-docker:/postbound/public \
+    --env USE_PGLAB=true \
+    --env OPTIMIZE_PG_CONFIG=true \
+    --env SETUP_STATS=true \
+    --env SETUP_JOB=false \
+    --env SETUP_STACK=false \
+    --volume $PWD/vol-postbound:/postbound \
+    --volume $PWD/vol-pglab:/pg_lab \
     --publish 5432:5432 \
     postbound
 ```
@@ -66,8 +67,7 @@ Adjust the amount of shared memory depending on your machine.
 
 The Postgres server will be available at port 5432 from the host machine (using the user _postbound_ with the same
 password).
-The volume mountpoint can be used to easily copy experiment scripts into the container and to export results back out
-again.
+The volume mountpoints provide all internal files from PostBOUND and pg_lab (if used).
 
 You can connect to the PostBOUND container using the usual
 
@@ -222,6 +222,9 @@ A detailed documentation of PostBOUND is available [here](https://postbound.read
 
 
 ## 🐳 Docker options
+
+The following options can be used when starting the Docker container as `--env` parameters (with the exception of _TIMEZONE_,
+which must be specified as a `--build-arg` when creating the image).
 
 | Argument | Allowed values | Description | Default |
 |----------|----------------|-------------|---------|
