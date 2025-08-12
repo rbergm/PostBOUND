@@ -385,6 +385,9 @@ class PostgresSetting(str):
         """
         return PostgresSetting(self.parameter, value)
 
+    def __getnewargs__(self) -> tuple[str, object]:
+        return (self.parameter, self.value)
+
 
 class PostgresConfiguration(collections.UserString):
     """Model for a collection of different postgres settings that form a complete server configuration.

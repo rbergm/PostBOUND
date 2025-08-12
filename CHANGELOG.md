@@ -50,11 +50,15 @@ stability. Since we are not ready for the 1.0 release yet, this does not matter 
 - _None_
 
 ### 📰 Updates
+- Moved `simplify_result_set` into the public API of the _db_ package. All backends are practically doing the same stuff
+  anyway.
 - Refactored the internals of query execution with timeouts on Postgres. The query is still executed in a separate process, but
   the process now establishes its own database connection instead of sharing the connection from the main process. This
   circumvents issues with the connection not being pickle-able on some systems (looking at you, Windows).
 
 ### 🏥 Fixes
+- Fixed `PostgresSetting` not being pickle-able. This temporarily broke the refactored timeout query execution logic for
+  Postgres.
 - 🐘 🍏 Fixed SSB setup for Postgres on MacOS
 
 ### 🪲 Known bugs
