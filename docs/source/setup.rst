@@ -155,17 +155,11 @@ The resulting Docker container contains a virtual environment-based installation
 server completely configured and ready to use.
 Optionally, you can also obtain an optimized Postgres server configuration and setup different benchmarks.
 
-.. note::
-
-    Right now, the Docker setup creates a tailored image for PostBOUND and Postgres.
-    Sadly, this prevents us from using volumes to persist the Postgres data or to make the complete PostBOUND framework
-    available on the host.
-    This situation is not ideal and we will probably use a different approach in the (near) future.
-    But for now, this is the best that we have.
 
 To create the Docker image, simply run ``docker build`` in the main PostBOUND directory.
-The build process will take a while, since it has to download and compile Postgres from source.
-You can customize the build process with the following ``--build-arg`` options:
+You can specify the timezone of the image using the ``TIMEZONE`` ``--build-arg`` (see below).
+You can customize the container with the following options via ``--env`` parameters (with the exception of _TIMEZONE_,
+which must be specified as a `--build-arg` when creating the image).
 
 +------------------------+-------------------------------+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+---------------+
 | Argument               | Allowed values                | Description                                                                                                                                                                                                                                                            | Default       |
@@ -191,8 +185,7 @@ You can customize the build process with the following ``--build-arg`` options:
 
 The Docker container makes port 5432 available to bind on the system.
 This enables you to connect to the Postgres server from outside.
-Likewise, a volume is created at ``/postbound/public`` to easily copy experiment scripts into the container and to export
-results back out.
+Likewise, a volumes are created at ``/postbound/`` and ``/pg_lab`` (only useful if pg_lab is actually enabled).
 The PostBOUND installation itself is located at ``/postbound``.
 If a vanilla Postgres server is used, it is installed at ``/postbound/db-support/postgres/postgres-server``.
 pg_lab servers are installed at ``/pg_lab``.
@@ -206,18 +199,19 @@ Putting things together, you can create a Docker container with PostBOUND and Po
 
     docker build -t postbound \
         --build-arg TIMEZONE=$(cat /etc/timezone) \
-        --build-arg SETUP_IMDB=true \
-        --build-arg SETUP_STATS=true \
-        --build-arg OPTIMIZE_PG_CONFIG=true \
-        --build-arg PG_DISK_TYPE=SSD \
-        --build-arg PG_VER=17 \
-        --build-arg USE_PGLAB=true \
         .
 
     docker run -dt \
         --shm-size 4G \
         --name postbound \
-        --volume $PWD/postbound-docker:/postbound/public \
+        --env SETUP_IMDB=true \
+        --env SETUP_STATS=true \
+        --env OPTIMIZE_PG_CONFIG=true \
+        --env PG_DISK_TYPE=SSD \
+        --env PG_VER=17 \
+        --env USE_PGLAB=true \
+        --volume $PWD/vol-postbound:/postbound \
+        --volume $PWD/vol-pglab:/pg_lab \
         --publish 5432:5432 \
         postbound
 
@@ -225,7 +219,8 @@ Putting things together, you can create a Docker container with PostBOUND and Po
 
 .. tip::
 
-    Building the Docker image will take a while.
+    Building the Docker container will take a while.
     This is expected and nothing to worry about.
     The build process involves downloading and compiling Postgres from source, as well as optionally setting up the
     databases for JOB, Stats and the like (which also includes downloading and importing them).
+    You can follow the current progress via ``docker logs -f postbound`` (provided that your container is called *postbound*).
