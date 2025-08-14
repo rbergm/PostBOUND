@@ -7,13 +7,13 @@ else
 fi
 
 if [ -z "$PG_VER" ] ; then
-    echo "PG_VER is not set, using default version"
+    echo "[setup] PG_VER is not set, using default version"
     PG_VER=17
 fi
 
 if [ -z "$(ls /postbound)" ] ; then
 
-    echo "No files found in /postbound, starting initial setup"
+    echo "[setup] No files found in /postbound, starting initial setup"
 
     sudo chown -R $USERNAME:$USERNAME /postbound
     sudo chmod -R 755 /postbound
@@ -24,13 +24,17 @@ if [ -z "$(ls /postbound)" ] ; then
     git clone --depth 1 --branch=feature/duckdb-support https://github.com/rbergm/PostBOUND /postbound
 
     # Setup local Postgres or pg_lab
-    if [ "$USE_PGLAB" = "true" ] ; then
+    if [ "$USE_PGLAB" = "true" ] & [ -z "$(ls /pg_lab)" ] ; then
+        echo "[setup] Building pg_lab"
         git clone --depth 1 --branch=main https://github.com/rbergm/pg_lab /pg_lab
         cd /pg_lab && ./postgres-setup.sh --pg-ver $PGVER --remote-password "postbound" --stop
         . ./postgres-start.sh
-    else
+    else if [ "$USE_PGLAB" = "false" ]
+        echo "[setup] Building vanilla Postgres server"
         cd /postbound/db-support/postgres && ./postgres-setup.sh --pg-ver $PGVER --remote-password "postbound" --stop
         . ./postgres-start.sh
+    else
+        echo "[setup] Reusing existing pg_lab installation"
     fi
 
     cd /postbound/db-support/postgres
@@ -76,6 +80,8 @@ if [ -z "$(ls /postbound)" ] ; then
     echo "cd /postbound" >> /home/$USERNAME/.bashrc
     echo "source /postbound/pb-venv/bin/activate" >> /home/$USERNAME/.bashrc
 
+
+    echo "[setup] Installation complete. You can now start using PostBOUND."
 else
 
     cd $PG_PATH

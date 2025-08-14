@@ -1,6 +1,6 @@
 FROM ubuntu:noble
 
-EXPOSE 5432
+EXPOSE 5432 8888
 STOPSIGNAL SIGINT
 
 # Install dependencies

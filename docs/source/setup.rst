@@ -155,11 +155,14 @@ The resulting Docker container contains a virtual environment-based installation
 server completely configured and ready to use.
 Optionally, you can also obtain an optimized Postgres server configuration and setup different benchmarks.
 
-
 To create the Docker image, simply run ``docker build`` in the main PostBOUND directory.
 You can specify the timezone of the image using the ``TIMEZONE`` ``--build-arg`` (see below).
 You can customize the container with the following options via ``--env`` parameters (with the exception of _TIMEZONE_,
 which must be specified as a `--build-arg` when creating the image).
+Please note that the *run* command will invoke a lot of setup logic.
+Hence, it will take a substantial amount of time to complete the installation.
+This is because the container will compile a local Postgres server from source, import benchmarks, etc.
+Use ``docker logs -f <container name>`` to monitor the installation progress.
 
 +------------------------+-------------------------------+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+---------------+
 | Argument               | Allowed values                | Description                                                                                                                                                                                                                                                            | Default       |
@@ -184,11 +187,16 @@ which must be specified as a `--build-arg` when creating the image).
 +------------------------+-------------------------------+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+---------------+
 
 The Docker container makes port 5432 available to bind on the system.
+If you plan on using Jupyter for data analysis, consider also publishing port 8888 on the container to access the notebooks
+from your client's browser.
 This enables you to connect to the Postgres server from outside.
-Likewise, a volumes are created at ``/postbound/`` and ``/pg_lab`` (only useful if pg_lab is actually enabled).
+Likewise, volumes are created at ``/postbound/`` and ``/pg_lab`` (only useful if pg_lab is actually enabled).
 The PostBOUND installation itself is located at ``/postbound``.
 If a vanilla Postgres server is used, it is installed at ``/postbound/db-support/postgres/postgres-server``.
 pg_lab servers are installed at ``/pg_lab``.
+If the pg_lab volume points to an existing (i.e. non-empty) directory, the setup assumes that this is already a valid
+pg_lab installation and skips the corresponding setup.
+This can be useful if multiple containers should share the same pg_lab installation.
 
 Once you log in to the container, the PostBOUND virtual environment will be activated automatically.
 Likewise, all Postgres binaries are available on the *PATH*.
@@ -197,9 +205,7 @@ Putting things together, you can create a Docker container with PostBOUND and Po
 
 .. code-block:: bash
 
-    docker build -t postbound \
-        --build-arg TIMEZONE=$(cat /etc/timezone) \
-        .
+    docker build -t postbound --build-arg TIMEZONE=$(cat /etc/timezone) .
 
     docker run -dt \
         --shm-size 4G \
@@ -213,6 +219,7 @@ Putting things together, you can create a Docker container with PostBOUND and Po
         --volume $PWD/vol-postbound:/postbound \
         --volume $PWD/vol-pglab:/pg_lab \
         --publish 5432:5432 \
+        --publish 8888:8888 \
         postbound
 
     docker exec -it postbound /bin/bash

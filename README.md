@@ -31,9 +31,7 @@ The fastest way to get an installation of PostBOUND up and running is to use the
 You can build your Docker image with the following command:
 
 ```sh
-docker build -t postbound \
-    --build-arg TIMEZONE=$(cat /etc/timezone) \
-    .
+docker build -t postbound --build-arg TIMEZONE=$(cat /etc/timezone) .
 ```
 
 This will create a Docker image with a local Postgres instance (using [pg_lab](https://github.com/rbergm/pg_lab)) and
@@ -56,17 +54,20 @@ docker run -dt \
     --volume $PWD/vol-postbound:/postbound \
     --volume $PWD/vol-pglab:/pg_lab \
     --publish 5432:5432 \
+    --publish 8888:8888 \
     postbound
 ```
 
-Adjust the amount of shared memory depending on your machine.
+Adjust the amount of shared memory depending on your machine. Note that the initial start of the container will take a
+substantial amount of time. This is because the container needs to compile a fresh Postgres server from source, download and
+import workloads, etc. Use `docker logs -f postbound`  to monitor the startup process.
 
 > [!TIP]
 > Shared memory is used by Postgres for its internal caching and therefore paramount for good server performance.
 > The general recommendation is to set it to at least 1/4 of the available RAM.
 
 The Postgres server will be available at port 5432 from the host machine (using the user _postbound_ with the same
-password).
+password). If you plan on using Jupyter for data analysis, also publish port 8888.
 The volume mountpoints provide all internal files from PostBOUND and pg_lab (if used).
 
 You can connect to the PostBOUND container using the usual
@@ -239,8 +240,10 @@ which must be specified as a `--build-arg` when creating the image).
 | `USE_PGLAB` | `true` or `false` | Whether to initialize a [pg_lab](https://github.com/rbergm/pg_lab) server instead of a normal Postgres server. pg_lab provides advanced hinting capabilities and offers additional extension points for the query optimizer. | `false` |
 
 The PostBOUND source code is located at `/postbound`. If pg_lab is being used, the corresponding files are located at `/pg_lab`.
-The container automatically exposes the Postgres port 5432 and provides a volume mountpoint at `/postbound/public`. This
-mountpoint can be used to easily get experiment scripts into the container and to export results back out again.
+The container automatically exposes the Postgres port 5432 and provides volume mountpoints at `/postbound` and `/pg_lab`.
+These mountpoints can be used as backups or to easily ingest data into the container.
+If the pg_lab mountpoint points to an existing (i.e. non-empty) directory, the setup assumes that this is already a valid
+pg_lab installation and skips the corresponding setup.
 
 > [!TIP]
 > pg_lab provides advanced hinting support (e.g. for materialization or cardinality hints for base tables) and offers
