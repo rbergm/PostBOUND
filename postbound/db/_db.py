@@ -22,11 +22,10 @@ import collections
 import json
 import os
 import textwrap
-import typing
 import warnings
 from collections.abc import Iterable, Sequence
 from datetime import date, datetime, time, timedelta
-from typing import Any, Optional, runtime_checkable
+from typing import Any, Optional, Protocol, Type, runtime_checkable
 
 import networkx as nx
 
@@ -55,7 +54,7 @@ ResultSet = Sequence[ResultRow]
 """Simple type alias to denote the result relation of a query."""
 
 
-class Cursor(typing.Protocol):
+class Cursor(Protocol):
     """Interface for database cursors that adhere to the Python Database API specification.
 
     This is not a complete representation and only focuses on the parts of the specification that are important for
@@ -87,7 +86,7 @@ class Cursor(typing.Protocol):
         raise NotImplementedError
 
 
-class Connection(typing.Protocol):
+class Connection(Protocol):
     """Interface for database connections that adhere to the Python Database API specification.
 
     This is not a complete representation and only focuses on the parts of the specification that are important for
@@ -110,7 +109,7 @@ class Connection(typing.Protocol):
 
 
 @runtime_checkable
-class PrewarmingSupport(typing.Protocol):
+class PrewarmingSupport(Protocol):
     """Some databases might support adding specific tables to their shared buffer.
 
     If so, they should implement this protocol to allow other parts of the framework to exploit this feature.
@@ -159,7 +158,7 @@ class PrewarmingSupport(typing.Protocol):
 
 
 @runtime_checkable
-class TimeoutSupport(typing.Protocol):
+class TimeoutSupport(Protocol):
     """Marks database systems that support executing queries with a timeout."""
 
     def execute_with_timeout(
@@ -186,6 +185,55 @@ class TimeoutSupport(typing.Protocol):
         -------
         Optional[ResultSet]
             The result set of the query. If the query was cancelled, this will be *None*.
+        """
+        ...
+
+
+@runtime_checkable
+class StopwatchSupport(Protocol):
+    """Marks the database systems that support measurement of query execution times."""
+
+    def time_query(
+        self, query: SqlQuery | str, *, timeout: Optional[float] = None
+    ) -> float:
+        """Determines the execution time of a query.
+
+        The execution time is measured from the moment the query is passed to the internal cursor (i.e. including sending the
+        query to the database server), until the execution is finished. Therfore, it does not include the time required to
+        transfer the result set back to the client.
+
+        Parameters
+        ----------
+        query : SqlQuery | str
+            The query to execute.
+        timeout : Optional[float], optional
+            Cancels the query execution if it takes longer than this number (in seconds). Notice that this parameter requires
+            timeout support from the database system.
+
+        Returns
+        -------
+        float
+            The runtime of the query in seconds. The result set is ignored.
+
+        Raises
+        ------
+        UnsupportedDatabaseFeatureError
+            If the database system does not support timeouts. You can use the `TimeoutSupport` protocol to check this
+            beforehand.
+        """
+        ...
+
+    def last_query_runtime(self) -> float:
+        """Get the runtime of the last executed query.
+
+        The execution time is measured from the moment the query is passed to the internal cursor (i.e. including sending the
+        query to the database server), until the execution is finished. Therfore, it does not include the time required to
+        transfer the result set back to the client.
+
+        Returns
+        -------
+        float
+            The runtime of the last executed query in seconds. If no query has been executed before, *NaN* is returned.
         """
         ...
 
@@ -513,6 +561,10 @@ class Database(abc.ABC):
     def close(self) -> None:
         """Shuts down all currently open connections to the database."""
         raise NotImplementedError
+
+    def provides(self, support: Type) -> bool:
+        """Checks, whether the database interface supports a specific protocol."""
+        return isinstance(self, support)
 
     def _get_cache_enabled(self) -> bool:
         """Getter for the `cache_enabled` property.

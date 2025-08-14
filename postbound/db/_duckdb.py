@@ -5,7 +5,9 @@ from __future__ import annotations
 import json
 import math
 import multiprocessing
+import multiprocessing.connection
 import textwrap
+import time
 import warnings
 from collections.abc import Iterable, Sequence
 from pathlib import Path
@@ -45,10 +47,23 @@ from ._db import (
 from .postgres import HintParts, PostgresLimitClause
 
 
-def _timeout_executor(query: str, *, cursor: Cursor, result_pipe, error_pipe) -> None:
+def _timeout_executor(
+    query: str,
+    *,
+    cursor: Cursor,
+    result_pipe: multiprocessing.connection.Connection,
+    error_pipe: multiprocessing.connection.Connection,
+    runtime_pipe: multiprocessing.connection.Connection,
+) -> None:
     try:
-        result_set = cursor.execute(query).fetchall()
+        start_time = time.perf_counter_ns()
+        cursor.execute(query)
+        end_time = time.perf_counter_ns()
+        runtime = (end_time - start_time) / 10**9  # convert to seconds
+        result_set = cursor.fetchall()
+
         result_pipe.send(result_set)
+        runtime_pipe.send(runtime)
     except Exception as e:
         error_pipe.send(e)
 
@@ -65,6 +80,7 @@ class DuckDBInterface(Database):
 
         self._db = duck.connect(db)
         self._cur = self._db.cursor()
+        self._last_query_runtime = math.nan
 
         self._schema = DuckDBSchema(self)
         self._optimizer = DuckDBOptimizer(self)
@@ -122,8 +138,14 @@ class DuckDBInterface(Database):
             if raw_result is None:
                 raise TimeoutError(query)
         else:
+            start_time = time.perf_counter_ns()
             self._cur.execute(query)
+            end_time = time.perf_counter_ns()
+
             raw_result = self._cur.fetchall()
+            self._last_query_runtime = (
+                end_time - start_time
+            ) / 10**9  # convert to seconds
 
         if cache_enabled:
             self._query_cache[query] = raw_result
@@ -139,6 +161,7 @@ class DuckDBInterface(Database):
 
         result_recv, result_send = multiprocessing.Pipe(duplex=False)
         error_recv, error_send = multiprocessing.Pipe(duplex=False)
+        runtime_recv, runtime_send = multiprocessing.Pipe(duplex=False)
         worker = multiprocessing.Process(
             target=_timeout_executor,
             args=(query,),
@@ -146,6 +169,7 @@ class DuckDBInterface(Database):
                 "cursor": cur,
                 "result_pipe": result_send,
                 "error_pipe": error_send,
+                "runtime_pipe": runtime_send,
             },
         )
 
@@ -160,15 +184,24 @@ class DuckDBInterface(Database):
         if timed_out:
             worker.terminate()
             worker.join()
+            self._last_query_runtime = timeout
             return None
 
         result_set = result_recv.recv()
+        self._last_query_runtime = runtime_recv.recv()
 
         worker.close()
         result_send.close()
         result_recv.close()
 
         return result_set
+
+    def last_query_runtime(self) -> float:
+        return self._last_query_runtime
+
+    def time_query(self, query: SqlQuery, *, timeout: Optional[float] = None) -> float:
+        self.execute_query(query, cache_enabled=False, raw=True, timeout=timeout)
+        return self.last_query_runtime()
 
     def database_name(self) -> str:
         self._cur.execute("SELECT CURRENT_DATABASE();")

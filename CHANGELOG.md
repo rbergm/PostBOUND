@@ -43,8 +43,13 @@ stability. Since we are not ready for the 1.0 release yet, this does not matter 
 # ⏳ Version 0.17.0 _(planned)_
 
 ### 🐣 New features
+- 🦆 DuckDB is now a supported database system using the [quacklab backend](https://github.com/rbergm/quacklab)
+- Added a new `StopwatchSupport` protocol for database backends. This allows to obtain (comparatively) precise timing
+  information for query execution. Postgres and DuckDB currently support this protocol and the `execute_XXX` utilities
+  automatically detect whether the target database supports this functionality.
 - Added JOB-light as a pre-defined workload
 - When executing a query with a timeout on the Postgres backend, errors will now be properly propagated to the client.
+  Practically, this means that the `execute_query` function will raise a `DatabaseServerError` directly.
 - 🐳 Revamped the Docker setup to properly use volumes. Instead of setting up the database, etc. when building the image,
   this is now delayed until the actual container is created. This process allows to make all of the internals available on the
   host using volumes.

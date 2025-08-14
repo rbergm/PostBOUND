@@ -21,6 +21,7 @@ import subprocess
 import sys
 import textwrap
 import threading
+import time
 import warnings
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
@@ -664,6 +665,7 @@ class PostgresInterface(Database):
 
         self._current_geqo_state = self._obtain_geqo_state()
         self._timeout_executor = TimeoutQueryExecutor(self)
+        self._last_query_runtime = math.nan
 
         super().__init__(system_name, cache_enabled=cache_enabled)
 
@@ -698,7 +700,14 @@ class PostgresInterface(Database):
         try:
             self._current_geqo_state = self._obtain_geqo_state()
             prepared_query, deactivated_geqo = self._prepare_query_execution(query)
+
+            start_time = time.perf_counter_ns()
             self._cursor.execute(prepared_query)
+            end_time = time.perf_counter_ns()
+            self._last_query_runtime = (
+                end_time - start_time
+            ) / 10**9  # convert to seconds
+
             query_result = (
                 self._cursor.fetchall() if self._cursor.rowcount >= 0 else None
             )
@@ -744,6 +753,15 @@ class PostgresInterface(Database):
         except TimeoutError:
             self.apply_configuration(current_config)
             return None
+
+    def last_query_runtime(self) -> float:
+        return self._last_query_runtime
+
+    def time_query(
+        self, query: qal.SqlQuery, *, timeout: Optional[float] = None
+    ) -> float:
+        self.execute_query(query, cache_enabled=False, raw=True, timeout=timeout)
+        return self.last_query_runtime()
 
     def optimizer(self) -> PostgresOptimizer:
         return PostgresOptimizer(self)
@@ -3144,9 +3162,11 @@ class ParallelQueryExecutor:
 
 def _timeout_query_worker(
     query: qal.SqlQuery | str,
+    *,
     pg_config: dict,
     result_send: mp_conn.Connection,
     err_send: mp_conn.Connection,
+    runtime_send: mp_conn.Connection,
     **kwargs,
 ) -> None:
     """Internal function to the `TimeoutQueryExecutor` to run individual queries.
@@ -3165,6 +3185,8 @@ def _timeout_query_worker(
         Pipe connection to send the query result
     err_send : mp_conn.Connection
         Pipe connection to send any errors that occurred during the query execution
+    runtime_send: mp_conn.Connection
+        Pipe connection to send the query runtime
     kwargs : Any
         Additional parameters to pass to the `PostgresInterface.execute_query` method.
     """
@@ -3179,8 +3201,13 @@ def _timeout_query_worker(
         )
         pg_instance.apply_configuration(pg_config["config"])
 
+        start_time = time.perf_counter_ns()
         result = pg_instance.execute_query(query, **kwargs)
+        end_time = time.perf_counter_ns()
+        runtime = (end_time - start_time) / 10**9  # convert to seconds
+
         result_send.send(result)
+        runtime_send.send(runtime)
     except Exception as e:
         err_send.send(e)
 
@@ -3243,10 +3270,17 @@ class TimeoutQueryExecutor:
         """
         result_recv, result_send = mp.Pipe(False)
         error_recv, error_send = mp.Pipe(False)
+        runtime_recv, runtime_send = mp.Pipe(False)
         query_worker = mp.Process(
             target=_timeout_query_worker,
-            args=(query, self._pg_fingerprint(), result_send, error_send),
-            kwargs=kwargs,
+            args=(query,),
+            kwargs={
+                "pg_config": self._pg_fingerprint(),
+                "result_send": result_send,
+                "err_send": error_send,
+                "runtime_send": runtime_send,
+                **kwargs,
+            },
         )
 
         query_worker.start()
@@ -3273,12 +3307,18 @@ class TimeoutQueryExecutor:
             query_worker.join()
             self._pg_instance.reset_connection()
             query_result = None
+            self._pg_instance._last_query_runtime = timeout
         else:
             query_result = result_recv.recv()
+            self._pg_instance._last_query_runtime = runtime_recv.recv()
 
         query_worker.close()
         result_send.close()
         result_recv.close()
+        error_send.close()
+        error_recv.close()
+        runtime_send.close()
+        runtime_recv.close()
 
         if timed_out:
             raise TimeoutError(query)
