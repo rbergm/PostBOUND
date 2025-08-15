@@ -58,6 +58,8 @@ stability. Since we are not ready for the 1.0 release yet, this does not matter 
 - _None_
 
 ### 📰 Updates
+- _AT_ is now a reserved SQL keyword and will be automatically escaped when used as an identifier. This keeps DuckDB quiet on
+  the JOB workload.
 - Moved `simplify_result_set` into the public API of the _db_ package. All backends are practically doing the same stuff
   anyway.
 - Refactored the internals of query execution with timeouts on Postgres. The query is still executed in a separate process, but

@@ -511,6 +511,7 @@ SqlKeywords = frozenset(
         "AS",
         "ASC",
         "ASYMMETRIC",
+        "AT",
         "BINARY",
         "BOTH",
         "CASE",
