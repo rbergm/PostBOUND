@@ -21,7 +21,9 @@ import subprocess
 import sys
 import textwrap
 import threading
+import time
 import warnings
+from collections import UserString
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from multiprocessing import connection as mp_conn
@@ -73,7 +75,7 @@ from ..qal import (
     WindowExpression,
     transform,
 )
-from ..util import StateError, Version
+from ..util import StateError, Version, jsondict
 from ._db import (
     Database,
     DatabasePool,
@@ -86,6 +88,7 @@ from ._db import (
     OptimizerInterface,
     ResultSet,
     UnsupportedDatabaseFeatureError,
+    simplify_result_set,
 )
 
 # TODO: find a nice way to support index nested-loop join hints.
@@ -384,6 +387,9 @@ class PostgresSetting(str):
         """
         return PostgresSetting(self.parameter, value)
 
+    def __getnewargs__(self) -> tuple[str, object]:
+        return (self.parameter, self.value)
+
 
 class PostgresConfiguration(collections.UserString):
     """Model for a collection of different postgres settings that form a complete server configuration.
@@ -620,38 +626,6 @@ def _modifies_geqo_config(query: qal.SqlQuery) -> bool:
     return "geqo" in query.hints.preparatory_statements.lower()
 
 
-def _simplify_result_set(result_set: list[tuple[Any]]) -> Any:
-    """Implementation of the result set simplification logic outlined in `Database.execute_query`.
-
-    Parameters
-    ----------
-    result_set : list[tuple[Any]]
-        Result set to simplify: each entry in the list corresponds to one row in the result set and each component of the
-        tuples corresponds to one column in the result set
-
-    Returns
-    -------
-    Any
-        The simplified result set: if the result set consists just of a single row, this row is unwrapped from the list. If the
-        result set contains just a single column, this is unwrapped from the tuple. Both simplifications are also combined,
-        such that a result set of a single row of a single column is turned into the single value.
-    """
-    # simplify the query result as much as possible: [(42, 24)] becomes (42, 24) and [(1,), (2,)] becomes [1, 2]
-    # [(42, 24), (4.2, 2.4)] is left as-is
-    if not result_set:
-        return []
-
-    result_structure = result_set[0]  # what do the result tuples look like?
-    if len(result_structure) == 1:  # do we have just one column?
-        result_set = [
-            row[0] for row in result_set
-        ]  # if it is just one column, unwrap it
-
-    if len(result_set) == 1:  # if it is just one row, unwrap it
-        return result_set[0]
-    return result_set
-
-
 class PostgresInterface(Database):
     """Database implementation for PostgreSQL backends.
 
@@ -692,6 +666,7 @@ class PostgresInterface(Database):
 
         self._current_geqo_state = self._obtain_geqo_state()
         self._timeout_executor = TimeoutQueryExecutor(self)
+        self._last_query_runtime = math.nan
 
         super().__init__(system_name, cache_enabled=cache_enabled)
 
@@ -712,52 +687,62 @@ class PostgresInterface(Database):
         raw: bool = False,
         timeout: Optional[float] = None,
     ) -> Any:
-        if timeout is not None:
+        if timeout is not None and timeout > 0:
             return self._timeout_executor.execute_query(
                 query, timeout=timeout, cache_enabled=cache_enabled, raw=raw
             )
 
         cache_enabled = cache_enabled or (cache_enabled is None and self._cache_enabled)
+        if isinstance(query, UserString):
+            query = str(query)
 
         if cache_enabled and query in self._query_cache:
             query_result = self._query_cache[query]
-        else:
-            try:
-                self._current_geqo_state = self._obtain_geqo_state()
-                prepared_query, deactivated_geqo = self._prepare_query_execution(query)
-                self._cursor.execute(prepared_query)
-                query_result = (
-                    self._cursor.fetchall() if self._cursor.rowcount >= 0 else None
-                )
-                if deactivated_geqo:
-                    self._restore_geqo_state()
-                if cache_enabled:
-                    self._inflate_query_cache()
-                    self._query_cache[prepared_query] = query_result
-            except (psycopg.InternalError, psycopg.OperationalError) as e:
-                msg = "\n".join(
-                    [
-                        f"At {util.timestamp()}",
-                        "For query:",
-                        str(query),
-                        "Message:",
-                        str(e),
-                    ]
-                )
-                raise DatabaseServerError(msg, e)
-            except psycopg.Error as e:
-                msg = "\n".join(
-                    [
-                        f"At {util.timestamp()}",
-                        "For query:",
-                        str(query),
-                        "Message:",
-                        str(e),
-                    ]
-                )
-                raise DatabaseUserError(msg, e)
+            return query_result if raw else simplify_result_set(query_result)
 
-        return query_result if raw else _simplify_result_set(query_result)
+        try:
+            self._current_geqo_state = self._obtain_geqo_state()
+            prepared_query, deactivated_geqo = self._prepare_query_execution(query)
+
+            start_time = time.perf_counter_ns()
+            self._cursor.execute(prepared_query)
+            end_time = time.perf_counter_ns()
+            self._last_query_runtime = (
+                end_time - start_time
+            ) / 10**9  # convert to seconds
+
+            query_result = (
+                self._cursor.fetchall() if self._cursor.rowcount >= 0 else None
+            )
+            if deactivated_geqo:
+                self._restore_geqo_state()
+            if cache_enabled:
+                self._inflate_query_cache()
+                self._query_cache[prepared_query] = query_result
+        except (psycopg.InternalError, psycopg.OperationalError) as e:
+            msg = "\n".join(
+                [
+                    f"At {util.timestamp()}",
+                    "For query:",
+                    str(query),
+                    "Message:",
+                    str(e),
+                ]
+            )
+            raise DatabaseServerError(msg, e)
+        except psycopg.Error as e:
+            msg = "\n".join(
+                [
+                    f"At {util.timestamp()}",
+                    "For query:",
+                    str(query),
+                    "Message:",
+                    str(e),
+                ]
+            )
+            raise DatabaseUserError(msg, e)
+
+        return query_result if raw else simplify_result_set(query_result)
 
     def execute_with_timeout(
         self, query: qal.SqlQuery | str, timeout: float = 60.0
@@ -771,6 +756,15 @@ class PostgresInterface(Database):
         except TimeoutError:
             self.apply_configuration(current_config)
             return None
+
+    def last_query_runtime(self) -> float:
+        return self._last_query_runtime
+
+    def time_query(
+        self, query: qal.SqlQuery, *, timeout: Optional[float] = None
+    ) -> float:
+        self.execute_query(query, cache_enabled=False, raw=True, timeout=timeout)
+        return self.last_query_runtime()
 
     def optimizer(self) -> PostgresOptimizer:
         return PostgresOptimizer(self)
@@ -801,7 +795,7 @@ class PostgresInterface(Database):
         """
         return self._connection.info.backend_pid
 
-    def describe(self) -> dict:
+    def describe(self) -> jsondict:
         base_info = {
             "system_name": self.database_system_name(),
             "system_version": self.database_system_version(),
@@ -821,22 +815,30 @@ class PostgresInterface(Database):
             if setting in _SignificantPostgresSettings
         }
 
-        schema_info: list = []
-        for table in self.schema().tables():
-            column_info: list = []
-            for column in self.schema().columns(table):
+        schema_info: list[jsondict] = []
+        for table in self._db_schema.tables():
+            column_info: list[jsondict] = []
+
+            for column in self._db_schema.columns(table):
                 column_info.append(
-                    {"column": str(column), "indexed": self.schema().has_index(column)}
+                    {
+                        "column": str(column),
+                        "indexed": self.schema().has_index(column),
+                        "foreign_keys": self._db_schema.foreign_keys_on(column),
+                    }
                 )
+
+            pk_col = self._db_schema.primary_key_column(table)
             schema_info.append(
                 {
                     "table": str(table),
                     "n_rows": self.statistics().total_rows(table, emulated=True),
                     "columns": column_info,
+                    "primary_key": pk_col.name if pk_col else None,
                 }
             )
-        base_info["schema_info"] = schema_info
 
+        base_info["schema_info"] = schema_info
         return base_info
 
     def reset_connection(self) -> int:
@@ -1840,6 +1842,9 @@ class HintParts:
         )
         return HintParts(merged_settings, merged_hints)
 
+    def __bool__(self) -> bool:
+        return bool(self.settings or self.hints)
+
 
 PostgresOptimizerSettings = {
     JoinOperator.NestedLoopJoin: "enable_nestloop",
@@ -2261,6 +2266,14 @@ class PostgresHintService(HintService):
             )
 
         hint_parts = None
+
+        if plan is not None and any(
+            param is not None
+            for param in (join_order, physical_operators, plan_parameters)
+        ):
+            raise ValueError(
+                "Can only hint an entire query plan, or individual parts, not both."
+            )
 
         if plan is not None:
             join_order = jointree_from_plan(plan)
@@ -3024,7 +3037,7 @@ def _parallel_query_worker(
     result_set = cursor.fetchall()
     cursor.close()
 
-    return query, _simplify_result_set(result_set)
+    return query, simplify_result_set(result_set)
 
 
 class ParallelQueryExecutor:
@@ -3152,27 +3165,54 @@ class ParallelQueryExecutor:
 
 def _timeout_query_worker(
     query: qal.SqlQuery | str,
-    pg_instance: PostgresInterface,
-    query_result_sender: mp_conn.Connection,
+    *,
+    pg_config: dict,
+    result_send: mp_conn.Connection,
+    err_send: mp_conn.Connection,
+    runtime_send: mp_conn.Connection,
     **kwargs,
 ) -> None:
     """Internal function to the `TimeoutQueryExecutor` to run individual queries.
 
-    Query results are sent via the pipe, not as a return value.
+    Query results are sent via the `result_send` pipe, not as a return value. In case of any errors, these are sent via the
+    `err_send` pipe. Therefore, it is best to check the `err_send` pipe first, before reading from the `result_send` pipe.
 
     Parameters
     ----------
     query : qal.SqlQuery | str
         Query to execute
-    pg_instance : PostgresInterface
-        Database connection to execute the query on
-    query_result_sender : mp_conn.Connection
+    pg_config : dict
+        Pickable representation of the current Postgres connection. This is used to re-establish the connection in the parallel
+        worker.
+    result_send : mp_conn.Connection
         Pipe connection to send the query result
+    err_send : mp_conn.Connection
+        Pipe connection to send any errors that occurred during the query execution
+    runtime_send: mp_conn.Connection
+        Pipe connection to send the query runtime
     kwargs : Any
         Additional parameters to pass to the `PostgresInterface.execute_query` method.
     """
-    result = pg_instance.execute_query(query, **kwargs)
-    query_result_sender.send(result)
+    try:
+        connect_string = pg_config["connect_string"]
+        cache_enabled = pg_config.get("cache_enabled", False)
+        pg_instance = connect(
+            connect_string=connect_string,
+            cache_enabled=cache_enabled,
+            private=True,
+            refresh=True,
+        )
+        pg_instance.apply_configuration(pg_config["config"])
+
+        start_time = time.perf_counter_ns()
+        result = pg_instance.execute_query(query, **kwargs)
+        end_time = time.perf_counter_ns()
+        runtime = (end_time - start_time) / 10**9  # convert to seconds
+
+        result_send.send(result)
+        runtime_send.send(runtime)
+    except Exception as e:
+        err_send.send(e)
 
 
 class TimeoutQueryExecutor:
@@ -3231,36 +3271,75 @@ class TimeoutQueryExecutor:
         PostgresInterface.execute_query
         PostgresInterface.reset_connection
         """
-        query_result_receiver, query_result_sender = mp.Pipe(False)
-        query_execution_worker = mp.Process(
+        result_recv, result_send = mp.Pipe(False)
+        error_recv, error_send = mp.Pipe(False)
+        runtime_recv, runtime_send = mp.Pipe(False)
+        query_worker = mp.Process(
             target=_timeout_query_worker,
-            args=(query, self._pg_instance, query_result_sender),
-            kwargs=kwargs,
+            args=(query,),
+            kwargs={
+                "pg_config": self._pg_fingerprint(),
+                "result_send": result_send,
+                "err_send": error_send,
+                "runtime_send": runtime_send,
+                **kwargs,
+            },
         )
 
-        query_execution_worker.start()
-        query_execution_worker.join(timeout)
-        timed_out = query_execution_worker.is_alive()
+        query_worker.start()
+        query_worker.join(timeout)
 
+        # We perform the timeout check before doing anything else to make sure that the worker process cannot terminate
+        # immediately after the timeout has been reached. E.g., suppose that  the query is still running after calling join().
+        # If we would now proceed to check the error-pipe, the query would have more time to terminate while we are performing
+        # our error checks. This might result in an involuntary increase in the timeout duration. By keeping the timeout check
+        # as close to the join() call as possible, we minimize this risk.
+        timed_out = query_worker.is_alive()
+
+        # Now that we know whether the worker timed out or not, we need to make sure that it actually terminated properly
+        # (or timed out). In case of an error, we just propagate it to the client.
+        if error_recv.poll():
+            raise error_recv.recv()
+
+        # At this point we know that the worker either terminated in time or that it timed out, but it did not error.
+        # Both the timeout and the termination case can be handled in a pretty straightforward manner. The only important thing
+        # is that in case of a timeout, we reset the connection to ensure that there is no dangling or inconsistent state left
+        # over.
         if timed_out:
-            query_execution_worker.terminate()
-            query_execution_worker.join()
+            query_worker.terminate()
+            query_worker.join()
             self._pg_instance.reset_connection()
             query_result = None
+            self._pg_instance._last_query_runtime = timeout
         else:
-            query_result = query_result_receiver.recv()
+            query_result = result_recv.recv()
+            self._pg_instance._last_query_runtime = runtime_recv.recv()
 
-        query_execution_worker.close()
-        query_result_sender.close()
-        query_result_receiver.close()
+        query_worker.close()
+        result_send.close()
+        result_recv.close()
+        error_send.close()
+        error_recv.close()
+        runtime_send.close()
+        runtime_recv.close()
 
         if timed_out:
             raise TimeoutError(query)
         else:
             return query_result
 
-    def __call__(self, query: qal.SqlQuery | str, timeout: float) -> Any:
-        return self.execute_query(query, timeout)
+    def _pg_fingerprint(self) -> dict:
+        """Generate a pickable representation of the current Postgres connection."""
+        return {
+            "connect_string": self._pg_instance.connect_string,
+            "cache_enabled": self._pg_instance.cache_enabled,
+            "config": self._pg_instance.current_configuration(
+                runtime_changeable_only=True
+            ),
+        }
+
+    def __call__(self, query: qal.SqlQuery | str, timeout: float, **kwargs) -> Any:
+        return self.execute_query(query, timeout, **kwargs)
 
 
 PostgresExplainJoinNodes = {

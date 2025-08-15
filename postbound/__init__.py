@@ -128,7 +128,7 @@ from ._stages import (
     PlanEnumerator,
     as_complete_algorithm,
 )
-from .db import Database, postgres
+from .db import Database, duckdb, postgres
 from .experiments import analysis, executor, workloads
 from .experiments.executor import execute_workload, optimize_and_execute_workload
 from .optimizer import (
@@ -139,7 +139,7 @@ from .optimizer import (
 )
 from .qal import SqlQuery, parse_query, relalg, transform
 
-__version__ = "0.16.0"
+__version__ = "0.17.0"
 
 __all__ = [
     "db",
@@ -172,6 +172,7 @@ __all__ = [
     "OptimizationSettings",
     "Database",
     "postgres",
+    "duckdb",
     "relalg",
     "transform",
     "SqlQuery",

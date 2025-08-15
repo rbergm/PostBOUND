@@ -1,7 +1,7 @@
 # PostBOUND
 
 ![GitHub License](https://img.shields.io/github/license/rbergm/PostBOUND)
-![Static Badge](https://img.shields.io/badge/version-0.16.0-blue)
+![GitHub Release](https://img.shields.io/github/v/release/rbergm/PostBOUND?color=blue)
 
 <p align="center">
     <img src="docs/figures/postbound-logo.svg" style="width: 150px; margin: 15px;">
@@ -31,14 +31,7 @@ The fastest way to get an installation of PostBOUND up and running is to use the
 You can build your Docker image with the following command:
 
 ```sh
-docker build -t postbound \
-    --build-arg TIMEZONE=$(cat /etc/timezone) \
-    --build-arg USE_PGLAB=true \
-    --build-arg OPTIMIZE_PG_CONFIG=true \
-    --build-arg SETUP_STATS=true \
-    --build-arg SETUP_JOB=false \
-    --build-arg SETUP_STACK=false \
-    .
+docker build -t postbound --build-arg TIMEZONE=$(cat /etc/timezone) .
 ```
 
 This will create a Docker image with a local Postgres instance (using [pg_lab](https://github.com/rbergm/pg_lab)) and
@@ -53,21 +46,29 @@ Once the image is built, create a container like so:
 docker run -dt \
     --shm-size 4G \
     --name postbound \
-    --volume $PWD/postbound-docker:/postbound/public \
+    --env USE_PGLAB=true \
+    --env OPTIMIZE_PG_CONFIG=true \
+    --env SETUP_STATS=true \
+    --env SETUP_JOB=false \
+    --env SETUP_STACK=false \
+    --volume $PWD/vol-postbound:/postbound \
+    --volume $PWD/vol-pglab:/pg_lab \
     --publish 5432:5432 \
+    --publish 8888:8888 \
     postbound
 ```
 
-Adjust the amount of shared memory depending on your machine.
+Adjust the amount of shared memory depending on your machine. Note that the initial start of the container will take a
+substantial amount of time. This is because the container needs to compile a fresh Postgres server from source, download and
+import workloads, etc. Use `docker logs -f postbound`  to monitor the startup process.
 
 > [!TIP]
 > Shared memory is used by Postgres for its internal caching and therefore paramount for good server performance.
 > The general recommendation is to set it to at least 1/4 of the available RAM.
 
 The Postgres server will be available at port 5432 from the host machine (using the user _postbound_ with the same
-password).
-The volume mountpoint can be used to easily copy experiment scripts into the container and to export results back out
-again.
+password). If you plan on using Jupyter for data analysis, also publish port 8888.
+The volume mountpoints provide all internal files from PostBOUND and pg_lab (if used).
 
 You can connect to the PostBOUND container using the usual
 
@@ -223,6 +224,9 @@ A detailed documentation of PostBOUND is available [here](https://postbound.read
 
 ## 🐳 Docker options
 
+The following options can be used when starting the Docker container as `--env` parameters (with the exception of _TIMEZONE_,
+which must be specified as a `--build-arg` when creating the image).
+
 | Argument | Allowed values | Description | Default |
 |----------|----------------|-------------|---------|
 | `TIMEZONE` | Any valid timezone identifier | Timezone of the Docker container (and hence the Postgres server). It is probably best to just use the value of `cat /etc/timezone` | `UTC` |
@@ -236,8 +240,10 @@ A detailed documentation of PostBOUND is available [here](https://postbound.read
 | `USE_PGLAB` | `true` or `false` | Whether to initialize a [pg_lab](https://github.com/rbergm/pg_lab) server instead of a normal Postgres server. pg_lab provides advanced hinting capabilities and offers additional extension points for the query optimizer. | `false` |
 
 The PostBOUND source code is located at `/postbound`. If pg_lab is being used, the corresponding files are located at `/pg_lab`.
-The container automatically exposes the Postgres port 5432 and provides a volume mountpoint at `/postbound/public`. This
-mountpoint can be used to easily get experiment scripts into the container and to export results back out again.
+The container automatically exposes the Postgres port 5432 and provides volume mountpoints at `/postbound` and `/pg_lab`.
+These mountpoints can be used as backups or to easily ingest data into the container.
+If the pg_lab mountpoint points to an existing (i.e. non-empty) directory, the setup assumes that this is already a valid
+pg_lab installation and skips the corresponding setup.
 
 > [!TIP]
 > pg_lab provides advanced hinting support (e.g. for materialization or cardinality hints for base tables) and offers

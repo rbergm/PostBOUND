@@ -41,7 +41,7 @@ class OurNativeOptimizer(pb.CompleteOptimizationAlgorithm):
 
 custom_pipeline = (
     pb.IntegratedOptimizationPipeline(postgres_db)
-    .setup_optimization_algorithm(OurNativeOptimizer(postgres_db))
+    .setup_optimization_algorithm(OurNativeOptimizer(postgres_db.optimizer()))
     .build()
 )
 

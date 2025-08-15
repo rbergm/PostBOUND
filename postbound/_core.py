@@ -7,6 +7,7 @@ from enum import Enum
 from numbers import Number
 from typing import Optional, Protocol, TypeVar
 
+from .util import jsondict
 from .util.errors import StateError
 
 T = TypeVar("T")
@@ -112,6 +113,9 @@ class Cardinality(Number):
         In contrast to accessing the `value` property, this method always returns a float and does not raise an error for
         invalid cardinalities. Instead, it returns *NaN* for unknown cardinalities and *inf* for infinite cardinalities.
         """
+        return float(self)
+
+    def __json__(self) -> jsondict:
         return float(self)
 
     def __bool__(self) -> bool:
@@ -511,6 +515,7 @@ SqlKeywords = frozenset(
         "AS",
         "ASC",
         "ASYMMETRIC",
+        "AT",
         "BINARY",
         "BOTH",
         "CASE",

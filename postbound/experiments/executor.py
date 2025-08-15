@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import functools
 import json
 import math
 import time
@@ -10,7 +9,7 @@ import warnings
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Literal, Optional
+from typing import Literal, Optional
 
 import natsort
 import numpy as np
@@ -18,7 +17,6 @@ import pandas as pd
 
 from .. import db, qal, util
 from .._pipelines import OptimizationPipeline
-from ..db import postgres
 from ..optimizer import validation
 from . import workloads
 
@@ -165,35 +163,6 @@ class QueryPreparationService:
         return query
 
 
-def _standard_executor(
-    query: qal.SqlQuery, *, target: db.Database
-) -> tuple[Any, float]:
-    """Default executor that delegates to `execute_query`."""
-    start = time.perf_counter_ns()
-    result_set = target.execute_query(query, cache_enabled=False)
-    end = time.perf_counter_ns()
-    runtime = (end - start) / 1_000_000_000  # convert to seconds
-    return result_set, runtime
-
-
-def _timeout_executor(
-    query: qal.SqlQuery, *, target: postgres.PostgresInterface, timeout: float
-) -> tuple[Any, float]:
-    """Executor that automatically cancels the query if it exceeds a specific timeout.
-
-    Timed-out queries are not retried, they produce a result of *(None, inf)*.
-    """
-    timeout_executor = postgres.TimeoutQueryExecutor(target)
-    try:
-        start = time.perf_counter_ns()
-        result_set = timeout_executor.execute_query(query, timeout=timeout)
-        end = time.perf_counter_ns()
-        runtime = (end - start) / 1_000_000_000  # convert to seconds
-        return result_set, runtime
-    except TimeoutError:
-        return None, math.inf
-
-
 def _failed_execution_result(
     query: qal.SqlQuery, database: db.Database, repetitions: int = 1
 ) -> pd.DataFrame:
@@ -297,7 +266,7 @@ def execute_query(
     timeout : Optional[float], optional
         The maximum time in seconds that the query is allowed to run. If the query exceeds this time, the execution is
         cancelled and the execution time is set to *Inf*. If this parameter is omitted, no timeout is enforced. Notice that
-        timeouts are currently only supported for PostgreSQL. If another database system is used, an error will be raised.
+        timeouts require the database to implement `TimeoutSupport`.
     label : str, optional
         A label that identifies the query. Currently, this is only used for logging purposes.
     logger : Optional[PredefLogger], optional
@@ -328,22 +297,30 @@ def execute_query(
     if query_preparation:
         query = query_preparation.prepare_query(query, on=database)
 
-    if timeout is not None:
-        if not isinstance(database, postgres.PostgresInterface):
-            raise ValueError(
-                "Timeouts are currently only supported for PostgreSQL databases"
-            )
-        query_executor = functools.partial(
-            _timeout_executor, target=database, timeout=timeout
-        )
-    else:
-        query_executor = functools.partial(_standard_executor, target=database)
+    if timeout is not None and not isinstance(database, db.TimeoutSupport):
+        raise ValueError(f"Database system {database} does not provide timeout support")
 
     query_results = []
     execution_times = []
 
     for __ in iterations:
-        current_result, exec_time = query_executor(query)
+        if timeout is not None:
+            start_time = time.perf_counter_ns()
+            current_result = database.execute_with_timeout(query, timeout=timeout)
+            end_time = time.perf_counter_ns()
+            current_result = db.simplify_result_set(current_result)
+            exec_time = (
+                math.inf if current_result is None else (end_time - start_time) / 10**9
+            )  # convert to seconds
+        else:
+            start_time = time.perf_counter_ns()
+            current_result = database.execute_query(query, cache_enabled=False)
+            end_time = time.perf_counter_ns()
+            exec_time = (end_time - start_time) / 10**9  # convert to seconds
+
+        if isinstance(database, db.StopwatchSupport):
+            exec_time = database.last_query_runtime()
+
         query_results.append(current_result)
         execution_times.append(exec_time)
         execution_result = ExecutionResult(
@@ -440,7 +417,7 @@ def execute_workload(
     timeout : Optional[float], optional
         The maximum time in seconds that the query is allowed to run. If the query exceeds this time, the execution is
         cancelled and the execution time is set to *Inf*. If this parameter is omitted, no timeout is enforced. Notice that
-        timeouts are currently only supported for PostgreSQL. If another database system is used, an error will be raised.
+        timeouts require the database to implement `TimeoutSupport`.
     include_labels : bool, optional
         Whether to add the label of each query to the workload results, by default *False*
     post_process : Optional[Callable[[ExecutionResult], None]], optional
@@ -591,7 +568,7 @@ def optimize_and_execute_query(
     timeout : Optional[float], optional
         The maximum time in seconds that the query is allowed to run. If the query exceeds this time, the execution is
         cancelled and the execution time is set to *Inf*. If this parameter is omitted, no timeout is enforced. Notice that
-        timeouts are currently only supported for PostgreSQL. If another database system is used, an error will be raised.
+        timeouts require the database to implement `TimeoutSupport`.
     label : str, optional
         A label that identifies the query. Currently, this is only used for logging purposes.
     logger : Optional[PredefLogger], optional
@@ -688,7 +665,7 @@ def optimize_and_execute_workload(
     timeout : Optional[float], optional
         The maximum time in seconds that the query is allowed to run. If the query exceeds this time, the execution is
         cancelled and the execution time is set to *Inf*. If this parameter is omitted, no timeout is enforced. Notice that
-        timeouts are currently only supported for PostgreSQL. If another database system is used, an error will be raised.
+        timeouts require the database to implement `TimeoutSupport`.
     include_labels : bool, optional
         Whether to add the label of each query to the workload results, by default *False*
     post_process : Optional[Callable[[ExecutionResult], None]], optional

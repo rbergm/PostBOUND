@@ -7,32 +7,31 @@ import warnings
 from collections.abc import Container, Iterable
 from typing import Generic, Literal, Optional, Union
 
+from .. import util
+from .._core import (
+    Cardinality,
+    IntermediateOperator,
+    JoinOperator,
+    PhysicalOperator,
+    ScanOperator,
+)
+from .._qep import (
+    JoinDirection,
+    PlanEstimates,
+    PlanMeasures,
+    PlanParams,
+    QueryPlan,
+    SortKey,
+    Subplan,
+)
+from ..qal import SqlQuery, TableReference, parser
+from ..util import StateError, jsondict
 from ._hints import (
     PhysicalOperatorAssignment,
     PlanParameterization,
     operators_from_plan,
     read_operator_json,
 )
-from .. import util
-from .._core import (
-    Cardinality,
-    ScanOperator,
-    JoinOperator,
-    IntermediateOperator,
-    PhysicalOperator,
-)
-from .._qep import (
-    JoinDirection,
-    SortKey,
-    QueryPlan,
-    PlanParams,
-    PlanEstimates,
-    PlanMeasures,
-    Subplan,
-)
-from ..qal import parser, TableReference, SqlQuery
-from ..util import jsondict, StateError
-
 
 AnnotationType = typing.TypeVar("AnnotationType")
 """The concrete annotation used to augment information stored in the join tree."""
@@ -893,17 +892,17 @@ def read_query_plan_json(json_data: dict | str) -> QueryPlan:
 
     measures_json: dict = json_data.get("measures", {})
     cardinality = measures_json.get("cardinality", math.nan)
-    cost = measures_json.get("cost", math.nan)
+    exec_time = measures_json.get("execution_time", math.nan)
     cache_hits = measures_json.get("cache_hits")
     cache_misses = measures_json.get("cache_misses")
     additional_measures = {
         key: value
         for key, value in measures_json.items()
-        if key not in {"cardinality", "cost", "cache_hits", "cache_misses"}
+        if key not in {"cardinality", "execution_time", "cache_hits", "cache_misses"}
     }
     measures = PlanMeasures(
         cardinality=cardinality,
-        cost=cost,
+        execution_time=exec_time,
         cache_hits=cache_hits,
         cache_misses=cache_misses,
         **additional_measures,

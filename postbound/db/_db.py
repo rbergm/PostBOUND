@@ -22,15 +22,15 @@ import collections
 import json
 import os
 import textwrap
-import typing
 import warnings
 from collections.abc import Iterable, Sequence
-from typing import Any, Optional, runtime_checkable
+from datetime import date, datetime, time, timedelta
+from typing import Any, Optional, Protocol, Type, runtime_checkable
 
 import networkx as nx
 
 from .. import util
-from .._core import Cardinality
+from .._core import Cardinality, Cost
 from .._qep import QueryPlan
 from ..optimizer import (
     HintType,
@@ -54,7 +54,7 @@ ResultSet = Sequence[ResultRow]
 """Simple type alias to denote the result relation of a query."""
 
 
-class Cursor(typing.Protocol):
+class Cursor(Protocol):
     """Interface for database cursors that adhere to the Python Database API specification.
 
     This is not a complete representation and only focuses on the parts of the specification that are important for
@@ -86,7 +86,7 @@ class Cursor(typing.Protocol):
         raise NotImplementedError
 
 
-class Connection(typing.Protocol):
+class Connection(Protocol):
     """Interface for database connections that adhere to the Python Database API specification.
 
     This is not a complete representation and only focuses on the parts of the specification that are important for
@@ -109,7 +109,7 @@ class Connection(typing.Protocol):
 
 
 @runtime_checkable
-class PrewarmingSupport(typing.Protocol):
+class PrewarmingSupport(Protocol):
     """Some databases might support adding specific tables to their shared buffer.
 
     If so, they should implement this protocol to allow other parts of the framework to exploit this feature.
@@ -158,7 +158,7 @@ class PrewarmingSupport(typing.Protocol):
 
 
 @runtime_checkable
-class TimeoutSupport(typing.Protocol):
+class TimeoutSupport(Protocol):
     """Marks database systems that support executing queries with a timeout."""
 
     def execute_with_timeout(
@@ -189,11 +189,125 @@ class TimeoutSupport(typing.Protocol):
         ...
 
 
+@runtime_checkable
+class StopwatchSupport(Protocol):
+    """Marks the database systems that support measurement of query execution times."""
+
+    def time_query(
+        self, query: SqlQuery | str, *, timeout: Optional[float] = None
+    ) -> float:
+        """Determines the execution time of a query.
+
+        The execution time is measured from the moment the query is passed to the internal cursor (i.e. including sending the
+        query to the database server), until the execution is finished. Therfore, it does not include the time required to
+        transfer the result set back to the client.
+
+        Parameters
+        ----------
+        query : SqlQuery | str
+            The query to execute.
+        timeout : Optional[float], optional
+            Cancels the query execution if it takes longer than this number (in seconds). Notice that this parameter requires
+            timeout support from the database system.
+
+        Returns
+        -------
+        float
+            The runtime of the query in seconds. The result set is ignored.
+
+        Raises
+        ------
+        UnsupportedDatabaseFeatureError
+            If the database system does not support timeouts. You can use the `TimeoutSupport` protocol to check this
+            beforehand.
+        """
+        ...
+
+    def last_query_runtime(self) -> float:
+        """Get the runtime of the last executed query.
+
+        The execution time is measured from the moment the query is passed to the internal cursor (i.e. including sending the
+        query to the database server), until the execution is finished. Therfore, it does not include the time required to
+        transfer the result set back to the client.
+
+        Returns
+        -------
+        float
+            The runtime of the last executed query in seconds. If no query has been executed before, *NaN* is returned.
+        """
+        ...
+
+
 class QueryCacheWarning(UserWarning):
     """Warning to indicate that the query result cache was not found."""
 
     def __init__(self, msg: str) -> None:
         super().__init__(msg)
+
+
+def simplify_result_set(result_set: list[tuple[Any]]) -> Any:
+    """Default implementation of the result set simplification logic outlined in `Database.execute_query`.
+
+    Parameters
+    ----------
+    result_set : list[tuple[Any]]
+        Result set to simplify: each entry in the list corresponds to one row in the result set and each component of the
+        tuples corresponds to one column in the result set
+
+    Returns
+    -------
+    Any
+        The simplified result set: if the result set consists just of a single row, this row is unwrapped from the list. If the
+        result set contains just a single column, this is unwrapped from the tuple. Both simplifications are also combined,
+        such that a result set of a single row of a single column is turned into the single value.
+    """
+    # simplify the query result as much as possible: [(42, 24)] becomes (42, 24) and [(1,), (2,)] becomes [1, 2]
+    # [(42, 24), (4.2, 2.4)] is left as-is
+    if not result_set:
+        return []
+
+    result_structure = result_set[0]  # what do the result tuples look like?
+    if len(result_structure) == 1:  # do we have just one column?
+        result_set = [
+            row[0] for row in result_set
+        ]  # if it is just one column, unwrap it
+
+    if len(result_set) == 1:  # if it is just one row, unwrap it
+        return result_set[0]
+    return result_set
+
+
+class _DBCacheJsonEncoder(json.JSONEncoder):
+    def default(self, obj: Any) -> Any:
+        if isinstance(obj, datetime):
+            return {"$datetime": obj.isoformat()}
+        elif isinstance(obj, date):
+            return {"$date": obj.isoformat()}
+        elif isinstance(obj, time):
+            return {"$time": obj.isoformat()}
+        elif isinstance(obj, timedelta):
+            return {"$timedelta": obj.total_seconds()}
+        return super().default(obj)
+
+
+class _DBCacheJsonDecoder(json.JSONDecoder):
+    def __init__(self, *args, **kwargs):
+        self._second_hook = kwargs.get("object_hook")
+        super().__init__(object_hook=self.object_hook, *args, **kwargs)
+
+    def object_hook(self, obj: Any) -> Any:
+        if self._second_hook:
+            return self._second_hook(obj)
+
+        if "$datetime" in obj:
+            return datetime.fromisoformat(obj["$datetime"])
+        elif "$date" in obj:
+            return date.fromisoformat(obj["$date"])
+        elif "$time" in obj:
+            return time.fromisoformat(obj["$time"])
+        elif "$timedelta" in obj:
+            return timedelta(seconds=obj["$timedelta"])
+        return obj
 
 
 class Database(abc.ABC):
@@ -226,10 +340,9 @@ class Database(abc.ABC):
         The name of the database system for which the connection is established. This is only really important to
         distinguish different instances of the interface in a convenient manner.
     cache_enabled : bool, optional
-        Whether complex queries that are executed against the database system should be cached. This is especially
-        usefull to emulate certain statistics that are not maintained by the specific database system (see
-        `DatabaseStatistics` for details). If this is ``False``, the query cache will not be loaded as well.
-        Defaults to ``True``.
+        Whether complex queries that are executed against the database system should be cached. This is especially useful to
+        emulate certain statistics that are not maintained by the specific database system (see `DatabaseStatistics` for
+        details). If this is *False*, the query cache will not be loaded as well. Defaults to *True*.
 
     Notes
     -----
@@ -243,7 +356,7 @@ class Database(abc.ABC):
         self.system_name = system_name
 
         self._cache_enabled = cache_enabled
-        self._query_cache: dict[str, list[tuple]] = {}
+        self._query_cache: dict[str, ResultSet] = {}
         if self._cache_enabled:
             self._inflate_query_cache()
         atexit.register(self.close)
@@ -322,7 +435,7 @@ class Database(abc.ABC):
             The query to execute. If it contains a `Hint` with `preparatory_statements`, these will be executed
             beforehand. Notice that such statements are never subject to caching.
         cache_enabled : Optional[bool], optional
-            Controls the caching behavior for just this one query. The default value of ``None`` indicates that the
+            Controls the caching behavior for just this one query. The default value of *None* indicates that the
             "global" configuration of the database system should be used. Setting this parameter to a boolean value
             forces or deactivates caching for the specific query for the specific execution no matter what the "global"
             configuration is.
@@ -335,7 +448,7 @@ class Database(abc.ABC):
         Any
             Result set of the input query. This is a list of equal-length tuples in the most general case. Each
             component of the tuple corresponds to a specific column of the result set and each tuple corresponds to a
-            row in the result set. However, many queries do not provide a 2-dimensional result set (e.g. ``COUNT(*)``
+            row in the result set. However, many queries do not provide a 2-dimensional result set (e.g. *COUNT(\\*)*
             queries). In such cases, the nested structure of the result set makes it quite cumbersome to use.
             Therefore, this method tries to simplify the return value of the query for more convenient use (if `raw` mode is
             disabled). More specifically, if the query returns just a single row, this row is returned directly as a tuple.
@@ -369,7 +482,7 @@ class Database(abc.ABC):
         Returns
         -------
         str
-            The database name, e.g. ``"imdb"`` or ``"tpc-h"``
+            The database name, e.g. *imdb* or *tpc-h*
         """
         raise NotImplementedError
 
@@ -379,7 +492,7 @@ class Database(abc.ABC):
         Returns
         -------
         str
-            The database system name, e.g. ``"PostgreSQL"``
+            The database system name, e.g. *PostgreSQL*
         """
         return self.system_name
 
@@ -449,6 +562,10 @@ class Database(abc.ABC):
         """Shuts down all currently open connections to the database."""
         raise NotImplementedError
 
+    def provides(self, support: Type) -> bool:
+        """Checks, whether the database interface supports a specific protocol."""
+        return isinstance(self, support)
+
     def _get_cache_enabled(self) -> bool:
         """Getter for the `cache_enabled` property.
 
@@ -491,7 +608,7 @@ class Database(abc.ABC):
         if os.path.isfile(query_cache_name):
             with open(query_cache_name, "r") as cache_file:
                 try:
-                    self._query_cache = json.load(cache_file)
+                    self._query_cache = json.load(cache_file, cls=_DBCacheJsonDecoder)
                 except json.JSONDecodeError as e:
                     warnings.warn(
                         "Could not read query cache: " + str(e),
@@ -515,7 +632,7 @@ class Database(abc.ABC):
             The path where to write the file to. If it exists, it will be overwritten.
         """
         with open(query_cache_name, "w") as cache_file:
-            json.dump(self._query_cache, cache_file)
+            json.dump(self._query_cache, cache_file, cls=_DBCacheJsonEncoder)
 
     def _query_cache_name(self) -> str:
         """Provides a normalized file name for the query cache.
@@ -571,10 +688,22 @@ class DatabaseSchema(abc.ABC):
     db : Database
         The database for which the schema information should be read. This is required to obtain cursors that request
         the desired data.
+    prep_placeholder : str, optional
+        The placeholder that is used for prepared statements. Some systems use `?` as a placeholder, while others use *%s*
+        (the default). This needs to be specified to ensure that the information_schema queries are correctly formatted.
+
+    Notes
+    -----
+    **Hint for implementors:** the database schema contains no abstract methods that need to be overridden. All methods come
+    with a default implementation that uses the *information_schema* to retrieve the necessary information. However, if the
+    target database system does not support specific features of the information_schema, the corresponding methods need to be
+    overridden to provide the necessary functionality. The documentation of each method details which parts of the
+    information_schema it needs.
     """
 
-    def __init__(self, db: Database):
+    def __init__(self, db: Database, *, prep_placeholder: str = "%s"):
         self._db = db
+        self._prep_placeholder = prep_placeholder
 
     def tables(self) -> set[TableReference]:
         """Fetches all user-defined tables that are contained in the current database.
@@ -583,10 +712,17 @@ class DatabaseSchema(abc.ABC):
         -------
         set[TableReference]
             All tables in the current schema, including materialized views, etc.
+
+        Notes
+        -----
+        **Hint for implementors:** the default implementation of this method relies on the *information_schema.tables* view.
         """
-        query_template = (
-            "SELECT table_name FROM information_schema.tables WHERE table_catalog = %s"
-        )
+        query_template = textwrap.dedent(f"""
+            SELECT table_name
+            FROM information_schema.tables
+            WHERE table_catalog = {self._prep_placeholder}
+                AND table_schema = current_schema()
+            """)
         self._db.cursor().execute(query_template, (self._db.database_name(),))
         result_set = self._db.cursor().fetchall()
         assert result_set is not None
@@ -603,24 +739,40 @@ class DatabaseSchema(abc.ABC):
         Returns
         -------
         Sequence[ColumnReference]
-            All columns for the given table. Will be empty if the table is not found or does not contain any columns.
+            All columns for the given table. Columns are ordered according to their position in the table.
+            Will be empty if the table is not found or does not contain any columns.
 
         Raises
         ------
         postbound.qal.VirtualTableError
             If the given table is virtual (e.g. subquery or CTE)
+
+        Notes
+        -----
+        **Hint for implementors:** the default implementation of this method relies on the *information_schema.columns* view.
         """
+
+        # The documentation of lookup_column() reference an implementation detail of this method.
+        # Make sure to keep the two in sync.
+
         table = table if isinstance(table, TableReference) else TableReference(table)
         if table.virtual:
             raise VirtualTableError(table)
-        query_template = textwrap.dedent("""
-                                         SELECT column_name
-                                         FROM information_schema.columns
-                                         WHERE table_catalog = %s AND table_name = %s
-                                         ORDER BY ordinal_position
-                                         """)
-        db_name = self._db.database_name()
-        self._db.cursor().execute(query_template, (db_name, table.full_name))
+        schema_placeholder = (
+            self._prep_placeholder if table.schema else "current_schema()"
+        )
+        query_template = textwrap.dedent(f"""
+            SELECT column_name
+            FROM information_schema.columns
+            WHERE table_name = {self._prep_placeholder}
+                AND table_catalog = current_database()
+                AND table_schema = {schema_placeholder}
+            ORDER BY ordinal_position
+            """)
+        params = [table.full_name]
+        if table.schema:
+            params.append(table.schema)
+        self._db.cursor().execute(query_template, params)
         result_set = self._db.cursor().fetchall()
         assert result_set is not None
         return [ColumnReference(row[0], table) for row in result_set]
@@ -642,25 +794,32 @@ class DatabaseSchema(abc.ABC):
         ------
         ValueError
             If the table was not found in the current database
+
+        Notes
+        -----
+        **Hint for implementors:** the default implementation of this method relies on the *information_schema.tables* view.
         """
         if isinstance(table, TableReference) and table.virtual:
             raise VirtualTableError(table)
         table = table if isinstance(table, str) else table.full_name
         db_name = self._db.database_name()
-        query_template = textwrap.dedent("""
-                                         SELECT table_type
-                                         FROM information_schema.tables
-                                         WHERE table_catalog = %s AND table_name = %s
-                                         """)
+
+        query_template = textwrap.dedent(f"""
+            SELECT table_type
+            FROM information_schema.tables
+            WHERE table_catalog = {self._prep_placeholder}
+                AND table_name = {self._prep_placeholder}
+                AND table_catalog = current_database()
+            """)
         self._db.cursor().execute(query_template, (db_name, table))
         result_set = self._db.cursor().fetchall()
+
         assert result_set is not None
         if not result_set:
             raise ValueError(f"Table '{table}' not found in database '{db_name}'")
         table_type = result_set[0][0]
         return table_type == "VIEW"
 
-    @abc.abstractmethod
     def lookup_column(
         self,
         column: ColumnReference | str,
@@ -689,10 +848,23 @@ class DatabaseSchema(abc.ABC):
         ------
         ValueError
             If `expect_match` is enabled and none of the candidate tables has a column of the given name.
-        """
-        raise NotImplementedError
 
-    @abc.abstractmethod
+        Notes
+        -----
+        **Hint for implementors:** the default implementation of this method (transitively) relies on the
+        *information_schema.columns* view.
+        """
+        for candidate in candidate_tables:
+            candidate_cols = self.columns(candidate)
+            if column in candidate_cols:
+                return candidate
+
+        if expect_match:
+            raise ValueError(
+                f"Column '{column}' not found in any of the candidate tables: {candidate_tables}"
+            )
+        return None
+
     def is_primary_key(self, column: ColumnReference) -> bool:
         """Checks, whether a column is the primary key for its associated table.
 
@@ -704,8 +876,7 @@ class DatabaseSchema(abc.ABC):
         Returns
         -------
         bool
-            Whether the column is the primary key of its table. If it is part of a compound primary key, this is
-            ``False``.
+            Whether the column is the primary key of its table. If it is part of a compound primary key, this is *False*.
 
         Raises
         ------
@@ -713,10 +884,99 @@ class DatabaseSchema(abc.ABC):
             If the column is not associated with any table
         postbound.qal.VirtualTableError
             If the table associated with the column is a virtual table (e.g. subquery or CTE)
-        """
-        raise NotImplementedError
 
-    @abc.abstractmethod
+        Notes
+        -----
+        **Hint for implementors:** the default implementation of this method relies on the
+        *information_schema.table_constraints* and *information_schema.constraint_column_usage* views.
+        """
+        if not column.is_bound():
+            raise UnboundColumnError(
+                f"Cannot check primary key status for column {column}: Column is not bound to any table."
+            )
+
+        schema_placeholder = (
+            self._prep_placeholder if column.table.schema else "current_schema()"
+        )
+        query_template = textwrap.dedent(f"""
+            SELECT ccu.column_name
+            FROM information_schema.table_constraints tc
+                JOIN information_schema.constraint_column_usage ccu
+                ON tc.constraint_name = ccu.constraint_name
+                    AND tc.table_catalog = ccu.table_catalog
+                    AND tc.table_schema = ccu.table_schema
+                    AND tc.table_name = ccu.table_name
+                    AND tc.constraint_catalog = ccu.constraint_catalog
+            WHERE tc.table_name = {self._prep_placeholder}
+                AND ccu.column_name = {self._prep_placeholder}
+                AND tc.constraint_type = 'PRIMARY KEY'
+                AND tc.table_catalog = current_database()
+                AND tc.table_schema = {schema_placeholder};
+            """)
+
+        params = [column.table.full_name, column.name]
+        if column.table.schema:
+            params.append(column.table.schema)
+
+        self._db.cursor().execute(query_template, params)
+        result_set = self._db.cursor().fetchone()
+
+        return result_set is not None
+
+    def primary_key_column(
+        self, table: TableReference | str
+    ) -> Optional[ColumnReference]:
+        """Determines the primary key column of a specific table.
+
+        Parameters
+        ----------
+        table : TableReference | str
+            The table to check
+
+        Returns
+        -------
+        Optional[ColumnReference]
+            The primary key if it exists, or *None* otherwise.
+
+        Notes
+        -----
+        **Hint for implementors:** the default implementation of this method relies on the
+        *information_schema.table_constraints* and *information_schema.constraint_column_usage* views.
+        """
+        schema_placeholder = (
+            self._prep_placeholder if table.schema else "current_schema()"
+        )
+        query_template = textwrap.dedent(f"""
+            SELECT ccu.column_name
+            FROM information_schema.table_constraints tc
+                JOIN information_schema.constraint_column_usage ccu
+                ON tc.constraint_name = ccu.constraint_name
+                    AND tc.table_catalog = ccu.table_catalog
+                    AND tc.table_schema = ccu.table_schema
+                    AND tc.table_name = ccu.table_name
+                    AND tc.constraint_catalog = ccu.constraint_catalog
+            WHERE tc.table_name = {self._prep_placeholder}
+                AND tc.constraint_type = 'PRIMARY KEY'
+                AND tc.table_catalog = current_database()
+                AND tc.table_schema = {schema_placeholder};
+            """)
+
+        params = [table.full_name]
+        if table.schema:
+            params.append(table.schema)
+
+        self._db.cursor().execute(query_template, params)
+        result_set = self._db.cursor().fetchall()
+
+        if not result_set:
+            return None
+        elif len(result_set) > 1:
+            raise ValueError(
+                f"Table {table} has multiple primary key columns: {result_set}"
+            )
+        col = result_set[0][0]
+        return ColumnReference(col, table)
+
     def has_secondary_index(self, column: ColumnReference) -> bool:
         """Checks, whether a secondary index is available for a specific column.
 
@@ -737,75 +997,76 @@ class DatabaseSchema(abc.ABC):
             If the column is not associated with any table
         postbound.qal.VirtualTableError
             If the table associated with the column is a virtual table (e.g. subquery or CTE)
+
+        Notes
+        -----
+        **Hints for implementors:**
+        The default implementation of this method assumes that each foreign key column and each column with a UNIQUE constraint
+        has an associated index. If this should not be the case, a custom implementation needs to be supplied.
+        Furthermore, the implementation relies on the *information_schema.table_constraints*,
+        *information_schema.constraint_column_usage* and *information_schema.key_column_usage* views.
         """
-        raise NotImplementedError
 
-    def has_index(self, column: ColumnReference) -> bool:
-        """Checks, whether there is any index structure available on a column
+        # The documentation of has_index() references an implementation detail of this method.
+        # Make sure to keep the two in sync.
 
-        Parameters
-        ----------
-        column : ColumnReference
-            The column to check
+        if not column.is_bound():
+            raise UnboundColumnError(
+                f"Cannot check index status for column {column}: Column is not bound to any table."
+            )
 
-        Returns
-        -------
-        bool
-            Whether any kind of index (primary, or secondary) is available for the column. Only compound indexes will
-            fail this test.
-
-        Raises
-        ------
-        postbound.qal.UnboundColumnError
-            If the column is not associated with any table
-        postbound.qal.VirtualTableError
-            If the table associated with the column is a virtual table (e.g. subquery or CTE)
-        """
-        return self.is_primary_key(column) or self.has_secondary_index(column)
-
-    @abc.abstractmethod
-    def indexes_on(self, column: ColumnReference) -> set[str]:
-        """Retrieves the names of all indexes of a specific column.
-
-        Parameters
-        ----------
-        column : ColumnReference
-            The column to check.
-
-        Returns
-        -------
-        set[str]
-            The indexes. If no indexes are available, the set will be empty.
-
-        Raises
-        ------
-        postbound.qal.UnboundColumnError
-            If the column is not associated with any table
-        postbound.qal.VirtualTableError
-            If the table associated with the column is a virtual table (e.g. subquery or CTE)
-        """
-        raise NotImplementedError
-
-    def primary_key_column(
-        self, table: TableReference | str
-    ) -> Optional[ColumnReference]:
-        """Determines the primary key column of a specific table.
-
-        Parameters
-        ----------
-        table : TableReference | str
-            The table to check
-
-        Returns
-        -------
-        Optional[ColumnReference]
-            The primary key if it exists, or *None* otherwise.
-        """
-        return next(
-            (col for col in self.columns(table) if self.is_primary_key(col)), None
+        schema_placeholder = (
+            self._prep_placeholder if column.table.schema else "current_schema()"
         )
 
-    @abc.abstractmethod
+        # The query template is much more complicated here, due to the different semantics of the constraint_column_usage
+        # view. For UNIQUE constraints, the column is the column that is constrained. However, for foreign keys, the column
+        # is the column that is being referenced.
+        query_template = textwrap.dedent(f"""
+            SELECT ccu.column_name
+            FROM information_schema.table_constraints tc
+                JOIN information_schema.constraint_column_usage ccu
+                ON tc.constraint_name = ccu.constraint_name
+                    AND tc.table_catalog = ccu.table_catalog
+                    AND tc.table_schema = ccu.table_schema
+                    AND tc.table_name = ccu.table_name
+                    AND tc.constraint_catalog = ccu.constraint_catalog
+            WHERE tc.table_name = {self._prep_placeholder}
+                AND ccu.column_name = {self._prep_placeholder}
+                AND tc.constraint_type = 'UNIQUE'
+                AND tc.table_catalog = current_database()
+                AND tc.table_schema = {schema_placeholder}
+            UNION
+            SELECT kcu.column_name
+            FROM information_schema.table_constraints tc
+                JOIN information_schema.key_column_usage kcu
+                ON tc.constraint_name = kcu.constraint_name
+                    AND tc.table_catalog = kcu.table_catalog
+                    AND tc.table_schema = kcu.table_schema
+                    AND tc.table_name = kcu.table_name
+                    AND tc.constraint_catalog = kcu.constraint_catalog
+            WHERE tc.table_name = {self._prep_placeholder}
+                AND kcu.column_name = {self._prep_placeholder}
+                AND tc.constraint_type = 'FOREIGN KEY'
+                AND tc.table_catalog = current_database()
+                AND tc.table_schema = {schema_placeholder};
+            """)
+
+        # Due to the UNION query, we need to repeat the placeholders. While the implementation is definitely not elegant,
+        # this solution is arguably better than relying on named parameters which might or might not be supported by the
+        # target database.
+        params = [column.table.full_name, column.name]
+        if column.table.schema:
+            params.append(column.table.schema)
+        params.extend([column.table.full_name, column.name])
+        if column.table.schema:
+            params.append(column.table.schema)
+
+        self._db.cursor().execute(query_template, params)
+        result_set = self._db.cursor().fetchone()
+
+        return result_set is not None
+
     def foreign_keys_on(self, column: ColumnReference) -> set[ColumnReference]:
         """Fetches all foreign key constraints that are specified on a specific column.
 
@@ -832,9 +1093,157 @@ class DatabaseSchema(abc.ABC):
         postbound.qal.VirtualTableError
             If the table associated with the column is a virtual table (e.g. subquery or CTE)
         """
-        raise NotImplementedError
+        if not column.is_bound():
+            raise UnboundColumnError(
+                f"Cannot check foreign keys for column {column}: Column is not bound to any table."
+            )
 
-    @abc.abstractmethod
+        schema_placeholder = (
+            self._prep_placeholder if column.table.schema else "current_schema()"
+        )
+        query_template = textwrap.dedent(f"""
+            SELECT ccu.table_name, ccu.column_name
+            FROM information_schema.table_constraints tc
+                JOIN information_schema.key_column_usage kcu
+                    ON tc.constraint_name = kcu.constraint_name
+                    AND tc.table_schema = kcu.table_schema
+                    AND tc.table_name = kcu.table_name
+                JOIN information_schema.constraint_column_usage ccu
+                    ON tc.constraint_name = ccu.constraint_name
+                    AND tc.table_schema = ccu.table_schema
+                    AND tc.table_catalog = ccu.table_catalog
+            WHERE tc.table_name = {self._prep_placeholder}
+                AND kcu.column_name = {self._prep_placeholder}
+                AND tc.constraint_type = 'FOREIGN KEY'
+                AND tc.table_schema = {schema_placeholder}
+                AND tc.table_catalog = current_database();
+            """)
+        params = [column.table.full_name, column.name]
+        if column.table.schema:
+            params.append(column.table.schema)
+
+        self._db.cursor().execute(query_template, params)
+        result_set = self._db.cursor().fetchall()
+
+        return {
+            ColumnReference(row[1], TableReference(row[0], schema=column.table.schema))
+            for row in result_set
+        }
+
+    def has_index(self, column: ColumnReference) -> bool:
+        """Checks, whether there is any index structure available on a column
+
+        Parameters
+        ----------
+        column : ColumnReference
+            The column to check
+
+        Returns
+        -------
+        bool
+            Whether any kind of index (primary, or secondary) is available for the column. Only compound indexes will
+            fail this test.
+
+        Raises
+        ------
+        postbound.qal.UnboundColumnError
+            If the column is not associated with any table
+        postbound.qal.VirtualTableError
+            If the table associated with the column is a virtual table (e.g. subquery or CTE)
+
+        Notes
+        -----
+        **Hints for implementors:** the default implementation of this method (transitively) relies on the
+        **information_schema.table_constraints** and **information_schema.constraint_column_usage** views. It assumes that
+        primary keys, foreign keys and unique constraints are all associated with an index structure. If this is not the case,
+        a custom implementation needs to be supplied.
+        """
+        return self.is_primary_key(column) or self.has_secondary_index(column)
+
+    def indexes_on(self, column: ColumnReference) -> set[str]:
+        """Retrieves the names of all indexes of a specific column.
+
+        Parameters
+        ----------
+        column : ColumnReference
+            The column to check.
+
+        Returns
+        -------
+        set[str]
+            The indexes. If no indexes are available, the set will be empty.
+
+        Raises
+        ------
+        postbound.qal.UnboundColumnError
+            If the column is not associated with any table
+        postbound.qal.VirtualTableError
+            If the table associated with the column is a virtual table (e.g. subquery or CTE)
+
+        Notes
+        -----
+        **Hints for implementors:** the default implementation of this method assumes that primary keys, foreign keys and
+        unique constraints are all associated with an index structure. It provides the names of the corresponding constraints.
+        The implementation relies on the *information_schema.table_constraints*, *information_schema.constraint_column_usage*
+        and *information_schema.key_column_usage* views.
+        """
+        if not column.is_bound():
+            raise UnboundColumnError(
+                f"Cannot retrieve indexes for column {column}: Column is not bound to any table."
+            )
+
+        schema_placeholder = (
+            self._prep_placeholder if column.table.schema else "current_schema()"
+        )
+
+        # The query template is much more complicated here, due to the different semantics of the constraint_column_usage
+        # view. For UNIQUE constraints, the column is the column that is constrained. However, for foreign keys, the column
+        # is the column that is being referenced.
+        query_template = textwrap.dedent(f"""
+            SELECT tc.constraint_name
+            FROM information_schema.table_constraints tc
+                JOIN information_schema.constraint_column_usage ccu
+                ON tc.constraint_name = ccu.constraint_name
+                    AND tc.table_catalog = ccu.table_catalog
+                    AND tc.table_schema = ccu.table_schema
+                    AND tc.table_name = ccu.table_name
+                    AND tc.constraint_catalog = ccu.constraint_catalog
+            WHERE tc.table_name = {self._prep_placeholder}
+                AND ccu.column_name = {self._prep_placeholder}
+                AND tc.constraint_type IN ('PRIMARY KEY', 'UNIQUE')
+                AND tc.table_catalog = current_database()
+                AND tc.table_schema = {schema_placeholder}
+            UNION
+            SELECT tc.constraint_name
+            FROM information_schema.table_constraints tc
+                JOIN information_schema.key_column_usage kcu
+                ON tc.constraint_name = kcu.constraint_name
+                    AND tc.table_catalog = kcu.table_catalog
+                    AND tc.table_schema = kcu.table_schema
+                    AND tc.table_name = kcu.table_name
+                    AND tc.constraint_catalog = kcu.constraint_catalog
+            WHERE tc.table_name = {self._prep_placeholder}
+                AND kcu.column_name = {self._prep_placeholder}
+                AND tc.constraint_type = 'FOREIGN KEY'
+                AND tc.table_catalog = current_database()
+                AND tc.table_schema = {schema_placeholder};
+            """)
+
+        # Due to the UNION query, we need to repeat the placeholders. While the implementation is definitely not elegant,
+        # this solution is arguably better than relying on named parameters which might or might not be supported by the
+        # target database.
+        params = [column.table.full_name, column.name]
+        if column.table.schema:
+            params.append(column.table.schema)
+        params.extend([column.table.full_name, column.name])
+        if column.table.schema:
+            params.append(column.table.schema)
+
+        self._db.cursor().execute(query_template, params)
+        result_set = self._db.cursor().fetchall()
+
+        return {row[0] for row in result_set}
+
     def datatype(self, column: ColumnReference) -> str:
         """Retrieves the (physical) data type of a column.
 
@@ -857,10 +1266,38 @@ class DatabaseSchema(abc.ABC):
             If the column is not associated with any table
         postbound.qal.VirtualTableError
             If the table associated with the column is a virtual table (e.g. subquery or CTE)
-        """
-        raise NotImplementedError
 
-    @abc.abstractmethod
+        Notes
+        -----
+        **Hint for implementors:** the default implementation of this method relies on the *information_schema.columns* view.
+        """
+        if not column.is_bound():
+            raise UnboundColumnError(
+                f"Cannot check datatype for column {column}: Column is not bound to any table."
+            )
+
+        schema_placeholder = (
+            self._prep_placeholder if column.table.schema else "current_schema()"
+        )
+        query_template = textwrap.dedent(f"""
+            SELECT data_type
+            FROM information_schema.columns
+            WHERE table_name = {self._prep_placeholder}
+                AND column_name = {self._prep_placeholder}
+                AND table_catalog = current_database()
+                AND table_schema = {schema_placeholder};
+            """)
+
+        params = [column.table.full_name, column.name]
+        if column.table.schema:
+            params.append(column.table.schema)
+
+        self._db.cursor().execute(query_template, params)
+        result_set = self._db.cursor().fetchone()
+        assert result_set
+
+        return result_set[0]
+
     def is_nullable(self, column: ColumnReference) -> bool:
         """Checks, whether a specific column may contain NULL values.
 
@@ -880,8 +1317,37 @@ class DatabaseSchema(abc.ABC):
             If the column is not associated with any table
         postbound.qal.VirtualTableError
             If the table associated with the column is a virtual table (e.g. subquery or CTE)
+
+        Notes
+        -----
+        **Hint for implementors:** the default implementation of this method relies on the *information_schema.columns* view.
         """
-        raise NotImplementedError
+        if not column.is_bound():
+            raise UnboundColumnError(
+                f"Cannot check nullability for column {column}: Column is not bound to any table."
+            )
+
+        schema_placeholder = (
+            self._prep_placeholder if column.table.schema else "current_schema()"
+        )
+        query_template = textwrap.dedent(f"""
+            SELECT is_nullable
+            FROM information_schema.columns
+            WHERE table_name = {self._prep_placeholder}
+                AND column_name = {self._prep_placeholder}
+                AND table_catalog = current_database()
+                AND table_schema = {schema_placeholder};
+            """)
+
+        params = [column.table.full_name, column.name]
+        if column.table.schema:
+            params.append(column.table.schema)
+
+        self._db.cursor().execute(query_template, params)
+        result_set = self._db.cursor().fetchone()
+        assert result_set
+
+        return result_set[0] == "YES"
 
     def as_graph(self) -> nx.DiGraph:
         """Constructs a compact representation of the database schema.
@@ -958,12 +1424,12 @@ class DatabaseStatistics(abc.ABC):
     Alternatively, the statistics interface can create the illusion of a normalized and standardized statistics
     catalogue. This so-called *emulated* mode does not rely on the statistics catalogs and issues equivalent SQL
     queries instead. For example, if a statistic on the number of distinct values of a column is requested, this
-    emulated by running a ``SELECT COUNT(DISTINCT column) FROM table`` query.
+    emulated by running a *SELECT COUNT(DISTINCT column) FROM table* query.
 
-    The current mode can be customized using the boolean `emualted` property. If the statistics interface operates in
+    The current mode can be customized using the boolean `emulated` property. If the statistics interface operates in
     native mode (i.e. based on the actual statistics catalog) and the user requests a statistic that is not available
     in the selected database system, the behavior depends on another attribute: `enable_emulation_fallback`. If this
-    boolean attribute is ``True``, an emulated statistic will be calculated instead. Otherwise, an
+    boolean attribute is *True*, an emulated statistic will be calculated instead. Otherwise, an
     `UnsupportedDatabaseFeatureError` is raised.
 
     Since the live computation of emulated statistics can be costly, the statistics interface has its own
@@ -978,12 +1444,12 @@ class DatabaseStatistics(abc.ABC):
         The database for which the schema information should be read. This is required to hook into the database cache
         and to obtain the cursors to actuall execute queries.
     emulated : bool, optional
-        Whether the statistics interface should operate in emulation mode. To enable reproducibility, this is ``True``
+        Whether the statistics interface should operate in emulation mode. To enable reproducibility, this is *True*
         by default
     enable_emulation_fallback : bool, optional
         Whether emulation should be used for unsupported statistics when running in native mode, by default True
     cache_enabled : Optional[bool], optional
-        Whether emulated statistics queries should be subject to caching, by default True. Set to ``None`` to use the
+        Whether emulated statistics queries should be subject to caching, by default True. Set to *None* to use the
         caching behavior of the `db`
 
     See Also
@@ -1018,17 +1484,17 @@ class DatabaseStatistics(abc.ABC):
         table : TableReference
             The table to check
         emulated : Optional[bool], optional
-            Whether to force emulation mode for this single call. Defaults to ``None`` which indicates that the
+            Whether to force emulation mode for this single call. Defaults to *None* which indicates that the
             emulation setting of the statistics interface should be used.
         cache_enabled : Optional[bool], optional
-            Whether to enable result caching in emulation mode. Defaults to ``None`` which indicates that the caching
+            Whether to enable result caching in emulation mode. Defaults to *None* which indicates that the caching
             setting of the statistics interface should be used.
 
         Returns
         -------
         Optional[int]
             The total number of rows in the table. If no such statistic exists, but the database system in principle
-            maintains the statistic, ``None`` is returned. For example, this situation can occur if the database system
+            maintains the statistic, *None* is returned. For example, this situation can occur if the database system
             only maintains a row count if the table has at least a certain size and the table in question did not reach
             that size yet.
 
@@ -1060,17 +1526,17 @@ class DatabaseStatistics(abc.ABC):
         column : ColumnReference
             The column to check
         emulated : Optional[bool], optional
-            Whether to force emulation mode for this single call. Defaults to ``None`` which indicates that the
+            Whether to force emulation mode for this single call. Defaults to *None* which indicates that the
             emulation setting of the statistics interface should be used.
         cache_enabled : Optional[bool], optional
-            Whether to enable result caching in emulation mode. Defaults to ``None`` which indicates that the caching
+            Whether to enable result caching in emulation mode. Defaults to *None* which indicates that the caching
             setting of the statistics interface should be used.
 
         Returns
         -------
         Optional[int]
             The number of distinct values in the column. If no such statistic exists, but the database system in
-            principle maintains the statistic, ``None`` is returned. For example, this situation can occur if the
+            principle maintains the statistic, *None* is returned. For example, this situation can occur if the
             database system only maintains a distinct value count if the column values are distributed in a
             sufficiently diverse way.
 
@@ -1106,17 +1572,17 @@ class DatabaseStatistics(abc.ABC):
         column : ColumnReference
             The column to check
         emulated : Optional[bool], optional
-            Whether to force emulation mode for this single call. Defaults to ``None`` which indicates that the
+            Whether to force emulation mode for this single call. Defaults to *None* which indicates that the
             emulation setting of the statistics interface should be used.
         cache_enabled : Optional[bool], optional
-            Whether to enable result caching in emulation mode. Defaults to ``None`` which indicates that the caching
+            Whether to enable result caching in emulation mode. Defaults to *None* which indicates that the caching
             setting of the statistics interface should be used.
 
         Returns
         -------
         Optional[tuple[Any, Any]]
             A tuple of minimum and maximum value. If no such statistic exists, but the database system in principle
-            maintains the statistic, ``None`` is returned. For example, this situation can occur if thec database
+            maintains the statistic, *None* is returned. For example, this situation can occur if thec database
             system only maintains the min/max value if they are sufficiently far apart.
 
         Raises
@@ -1155,10 +1621,10 @@ class DatabaseStatistics(abc.ABC):
             The maximum number of most common values to return. Defaults to 10. If there are less values available, all
             of the available values will be returned.
         emulated : Optional[bool], optional
-            Whether to force emulation mode for this single call. Defaults to ``None`` which indicates that the
+            Whether to force emulation mode for this single call. Defaults to *None* which indicates that the
             emulation setting of the statistics interface should be used.
         cache_enabled : Optional[bool], optional
-            Whether to enable result caching in emulation mode. Defaults to ``None`` which indicates that the caching
+            Whether to enable result caching in emulation mode. Defaults to *None* which indicates that the caching
             setting of the statistics interface should be used.
 
         Returns
@@ -1191,7 +1657,7 @@ class DatabaseStatistics(abc.ABC):
     def _calculate_total_rows(
         self, table: TableReference, *, cache_enabled: Optional[bool] = None
     ) -> int:
-        """Retrieves the total number of rows of a table by issuing a ``COUNT(*)`` query against the live database.
+        """Retrieves the total number of rows of a table by issuing a *COUNT(\\*)* query against the live database.
 
         The table is assumed to be non-virtual.
 
@@ -1200,7 +1666,7 @@ class DatabaseStatistics(abc.ABC):
         table : TableReference
             The table to check
         cache_enabled : Optional[bool], optional
-            Whether to enable result caching in emulation mode. Defaults to ``None`` which indicates that the caching
+            Whether to enable result caching in emulation mode. Defaults to *None* which indicates that the caching
             setting of the statistics interface should be used.
 
         Returns
@@ -1217,7 +1683,7 @@ class DatabaseStatistics(abc.ABC):
     def _calculate_distinct_values(
         self, column: ColumnReference, *, cache_enabled: Optional[bool] = None
     ) -> int:
-        """Retrieves the number of distinct column values by issuing a ``COUNT(*)`` / ``GROUP BY`` query over that
+        """Retrieves the number of distinct column values by issuing a *COUNT(\\*)* / *GROUP BY* query over that
         column against the live database.
 
         The column is assumed to be bound to a (non-virtual) table.
@@ -1227,7 +1693,7 @@ class DatabaseStatistics(abc.ABC):
         column : ColumnReference
             The column to check
         cache_enabled : Optional[bool], optional
-            Whether to enable result caching in emulation mode. Defaults to ``None`` which indicates that the caching
+            Whether to enable result caching in emulation mode. Defaults to *None* which indicates that the caching
             setting of the statistics interface should be used.
 
         Returns
@@ -1256,13 +1722,13 @@ class DatabaseStatistics(abc.ABC):
         column : ColumnReference
             The column to check
         cache_enabled : Optional[bool], optional
-            Whether to enable result caching in emulation mode. Defaults to ``None`` which indicates that the caching
+            Whether to enable result caching in emulation mode. Defaults to *None* which indicates that the caching
             setting of the statistics interface should be used.
 
         Returns
         -------
         tuple[Any, Any]
-            A tuple of ``(min val, max val)``
+            A tuple of *(min, max)*
         """
         query_template = "SELECT MIN({col}), MAX({col}) FROM {tab}".format(
             col=column.name, tab=column.table.full_name
@@ -1278,7 +1744,7 @@ class DatabaseStatistics(abc.ABC):
         """Retrieves the `k` most frequent values of a column along with their frequencies by issuing a query over that
         column against the live database.
 
-        The actual query combines a ``COUNT(*)`` aggregation, with a grouping over the column values, followed by a
+        The actual query combines a *COUNT(\\*)* aggregation, with a grouping over the column values, followed by a
         count-based ordering and limit.
 
         The column is assumed to be bound to a (non-virtual) table.
@@ -1291,13 +1757,13 @@ class DatabaseStatistics(abc.ABC):
             The number of most frequent values to retrieve. If less values are available (because there are not as much
             distinct values in the column), the frequencies of all values is returned.
         cache_enabled : Optional[bool], optional
-            Whether to enable result caching in emulation mode. Defaults to ``None`` which indicates that the caching
+            Whether to enable result caching in emulation mode. Defaults to *None* which indicates that the caching
             setting of the statistics interface should be used.
 
         Returns
         -------
         Sequence[tuple[Any, int]]
-            The most common values in ``(value, frequency)`` pairs, ordered by largest frequency first. Can be smaller
+            The most common values in *(value, frequency)* pairs, ordered by largest frequency first. Can be smaller
             than the requested `k` value if the column contains less distinct values.
         """
         query_template = textwrap.dedent(
@@ -1328,7 +1794,7 @@ class DatabaseStatistics(abc.ABC):
         -------
         Optional[int]
             The total number of rows in the table. If no such statistic exists, but the database system in principle
-            maintains the statistic, ``None`` is returned. For example, this situation can occur if the database system
+            maintains the statistic, *None* is returned. For example, this situation can occur if the database system
             only maintains a row count if the table has at least a certain size and the table in question did not reach
             that size yet.
         """
@@ -1351,7 +1817,7 @@ class DatabaseStatistics(abc.ABC):
         -------
         Optional[int]
             The number of distinct values in the column. If no such statistic exists, but the database system in
-            principle maintains the statistic, ``None`` is returned. For example, this situation can occur if the
+            principle maintains the statistic, *None* is returned. For example, this situation can occur if the
             database system only maintains a distinct value count if the column values are distributed in a
             sufficiently diverse way.
         """
@@ -1374,7 +1840,7 @@ class DatabaseStatistics(abc.ABC):
         -------
         Optional[tuple[Any, Any]]
             A tuple of minimum and maximum value. If no such statistic exists, but the database system in principle
-            maintains the statistic, ``None`` is returned. For example, this situation can occur if thec database
+            maintains the statistic, *None* is returned. For example, this situation can occur if thec database
             system only maintains the min/max value if they are sufficiently far apart.
         """
         raise NotImplementedError
@@ -1471,9 +1937,9 @@ class HintService(abc.ABC):
         In the most common case this involves building a `Hint` clause that encodes the optimization decisions in a
         system-specific way. However, depending on the concrete database system, this might also involve a
         restructuring of certain parts of the query, e.g. the usage of specific join statements, the introduction of
-        non-standard SQL statements, or a reordering of the ``FROM`` clause.
+        non-standard SQL statements, or a reordering of the *FROM* clause.
 
-        Notice that all optimization information is optional. If individual parameters are set to ``None``, nothing
+        Notice that all optimization information is optional. If individual parameters are set to *None*, nothing
         has been enforced by PostBOUND's optimization process and the native optimizer of the database system should
         "fill the gaps".
 
@@ -1487,7 +1953,7 @@ class HintService(abc.ABC):
         query : SqlQuery
             The query that should be transformed
         plan : Optional[QueryPlan], optional
-            The query execution plan. If this is given, all other parameters should be ``None``. This essentially
+            The query execution plan. If this is given, all other parameters should be *None*. This essentially
             enforces the given query plan.
         join_order : Optional[JoinTree], optional
             The sequence in which individual joins should be executed.
@@ -1583,7 +2049,7 @@ class OptimizerInterface(abc.ABC):
         Returns
         -------
         QueryPlan
-            The corresponding execution plan. This will never be an ``ANALYZE`` plan, but contain as much meaningful
+            The corresponding execution plan. This will never be an *ANALYZE* plan, but contain as much meaningful
             information as can be derived for the specific database system (e.g. regarding cardinality and cost
             estimates)
         """
@@ -1603,7 +2069,7 @@ class OptimizerInterface(abc.ABC):
         Returns
         -------
         QueryPlan
-            The corresponding execution plan. This plan will be an ``ANALYZE`` plan and contain all information that
+            The corresponding execution plan. This plan will be an *ANALYZE* plan and contain all information that
             can be derived for the specific database system (e.g. cardinality estimates as well as true cardinality
             counts)
         """
@@ -1629,7 +2095,7 @@ class OptimizerInterface(abc.ABC):
         raise NotImplementedError
 
     @abc.abstractmethod
-    def cost_estimate(self, query: SqlQuery | str) -> float:
+    def cost_estimate(self, query: SqlQuery | str) -> Cost:
         """Queries the DBMS query optimizer for the estimated cost of executing the query.
 
         The cost estimate will correspond to the estimate for the final node. Typically, this cost includes the cost
@@ -1642,7 +2108,7 @@ class OptimizerInterface(abc.ABC):
 
         Returns
         -------
-        float
+        Cost
             The cost estimate of the native optimizer for the database system.
         """
         raise NotImplementedError

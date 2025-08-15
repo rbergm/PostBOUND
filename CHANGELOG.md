@@ -8,8 +8,89 @@ stability. Since we are not ready for the 1.0 release yet, this does not matter 
 
 ---
 
+# ➡ Version 0.17.0 _(current)_
 
-# ➡ Version 0.16.0 _(current)_
+### 🐣 New features
+- 🦆 DuckDB is now a supported database system using the [quacklab backend](https://github.com/rbergm/quacklab)
+- Added a new `StopwatchSupport` protocol for database backends. This allows to obtain (comparatively) precise timing
+  information for query execution. Postgres and DuckDB currently support this protocol and the `execute_XXX` utilities
+  automatically detect whether the target database supports this functionality.
+- Added JOB-light as a pre-defined workload
+- When executing a query with a timeout on the Postgres backend, errors will now be properly propagated to the client.
+  Practically, this means that the `execute_query` function will raise a `DatabaseServerError` directly.
+- 🐳 Revamped the Docker setup to properly use volumes. Instead of setting up the database, etc. when building the image,
+  this is now delayed until the actual container is created. This process allows to make all of the internals available on the
+  host using volumes.
+
+### 💀 Breaking changes
+- _None_
+
+### 📰 Updates
+- _AT_ is now a reserved SQL keyword and will be automatically escaped when used as an identifier. This keeps DuckDB quiet on
+  the JOB workload.
+- Can now pass arbitrary `UserString` instances to `execute_query()` on the Postgres backend.
+- Moved `simplify_result_set` into the public API of the _db_ package. All backends are practically doing the same stuff
+  anyway.
+- Refactored the internals of query execution with timeouts on Postgres. The query is still executed in a separate process, but
+  the process now establishes its own database connection instead of sharing the connection from the main process. This
+  circumvents issues with the connection not being pickle-able on some systems (looking at you, Windows).
+- Added support for timestamp-based columns in the database query cache.
+
+### 🏥 Fixes
+- Fixed `PostgresSetting` not being pickle-able. This temporarily broke the refactored timeout query execution logic for
+  Postgres.
+- 🐘 🍏 Fixed SSB setup for Postgres on MacOS
+
+### 🪲 Known bugs
+- _None_
+
+---
+
+
+# 🛣 Roadmap
+
+Currently, we plan to implement the following features in the future (in no particular order):
+
+- Supporting parallel query plans in the Postgres-style dynamic programming enumerator
+- Using the GUC hint mechanism to enforce "global" optimization settings for Postgres
+- Providing a Substrait export for query plans
+- Better benchmarking setup, mostly focused on comparing one or multiple optimization pipelines and creating better experiment
+  logs and the ability to cancel/resume long-running benchmarks
+- Adding popular optimization algorithms to the collection of pre-defined optimizers
+
+---
+
+# 🕑 Past versions
+
+## ⏳ Version 0.16.1 _(current)_
+
+### 🐣 New features
+- _None_
+
+### 💀 Breaking changes
+- Edges in the schema graph now contain an explicit list of foreign key references (see _Fixes_)
+
+### 📰 Updates
+- Made `Cardinality` objects JSON-serializable
+- Setting a timeout to 0 when executing a query on Postgres now disabled the timeout
+
+### 🏥 Fixes
+- Fixed non-deterministic edge annotations in the schema graph. The old implementation implicitly assumed that there could only
+  be a single foreign key reference between two tables. If there were multiple such references, the foreign key constraint that
+  appears in the edge annotation was "random". To fix this, we now store an explicit list of foreign keys in the edges.
+- Fixed query plan JSON serialization/deserialization not respecting custom data correctly
+- Fixed `read_operator_json` not re-constructing intermediate operators correctly. Transitively, this fixes
+  `read_query_plan_json` not working for plans with intermediate operators.
+
+### 🪲 Known bugs
+- 🐘 `PostgresConfiguration` cannot be passed directly to `execute_query()` or a manual psycopg cursor. It seems that psycopg
+  does not recognize *UserString* as a valid string and raises an error. As a workaround, make sure to call *str()* on the
+  configuration before trying to execute it. `apply_configuration()` does so automatically.
+
+---
+
+
+## 🕑 Version 0.16.0
 
 ### 🐣 New features
 - Added a proper high-level documentation available at https://postbound.readthedocs.io/en/latest/
@@ -39,20 +120,6 @@ stability. Since we are not ready for the 1.0 release yet, this does not matter 
   configuration before trying to execute it. `apply_configuration()` does so automatically.
 
 ---
-
-
-# 🛣 Roadmap
-
-Currently, we plan to implement the following features in the future (in no particular order):
-
-- DuckDB backend, propably using the Substrait extension at first
-- Better benchmarking setup, mostly focused on comparing one or multiple optimization pipelines and creating better experiment
-  logs and the ability to cancel/resume long-running benchmarks
-- Adding popular optimization algorithms to the collection of pre-defined optimizers
-
----
-
-# 🕑 Past versions
 
 ## 🕑 Version 0.15.4
 
