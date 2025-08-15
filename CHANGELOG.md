@@ -9,7 +9,49 @@ stability. Since we are not ready for the 1.0 release yet, this does not matter 
 ---
 
 
-# ➡ Version 0.16.0 _(current)_
+# ⏳ Version 0.16.1 _(current)_
+
+## 🐣 New features
+- _None_
+
+## 💀 Breaking changes
+- Edges in the schema graph now contain an explicit list of foreign key references (see _Fixes_)
+
+## 📰 Updates
+- Made `Cardinality` objects JSON-serializable
+- Setting a timeout to 0 when executing a query on Postgres now disabled the timeout
+
+## 🏥 Fixes
+- Fixed non-deterministic edge annotations in the schema graph. The old implementation implicitly assumed that there could only
+  be a single foreign key reference between two tables. If there were multiple such references, the foreign key constraint that
+  appears in the edge annotation was "random". To fix this, we now store an explicit list of foreign keys in the edges.
+- Fixed query plan JSON serialization/deserialization not respecting custom data correctly
+- Fixed `read_operator_json` not re-constructing intermediate operators correctly. Transitively, this fixes
+  `read_query_plan_json` not working for plans with intermediate operators.
+
+## 🪲 Known bugs
+- 🐘 `PostgresConfiguration` cannot be passed directly to `execute_query()` or a manual psycopg cursor. It seems that psycopg
+  does not recognize *UserString* as a valid string and raises an error. As a workaround, make sure to call *str()* on the
+  configuration before trying to execute it. `apply_configuration()` does so automatically.
+
+---
+
+
+# 🛣 Roadmap
+
+Currently, we plan to implement the following features in the future (in no particular order):
+
+- DuckDB backend, propably using the Substrait extension at first
+- Better benchmarking setup, mostly focused on comparing one or multiple optimization pipelines and creating better experiment
+  logs and the ability to cancel/resume long-running benchmarks
+- Adding popular optimization algorithms to the collection of pre-defined optimizers
+
+---
+
+
+# 🕑 Past versions
+
+## 🕑 Version 0.16.0 _(current)_
 
 ### 🐣 New features
 - Added a proper high-level documentation available at https://postbound.readthedocs.io/en/latest/
@@ -79,19 +121,6 @@ stability. Since we are not ready for the 1.0 release yet, this does not matter 
 
 ---
 
-
-# 🛣 Roadmap
-
-Currently, we plan to implement the following features in the future (in no particular order):
-
-- DuckDB backend, propably using the Substrait extension at first
-- Better benchmarking setup, mostly focused on comparing one or multiple optimization pipelines and creating better experiment
-  logs and the ability to cancel/resume long-running benchmarks
-- Adding popular optimization algorithms to the collection of pre-defined optimizers
-
----
-
-# 🕑 Past versions
 
 ## 🕑 Version 0.15.4
 

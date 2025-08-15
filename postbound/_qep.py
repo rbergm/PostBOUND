@@ -10,16 +10,15 @@ from typing import Any, Literal, Optional
 from . import util
 from ._core import (
     Cardinality,
+    ColumnReference,
     Cost,
-    ScanOperator,
     JoinOperator,
     PhysicalOperator,
+    ScanOperator,
     TableReference,
-    ColumnReference,
 )
-from .qal import SqlExpression, ColumnExpression, AbstractPredicate
-from .util import jsondict, StateError
-
+from .qal import AbstractPredicate, ColumnExpression, SqlExpression
+from .util import StateError, jsondict
 
 JoinDirection = Literal["inner", "outer"]
 
@@ -400,6 +399,8 @@ class PlanEstimates:
     cost : Cost, optional
         The approximate amount of abstract "work" that needs to be done to compute the result set of the operator. If no
         estimate is available, *NaN* can be used.
+    **kwargs
+        Additional metadata that should be attached to the plan estimates.
 
     Notes
     -----
@@ -410,14 +411,18 @@ class PlanEstimates:
     """
 
     def __init__(
-        self, *, cardinality: Cardinality = Cardinality.unknown(), cost: Cost = math.nan
+        self,
+        *,
+        cardinality: Cardinality = Cardinality.unknown(),
+        cost: Cost = math.nan,
+        **kwargs,
     ) -> None:
         cardinality = (
             cardinality
             if isinstance(cardinality, Cardinality)
             else Cardinality(cardinality)
         )
-        self._params = {"cardinality": cardinality, "cost": cost}
+        self._params = {"cardinality": cardinality, "cost": cost, **kwargs}
 
     @property
     def cardinality(self) -> Cardinality:
@@ -502,6 +507,8 @@ class PlanMeasures:
     cache_misses : Optional[int], optional
         The number of page reads that had to be delegated to the disk and could not be satisfied by the shared buffer. If no
         measurement is available, *None* can be used.
+    **kwargs
+        Additional metadata that should be attached to the plan measures.
 
     Notes
     -----
@@ -518,6 +525,7 @@ class PlanMeasures:
         execution_time: float = math.nan,
         cache_hits: Optional[int] = None,
         cache_misses: Optional[int] = None,
+        **kwargs,
     ) -> None:
         cardinality = (
             cardinality
@@ -529,6 +537,7 @@ class PlanMeasures:
             "execution_time": execution_time,
             "cache_hits": cache_hits,
             "cache_misses": cache_misses,
+            **kwargs,
         }
 
     @property
@@ -652,13 +661,15 @@ class Subplan:
 class QueryPlan:
     """Models the structure of a query execution plan (QEP).
 
-    Query plans are constructed as a tree of operators and each operator represents an entire query plan by itself. Hence, we
+    Query plans are constructed as a tree of operators. Each operator represents an entire query plan by itself. Hence, we
     use the *QueryPlan* to refer to the actual nodes in a hierarchical structure. Each node has a potentially large amount of
     metadata attached to it, e.g. regarding the table being scanned for scan nodes, the estimated cost of the operator or the
     actual cardinality of the result set. The different types of metadata are structured into three separate classes:
+
     - `PlanParams` contain all structural metadata about the operator, e.g. the table being scanned or the filter predicate.
     - `PlanEstimates` contain the optimizer's view on the operator, e.g. the estimated cardinality and cost.
     - `PlanMeasures` contain the actual execution statistics of the operator, e.g. the actual cardinality and execution time.
+
     Users are free to attach additional metadata to each of the containers to support there specific use-cases. However, these
     additional fields are typically not considered by the standard methods available on query plans. For example, if users
     store additional tables in the node, these are not considered in the `tables` method.
