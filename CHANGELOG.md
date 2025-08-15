@@ -102,6 +102,7 @@ Currently, we plan to implement the following features in the future (in no part
 ### 📰 Updates
 - _AT_ is now a reserved SQL keyword and will be automatically escaped when used as an identifier. This keeps DuckDB quiet on
   the JOB workload.
+- Can now pass arbitrary `UserString` instances to `execute_query()` on the Postgres backend.
 - Moved `simplify_result_set` into the public API of the _db_ package. All backends are practically doing the same stuff
   anyway.
 - Refactored the internals of query execution with timeouts on Postgres. The query is still executed in a separate process, but
@@ -115,12 +116,25 @@ Currently, we plan to implement the following features in the future (in no part
 - 🐘 🍏 Fixed SSB setup for Postgres on MacOS
 
 ### 🪲 Known bugs
-- 🐘 `PostgresConfiguration` cannot be passed directly to `execute_query()` or a manual psycopg cursor. It seems that psycopg
-  does not recognize *UserString* as a valid string and raises an error. As a workaround, make sure to call *str()* on the
-  configuration before trying to execute it. `apply_configuration()` does so automatically.
+- _None_
 
 ---
 
+
+# 🛣 Roadmap
+
+Currently, we plan to implement the following features in the future (in no particular order):
+
+- Supporting parallel query plans in the Postgres-style dynamic programming enumerator
+- Using the GUC hint mechanism to enforce "global" optimization settings for Postgres
+- Providing a Substrait export for query plans
+- Better benchmarking setup, mostly focused on comparing one or multiple optimization pipelines and creating better experiment
+  logs and the ability to cancel/resume long-running benchmarks
+- Adding popular optimization algorithms to the collection of pre-defined optimizers
+
+---
+
+# 🕑 Past versions
 
 ## 🕑 Version 0.15.4
 

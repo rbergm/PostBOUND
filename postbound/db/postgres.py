@@ -23,6 +23,7 @@ import textwrap
 import threading
 import time
 import warnings
+from collections import UserString
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from multiprocessing import connection as mp_conn
@@ -692,6 +693,8 @@ class PostgresInterface(Database):
             )
 
         cache_enabled = cache_enabled or (cache_enabled is None and self._cache_enabled)
+        if isinstance(query, UserString):
+            query = str(query)
 
         if cache_enabled and query in self._query_cache:
             query_result = self._query_cache[query]

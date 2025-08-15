@@ -9,6 +9,7 @@ import multiprocessing.connection
 import textwrap
 import time
 import warnings
+from collections import UserString
 from collections.abc import Iterable, Sequence
 from pathlib import Path
 from typing import Any, Optional
@@ -127,6 +128,8 @@ class DuckDBInterface(Database):
             query = transform.drop_hints(query, preparatory_statements_only=True)
         if isinstance(query, SqlQuery):
             query = self._hinting.format_query(query)
+        elif isinstance(query, UserString):
+            query = str(query)
 
         if cache_enabled:
             cached_res = self._query_cache.get(query)
