@@ -72,7 +72,7 @@ source "$VENV/bin/activate"
 
 python3 -m pip install --upgrade pip
 
-BUILD_PYTHON=1 make -j 12 release
+GEN=Ninja BUILD_PYTHON=1 make release
 
 if [ -n "$BASH_VERSION" -a "$BASH_SOURCE" != "$0" ] || [ -n "$ZSH_VERSION" -a "$ZSH_EVAL_CONTEXT" != "toplevel" ] ; then
     echo ".. Adding DuckDB executable to the system PATH"
