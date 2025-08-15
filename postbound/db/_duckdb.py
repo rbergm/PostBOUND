@@ -72,13 +72,13 @@ class DuckDBInterface(Database):
     def __init__(
         self, db: Path, *, system_name: str = "DuckDB", cache_enabled: bool = False
     ) -> None:
-        import duckdb as duck
+        import duckdb
 
         super().__init__(system_name=system_name, cache_enabled=cache_enabled)
 
         self._dbfile = db
 
-        self._db = duck.connect(db)
+        self._db = duckdb.connect(db)
         self._cur = self._db.cursor()
         self._last_query_runtime = math.nan
 

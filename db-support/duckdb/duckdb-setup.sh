@@ -4,6 +4,7 @@ WD=$(pwd)
 VENV="$WD/../../pb-venv"
 EXPLICIT_VENV="false"
 TARGET_DIR="$WD/quacklab"
+SKIP_PULL="false"
 
 function show_help() {
     RET=$1
@@ -11,6 +12,7 @@ function show_help() {
     echo "Allowed options:"
     echo -e "--venv <venv>\tpath to the Python virtual environment to install the DuckDB package into. Defaults to '$VENV'."
     echo -e "-d | --dir <directory>\tthe directory to install the DuckDB binary distribution in. Defaults to '$TARGET_DIR'."
+    echo -e "--no-update\tdon't try to pull the latest DuckDB version"
     exit $RET
 }
 
@@ -33,6 +35,10 @@ while [ $# -gt 0 ] ; do
                 TARGET_DIR="$WD/$2"
             fi
             shift
+            shift
+            ;;
+        --no-update)
+            SKIP_PULL="true"
             shift
             ;;
         --help)
@@ -60,8 +66,11 @@ echo ".. Setting up hinting-aware DuckDB"
 if [ -d "$TARGET_DIR" ] ; then
     echo ".. Re-using existing DuckDB build directory at $TARGET_DIR"
     cd "$TARGET_DIR"
-    git pull
-    git fetch --tags
+
+    if [ "$SKIP_PULL" = "false" ] ; then
+        git pull
+        git fetch --tags
+    fi
 else
     git clone https://github.com/rbergm/quacklab.git "$TARGET_DIR"
     cd "$TARGET_DIR"
