@@ -29,7 +29,7 @@ if [ -z "$(ls /postbound)" ] ; then
         git clone --depth 1 --branch=main https://github.com/rbergm/pg_lab /pg_lab
         cd /pg_lab && ./postgres-setup.sh --pg-ver $PGVER --remote-password "postbound" --stop
         . ./postgres-start.sh
-    else if [ "$USE_PGLAB" = "false" ]
+    elif [ "$USE_PGLAB" = "false" ] ; then
         echo "[setup] Building vanilla Postgres server"
         cd /postbound/db-support/postgres && ./postgres-setup.sh --pg-ver $PGVER --remote-password "postbound" --stop
         . ./postgres-start.sh
