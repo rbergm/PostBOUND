@@ -22,7 +22,9 @@ At a high level, PostBOUND has the following goals and features:
 - 🔋 **Batteries included:** in addition to the Python package, PostBOUND provides a lot of utilities to setup databases
   and load commonly used benchmarks (e.g., JOB, Stats and Stack).
 
-| **[💻 Installation](https://postbound.readthedocs.io/en/latest/setup.html)** | **[📖 Documentation](https://postbound.readthedocs.io/en/latest/)** | **[🧑‍🏫 Examples](https://github.com/rbergm/PostBOUND/tree/main/examples)** |
+| **[💻 Installation](https://postbound.readthedocs.io/en/latest/setup.html)**
+| **[📖 Documentation](https://postbound.readthedocs.io/en/latest/)**
+| **[🧑‍🏫 Examples](https://github.com/rbergm/PostBOUND/tree/main/examples)** |
 
 
 ## ⚡️ Quick Start
@@ -137,7 +139,10 @@ import random
 import postbound as pb
 
 # Step 1: define our optimization strategy.
-# We use the pre-defined join graph to keep track of free tables.
+# In this example we develop a simple join order optimizer that
+# selects a linear join order at random.
+# We delegate most of the actual work to the pre-defined join grap
+# that keeps track of free tables.
 class RandomJoinOrderOptimizer(pb.JoinOrderOptimization):
     def optimize_join_order(self, query: pb.SqlQuery) -> pb.LogicalJoinTree:
         join_tree = pb.LogicalJoinTree()
@@ -159,6 +164,7 @@ class RandomJoinOrderOptimizer(pb.JoinOrderOptimization):
 
 # Step 2: connect to the target database, load the workload and
 # setup the optimization pipeline.
+# In our case, we evaluate on the Join Order Benchmark on Postgres
 pg_imdb = pb.postgres.connect(config_file=".psycopg_connection_job")
 job = pb.workloads.job()
 
@@ -168,12 +174,12 @@ optimization_pipeline = (
     .build()
 )
 
-# (Step 3): we just compare against the native Postgres optimizer,
-# which does not require any additional setup.
+# (Step 3): in this example we just compare against the native Postgres optimizer
+# Therefore, we do not need to setup any additional optimizers.
 
 # Step 4: execute the workload.
-# We use the QueryPreparationService to prewarm the database buffer run all queries
-# as EXPLAIN ANALYZE.
+# We use the QueryPreparationService to prewarm the database buffer and run all
+# queries as EXPLAIN ANALYZE.
 query_prep = pb.experiments.QueryPreparationService(
     prewarm=True, analyze=True, preparatory_statements=["SET geqo TO off;"]
 )
