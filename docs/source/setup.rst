@@ -181,7 +181,7 @@ Use ``docker logs -f <container name>`` to monitor the installation progress.
 +------------------------+-------------------------------+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+---------------+
 | ``PG_DISK_TYPE``.      | *SSD* or *HDD*                | In case the Postgres server is automatically configured (see ``OPTIMIZE_PG_CONFIG``) this indicates the kind of storage for the actual database. In turn, this influences the relative cost of sequential access and index-based access for the query optimizer.       | *SSD*         |
 +------------------------+-------------------------------+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+---------------+
-| ``PG_VER``             | 16, 17, ...                   | The Postgres version to use. Notice that pg_lab supports fewer versions. This value is passed to the ``postgres-setup.sh`` script of the Postgres tooling (either under ``db-support`` or from pg_lab), which provides the most up to date list of supported versions. | *17*          |
+| ``PGVER``              | 16, 17, ...                   | The Postgres version to use. Notice that pg_lab supports fewer versions. This value is passed to the ``postgres-setup.sh`` script of the Postgres tooling (either under ``db-support`` or from pg_lab), which provides the most up to date list of supported versions. | *17*          |
 +------------------------+-------------------------------+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+---------------+
 | ``USE_PGLAB``          | *true* or *false*             | Whether to initialize a `pg_lab <https://github.com/rbergm/pg_lab>`__ server instead of a normal Postgres server. pg_lab provides advanced hinting capabilities and offers additional extension points for the query optimizer.                                        | *false*       |
 +------------------------+-------------------------------+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+---------------+
@@ -214,7 +214,7 @@ Putting things together, you can create a Docker container with PostBOUND and Po
         --env SETUP_STATS=true \
         --env OPTIMIZE_PG_CONFIG=true \
         --env PG_DISK_TYPE=SSD \
-        --env PG_VER=17 \
+        --env PGVER=17 \
         --env USE_PGLAB=true \
         --volume $PWD/vol-postbound:/postbound \
         --volume $PWD/vol-pglab:/pg_lab \

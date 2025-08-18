@@ -22,7 +22,7 @@ At a high level, PostBOUND has the following goals and features:
 - 🔋 **Batteries included:** in addition to the Python package, PostBOUND provides a lot of utilities to setup databases
   and load commonly used benchmarks (e.g., JOB, Stats and Stack).
 
-**| [💻 Installation](https://postbound.readthedocs.io/en/latest/setup.html) | [📖 Documentation](https://postbound.readthedocs.io/en/latest/) | [🧑‍🏫 Examples](https://github.com/rbergm/PostBOUND/tree/main/examples) |**
+| **[💻 Installation](https://postbound.readthedocs.io/en/latest/setup.html)** | **[📖 Documentation](https://postbound.readthedocs.io/en/latest/)** | **[🧑‍🏫 Examples](https://github.com/rbergm/PostBOUND/tree/main/examples)** |
 
 
 ## ⚡️ Quick Start
@@ -189,6 +189,15 @@ pb.experiments.prepare_export(optimized_results).to_csv("job-results-optimized.c
 ```
 
 
+## 🤬 Issues
+
+Something feels wrong or broken, or a part of PostBOUND is poorly documented or otherwise unclear?
+Please don't hestitate to file an issue or open a pull request!
+PostBOUND is not one-off software, but an ongoing research project.
+We are always happy to improve both PostBOUND and its documentation and we feel that the user experience (specifically,
+_your_ user experience) is a very important part of this.
+
+
 ## 🫶 Reference
 
 If you find our work useful, please cite the following paper:
@@ -236,7 +245,7 @@ which must be specified as a `--build-arg` when creating the image).
 | `SETUP_STACK` | `true` or `false`| Whether a [Stack](https://doi.org/10.1145/3448016.3452838) instance should be created as part of the Postgres setup. PostBOUND can connect to the database using the `.psycopg_connection_stack` config file. | `false` |
 | `OPTIMIZE_PG_CONFIG` |  `true` or `false` | Whether the Postgres configuration parameters should be automatically set based on your hardware platform. Rules are based on [PGTune](https://pgtune.leopard.in.ua/) by [le0pard](https://github.com/le0pard). | `false` |
 | `PG_DISK_TYPE` | `SSD` or `HDD` | In case the Postgres server is automatically configured (see `OPTIMIZE_PG_CONFIG`) this indicates the kind of storage for the actual database. In turn, this influences the relative cost of sequential access and index-based access for the query optimizer. | `SSD` |
-| `PG_VER` | 16, 17, ... | The Postgres version to use. Notice that pg_lab supports fewer versions. This value is passed to the `postgres-setup.sh` script of the Postgres tooling (either under `db-support` or from pg_lab), which provides the most up to date list of supported versions. | 17 |
+| `PGVER` | 16, 17, ... | The Postgres version to use. Notice that pg_lab supports fewer versions. This value is passed to the `postgres-setup.sh` script of the Postgres tooling (either under `db-support` or from pg_lab), which provides the most up to date list of supported versions. | 17 |
 | `USE_PGLAB` | `true` or `false` | Whether to initialize a [pg_lab](https://github.com/rbergm/pg_lab) server instead of a normal Postgres server. pg_lab provides advanced hinting capabilities and offers additional extension points for the query optimizer. | `false` |
 
 The PostBOUND source code is located at `/postbound`. If pg_lab is being used, the corresponding files are located at `/pg_lab`.

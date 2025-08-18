@@ -1,14 +1,14 @@
 #!/bin/bash
 
 if [ "$USE_PGLAB" = "true" ] ; then
-    PG_PATH=/pg_lab
+    PGPATH=/pg_lab
 else
-    PG_PATH=/postbound/db-support/postgres
+    PGPATH=/postbound/db-support/postgres
 fi
 
-if [ -z "$PG_VER" ] ; then
-    echo "[setup] PG_VER is not set, using default version"
-    PG_VER=17
+if [ -z "$PGVER" ] ; then
+    echo "[setup] PGVER is not set, using default version"
+    PGVER="17"
 fi
 
 if [ -z "$(ls /postbound)" ] ; then
@@ -27,11 +27,11 @@ if [ -z "$(ls /postbound)" ] ; then
     if [ "$USE_PGLAB" = "true" ] & [ -z "$(ls /pg_lab)" ] ; then
         echo "[setup] Building pg_lab"
         git clone --depth 1 --branch=main https://github.com/rbergm/pg_lab /pg_lab
-        cd /pg_lab && ./postgres-setup.sh --pg-ver $PGVER --remote-password "postbound" --stop
+        cd /pg_lab && ./postgres-setup.sh --pg-ver "$PGVER" --remote-password "postbound" --stop
         . ./postgres-start.sh
     elif [ "$USE_PGLAB" = "false" ] ; then
         echo "[setup] Building vanilla Postgres server"
-        cd /postbound/db-support/postgres && ./postgres-setup.sh --pg-ver $PGVER --remote-password "postbound" --stop
+        cd /postbound/db-support/postgres && ./postgres-setup.sh --pg-ver "$PGVER" --remote-password "postbound" --stop
         . ./postgres-start.sh
     else
         echo "[setup] Reusing existing pg_lab installation"
@@ -84,7 +84,8 @@ if [ -z "$(ls /postbound)" ] ; then
     echo "[setup] Installation complete. You can now start using PostBOUND."
 else
 
-    cd $PG_PATH
+    echo "Starting Postgres server"
+    cd $PGPATH
     . ./postgres-start.sh
 
 fi

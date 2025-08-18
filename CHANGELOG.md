@@ -8,7 +8,42 @@ stability. Since we are not ready for the 1.0 release yet, this does not matter 
 
 ---
 
-# ➡ Version 0.17.0 _(current)_
+# ➡ Version 0.17.1 _(current)_
+
+## 🐣 New features
+- _None_
+
+## 💀 Breaking changes
+- _None_
+
+## 📰 Updates
+- _None_
+
+## 🏥 Fixes
+- 🐳 Multiple setup fixes for the Docker file
+
+## 🪲 Known bugs
+- _None_
+
+---
+
+
+# 🛣 Roadmap
+
+Currently, we plan to implement the following features in the future (in no particular order):
+
+- Supporting parallel query plans in the Postgres-style dynamic programming enumerator
+- Using the GUC hint mechanism to enforce "global" optimization settings for Postgres
+- Providing a Substrait export for query plans
+- Better benchmarking setup, mostly focused on comparing one or multiple optimization pipelines and creating better experiment
+  logs and the ability to cancel/resume long-running benchmarks
+- Adding popular optimization algorithms to the collection of pre-defined optimizers
+
+---
+
+# 🕑 Past versions
+
+## 🕑 Version 0.17.0
 
 ### 🐣 New features
 - 🦆 DuckDB is now a supported database system using the [quacklab backend](https://github.com/rbergm/quacklab)
@@ -47,22 +82,7 @@ stability. Since we are not ready for the 1.0 release yet, this does not matter 
 ---
 
 
-# 🛣 Roadmap
-
-Currently, we plan to implement the following features in the future (in no particular order):
-
-- Supporting parallel query plans in the Postgres-style dynamic programming enumerator
-- Using the GUC hint mechanism to enforce "global" optimization settings for Postgres
-- Providing a Substrait export for query plans
-- Better benchmarking setup, mostly focused on comparing one or multiple optimization pipelines and creating better experiment
-  logs and the ability to cancel/resume long-running benchmarks
-- Adding popular optimization algorithms to the collection of pre-defined optimizers
-
----
-
-# 🕑 Past versions
-
-## ⏳ Version 0.16.1 _(current)_
+## 🕑 Version 0.16.1
 
 ### 🐣 New features
 - _None_
