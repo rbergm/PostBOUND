@@ -8,31 +8,31 @@ from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass
 from typing import Optional
 
-from .. import validation
-from ..validation import OptimizationPreCheck
 from ... import db, util
 from ..._core import (
-    TableReference,
-    ScanOperator,
-    JoinOperator,
-    IntermediateOperator,
     Cardinality,
+    IntermediateOperator,
+    JoinOperator,
+    ScanOperator,
+    TableReference,
 )
 from ..._qep import QueryPlan, SortKey
-from ..._stages import PlanEnumerator, CostModel, CardinalityEstimator
+from ..._stages import CardinalityEstimator, CostModel, PlanEnumerator
+from ...db import DatabaseSchema
+from ...db.postgres import PostgresJoinHints, PostgresScanHints
 from ...qal import (
-    ColumnReference,
-    SqlQuery,
-    ColumnExpression,
-    CompoundOperator,
     AbstractPredicate,
+    ColumnExpression,
+    ColumnReference,
+    CompoundOperator,
     CompoundPredicate,
+    QueryPredicates,
+    SqlQuery,
     transform,
 )
-from ...db import DatabaseSchema
-from ...db.postgres import PostgresScanHints, PostgresJoinHints
-from ...util import jsondict, LogicError
-
+from ...util import LogicError, jsondict
+from .. import validation
+from ..validation import OptimizationPreCheck
 
 DPTable = dict[frozenset[TableReference], QueryPlan]
 
@@ -194,10 +194,15 @@ class DynamicProgrammingEnumerator(PlanEnumerator):
             # We determine access paths in two phases: initially, we just gather all possible access paths to a specific table.
             # Aftewards, we evaluate these candidates according to our cost model and select the cheapest one.
             candidate_plans: list[QueryPlan] = []
+            filter_condition = self.predicates.filters_for(table)
 
             if ScanOperator.SequentialScan in self._scan_ops:
                 candidate_plans.append(
-                    QueryPlan(ScanOperator.SequentialScan, base_table=table)
+                    QueryPlan(
+                        ScanOperator.SequentialScan,
+                        base_table=table,
+                        filter_predicate=filter_condition,
+                    )
                 )
             candidate_plans += self._determine_index_paths(query, table)
 
@@ -223,6 +228,7 @@ class DynamicProgrammingEnumerator(PlanEnumerator):
 
         The access paths do not contain a cost or cardinality estimates, yet. These information must be added by the caller.
         """
+        filter_condition = self.predicates.filters_for(table)
         required_columns = _collect_used_columns(
             query, table, schema=self._target_db.schema()
         )
@@ -251,6 +257,7 @@ class DynamicProgrammingEnumerator(PlanEnumerator):
                             base_table=table,
                             index=index,
                             sort_keys=sorting,
+                            filter_predicate=filter_condition,
                         )
                     )
                 if can_idx_only_scan and ScanOperator.IndexOnlyScan in self._scan_ops:
@@ -260,6 +267,7 @@ class DynamicProgrammingEnumerator(PlanEnumerator):
                             base_table=table,
                             index=index,
                             sort_keys=sorting,
+                            filter_predicate=filter_condition,
                         )
                     )
 
@@ -269,7 +277,10 @@ class DynamicProgrammingEnumerator(PlanEnumerator):
             # Furthermore, bitmap scans are partial sequential scans and thus do not provide a sort key.
             candidate_plans.append(
                 QueryPlan(
-                    ScanOperator.BitmapScan, base_table=table, indexes=candidate_indexes
+                    ScanOperator.BitmapScan,
+                    base_table=table,
+                    indexes=candidate_indexes,
+                    filter_predicate=filter_condition,
                 )
             )
 
@@ -363,16 +374,24 @@ class DynamicProgrammingEnumerator(PlanEnumerator):
                 # product. Since we do not consider cross products, we can skip this split.
                 continue
 
+            join_condition = query.predicates().joins_between(outer, inner)
+
             if JoinOperator.NestedLoopJoin in self._join_ops:
                 candidate_plans.append(
                     QueryPlan(
-                        JoinOperator.NestedLoopJoin, children=[outer_plan, inner_plan]
+                        JoinOperator.NestedLoopJoin,
+                        children=[outer_plan, inner_plan],
+                        join_condition=join_condition,
                     )
                 )
 
             if JoinOperator.HashJoin in self._join_ops:
                 candidate_plans.append(
-                    QueryPlan(JoinOperator.HashJoin, children=[outer_plan, inner_plan])
+                    QueryPlan(
+                        JoinOperator.HashJoin,
+                        children=[outer_plan, inner_plan],
+                        join_condition=join_condition,
+                    )
                 )
 
             if JoinOperator.SortMergeJoin in self._join_ops:
@@ -380,7 +399,9 @@ class DynamicProgrammingEnumerator(PlanEnumerator):
                 # just merge directly.
                 candidate_plans.append(
                     QueryPlan(
-                        JoinOperator.SortMergeJoin, children=[outer_plan, inner_plan]
+                        JoinOperator.SortMergeJoin,
+                        children=[outer_plan, inner_plan],
+                        join_condition=join_condition,
                     )
                 )
 
@@ -550,8 +571,9 @@ class PostgresDynProg(PlanEnumerator):
             }
 
         self.query: SqlQuery = None
+        self.predicates: QueryPredicates = None
         self.cost_model: CostModel = None
-        self.cardinality_estimatorr: CardinalityEstimator = None
+        self.cardinality_estimator: CardinalityEstimator = None
         self.join_rel_level: JoinRelLevel = None
         self.target_db = target_db
 
@@ -566,6 +588,7 @@ class PostgresDynProg(PlanEnumerator):
         self, query, *, cost_model, cardinality_estimator
     ) -> QueryPlan:
         self.query = transform.add_ec_predicates(query)
+        self.predicates = self.query.predicates()
 
         cardinality_estimator.initialize(self.target_db, query)
         cost_model.initialize(self.target_db, query)
@@ -583,6 +606,7 @@ class PostgresDynProg(PlanEnumerator):
         cost_model.cleanup()
         cardinality_estimator.cleanup()
         self.query = None
+        self.predicates = None
         self.cost_model = None
         self.cardinality_estimator = None
 
@@ -982,11 +1006,13 @@ class PostgresDynProg(PlanEnumerator):
         This method assumes that sequential scans are actually enabled.
         """
         baserel = util.simplify(rel.intermediate)
+        filter_condition = self.predicates.filters_for(baserel)
         path = QueryPlan(
             ScanOperator.SequentialScan,
             children=[],
             base_table=baserel,
             estimated_cardinality=rel.cardinality,
+            filter_predicate=filter_condition,
         )
 
         cost = self.cost_model.estimate_cost(self.query, path)
@@ -1008,6 +1034,7 @@ class PostgresDynProg(PlanEnumerator):
             return
 
         base_table = util.simplify(rel.intermediate)
+        filter_condition = self.predicates.filters_for(base_table)
         required_columns = self.query.columns_of(base_table)
         idx_only_scan = (
             ScanOperator.IndexOnlyScan in self._scan_ops and len(required_columns) <= 1
@@ -1030,6 +1057,7 @@ class PostgresDynProg(PlanEnumerator):
                         base_table=base_table,
                         index=index,
                         sort_keys=sorting,
+                        filter_predicate=filter_condition,
                     )
                     index_paths.append(idx_path)
                 if idx_only_scan:
@@ -1038,6 +1066,7 @@ class PostgresDynProg(PlanEnumerator):
                         base_table=base_table,
                         index=index,
                         sort_keys=sorting,
+                        filter_predicate=filter_condition,
                     )
                     index_paths.append(idx_path)
 
@@ -1071,8 +1100,13 @@ class PostgresDynProg(PlanEnumerator):
         if not candidate_indexes:
             return
 
+        filter_condition = self.predicates.filters_for(base_table)
+
         bitmap_path = QueryPlan(
-            ScanOperator.BitmapScan, base_table=base_table, indexes=candidate_indexes
+            ScanOperator.BitmapScan,
+            base_table=base_table,
+            indexes=candidate_indexes,
+            filter_predicate=filter_condition,
         )
         cost_estimate = self.cost_model.estimate_cost(self.query, bitmap_path)
         bitmap_path = bitmap_path.with_estimates(cost=cost_estimate)
@@ -1155,10 +1189,15 @@ class PostgresDynProg(PlanEnumerator):
         cost_model : CostModel
             The cost model to evaluate the new path
         """
+        join_condition = self.predicates.joins_between(
+            outer_path.tables(), inner_path.tables()
+        )
+
         nlj_path = QueryPlan(
             JoinOperator.NestedLoopJoin,
             children=[outer_path, inner_path],
             estimated_cardinality=join_rel.cardinality,
+            filter_predicate=join_condition,
         )
 
         cost_estimate = self.cost_model.estimate_cost(self.query, nlj_path)
@@ -1189,11 +1228,15 @@ class PostgresDynProg(PlanEnumerator):
 
         # This function assumes that outer_path and inner_path are already sorted appropriately.
         merge_key = outer_path.sort_keys[0].merge_with(inner_path.sort_keys[0])
+        join_condition = self.predicates.joins_between(
+            outer_path.tables(), inner_path.tables()
+        )
         merge_path = QueryPlan(
             JoinOperator.SortMergeJoin,
             children=[outer_path, inner_path],
             sort_keys=[merge_key],
             estimated_cardinality=join_rel.cardinality,
+            filter_predicate=join_condition,
         )
 
         cost_estimate = self.cost_model.estimate_cost(self.query, merge_path)
@@ -1220,10 +1263,15 @@ class PostgresDynProg(PlanEnumerator):
         cost_model : CostModel
             The cost model to evaluate the new path
         """
+        join_condition = self.predicates.joins_between(
+            outer_path.tables(), inner_path.tables()
+        )
+
         hash_path = QueryPlan(
             JoinOperator.HashJoin,
             children=[outer_path, inner_path],
             estimated_cardinality=join_rel.cardinality,
+            filter_predicate=join_condition,
         )
 
         cost_estimate = self.cost_model.estimate_cost(self.query, hash_path)

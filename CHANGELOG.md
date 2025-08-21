@@ -39,6 +39,24 @@ Currently, we plan to implement the following features in the future (in no part
   logs and the ability to cancel/resume long-running benchmarks
 - Adding popular optimization algorithms to the collection of pre-defined optimizers
 
+# ⏳ Version 0.17.2 _(planned)_
+
+## 🐣 New features
+- _None_
+
+## 💀 Breaking changes
+- _None_
+
+## 📰 Updates
+- Query plans created by the dynamic programming enumerator (including the Postgres-specific variant) now include filter
+  conditions for scan operators and join conditions for join operators.
+
+## 🏥 Fixes
+- _None_
+
+## 🪲 Known bugs
+- _None_
+
 ---
 
 # 🕑 Past versions
