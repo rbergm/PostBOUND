@@ -228,7 +228,7 @@ class DynamicProgrammingEnumerator(PlanEnumerator):
 
         The access paths do not contain a cost or cardinality estimates, yet. These information must be added by the caller.
         """
-        filter_condition = self.predicates.filters_for(table)
+        filter_condition = query.predicates().filters_for(table)
         required_columns = _collect_used_columns(
             query, table, schema=self._target_db.schema()
         )
