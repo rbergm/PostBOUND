@@ -52,7 +52,7 @@ Currently, we plan to implement the following features in the future (in no part
   conditions for scan operators and join conditions for join operators.
 
 ## 🏥 Fixes
-- _None_
+- Use the main branch in the Docker setup
 
 ## 🪲 Known bugs
 - _None_

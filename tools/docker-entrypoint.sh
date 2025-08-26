@@ -21,7 +21,7 @@ if [ -z "$(ls /postbound)" ] ; then
     sudo chown -R $USERNAME:$USERNAME /pg_lab
     sudo chmod -R 755 /pg_lab
 
-    git clone --depth 1 --branch=feature/duckdb-support https://github.com/rbergm/PostBOUND /postbound
+    git clone --depth 1 --branch=main https://github.com/rbergm/PostBOUND /postbound
 
     # Setup local Postgres or pg_lab
     if [ "$USE_PGLAB" = "true" ] & [ -z "$(ls /pg_lab)" ] ; then
@@ -82,6 +82,7 @@ if [ -z "$(ls /postbound)" ] ; then
 
 
     echo "[setup] Installation complete. You can now start using PostBOUND."
+
 else
 
     echo "Starting Postgres server"
