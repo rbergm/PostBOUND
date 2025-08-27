@@ -42,7 +42,8 @@ Currently, we plan to implement the following features in the future (in no part
 # ⏳ Version 0.17.2 _(planned)_
 
 ## 🐣 New features
-- _None_
+- Exposed DuckDB's internal `parse_duckdb_plan()` in the DuckDB module to support manual conversion of DuckDB's plan output to
+  `QueryPlan` instances
 
 ## 💀 Breaking changes
 - _None_

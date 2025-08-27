@@ -415,6 +415,65 @@ class DuckDBStatistics(DatabaseStatistics):
         raise UnsupportedDatabaseFeatureError(self._db, "most common value statistics.")
 
 
+def parse_duckdb_plan(raw_plan: dict) -> QueryPlan:
+    node_type = raw_plan.get("name") or raw_plan.get("operator_name")
+    if not node_type:
+        assert len(raw_plan["children"]) == 1, (
+            "Expected a single child for the root operator"
+        )
+        return parse_duckdb_plan(raw_plan["children"][0])
+
+    if node_type == "EXPLAIN" or node_type == "EXPLAIN_ANALYZE":
+        assert len(raw_plan["children"]) == 1, (
+            "Expected a single child for EXPLAIN operator"
+        )
+        return parse_duckdb_plan(raw_plan["children"][0])
+
+    extras: dict = raw_plan.get("extra_info", {})
+    match node_type:
+        case "HASH_JOIN":
+            operator = JoinOperator.HashJoin
+        case (
+            "SEQ_SCAN" | "SEQ_SCAN "  # DuckDB has a weird typo in the SEQ_SCAN label
+        ) if extras.get("Type", "") == "Sequential Scan":
+            operator = ScanOperator.SequentialScan
+        case (
+            "SEQ_SCAN" | "SEQ_SCAN "  # DuckDB has a weird typo in the SEQ_SCAN label
+        ) if extras.get("Type", "") == "Index Scan":
+            operator = ScanOperator.IndexScan
+        case _:
+            warnings.warn(f"Unknown node type: {node_type}, ({extras})")
+            operator = None
+    if operator is not None:
+        node_type = operator
+
+    base_table = None
+    if operator in ScanOperator:
+        tab = extras.get("Table", "")
+        if tab:
+            base_table = TableReference(tab)
+
+    card_est = float(
+        extras.get("Estimated Cardinality", math.nan)
+    )  # Estimated Cardinality is a string for some reason..
+    card_act = raw_plan.get("operator_cardinality", math.nan)
+
+    children = [parse_duckdb_plan(child) for child in raw_plan.get("children", [])]
+
+    own_runtime = extras.get("operator_timing", math.nan)
+    total_runtime = own_runtime + sum(child.execution_time for child in children)
+
+    return QueryPlan(
+        node_type,
+        operator=operator,
+        children=children,
+        base_table=base_table,
+        estimated_cardinality=card_est,
+        actual_cardinality=card_act,
+        execution_time=total_runtime,
+    )
+
+
 class DuckDBOptimizer(OptimizerInterface):
     def __init__(self, db: DuckDBInterface) -> None:
         self._db = db
@@ -435,7 +494,7 @@ class DuckDBOptimizer(OptimizerInterface):
 
         raw_explain = result_set[1]
         parsed = json.loads(raw_explain)
-        return self._parse_duckdb_plan(parsed[0])
+        return parse_duckdb_plan(parsed[0])
 
     def analyze_plan(self, query: SqlQuery) -> QueryPlan:
         query = qal.transform.as_explain_analyze(query, qal.Explain)
@@ -446,7 +505,7 @@ class DuckDBOptimizer(OptimizerInterface):
         assert len(result_set) == 2
 
         raw_explain = result_set[1]
-        return self._parse_duckdb_plan(json.loads(raw_explain))
+        return parse_duckdb_plan(json.loads(raw_explain))
 
     def cardinality_estimate(self, query: SqlQuery | str) -> Cardinality:
         plan = self.query_plan(query)
@@ -458,68 +517,6 @@ class DuckDBOptimizer(OptimizerInterface):
 
     def cost_estimate(self, query: SqlQuery | str) -> Cost:
         raise UnsupportedDatabaseFeatureError(self._db, "cost estimates")
-
-    def _parse_duckdb_plan(self, raw_plan: dict) -> QueryPlan:
-        node_type = raw_plan.get("name") or raw_plan.get("operator_name")
-        if not node_type:
-            assert len(raw_plan["children"]) == 1, (
-                "Expected a single child for the root operator"
-            )
-            return self._parse_duckdb_plan(raw_plan["children"][0])
-
-        if node_type == "EXPLAIN" or node_type == "EXPLAIN_ANALYZE":
-            assert len(raw_plan["children"]) == 1, (
-                "Expected a single child for EXPLAIN operator"
-            )
-            return self._parse_duckdb_plan(raw_plan["children"][0])
-
-        extras: dict = raw_plan.get("extra_info", {})
-        match node_type:
-            case "HASH_JOIN":
-                operator = JoinOperator.HashJoin
-            case (
-                "SEQ_SCAN"
-                | "SEQ_SCAN "  # DuckDB has a weird typo in the SEQ_SCAN label
-            ) if extras.get("Type", "") == "Sequential Scan":
-                operator = ScanOperator.SequentialScan
-            case (
-                "SEQ_SCAN"
-                | "SEQ_SCAN "  # DuckDB has a weird typo in the SEQ_SCAN label
-            ) if extras.get("Type", "") == "Index Scan":
-                operator = ScanOperator.IndexScan
-            case _:
-                warnings.warn(f"Unknown node type: {node_type}, ({extras})")
-                operator = None
-        if operator is not None:
-            node_type = operator
-
-        base_table = None
-        if operator in ScanOperator:
-            tab = extras.get("Table", "")
-            if tab:
-                base_table = TableReference(tab)
-
-        card_est = float(
-            extras.get("Estimated Cardinality", math.nan)
-        )  # Estimated Cardinality is a string for some reason..
-        card_act = raw_plan.get("operator_cardinality", math.nan)
-
-        children = [
-            self._parse_duckdb_plan(child) for child in raw_plan.get("children", [])
-        ]
-
-        own_runtime = extras.get("operator_timing", math.nan)
-        total_runtime = own_runtime + sum(child.execution_time for child in children)
-
-        return QueryPlan(
-            node_type,
-            operator=operator,
-            children=children,
-            base_table=base_table,
-            estimated_cardinality=card_est,
-            actual_cardinality=card_act,
-            execution_time=total_runtime,
-        )
 
 
 class DuckDBHintService(HintService):
