@@ -641,7 +641,6 @@ class DuckDBHintService(HintService):
                 "intermediate operators",
             )
 
-        global_settings: list[str] = []
         for param, val in ops.global_settings.items():
             match param:
                 case ScanOperator.SequentialScan:
@@ -658,9 +657,9 @@ class DuckDBHintService(HintService):
                     raise UnsupportedDatabaseFeatureError(self._db, param)
 
             val_txt = "on" if val else "off"
-            global_settings.append(f"{param_txt} = {val_txt}")
+            hints.append(f"Set({param_txt} = {val_txt})")
 
-        return HintParts(global_settings, hints)
+        return HintParts([], hints)
 
     def _generate_parameter_hints(self, parameters: PlanParameterization) -> HintParts:
         if not parameters:
