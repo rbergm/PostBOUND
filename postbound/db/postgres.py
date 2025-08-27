@@ -2850,6 +2850,30 @@ class PostgresOptimizer(OptimizerInterface):
         self._pg_instance.cursor.execute(f"SET {setting_name} TO {status}")
 
 
+def _reconnect(name: str, *, pool: DatabasePool) -> PostgresInterface:
+    """Fetches a connection from the database pool.
+
+    If the connection is in a bad state (e.g. because the user called close() before), it is re-established.
+
+    Parameters
+    ----------
+    name : str
+        The name of the database connection in the pool.
+    pool : DatabasePool
+        The current pool.
+    """
+    current_instance: PostgresInterface = pool.retrieve_database(name)
+
+    status = current_instance._connection.info.status
+    if status != psycopg.pq.ConnStatus.OK:
+        # Actually there are a lot of other ConnStatus values beyond OK and Bad
+        # We could handle them explicitly here, or we might just defined anything that is not OK as Bad.
+        # The latter seems much simpler so let's just do this for now.
+        current_instance.reset_connection()
+
+    return current_instance
+
+
 def connect(
     *,
     name: str = "postgres",
@@ -2914,7 +2938,7 @@ def connect(
     """
     db_pool = DatabasePool.get_instance()
     if name in db_pool and not refresh:
-        return db_pool.retrieve_database(name)
+        return _reconnect(name, pool=db_pool)
 
     if config_file and not connect_string:
         if not os.path.exists(config_file):

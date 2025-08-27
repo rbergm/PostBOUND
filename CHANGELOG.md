@@ -50,9 +50,12 @@ Currently, we plan to implement the following features in the future (in no part
 ## 📰 Updates
 - Query plans created by the dynamic programming enumerator (including the Postgres-specific variant) now include filter
   conditions for scan operators and join conditions for join operators.
+- Calling `connect()` to get a Postgres or DuckDB connection now checks if the connection is still valid and re-establishes the
+  connection if it has been closed before.
 
 ## 🏥 Fixes
 - Use the main branch in the Docker setup
+- 🦆 Fixed hint syntax for global settings in DuckDB
 
 ## 🪲 Known bugs
 - _None_

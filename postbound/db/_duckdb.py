@@ -71,7 +71,11 @@ def _timeout_executor(
 
 class DuckDBInterface(Database):
     def __init__(
-        self, db: Path, *, system_name: str = "DuckDB", cache_enabled: bool = False
+        self,
+        db: Path,
+        *,
+        system_name: str = "DuckDB",
+        cache_enabled: bool = False,
     ) -> None:
         import duckdb
 
@@ -79,8 +83,7 @@ class DuckDBInterface(Database):
 
         self._dbfile = db
 
-        self._db = duckdb.connect(db)
-        self._cur = self._db.cursor()
+        self._cur = duckdb.connect(db)
         self._last_query_runtime = math.nan
 
         self._schema = DuckDBSchema(self)
@@ -158,7 +161,7 @@ class DuckDBInterface(Database):
     def execute_with_timeout(
         self, query: SqlQuery | str, *, timeout: float = 60.0
     ) -> Optional[ResultSet]:
-        cur = self._db.cursor()
+        cur = self._cur.cursor()
         if isinstance(query, SqlQuery):
             query = self._hinting.format_query(query)
 
@@ -185,6 +188,7 @@ class DuckDBInterface(Database):
             raise error_recv.recv()
 
         if timed_out:
+            cur.interrupt()
             worker.terminate()
             worker.join()
             self._last_query_runtime = timeout
@@ -223,7 +227,11 @@ class DuckDBInterface(Database):
 
     def close(self) -> None:
         self._cur.close()
-        self._db.close()
+
+    def reconnect(self) -> None:
+        import duckdb
+
+        self._cur = duckdb.connect(self._dbfile)
 
     def reset_connection(self) -> None:
         import duckdb
@@ -233,8 +241,7 @@ class DuckDBInterface(Database):
         except Exception:
             pass
 
-        self._db = duckdb.connect(self._dbfile)
-        self._cur = self._db.cursor()
+        self._cur = duckdb.connect(self._dbfile)
 
     def describe(self) -> jsondict:
         base_info = {
@@ -294,8 +301,8 @@ class DuckDBSchema(DatabaseSchema):
         if column.table.schema:
             params.append(column.table.schema)
 
-        self._db.cursor().execute(query_template, parameters=params)
-        result_set = self._db.cursor().fetchone()
+        self._cur.execute(query_template, parameters=params)
+        result_set = self._cur.fetchone()
 
         return result_set is not None
 
@@ -345,8 +352,8 @@ class DuckDBSchema(DatabaseSchema):
         if column.table.schema:
             params.append(column.table.schema)
 
-        self._db.cursor().execute(query_template, params)
-        result_set = self._db.cursor().fetchall()
+        self._cur.execute(query_template, params)
+        result_set = self._cur.fetchall()
 
         return {row[0] for row in result_set}
 
@@ -703,6 +710,24 @@ class DuckDBHintService(HintService):
         return " ".join(table.identifier() for table in intermediate)
 
 
+def _reconnect(name: str, *, pool: DatabasePool) -> DuckDBInterface:
+    import duckdb
+
+    current_conn: DuckDBInterface = pool.retrieve_database(name)
+
+    try:
+        # check if the connection is still active
+        current_conn.execute_query("SELECT 1", cache_enabled=False, raw=True)
+    except duckdb.ConnectionException as e:
+        # otherwise re-establish the connection
+        if "Connection Error: Connection already closed!" in e.args:
+            current_conn.reconnect()
+        else:
+            raise e
+
+    return current_conn
+
+
 def connect(
     db: str | Path,
     *,
@@ -712,7 +737,7 @@ def connect(
 ) -> DuckDBInterface:
     db_pool = DatabasePool.get_instance()
     if name in db_pool and not refresh:
-        return db_pool.retrieve_database(name)
+        return _reconnect(name, pool=db_pool)
 
     db = Path(db) if isinstance(db, str) else db
     duckdb_instance = DuckDBInterface(Path(db))
