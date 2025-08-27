@@ -656,7 +656,7 @@ class DuckDBHintService(HintService):
                 case _:
                     raise UnsupportedDatabaseFeatureError(self._db, param)
 
-            val_txt = "on" if val else "off"
+            val_txt = "'on'" if val else "'off'"
             hints.append(f"Set({param_txt} = {val_txt})")
 
         return HintParts([], hints)
