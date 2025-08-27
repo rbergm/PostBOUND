@@ -54,6 +54,7 @@ Currently, we plan to implement the following features in the future (in no part
   conditions for scan operators and join conditions for join operators.
 - 🐘 🦆 Calling `connect()` to get a Postgres or DuckDB connection now checks if the connection is still valid and
   re-establishes the connection if it has been closed before.
+- 🦆 No longer issue warnings when parsing a DuckDB query plan with filter, projection or aggregate nodes.
 
 ## 🏥 Fixes
 - Use the main branch in the Docker setup

@@ -441,6 +441,8 @@ def parse_duckdb_plan(raw_plan: dict) -> QueryPlan:
             "SEQ_SCAN" | "SEQ_SCAN "  # DuckDB has a weird typo in the SEQ_SCAN label
         ) if extras.get("Type", "") == "Index Scan":
             operator = ScanOperator.IndexScan
+        case "PROJECTION" | "FILTER" | "UNGROUPED_AGGREGATE" | "PERFECT_HASH_GROUP_BY":
+            operator = None
         case _:
             warnings.warn(f"Unknown node type: {node_type}, ({extras})")
             operator = None
@@ -510,7 +512,8 @@ class DuckDBOptimizer(OptimizerInterface):
         assert len(result_set) == 2
 
         raw_explain = result_set[1]
-        return parse_duckdb_plan(json.loads(raw_explain))
+        parsed = json.loads(raw_explain)
+        return parse_duckdb_plan(parsed[0])
 
     def cardinality_estimate(self, query: SqlQuery | str) -> Cardinality:
         plan = self.query_plan(query)
