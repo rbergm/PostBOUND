@@ -496,12 +496,17 @@ class DuckDBOptimizer(OptimizerInterface):
         parsed = json.loads(raw_explain)
         return parse_duckdb_plan(parsed[0])
 
-    def analyze_plan(self, query: SqlQuery) -> QueryPlan:
+    def analyze_plan(
+        self, query: SqlQuery, *, timeout: Optional[float] = None
+    ) -> Optional[QueryPlan]:
         query = qal.transform.as_explain_analyze(query, qal.Explain)
-        query = self._db.hinting().format_query(query)
 
-        self._db.cursor().execute(query)
-        result_set = self._db.cursor().fetchone()
+        try:
+            result_set = self._db.execute_query(
+                query, cache_enabled=False, raw=True, timeout=timeout
+            )[0]
+        except TimeoutError:
+            return None
         assert len(result_set) == 2
 
         raw_explain = result_set[1]

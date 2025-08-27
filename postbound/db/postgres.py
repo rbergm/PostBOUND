@@ -2785,16 +2785,19 @@ class PostgresOptimizer(OptimizerInterface):
             self._pg_instance._restore_geqo_state()
         return query_plan.as_qep()
 
-    def analyze_plan(self, query: qal.SqlQuery) -> QueryPlan:
-        self._pg_instance._current_geqo_state = self._pg_instance._obtain_geqo_state()
-        query, deactivated_geqo = self._pg_instance._prepare_query_execution(
-            qal.transform.as_explain_analyze(query)
-        )
-        self._pg_instance.cursor().execute(query)
-        raw_query_plan = self._pg_instance.cursor().fetchone()[0]
+    def analyze_plan(
+        self, query: qal.SqlQuery, *, timeout: Optional[float] = None
+    ) -> Optional[QueryPlan]:
+        query = qal.transform.as_explain_analyze(query)
+
+        try:
+            raw_query_plan: dict = self._pg_instance.execute_query(
+                query, cache_enabled=False, raw=True, timeout=timeout
+            )[0]
+        except TimeoutError:
+            return None
+
         query_plan = PostgresExplainPlan(raw_query_plan)
-        if deactivated_geqo:
-            self._pg_instance._restore_geqo_state()
         return query_plan.as_qep()
 
     def cardinality_estimate(self, query: qal.SqlQuery | str) -> Cardinality:

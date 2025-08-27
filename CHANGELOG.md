@@ -42,8 +42,9 @@ Currently, we plan to implement the following features in the future (in no part
 # ⏳ Version 0.17.2 _(planned)_
 
 ## 🐣 New features
-- Exposed DuckDB's internal `parse_duckdb_plan()` in the DuckDB module to support manual conversion of DuckDB's plan output to
+- 🦆 Exposed DuckDB's internal `parse_duckdb_plan()` in the DuckDB module to support manual conversion of DuckDB's plan output to
   `QueryPlan` instances
+- 🐘 🦆 Added support for timeouts in `analyze_plan()` for Postgres and DuckDB
 
 ## 💀 Breaking changes
 - _None_
@@ -51,8 +52,8 @@ Currently, we plan to implement the following features in the future (in no part
 ## 📰 Updates
 - Query plans created by the dynamic programming enumerator (including the Postgres-specific variant) now include filter
   conditions for scan operators and join conditions for join operators.
-- Calling `connect()` to get a Postgres or DuckDB connection now checks if the connection is still valid and re-establishes the
-  connection if it has been closed before.
+- 🐘 🦆 Calling `connect()` to get a Postgres or DuckDB connection now checks if the connection is still valid and
+  re-establishes the connection if it has been closed before.
 
 ## 🏥 Fixes
 - Use the main branch in the Docker setup
