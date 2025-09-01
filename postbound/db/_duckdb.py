@@ -301,8 +301,9 @@ class DuckDBSchema(DatabaseSchema):
         if column.table.schema:
             params.append(column.table.schema)
 
-        self._cur.execute(query_template, parameters=params)
-        result_set = self._cur.fetchone()
+        cur = self._db.cursor()
+        cur.execute(query_template, parameters=params)
+        result_set = cur.fetchone()
 
         return result_set is not None
 
@@ -352,8 +353,9 @@ class DuckDBSchema(DatabaseSchema):
         if column.table.schema:
             params.append(column.table.schema)
 
-        self._cur.execute(query_template, params)
-        result_set = self._cur.fetchall()
+        cur = self._db.cursor()
+        cur.execute(query_template, params)
+        result_set = cur.fetchall()
 
         return {row[0] for row in result_set}
 

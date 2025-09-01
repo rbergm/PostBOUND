@@ -59,7 +59,7 @@ Currently, we plan to implement the following features in the future (in no part
 - 🐘 Calling  `connect()` now also supports a _Path_ param for the config file
 
 ### 🏥 Fixes
-- _None_
+- 🦆 Fixed DuckDB schema interface using a broken cursor variable
 
 ### 🪲 Known bugs
 - _None_
