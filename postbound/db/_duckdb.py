@@ -744,8 +744,8 @@ def connect(
     if name in db_pool and not refresh:
         return _reconnect(name, pool=db_pool)
 
-    db = Path(db) if isinstance(db, str) else db
-    duckdb_instance = DuckDBInterface(Path(db))
+    db = Path(db)
+    duckdb_instance = DuckDBInterface(db)
 
     if not private:
         db_pool.register_database(name, duckdb_instance)

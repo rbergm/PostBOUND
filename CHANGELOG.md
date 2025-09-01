@@ -56,7 +56,7 @@ Currently, we plan to implement the following features in the future (in no part
 - _None_
 
 ### 📰 Updates
-- _None_
+- 🐘 Calling  `connect()` now also supports a _Path_ param for the config file
 
 ### 🏥 Fixes
 - _None_

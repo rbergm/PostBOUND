@@ -2894,7 +2894,7 @@ def connect(
     *,
     name: str = "postgres",
     connect_string: str | None = None,
-    config_file: str | None = ".psycopg_connection",
+    config_file: str | Path | None = ".psycopg_connection",
     encoding: str = "UTF8",
     cache_enabled: bool = False,
     refresh: bool = False,
@@ -2921,7 +2921,7 @@ def connect(
     connect_string : str | None, optional
         A Psycopg-compatible connect string for the database. Supplying this parameter overwrites any other connection
         data
-    config_file : str | None, optional
+    config_file : str | Path | None, optional
         A file containing a Psycopg-compatible connect string for the database. This is the default and preferred method of
         connecting to a Postgres database. Defaults to *.psycopg_connection*
     encoding : str, optional
@@ -2957,7 +2957,8 @@ def connect(
         return _reconnect(name, pool=db_pool)
 
     if config_file and not connect_string:
-        if not os.path.exists(config_file):
+        config_file = Path(config_file)
+        if not config_file.is_file():
             wdir = os.getcwd()
             raise ValueError(
                 f"Failed to obtain a database connection. Tried to read the config file '{config_file}' from "
