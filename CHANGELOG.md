@@ -60,6 +60,8 @@ Currently, we plan to implement the following features in the future (in no part
 
 ### 🏥 Fixes
 - 🦆 Fixed DuckDB schema interface using a broken cursor variable
+- 🦆 Fixed query execution with timeouts on DuckDB failing on MacOS. It seems that the DuckDB connection is only pickle-able
+  on Linux-based systems.
 
 ### 🪲 Known bugs
 - _None_

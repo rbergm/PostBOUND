@@ -6,6 +6,7 @@ import json
 import math
 import multiprocessing
 import multiprocessing.connection
+import sys
 import textwrap
 import time
 import warnings
@@ -56,6 +57,30 @@ def _timeout_executor(
     error_pipe: multiprocessing.connection.Connection,
     runtime_pipe: multiprocessing.connection.Connection,
 ) -> None:
+    try:
+        start_time = time.perf_counter_ns()
+        cursor.execute(query)
+        end_time = time.perf_counter_ns()
+        runtime = (end_time - start_time) / 10**9  # convert to seconds
+        result_set = cursor.fetchall()
+
+        result_pipe.send(result_set)
+        runtime_pipe.send(runtime)
+    except Exception as e:
+        error_pipe.send(e)
+
+
+def _timeout_executor_macos(
+    query: str,
+    *,
+    db: Path,
+    result_pipe: multiprocessing.connection.Connection,
+    error_pipe: multiprocessing.connection.Connection,
+    runtime_pipe: multiprocessing.connection.Connection,
+) -> None:
+    import duckdb
+
+    cursor = duckdb.connect(db)
     try:
         start_time = time.perf_counter_ns()
         cursor.execute(query)
@@ -161,23 +186,40 @@ class DuckDBInterface(Database):
     def execute_with_timeout(
         self, query: SqlQuery | str, *, timeout: float = 60.0
     ) -> Optional[ResultSet]:
-        cur = self._cur.cursor()
         if isinstance(query, SqlQuery):
             query = self._hinting.format_query(query)
 
         result_recv, result_send = multiprocessing.Pipe(duplex=False)
         error_recv, error_send = multiprocessing.Pipe(duplex=False)
         runtime_recv, runtime_send = multiprocessing.Pipe(duplex=False)
-        worker = multiprocessing.Process(
-            target=_timeout_executor,
-            args=(query,),
-            kwargs={
-                "cursor": cur,
-                "result_pipe": result_send,
-                "error_pipe": error_send,
-                "runtime_pipe": runtime_send,
-            },
-        )
+
+        if sys.platform == "darwin":
+            self.close()
+        else:
+            cur = self._cur.cursor()
+
+        if sys.platform == "darwin":
+            worker = multiprocessing.Process(
+                target=_timeout_executor_macos,
+                args=(query,),
+                kwargs={
+                    "db": self._dbfile,
+                    "result_pipe": result_send,
+                    "error_pipe": error_send,
+                    "runtime_pipe": runtime_send,
+                },
+            )
+        else:
+            worker = multiprocessing.Process(
+                target=_timeout_executor,
+                args=(query,),
+                kwargs={
+                    "cursor": cur,
+                    "result_pipe": result_send,
+                    "error_pipe": error_send,
+                    "runtime_pipe": runtime_send,
+                },
+            )
 
         worker.start()
         worker.join(timeout)
@@ -187,8 +229,10 @@ class DuckDBInterface(Database):
             worker.terminate()
             raise error_recv.recv()
 
-        if timed_out:
+        if timed_out and sys.platform != "darwin":
             cur.interrupt()
+
+        if timed_out:
             worker.terminate()
             worker.join()
             self._last_query_runtime = timeout
@@ -201,6 +245,8 @@ class DuckDBInterface(Database):
         result_send.close()
         result_recv.close()
 
+        if sys.platform == "darwin":
+            self.reconnect()
         return result_set
 
     def last_query_runtime(self) -> float:
