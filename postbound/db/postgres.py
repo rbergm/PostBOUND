@@ -3002,14 +3002,13 @@ def start(pgdata: str | Path = "") -> None:
         raise ValueError("Cannot start Postgres server: pg_ctl is not on PATH")
 
     pgdata = pgdata or os.environ["PGDATA"]
-    pgdata = str(pgdata)
+    pgdata = Path(pgdata).expanduser()
     if not pgdata:
         raise ValueError(
             "Cannot start Postgres server: Must either supply pgdata argument or set PGDATA environment variable"
         )
 
-    # we set shell = True to benefit from ~ expansion
-    subprocess.run(["pg_ctl", "-D", pgdata, "start"], check=True, shell=True)
+    subprocess.run(["pg_ctl", "-D", pgdata, "start"], check=True)
 
 
 def stop(pgdata: str | Path = "", *, raise_on_error: bool = False) -> None:
@@ -3025,14 +3024,13 @@ def stop(pgdata: str | Path = "", *, raise_on_error: bool = False) -> None:
         raise ValueError("Cannot stop Postgres server: pg_ctl is not on PATH")
 
     pgdata = pgdata or os.environ["PGDATA"]
-    pgdata = str(pgdata)
+    pgdata = Path(pgdata).expanduser()
     if not pgdata:
         raise ValueError(
             "Cannot stop Postgres server: Must either supply pgdata argument or set PGDATA environment variable"
         )
 
-    # we set shell = True to benefit from ~ expansion
-    subprocess.run(["pg_ctl", "-D", pgdata, "stop"], check=raise_on_error, shell=True)
+    subprocess.run(["pg_ctl", "-D", pgdata, "stop"], check=raise_on_error)
 
 
 def _parallel_query_initializer(
