@@ -50,6 +50,7 @@ Currently, we plan to implement the following features in the future (in no part
 
 ### 🐣 New features
 - 🐘 Added `start()` and `stop()` functions to manage a local Postgres server
+- 🐘 Added `data_dir()` function to retrieve the data directory of the Postgres server
 
 ### 💀 Breaking changes
 - _None_

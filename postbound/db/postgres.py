@@ -27,6 +27,7 @@ from collections import UserString
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from multiprocessing import connection as mp_conn
+from pathlib import Path
 from typing import Any, Literal, Optional
 
 import psycopg
@@ -794,6 +795,18 @@ class PostgresInterface(Database):
             The process ID
         """
         return self._connection.info.backend_pid
+
+    def data_dir(self) -> Path:
+        """Get the data directory of the Postgres server.
+
+        Returns
+        -------
+        Path
+            The data directory path
+        """
+        self._cursor.execute("SHOW data_directory;")
+        data_dir = self._cursor.fetchone()[0]
+        return Path(data_dir)
 
     def describe(self) -> jsondict:
         base_info = {
