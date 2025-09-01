@@ -2991,7 +2991,7 @@ def connect(
     return postgres_db
 
 
-def start(pgdata: str = "") -> None:
+def start(pgdata: str | Path = "") -> None:
     """Starts a local Postgres server.
 
     This function assumes that *pg_ctl* is available on the system PATH and either the server's data directory is specified
@@ -3001,6 +3001,7 @@ def start(pgdata: str = "") -> None:
         raise ValueError("Cannot start Postgres server: pg_ctl is not on PATH")
 
     pgdata = pgdata or os.environ["PGDATA"]
+    pgdata = str(pgdata)
     if not pgdata:
         raise ValueError(
             "Cannot start Postgres server: Must either supply pgdata argument or set PGDATA environment variable"
@@ -3010,7 +3011,7 @@ def start(pgdata: str = "") -> None:
     subprocess.run(["pg_ctl", "-D", pgdata, "start"], check=True, shell=True)
 
 
-def stop(pgdata: str = "", *, raise_on_error: bool = False) -> None:
+def stop(pgdata: str | Path = "", *, raise_on_error: bool = False) -> None:
     """Stops a running (local) Postgres server.
 
     This function assumes that *pg_ctl* is available on the system PATH and either the server's data directory is specified
@@ -3023,6 +3024,7 @@ def stop(pgdata: str = "", *, raise_on_error: bool = False) -> None:
         raise ValueError("Cannot stop Postgres server: pg_ctl is not on PATH")
 
     pgdata = pgdata or os.environ["PGDATA"]
+    pgdata = str(pgdata)
     if not pgdata:
         raise ValueError(
             "Cannot stop Postgres server: Must either supply pgdata argument or set PGDATA environment variable"
