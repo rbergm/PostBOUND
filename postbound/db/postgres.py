@@ -2978,6 +2978,47 @@ def connect(
     return postgres_db
 
 
+def start(pgdata: str = "") -> None:
+    """Starts a local Postgres server.
+
+    This function assumes that *pg_ctl* is available on the system PATH and either the server's data directory is specified
+    explicitly, or set via the *PGDATA* environment variable.
+    """
+    if os.system("which pg_ctl") != 0:
+        raise ValueError("Cannot start Postgres server: pg_ctl is not on PATH")
+
+    pgdata = pgdata or os.environ["PGDATA"]
+    if not pgdata:
+        raise ValueError(
+            "Cannot start Postgres server: Must either supply pgdata argument or set PGDATA environment variable"
+        )
+
+    # we set shell = True to benefit from ~ expansion
+    subprocess.run(["pg_ctl", "-D", pgdata, "start"], check=True, shell=True)
+
+
+def stop(pgdata: str = "", *, raise_on_error: bool = False) -> None:
+    """Stops a running (local) Postgres server.
+
+    This function assumes that *pg_ctl* is available on the system PATH and either the server's data directory is specified
+    explicitly, or set via the *PGDATA* environment variable.
+
+    If the server cannot be stopped due to whatever reason, an error can be raised by setting the corresponding parameter.
+    Otherwise, it is silently ignored.
+    """
+    if os.system("which pg_ctl") != 0:
+        raise ValueError("Cannot stop Postgres server: pg_ctl is not on PATH")
+
+    pgdata = pgdata or os.environ["PGDATA"]
+    if not pgdata:
+        raise ValueError(
+            "Cannot stop Postgres server: Must either supply pgdata argument or set PGDATA environment variable"
+        )
+
+    # we set shell = True to benefit from ~ expansion
+    subprocess.run(["pg_ctl", "-D", pgdata, "stop"], check=raise_on_error, shell=True)
+
+
 def _parallel_query_initializer(
     connect_string: str, local_data: threading.local, verbose: bool = False
 ) -> None:

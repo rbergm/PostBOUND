@@ -46,6 +46,23 @@ Currently, we plan to implement the following features in the future (in no part
   logs and the ability to cancel/resume long-running benchmarks
 - Adding popular optimization algorithms to the collection of pre-defined optimizers
 
+## ➡ Version 0.17.3 _(planned)_
+
+### 🐣 New features
+- 🐘 Added `start()` and `stop()` functions to manage a local Postgres server
+
+### 💀 Breaking changes
+- _None_
+
+### 📰 Updates
+- _None_
+
+### 🏥 Fixes
+- _None_
+
+### 🪲 Known bugs
+- _None_
+
 ---
 
 # 🕑 Past versions
