@@ -24,7 +24,7 @@ import threading
 import time
 import warnings
 from collections import UserString
-from collections.abc import Iterable, Sequence
+from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass
 from multiprocessing import connection as mp_conn
 from pathlib import Path
@@ -3119,7 +3119,7 @@ def _parallel_query_worker(
     result_set = cursor.fetchall()
     cursor.close()
 
-    return query, simplify_result_set(result_set)
+    return query, result_set
 
 
 class ParallelQueryExecutor:
@@ -3183,9 +3183,12 @@ class ParallelQueryExecutor:
         )
         self._tasks: list[concurrent.futures.Future] = []
         self._results: list[Any] = []
+        self._queries: dict[concurrent.futures.Future, qal.SqlQuery | str] = {}
 
     def queue_query(self, query: qal.SqlQuery | str) -> None:
         """Adds a new query to the queue, to be executed as soon as possible.
+
+        If a timeout was specified when creating the executor, this timeout will be applied to the query.
 
         Parameters
         ----------
@@ -3200,31 +3203,53 @@ class ParallelQueryExecutor:
             self._verbose,
         )
         self._tasks.append(future)
+        self._queries[future] = query
 
-    def drain_queue(self, timeout: Optional[float] = None) -> None:
+    def drain_queue(
+        self,
+        timeout: Optional[float] = None,
+        *,
+        callback: Optional[
+            Callable[[qal.SqlQuery | str, ResultSet | None], None]
+        ] = None,
+    ) -> None:
         """Blocks, until all queries currently queued have terminated.
 
         Parameters
         ----------
         timeout : Optional[float], optional
             The number of seconds to wait until the calculation is aborted. Defaults to *None*, which indicates no timeout,
-            i.e. wait forever.
+            i.e. wait forever. Note that in contrast to the timeout specified when creating the executor, this timeout
+            applies to the entire queue and not to individual queries. For example, one can set the per-query timeout to 1s
+            which means that each query can be executed for at most 1 second. If an additional timeout of 10s is specified
+            on the queue, the entire queue will be aborted if it takes longer than 10 seconds to complete.
+        callback : Optional[Callable[[qal.SqlQuery | str, ResultSet | None], None]], optional
+            A callback to be executed with each query that completes. The callback receives the query that was executed and
+            the corresponding (raw) result set as arguments. If the query ran into a timeout, the result set is *None*.
 
         Raises
         ------
         TimeoutError or concurrent.futures.TimeoutError
-            If queries took longer than the given `timeout` to execute
+            If some queries have not completed after the given `timeout`.
         """
         for future in concurrent.futures.as_completed(self._tasks, timeout=timeout):
-            self._results.append(future.result())
+            result_set = future.result()
+            self._results.append(result_set)
 
-    def result_set(self) -> dict[str | qal.SqlQuery, Any]:
+            if not callback:
+                continue
+
+            query = self._queries[future]
+            callback(query, result_set)
+
+    def result_set(self) -> dict[str | qal.SqlQuery, ResultSet | None]:
         """Provides the results of all queries that have terminated already, mapping query -> result set
 
         Returns
         -------
-        dict[str | qal.SqlQuery, Any]
-            The query results. The result set is simplified according to similar rules as `Database.execute_query`
+        dict[str | qal.SqlQuery, ResultSet | None]
+            The query results. The raw result sets are provided without any simplification. If the query timed out, the result
+            set is *None* (in contrast to empty result sets like `[]`).
         """
         return dict(self._results)
 
