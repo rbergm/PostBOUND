@@ -8,29 +8,29 @@ stability. Since we are not ready for the 1.0 release yet, this does not matter 
 
 ---
 
-# ➡ Version 0.17.2 _(current)_
+# ➡ Version 0.17.3 _(current)_
 
 ## 🐣 New features
-- 🦆 Exposed DuckDB's internal `parse_duckdb_plan()` in the DuckDB module to support manual conversion of DuckDB's plan output to
-  `QueryPlan` instances
-- 🐘 🦆 Added support for timeouts in `analyze_plan()` for Postgres and DuckDB
+- 🐘 Added `start()`, `stop()` and `is_running()` functions to manage a local Postgres server
+- 🐘 Added `data_dir()` function to retrieve the data directory of the Postgres server
+- 🐘 The parallel query executor now supports optional callbacks
 
-## 💀 Breaking changes
+# 💀 Breaking changes
 - _None_
 
 ## 📰 Updates
-- Query plans created by the dynamic programming enumerator (including the Postgres-specific variant) now include filter
-  conditions for scan operators and join conditions for join operators.
-- 🐘 🦆 Calling `connect()` to get a Postgres or DuckDB connection now checks if the connection is still valid and
-  re-establishes the connection if it has been closed before.
-- 🦆 No longer issue warnings when parsing a DuckDB query plan with filter, projection or aggregate nodes.
+- The `to_json()` utility now handles `Path` objects
+- 🐘 Calling  `connect()` now also supports a _Path_-typed param for the config file
 
 ## 🏥 Fixes
-- Use the main branch in the Docker setup
-- 🦆 Fixed hint syntax for global settings in DuckDB
+- 🐳 Fixed Docker setup when a vanilla Postgres is configured instead of pg_lab
+- 🐘 Fixed Postgres setup with very old server releases (12.4 specifically)
+- 🦆 Fixed DuckDB schema interface using a broken cursor variable
+- 🦆 Fixed query execution with timeouts on DuckDB failing on MacOS. It seems that the DuckDB connection is only pickle-able
+  on Linux-based systems.
 
 ## 🪲 Known bugs
-- _None_
+- The automatic optimization of the Postgres server configuration as part of the Docker installation does not work on MacOS
 
 ---
 
@@ -46,33 +46,36 @@ Currently, we plan to implement the following features in the future (in no part
   logs and the ability to cancel/resume long-running benchmarks
 - Adding popular optimization algorithms to the collection of pre-defined optimizers
 
-## ➡ Version 0.17.3 _(planned)_
+---
+
+# 🕑 Past versions
+
+## ➡ Version 0.17.2
 
 ### 🐣 New features
-- 🐘 Added `start()`, `stop()` and `is_running()` functions to manage a local Postgres server
-- 🐘 Added `data_dir()` function to retrieve the data directory of the Postgres server
-- 🐘 The parallel query executor now supports optional callbacks
+- 🦆 Exposed DuckDB's internal `parse_duckdb_plan()` in the DuckDB module to support manual conversion of DuckDB's plan output to
+  `QueryPlan` instances
+- 🐘 🦆 Added support for timeouts in `analyze_plan()` for Postgres and DuckDB
 
 ### 💀 Breaking changes
 - _None_
 
 ### 📰 Updates
-- The `to_json()` utility now handles `Path` objects
-- 🐘 Calling  `connect()` now also supports a _Path_ param for the config file
+- Query plans created by the dynamic programming enumerator (including the Postgres-specific variant) now include filter
+  conditions for scan operators and join conditions for join operators.
+- 🐘 🦆 Calling `connect()` to get a Postgres or DuckDB connection now checks if the connection is still valid and
+  re-establishes the connection if it has been closed before.
+- 🦆 No longer issue warnings when parsing a DuckDB query plan with filter, projection or aggregate nodes.
 
-### 🏥 Fixes
-- 🐳 Fixed Docker setup when a vanilla Postgres is configured instead of pg_lab
-- 🐘 Fixed Postgres setup with very old server releases (12.4 specifically)
-- 🦆 Fixed DuckDB schema interface using a broken cursor variable
-- 🦆 Fixed query execution with timeouts on DuckDB failing on MacOS. It seems that the DuckDB connection is only pickle-able
-  on Linux-based systems.
+## 🏥 Fixes
+- Use the main branch in the Docker setup
+- 🦆 Fixed hint syntax for global settings in DuckDB
 
 ### 🪲 Known bugs
-- The automatic optimization of the Postgres server configuration as part of the Docker installation does not work on MacOS
+- _None_
 
 ---
 
-# 🕑 Past versions
 
 ## 🕑 Version 0.17.1
 
