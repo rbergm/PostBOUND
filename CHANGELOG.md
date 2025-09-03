@@ -61,12 +61,14 @@ Currently, we plan to implement the following features in the future (in no part
 - 🐘 Calling  `connect()` now also supports a _Path_ param for the config file
 
 ### 🏥 Fixes
+- 🐳 Fixed Docker setup when a vanilla Postgres is configured instead of pg_lab
+- 🐘 Fixed Postgres setup with very old server releases (12.4 specifically)
 - 🦆 Fixed DuckDB schema interface using a broken cursor variable
 - 🦆 Fixed query execution with timeouts on DuckDB failing on MacOS. It seems that the DuckDB connection is only pickle-able
   on Linux-based systems.
 
 ### 🪲 Known bugs
-- _None_
+- The automatic optimization of the Postgres server configuration as part of the Docker installation does not work on MacOS
 
 ---
 
