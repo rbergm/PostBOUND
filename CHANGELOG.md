@@ -49,7 +49,7 @@ Currently, we plan to implement the following features in the future (in no part
 ## ➡ Version 0.17.3 _(planned)_
 
 ### 🐣 New features
-- 🐘 Added `start()` and `stop()` functions to manage a local Postgres server
+- 🐘 Added `start()`, `stop()` and `is_running()` functions to manage a local Postgres server
 - 🐘 Added `data_dir()` function to retrieve the data directory of the Postgres server
 - 🐘 The parallel query executor now supports optional callbacks
 
