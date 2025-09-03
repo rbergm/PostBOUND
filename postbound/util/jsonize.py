@@ -12,11 +12,9 @@ from __future__ import annotations
 
 import abc
 import enum
-from typing import IO, Protocol, runtime_checkable
-
 import json
-from typing import Any
-
+from pathlib import Path
+from typing import IO, Any, Protocol, runtime_checkable
 
 jsondict = dict
 """Type alias for a JSON-izeable dictionary."""
@@ -39,12 +37,14 @@ class JsonizeEncoder(json.JSONEncoder):
     """
 
     def default(self, obj: Any) -> Any:
-        if "__json__" in dir(obj):
-            return obj.__json__()
+        if isinstance(obj, enum.Enum):
+            return obj.value
         elif isinstance(obj, (set, frozenset)):
             return list(obj)
-        elif isinstance(obj, enum.Enum):
-            return obj.value
+        elif isinstance(obj, Path):
+            return str(obj)
+        elif "__json__" in dir(obj):
+            return obj.__json__()
         return json.JSONEncoder.default(self, obj)
 
 

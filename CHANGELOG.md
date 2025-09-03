@@ -57,6 +57,7 @@ Currently, we plan to implement the following features in the future (in no part
 - _None_
 
 ### 📰 Updates
+- The `to_json()` utility now handles `Path` objects
 - 🐘 Calling  `connect()` now also supports a _Path_ param for the config file
 
 ### 🏥 Fixes
