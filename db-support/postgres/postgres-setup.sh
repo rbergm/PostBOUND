@@ -127,13 +127,6 @@ cd $PG_TARGET_DIR/contrib/pg_prewarm
 make -j $MAKE_CORES && make install
 cd $PG_TARGET_DIR
 
-echo ".. Installing pg_cooldown extension"
-cd $PG_TARGET_DIR/contrib
-git clone https://github.com/rbergm/pg_cooldown.git pg_cooldown
-cd pg_cooldown
-make -j $MAKE_CORES && make install
-cd $PG_TARGET_DIR
-
 echo ".. Installing pg_buffercache extension"
 cd $PG_TARGET_DIR/contrib/pg_buffercache
 make -j $MAKE_CORES && make install
