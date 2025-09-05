@@ -46,11 +46,28 @@ Currently, we plan to implement the following features in the future (in no part
   logs and the ability to cancel/resume long-running benchmarks
 - Adding popular optimization algorithms to the collection of pre-defined optimizers
 
+## ⏳ Version 0.17.4 _(planned)_
+
+### 🐣 New features
+- Added a `logfile()` method to the Postgres interface to retrieve the log file of a local Postgres server
+
+### 💀 Breaking changes
+- _None_
+
+### 📰 Updates
+- Starting a local Postgres server now supports specifying a log file
+
+## 🏥 Fixes
+- _None_
+
+### 🪲 Known bugs
+- The automatic optimization of the Postgres server configuration as part of the Docker installation does not work on MacOS
+
 ---
 
 # 🕑 Past versions
 
-## ➡ Version 0.17.2
+## 🕑 Version 0.17.2
 
 ### 🐣 New features
 - 🦆 Exposed DuckDB's internal `parse_duckdb_plan()` in the DuckDB module to support manual conversion of DuckDB's plan output to

@@ -808,6 +808,13 @@ class PostgresInterface(Database):
         data_dir = self._cursor.fetchone()[0]
         return Path(data_dir)
 
+    def logfile(self) -> Optional[Path]:
+        """Get the log file of the (local) Postgres server."""
+        proc_path = Path(f"/proc/{self.backend_pid()}/fd/1")
+        if not proc_path.exists() or not proc_path.is_symlink():
+            return None
+        return proc_path.resolve()
+
     def describe(self) -> jsondict:
         base_info = {
             "system_name": self.database_system_name(),
@@ -2992,7 +2999,7 @@ def connect(
     return postgres_db
 
 
-def start(pgdata: str | Path = "") -> None:
+def start(pgdata: str | Path = "", *, logfile: str | Path = "") -> None:
     """Starts a local Postgres server.
 
     This function assumes that *pg_ctl* is available on the system PATH and either the server's data directory is specified
@@ -3008,7 +3015,12 @@ def start(pgdata: str | Path = "") -> None:
             "Cannot start Postgres server: Must either supply pgdata argument or set PGDATA environment variable"
         )
 
-    subprocess.run(["pg_ctl", "-D", pgdata, "start"], check=True)
+    args = ["pg_ctl", "-D", pgdata]
+    if logfile:
+        args.extend(["-l", logfile])
+    args.append("start")
+
+    subprocess.run(args, check=True)
 
 
 def stop(pgdata: str | Path = "", *, raise_on_error: bool = False) -> None:
