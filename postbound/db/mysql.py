@@ -40,40 +40,40 @@ from typing import Any, Optional
 
 import mysql.connector
 
-from ._db import (
-    Cursor,
-    Database,
-    DatabaseSchema,
-    DatabaseStatistics,
-    OptimizerInterface,
-    HintService,
-    DatabasePool,
-    UnsupportedDatabaseFeatureError,
-)
 from .. import qal, util
-from .._core import ScanOperator, JoinOperator, PhysicalOperator, Cardinality
+from .._core import Cardinality, JoinOperator, PhysicalOperator, ScanOperator
 from .._qep import QueryPlan
-from ..qal import (
-    transform,
-    TableReference,
-    ColumnReference,
-    SqlExpression,
-    StaticValueExpression,
-    CastExpression,
-    Explain,
-    Hint,
-    SqlQuery,
-    UnboundColumnError,
-    VirtualTableError,
-)
-from ..optimizer._jointree import JoinTree, jointree_from_plan, parameters_from_plan
 from ..optimizer._hints import (
     HintType,
     PhysicalOperatorAssignment,
     PlanParameterization,
     operators_from_plan,
 )
+from ..optimizer._jointree import JoinTree, jointree_from_plan, parameters_from_plan
+from ..qal import (
+    CastExpression,
+    ColumnReference,
+    Explain,
+    Hint,
+    SqlExpression,
+    SqlQuery,
+    StaticValueExpression,
+    TableReference,
+    UnboundColumnError,
+    VirtualTableError,
+    transform,
+)
 from ..util import Version
+from ._db import (
+    Cursor,
+    Database,
+    DatabasePool,
+    DatabaseSchema,
+    DatabaseStatistics,
+    HintService,
+    OptimizerInterface,
+    UnsupportedDatabaseFeatureError,
+)
 
 
 @dataclasses.dataclass(frozen=True)
@@ -552,7 +552,7 @@ def _generate_prep_statements(
             statements.append(f"SET @@optimizer_switch='{optimizer_switch}';")
 
     if plan_parameters:
-        for setting, value in plan_parameters.system_specific_settings.items():
+        for setting, value in plan_parameters.system_settings.items():
             statements.append(f"SET {setting}={_escape_setting(value)};")
 
     return "\n".join(statements) if statements else ""

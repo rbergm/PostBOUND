@@ -18,7 +18,9 @@ from typing import Optional
 import numpy as np
 import pandas as pd
 
-from postbound import db, qal, optimizer as opt
+from postbound import db
+from postbound import optimizer as opt
+from postbound import qal
 from postbound.db import postgres
 from postbound.experiments import workloads
 from postbound.optimizer.strategies import enumeration, randomized
@@ -281,7 +283,7 @@ class TrueCardinalityGenerator:
                 )
                 continue
             cardinality = current_cardinality.iloc[0]["cardinality"]
-            plan_params.add_cardinality_hint(joined_tables, cardinality)
+            plan_params.add_cardinality(joined_tables, cardinality)
         for base_table in join_order.table_sequence():
             table = base_table.table
             current_cardinality = self._relevant_queries[
@@ -295,7 +297,7 @@ class TrueCardinalityGenerator:
                 )
                 continue
             cardinality = current_cardinality.iloc[0]["cardinality"]
-            plan_params.add_cardinality_hint([table], cardinality)
+            plan_params.add_cardinality([table], cardinality)
 
         plan_params.set_system_settings(geqo="off")
         return None, plan_params
@@ -660,4 +662,5 @@ def main():
 
 
 if __name__ == "__main__":
+    main()
     main()

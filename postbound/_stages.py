@@ -876,7 +876,7 @@ class CardinalityGenerator(ParameterGeneration, CardinalityEstimator, abc.ABC):
         for join in self.generate_intermediates(query):
             estimate = self.calculate_estimate(query, join)
             if not math.isnan(estimate):
-                parameterization.add_cardinality_hint(join, estimate)
+                parameterization.add_cardinality(join, estimate)
         return parameterization
 
     def generate_plan_parameters(
@@ -892,7 +892,7 @@ class CardinalityGenerator(ParameterGeneration, CardinalityEstimator, abc.ABC):
         for intermediate in join_order.iternodes():
             estimate = self.calculate_estimate(query, intermediate.tables())
             if not math.isnan(estimate):
-                parameterization.add_cardinality_hint(intermediate.tables(), estimate)
+                parameterization.add_cardinality(intermediate.tables(), estimate)
 
         return parameterization
 

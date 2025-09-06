@@ -617,8 +617,8 @@ def _make_simple_plan(
     (Estimated) cardinalities can still be customized accroding to the plan parameters. However, parallel workers are ignored.
     """
     tables = frozenset(join_tree.tables())
-    if plan_params and plan_params.cardinality_hints.get(tables, None):
-        cardinality = plan_params.cardinality_hints[tables]
+    if plan_params and plan_params.cardinalities.get(tables, None):
+        cardinality = plan_params.cardinalities[tables]
     elif isinstance(join_tree, LogicalJoinTree):
         cardinality = join_tree.annotation
     else:
@@ -682,15 +682,15 @@ def _make_custom_plan(
     parameters. As a fallback, cardinalities from the join tree annotations are used.
     """
     tables = frozenset(join_tree.tables())
-    if plan_params and plan_params.cardinality_hints.get(tables, None):
-        cardinality = plan_params.cardinality_hints[tables]
+    if plan_params and plan_params.cardinalities.get(tables, None):
+        cardinality = plan_params.cardinalities[tables]
     elif isinstance(join_tree, LogicalJoinTree):
         cardinality = join_tree.annotation
     else:
         cardinality = math.nan
 
     par_workers = (
-        plan_params.parallel_worker_hints.get(tables, None) if plan_params else None
+        plan_params.parallel_workers.get(tables, None) if plan_params else None
     )
 
     operator = physical_ops.get(tables)
@@ -1015,9 +1015,9 @@ def parameters_from_plan(
         parallel_workers = query_plan.params.parallel_workers
 
     if not math.isnan(card):
-        params.add_cardinality_hint(query_plan.tables(), card)
+        params.add_cardinality(query_plan.tables(), card)
     if parallel_workers:
-        params.add_parallelization_hint(query_plan.tables(), parallel_workers)
+        params.set_workers(query_plan.tables(), parallel_workers)
 
     for child in query_plan.children:
         child_params = parameters_from_plan(

@@ -8,7 +8,7 @@ from datetime import datetime
 
 import pandas as pd
 
-from postbound import qal, optimizer
+from postbound import optimizer, qal
 from postbound.db import postgres
 from postbound.experiments import workloads
 from postbound.util import jsonize
@@ -33,7 +33,7 @@ def true_cardinalities(label: str) -> optimizer.PlanParameterization:
     relevant_queries = card_df[card_df["label"] == label]
     plan_params = optimizer.PlanParameterization()
     for __, row in relevant_queries.iterrows():
-        plan_params.add_cardinality_hint(row["tables"], row["cardinality"])
+        plan_params.add_cardinality(row["tables"], row["cardinality"])
     return plan_params
 
 

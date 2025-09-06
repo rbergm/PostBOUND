@@ -46,7 +46,7 @@ Currently, we plan to implement the following features in the future (in no part
   logs and the ability to cancel/resume long-running benchmarks
 - Adding popular optimization algorithms to the collection of pre-defined optimizers
 
-## ➡ Version 0.17.3 _(planned)_
+## ➡ Version 0.18.0 _(planned)_
 
 ### 🐣 New features
 - 🐘 Added `start()`, `stop()` and `is_running()` functions to manage a local Postgres server
@@ -54,7 +54,7 @@ Currently, we plan to implement the following features in the future (in no part
 - 🐘 The parallel query executor now supports optional callbacks
 
 ### 💀 Breaking changes
-- _None_
+- Renamed the attributes of `PlanParameterization` to be more succint
 
 ### 📰 Updates
 - The `to_json()` utility now handles `Path` objects

@@ -2649,7 +2649,7 @@ class PostgresHintService(HintService):
         joins (currently pg_hint_plan can only communicate parallelization hints for parallel scans)
         """
         hints, settings = [], []
-        for join, cardinality_hint in plan_parameters.cardinality_hints.items():
+        for join, cardinality_hint in plan_parameters.cardinalities.items():
             if len(join) < 2 and self._backend == "pg_hint_plan":
                 # pg_hint_plan can only generate cardinality hints for joins
                 warnings.warn(
@@ -2666,7 +2666,7 @@ class PostgresHintService(HintService):
             )
             hints.append(hint_text)
 
-        for join, num_workers in plan_parameters.parallel_worker_hints.items():
+        for join, num_workers in plan_parameters.parallel_workers.items():
             if self._backend == "pg_lab":
                 warnings.warn(
                     "pg_lab does not support parallel worker hints",
@@ -2684,7 +2684,7 @@ class PostgresHintService(HintService):
             table: TableReference = util.simplify(join)
             hints.append(f"Parallel({table.identifier()} {num_workers} hard)")
 
-        for operator, setting in plan_parameters.system_specific_settings.items():
+        for operator, setting in plan_parameters.system_settings.items():
             setting = _escape_setting(setting)
             settings.append(f"SET {operator} = {setting};")
 

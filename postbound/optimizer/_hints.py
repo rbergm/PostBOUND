@@ -4,7 +4,7 @@ import json
 import math
 from collections.abc import Collection, Iterable
 from enum import Enum
-from typing import Any, Optional
+from typing import Any, Literal, Optional
 
 from .. import util
 from .._core import (
@@ -691,6 +691,53 @@ class PhysicalOperatorAssignment:
         )
         return merged_assignment
 
+    def integrate_workers_from(
+        self, params: PlanParameterization, *, fail_on_missing: bool = False
+    ) -> PhysicalOperatorAssignment:
+        """Adds parallel workers from plan parameters to all matching operators.
+
+        Parameters
+        ----------
+        params : PlanParameterization
+            Parameters that provide the number of workers for specific intermediates
+        fail_on_missing : bool, optional
+            Whether to raise an error if the plan parameters contain worker hints for an intermediate that does not have
+            an operator assigned. The default is to just ignore such hints.
+
+        Returns
+        -------
+        PhysicalOperatorAssignment
+            The updated assignment. The original assignment is not modified.
+        """
+        assignment = self.clone()
+
+        for intermediate, workers in params.parallel_workers.items():
+            operator = assignment.get(intermediate)
+            if not operator and fail_on_missing:
+                raise ValueError(
+                    f"Cannot integrate workers - no operator set for {list(intermediate)}"
+                )
+            elif not operator:
+                continue
+
+            match operator:
+                case ScanOperatorAssignment(op, tab):
+                    updated_assignment = ScanOperatorAssignment(op, tab, workers)
+                case DirectionalJoinOperatorAssignment(op, outer, inner):
+                    updated_assignment = DirectionalJoinOperatorAssignment(
+                        op, inner, outer, parallel_workers=workers
+                    )
+                case JoinOperatorAssignment(op, join):
+                    updated_assignment = JoinOperatorAssignment(
+                        op, join, parallel_workers=workers
+                    )
+                case _:
+                    raise RuntimeError(f"Unexpected operator type: {operator}")
+
+            assignment.add(updated_assignment)
+
+        return assignment
+
     def global_settings_only(self) -> PhysicalOperatorAssignment:
         """Provides an assignment that only contains the global settings.
 
@@ -953,46 +1000,59 @@ def read_operator_assignment_json(json_data: dict | str) -> PhysicalOperatorAssi
     return assignment
 
 
+ExecutionMode = Literal["sequential", "parallel"]
+"""
+The execution mode indicates whether a query should be executed using either only sequential operators or only parallel ones.
+"""
+
+
 class PlanParameterization:
     """The plan parameterization stores metadata that is assigned to different parts of the plan.
 
     Currently, three types of parameters are supported:
 
-    - `cardinality_hints` provide specific cardinality estimates for individual joins or tables. These can be used to overwrite
+    - `cardinalities` provide specific cardinality estimates for individual joins or tables. These can be used to overwrite
       the estimation of the native database system
-    - `parallel_worker_hints` indicate how many worker processes should be used to execute individual joins or table
+    - `parallel_workers` indicate how many worker processes should be used to execute individual joins or table
       scans (assuming that the selected operator can be parallelized). Notice that this can also be indicated as part of the
-      `physops` module
-    - `system_specific_settings` can be used to enable or disable specific optimization or execution features of the target
+      `PhysicalOperatorAssignment` which will take precedence over this setting.
+    - `system_settings` can be used to enable or disable specific optimization or execution features of the target
       database. For example, they can be used to disable parallel execution or switch to another cardinality estimation method.
       Such settings should be used sparingly since they defeat the purpose of optimization algorithms that are independent of
       specific database systems.
+
+    In addition, the `execution_mode` can be used to control whether the optimizer should only consider sequential plans or
+    parallel plans. Note that the `parallel_workers` take precedence over this setting. If the optimizer should decide whether
+    a parallel execution is beneficial, this should be set to *None*.
 
     Although it is allowed to modify the different dictionaries directly, the more high-level methods should be used instead.
     This ensures that all potential (future) invariants are maintained.
 
     Attributes
     ----------
-    cardinality_hints : dict[frozenset[TableReference], Cardinality]
+    cardinalities : dict[frozenset[TableReference], Cardinality]
         Contains the cardinalities for individual joins and scans. This is always the cardinality that is emitted by a specific
         operator. All joins are identified by the base tables that they combine. Keys of single tables correpond to scans.
-    paralell_worker_hints : dict[frozenset[TableReference], int]
+    parallel_workers : dict[frozenset[TableReference], int]
         Contains the number of parallel processes that should be used to execute a join or scan. All joins are identified by
         the base tables that they combine. Keys of single tables correpond to scans. "Processes" does not necessarily mean
         "system processes". The database system can also choose to use threads or other means of parallelization. This is not
         restricted by the join assignment.
-    system_specific_settings : dict[str, Any]
+    system_settings : dict[str, Any]
         Contains the settings for the target database system. The keys and values, as well as their usage depend entirely on
         the system. For example, in Postgres a setting like *enable_geqo = 'off'* can be used to disable the genetic optimizer.
-        During query execution, this is applied as preparatory statement before the actual query is executed.
+    execution_mode : ExecutionMode | None
+        Indicates whether the optimizer should only consider sequential plans, parallel plans, or leave the decision to the
+        optimizer (*None*). The default is *None*.
     """
 
     def __init__(self) -> None:
-        self.cardinality_hints: dict[frozenset[TableReference], Cardinality] = {}
-        self.parallel_worker_hints: dict[frozenset[TableReference], int] = {}
-        self.system_specific_settings: dict[str, Any] = {}
+        self.cardinalities: dict[frozenset[TableReference], Cardinality] = {}
+        self.parallel_workers: dict[frozenset[TableReference], int] = {}
+        self.system_settings: dict[str, Any] = {}
+        self.execution_mode: ExecutionMode | None = None
 
-    def add_cardinality_hint(
+    def add_cardinality(
         self, tables: Iterable[TableReference], cardinality: Cardinality
     ) -> None:
         """Assigns a specific cardinality hint to a (join of) tables.
@@ -1004,11 +1064,9 @@ class PlanParameterization:
         cardinality : Cardinality
             The estimated or known cardinality.
         """
-        self.cardinality_hints[frozenset(tables)] = cardinality
+        self.cardinalities[frozenset(tables)] = cardinality
 
-    def add_parallelization_hint(
-        self, tables: Iterable[TableReference], num_workers: int
-    ) -> None:
+    def set_workers(self, tables: Iterable[TableReference], num_workers: int) -> None:
         """Assigns a specific number of parallel workers to a (join of) tables.
 
         How these workers are implemented depends on the database system. They could become actual system processes, threads,
@@ -1024,7 +1082,9 @@ class PlanParameterization:
             is then responsible for spawning the workers, but can also take part in the actual calculation. To prevent one-off
             errors, we standardize this number to denote the total number of workers that take part in the calculation.
         """
-        self.parallel_worker_hints[frozenset(tables)] = num_workers
+        self.parallel_workers[frozenset(tables)] = num_workers
+        if num_workers > 1:
+            self.execution_mode = "parallel"
 
     def set_system_settings(
         self, setting_name: str = "", setting_value: Any = None, **kwargs
@@ -1065,9 +1125,9 @@ class PlanParameterization:
             raise ValueError("setting_name or kwargs required!")
 
         if setting_name:
-            self.system_specific_settings[setting_name] = setting_value
+            self.system_settings[setting_name] = setting_value
         else:
-            self.system_specific_settings |= kwargs
+            self.system_settings |= kwargs
 
     def merge_with(
         self, other_parameters: PlanParameterization
@@ -1088,21 +1148,21 @@ class PlanParameterization:
             The merged parameters
         """
         merged_params = PlanParameterization()
-        merged_params.cardinality_hints = (
-            self.cardinality_hints | other_parameters.cardinality_hints
+        merged_params.cardinalities = (
+            self.cardinalities | other_parameters.cardinalities
         )
-        merged_params.parallel_worker_hints = (
-            self.parallel_worker_hints | other_parameters.parallel_worker_hints
+        merged_params.parallel_workers = (
+            self.parallel_workers | other_parameters.parallel_workers
         )
-        merged_params.system_specific_settings = (
-            self.system_specific_settings | other_parameters.system_specific_settings
+        merged_params.system_settings = (
+            self.system_settings | other_parameters.system_settings
         )
         return merged_params
 
     def __json__(self) -> jsondict:
         return {
-            "cardinality_hints": self.cardinality_hints,
-            "parallel_worker_hints": self.parallel_worker_hints,
+            "cardinality_hints": self.cardinalities,
+            "parallel_worker_hints": self.parallel_workers,
         }
 
     def __repr__(self) -> str:
@@ -1110,8 +1170,8 @@ class PlanParameterization:
 
     def __str__(self) -> str:
         return (
-            f"PlanParams(cards={self.cardinality_hints}, "
-            f"system specific={self.system_specific_settings}, par workers={self.parallel_worker_hints})"
+            f"PlanParams(cards={self.cardinalities}, "
+            f"system specific={self.system_settings}, par workers={self.parallel_workers})"
         )
 
 
@@ -1130,11 +1190,11 @@ def read_plan_params_json(json_data: dict | str) -> PlanParameterization:
     """
     json_data = json.loads(json_data) if isinstance(json_data, str) else json_data
     params = PlanParameterization()
-    params.cardinality_hints = {
+    params.cardinalities = {
         frozenset(parser.load_table_json(tab)): card
         for tab, card in json_data.get("cardinality_hints", {}).items()
     }
-    params.parallel_worker_hints = {
+    params.parallel_workers = {
         frozenset(parser.load_table_json(tab)): workers
         for tab, workers in json_data.get("parallel_worker_hints", {}).items()
     }
@@ -1192,14 +1252,12 @@ def update_plan(
         else query_plan.operator
     )
     updated_card_est = (
-        params.cardinality_hints.get(
-            query_plan.tables(), query_plan.estimated_cardinality
-        )
+        params.cardinalities.get(query_plan.tables(), query_plan.estimated_cardinality)
         if params
         else query_plan.estimated_cardinality
     )
     updated_workers = (
-        params.parallel_worker_hints.get(
+        params.parallel_workers.get(
             query_plan.tables(), query_plan.params.parallel_workers
         )
         if params

@@ -726,17 +726,17 @@ class DuckDBHintService(HintService):
             return HintParts.empty()
 
         hints: list[str] = []
-        for intermediate, card in parameters.cardinality_hints.items():
+        for intermediate, card in parameters.cardinalities.items():
             if not card.is_valid():
                 continue
             intermediate_txt = self._intermediate_to_hint(intermediate)
             hints.append(f"Card({intermediate_txt} #{card})")
 
-        if parameters.parallel_worker_hints:
+        if parameters.parallel_workers:
             raise UnsupportedDatabaseFeatureError(self._db, "parallel worker hints")
 
         global_settings: list[str] = []
-        for param, val in parameters.system_specific_settings.items():
+        for param, val in parameters.system_settings.items():
             if isinstance(val, str):
                 val_txt = f"'{val}'"
             else:

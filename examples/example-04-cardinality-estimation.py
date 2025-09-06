@@ -107,7 +107,7 @@ class JitteringCardinalityEstimator(pb.CardinalityGenerator):
                 )
                 continue
 
-            cardinalities.add_cardinality_hint(join, estimated_cardinality)
+            cardinalities.add_cardinality(join, estimated_cardinality)
 
         return cardinalities
 
