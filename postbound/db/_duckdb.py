@@ -12,6 +12,7 @@ import time
 import warnings
 from collections import UserString
 from collections.abc import Iterable, Sequence
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Optional
 
@@ -46,7 +47,7 @@ from ._db import (
     UnsupportedDatabaseFeatureError,
     simplify_result_set,
 )
-from .postgres import HintParts, PostgresLimitClause
+from .postgres import PostgresLimitClause
 
 
 def _timeout_executor(
@@ -573,6 +574,82 @@ class DuckDBOptimizer(OptimizerInterface):
 
     def cost_estimate(self, query: SqlQuery | str) -> Cost:
         raise UnsupportedDatabaseFeatureError(self._db, "cost estimates")
+
+
+@dataclass
+class HintParts:
+    """Models the different kinds of optimizer hints that are supported by Postgres.
+
+    HintParts are designed to conveniently collect all kinds of hints in order to prepare the generation of a proper
+    `Hint` clause.
+
+    See Also
+    --------
+    Hint
+    """
+
+    settings: list[str]
+    """Settings are global to the current database connection and influence the selection of operators for all queries.
+
+    Typical examples include ``SET enable_nestloop = 'off'``, which disables the usage of nested loop joins for all
+    queries.
+    """
+
+    hints: list[str]
+    """Hints are supplied by the *quack_lab* extension and influence optimizer decisions on a per-query basis.
+
+    Typical examples include the selection of a specific join order as well as the assignment of join operators to
+    individual joins.
+    """
+
+    @staticmethod
+    def empty() -> HintParts:
+        """Creates a new hint parts object without any contents.
+
+        Returns
+        -------
+        HintParts
+            A fresh plain hint parts object
+        """
+        return HintParts([], [])
+
+    def add(self, hint: str) -> None:
+        """Adds a new hint.
+
+        This modifies the current object.
+
+        Parameters
+        ----------
+        hint : str
+            The hint to add
+        """
+        self.hints.append(hint)
+
+    def merge_with(self, other: HintParts) -> HintParts:
+        """Combines the hints that are contained in this hint parts object with all hints in the other object.
+
+        This constructs new hint parts and leaves the current objects unmodified.
+
+        Parameters
+        ----------
+        other : HintParts
+            The additional hints to incorporate
+
+        Returns
+        -------
+        HintParts
+            A new hint parts object that contains the hints from both source objects
+        """
+        merged_settings = self.settings + [
+            setting for setting in other.settings if setting not in self.settings
+        ]
+        merged_hints = (
+            self.hints + [""] + [hint for hint in other.hints if hint not in self.hints]
+        )
+        return HintParts(merged_settings, merged_hints)
+
+    def __bool__(self) -> bool:
+        return bool(self.settings or self.hints)
 
 
 class DuckDBHintService(HintService):

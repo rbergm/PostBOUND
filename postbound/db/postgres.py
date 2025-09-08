@@ -33,7 +33,7 @@ from typing import Any, Literal, Optional
 import psycopg
 import psycopg.rows
 
-from .. import qal, util
+from .. import util
 from .._core import (
     Cardinality,
     IntermediateOperator,
@@ -60,12 +60,16 @@ from ..qal import (
     ColumnReference,
     CompoundOperator,
     CompoundPredicate,
+    Explain,
     FunctionExpression,
+    Hint,
     InPredicate,
+    Limit,
     MathExpression,
     OrderBy,
     OrderByExpression,
     SqlExpression,
+    SqlQuery,
     StarExpression,
     StaticValueExpression,
     SubqueryExpression,
@@ -74,6 +78,7 @@ from ..qal import (
     UnboundColumnError,
     VirtualTableError,
     WindowExpression,
+    formatter,
     transform,
 )
 from ..util import StateError, Version, jsondict
@@ -117,12 +122,12 @@ class _GeQOState:
     enabled: bool
     threshold: int
 
-    def triggers_geqo(self, query: qal.SqlQuery) -> bool:
+    def triggers_geqo(self, query: SqlQuery) -> bool:
         """Checks, whether a specific query would be optimized using GeQO.
 
         Parameters
         ----------
-        query : qal.SqlQuery
+        query : SqlQuery
             The query to check. Notice that eventual preparatory statements that might modify the GeQO configuration are
             ignored.
 
@@ -579,6 +584,16 @@ class PostgresConfiguration(collections.UserString):
             super().__setitem__(key, value)
 
 
+class PostgresConfigInterface:
+    """A thin wrapper that provides read-only access to Postgres configuration settings using __getitem__ syntax."""
+
+    def __init__(self, pg_instance: PostgresInterface) -> None:
+        self._pg = pg_instance
+
+    def __getitem__(self, key: str) -> Any:
+        return self._pg.execute_query(f"SHOW {key};", cache_enabled=False, raw=False)
+
+
 _PGVersionPattern = re.compile(r"^PostgreSQL (?P<pg_ver>[\d]+(\.[\d]+)?).*$")
 """Regular expression to extract the Postgres server version from the *VERSION()* function.
 
@@ -589,12 +604,12 @@ References
 """
 
 
-def _query_contains_geqo_sensible_settings(query: qal.SqlQuery) -> bool:
+def _query_contains_geqo_sensible_settings(query: SqlQuery) -> bool:
     """Checks, whether a specific query contains any information that would be overwritten by GeQO.
 
     Parameters
     ----------
-    query : qal.SqlQuery
+    query : SqlQuery
         The query to check
 
     Returns
@@ -605,12 +620,12 @@ def _query_contains_geqo_sensible_settings(query: qal.SqlQuery) -> bool:
     return query.hints is not None and bool(query.hints.query_hints)
 
 
-def _modifies_geqo_config(query: qal.SqlQuery) -> bool:
+def _modifies_geqo_config(query: SqlQuery) -> bool:
     """Heuristic to check whether a specific query changes the current GeQO config of a Postgres system.
 
     Parameters
     ----------
-    query : qal.SqlQuery
+    query : SqlQuery
         The query to check
 
     Returns
@@ -619,7 +634,7 @@ def _modifies_geqo_config(query: qal.SqlQuery) -> bool:
         Whether the query modifies the GeQO config. Notice that this is a heuristic check - there could be false positives as
         well as false negatives!
     """
-    if not isinstance(query, qal.SqlQuery):
+    if not isinstance(query, SqlQuery):
         return False
 
     if not query.hints or not query.hints.preparatory_statements:
@@ -630,12 +645,16 @@ def _modifies_geqo_config(query: qal.SqlQuery) -> bool:
 class PostgresInterface(Database):
     """Database implementation for PostgreSQL backends.
 
+    The `config` attribute provides read-only access to the current GUC values of the server.
+
     Parameters
     ----------
     connect_string : str
         Connection string for `psycopg` to establish a connection to the Postgres server
     system_name : str, optional
         Description of the specific Postgres server, by default *Postgres*
+    client_encoding : str, optional
+        The client encoding to use for the connection, by default *UTF8*
     cache_enabled : bool, optional
         Whether to enable caching of database queries, by default *False*
     debug : bool, optional
@@ -653,6 +672,7 @@ class PostgresInterface(Database):
     ) -> None:
         self.connect_string = connect_string
         self.debug = debug
+        self.config = PostgresConfigInterface(self)
         self._connection: psycopg.Connection = psycopg.connect(
             connect_string,
             application_name="PostBOUND",
@@ -682,7 +702,7 @@ class PostgresInterface(Database):
 
     def execute_query(
         self,
-        query: qal.SqlQuery | str,
+        query: SqlQuery | str,
         *,
         cache_enabled: Optional[bool] = None,
         raw: bool = False,
@@ -746,7 +766,7 @@ class PostgresInterface(Database):
         return query_result if raw else simplify_result_set(query_result)
 
     def execute_with_timeout(
-        self, query: qal.SqlQuery | str, timeout: float = 60.0
+        self, query: SqlQuery | str, timeout: float = 60.0
     ) -> Optional[ResultSet]:
         current_config = self.current_configuration(runtime_changeable_only=True)
         try:
@@ -761,9 +781,7 @@ class PostgresInterface(Database):
     def last_query_runtime(self) -> float:
         return self._last_query_runtime
 
-    def time_query(
-        self, query: qal.SqlQuery, *, timeout: Optional[float] = None
-    ) -> float:
+    def time_query(self, query: SqlQuery, *, timeout: Optional[float] = None) -> float:
         self.execute_query(query, cache_enabled=False, raw=True, timeout=timeout)
         return self.last_query_runtime()
 
@@ -1155,13 +1173,15 @@ class PostgresInterface(Database):
         int
             The backend process ID of the new connection
         """
-        self._connection.autocommit = True
+        self._connection.autocommit = (
+            True  # pg_hint_plan hinting backend currently relies on autocommit!
+        )
         self._connection.prepare_threshold = None
         self._cursor: psycopg.Cursor = self._connection.cursor()
         return self.backend_pid()
 
     def _prepare_query_execution(
-        self, query: qal.SqlQuery | str, *, drop_explain: bool = False
+        self, query: SqlQuery | str, *, drop_explain: bool = False
     ) -> tuple[str, bool]:
         """Handles necessary setup logic that enable an arbitrary query to be executed by the database system.
 
@@ -1174,7 +1194,7 @@ class PostgresInterface(Database):
 
         Parameters
         ----------
-        query : qal.SqlQuery | str
+        query : SqlQuery | str
             The query to prepare. Only queries from the query abstraction layer can be prepared.
         drop_explain : bool, optional
             Whether any `Explain` clauses on the query should be ignored. This is intended for cases where the callee
@@ -1186,7 +1206,7 @@ class PostgresInterface(Database):
             A unified version of the query that is ready for execution and a boolean indicating whether GeQO has been
             automatically deactivated.
         """
-        if not isinstance(query, qal.SqlQuery):
+        if not isinstance(query, SqlQuery):
             return query, False
 
         requires_geqo_deactivation = self._hinting_backend._requires_geqo_deactivation(
@@ -1197,10 +1217,10 @@ class PostgresInterface(Database):
             self._cursor.execute("SET geqo = 'off';")
 
         if drop_explain:
-            query = qal.transform.drop_clause(query, qal.Explain)
+            query = transform.drop_clause(query, Explain)
         if query.hints and query.hints.preparatory_statements:
             self._cursor.execute(query.hints.preparatory_statements)
-            query = qal.transform.drop_hints(query, preparatory_statements_only=True)
+            query = transform.drop_hints(query, preparatory_statements_only=True)
         return self._hinting_backend.format_query(query), requires_geqo_deactivation
 
     def _obtain_query_plan(self, query: str) -> dict:
@@ -1501,7 +1521,7 @@ class PostgresSchemaInterface(DatabaseSchema):
 
         Raises
         ------
-        postbound.qal.base.VirtualTableError
+        VirtualTableError
             If the table is a virtual table (e.g. subquery or CTE)
         """
         if table.virtual:
@@ -1528,7 +1548,7 @@ class PostgresSchemaInterface(DatabaseSchema):
 
         Raises
         ------
-        postbound.qal.base.VirtualTableError
+        VirtualTableError
             If the table is a virtual table (e.g. subquery or CTE)
         """
         if table.virtual:
@@ -1778,87 +1798,6 @@ class PostgresStatisticsInterface(DatabaseStatistics):
         return self._db.cursor().fetchall()[:k]
 
 
-@dataclass
-class HintParts:
-    """Models the different kinds of optimizer hints that are supported by Postgres.
-
-    HintParts are designed to conveniently collect all kinds of hints in order to prepare the generation of a proper
-    `Hint` clause.
-
-    See Also
-    --------
-    qal.Hint
-    """
-
-    settings: list[str]
-    """Settings are global to the current database connection and influence the selection of operators for all queries.
-
-    Typical examples include ``SET enable_nestloop = 'off'``, which disables the usage of nested loop joins for all
-    queries.
-    """
-
-    hints: list[str]
-    """Hints are supplied by the *pg_hint_plan* extension and influence optimizer decisions on a per-query basis.
-
-    Typical examples include the selection of a specific join order as well as the assignment of join operators to
-    individual joins.
-
-    References
-    ----------
-
-    .. pg_hint_plan extension: https://github.com/ossc-db/pg_hint_plan
-    """
-
-    @staticmethod
-    def empty() -> HintParts:
-        """Creates a new hint parts object without any contents.
-
-        Returns
-        -------
-        HintParts
-            A fresh plain hint parts object
-        """
-        return HintParts([], [])
-
-    def add(self, hint: str) -> None:
-        """Adds a new hint.
-
-        This modifies the current object.
-
-        Parameters
-        ----------
-        hint : str
-            The hint to add
-        """
-        self.hints.append(hint)
-
-    def merge_with(self, other: HintParts) -> HintParts:
-        """Combines the hints that are contained in this hint parts object with all hints in the other object.
-
-        This constructs new hint parts and leaves the current objects unmodified.
-
-        Parameters
-        ----------
-        other : HintParts
-            The additional hints to incorporate
-
-        Returns
-        -------
-        HintParts
-            A new hint parts object that contains the hints from both source objects
-        """
-        merged_settings = self.settings + [
-            setting for setting in other.settings if setting not in self.settings
-        ]
-        merged_hints = (
-            self.hints + [""] + [hint for hint in other.hints if hint not in self.hints]
-        )
-        return HintParts(merged_settings, merged_hints)
-
-    def __bool__(self) -> bool:
-        return bool(self.settings or self.hints)
-
-
 PostgresOptimizerSettings = {
     JoinOperator.NestedLoopJoin: "enable_nestloop",
     JoinOperator.HashJoin: "enable_hashjoin",
@@ -1873,7 +1812,7 @@ PostgresOptimizerSettings = {
 }
 """All (session-global) optimizer settings that modify the allowed physical operators."""
 
-PGHintPlanOptimizerHints = {
+PGHintPlanOptimizerHints: dict[PhysicalOperator, str] = {
     JoinOperator.NestedLoopJoin: "NestLoop",
     JoinOperator.HashJoin: "HashJoin",
     JoinOperator.SortMergeJoin: "MergeJoin",
@@ -1881,6 +1820,7 @@ PGHintPlanOptimizerHints = {
     ScanOperator.IndexScan: "IndexOnlyScan",
     ScanOperator.IndexOnlyScan: "IndexOnlyScan",
     ScanOperator.BitmapScan: "BitmapScan",
+    IntermediateOperator.Memoize: "Memoize",
 }
 """All physical operators that can be enforced by pg_hint_plan.
 
@@ -1892,7 +1832,7 @@ References
 .. pg_hint_plan hints: https://github.com/ossc-db/pg_hint_plan/blob/master/docs/hint_list.md
 """
 
-PGLabOptimizerHints = {
+PGLabOptimizerHints: dict[PhysicalOperator, str] = {
     JoinOperator.NestedLoopJoin: "NestLoop",
     JoinOperator.HashJoin: "HashJoin",
     JoinOperator.SortMergeJoin: "MergeJoin",
@@ -1910,7 +1850,7 @@ These settings operate on a per-relation basis and overwrite the session-global 
 References
 ----------
 
-.. pg_lab extension: TODO
+.. pg_lab extension: https://github.com/rbergm/pg_lab/blob/main/docs/hinting.md
 
 """
 
@@ -1962,9 +1902,7 @@ def _escape_setting(setting: Any) -> str:
     return f"'{setting}'"
 
 
-def _apply_hint_block_to_query(
-    query: qal.SqlQuery, hint_block: Optional[qal.Hint]
-) -> qal.SqlQuery:
+def _apply_hint_block_to_query(query: SqlQuery, hint_block: Optional[Hint]) -> SqlQuery:
     """Ensures that a hint block is added to a query.
 
     Since the query abstraction layer consists of immutable data objects, a new query has to be created. This method's
@@ -1972,17 +1910,17 @@ def _apply_hint_block_to_query(
 
     Parameters
     ----------
-    query : qal.SqlQuery
+    query : SqlQuery
         The query to apply the hint block to
-    hint_block : Optional[qal.Hint]
+    hint_block : Optional[Hint]
         The hint block to apply. If this is *None*, no modifications are performed.
 
     Returns
     -------
-    qal.SqlQuery
+    SqlQuery
         The input query with the hint block applied
     """
-    return qal.transform.add_clause(query, hint_block) if hint_block else query
+    return transform.add_clause(query, hint_block) if hint_block else query
 
 
 PostgresJoinHints = {
@@ -2011,18 +1949,18 @@ PostgresPlanHints = {
 """All non-operator hints supported by Postgres, that can be used to enforce additional optimizer behaviour."""
 
 
-class PostgresExplainClause(qal.Explain):
+class PostgresExplainClause(Explain):
     """A specialized *EXPLAIN* clause implementation to handle Postgres custom syntax for query plans.
 
     If *ANALYZE* is enabled, this also retrieves information about shared buffer usage (page hits and disk reads).
 
     Parameters
     ----------
-    original_clause : qal.Explain
+    original_clause : Explain
         The actual *EXPLAIN* clause. The new explain clause acts as a decorator around the original clause.
     """
 
-    def __init__(self, original_clause: qal.Explain) -> None:
+    def __init__(self, original_clause: Explain) -> None:
         super().__init__(original_clause.analyze, original_clause.target_format)
 
     def __str__(self) -> str:
@@ -2033,16 +1971,16 @@ class PostgresExplainClause(qal.Explain):
         return f"EXPLAIN {explain_args}"
 
 
-class PostgresLimitClause(qal.Limit):
+class PostgresLimitClause(Limit):
     """A specialized *LIMIT* clause implementation to handle Postgres custom syntax for limits / offsets
 
     Parameters
     ----------
-    original_clause : qal.Limit
+    original_clause : Limit
         The actual *LIMIT* clause. The new limit clause acts as a decorator around the original clause.
     """
 
-    def __init__(self, original_clause: qal.Limit) -> None:
+    def __init__(self, original_clause: Limit) -> None:
         super().__init__(
             limit=original_clause.limit,
             offset=original_clause.offset,
@@ -2081,7 +2019,7 @@ def _replace_postgres_cast_expressions(expression: SqlExpression) -> SqlExpressi
 
     See Also
     --------
-    postbound.qal.transform.replace_expressions
+    transform.replace_expressions
     """
     target = type(expression)
     match expression:
@@ -2198,6 +2136,309 @@ If the hint service is inactive, the backend is set to _none_.
 """
 
 
+def _walk_join_order(node: JoinTree) -> str:
+    if node.is_scan():
+        return node.base_table.identifier()
+
+    outer = _walk_join_order(node.outer_child)
+    inner = _walk_join_order(node.inner_child)
+    return f"({outer} {inner})"
+
+
+def _generate_pghintplan_hints(
+    query: SqlQuery,
+    join_order: Optional[JoinTree],
+    phys_ops: Optional[PhysicalOperatorAssignment],
+    plan_params: Optional[PlanParameterization],
+    *,
+    pg_instance: PostgresInterface,
+) -> Hint:
+    hints: list[str] = []
+    prep_statements: list[str] = []
+    used_parallel: bool = False
+
+    geqo_thresh: int = pg_instance.config["geqo_threshold"]
+    if len(query.tables()) > geqo_thresh:
+        warnings.warn(
+            "Temporarily disabling GEQO. pg_hint_plan only works with the DP optimizer.",
+            category=HintWarning,
+        )
+        hints.append("Set(geqo off)")
+
+    if join_order and len(join_order) > 1:
+        join_str = _walk_join_order(join_order)
+        hints.append(f"Leading({join_str})")
+
+    if phys_ops:
+        for scan in phys_ops.scan_operators.values():
+            op = PGHintPlanOptimizerHints[scan.operator]
+            tab = scan.table.identifier()
+            hints.append(f"{op}({tab})")
+            if scan.parallel_workers > 1 and not used_parallel:
+                hints.append(f"Parallel({tab} {scan.parallel_workers} hard)")
+                used_parallel = True
+            elif used_parallel:
+                warnings.warn(
+                    "Cannot set multiple parallel hints for Postgres. Ignoring additional hints.",
+                    category=HintWarning,
+                )
+
+        for join in phys_ops.join_operators.values():
+            op = PGHintPlanOptimizerHints[join.operator]
+            intermediate = " ".join(tab.identifier() for tab in join.intermediate)
+            hints.append(f"{op}({intermediate})")
+            if join.parallel_workers > 1 and not used_parallel:
+                warnings.warn(
+                    "Cannot directly set parallel workers on a join with pg_hint_plan. "
+                    "Setting on all base tables instead.",
+                    category=HintWarning,
+                )
+                for tab in join.intermediate:
+                    hints.append(
+                        f"Parallel({tab.identifier()} {join.parallel_workers} hard)"
+                    )
+            elif used_parallel:
+                warnings.warn(
+                    "Cannot set multiple parallel hints for Postgres. Ignoring additional hints.",
+                    category=HintWarning,
+                )
+
+        for tabs, intermediate_op in phys_ops.intermediate_operators.items():
+            op = PGHintPlanOptimizerHints.get(intermediate_op)
+            if not op:
+                warnings.warn(
+                    f"Cannot enforce operator {intermediate_op} with pg_hint_plan. Ignoring additional hints",
+                    category=HintWarning,
+                )
+                continue
+            intermediate = " ".join(tab.identifier() for tab in tabs)
+            hints.append(f"{op}({intermediate})")
+
+        for op, val in phys_ops.global_settings.items():
+            setting = PostgresOptimizerSettings[op]
+            hints.append(f"Set({setting} {val})")
+
+    if plan_params:
+        for tabs, card in plan_params.cardinalities.items():
+            if card.isnan():
+                continue
+            intermediate = " ".join(tab.identifier() for tab in tabs)
+            if card.isinf():
+                warnings.warn(
+                    f"Ignoring infinite cardinality for intermediate {intermediate}",
+                    category=HintWarning,
+                )
+            hints.append(f"Rows({intermediate} #{card.value})")
+
+        for tabs, workers in plan_params.parallel_workers.items():
+            if workers == 1:
+                continue
+            elif used_parallel:
+                warnings.warn(
+                    "Cannot set multiple parallel hints for Postgres. Ignoring additional hints.",
+                    category=HintWarning,
+                )
+                continue
+
+            intermediate = " ".join(tab.identifier() for tab in tabs)
+            hints.append(f"Parallel({intermediate} {workers} hard)")
+            used_parallel = True
+
+        for setting, val in plan_params.system_settings.items():
+            # TODO: we could be smart here and differentiate betwen settings that only affect the optimizer and settings
+            # that also affect the execution engine. The former can be set in pg_hint_plan via Set(...), while the latter
+            # must be set via a preparatory SET statement. We should avoid this second case if at all possible since it
+            # affects the entire session and not just the current query.
+            # For now, we mitigate this issue in a different way: we emit SET LOCAL statements which only modify the
+            # current transaction. Since the Postgres interface runs in autocommit mode, each query is executed within
+            # its own transaction. Therefore, all changes are reverted immediately after the query has finished.
+            prep_statements.append(f"SET LOCAL {setting} TO '{val}';")
+
+        if plan_params.execution_mode is not None:
+            warnings.warn(
+                "pg_hint_plan does not support execution mode hints",
+                category=HintWarning,
+            )
+
+    hints.insert(0, "Config(plan_mode=full)")
+    hints = [f" {line}" for line in hints]
+    hints.insert(0, "/*+")
+    hints.append(" */")
+
+    return Hint("\n".join(prep_statements), "\n".join(hints))
+
+
+def _generate_pglab_hints(
+    join_order: Optional[JoinTree],
+    phys_ops: Optional[PhysicalOperatorAssignment],
+    plan_params: Optional[PlanParameterization],
+) -> Hint:
+    hints: list[str] = []
+    prep_statements: list[str] = []
+
+    has_worker_params = plan_params and plan_params.parallel_workers
+    used_parallel = False
+
+    if has_worker_params and not phys_ops:
+        warnings.warn(
+            "pg_lab can only force parallel execution of nodes with known operators. Ignoring worker hints.",
+            category=HintWarning,
+        )
+    elif has_worker_params:
+        has_dangling_worker_hints = any(
+            intermediate not in phys_ops
+            for intermediate in plan_params.parallel_workers
+        )
+        if has_dangling_worker_hints:
+            warnings.warn(
+                "pg_lab can only force parallel execution of nodes with known operators. Ignoring additional hints.",
+                category=HintWarning,
+            )
+        phys_ops = phys_ops.integrate_workers_from(plan_params)
+
+    hints.append("Config(plan_mode=anchored)")
+
+    if join_order and len(join_order) > 1:
+        join_str = _walk_join_order(join_order)
+        hints.append(f"JoinOrder({join_str})")
+
+    if phys_ops:
+        for scan in phys_ops.scan_operators.values():
+            op = PGLabOptimizerHints[scan.operator]
+            table = scan.table.identifier()
+
+            if scan.parallel_workers > 1 and not used_parallel:
+                # TODO: check for off-by-one errors!!!
+                hint = f"{op}({table} (workers={scan.parallel_workers}))"
+                used_parallel = True
+            elif scan.parallel_workers > 1 and used_parallel:
+                warnings.warn(
+                    "Cannot set multiple parallel hints for Postgres. Ignoring additional hints.",
+                    category=HintWarning,
+                )
+            else:
+                hint = f"{op}({table})"
+            hints.append(hint)
+
+        for join in phys_ops.join_operators.values():
+            op = PGLabOptimizerHints[join.operator]
+            intermediate = " ".join(tab.identifier() for tab in join.intermediate)
+
+            if join.parallel_workers > 1 and not used_parallel:
+                hint = f"{op}({intermediate} (workers={join.parallel_workers}))"
+                used_parallel = True
+            elif join.parallel_workers > 1 and used_parallel:
+                warnings.warn(
+                    "Cannot set multiple parallel hints for Postgres. Ignoring additional hints.",
+                    category=HintWarning,
+                )
+            else:
+                hint = f"{op}({intermediate})"
+            hints.append(hint)
+
+        for tabs, intermediate_op in phys_ops.intermediate_operators.items():
+            op = PGLabOptimizerHints[intermediate_op]
+            intermediate = " ".join(tab.identifier() for tab in tabs)
+            hints.append(f"{op}({intermediate})")
+
+        for op, enabled in phys_ops.global_settings.items():
+            setting = PostgresOptimizerSettings[op]
+            value = "on" if enabled else "off"
+            hints.append(f"Set({setting} = '{value}')")
+
+    if plan_params:
+        for tabs, card in plan_params.cardinalities.items():
+            if card.isnan():
+                continue
+
+            intermediate = " ".join(tab.identifier() for tab in tabs)
+            if card.isinf():
+                warnings.warn(
+                    f"Ignoring infinite cardinality for intermediate {intermediate}",
+                    category=HintWarning,
+                )
+            hints.append(f"Card({intermediate} #{card})")
+
+        for setting, val in plan_params.system_settings.items():
+            hints.append(f"Set({setting} = '{val}')")
+
+        if plan_params.execution_mode is not None:
+            mode = (
+                "sequential"
+                if plan_params.execution_mode == "sequential"
+                else "parallel"
+            )
+            hints.append(f"Config(exec_mode={mode})")
+
+    hints = [f"  {line}" for line in hints]
+    hints.insert(0, "/*=pg_lab=")
+    hints.append(" */")
+
+    return Hint("\n".join(prep_statements), "\n".join(hints))
+
+
+def _extract_plan_join_order(plan: QueryPlan) -> str:
+    if plan.is_scan():
+        return plan.base_table.identifier()
+
+    if plan.input_node:
+        return _extract_plan_join_order(plan.input_node)
+
+    outer = _extract_plan_join_order(plan.outer_child)
+    inner = _extract_plan_join_order(plan.inner_child)
+    return f"({outer} {inner})"
+
+
+def _generate_pglab_plan(
+    plan: QueryPlan, *, hints: list[str], in_upperrel: bool, used_parallel: bool
+) -> Hint:
+    initial = not hints
+
+    if in_upperrel and plan.is_join():
+        # We found the first join in our query plan. We can now generate the join order hint!
+        join_order = _extract_plan_join_order(plan)
+        hints.append(f"JoinOrder({join_order})")
+
+    if in_upperrel and plan.is_scan() or plan.is_join():
+        # This check needs to be guarded by in_upperrel to prevent sorts appearing after the first joins from resetting
+        # the switch
+        in_upperrel = False
+
+    if plan.operator is not None:
+        op = PGLabOptimizerHints[plan.operator]
+        intermediate = " ".join(tab.identifier() for tab in plan.tables())
+        if plan.parallel_workers and not used_parallel:
+            hint = f"{op}({intermediate} (workers={plan.parallel_workers}))"
+            used_parallel = True
+        elif plan.parallel_workers and used_parallel:
+            warnings.warn(
+                "Cannot set multiple parallel hints for Postgres. Ignoring all additional hints",
+                category=HintWarning,
+            )
+        else:
+            hint = f"{op}({intermediate})"
+        hints.append(hint)
+    elif in_upperrel and plan.parallel_workers and not used_parallel:
+        hints.append(f"Result(workers={plan.parallel_workers})")
+        used_parallel = True
+    elif in_upperrel and plan.parallel_workers and used_parallel:
+        warnings.warn(
+            "Cannot set multiple parallel hints for Postgres. Ignoring all additional hints",
+            category=HintWarning,
+        )
+
+    for child in plan.children:
+        _generate_pglab_plan(
+            child, hints=hints, in_upperrel=in_upperrel, used_parallel=used_parallel
+        )
+
+    if initial:
+        hints = [f"  {line}" for line in hints]
+        hints.insert(0, "/*=pg_lab=")
+        hints.append(" */")
+    return Hint("", "\n".join(hints))
+
+
 class PostgresHintService(HintService):
     """Postgres-specific implementation of the hinting capabilities.
 
@@ -2256,68 +2497,76 @@ class PostgresHintService(HintService):
 
     def generate_hints(
         self,
-        query: qal.SqlQuery,
+        query: SqlQuery,
         plan: Optional[QueryPlan] = None,
         *,
         join_order: Optional[JoinTree] = None,
         physical_operators: Optional[PhysicalOperatorAssignment] = None,
         plan_parameters: Optional[PlanParameterization] = None,
-    ) -> qal.SqlQuery:
+    ) -> SqlQuery:
         self._assert_active_backend()
+
         adapted_query = query
         if adapted_query.explain and not isinstance(
             adapted_query.explain, PostgresExplainClause
         ):
-            adapted_query = qal.transform.replace_clause(
+            adapted_query = transform.replace_clause(
                 adapted_query, PostgresExplainClause(adapted_query.explain)
             )
         if adapted_query.limit_clause and not isinstance(
             adapted_query.limit_clause, PostgresLimitClause
         ):
-            adapted_query = qal.transform.replace_clause(
+            adapted_query = transform.replace_clause(
                 adapted_query, PostgresLimitClause(adapted_query.limit_clause)
             )
 
-        hint_parts = None
-
-        if plan is not None and any(
+        has_param = any(
             param is not None
             for param in (join_order, physical_operators, plan_parameters)
-        ):
+        )
+        if plan is not None and has_param:
             raise ValueError(
                 "Can only hint an entire query plan, or individual parts, not both."
             )
 
-        if plan is not None:
-            join_order = jointree_from_plan(plan)
-            physical_operators = operators_from_plan(plan)
-            plan_parameters = parameters_from_plan(plan)
+        match self._backend:
+            case "pg_hint_plan":
+                if plan is not None:
+                    join_order = jointree_from_plan(plan)
+                    physical_operators = operators_from_plan(
+                        plan, include_workers=False
+                    )
+                    plan_parameters = parameters_from_plan(
+                        plan, target_cardinality="actual", fallback_estimated=True
+                    )
 
-        if join_order is not None:
-            adapted_query, hint_parts = self._generate_pg_join_order_hint(
-                adapted_query, join_order, physical_operators
-            )
+                hints = _generate_pghintplan_hints(
+                    query,
+                    join_order,
+                    physical_operators,
+                    plan_parameters,
+                    pg_instance=self._postgres_db,
+                )
+            case "pg_lab" if plan is not None:
+                hints = _generate_pglab_plan(
+                    plan, hints=[], in_upperrel=True, used_parallel=False
+                )
+            case "pg_lab":
+                hints = _generate_pglab_hints(
+                    join_order,
+                    physical_operators,
+                    plan_parameters,
+                )
 
-        hint_parts = hint_parts if hint_parts else HintParts.empty()
+        query = transform.add_clause(adapted_query, hints)
+        return query
 
-        if physical_operators:
-            operator_hints = self._generate_pg_operator_hints(physical_operators)
-            hint_parts = hint_parts.merge_with(operator_hints)
-
-        if plan_parameters:
-            plan_hints = self._generate_pg_parameter_hints(plan_parameters)
-            hint_parts = hint_parts.merge_with(plan_hints)
-
-        hint_block = self._generate_hint_block(hint_parts)
-        adapted_query = _apply_hint_block_to_query(adapted_query, hint_block)
-        return adapted_query
-
-    def format_query(self, query: qal.SqlQuery) -> str:
+    def format_query(self, query: SqlQuery) -> str:
         if query.explain:
             query = transform.replace_clause(
                 query, PostgresExplainClause(query.explain)
             )
-        return qal.format_quick(query, flavor="postgres")
+        return formatter.format_quick(query, flavor="postgres")
 
     def supports_hint(self, hint: PhysicalOperator | HintType) -> bool:
         self._assert_active_backend()
@@ -2418,12 +2667,12 @@ class PostgresHintService(HintService):
             self._inactive = True
             self._backend = "none"
 
-    def _requires_geqo_deactivation(self, query: qal.SqlQuery) -> bool:
+    def _requires_geqo_deactivation(self, query: SqlQuery) -> bool:
         """Determines whether the query requires the deactivation of the genetic optimizer (GeQO).
 
         Parameters
         ----------
-        query : qal.SqlQuery
+        query : SqlQuery
             The query to check
 
         Returns
@@ -2452,304 +2701,6 @@ class PostgresHintService(HintService):
 
         # If we reach this point, we have to deactivate GeQO
         return True
-
-    def _generate_leading_hint_content(self, node: JoinTree) -> str:
-        """Builds a substring of the *Leading* hint to enforce the join order for a specific part of the join tree.
-
-        Parameters
-        ----------
-        node : JoinTree
-            Subtree of the join order for which the hint should be generated
-
-        Returns
-        -------
-        str
-            Part of the join hint that corresponds to the join of the current subtree, e.g. for the join ``R ⋈ S``, the
-            substring would be ``"R S"``.
-
-        Raises
-        ------
-        ValueError
-            If the `node` is neither a base table node, nor an intermediate join node. This error should never
-            ever be raised. If it is, it means that the join tree representation was updated to include other types of
-            nodes (whatever these should be), and the implementation of this method was not updated accordingly. This is
-            a severe bug in the method!
-
-        References
-        ----------
-
-        .. pg_hint_plan Leading hint: https://github.com/ossc-db/pg_hint_plan/blob/master/docs/hint_list.md
-        """
-        if node.is_scan():
-            return node.base_table.identifier()
-        if not node.is_join():
-            raise ValueError(f"Unknown join tree node: {node}")
-
-        inner_hint = self._generate_leading_hint_content(node.inner_child)
-        outer_hint = self._generate_leading_hint_content(node.outer_child)
-        return f"({outer_hint} {inner_hint})"
-
-    def _generate_pg_join_order_hint(
-        self,
-        query: qal.SqlQuery,
-        join_order: JoinTree,
-        operator_assignment: Optional[PhysicalOperatorAssignment] = None,
-    ) -> tuple[qal.SqlQuery, Optional[HintParts]]:
-        """Builds the entire *Leading* hint to enforce the join order for a specific query.
-
-        Using a *Leading* hint, it is possible to generate the an arbitrarily nested join order for an input query.
-        However, at the same time this hint also enforces the join direction (i.e. inner or outer relation) of the join
-        partners. Due to some pecularities of the interpretation of inner and outer relation by Postgres, this method
-        also needs to access the operator assignment in addition to the join tree. The directions in the hint depend on the
-        selected join operators. See `_generate_leading_hint_content` for details. This method delegates most of the heavy
-        lifting to it.
-
-        Parameters
-        ----------
-        query : qal.SqlQuery
-            The query for which the hint should be generated. Notice that the hint will not be incorporated at this stage
-            already. Strictly speaking, this parameter is not even necessary for the hint generation part. However, it is
-            still included to retain the ability to quickly switch to a query transformation-based join order enforcement
-            at a later point in time.
-        join_order : JoinTree
-            The desired join order
-        operator_assignment : Optional[PhysicalOperatorAssignment], optional
-            The operators that should be used to perform the actual joins. This is necessary to generate the correct join
-            order (as outlined above)
-
-        Returns
-        -------
-        tuple[qal.SqlQuery, Optional[HintParts]]
-            A potentially transformed version of the input query along with the necessary hints to enforce the join order.
-            All future hint generation steps should use the transformed query as input rather than the original one, even
-            though right now no transformations are being performed and the returned query simply matches the input query.
-
-        See Also
-        --------
-        _generate_leading_hint_content
-
-        References
-        ----------
-
-        .. pg_hint_plan Leading hint: https://github.com/ossc-db/pg_hint_plan/blob/master/docs/hint_list.md
-        """
-        if len(join_order) < 2:
-            return query, None
-        leading_hint = self._generate_leading_hint_content(join_order)
-        leading_hint = (
-            f"JoinOrder({leading_hint})"
-            if self._backend == "pg_lab"
-            else f"Leading({leading_hint})"
-        )
-        hints = HintParts([], [leading_hint])
-        return query, hints
-
-    def _generate_pg_operator_hints(
-        self, physical_operators: PhysicalOperatorAssignment
-    ) -> HintParts:
-        """Builds the necessary operator-level hints and global settings to enforce a specific operator assignment.
-
-        ..TODO: documentation is slightly outdated, update to reflect new pg_lab backend!
-
-        The resulting hints object will consist of pg_hint_plan hints for all operators that affect individual joins or
-        scans and standard postgres settings that influence the selection of operators for the entire query. Notice that
-        the per-operator hints overwrite global settings, e.g. one can disabled nested-loop joins globally, but than assign
-        a nested-loop join for a specific join again. This will disable nested-loop joins for all joins in the query,
-        except for the one join in question. For that join, a nested-loop join will be forced.
-
-        Parameters
-        ----------
-        physical_operators : PhysicalOperatorAssignment
-            The operator settings in question
-
-        Returns
-        -------
-        HintParts
-            A Postgres and pg_hint_plan compatible encoding of the operator assignment
-        """
-        settings = []
-        for operator, enabled in physical_operators.global_settings.items():
-            setting = "on" if enabled else "off"
-            operator_key = PostgresOptimizerSettings.get(operator)
-            if not operator_key:
-                continue
-
-            # TODO: can we use SET LOCAL here? This could make any rollbacks unnecessary..
-            settings.append(f"SET {operator_key} = '{setting}';")
-
-        hints = []
-        for table, scan_assignment in physical_operators.scan_operators.items():
-            table_key = table.identifier()
-            scan_assignment = (
-                PGLabOptimizerHints[scan_assignment.operator]
-                if self._backend == "pg_lab"
-                else PGHintPlanOptimizerHints[scan_assignment.operator]
-            )
-            hints.append(f"{scan_assignment}({table_key})")
-
-        if hints:
-            hints.append(
-                ""
-            )  # insert empty hint to force empty line between scan and join operators
-        for join, join_assignment in physical_operators.join_operators.items():
-            join_key = _generate_join_key(join)
-            join_assignment = (
-                PGLabOptimizerHints[join_assignment.operator]
-                if self._backend == "pg_lab"
-                else PGHintPlanOptimizerHints[join_assignment.operator]
-            )
-            hints.append(f"{join_assignment}({join_key})")
-
-        if self._backend == "pg_lab":
-            if hints:
-                hints.append("")
-            for intermediate, op in physical_operators.intermediate_operators.items():
-                if op == IntermediateOperator.Sort:
-                    # no need to hint these
-                    continue
-
-                intermediate_op = PGLabOptimizerHints[op]
-                intermediate_key = _generate_join_key(intermediate)
-                hints.append(f"{intermediate_op}({intermediate_key})")
-
-        if not settings and not hints:
-            return HintParts.empty()
-
-        return HintParts(settings, hints)
-
-    def _generate_pg_parameter_hints(
-        self, plan_parameters: PlanParameterization
-    ) -> HintParts:
-        """Builds the necessary operator-level hints and global settings to communicate plan parameters to the optimizer.
-
-        ..TODO: documentation is slightly outdated, update to reflect new pg_lab backend!
-
-        The resulting hints object will consist of pg_hint_plan hints that enforce custom cardinality estimates for
-        specific joins, hints that enforce a parallel scan for a given base table and preparatory statements to accomodate
-        all user-specific settings. Notice that due to limitations of the pg_hint_plan extension, cardinality hints
-        currently only work for intermediate results and not for base tables. Conversely, it is not possible to supply
-        parallelization hints for anything other than base tables, i.e. it is not possible to enforce the parallel
-        execution of a join.
-
-
-        Parameters
-        ----------
-        plan_parameters : PlanParameterization
-            The parameters in question
-
-        Returns
-        -------
-        HintParts
-            A Postgres and pg_hint_plan compatible encoding of the operator assignment
-
-        Warns
-        -----
-        Emits warnings if either 1) cardinality hints are supplied for base tables (currently pg_hint_plan can only
-        communicate cardinality hints for intermediate joins), or 2) parallel worker hints are supplied for intermediate
-        joins (currently pg_hint_plan can only communicate parallelization hints for parallel scans)
-        """
-        hints, settings = [], []
-        for join, cardinality_hint in plan_parameters.cardinalities.items():
-            if len(join) < 2 and self._backend == "pg_hint_plan":
-                # pg_hint_plan can only generate cardinality hints for joins
-                warnings.warn(
-                    f"Ignoring cardinality hint for base table {join}",
-                    category=HintWarning,
-                )
-                continue
-            cardinality_hint = round(cardinality_hint)
-            join_key = _generate_join_key(join)
-            hint_text = (
-                f"Card({join_key} #{cardinality_hint})"
-                if self._backend == "pg_lab"
-                else f"Rows({join_key} #{cardinality_hint})"
-            )
-            hints.append(hint_text)
-
-        for join, num_workers in plan_parameters.parallel_workers.items():
-            if self._backend == "pg_lab":
-                warnings.warn(
-                    "pg_lab does not support parallel worker hints",
-                    category=HintWarning,
-                )
-                continue
-            if len(join) != 1:
-                # pg_hint_plan can only generate parallelization hints for single tables
-                warnings.warn(
-                    f"Ignoring parallel workers hint for join {join}",
-                    category=HintWarning,
-                )
-                continue
-
-            table: TableReference = util.simplify(join)
-            hints.append(f"Parallel({table.identifier()} {num_workers} hard)")
-
-        for operator, setting in plan_parameters.system_settings.items():
-            setting = _escape_setting(setting)
-            settings.append(f"SET {operator} = {setting};")
-
-        return HintParts(settings, hints)
-
-    def _generate_pg_intermediate_hints(self, query_plan: QueryPlan) -> HintParts:
-        """Generates hints for auxiliary nodes in the query plan.
-
-        This includes nodes that are neither scans nor joins, such as Memoize and Materialize. Notice that such hints are
-        currently only supported by the pg_lab extension.
-
-        Parameters
-        ----------
-        query_plan : QueryPlan
-            The plan to encode
-
-        Returns
-        -------
-        HintParts
-            A pg_lab-compatible encoding of the intermediate nodes.
-        """
-        if self._backend != "pg_lab":
-            return HintParts.empty()
-
-        auxiliaries = query_plan.find_all_nodes(QueryPlan.is_auxiliary)
-        hints = HintParts.empty()
-        for aux_node in auxiliaries:
-            if aux_node.node_type == "Materialize":
-                table_identifier = ", ".join(
-                    tab.identifier() for tab in aux_node.tables()
-                )
-                hints.add(f"Material({table_identifier})")
-            elif aux_node.node_type == "Memoize":
-                table_identifier = ", ".join(
-                    tab.identifier() for tab in aux_node.tables()
-                )
-                hints.add(f"Memo({table_identifier})")
-        return hints
-
-    def _generate_hint_block(self, parts: HintParts) -> Optional[qal.Hint]:
-        """Transforms a collection of hints into a proper hint clause.
-
-        Parameters
-        ----------
-        parts : HintParts
-            The hints to combine
-
-        Returns
-        -------
-        Optional[qal.Hint]
-            A syntactically correct hint clause tailored for Postgres and pg_hint_plan. If neither settings nor hints
-            are contained in the `parts`, *None* is returned instead.
-        """
-        settings, hints = parts.settings, parts.hints
-        if not settings and not hints:
-            return None
-        settings_block = "\n".join(settings)
-        hint_prefix = "/*=pg_lab=" if self._backend == "pg_lab" else "/*+"
-        hint_suffix = "*/"
-        hints_block = (
-            "\n".join([hint_prefix] + ["  " + hint for hint in hints] + [hint_suffix])
-            if hints
-            else ""
-        )
-        return qal.Hint(settings_block, hints_block)
 
     def _assert_active_backend(self) -> None:
         """Ensures that a proper hinting backend is available.
@@ -2784,9 +2735,9 @@ class PostgresOptimizer(OptimizerInterface):
     def __init__(self, postgres_instance: PostgresInterface) -> None:
         self._pg_instance = postgres_instance
 
-    def query_plan(self, query: qal.SqlQuery | str) -> QueryPlan:
+    def query_plan(self, query: SqlQuery | str) -> QueryPlan:
         self._pg_instance._current_geqo_state = self._pg_instance._obtain_geqo_state()
-        if isinstance(query, qal.SqlQuery):
+        if isinstance(query, SqlQuery):
             query, deactivated_geqo = self._pg_instance._prepare_query_execution(
                 query, drop_explain=True
             )
@@ -2799,9 +2750,9 @@ class PostgresOptimizer(OptimizerInterface):
         return query_plan.as_qep()
 
     def analyze_plan(
-        self, query: qal.SqlQuery, *, timeout: Optional[float] = None
+        self, query: SqlQuery, *, timeout: Optional[float] = None
     ) -> Optional[QueryPlan]:
-        query = qal.transform.as_explain_analyze(query)
+        query = transform.as_explain_analyze(query)
 
         try:
             raw_query_plan: dict = self._pg_instance.execute_query(
@@ -2813,8 +2764,8 @@ class PostgresOptimizer(OptimizerInterface):
         query_plan = PostgresExplainPlan(raw_query_plan)
         return query_plan.as_qep()
 
-    def cardinality_estimate(self, query: qal.SqlQuery | str) -> Cardinality:
-        if isinstance(query, qal.SqlQuery):
+    def cardinality_estimate(self, query: SqlQuery | str) -> Cardinality:
+        if isinstance(query, SqlQuery):
             self._pg_instance._current_geqo_state = (
                 self._pg_instance._obtain_geqo_state()
             )
@@ -2829,9 +2780,9 @@ class PostgresOptimizer(OptimizerInterface):
             self._pg_instance._restore_geqo_state()
         return Cardinality(estimate)
 
-    def cost_estimate(self, query: qal.SqlQuery | str) -> float:
+    def cost_estimate(self, query: SqlQuery | str) -> float:
         self._pg_instance._current_geqo_state = self._pg_instance._obtain_geqo_state()
-        if isinstance(query, qal.SqlQuery):
+        if isinstance(query, SqlQuery):
             query, deactivated_geqo = self._pg_instance._prepare_query_execution(
                 query, drop_explain=True
             )
@@ -3084,16 +3035,16 @@ def _parallel_query_initializer(
 
 
 def _parallel_query_worker(
-    query: str | qal.SqlQuery,
+    query: str | SqlQuery,
     local_data: threading.local,
     timeout: Optional[int] = None,
     verbose: bool = False,
-) -> tuple[qal.SqlQuery | str, Any]:
+) -> tuple[SqlQuery | str, Any]:
     """Internal function for the `ParallelQueryExecutor` to run individual queries.
 
     Parameters
     ----------
-    query : str | qal.SqlQuery
+    query : str | SqlQuery
         The query to execute. The parallel executor does not make use of caching whatsoever, so no additional parameters are
         required.
     local_data : threading.local
@@ -3107,7 +3058,7 @@ def _parallel_query_worker(
 
     Returns
     -------
-    tuple[qal.SqlQuery | str, Any]
+    tuple[SqlQuery | str, Any]
         A tuple of the original query and the (simplified) result set. See `Database.execute_query` for an outline of the
         simplification process. This method applies the same rules. The query is also provided to distinguish the different
         result sets that arrive in parallel.
@@ -3167,7 +3118,7 @@ class ParallelQueryExecutor:
 
     See Also
     --------
-    postbound.db.db.Database
+    Database
     PostgresInterface
 
     References
@@ -3203,16 +3154,16 @@ class ParallelQueryExecutor:
         )
         self._tasks: list[concurrent.futures.Future] = []
         self._results: list[Any] = []
-        self._queries: dict[concurrent.futures.Future, qal.SqlQuery | str] = {}
+        self._queries: dict[concurrent.futures.Future, SqlQuery | str] = {}
 
-    def queue_query(self, query: qal.SqlQuery | str) -> None:
+    def queue_query(self, query: SqlQuery | str) -> None:
         """Adds a new query to the queue, to be executed as soon as possible.
 
         If a timeout was specified when creating the executor, this timeout will be applied to the query.
 
         Parameters
         ----------
-        query : qal.SqlQuery | str
+        query : SqlQuery | str
             The query to execute
         """
         future = self._thread_pool.submit(
@@ -3229,9 +3180,7 @@ class ParallelQueryExecutor:
         self,
         timeout: Optional[float] = None,
         *,
-        callback: Optional[
-            Callable[[qal.SqlQuery | str, ResultSet | None], None]
-        ] = None,
+        callback: Optional[Callable[[SqlQuery | str, ResultSet | None], None]] = None,
     ) -> None:
         """Blocks, until all queries currently queued have terminated.
 
@@ -3243,7 +3192,7 @@ class ParallelQueryExecutor:
             applies to the entire queue and not to individual queries. For example, one can set the per-query timeout to 1s
             which means that each query can be executed for at most 1 second. If an additional timeout of 10s is specified
             on the queue, the entire queue will be aborted if it takes longer than 10 seconds to complete.
-        callback : Optional[Callable[[qal.SqlQuery | str, ResultSet | None], None]], optional
+        callback : Optional[Callable[[SqlQuery | str, ResultSet | None], None]], optional
             A callback to be executed with each query that completes. The callback receives the query that was executed and
             the corresponding (raw) result set as arguments. If the query ran into a timeout, the result set is *None*.
 
@@ -3262,12 +3211,12 @@ class ParallelQueryExecutor:
             query = self._queries[future]
             callback(query, result_set)
 
-    def result_set(self) -> dict[str | qal.SqlQuery, ResultSet | None]:
+    def result_set(self) -> dict[str | SqlQuery, ResultSet | None]:
         """Provides the results of all queries that have terminated already, mapping query -> result set
 
         Returns
         -------
-        dict[str | qal.SqlQuery, ResultSet | None]
+        dict[str | SqlQuery, ResultSet | None]
             The query results. The raw result sets are provided without any simplification. If the query timed out, the result
             set is *None* (in contrast to empty result sets like `[]`).
         """
@@ -3291,7 +3240,7 @@ class ParallelQueryExecutor:
 
 
 def _timeout_query_worker(
-    query: qal.SqlQuery | str,
+    query: SqlQuery | str,
     *,
     pg_config: dict,
     result_send: mp_conn.Connection,
@@ -3306,7 +3255,7 @@ def _timeout_query_worker(
 
     Parameters
     ----------
-    query : qal.SqlQuery | str
+    query : SqlQuery | str
         Query to execute
     pg_config : dict
         Pickable representation of the current Postgres connection. This is used to re-establish the connection in the parallel
@@ -3371,12 +3320,12 @@ class TimeoutQueryExecutor:
             else DatabasePool.get_instance().current_database()
         )
 
-    def execute_query(self, query: qal.SqlQuery | str, timeout: float, **kwargs) -> Any:
+    def execute_query(self, query: SqlQuery | str, timeout: float, **kwargs) -> Any:
         """Runs a query on the database connection, cancelling if it takes longer than a specific timeout.
 
         Parameters
         ----------
-        query : qal.SqlQuery | str
+        query : SqlQuery | str
             Query to execute
         timeout : float
             Maximum query execution time in seconds.
@@ -3465,7 +3414,7 @@ class TimeoutQueryExecutor:
             ),
         }
 
-    def __call__(self, query: qal.SqlQuery | str, timeout: float, **kwargs) -> Any:
+    def __call__(self, query: SqlQuery | str, timeout: float, **kwargs) -> Any:
         return self.execute_query(query, timeout, **kwargs)
 
 

@@ -994,12 +994,15 @@ def parameters_from_plan(
     query_plan: QueryPlan | LogicalJoinTree,
     *,
     target_cardinality: Literal["estimated", "actual"] = "estimated",
+    fallback_estimated: bool = False,
 ) -> PlanParameterization:
     """Extracts the cardinality estimates from a join tree.
 
     The join tree can be either a logical representation, in which case the cardinalities are extracted directly. Or, it can be
     a full query plan, in which case the cardinalities are extracted from the estimates or actual measurements. The cardinality
     source depends on the `target_cardinality` setting.
+    If actual cardinalities should be used, but some nodes do only have estimates, these can be used as a fallback if
+    `fallback_estimated` is set.
     """
     params = PlanParameterization()
 
@@ -1007,11 +1010,16 @@ def parameters_from_plan(
         card = query_plan.annotation
         parallel_workers = None
     else:
-        card = (
-            query_plan.estimated_cardinality
-            if target_cardinality == "estimated"
-            else query_plan.actual_cardinality
-        )
+        if target_cardinality == "estimated":
+            card = query_plan.estimated_cardinality
+        elif target_cardinality == "actual" and not fallback_estimated:
+            card = query_plan.actual_cardinality
+        else:  # we should use actuals, but are allowed to fall back to estimates if necessary
+            card = (
+                query_plan.actual_cardinality
+                if query_plan.actual_cardinality.is_valid()
+                else query_plan.estimated_cardinality
+            )
         parallel_workers = query_plan.params.parallel_workers
 
     if not math.isnan(card):

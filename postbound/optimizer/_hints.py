@@ -190,6 +190,11 @@ class JoinOperatorAssignment:
         return self._join
 
     @property
+    def intermediate(self) -> frozenset[TableReference]:
+        """Alias for `join`"""
+        return self._join
+
+    @property
     def parallel_workers(self) -> float | int:
         """Get the number of parallel processes that should be used in the join.
 
@@ -929,16 +934,37 @@ class PhysicalOperatorAssignment:
         return f"global=[{global_str}] scans=[{scans_str}] joins=[{joins_str}] intermediates=[{intermediates_str}]"
 
 
-def operators_from_plan(query_plan: QueryPlan) -> PhysicalOperatorAssignment:
+def operators_from_plan(
+    query_plan: QueryPlan, *, include_workers: bool = False
+) -> PhysicalOperatorAssignment:
     """Extracts the operator assignment from a whole query plan.
 
-    Notice that this method does not add parallel workers to the assignment, since this is better handled by the
-    parameterization.
+    Notice that this method only adds parallel workers to the assignment if explicitly told to, since this is generally
+    better handled by the parameterization.
     """
     assignment = PhysicalOperatorAssignment()
     if not query_plan.operator and query_plan.input_node:
         return operators_from_plan(query_plan.input_node)
-    assignment.add(query_plan.operator, query_plan.tables())
+
+    workers = query_plan.parallel_workers if include_workers else math.nan
+    match query_plan.operator:
+        case ScanOperator():
+            operator = ScanOperatorAssignment(
+                query_plan.operator,
+                query_plan.base_table,
+                workers,
+            )
+            assignment.add(operator)
+        case JoinOperator():
+            operator = JoinOperatorAssignment(
+                query_plan.operator,
+                query_plan.tables(),
+                workers,
+            )
+            assignment.add(operator)
+        case _:
+            assignment.add(query_plan.operator, query_plan.tables())
+
     for child in query_plan.children:
         child_assignment = operators_from_plan(child)
         assignment = assignment.merge_with(child_assignment)
@@ -1002,7 +1028,8 @@ def read_operator_assignment_json(json_data: dict | str) -> PhysicalOperatorAssi
 
 ExecutionMode = Literal["sequential", "parallel"]
 """
-The execution mode indicates whether a query should be executed using either only sequential operators or only parallel ones.
+The execution mode indicates whether a query should be executed using either only sequential operators or only parallel
+ones.
 """
 
 
@@ -1014,33 +1041,37 @@ class PlanParameterization:
     - `cardinalities` provide specific cardinality estimates for individual joins or tables. These can be used to overwrite
       the estimation of the native database system
     - `parallel_workers` indicate how many worker processes should be used to execute individual joins or table
-      scans (assuming that the selected operator can be parallelized). Notice that this can also be indicated as part of the
-      `PhysicalOperatorAssignment` which will take precedence over this setting.
+      scans (assuming that the selected operator can be parallelized). Notice that this can also be indicated as part of
+      the `PhysicalOperatorAssignment` which will take precedence over this setting.
     - `system_settings` can be used to enable or disable specific optimization or execution features of the target
-      database. For example, they can be used to disable parallel execution or switch to another cardinality estimation method.
-      Such settings should be used sparingly since they defeat the purpose of optimization algorithms that are independent of
-      specific database systems.
+      database. For example, they can be used to disable parallel execution or switch to another cardinality estimation
+      method. Such settings should be used sparingly since they defeat the purpose of optimization algorithms that are
+      independent of specific database systems. Using these settings can also modify properties of the connection and
+      therefore affect later queries. It is the users's responsibility to reset such settings if necessary.
 
     In addition, the `execution_mode` can be used to control whether the optimizer should only consider sequential plans or
-    parallel plans. Note that the `parallel_workers` take precedence over this setting. If the optimizer should decide whether
-    a parallel execution is beneficial, this should be set to *None*.
+    parallel plans. Note that the `parallel_workers` take precedence over this setting. If the optimizer should decide
+    whether a parallel execution is beneficial, this should be set to *None*.
 
-    Although it is allowed to modify the different dictionaries directly, the more high-level methods should be used instead.
-    This ensures that all potential (future) invariants are maintained.
+    Although it is allowed to modify the different dictionaries directly, the more high-level methods should be used
+    instead. This ensures that all potential (future) invariants are maintained.
 
     Attributes
     ----------
     cardinalities : dict[frozenset[TableReference], Cardinality]
-        Contains the cardinalities for individual joins and scans. This is always the cardinality that is emitted by a specific
-        operator. All joins are identified by the base tables that they combine. Keys of single tables correpond to scans.
+        Contains the cardinalities for individual joins and scans. This is always the cardinality that is emitted by a
+        specific operator. All joins are identified by the base tables that they combine. Keys of single tables correpond
+        to scans. Each join should assume that all filter predicates that can be evaluated at this point have already been
+        applied.
     parallel_workers : dict[frozenset[TableReference], int]
-        Contains the number of parallel processes that should be used to execute a join or scan. All joins are identified by
-        the base tables that they combine. Keys of single tables correpond to scans. "Processes" does not necessarily mean
-        "system processes". The database system can also choose to use threads or other means of parallelization. This is not
-        restricted by the join assignment.
+        Contains the number of parallel processes that should be used to execute a join or scan. All joins are identified
+        by the base tables that they combine. Keys of single tables correpond to scans. "Processes" does not necessarily
+        mean "system processes". The database system can also choose to use threads or other means of parallelization. This
+        is not restricted by the join assignment.
     system_settings : dict[str, Any]
-        Contains the settings for the target database system. The keys and values, as well as their usage depend entirely on
-        the system. For example, in Postgres a setting like *enable_geqo = 'off'* can be used to disable the genetic optimizer.
+        Contains the settings for the target database system. The keys and values, as well as their usage depend entirely
+        on the system. For example, in Postgres a setting like *enable_geqo = 'off'* can be used to disable the genetic
+        optimizer.
     execution_mode : ExecutionMode | None
         Indicates whether the optimizer should only consider sequential plans, parallel plans, or leave the decision to the
         optimizer (*None*). The default is *None*.
@@ -1048,9 +1079,33 @@ class PlanParameterization:
 
     def __init__(self) -> None:
         self.cardinalities: dict[frozenset[TableReference], Cardinality] = {}
+        """
+        Contains the cardinalities for individual joins and scans. This is always the cardinality that is emitted by a
+        specific operator. All joins are identified by the base tables that they combine. Keys of single tables correpond
+        to scans.
+        Each join should assume that all filter predicates that can be evaluated at this point have already been applied.
+        """
+
         self.parallel_workers: dict[frozenset[TableReference], int] = {}
+        """
+        Contains the number of parallel processes that should be used to execute a join or scan. All joins are identified
+        by the base tables that they combine. Keys of single tables correpond to scans. "Processes" does not necessarily
+        mean "system processes". The database system can also choose to use threads or other means of parallelization. This
+        is not restricted by the join assignment.
+        """
+
         self.system_settings: dict[str, Any] = {}
+        """
+        Contains the settings for the target database system. The keys and values, as well as their usage depend entirely
+        on the system. For example, in Postgres a setting like *enable_geqo = 'off'* can be used to disable the genetic
+        optimizer.
+        """
+
         self.execution_mode: ExecutionMode | None = None
+        """
+        Indicates whether the optimizer should only consider sequential plans, parallel plans, or leave the decision to the
+        optimizer (*None*). The default is *None*.
+        """
 
     def add_cardinality(
         self, tables: Iterable[TableReference], cardinality: Cardinality
@@ -1083,8 +1138,6 @@ class PlanParameterization:
             errors, we standardize this number to denote the total number of workers that take part in the calculation.
         """
         self.parallel_workers[frozenset(tables)] = num_workers
-        if num_workers > 1:
-            self.execution_mode = "parallel"
 
     def set_system_settings(
         self, setting_name: str = "", setting_value: Any = None, **kwargs
@@ -1158,6 +1211,22 @@ class PlanParameterization:
             self.system_settings | other_parameters.system_settings
         )
         return merged_params
+
+    def drop_workers(self) -> PlanParameterization:
+        """Provides a copy of the current parameters without any parallel worker hints.
+
+        Changes to the copy are not reflected back on this parameterization and vice-versa.
+
+        Returns
+        -------
+        PlanParameterization
+            The copy without any parallel worker hints
+        """
+        params = PlanParameterization()
+        params.cardinalities = dict(self.cardinalities)
+        params.system_settings = dict(self.system_settings)
+        params.execution_mode = self.execution_mode
+        return params
 
     def __json__(self) -> jsondict:
         return {
