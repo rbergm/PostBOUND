@@ -1029,7 +1029,9 @@ def parameters_from_plan(
 
     for child in query_plan.children:
         child_params = parameters_from_plan(
-            child, target_cardinality=target_cardinality
+            child,
+            target_cardinality=target_cardinality,
+            fallback_estimated=fallback_estimated,
         )
         params = params.merge_with(child_params)
 

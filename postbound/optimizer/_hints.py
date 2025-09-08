@@ -959,7 +959,7 @@ def operators_from_plan(
             operator = JoinOperatorAssignment(
                 query_plan.operator,
                 query_plan.tables(),
-                workers,
+                parallel_workers=workers,
             )
             assignment.add(operator)
         case _:

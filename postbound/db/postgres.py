@@ -25,7 +25,6 @@ import time
 import warnings
 from collections import UserString
 from collections.abc import Callable, Iterable, Sequence
-from dataclasses import dataclass
 from multiprocessing import connection as mp_conn
 from pathlib import Path
 from typing import Any, Literal, Optional
@@ -96,77 +95,6 @@ from ._db import (
     UnsupportedDatabaseFeatureError,
     simplify_result_set,
 )
-
-# TODO: find a nice way to support index nested-loop join hints.
-# Probably inspired by the join order/join direction handling?
-
-HintBlock = collections.namedtuple(
-    "HintBlock", ["preparatory_statements", "hints", "query"]
-)
-"""Type alias to capture relevant info in a hint block under construction."""
-
-
-@dataclass
-class _GeQOState:
-    """Captures the current configuration of the GeQO optimizer for a Postgres instance.
-
-    Attributes
-    ----------
-    enabled : bool
-        Whether the GeQO optimizer is enabled. If it is disabled, the values of all other settings can be ignored.
-    threshold : int
-        The minimum number of tables that need to be joined in order for the GeQO optimizer to be activated. All queries with
-        less joined tables are optimized using a traditional dynamic programming-based optimizer.
-    """
-
-    enabled: bool
-    threshold: int
-
-    def triggers_geqo(self, query: SqlQuery) -> bool:
-        """Checks, whether a specific query would be optimized using GeQO.
-
-        Parameters
-        ----------
-        query : SqlQuery
-            The query to check. Notice that eventual preparatory statements that might modify the GeQO configuration are
-            ignored.
-
-        Returns
-        -------
-        bool
-            Whether GeQO would be used to optimize the query
-
-        Warnings
-        --------
-        This check does not consider eventual side effects of the query that modify the optimizer configuration. For example,
-        consider a query that would be optimized using GeQO given the current configuration. If this query contained a
-        preparatory statement that disabled the GeQO optimizer, that statement would not influence the check result.
-        """
-        return self.enabled and len(query.tables()) >= self.threshold
-
-
-def _escape_setting_value(value: object) -> str:
-    """Generates a Postgres-usable string for a setting value.
-
-    Depending on the value type, plain formatting, quotes, etc. are applied.
-
-    Parameters
-    ----------
-    value : object
-        The value to escape.
-
-    Returns
-    -------
-    str
-        The escaped value
-    """
-    if isinstance(value, bool):
-        return "'on'" if value else "'off'"
-    elif isinstance(value, (float, int)):
-        return str(value)
-    else:
-        return f"'{value}'"
-
 
 _SignificantPostgresSettings = {
     # Resource consumption settings (see https://www.postgresql.org/docs/current/runtime-config-resource.html)
@@ -350,9 +278,8 @@ class PostgresSetting(str):
         self._val = value
 
     def __new__(cls, parameter: str, value: object):
-        return super().__new__(
-            cls, f"SET {parameter} = {_escape_setting_value(value)};"
-        )
+        value = "on" if value is True else "off" if value is False else value
+        return super().__new__(cls, f"SET {parameter} = '{value}';")
 
     __match_args__ = ("parameter", "value")
 
@@ -604,44 +531,6 @@ References
 """
 
 
-def _query_contains_geqo_sensible_settings(query: SqlQuery) -> bool:
-    """Checks, whether a specific query contains any information that would be overwritten by GeQO.
-
-    Parameters
-    ----------
-    query : SqlQuery
-        The query to check
-
-    Returns
-    -------
-    bool
-        Whether the query is subject to unwanted GeQO modifications
-    """
-    return query.hints is not None and bool(query.hints.query_hints)
-
-
-def _modifies_geqo_config(query: SqlQuery) -> bool:
-    """Heuristic to check whether a specific query changes the current GeQO config of a Postgres system.
-
-    Parameters
-    ----------
-    query : SqlQuery
-        The query to check
-
-    Returns
-    -------
-    bool
-        Whether the query modifies the GeQO config. Notice that this is a heuristic check - there could be false positives as
-        well as false negatives!
-    """
-    if not isinstance(query, SqlQuery):
-        return False
-
-    if not query.hints or not query.hints.preparatory_statements:
-        return False
-    return "geqo" in query.hints.preparatory_statements.lower()
-
-
 class PostgresInterface(Database):
     """Database implementation for PostgreSQL backends.
 
@@ -685,7 +574,6 @@ class PostgresInterface(Database):
         self._db_schema = PostgresSchemaInterface(self)
         self._hinting_backend = PostgresHintService(self)
 
-        self._current_geqo_state = self._obtain_geqo_state()
         self._timeout_executor = TimeoutQueryExecutor(self)
         self._last_query_runtime = math.nan
 
@@ -716,17 +604,16 @@ class PostgresInterface(Database):
         cache_enabled = cache_enabled or (cache_enabled is None and self._cache_enabled)
         if isinstance(query, UserString):
             query = str(query)
+        elif isinstance(query, SqlQuery):
+            query = self._hinting_backend.format_query(query)
 
         if cache_enabled and query in self._query_cache:
             query_result = self._query_cache[query]
             return query_result if raw else simplify_result_set(query_result)
 
         try:
-            self._current_geqo_state = self._obtain_geqo_state()
-            prepared_query, deactivated_geqo = self._prepare_query_execution(query)
-
             start_time = time.perf_counter_ns()
-            self._cursor.execute(prepared_query)
+            self._cursor.execute(query)
             end_time = time.perf_counter_ns()
             self._last_query_runtime = (
                 end_time - start_time
@@ -735,11 +622,9 @@ class PostgresInterface(Database):
             query_result = (
                 self._cursor.fetchall() if self._cursor.rowcount >= 0 else None
             )
-            if deactivated_geqo:
-                self._restore_geqo_state()
             if cache_enabled:
                 self._inflate_query_cache()
-                self._query_cache[prepared_query] = query_result
+                self._query_cache[query] = query_result
         except (psycopg.InternalError, psycopg.OperationalError) as e:
             msg = "\n".join(
                 [
@@ -1179,110 +1064,6 @@ class PostgresInterface(Database):
         self._connection.prepare_threshold = None
         self._cursor: psycopg.Cursor = self._connection.cursor()
         return self.backend_pid()
-
-    def _prepare_query_execution(
-        self, query: SqlQuery | str, *, drop_explain: bool = False
-    ) -> tuple[str, bool]:
-        """Handles necessary setup logic that enable an arbitrary query to be executed by the database system.
-
-        This setup process involves formatting the query to accomodate deviations from standard SQL by the database
-        system, as well as executing preparatory statements of the query's `Hint` clause.
-
-        `drop_explain` can be used to remove any EXPLAIN clauses from the query. Note that all actions that require
-        the "semantics" of the query to be known (e.g. EXPLAIN modifications or query hints) and are therefore only
-        executed for instances of the qal queries.
-
-        Parameters
-        ----------
-        query : SqlQuery | str
-            The query to prepare. Only queries from the query abstraction layer can be prepared.
-        drop_explain : bool, optional
-            Whether any `Explain` clauses on the query should be ignored. This is intended for cases where the callee
-            has its own handling of *EXPLAIN* blocks. Defaults to *False*.
-
-        Returns
-        -------
-        tuple[str, bool]
-            A unified version of the query that is ready for execution and a boolean indicating whether GeQO has been
-            automatically deactivated.
-        """
-        if not isinstance(query, SqlQuery):
-            return query, False
-
-        requires_geqo_deactivation = self._hinting_backend._requires_geqo_deactivation(
-            query
-        )
-        if requires_geqo_deactivation:
-            util.logging.print_if(self.debug, "Disabling GeQO", file=sys.stderr)
-            self._cursor.execute("SET geqo = 'off';")
-
-        if drop_explain:
-            query = transform.drop_clause(query, Explain)
-        if query.hints and query.hints.preparatory_statements:
-            self._cursor.execute(query.hints.preparatory_statements)
-            query = transform.drop_hints(query, preparatory_statements_only=True)
-        return self._hinting_backend.format_query(query), requires_geqo_deactivation
-
-    def _obtain_query_plan(self, query: str) -> dict:
-        """Provides the query plan that would be used for executing a specific query.
-
-        Parameters
-        ----------
-        query : str
-            The query to plan. It does not have to be an *EXPLAIN* query already, this will be added if necessary.
-
-        Returns
-        -------
-        dict
-            The raw *EXPLAIN* data.
-        """
-        if not query.upper().startswith("EXPLAIN (FORMAT JSON)"):
-            query = "EXPLAIN (FORMAT JSON) " + query
-        try:
-            self._cursor.execute(query)
-            return self._cursor.fetchone()[0]
-        except (psycopg.InternalError, psycopg.OperationalError) as e:
-            msg = "\n".join(
-                [f"At {util.timestamp()}", "For query:", str(query), "Message:", str(e)]
-            )
-            raise DatabaseServerError(msg, e)
-        except psycopg.Error as e:
-            msg = "\n".join(
-                [f"At {util.timestamp()}", "For query:", str(query), "Message:", str(e)]
-            )
-            raise DatabaseUserError(msg, e)
-
-    def _obtain_geqo_state(self) -> _GeQOState:
-        """Fetches the current GeQO configuration from the database.
-
-        Returns
-        -------
-        _GeQOState
-            The relevant GeQO config
-        """
-        self._cursor.execute(
-            "SELECT name, setting FROM pg_settings "
-            "WHERE name IN ('geqo', 'geqo_threshold') ORDER BY name;"
-        )
-        geqo_enabled: bool = False
-        geqo_threshold: int = 0
-        for name, value in self._cursor.fetchall():
-            if name == "geqo":
-                geqo_enabled = value == "on"
-            elif name == "geqo_threshold":
-                geqo_threshold = int(value)
-            else:
-                warnings.warn(f"Unexpected GeQO setting '{name}' with value '{value}'")
-                continue
-        return _GeQOState(geqo_enabled, geqo_threshold)
-
-    def _restore_geqo_state(self) -> None:
-        """Resets the GeQO configuration of the database system to the known `_current_geqo_state`."""
-        geqo_enabled = "on" if self._current_geqo_state.enabled else "off"
-        self._cursor.execute(f"SET geqo = '{geqo_enabled}';")
-        self._cursor.execute(
-            f"SET geqo_threshold = {self._current_geqo_state.threshold};"
-        )
 
     def _fetch_index_relnames(
         self, table: TableReference | str
@@ -2157,8 +1938,8 @@ def _generate_pghintplan_hints(
     prep_statements: list[str] = []
     used_parallel: bool = False
 
-    geqo_thresh: int = pg_instance.config["geqo_threshold"]
-    if len(query.tables()) > geqo_thresh:
+    geqo_thresh: str = pg_instance.config["geqo_threshold"]
+    if len(query.tables()) > int(geqo_thresh):
         warnings.warn(
             "Temporarily disabling GEQO. pg_hint_plan only works with the DP optimizer.",
             category=HintWarning,
@@ -2222,12 +2003,15 @@ def _generate_pghintplan_hints(
         for tabs, card in plan_params.cardinalities.items():
             if card.isnan():
                 continue
+
             intermediate = " ".join(tab.identifier() for tab in tabs)
             if card.isinf():
                 warnings.warn(
                     f"Ignoring infinite cardinality for intermediate {intermediate}",
                     category=HintWarning,
                 )
+                continue
+
             hints.append(f"Rows({intermediate} #{card.value})")
 
         for tabs, workers in plan_params.parallel_workers.items():
@@ -2357,6 +2141,8 @@ def _generate_pglab_hints(
                     f"Ignoring infinite cardinality for intermediate {intermediate}",
                     category=HintWarning,
                 )
+                continue
+
             hints.append(f"Card({intermediate} #{card})")
 
         for setting, val in plan_params.system_settings.items():
@@ -2418,6 +2204,10 @@ def _generate_pglab_plan(
         else:
             hint = f"{op}({intermediate})"
         hints.append(hint)
+
+        card = plan.actual_cardinality or plan.estimated_cardinality
+        if card:
+            hints.append(f"Card({intermediate} #{card})")
     elif in_upperrel and plan.parallel_workers and not used_parallel:
         hints.append(f"Result(workers={plan.parallel_workers})")
         used_parallel = True
@@ -2667,41 +2457,6 @@ class PostgresHintService(HintService):
             self._inactive = True
             self._backend = "none"
 
-    def _requires_geqo_deactivation(self, query: SqlQuery) -> bool:
-        """Determines whether the query requires the deactivation of the genetic optimizer (GeQO).
-
-        Parameters
-        ----------
-        query : SqlQuery
-            The query to check
-
-        Returns
-        -------
-        bool
-            Whether GeQO needs to be disabled to ensure a proper execution of the query
-        """
-        if self._inactive:
-            return False
-
-        if self._backend == "pg_lab":
-            # pg_lab can work with GeQO just fine
-            return False
-
-        if not _query_contains_geqo_sensible_settings(query) or _modifies_geqo_config(
-            query
-        ):
-            # If the query does not contain any problematic parts (i.e. hints) that GeQO might interfere with, or if the
-            # query takes care of the GeQO configuration itself, we do not need to deactivate GeQO
-            return False
-
-        if not self._postgres_db._current_geqo_state.triggers_geqo(query):
-            # If the database has GeQO disabled, or if the query is below the GeQO threshold, we do not need to deactivate
-            # GeQO
-            return False
-
-        # If we reach this point, we have to deactivate GeQO
-        return True
-
     def _assert_active_backend(self) -> None:
         """Ensures that a proper hinting backend is available.
 
@@ -2736,17 +2491,15 @@ class PostgresOptimizer(OptimizerInterface):
         self._pg_instance = postgres_instance
 
     def query_plan(self, query: SqlQuery | str) -> QueryPlan:
-        self._pg_instance._current_geqo_state = self._pg_instance._obtain_geqo_state()
         if isinstance(query, SqlQuery):
-            query, deactivated_geqo = self._pg_instance._prepare_query_execution(
-                query, drop_explain=True
-            )
+            query = transform.as_explain(query)
+            query = self._pg_instance._hinting_backend.format_query(query)
         else:
-            deactivated_geqo = False
-        raw_query_plan = self._pg_instance._obtain_query_plan(query)
-        query_plan = PostgresExplainPlan(raw_query_plan)
-        if deactivated_geqo:
-            self._pg_instance._restore_geqo_state()
+            query = self._explainify(query)
+        raw_query_plan: list = self._pg_instance.execute_query(
+            query, cache_enabled=False
+        )
+        query_plan = PostgresExplainPlan(raw_query_plan[0])
         return query_plan.as_qep()
 
     def analyze_plan(
@@ -2766,32 +2519,22 @@ class PostgresOptimizer(OptimizerInterface):
 
     def cardinality_estimate(self, query: SqlQuery | str) -> Cardinality:
         if isinstance(query, SqlQuery):
-            self._pg_instance._current_geqo_state = (
-                self._pg_instance._obtain_geqo_state()
-            )
-            query, deactivated_geqo = self._pg_instance._prepare_query_execution(
-                query, drop_explain=True
-            )
+            query = transform.as_explain(query)
+            query = self._pg_instance._hinting_backend.format_query(query)
         else:
-            deactivated_geqo = False
-        query_plan = self._pg_instance._obtain_query_plan(query)
+            query = self._explainify(query)
+        query_plan = self._pg_instance.execute_query(query, cache_enabled=False)
         estimate: int = query_plan[0]["Plan"]["Plan Rows"]
-        if deactivated_geqo:
-            self._pg_instance._restore_geqo_state()
         return Cardinality(estimate)
 
     def cost_estimate(self, query: SqlQuery | str) -> float:
-        self._pg_instance._current_geqo_state = self._pg_instance._obtain_geqo_state()
         if isinstance(query, SqlQuery):
-            query, deactivated_geqo = self._pg_instance._prepare_query_execution(
-                query, drop_explain=True
-            )
+            query = transform.as_explain(query)
+            query = self._pg_instance._hinting_backend.format_query(query)
         else:
-            deactivated_geqo = False
-        query_plan = self._pg_instance._obtain_query_plan(query)
-        estimate = query_plan[0]["Plan"]["Total Cost"]
-        if deactivated_geqo:
-            self._pg_instance._restore_geqo_state()
+            query = self._explainify(query)
+        query_plan = self._pg_instance.execute_query(query, cache_enabled=False)
+        estimate: float = query_plan[0]["Plan"]["Total Cost"]
         return estimate
 
     def configure_operator(self, operator: PhysicalOperator, *, enabled: bool) -> None:
@@ -2815,6 +2558,11 @@ class PostgresOptimizer(OptimizerInterface):
             )
         status = "on" if enabled else "off"
         self._pg_instance.cursor.execute(f"SET {setting_name} TO {status}")
+
+    def _explainify(self, query: str) -> str:
+        if not query.upper().startswith("EXPLAIN (FORMAT JSON)"):
+            query = f"EXPLAIN (FORMAT JSON) {query}"
+        return query
 
 
 def _reconnect(name: str, *, pool: DatabasePool) -> PostgresInterface:
