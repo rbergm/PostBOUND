@@ -614,9 +614,8 @@ def optimize_and_execute_query(
         execution_result[COL_OPT_FAILURE_REASON] = e.features
 
     execution_result[COL_ORIG_QUERY] = query
-    execution_result[COL_OPT_SETTINGS] = [
-        optimization_pipeline.describe()
-    ] * repetitions
+    pipeline_desc = optimization_pipeline.describe()
+    execution_result[COL_OPT_SETTINGS] = [pipeline_desc] * repetitions
     return execution_result
 
 

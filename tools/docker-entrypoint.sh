@@ -24,7 +24,7 @@ if [ -z "$(ls /postbound)" ] ; then
     git clone --depth 1 --branch=main https://github.com/rbergm/PostBOUND /postbound
 
     # Setup local Postgres or pg_lab
-    if [ "$USE_PGLAB" = "true" ] & [ -z "$(ls /pg_lab)" ] ; then
+    if [ "$USE_PGLAB" = "true" -a -z "$(ls /pg_lab)" ] ; then
         echo "[setup] Building pg_lab"
         git clone --depth 1 --branch=main https://github.com/rbergm/pg_lab /pg_lab
         cd /pg_lab && ./postgres-setup.sh --pg-ver "$PGVER" --remote-password "postbound" --stop
