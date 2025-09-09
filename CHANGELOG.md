@@ -52,6 +52,7 @@ Currently, we plan to implement the following features in the future (in no part
 - 🐘 Added `start()`, `stop()` and `is_running()` functions to manage a local Postgres server
 - 🐘 Added `data_dir()` function to retrieve the data directory of the Postgres server
 - 🐘 The parallel query executor now supports optional callbacks
+- Added a `last(n)` method to workloads to retrieve the last _n_ queries
 
 ### 💀 Breaking changes
 - Renamed the attributes of `PlanParameterization` to be more succint

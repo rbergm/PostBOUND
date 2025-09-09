@@ -320,6 +320,27 @@ class Workload(collections.UserDict[LabelType, qal.SqlQuery]):
         sub_workload = {label: self.data[label] for label in first_n_labels}
         return Workload(sub_workload, self._name, self._root)
 
+    def last(self, n: int) -> Workload[LabelType]:
+        """Provides the last `n` queries of the workload, according to the natural order of the query labels.
+
+        If there are less than `n` queries in the workload, all queries will be returned. Similar to other methods that rely
+        on some sort of ordering of the queries, if the natural order has been manually broken due to shuffling, the shuffled
+        order is used instead.
+
+        Parameters
+        ----------
+        n : int
+            The number of queries that should be returned
+
+        Returns
+        -------
+        Workload[LabelType]
+            A workload consisting of the last `n` queries of the current workload
+        """
+        last_n_labels = self._sorted_labels[-n:]
+        sub_workload = {label: self.data[label] for label in last_n_labels}
+        return Workload(sub_workload, self._name, self._root)
+
     def pick_random(self, n: int) -> Workload[LabelType]:
         """Constructs a new workload, consisting of randomly selected queries from this workload.
 
