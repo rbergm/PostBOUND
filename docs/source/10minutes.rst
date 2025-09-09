@@ -105,7 +105,7 @@ For more details on the query abstraction, see the separate :doc:`core/qal` docu
     reasons that are explained in the :doc:`core/qal` documentation.
     To indicate that some interface accepts both plain ``SELECT`` queries as well as set operations, the
     :type:`SelectStatement <postbound.qal.SelectStatement>` type is used.
-    
+
     We might add support for DDL and DML queries in the future, if there is actual demand for it.
     For now, such statements have to be represented as raw SQL strings.
     To indicate that an interface would also accept queries beyond ``SELECT``, the
@@ -134,8 +134,6 @@ For Postgres, you can connect to the database like so:
 Here, the ``config_file`` parameter points to a file that contains the connection parameters as a
 `psycopg-compatible <https://www.psycopg.org/psycopg3/docs/api/connections.html#psycopg.Connection.connect>`__ string.
 
-See the separate :doc:`core/databases` documentation for more details on the database abstraction.
-
 .. note::
 
     PostgreSQL does not provide hinting support out-of-the-box.
@@ -143,6 +141,10 @@ See the separate :doc:`core/databases` documentation for more details on the dat
     If you set up your own Postgres instance, make sure to install the extension.
     As an alternative, you can use `pg_lab <https://github.com/rbergm/pg_lab>`__, which extends Postgres with more advanced
     hinting capabilities and additional extension points for optimizer research.
+
+If you are using DuckDB, you can load a database using :func:`pb.duckdb.connect() <postbound.duckdb.connect>`.
+
+See the separate :doc:`core/databases` documentation for more details on the database abstraction.
 
 
 .. _10minutes-workloads:

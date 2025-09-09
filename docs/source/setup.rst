@@ -31,12 +31,12 @@ Once the framework is installed, you just need to configure the database connect
 A key requirement for PostBOUND is a running database server to execute queries against.
 See the :ref:`hinting` description for more details on why this is necessary and what  functionality the database has to
 provide.
-Currently, the most well-supported DBS is PostgreSQL.
+Currently, the most well-supported DBS are PostgreSQL and DuckDB.
 Limited support for MySQL is also available.
 In the following, we assume that PostBOUND should interact with a Postgres server.
 
 To ensure the smoothest interaction between PostBOUND and Postgres and to have the least configuration effort, the Postgres
-server and PostBOUND should run on the same address space (i.e. on the same machine or within the same virtualized
+server and PostBOUND should run in the same address space (i.e. on the same machine or within the same virtualized
 environment. Notably, a manual installation of PostBOUND and a Docker-based installation of Postgres does not work).
 Basically, there are three different options to setup a Postgres server:
 
@@ -146,13 +146,36 @@ Putting things together, you can create an entirely new Postgres server like so:
     ./postgres-psycopg-setup.sh job imdb
     cp .psycopg_connect_job ../..
 
+Similar to the Postgres setup, you can also create a local DuckDB installation by compiling it from source.
+To do so, use the ``db-support/duckdb/duckdb-setup.sh`` script.
+This script will automatically install the Python package into your PostBOUND virtual environment.
+See the ``--help`` options for more details.
+
+.. tip::
+
+    DuckDB does not provide any hinting functionality out-of-the-box.
+    Therefore, the setup creates a special version of DuckDB called `quacklab <https://github.com/rbergm/quacklab>`__,
+    that adds basic hinting capabilities to DuckDB.
+    This is also the reason why the setup compiles DuckDB from source instead of using a binary distribution.
+
+Once the DuckDB compilation is completed, you can include the _duckdb_ executable in your *PATH* by sourcing the
+``duckdb-load-env.sh`` script.
+Lastly, you can import popular benchmarks like JOB or Stats using the workload setup scripts:
+
+.. code-block:: bash
+
+    cd db-support/duckdb
+    ./duckdb-setup.sh
+    . ./duckdb-load-env.sh
+    ./workload-job-setup.sh  # this requires the duckdb executable to be on your PATH
+
 
 Docker Installation
 -------------------
 
 The Docker-based installation essentially automates the manual installation process described above.
 The resulting Docker container contains a virtual environment-based installation of PostBOUND and a Postgres (or pg_lab)
-server completely configured and ready to use.
+server as well as DuckDB completely configured and ready to use.
 Optionally, you can also obtain an optimized Postgres server configuration and setup different benchmarks.
 
 To create the Docker image, simply run ``docker build`` in the main PostBOUND directory.
@@ -160,37 +183,41 @@ You can specify the timezone of the image using the ``TIMEZONE`` ``--build-arg``
 You can customize the container with the following options via ``--env`` parameters (with the exception of _TIMEZONE_,
 which must be specified as a `--build-arg` when creating the image).
 Please note that the *run* command will invoke a lot of setup logic.
-Hence, it will take a substantial amount of time to complete the installation.
+Hence, it will take a substantial amount of time to complete the installation (think hours).
 This is because the container will compile a local Postgres server from source, import benchmarks, etc.
 Use ``docker logs -f <container name>`` to monitor the installation progress.
 
-+------------------------+-------------------------------+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+---------------+
-| Argument               | Allowed values                | Description                                                                                                                                                                                                                                                            | Default       |
-+========================+===============================+========================================================================================================================================================================================================================================================================+===============+
-| ``TIMEZONE``           | Any valid timezone identifier | Timezone of the Docker container (and hence the Postgres server). It is probably best to just use the value of ``cat /etc/timezone``.                                                                                                                                  | ``UTC``       |
-+------------------------+-------------------------------+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+---------------+
-| ``USERNAME``           | Any valid UNIX username       | The username within the Docker container. This will also be the Postgres user and password.                                                                                                                                                                            | ``postbound`` |
-+------------------------+-------------------------------+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+---------------+
-| ``SETUP_IMDB``         | *true* or *false*             | Whether an `IMDB <https://doi.org/10.14778/2850583.2850594>`__ instance should be created as part of the Postgres setup. PostBOUND can connect to the database using the ``.psycopg_connection_job`` config file.                                                      | *false*       |
-+------------------------+-------------------------------+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+---------------+
-| ``SETUP_STATS``        | *true* or *false*             | Whether a `Stats <https://doi.org/10.14778/3503585.3503586>`__ instance should be created as part of the Postgres setup. PostBOUND can connect to the database using the ``.psycopg_connection_stats`` config file.                                                    | *false*       |
-+------------------------+-------------------------------+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+---------------+
-| ``SETUP_STACK``        | *true* or *false*             | Whether a `Stack <https://doi.org/10.1145/3448016.3452838>`__ instance should be created as part of the Postgres setup. PostBOUND can connect to the database using the ``.psycopg_connection_stack`` config file.                                                     | *false*       |
-+------------------------+-------------------------------+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+---------------+
-| ``OPTIMIZE_PG_CONFIG`` | *true* or *false*             | Whether the Postgres configuration parameters should be automatically set based on your hardware platform. Rules are based on `PGTune <https://pgtune.leopard.in.ua/>`__ by `le0pard <https://github.com/le0pard>`__. See :ref:`pg-server-config` for more details.    | *false*       |
-+------------------------+-------------------------------+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+---------------+
-| ``PG_DISK_TYPE``.      | *SSD* or *HDD*                | In case the Postgres server is automatically configured (see ``OPTIMIZE_PG_CONFIG``) this indicates the kind of storage for the actual database. In turn, this influences the relative cost of sequential access and index-based access for the query optimizer.       | *SSD*         |
-+------------------------+-------------------------------+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+---------------+
-| ``PGVER``              | 16, 17, ...                   | The Postgres version to use. Notice that pg_lab supports fewer versions. This value is passed to the ``postgres-setup.sh`` script of the Postgres tooling (either under ``db-support`` or from pg_lab), which provides the most up to date list of supported versions. | *17*          |
-+------------------------+-------------------------------+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+---------------+
-| ``USE_PGLAB``          | *true* or *false*             | Whether to initialize a `pg_lab <https://github.com/rbergm/pg_lab>`__ server instead of a normal Postgres server. pg_lab provides advanced hinting capabilities and offers additional extension points for the query optimizer.                                        | *false*       |
-+------------------------+-------------------------------+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+---------------+
++------------------------+-------------------------------+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+---------------+
+| Argument               | Allowed values                | Description                                                                                                                                                                                                                                                                         | Default       |
++========================+===============================+=====================================================================================================================================================================================================================================================================================+===============+
+| ``TIMEZONE``           | Any valid timezone identifier | Timezone of the Docker container (and hence the Postgres server). It is probably best to just use the value of ``cat /etc/timezone``.                                                                                                                                               | ``UTC``       |
++------------------------+-------------------------------+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+---------------+
+| ``USERNAME``           | Any valid UNIX username       | The username within the Docker container. This will also be the Postgres user and password.                                                                                                                                                                                         | ``postbound`` |
++------------------------+-------------------------------+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+---------------+
+| ``SETUP_POSTGRES``     | *true* or *false*             | Whether a Postgres server should be setup. If ``USE_PGLAB`` is also set to *true*, a pg_lab server is created instead.                                                                                                                                                              | *true*        |
++------------------------+-------------------------------+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+---------------+
+| ``OPTIMIZE_PG_CONFIG`` | *true* or *false*             | Whether the Postgres configuration parameters should be automatically set based on your hardware platform. Rules are based on `PGTune <https://pgtune.leopard.in.ua/>`__ by `le0pard <https://github.com/le0pard>`__. See :ref:`pg-server-config` for more details.                 | *false*       |
++------------------------+-------------------------------+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+---------------+
+| ``PG_DISK_TYPE``.      | *SSD* or *HDD*                | In case the Postgres server is automatically configured (see ``OPTIMIZE_PG_CONFIG``) this indicates the kind of storage for the actual database. In turn, this influences the relative cost of sequential access and index-based access for the query optimizer.                    | *SSD*         |
++------------------------+-------------------------------+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+---------------+
+| ``PGVER``              | 16, 17, ...                   | The Postgres version to use. Notice that pg_lab supports fewer versions. This value is passed to the ``postgres-setup.sh`` script of the Postgres tooling (either under ``db-support`` or from pg_lab), which provides the most up to date list of supported versions.              | *17*          |
++------------------------+-------------------------------+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+---------------+
+| ``USE_PGLAB``          | *true* or *false*             | Whether to initialize a `pg_lab <https://github.com/rbergm/pg_lab>`__ server instead of a normal Postgres server. pg_lab provides advanced hinting capabilities and offers additional extension points for the query optimizer.                                                     | *false*       |
++------------------------+-------------------------------+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+---------------+
+| ``SETUP_DUCKDB``       | *true* or *false*             | Whether a local DuckDB installation should be created as part of the PostBOUND setup. This will compile DuckDB from source and install it under ``/postbound/db-support/duckdb/duckdb-server``.                                                                                     | *false*       |
++------------------------+-------------------------------+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+---------------+
+| ``SETUP_IMDB``         | *true* or *false*             | Whether an `IMDB <https://doi.org/10.14778/2850583.2850594>`__ instance should be created as part of the setup. PostBOUND can connect to the Postgres database using the ``.psycopg_connection_job`` config file. The DuckDB image will be available at ``/postbound/imdb.duckdb``. | *false*       |
++------------------------+-------------------------------+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+---------------+
+| ``SETUP_STATS``        | *true* or *false*             | Whether a `Stats <https://doi.org/10.14778/3503585.3503586>`__ instance should be created as part of the setup. PostBOUND can connect to the database using the ``.psycopg_connection_stats`` config file. The DuckDB image will be available at ``/postbound/stats.duckdb``.       | *false*       |
++------------------------+-------------------------------+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+---------------+
+| ``SETUP_STACK``        | *true* or *false*             | Whether a `Stack <https://doi.org/10.1145/3448016.3452838>`__ instance should be created as part of the setup. PostBOUND can connect to the database using the ``.psycopg_connection_stack`` config file. Note that we currently do not create a Stack image for DuckDB.            | *false*       |
++------------------------+-------------------------------+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+---------------+
 
 The Docker container makes port 5432 available to bind on the system.
+This enables you to connect to the Postgres server from outside.
 If you plan on using Jupyter for data analysis, consider also publishing port 8888 on the container to access the notebooks
 from your client's browser.
-This enables you to connect to the Postgres server from outside.
-Likewise, volumes are created at ``/postbound/`` and ``/pg_lab`` (only useful if pg_lab is actually enabled).
+Volumes are created at ``/postbound/`` and ``/pg_lab`` (only useful if pg_lab is actually enabled).
 The PostBOUND installation itself is located at ``/postbound``.
 If a vanilla Postgres server is used, it is installed at ``/postbound/db-support/postgres/postgres-server``.
 pg_lab servers are installed at ``/pg_lab``.
@@ -199,9 +226,9 @@ pg_lab installation and skips the corresponding setup.
 This can be useful if multiple containers should share the same pg_lab installation.
 
 Once you log in to the container, the PostBOUND virtual environment will be activated automatically.
-Likewise, all Postgres binaries are available on the *PATH*.
+Likewise, all Postgres and DuckDB binaries are available on the *PATH*.
 
-Putting things together, you can create a Docker container with PostBOUND and Postgres like so:
+Putting things together, you can create a Docker container with PostBOUND running Postgres and DuckDB like so:
 
 .. code-block:: bash
 
@@ -210,6 +237,7 @@ Putting things together, you can create a Docker container with PostBOUND and Po
     docker run -dt \
         --shm-size 4G \
         --name postbound \
+        --env SETUP_DUCKDB=true \
         --env SETUP_IMDB=true \
         --env SETUP_STATS=true \
         --env OPTIMIZE_PG_CONFIG=true \
@@ -230,4 +258,7 @@ Putting things together, you can create a Docker container with PostBOUND and Po
     This is expected and nothing to worry about.
     The build process involves downloading and compiling Postgres from source, as well as optionally setting up the
     databases for JOB, Stats and the like (which also includes downloading and importing them).
+    If you also include DuckDB in the setup, this will also be compiled from source.
+    During testing, we noticed that the creating an optimized build for DuckDB can take a substantial amount of time
+    (around 30 to 60 minutes on a reasonably fast machine).
     You can follow the current progress via ``docker logs -f postbound`` (provided that your container is called *postbound*).
