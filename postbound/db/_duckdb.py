@@ -2,11 +2,9 @@
 # The module is available in the __init__ of the db package under the duckdb name. This solves our problems for now.
 from __future__ import annotations
 
+import concurrent.futures
 import json
 import math
-import multiprocessing
-import multiprocessing.connection
-import sys
 import textwrap
 import time
 import warnings
@@ -50,51 +48,6 @@ from ._db import (
 from .postgres import PostgresLimitClause
 
 
-def _timeout_executor(
-    query: str,
-    *,
-    cursor: Cursor,
-    result_pipe: multiprocessing.connection.Connection,
-    error_pipe: multiprocessing.connection.Connection,
-    runtime_pipe: multiprocessing.connection.Connection,
-) -> None:
-    try:
-        start_time = time.perf_counter_ns()
-        cursor.execute(query)
-        end_time = time.perf_counter_ns()
-        runtime = (end_time - start_time) / 10**9  # convert to seconds
-        result_set = cursor.fetchall()
-
-        result_pipe.send(result_set)
-        runtime_pipe.send(runtime)
-    except Exception as e:
-        error_pipe.send(e)
-
-
-def _timeout_executor_macos(
-    query: str,
-    *,
-    db: Path,
-    result_pipe: multiprocessing.connection.Connection,
-    error_pipe: multiprocessing.connection.Connection,
-    runtime_pipe: multiprocessing.connection.Connection,
-) -> None:
-    import duckdb
-
-    cursor = duckdb.connect(db)
-    try:
-        start_time = time.perf_counter_ns()
-        cursor.execute(query)
-        end_time = time.perf_counter_ns()
-        runtime = (end_time - start_time) / 10**9  # convert to seconds
-        result_set = cursor.fetchall()
-
-        result_pipe.send(result_set)
-        runtime_pipe.send(runtime)
-    except Exception as e:
-        error_pipe.send(e)
-
-
 class DuckDBInterface(Database):
     def __init__(
         self,
@@ -115,6 +68,8 @@ class DuckDBInterface(Database):
         self._schema = DuckDBSchema(self)
         self._optimizer = DuckDBOptimizer(self)
         self._hinting = DuckDBHintService(self)
+
+        self._timeout_executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
 
     def schema(self) -> DuckDBSchema:
         return self._schema
@@ -190,65 +145,18 @@ class DuckDBInterface(Database):
         if isinstance(query, SqlQuery):
             query = self._hinting.format_query(query)
 
-        result_recv, result_send = multiprocessing.Pipe(duplex=False)
-        error_recv, error_send = multiprocessing.Pipe(duplex=False)
-        runtime_recv, runtime_send = multiprocessing.Pipe(duplex=False)
+        promise = self._timeout_executor.submit(self._execute_worker, query)
+        try:
+            result_set = promise.result(timeout=timeout)
+            return result_set
+        except concurrent.futures.TimeoutError:
+            self._cur.interrupt()
+            promise.result()
 
-        if sys.platform == "darwin":
-            self.close()
-        else:
-            cur = self._cur.cursor()
-
-        if sys.platform == "darwin":
-            worker = multiprocessing.Process(
-                target=_timeout_executor_macos,
-                args=(query,),
-                kwargs={
-                    "db": self._dbfile,
-                    "result_pipe": result_send,
-                    "error_pipe": error_send,
-                    "runtime_pipe": runtime_send,
-                },
-            )
-        else:
-            worker = multiprocessing.Process(
-                target=_timeout_executor,
-                args=(query,),
-                kwargs={
-                    "cursor": cur,
-                    "result_pipe": result_send,
-                    "error_pipe": error_send,
-                    "runtime_pipe": runtime_send,
-                },
-            )
-
-        worker.start()
-        worker.join(timeout)
-
-        timed_out = worker.is_alive()
-        if error_recv.poll():
-            worker.terminate()
-            raise error_recv.recv()
-
-        if timed_out and sys.platform != "darwin":
-            cur.interrupt()
-
-        if timed_out:
-            worker.terminate()
-            worker.join()
-            self._last_query_runtime = timeout
+            # Make sure to update the last query runtime just now, the worker might terminate while we try to cancel and update
+            # the runtime itself. This way we overwrite any measurement that the worker might have produced.
+            self._last_query_runtime = math.inf
             return None
-
-        result_set = result_recv.recv()
-        self._last_query_runtime = runtime_recv.recv()
-
-        worker.close()
-        result_send.close()
-        result_recv.close()
-
-        if sys.platform == "darwin":
-            self.reconnect()
-        return result_set
 
     def last_query_runtime(self) -> float:
         return self._last_query_runtime
@@ -321,6 +229,14 @@ class DuckDBInterface(Database):
 
         base_info["schema_info"] = schema_info
         return base_info
+
+    def _execute_worker(self, query: str) -> ResultSet:
+        start_time = time.perf_counter_ns()
+        self._cur.execute(query)
+        end_time = time.perf_counter_ns()
+        result_set = self._cur.fetchall()
+        self._last_query_runtime = (end_time - start_time) / 10**9  # convert to seconds
+        return result_set
 
 
 class DuckDBSchema(DatabaseSchema):

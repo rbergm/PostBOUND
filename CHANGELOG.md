@@ -61,6 +61,7 @@ Currently, we plan to implement the following features in the future (in no part
 - 🐘 Calling  `connect()` now also supports a _Path_ param for the config file
 
 ### 🏥 Fixes
+- 🦆 Fixed DuckDB performance regressions when executing query with timeout
 - 🦆 Fixed DuckDB schema interface using a broken cursor variable
 - 🦆 Fixed query execution with timeouts on DuckDB failing on MacOS. It seems that the DuckDB connection is only pickle-able
   on Linux-based systems.
