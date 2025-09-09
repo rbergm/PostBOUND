@@ -49,6 +49,7 @@ Currently, we plan to implement the following features in the future (in no part
 ## ➡ Version 0.18.0 _(planned)_
 
 ### 🐣 New features
+- 🦆 🐳 Added support for DuckDB when setting up a Docker container
 - 🐘 Added `start()`, `stop()` and `is_running()` functions to manage a local Postgres server
 - 🐘 Added `data_dir()` function to retrieve the data directory of the Postgres server
 - 🐘 Added a `logfile()` method to the Postgres interface to retrieve the log file of a local Postgres server
