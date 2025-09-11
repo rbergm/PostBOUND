@@ -19,7 +19,7 @@ from ..._core import (
 from ..._qep import QueryPlan, SortKey
 from ..._stages import CardinalityEstimator, CostModel, PlanEnumerator
 from ...db import DatabaseSchema
-from ...db.postgres import PostgresJoinHints, PostgresScanHints
+from ...db.postgres import PostgresInterface, PostgresJoinHints, PostgresScanHints
 from ...qal import (
     AbstractPredicate,
     ColumnExpression,
@@ -134,6 +134,8 @@ class DynamicProgrammingEnumerator(PlanEnumerator):
                 op for op in supported_join_ops if target_db.hinting().supports_hint(op)
             }
 
+        self.predicates: QueryPredicates = None
+
         self._target_db = target_db
         self._scan_ops = supported_scan_ops
         self._join_ops = supported_join_ops
@@ -141,6 +143,7 @@ class DynamicProgrammingEnumerator(PlanEnumerator):
     def generate_execution_plan(
         self, query, *, cost_model, cardinality_estimator
     ) -> QueryPlan:
+        self.predicates = query.predicates()
         cost_model.initialize(self._target_db, query)
         cardinality_estimator.initialize(self._target_db, query)
 
@@ -156,6 +159,7 @@ class DynamicProgrammingEnumerator(PlanEnumerator):
 
         cost_model.cleanup()
         cardinality_estimator.cleanup()
+        self.predicates = None
         return final_plan
 
     def pre_check(self) -> OptimizationPreCheck:
@@ -451,6 +455,12 @@ class RelOptInfo:
     Notice that this is only set after all paths for the RelOpt have been collected.
     """
 
+    cheapest_partial_path: Optional[QueryPlan]
+    """The cheapest access path that we have found for parallel execution.
+
+    Notice that this is only set after all paths for the RelOpt have been collected.
+    """
+
     cardinality: Cardinality
     """The estimated number of rows that are produced by this relation."""
 
@@ -478,7 +488,7 @@ Level = int
 JoinRelLevel = dict[Level, list[RelOptInfo]]
 """Alias for our dynamic programming table."""
 
-AddPathHook = Callable[["PostgresDynProg", RelOptInfo, QueryPlan], None]
+AddPathHook = Callable[["PostgresDynProg", RelOptInfo, QueryPlan, bool], None]
 """Hook method for users to get control in Postgres' *add_path()* method.
 
 The method is reponsible for storing a new candidate path in its `RelOptInfo`. It can decide, whether the path is actually
@@ -486,6 +496,11 @@ worth storing or not. Furthermore, the method can also prune existing paths from
 new path.
 
 All of these actions should be performed in-place by modifying the `RelOptInfo` object. No return value is expected.
+
+The last boolean parameter indicates whether the path is a partial path (i.e. a path for parallel execution) or not.
+If it is, the path should be stored in the `partial_paths` list, instead of the standard `pathlist`. Likewise, all checks
+should be performed against the `partial_paths` list. If the hook should not handle partial paths, it can simply delegate
+to the standard implementation on the enumerator.
 
 If need be, the method can also access the current state of the dynamic programmer. Specifically, the enumerator provides
 access to the query and database, the selected cost model and cardinality estimator, as well as to the current `JoinRelLevel`.
@@ -546,14 +561,20 @@ class PostgresDynProg(PlanEnumerator):
         enable_materialize: bool = True,
         enable_memoize: bool = True,
         enable_sort: bool = True,
+        max_parallel_workers: Optional[int] = None,
         add_path_hook: Optional[AddPathHook] = None,
-        target_db: Optional[db.Database] = None,
+        target_db: Optional[PostgresInterface] = None,
     ) -> None:
         target_db = (
             target_db
             if target_db is not None
             else db.DatabasePool.get_instance().current_database()
         )
+        if not isinstance(target_db, PostgresInterface):
+            raise LogicError(
+                "The PostgresDynProg enumerator can only be used with a Postgres database. "
+                "(but you can execute the plans on any database that supports the required hints)."
+            )
 
         supported_scan_ops = (
             supported_scan_ops if supported_scan_ops is not None else PostgresScanHints
@@ -582,6 +603,7 @@ class PostgresDynProg(PlanEnumerator):
         self._enable_materialize = enable_materialize
         self._enable_memoize = enable_memoize
         self._enable_sort = enable_sort
+        self._max_workers = max_parallel_workers if max_parallel_workers else 0
         self._add_path_hook = add_path_hook
 
     def generate_execution_plan(
@@ -630,7 +652,9 @@ class PostgresDynProg(PlanEnumerator):
             validation.SetOperationsPreCheck(),
         )
 
-    def standard_add_path(self, rel: RelOptInfo, path: QueryPlan) -> None:
+    def standard_add_path(
+        self, rel: RelOptInfo, path: QueryPlan, *, is_partial: bool = False
+    ) -> None:
         """Checks, whether a specific path is worthy of further consideration. If it is, the path is stored in the pathlist.
 
         This method's naming is exceptionally bad, but this the way it is named in the PG source code, so we stick with it.
@@ -643,16 +667,22 @@ class PostgresDynProg(PlanEnumerator):
         To determine, whether one path dominates another, we compare the paths' costs and sort orders. For one path to
         dominate the other one, it must be cheaper and at least as good sorted.
         If the paths are sorted differently, we keep them both.
+
+        This basic logic is executed for both regular paths and partial paths. Those are paths that can be executed in parallel
+        and will eventually be merged with the main paths (once the parallel portion is finished).
+        While "normal" paths (completely sequential ones or parallel paths that have finished their parallel portion) are
+        stored in the `pathlist`, partial paths are stored in the `partial_paths` list.
         """
-        if not rel.pathlist:
-            rel.pathlist = [path]
+        current_paths = rel.partial_paths if is_partial else rel.pathlist
+        if not current_paths:
+            current_paths.append(path)
             return
 
         result_paths: list[QueryPlan] = []
         keep_new = True  # we assume that we want to keep the new path to handle new sort orders correctly
         new_cost = path.estimated_cost
 
-        for i, old_path in enumerate(rel.pathlist):
+        for i, old_path in enumerate(current_paths):
             if not self._sorting_subsumes(
                 path.sort_keys, other=old_path.params.sort_keys
             ):
@@ -669,18 +699,24 @@ class PostgresDynProg(PlanEnumerator):
             )
 
             if new_dominates:
-                # the new path is better (or at least equally) sorted and cheaper, we can evict the old path
+                # The new path is better (or at least equally) sorted and cheaper, we can evict the old path
                 keep_new = True  # strictly speaking, this is not necessary, but it makes our intention clearer
                 continue  # don't break here, we need to check the remaining paths
             else:
-                # the existing path is better (or at least equally) sorted and cheaper, we don't need the new path
-                result_paths.extend(rel.pathlist[i:])
+                # The existing path is better (or at least equally) sorted and cheaper, we don't need the new path.
+                # This also means that we can stop checking the remaining paths. The new one won't get added and the old ones
+                # successfully competed against the path that just beat our new one. We can keep them all.
+                result_paths.extend(current_paths[i:])
                 keep_new = False
                 break
 
         if keep_new:
             result_paths.append(path)
-        rel.pathlist = result_paths
+
+        if is_partial:
+            rel.partial_paths = result_paths
+        else:
+            rel.pathlist = result_paths
 
     def _init_base_rels(self) -> list[RelOptInfo]:
         """Creates and initializes the RelOptInfos for all tables in the query, without computing any access paths."""
@@ -690,9 +726,6 @@ class PostgresDynProg(PlanEnumerator):
 
         for base_rel in self.query.tables():
             intermediate = frozenset([base_rel])
-            paths = []
-            partial_paths = []
-            cheapest_path = None
             cardinality = self.cardinality_estimator.calculate_estimate(
                 self.query, intermediate
             )
@@ -700,10 +733,11 @@ class PostgresDynProg(PlanEnumerator):
             initial_rels.append(
                 RelOptInfo(
                     intermediate=intermediate,
-                    pathlist=paths,
-                    partial_paths=partial_paths,
-                    cheapest_path=cheapest_path,
+                    pathlist=[],
+                    partial_paths=[],
+                    cheapest_path=None,
                     cardinality=cardinality,
+                    cheapest_partial_path=None,
                 )
             )
 
@@ -718,14 +752,11 @@ class PostgresDynProg(PlanEnumerator):
         # We implement the behavior of that function here
 
         for rel in initial_rels:
-            if ScanOperator.SequentialScan in self._scan_ops:
-                self._add_path(rel, self._create_seqscan_path(rel))
-
+            self._create_sequential_paths(rel)
             self._create_index_paths(rel)
             self._create_bitmap_path(rel)
 
-            # TODO: consider partial paths
-
+            self._generate_gather_paths(rel)
             self._set_cheapest(rel)
 
     def _standard_join_search(self, initial_rels: list[RelOptInfo]) -> RelOptInfo:
@@ -743,6 +774,7 @@ class PostgresDynProg(PlanEnumerator):
 
             for rel in self.join_rel_level[level]:
                 self._set_cheapest(rel)
+                self._generate_gather_paths(rel)
 
         assert len(self.join_rel_level[levels_needed]) == 1, (
             "Final join rel level should only contain one relation."
@@ -796,6 +828,7 @@ class PostgresDynProg(PlanEnumerator):
             partial_paths=[],
             cheapest_path=None,
             cardinality=cardinality,
+            cheapest_partial_path=None,
         )
 
         self.join_rel_level[level].append(join_rel)
@@ -890,6 +923,38 @@ class PostgresDynProg(PlanEnumerator):
                     )
                     self._add_path(join_rel, merge_path)
 
+            for outer_partial in outer_rel.partial_paths:
+                # same as above, just as for partial paths - we try each combination of partial outer with regular inner
+                if (
+                    not self._is_sorted_by(outer_partial, outer_col)
+                    and not self._enable_sort
+                ):
+                    continue
+
+                outer_path = (
+                    outer_path
+                    if self._is_sorted_by(outer_partial, outer_col)
+                    else self._create_sort_path(outer_partial, sort_key=outer_col)
+                )
+
+                for inner_path in inner_rel.pathlist:
+                    if (
+                        not self._is_sorted_by(inner_path, inner_col)
+                        and not self._enable_sort
+                    ):
+                        continue
+
+                    inner_path = (
+                        inner_path
+                        if self._is_sorted_by(inner_path, inner_col)
+                        else self._create_sort_path(inner_path, sort_key=inner_col)
+                    )
+
+                    merge_path = self._create_mergejoin_path(
+                        join_rel, outer_path=outer_path, inner_path=inner_path
+                    )
+                    self._add_path(join_rel, merge_path, is_partial=True)
+
     def _match_unsorted_outer(
         self, join_rel: RelOptInfo, *, outer_rel: RelOptInfo, inner_rel: RelOptInfo
     ) -> None:
@@ -951,6 +1016,40 @@ class PostgresDynProg(PlanEnumerator):
             )
             self._add_path(join_rel, mat_nlj)
 
+        outer_partial = outer_rel.cheapest_partial_path
+        if not outer_partial:
+            return
+        par_nlj = self._create_nestloop_path(
+            join_rel, outer_path=outer_partial, inner_path=inner_path
+        )
+        self._add_path(join_rel, par_nlj, is_partial=True)
+
+        if self._enable_memoize:
+            # same as above
+            join_predicate = self.query.predicates().joins_between(
+                outer_rel.intermediate, inner_rel.intermediate
+            )
+            assert join_predicate is not None, (
+                "Cross product detected. This should never happen so deep down in the "
+                "optimization process"
+            )
+
+            for first_col, second_col in join_predicate.join_partners():
+                cache_key = (
+                    first_col
+                    if first_col.table in inner_rel.intermediate
+                    else second_col
+                )
+                assert cache_key.table in inner_rel.intermediate, (
+                    "Cache key must be part of the inner relation"
+                )
+
+                memo_inner = self._create_memoize_path(inner_path, cache_key=cache_key)
+                par_nlj = self._create_nestloop_path(
+                    join_rel, outer_path=outer_partial, inner_path=memo_inner
+                )
+                self._add_path(join_rel, par_nlj, is_partial=True)
+
     def _hash_inner_outer(
         self, join_rel: RelOptInfo, *, outer_rel: RelOptInfo, inner_rel: RelOptInfo
     ) -> None:
@@ -972,7 +1071,17 @@ class PostgresDynProg(PlanEnumerator):
         )
         self._add_path(join_rel, hash_path)
 
-    def _add_path(self, rel: RelOptInfo, path: QueryPlan) -> None:
+        outer_partial = outer_rel.cheapest_partial_path
+        if not outer_partial:
+            return
+        par_hash = self._create_hashjoin_path(
+            join_rel, outer_path=outer_partial, inner_path=inner_path
+        )
+        self._add_path(join_rel, par_hash, is_partial=True)
+
+    def _add_path(
+        self, rel: RelOptInfo, path: QueryPlan, *, is_partial: bool = False
+    ) -> None:
         """Checks, whether a specific path is worthy of further consideration. If it is, the path is stored in the pathlist.
 
         This method's naming is exceptionally bad, but this the way it is named in the PG source code, so we stick with it.
@@ -980,6 +1089,9 @@ class PostgresDynProg(PlanEnumerator):
         If an `_add_path_hook` has been specified, this hook takes control after checking for illegal paths. The normal
         path adding logic is skipped in this case. Otherwise, we call the standard path adding logic from
         `_standard_add_path()`.
+
+        The method handles both regular paths and partial paths. Which path it is can be switched using the `is_partial`
+        parameter.
         """
 
         if math.isinf(path.estimated_cost):
@@ -988,17 +1100,36 @@ class PostgresDynProg(PlanEnumerator):
             return
 
         if self._add_path_hook:
-            self._add_path_hook(self, rel, path)
+            self._add_path_hook(self, rel, path, is_partial)
         else:
-            self.standard_add_path(rel, path)
+            self.standard_add_path(rel, path, is_partial=is_partial)
 
     def _set_cheapest(self, rel: RelOptInfo) -> None:
-        """Determines the cheapest path in terms of costs from the pathlist."""
-        if not rel.pathlist:
-            return
+        """Determines the cheapest path in terms of costs from the pathlist and partial pathlist."""
+        if rel.pathlist:
+            cheapest_path = min(rel.pathlist, key=lambda path: path.estimated_cost)
+            rel.cheapest_path = cheapest_path
+        if rel.partial_paths:
+            cheapest_partial = min(
+                rel.partial_paths, key=lambda path: path.estimated_cost
+            )
+            rel.cheapest_partial_path = cheapest_partial
 
-        cheapest_path = min(rel.pathlist, key=lambda path: path.estimated_cost)
-        rel.cheapest_path = cheapest_path
+    def _generate_gather_paths(self, rel: RelOptInfo) -> None:
+        """Scans a RelOpt for partial paths that might be gathered into regular paths."""
+        for partial_path in rel.partial_paths:
+            n_workers = partial_path.get("estimated_workers", None)
+            if n_workers is None:
+                raise LogicError(
+                    f"Partial path does not have estimated workers: {partial_path}"
+                )
+            gather_path = partial_path.parallelize(n_workers)
+            cost_estimate = self.cost_model.estimate_cost(self.query, gather_path)
+            gather_path = gather_path.with_estimates(cost=cost_estimate)
+
+            # It is important to not delete the partial path after gathering it. The path might still be useful in an
+            # upper-level partial path!
+            self._add_path(rel, gather_path)
 
     def _create_seqscan_path(self, rel: RelOptInfo) -> QueryPlan:
         """Constructs and initializes a sequential scan path for a specific relation.
@@ -1007,17 +1138,32 @@ class PostgresDynProg(PlanEnumerator):
         """
         baserel = util.simplify(rel.intermediate)
         filter_condition = self.predicates.filters_for(baserel)
+        workers = self._estimate_workers(baserel)
         path = QueryPlan(
             ScanOperator.SequentialScan,
             children=[],
             base_table=baserel,
             estimated_cardinality=rel.cardinality,
             filter_predicate=filter_condition,
+            estimated_workers=workers,
         )
 
         cost = self.cost_model.estimate_cost(self.query, path)
         path = path.with_estimates(cost=cost)
         return path
+
+    def _create_sequential_paths(self, rel: RelOptInfo) -> None:
+        """Builds all sequential paths for a specific relation.
+
+        This includes the regular sequential scan as well as the partial version.
+        """
+        if ScanOperator.SequentialScan not in self._scan_ops:
+            return
+        seq_path = self._create_seqscan_path(rel)
+        self._add_path(rel, seq_path)
+
+        if seq_path["estimated_workers"]:
+            self._add_path(rel, seq_path, is_partial=True)
 
     def _create_index_paths(self, rel: RelOptInfo) -> None:
         """Builds all index scan paths for a specific relation.
@@ -1051,6 +1197,7 @@ class PostgresDynProg(PlanEnumerator):
             sorting = [SortKey.of(column)]
 
             for index in available_indexes:
+                workers = self._estimate_workers(index)
                 if ScanOperator.IndexScan in self._scan_ops:
                     idx_path = QueryPlan(
                         ScanOperator.IndexScan,
@@ -1058,6 +1205,7 @@ class PostgresDynProg(PlanEnumerator):
                         index=index,
                         sort_keys=sorting,
                         filter_predicate=filter_condition,
+                        estimated_workers=workers,
                     )
                     index_paths.append(idx_path)
                 if idx_only_scan:
@@ -1067,6 +1215,7 @@ class PostgresDynProg(PlanEnumerator):
                         index=index,
                         sort_keys=sorting,
                         filter_predicate=filter_condition,
+                        estimated_workers=workers,
                     )
                     index_paths.append(idx_path)
 
@@ -1074,6 +1223,9 @@ class PostgresDynProg(PlanEnumerator):
             cost_estimate = self.cost_model.estimate_cost(self.query, path)
             path = path.with_estimates(cost=cost_estimate)
             self._add_path(rel, path)
+
+            if path["estimated_workers"]:
+                self._add_path(rel, path, is_partial=True)
 
     def _create_bitmap_path(self, rel: RelOptInfo) -> None:
         """Constructs and initializes a bitmap scan path for a specific relation.
@@ -1098,20 +1250,29 @@ class PostgresDynProg(PlanEnumerator):
             for column in required_columns
         }
         if not candidate_indexes:
+            # We only check if there are no candidate indexes at all and explicitly accept the case where there is a single
+            # candidate index. This is because we can still perform an index lookup followed by a sequential scan of the pages.
+            # This might be better than doing a full sequential scan or a full random I/O index scan.
             return
 
         filter_condition = self.predicates.filters_for(base_table)
+
+        # bitmap scans parallelize the scan portion, not the index portion
+        workers = self._estimate_workers(base_table)
 
         bitmap_path = QueryPlan(
             ScanOperator.BitmapScan,
             base_table=base_table,
             indexes=candidate_indexes,
             filter_predicate=filter_condition,
+            estimated_workers=workers,
         )
         cost_estimate = self.cost_model.estimate_cost(self.query, bitmap_path)
         bitmap_path = bitmap_path.with_estimates(cost=cost_estimate)
 
         self._add_path(rel, bitmap_path)
+        if workers:
+            self._add_path(rel, bitmap_path, is_partial=True)
 
     def _create_memoize_path(
         self, path: QueryPlan, *, cache_key: ColumnReference
@@ -1122,11 +1283,14 @@ class PostgresDynProg(PlanEnumerator):
 
         This method assumes that memoization is actually enabled.
         """
+        workers = path.get("estimated_workers", None)
+
         memo_path = QueryPlan(
             IntermediateOperator.Memoize,
             children=path,
             lookup_key=ColumnExpression(cache_key),
             estimated_cardinality=path.estimated_cardinality,
+            estimated_workers=workers,
         )
 
         cost_estimate = self.cost_model.estimate_cost(self.query, memo_path)
@@ -1138,10 +1302,13 @@ class PostgresDynProg(PlanEnumerator):
 
         This method assumes that materialization is actually enabled.
         """
+        workers = path.get("estimated_workers", None)
+
         mat_path = QueryPlan(
             IntermediateOperator.Materialize,
             children=path,
             estimated_cardinality=path.estimated_cardinality,
+            estimated_workers=workers,
         )
 
         cost_estimate = self.cost_model.estimate_cost(self.query, mat_path)
@@ -1158,11 +1325,14 @@ class PostgresDynProg(PlanEnumerator):
 
         This method assumes that sorting is actually enabled.
         """
+        workers = path.get("estimated_workers", None)
+
         sort_path = QueryPlan(
             IntermediateOperator.Sort,
             children=path,
             sort_keys=[SortKey.of(sort_key)],
             estimated_cardinality=path.estimated_cardinality,
+            estimated_workers=workers,
         )
 
         cost_estimate = self.cost_model.estimate_cost(self.query, sort_path)
@@ -1192,12 +1362,14 @@ class PostgresDynProg(PlanEnumerator):
         join_condition = self.predicates.joins_between(
             outer_path.tables(), inner_path.tables()
         )
+        workers = outer_path.get("estimated_workers", None)
 
         nlj_path = QueryPlan(
             JoinOperator.NestedLoopJoin,
             children=[outer_path, inner_path],
             estimated_cardinality=join_rel.cardinality,
             filter_predicate=join_condition,
+            estimated_workers=workers,
         )
 
         cost_estimate = self.cost_model.estimate_cost(self.query, nlj_path)
@@ -1231,12 +1403,15 @@ class PostgresDynProg(PlanEnumerator):
         join_condition = self.predicates.joins_between(
             outer_path.tables(), inner_path.tables()
         )
+        workers = outer_path.get("estimated_workers", None)
+
         merge_path = QueryPlan(
             JoinOperator.SortMergeJoin,
             children=[outer_path, inner_path],
             sort_keys=[merge_key],
             estimated_cardinality=join_rel.cardinality,
             filter_predicate=join_condition,
+            estimated_workers=workers,
         )
 
         cost_estimate = self.cost_model.estimate_cost(self.query, merge_path)
@@ -1266,17 +1441,36 @@ class PostgresDynProg(PlanEnumerator):
         join_condition = self.predicates.joins_between(
             outer_path.tables(), inner_path.tables()
         )
+        workers = outer_path.get("estimated_workers", None)
 
         hash_path = QueryPlan(
             JoinOperator.HashJoin,
             children=[outer_path, inner_path],
             estimated_cardinality=join_rel.cardinality,
             filter_predicate=join_condition,
+            estimated_workers=workers,
         )
 
         cost_estimate = self.cost_model.estimate_cost(self.query, hash_path)
         hash_path = hash_path.with_estimates(cost=cost_estimate)
         return hash_path
+
+    def _estimate_workers(self, relation: TableReference | str) -> int:
+        """Computes the number of worker processes to use for specific base relation or index.
+
+        Parameters
+        ----------
+        relation : TableReference | str
+            The base table or index to estimate. Indexes should be represented by their name whereas base tables can be
+            supplied either as a `TableReference` or by name.
+        """
+        if not self._max_workers:
+            return 0
+        n_pages = self.target_db.statistics().n_pages(relation)
+        workers = math.log(n_pages, 3)
+        if self._max_workers is None:
+            return math.round(workers)
+        return min(self._max_workers, math.round(workers))
 
     def _determine_join_keys(
         self, *, outer_rel: RelOptInfo, inner_rel: RelOptInfo

@@ -39,7 +39,6 @@ stability. Since we are not ready for the 1.0 release yet, this does not matter 
 
 Currently, we plan to implement the following features in the future (in no particular order):
 
-- Supporting parallel query plans in the Postgres-style dynamic programming enumerator
 - Using the GUC hint mechanism to enforce "global" optimization settings for Postgres
 - Providing a Substrait export for query plans
 - Better benchmarking setup, mostly focused on comparing one or multiple optimization pipelines and creating better experiment
@@ -49,6 +48,7 @@ Currently, we plan to implement the following features in the future (in no part
 ## ➡ Version 0.18.0 _(planned)_
 
 ### 🐣 New features
+- Added support for parallel plans in the Postgres-style plan enumerator
 - 🦆 🐳 Added support for DuckDB when setting up a Docker container
 - 🐘 Added `start()`, `stop()` and `is_running()` functions to manage a local Postgres server
 - 🐘 Added `data_dir()` function to retrieve the data directory of the Postgres server

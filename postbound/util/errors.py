@@ -12,7 +12,11 @@ class LogicError(RuntimeError):
     """
 
     def __init__(self, *args, **kwargs) -> None:
-        super().__init__(*args, **kwargs)
+        super().__init__(
+            "Internal PostBOUND error found. Please file a bug report on Github (https://github.com/rbergm/PostBOUND): ",
+            *args,
+            **kwargs,
+        )
 
 
 class StateError(RuntimeError):

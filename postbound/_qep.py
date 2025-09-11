@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import collections
+import copy
 import math
 from collections.abc import Callable, Iterable, Iterator, Sequence
 from dataclasses import dataclass
@@ -356,8 +357,34 @@ class PlanParams:
         """Provides all metadata that is currently stored in the parameters as key-value pairs, similar to *dict.items*"""
         return self._params.items()
 
+    def clone(self, *, deep: bool = False) -> PlanParams:
+        """Creates a copy of the current plan parameters.
+
+        Parameters
+        ----------
+        deep : bool, optional
+            Whether to create a deep copy of all parameters. Defaults to *False*.
+
+        Returns
+        -------
+        PlanParams
+            The copied parameters.
+        """
+        return self.__deepcopy__({}) if deep else self.__copy__()
+
     def __json__(self) -> jsondict:
         return self._params
+
+    def __copy__(self) -> PlanParams:
+        return PlanParams(**self._params)
+
+    def __deepcopy__(self, memo: dict[int, object] = {}) -> PlanParams:
+        params = copy.deepcopy(self._params, memo)
+        return PlanParams(**params)
+
+    def __contains__(self, key: object) -> bool:
+        params = object.__getattribute__(self, "_params")
+        return key in params
 
     def __getattribute__(self, name: str) -> Any:
         params = object.__getattribute__(self, "_params")
@@ -378,6 +405,12 @@ class PlanParams:
 
     def __setitem__(self, key: str, value: Any) -> None:
         self._params[key] = value
+
+    def __repr__(self) -> str:
+        return str(self)
+
+    def __str__(self) -> str:
+        return str(self._params)
 
 
 class PlanEstimates:
@@ -461,8 +494,34 @@ class PlanEstimates:
         """Provides all estimates as key-value pairs, similar to the *dict.items* method."""
         return self._params.items()
 
+    def clone(self, *, deep: bool = False) -> PlanEstimates:
+        """Creates a copy of the current plan estimates.
+
+        Parameters
+        ----------
+        deep : bool, optional
+            Whether to create a deep copy of all estimates. Defaults to *False*.
+
+        Returns
+        -------
+        PlanEstimates
+            The copied estimates.
+        """
+        return self.__deepcopy__({}) if deep else self.__copy__()
+
     def __json__(self) -> jsondict:
         return self._params
+
+    def __copy__(self) -> PlanEstimates:
+        return PlanEstimates(**self._params)
+
+    def __deepcopy__(self, memo: dict[int, object] = {}) -> PlanEstimates:
+        params = copy.deepcopy(self._params, memo)
+        return PlanEstimates(**params)
+
+    def __contains__(self, key: object) -> bool:
+        params = object.__getattribute__(self, "_params")
+        return key in params
 
     def __getattribute__(self, name: str) -> Any:
         params = object.__getattribute__(self, "_params")
@@ -483,6 +542,12 @@ class PlanEstimates:
 
     def __setitem__(self, key: str, value: Any) -> None:
         self._params[key] = value
+
+    def __repr__(self) -> str:
+        return str(self)
+
+    def __str__(self) -> str:
+        return str(self._params)
 
 
 class PlanMeasures:
@@ -593,8 +658,34 @@ class PlanMeasures:
         """Provides all measures as key-value pairs, similar to the *dict.items* method."""
         return self._params.items()
 
+    def clone(self, *, deep: bool = False) -> PlanMeasures:
+        """Creates a copy of the current plan measures.
+
+        Parameters
+        ----------
+        deep : bool, optional
+            Whether to create a deep copy of all measures. Defaults to *False*.
+
+        Returns
+        -------
+        PlanMeasures
+            The copied measures.
+        """
+        return self.__deepcopy__({}) if deep else self.__copy__()
+
     def __json__(self) -> jsondict:
         return self._params
+
+    def __copy__(self) -> PlanMeasures:
+        return PlanMeasures(**self._params)
+
+    def __deepcopy__(self, memo: dict[int, object] = {}) -> PlanMeasures:
+        params = copy.deepcopy(self._params, memo)
+        return PlanMeasures(**params)
+
+    def __contains__(self, key: object) -> bool:
+        params = object.__getattribute__(self, "_params")
+        return key in params
 
     def __getattribute__(self, name: str) -> Any:
         params = object.__getattribute__(self, "_params")
@@ -621,6 +712,12 @@ class PlanMeasures:
             not math.isnan(v) if isinstance(v, Number) else (v is not None)
             for v in self._params.values()
         )
+
+    def __repr__(self) -> str:
+        return str(self)
+
+    def __str__(self) -> str:
+        return str(self._params)
 
 
 @dataclass(frozen=True)
@@ -654,8 +751,29 @@ class Subplan:
         target_table = TableReference.create_virtual(self.target_name)
         return self.root.tables() | {target_table}
 
+    def clone(self, *, deep: bool = False) -> Subplan:
+        """Creates a copy of the current subplan.
+
+        Parameters
+        ----------
+        deep : bool, optional
+            Whether to create a deep copy of all contained plans. Defaults to *False*.
+
+        Returns
+        -------
+        Subplan
+            The copied subplan.
+        """
+        return self.__deepcopy__({}) if deep else self.__copy__()
+
     def __json__(self) -> jsondict:
         return {"root": self.root, "target_name": self.target_name}
+
+    def __copy__(self) -> Subplan:
+        return Subplan(self.root.clone(deep=False), self.target_name)
+
+    def __deepcopy__(self, memo: dict[int, object] = {}) -> Subplan:
+        return Subplan(self.root.clone(deep=True), self.target_name)
 
 
 class QueryPlan:
@@ -694,7 +812,9 @@ class QueryPlan:
     and the measurements as keyword arguments.
 
     In addition to the pre-defined metadata types, you can also add additional metadata as part of the *kwargs*. These will
-    be added to the plan parameters (using the same mixing rules as the pre-defined types.)
+    be added to the plan parameters (using the same mixing rules as the pre-defined types).
+    Each query plan provides dict-like access to the plan parameters, estimates and measures, e.g. ``plan["custom"] = 42``,
+    ``plan.get("custom", default)``, or ``"custom" in plan``.
 
     Query plans provide rather extensive support methods to check their shape (e.g. `is_linear()` or `is_bushy()`), to aid with
     traversal (e.g. `find_first_node()` or `find_all_nodes()`) or to extract specific information (e.g. `tables()` or
@@ -1081,6 +1201,28 @@ class QueryPlan:
         """Get the subplan that has to be executed as part of this node."""
         return self._subplan
 
+    def get(self, key: str, default: Any = None) -> Any:
+        """Retrieves a specific parameter from the plan.
+
+        The lookup is performed in the following order:
+
+        1. Plan parameters
+        2. Plan estimates
+        3. Plan measures
+
+        If none of these containers contains the requested key, the default value is returned.
+        """
+        value = self._plan_params.get(key)
+        if value is not None:
+            return value
+        value = self._estimates.get(key)
+        if value is not None:
+            return value
+        value = self._measures.get(key)
+        if value is not None:
+            return value
+        return default
+
     def is_join(self) -> bool:
         """Checks, whether the current node is a join operator."""
         return self._operator is not None and self._operator in JoinOperator
@@ -1206,6 +1348,16 @@ class QueryPlan:
         if len(self.children) == 1:
             return self.children[0].fetch_base_table()
         return None
+
+    def outermost_scan(self) -> Optional[QueryPlan]:
+        """Retrieves the scan node that is furthest to the "left", i.e. on the outer-most position in the plan."""
+        if self.is_scan():
+            return self
+        elif self.is_join():
+            return self.outer_child.outermost_scan()
+
+        assert self.input_node is not None
+        return self.input_node.outermost_scan()
 
     def tables(self) -> set[TableReference]:
         """Provides all tables that are accessed at some point in the plan.
@@ -1413,6 +1565,19 @@ class QueryPlan:
         smaller = min(self.estimated_cardinality, self.actual_cardinality) + 1
         return larger / smaller
 
+    def parallelize(self, workers: int) -> QueryPlan:
+        plan_params = self._plan_params.clone()
+        plan_params.parallel_workers = workers
+        return QueryPlan(
+            self.node_type,
+            operator=self.operator,
+            children=self.children,
+            plan_params=plan_params,
+            estimates=self._estimates,
+            measures=self._measures,
+            subplan=self.subplan,
+        )
+
     def with_estimates(
         self,
         *,
@@ -1603,6 +1768,9 @@ class QueryPlan:
         """Provides the tree-structure of the plan in a human-readable format."""
         return _astify(self)
 
+    def clone(self, *, deep: bool = False) -> QueryPlan:
+        return self.__deepcopy__({}) if deep else self.__copy__()
+
     def __json__(self) -> jsondict:
         return {
             "node_type": self.node_type,
@@ -1614,8 +1782,53 @@ class QueryPlan:
             "subplan": self._subplan,
         }
 
+    def __copy__(self) -> QueryPlan:
+        return QueryPlan(
+            self._node_type,
+            operator=self._operator,
+            children=self._children,
+            plan_params=self._plan_params.clone(deep=False),
+            estimates=self._estimates.clone(deep=False),
+            measures=self._measures.clone(deep=False) if self._measures else None,
+            subplan=self._subplan.clone(deep=False) if self._subplan else None,
+        )
+
+    def __deepcopy__(self, memo: dict[int, object] = {}) -> QueryPlan:
+        return QueryPlan(
+            self._node_type,
+            operator=self._operator,
+            children=[child.__deepcopy__(memo) for child in self._children],
+            plan_params=self._plan_params.clone(deep=True),
+            estimates=self._estimates.clone(deep=True),
+            measures=self._measures.clone(deep=True) if self._measures else None,
+            subplan=self._subplan.clone(deep=True) if self._subplan else None,
+        )
+
     def __len__(self) -> int:
         return self.plan_depth()
+
+    def __contains__(
+        self, key: str | TableReference | Iterable[TableReference]
+    ) -> bool:
+        if isinstance(key, TableReference):
+            return key in self.tables()
+        elif isinstance(key, Iterable):
+            return set(key).issubset(self.tables())
+
+        return (
+            key in self._plan_params
+            or key in self._estimates
+            or (self._measures and key in self._measures)
+        )
+
+    def __getitem__(self, key: str) -> Any:
+        if key in self._plan_params:
+            return self._plan_params[key]
+        if key in self._estimates:
+            return self._estimates[key]
+        if self._measures and key in self._measures:
+            return self._measures[key]
+        raise KeyError(f"'{key}' not found")
 
     def __iter__(self) -> Iterator[QueryPlan]:
         yield self

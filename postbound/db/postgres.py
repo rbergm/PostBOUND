@@ -1409,6 +1409,15 @@ class PostgresStatisticsInterface(DatabaseStatistics):
             cache_enabled=cache_enabled,
         )
 
+    def n_pages(self, table: TableReference | str) -> int:
+        query_template = "SELECT relpages FROM pg_class WHERE oid = %s::regclass"
+        regclass = table.full_name if isinstance(table, TableReference) else table
+        self._db.cursor().execute(query_template, (regclass,))
+        result_set = self._db.cursor().fetchone()
+        if not result_set:
+            raise ValueError(f"Could not retrieve page count for table '{table}'")
+        return result_set[0]
+
     def update_statistics(
         self,
         columns: Optional[ColumnReference | Iterable[ColumnReference]] = None,
@@ -3314,6 +3323,8 @@ class PostgresExplainNode:
 
         self.parent_relationship = explain_data.get("Parent Relationship", None)
         self.parallel_workers = explain_data.get("Workers Launched", math.nan)
+        if math.isnan(self.parallel_workers):
+            self.parallel_workers = explain_data.get("Workers Planned", math.nan)
         self.sort_keys = explain_data.get("Sort Key", [])
 
         self.shared_blocks_read = explain_data.get("Shared Read Blocks", math.nan)
