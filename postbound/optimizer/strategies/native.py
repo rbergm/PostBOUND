@@ -17,34 +17,34 @@ import warnings
 from collections.abc import Iterable
 from typing import Optional
 
+from ... import db, util
+from ..._core import (
+    Cardinality,
+    ColumnReference,
+    Cost,
+    IntermediateOperator,
+    JoinOperator,
+    ScanOperator,
+    TableReference,
+)
+from ..._qep import QueryPlan
+from ..._stages import (
+    CompleteOptimizationAlgorithm,
+    CostModel,
+    JoinOrderOptimization,
+    ParameterGeneration,
+    PhysicalOperatorSelection,
+)
+from ...db import DatabaseServerError, DatabaseUserError
+from ...db.postgres import PostgresInterface
+from ...qal import ColumnExpression, OrderBy, SqlQuery, transform
+from ...util import jsondict
 from .._hints import (
     PhysicalOperatorAssignment,
     PlanParameterization,
     operators_from_plan,
 )
 from .._jointree import JoinTree, jointree_from_plan, parameters_from_plan
-from ..._core import (
-    Cost,
-    Cardinality,
-    TableReference,
-    ColumnReference,
-    IntermediateOperator,
-    ScanOperator,
-    JoinOperator,
-)
-from ..._qep import QueryPlan
-from ..._stages import (
-    CostModel,
-    JoinOrderOptimization,
-    PhysicalOperatorSelection,
-    ParameterGeneration,
-    CompleteOptimizationAlgorithm,
-)
-from ... import db, util
-from ...qal import SqlQuery, ColumnExpression, OrderBy, transform
-from ...db import DatabaseServerError, DatabaseUserError
-from ...db.postgres import PostgresInterface
-from ...util import jsondict
 from ..policies.cardinalities import CardinalityGenerator
 
 
@@ -78,6 +78,8 @@ class NativeCostModel(CostModel):
             query = transform.extract_query_fragment(query, plan.tables())
 
         match plan.operator:
+            case ScanOperator.IndexScan | ScanOperator.IndexOnlyScan:
+                return self._cost_index_op(query, plan)
             case IntermediateOperator.Materialize:
                 return self._cost_materialize_op(query, plan)
             case IntermediateOperator.Memoize:
@@ -110,6 +112,51 @@ class NativeCostModel(CostModel):
 
     def initialize(self, target_db: db.Database, query: SqlQuery) -> None:
         self._target_db = target_db
+
+    def _cost_index_op(self, query: SqlQuery, plan: QueryPlan) -> Cost:
+        """Try to estimate the cost of an index scan or index-only scan at the root of a specific query plan.
+
+        This method purely exists to keep the rather complex logic of index costing out of the main cost estimation method.
+        """
+        plan = plan.with_actual_card()
+        original_query = self._target_db.hinting().generate_hints(query, plan)
+        try:
+            cost = self._target_db.optimizer().cost_estimate(original_query)
+            return cost
+        except (DatabaseServerError, DatabaseUserError):
+            pass
+
+        # This did not work, let's try a COUNT(*) query instead:
+        # Some database systems (including Postgres) only use indexes for plain queries if they can do something useful with
+        # it. We have to trick them.
+
+        count_query = transform.as_count_star_query(query)
+        count_query = self._target_db.hinting().generate_hints(count_query, plan)
+        try:
+            count_plan = self._target_db.optimizer().query_plan(count_query)
+            cost = math.nan
+        except (DatabaseServerError, DatabaseUserError):
+            cost = math.inf
+
+        if math.isinf(cost) and self._raise_on_error:
+            raise DatabaseServerError(
+                f"Could not estimate the cost of index plan {plan}."
+            )
+        elif math.isinf(cost):
+            return cost
+
+        index_node = count_plan.outermost_scan()
+        count_plan_matches_original_plan = (
+            index_node and index_node.operator == plan.operator
+        )
+        if not count_plan_matches_original_plan and self._raise_on_error:
+            raise DatabaseServerError(
+                f"Could not estimate the cost of index plan {plan}."
+            )
+        elif not count_plan_matches_original_plan:
+            return math.inf
+
+        return index_node.estimated_cost
 
     def _cost_materialize_op(self, query: SqlQuery, plan: QueryPlan) -> Cost:
         """Try to estimate the cost of a materialize node at the root of a specific query plan.
