@@ -540,17 +540,6 @@ class PostgresDynProg(PlanEnumerator):
     target_db : Optional[db.Database], optional
         The database on which the plans should be executed. This should usually be a Postgres instance. If omitted, the
         database is inferred from the `DatabasePool`.
-
-    Limitations
-    -----------
-
-    The current implementation does not follow the original PG source code 1:1, mostly due to limitations in the available
-    hinting backends (if we can't hint the feature anyway, there's no point in implementing it already).
-    The following features are not implemented yet:
-
-    - Parallel workers. All plans are sequential.
-    - Bushy plans. Instead, only zig-zag plans are computed
-
     """
 
     def __init__(
@@ -808,7 +797,24 @@ class PostgresDynProg(PlanEnumerator):
                 self._add_paths_to_joinrel(join_rel, outer_rel=rel1, inner_rel=rel2)
                 self._add_paths_to_joinrel(join_rel, outer_rel=rel2, inner_rel=rel1)
 
-        # TODO: consider bushy plans
+        for outer_size in range(2, level // 2 + 1):
+            inner_size = level - outer_size
+            if inner_size < 2:
+                continue
+
+            for rel1 in self.join_rel_level[outer_size]:
+                for rel2 in self.join_rel_level[inner_size]:
+                    if len(rel1.intermediate & rel2.intermediate) > 0:
+                        # don't join anything that we have already joined
+                        continue
+
+                    # functionality of build_join_rel()
+                    intermediate = rel1.intermediate | rel2.intermediate
+                    join_rel = self._build_join_rel(intermediate)
+
+                    # functionality of populate_joinrel_with_paths()
+                    self._add_paths_to_joinrel(join_rel, outer_rel=rel1, inner_rel=rel2)
+                    self._add_paths_to_joinrel(join_rel, outer_rel=rel2, inner_rel=rel1)
 
     def _build_join_rel(self, intermediate: frozenset[TableReference]) -> RelOptInfo:
         """Constructs and initializes a new RelOptInfo for a specific intermediate. No access paths are added, yet."""
@@ -873,8 +879,6 @@ class PostgresDynProg(PlanEnumerator):
         # match_unsorted_outer(). In our implementation, that function only handles nested-loop joins.
         #
         # Notice that Postgres does not consider materialization or memoization of subpaths for merge joins, so neither do we.
-        #
-        # TODO: handle parallel computation of the input paths
 
         join_keys = self._determine_join_keys(outer_rel=outer_rel, inner_rel=inner_rel)
 
@@ -968,8 +972,6 @@ class PostgresDynProg(PlanEnumerator):
         # as outlined in _sort_inner_outer(), we only handle nested-loop joins here
         # Nested-loop joins are inherently unsorted, so we only care about the cheapest access paths to the input relations
         # here.
-        #
-        # TODO: handle parallel computation of the input paths as well as parallel NLJs
 
         outer_path, inner_path = outer_rel.cheapest_path, inner_rel.cheapest_path
         if not outer_path or not inner_path:
