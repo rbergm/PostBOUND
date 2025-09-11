@@ -330,11 +330,12 @@ class TextBookOptimizationPipeline(OptimizationPipeline):
         self._target_db = target_db
         self._card_est: CardinalityEstimator = NativeCardinalityEstimator()
         self._cost_model: CostModel = NativeCostModel()
-        self._plan_enumerator: PlanEnumerator = (
-            PostgresDynProg(target_db=target_db)
-            if isinstance(target_db, PostgresInterface)
-            else DynamicProgrammingEnumerator(target_db=target_db)
-        )
+
+        if isinstance(target_db, PostgresInterface):
+            self._plan_enumerator = PostgresDynProg(target_db=target_db)
+            self._plan_enumerator.infer_settings()
+        else:
+            self._plan_enumerator = DynamicProgrammingEnumerator(target_db=target_db)
 
         self._support_check = validation.EmptyPreCheck()
         self._build = False

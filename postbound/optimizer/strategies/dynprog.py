@@ -595,6 +595,39 @@ class PostgresDynProg(PlanEnumerator):
         self._max_workers = max_parallel_workers if max_parallel_workers else 0
         self._add_path_hook = add_path_hook
 
+    def infer_settings(self) -> None:
+        """Sets all allowed operators according to the configuration of the target database.
+
+        For example, if the target database has index scans disabled, the enumerator will disable them as well.
+        """
+        allowed_scan_ops: list[ScanOperator] = []
+        if self.target_db.config["enable_seqscan"] == "on":
+            allowed_scan_ops.append(ScanOperator.SequentialScan)
+        if self.target_db.config["enable_indexscan"] == "on":
+            allowed_scan_ops.append(ScanOperator.IndexScan)
+        if self.target_db.config["enable_indexonlyscan"] == "on":
+            allowed_scan_ops.append(ScanOperator.IndexOnlyScan)
+        if self.target_db.config["enable_bitmapscan"] == "on":
+            allowed_scan_ops.append(ScanOperator.BitmapScan)
+        self._scan_ops = set(allowed_scan_ops)
+
+        allowed_join_ops: list[JoinOperator] = []
+        if self.target_db.config["enable_nestloop"] == "on":
+            allowed_join_ops.append(JoinOperator.NestedLoopJoin)
+        if self.target_db.config["enable_hashjoin"] == "on":
+            allowed_join_ops.append(JoinOperator.HashJoin)
+        if self.target_db.config["enable_mergejoin"] == "on":
+            allowed_join_ops.append(JoinOperator.SortMergeJoin)
+        self._join_ops = set(allowed_join_ops)
+
+        self._enable_materialize = self.target_db.config["enable_materialize"] == "on"
+        self._enable_memoize = self.target_db.config["enable_memoize"] == "on"
+        self._enable_sort = self.target_db.config["enable_sort"] == "on"
+
+        self._max_workers = int(
+            self.target_db.config["max_parallel_workers_per_gather"]
+        )
+
     def generate_execution_plan(
         self, query, *, cost_model, cardinality_estimator
     ) -> QueryPlan:

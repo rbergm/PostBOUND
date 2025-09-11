@@ -39,7 +39,6 @@ stability. Since we are not ready for the 1.0 release yet, this does not matter 
 
 Currently, we plan to implement the following features in the future (in no particular order):
 
-- Using the GUC hint mechanism to enforce "global" optimization settings for Postgres
 - Providing a Substrait export for query plans
 - Better benchmarking setup, mostly focused on comparing one or multiple optimization pipelines and creating better experiment
   logs and the ability to cancel/resume long-running benchmarks
@@ -61,6 +60,9 @@ Currently, we plan to implement the following features in the future (in no part
 
 ### 📰 Updates
 - Starting a local Postgres server now supports specifying a log file
+- When the textbook pipeline auto-selects a Postgres-style enumerator, the enumerator is now configured similarly to the target
+  database. E.g., if the textbook is setup for a Postgres database that has nested-loop joins disabled, the enumerator will
+  also disable these joins.
 
 ### 🏥 Fixes
 - 🦆 Fixed DuckDB performance regressions when executing query with timeout
