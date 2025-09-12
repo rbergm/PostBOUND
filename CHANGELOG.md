@@ -50,7 +50,6 @@ Currently, we plan to implement the following features in the future (in no part
 - Added support for parallel plans in the Postgres-style plan enumerator
 - Added support for bushy plans in the Postgres-style plan enumerator
 - 🦆 🐳 Added support for DuckDB when setting up a Docker container
-- 🐘 Enable Meson/Ninja-based builds in Postgres setup
 - 🐘 Added `start()`, `stop()` and `is_running()` functions to manage a local Postgres server
 - 🐘 Added `data_dir()` function to retrieve the data directory of the Postgres server
 - 🐘 Added a `logfile()` method to the Postgres interface to retrieve the log file of a local Postgres server
@@ -59,6 +58,7 @@ Currently, we plan to implement the following features in the future (in no part
 
 ### 💀 Breaking changes
 - Renamed the attributes of `PlanParameterization` to be more succint
+- 🐘 Migrate to Meson/Ninja for Postgres setup. This seems more stable/reliable across platforms overall (especially MacOS).
 
 ### 📰 Updates
 - Starting a local Postgres server now supports specifying a log file

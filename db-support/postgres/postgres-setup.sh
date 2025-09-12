@@ -30,6 +30,7 @@ PG_PORT=5432
 ENABLE_REMOTE_ACCESS="false"
 USER_PASSWORD=""
 STOP_AFTER="false"
+UUID_LIBRARY="none"
 
 show_help() {
     NEWLINE="\n\t\t\t\t"
@@ -41,7 +42,7 @@ show_help() {
     echo -e "-p | --port <port number>\tConfigure the Postgres server to listen on the given port (5432 by default)."
     echo -e "--remote-password <password>\tEnable remote access for the current user, based on the given password.${NEWLINE}Remote access is disabled if no password is provided."
     echo -e "--stop\t\t\t\tStop the Postgres server process after installation and setup finished"
-    echo -e "-b | --backend <backend>\tThe build backend to use. Allowed values are 'make' for configure/make and 'meson' for meson/ninja.\n\t\t\t\tDefault is 'make' on Linux and 'meson' on macOS."
+    echo -e "--uuid-lib <library>\t\tSpecify the UUID library to use or 'none' to disable UUID support (default: none).${NEWLINE}Currently supported libraries are 'ossp' and 'e2fs'."
     exit 1
 }
 
@@ -49,9 +50,14 @@ while [ $# -gt 0 ] ; do
     case $1 in
         --pg-ver)
             case $2 in
+                12)
+                    PG_VER_PRETTY="12"
+                    PG_VERSION=REL_12_STABLE
+                    PG_HINT_PLAN_VERSION=REL12_1_3_10
+                    ;;
                 12.4)
-                    PG_VER_PRETTY="12.4"
-                    PG_VERSION=REL_12_4
+                    PG_VER_PRETTY="12"
+                    PG_VERSION=REL_12_STABLE
                     PG_HINT_PLAN_VERSION=REL12_1_3_10
                     ;;
                 14)
@@ -106,12 +112,21 @@ while [ $# -gt 0 ] ; do
             STOP_AFTER="true"
             shift
             ;;
-        -b|--backend)
-            if [[ "$2" = "make" || "$2" = "meson" ]] ; then
-                BUILD_SYS=$2
-            else
-                show_help
-            fi
+        --uuid-lib)
+            case $2 in
+                ossp)
+                    UUID_LIBRARY="ossp"
+                    ;;
+                e2fs)
+                    UUID_LIBRARY="e2fs"
+                    ;;
+                none)
+                    UUID_LIBRARY="none"
+                    ;;
+                *)
+                    show_help
+                    ;;
+            esac
             shift
             shift
             ;;
@@ -123,13 +138,9 @@ done
 
 OS_TYPE=$(uname)
 if [[ "$OS_TYPE" = "Darwin" ]]; then
-    BUILD_SYS="meson"
     MAKE_CORES=$(sysctl -n hw.logicalcpu)
-    UUID_FLAGS="--with-uuid=e2fs"
 elif [[ "$OS_TYPE" = "Linux" ]]; then
-    BUILD_SYS="make"
     MAKE_CORES=$(nproc)
-    UUID_FLAGS="--with-uuid=ossp"
 else
     echo "Unsupported operating system: $OS_TYPE"
     exit 1
@@ -137,7 +148,6 @@ fi
 
 
 echo ".. Cloning Postgres $PG_VER_PRETTY"
-
 if [ ! -d "$PG_TARGET_DIR" ] ; then
     git clone --depth 1 --branch $PG_VERSION https://github.com/postgres/postgres.git $PG_TARGET_DIR
 fi
@@ -147,24 +157,24 @@ echo ".. Downloading pg_hint_plan extension"
 curl -L https://github.com/ossc-db/pg_hint_plan/archive/refs/tags/$PG_HINT_PLAN_VERSION.tar.gz -o contrib/pg_hint_plan.tar.gz
 
 echo ".. Building Postgres $PG_VER_PRETTY"
-if [ "$BUILD_SYS" = "make" ] ; then
-    if [ "$PG_VER_PRETTY" != "12.4" ]; then
-        ./configure --prefix=$PG_TARGET_DIR/build \
-                --with-ssl=openssl \
-                --with-python \
-                --with-llvm \
-                --with-lz4 \
-                --with-zstd
-    else
-        ./configure --prefix=$PG_TARGET_DIR/build \
+if [ "$PG_VER_PRETTY" -lt "16" ] ; then
+    make distclean || true
+    ./configure --prefix=$PG_TARGET_DIR/build \
                 --with-ssl=openssl \
                 --with-llvm
-    fi
     make clean && make -j $MAKE_CORES && make install
-elif [ "$BUILD_SYS" = "meson" ] ; then
-    meson setup build  --prefix=$PG_TARGET_DIR/build
-    cd build
-    ninja all && ninja install
+else
+    make distclean || true
+    meson setup build --prefix=$PG_TARGET_DIR/build \
+        -Dplpython=auto \
+        -Dicu=enabled \
+        -Dllvm=auto \
+        -Dlz4=auto \
+        -Dzstd=auto \
+        -Dssl=openssl \
+        -Duuid=$UUID_LIBRARY
+    cd $PG_TARGET_DIR/build
+    ninja clean && ninja all && ninja install
 fi
 export PATH="$PG_TARGET_DIR/build/bin:$PATH"
 export LD_LIBRARY_PATH="$PG_TARGET_DIR/build/lib:$LD_LIBRARY_PATH"
@@ -178,8 +188,9 @@ cd pg_hint_plan
 make -j $MAKE_CORES && make install
 cd $PG_TARGET_DIR
 
-if [ "$BUILD_SYS" = "make" ] ; then
-    # The Meson/Ninja build does already create the contrib modules
+if [ "$PG_VER_PRETTY" -lt "16" ] ; then
+    # Meson/Ninja automatically builds all contrib modules but it is only available since PG 16
+    # So we need to manually build the required extensions here for older versions
     echo ".. Installing pg_prewarm extension"
     cd $PG_TARGET_DIR/contrib/pg_prewarm
     make -j $MAKE_CORES && make install
