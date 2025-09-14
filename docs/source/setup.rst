@@ -65,7 +65,7 @@ For Ubuntu-based distributions, these can be installed like so:
 .. code-block:: bash
 
     sudo apt install \
-        build-essential flex bison curl pkg-config llvm clang \
+        build-essential meson ninja-build flex bison curl pkg-config llvm clang \
         libreadline-dev libssl-dev libicu-dev liblz4-dev libossp-uuid-dev python3-dev \
         git unzip zstd
 

@@ -166,6 +166,7 @@ if [ "$PG_VER_PRETTY" -lt "16" ] ; then
 else
     make distclean || true
     meson setup build --prefix=$PG_TARGET_DIR/build \
+        --buildtype=release \
         -Dplpython=auto \
         -Dicu=enabled \
         -Dllvm=auto \
