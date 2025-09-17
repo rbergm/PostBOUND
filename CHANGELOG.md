@@ -57,6 +57,10 @@ Currently, we plan to implement the following features in the future (in no part
 - Added a `last(n)` method to workloads to retrieve the last _n_ queries
 
 ### 💀 Breaking changes
+- Eliminated all duplicate imports in the public API. Core classes and functions are now only available from a single location
+  with a focus on succinctness. For example, the `Database` interface is now only available as `pb.Database` and the duplicate
+  import `pb.db.Database` has been removed. Similarly, `SqlQuery` is now only available as `pb.SqlQuery` and no longer as
+  `pb.qal.SqlQuery`.
 - Renamed the attributes of `PlanParameterization` to be more succint
 - 🐘 Migrate to Meson/Ninja for Postgres setup. This seems more stable/reliable across platforms overall (especially MacOS).
 
@@ -69,6 +73,9 @@ Currently, we plan to implement the following features in the future (in no part
 ### 🏥 Fixes
 - 🦆 Fixed DuckDB performance regressions when executing query with timeout
 - 🦆 Fixed DuckDB schema interface using a broken cursor variable
+- 🦆 Fixed DuckDB statistics catalog not retaining config across calls. Previously, each call to `statistics()` on the DuckDB
+  interface resulted in a new statistics catalog being created. This made it impossible to configure whether to use emulated
+  statistics or not.
 - 🦆 Fixed query execution with timeouts on DuckDB failing on MacOS. It seems that the DuckDB connection is only pickle-able
   on Linux-based systems.
 

@@ -6,7 +6,7 @@ import unittest
 
 import psycopg
 
-from postbound.optimizer import QueryPlan
+from postbound import QueryPlan
 from postbound.db import postgres
 
 
@@ -31,12 +31,18 @@ def _rebuild_result_set(result_set: object) -> list[tuple[object]]:
     return [(value,) for value in result_set]
 
 
-def _rebuild_result_set_from_cache(result_set: list[list[object]] | object) -> list[tuple[object]] | object:
+def _rebuild_result_set_from_cache(
+    result_set: list[list[object]] | object,
+) -> list[tuple[object]] | object:
     """Transforms a result set as stored in the database cache into the same format as provided by a cursor.
 
     If the given result set does not need such adaptions, none will be performed.
     """
-    if not isinstance(result_set, list) or not len(result_set) or not isinstance(result_set[0], list):
+    if (
+        not isinstance(result_set, list)
+        or not len(result_set)
+        or not isinstance(result_set[0], list)
+    ):
         # result sets stored in a cached are a list of nested lists of values
         # each entry in the outer list corresponds to a row and each value in the nested lists corresponds to a
         # column value
@@ -58,30 +64,40 @@ def _stringify_result_set(result_set: list[tuple[object]] | object) -> str:
     return f"result set ({len(result_set)} elements) :: contents = {result_set}"
 
 
-def _assert_default_result_sets_equal(first_set: list[tuple[object]], second_set: list[tuple[object]]) -> None:
+def _assert_default_result_sets_equal(
+    first_set: list[tuple[object]], second_set: list[tuple[object]]
+) -> None:
     """Compares two unordered result sets and makes sure they contain exactly the same rows."""
     first_set_set = set(first_set)
     second_set_set = set(second_set)
     if first_set_set != second_set_set:
         first_set_str = _stringify_result_set(first_set)
         second_set_str = _stringify_result_set(second_set)
-        raise AssertionError(f"Result sets differ: {first_set_str} vs. {second_set_str}")
+        raise AssertionError(
+            f"Result sets differ: {first_set_str} vs. {second_set_str}"
+        )
 
 
-def _assert_ordered_result_sets_equal(first_set: list[tuple[object]], second_set: list[tuple[object]]) -> None:
+def _assert_ordered_result_sets_equal(
+    first_set: list[tuple[object]], second_set: list[tuple[object]]
+) -> None:
     """Compares two ordered results sets and makes sure they contain exactly the same rows in exactly the same order."""
     for cursor, row in enumerate(first_set):
         comparison_row = second_set[cursor]
         if row != comparison_row:
             first_set_str = _stringify_result_set(first_set)
             second_set_str = _stringify_result_set(second_set)
-            raise AssertionError(f"Result sets differ: {first_set_str} vs {second_set_str}")
+            raise AssertionError(
+                f"Result sets differ: {first_set_str} vs {second_set_str}"
+            )
 
 
 class DatabaseTestCase(unittest.TestCase, abc.ABC):
     """Abstract test case that provides assertions on result sets of actually executed database queries."""
 
-    def assertResultSetsEqual(self, first_set: object, second_set: object, *, ordered: bool = False) -> None:
+    def assertResultSetsEqual(
+        self, first_set: object, second_set: object, *, ordered: bool = False
+    ) -> None:
         """Assertion that fails if the two result sets differ.
 
         Ordering can be accounted for by the `ordered` argument. By default, result sets are assumed to be unordered.
@@ -98,7 +114,9 @@ class DatabaseTestCase(unittest.TestCase, abc.ABC):
         if len(first_set) != len(second_set):
             first_set_str = _stringify_result_set(first_set)
             second_set_str = _stringify_result_set(second_set)
-            raise AssertionError(f"Result sets have different length: {first_set_str} and {second_set_str}")
+            raise AssertionError(
+                f"Result sets have different length: {first_set_str} and {second_set_str}"
+            )
 
         if ordered:
             _assert_ordered_result_sets_equal(first_set, second_set)
@@ -109,7 +127,9 @@ class DatabaseTestCase(unittest.TestCase, abc.ABC):
 class QueryTestCase(unittest.TestCase, abc.ABC):
     """Abstract test case that provides assertions on the structure of database queries."""
 
-    def assertQueriesEqual(self, first_query: object, second_query: object, message: str = "") -> None:
+    def assertQueriesEqual(
+        self, first_query: object, second_query: object, message: str = ""
+    ) -> None:
         """Assertion that fails if the two queries differ in a _significant_ way.
 
         This method is heavily heuristic and compares the two query strings according to the following rules:
@@ -127,17 +147,29 @@ class QueryTestCase(unittest.TestCase, abc.ABC):
 
 
 class PlanTestCase(unittest.TestCase, abc.ABC):
-    def assertQueryExecutionPlansEqual(self, first_plan: QueryPlan, second_plan: QueryPlan,
-                                       message: str = "", *, _cur_level: int = 0) -> None:
+    def assertQueryExecutionPlansEqual(
+        self,
+        first_plan: QueryPlan,
+        second_plan: QueryPlan,
+        message: str = "",
+        *,
+        _cur_level: int = 0,
+    ) -> None:
         if first_plan.node_type != second_plan.node_type:
             default_msg = f"Different operators at level {_cur_level}: {first_plan} vs. {second_plan}"
-            raise AssertionError(default_msg if not message else f"{message} :: {default_msg}")
+            raise AssertionError(
+                default_msg if not message else f"{message} :: {default_msg}"
+            )
         elif len(first_plan.children) != len(second_plan.children):
             default_msg = f"Different number of child nodes at level {_cur_level}: {first_plan} vs. {second_plan}"
-            raise AssertionError(default_msg if not message else f"{message} :: {default_msg}")
+            raise AssertionError(
+                default_msg if not message else f"{message} :: {default_msg}"
+            )
 
-        for (left_child, right_child) in zip(first_plan.children, second_plan.children):
-            self.assertQueryExecutionPlansEqual(left_child, right_child, message=message, _cur_level=_cur_level + 1)
+        for left_child, right_child in zip(first_plan.children, second_plan.children):
+            self.assertQueryExecutionPlansEqual(
+                left_child, right_child, message=message, _cur_level=_cur_level + 1
+            )
 
 
 def skip_if_no_db(config_file):
@@ -156,4 +188,6 @@ def skip_if_no_db(config_file):
         pg_instance.close()
         return lambda f: f
     except psycopg.OperationalError:
-        return unittest.skip(f"Cannot connect to database with config file '{config_file}'")
+        return unittest.skip(
+            f"Cannot connect to database with config file '{config_file}'"
+        )

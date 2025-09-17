@@ -18,7 +18,7 @@ from ._core import (
     ScanOperator,
     TableReference,
 )
-from .qal import AbstractPredicate, ColumnExpression, SqlExpression
+from .qal._qal import AbstractPredicate, ColumnExpression, SqlExpression
 from .util import StateError, jsondict
 
 JoinDirection = Literal["inner", "outer"]

@@ -18,20 +18,15 @@ from typing import Optional
 import numpy as np
 import pandas as pd
 
-from postbound import db
-from postbound import optimizer as opt
-from postbound import qal
-from postbound.db import postgres
-from postbound.experiments import workloads
+import postbound as pb
 from postbound.optimizer.strategies import enumeration, randomized
-from postbound.util import jsonize
 
 StopEvaluation = False
 CancelEvaluation = False
 Interactive = True
 logging_format = "%(asctime)s %(levelname)s %(message)s"
 logging_level = logging.DEBUG
-workloads.workloads_base_dir = "workloads/"
+pb.workloads.workloads_base_dir = "workloads/"
 
 
 @dataclasses.dataclass(frozen=True)
@@ -62,10 +57,10 @@ class ExperimentConfig:
 
 
 def skip_existing_results(
-    workload: workloads.Workload,
+    workload: pb.workloads.Workload,
     *,
     config: ExperimentConfig = ExperimentConfig.default(),
-) -> workloads.Workload:
+) -> pb.workloads.Workload:
     if not config.skip_existing_results:
         return workload
     existing_results = set()
@@ -91,8 +86,8 @@ def skip_existing_results(
 
 
 def filter_for_label(
-    workload: workloads.Workload, labels: Sequence[str]
-) -> workloads.Workload:
+    workload: pb.workloads.Workload, labels: Sequence[str]
+) -> pb.workloads.Workload:
     if not len(labels):
         return workload
     if len(labels) == 1:
@@ -115,8 +110,8 @@ def stop_evaluation(sig_num, stack_trace) -> None:
 
 
 def execute_query_handler(
-    query: qal.SqlQuery,
-    database: db.Database,
+    query: pb.SqlQuery,
+    database: pb.Database,
     duration_sender: multiprocessing.connection.Connection,
 ) -> None:
     signal.signal(signal.SIGINT, signal.SIG_IGN)
@@ -128,11 +123,11 @@ def execute_query_handler(
 
 
 def generate_all_join_orders(
-    query: qal.SqlQuery,
+    query: pb.SqlQuery,
     exhaustive_enumerator: enumeration.ExhaustiveJoinOrderEnumerator,
     *,
     config: ExperimentConfig = ExperimentConfig.default(),
-) -> list[opt.LogicalJoinTree]:
+) -> list[pb.LogicalJoinTree]:
     exhaustive_join_order_generator = exhaustive_enumerator.all_join_orders_for(query)
     join_order_plans = []
     for __ in range(config.exhaustive_join_ordering_limit):
@@ -148,8 +143,8 @@ def generate_all_join_orders(
 
 
 def generate_random_join_orders(
-    query: qal.SqlQuery, *, config: ExperimentConfig = ExperimentConfig.default()
-) -> list[opt.LogicalJoinTree]:
+    query: pb.SqlQuery, *, config: ExperimentConfig = ExperimentConfig.default()
+) -> list[pb.LogicalJoinTree]:
     random_enumerator = randomized.RandomJoinOrderGenerator()
     join_order_plans = []
     random_plan_hashes = set()
@@ -182,8 +177,8 @@ def generate_random_join_orders(
 @dataclasses.dataclass(frozen=True)
 class EvaluationResult:
     label: str
-    query: qal.SqlQuery
-    join_order: opt.JoinTree
+    query: pb.SqlQuery
+    join_order: pb.opt.JoinTree
     query_hints: str
     planner_options: str
     query_plan: dict
@@ -216,44 +211,44 @@ def determine_timeout(
 
 def assert_correct_query_plan(
     label: str,
-    query: qal.SqlQuery,
-    expected_join_order: opt.JoinTree,
+    query: pb.SqlQuery,
+    expected_join_order: pb.opt.JoinTree,
     actual_query_plan: dict,
 ) -> None:
-    parsed_actual_plan = postgres.PostgresExplainPlan(actual_query_plan).as_qep()
-    actual_join_order = opt.jointree_from_plan(parsed_actual_plan)
+    parsed_actual_plan = pb.postgres.PostgresExplainPlan(actual_query_plan).as_qep()
+    actual_join_order = pb.opt.jointree_from_plan(parsed_actual_plan)
     if expected_join_order != actual_join_order:
         logging.error("Join order was not enforced correctly for label %s", label)
 
 
 OperatorSelection = tuple[
-    Optional[opt.PhysicalOperatorAssignment], Optional[opt.PlanParameterization]
+    Optional[pb.PhysicalOperatorAssignment], Optional[pb.PlanParameterization]
 ]
 
 
-def native_operator_selection(join_order: opt.JoinTree) -> OperatorSelection:
-    plan_params = opt.PlanParameterization()
+def native_operator_selection(join_order: pb.opt.JoinTree) -> OperatorSelection:
+    plan_params = pb.PlanParameterization()
     plan_params.set_system_settings(geqo="off")
     return None, plan_params
 
 
-def restrict_to_hash_join(join_order: opt.JoinTree) -> OperatorSelection:
-    operator_selection = opt.PhysicalOperatorAssignment()
+def restrict_to_hash_join(join_order: pb.opt.JoinTree) -> OperatorSelection:
+    operator_selection = pb.PhysicalOperatorAssignment()
     operator_selection.set_operator_enabled_globally(
-        opt.JoinOperators.NestedLoopJoin, False
+        pb.JoinOperator.NestedLoopJoin, False
     )
     operator_selection.set_operator_enabled_globally(
-        opt.JoinOperators.SortMergeJoin, False
+        pb.JoinOperator.SortMergeJoin, False
     )
 
-    plan_params = opt.PlanParameterization()
+    plan_params = pb.PlanParameterization()
     plan_params.set_system_settings(geqo="off")
     return operator_selection, plan_params
 
 
-def parse_tables_list(tables: str) -> set[qal.TableReference]:
+def parse_tables_list(tables: str) -> set[pb.TableReference]:
     jsonized = json.loads(tables)
-    return {qal.TableReference(tab["full_name"], tab.get("alias")) for tab in jsonized}
+    return {pb.TableReference(tab["full_name"], tab.get("alias")) for tab in jsonized}
 
 
 class TrueCardinalityGenerator:
@@ -263,14 +258,17 @@ class TrueCardinalityGenerator:
         self._current_label: Optional[str] = None
         self._relevant_queries: Optional[pd.DataFrame] = None
 
-    def setup_for_query(self, label: str, query: qal.SqlQuery) -> None:
+    def setup_for_query(self, label: str, query: pb.SqlQuery) -> None:
         self._current_label = label
         self._relevant_queries = self._card_df[self._card_df.label == label].copy()
 
-    def __call__(self, join_order: opt.JoinTree) -> OperatorSelection:
+    def __call__(self, join_order: pb.opt.JoinTree) -> OperatorSelection:
         assert self._relevant_queries is not None
-        plan_params = opt.PlanParameterization()
-        for intermediate_join in join_order.join_sequence():
+        plan_params = pb.PlanParameterization()
+        for intermediate_join in join_order.iternodes():
+            if intermediate_join.is_scan():
+                continue
+
             joined_tables = intermediate_join.tables()
             current_cardinality = self._relevant_queries[
                 self._relevant_queries.tables == joined_tables
@@ -284,8 +282,7 @@ class TrueCardinalityGenerator:
                 continue
             cardinality = current_cardinality.iloc[0]["cardinality"]
             plan_params.add_cardinality(joined_tables, cardinality)
-        for base_table in join_order.table_sequence():
-            table = base_table.table
+        for table in join_order.tables():
             current_cardinality = self._relevant_queries[
                 self._relevant_queries.tables == {table}
             ]
@@ -305,13 +302,13 @@ class TrueCardinalityGenerator:
 
 def execute_single_query(
     label: str,
-    query: qal.SqlQuery,
-    join_order: opt.LogicalJoinTree,
+    query: pb.SqlQuery,
+    join_order: pb.LogicalJoinTree,
     *,
     n_executed_plans: int = 0,
     total_query_runtime: float = 0,
-    db_instance: db.Database,
-    operator_generator: Callable[[opt.JoinTree], OperatorSelection],
+    db_instance: pb.Database,
+    operator_generator: Callable[[pb.opt.JoinTree], OperatorSelection],
     config: ExperimentConfig = ExperimentConfig.default(),
 ) -> EvaluationResult:
     query_generator = db_instance.hinting()
@@ -323,7 +320,7 @@ def execute_single_query(
         physical_operators=operator_selection,
         plan_parameters=plan_params,
     )
-    optimized_query = qal.transform.as_explain_analyze(optimized_query)
+    optimized_query = pb.transform.as_explain_analyze(optimized_query)
 
     query_timeout = determine_timeout(
         label, total_query_runtime, n_executed_plans, config=config
@@ -347,7 +344,7 @@ def execute_single_query(
         # We cannot use db.optimizer().query_plan() here, b/c we need to JSON-serialize the raw plan later on. This is
         # currently not supported by the QueryExecutionPlan
         query_plan = db_instance.execute_query(
-            qal.transform.as_explain(optimized_query), cache_enabled=False
+            pb.transform.as_explain(optimized_query), cache_enabled=False
         )
         query_runtime = np.inf
     else:
@@ -379,8 +376,8 @@ def execute_single_query(
 
 
 def prewarm_database(
-    query: qal.SqlQuery,
-    db_instance: postgres.PostgresInterface,
+    query: pb.SqlQuery,
+    db_instance: pb.postgres.PostgresInterface,
     *,
     config: ExperimentConfig = ExperimentConfig.default(),
 ) -> None:
@@ -391,9 +388,9 @@ def prewarm_database(
 
 def evaluate_query(
     label: str,
-    query: qal.SqlQuery,
+    query: pb.SqlQuery,
     *,
-    db_instance: postgres.PostgresInterface,
+    db_instance: pb.postgres.PostgresInterface,
     config: ExperimentConfig = ExperimentConfig.default(),
 ) -> Iterable[EvaluationResult]:
     logging.debug("Building all plans for query %s", label)
@@ -471,9 +468,9 @@ def evaluate_query(
 
 def prepare_for_export(df: pd.DataFrame) -> pd.DataFrame:
     df = df.copy()
-    df["join_order"] = df["join_order"].apply(jsonize.to_json)
-    df["query_plan"] = df["query_plan"].apply(jsonize.to_json)
-    df["db_config"] = df["db_config"].apply(jsonize.to_json)
+    df["join_order"] = df["join_order"].apply(pb.util.to_json)
+    df["query_plan"] = df["query_plan"].apply(pb.util.to_json)
+    df["db_config"] = df["db_config"].apply(pb.util.to_json)
     return df
 
 
@@ -616,7 +613,7 @@ def main():
     config, labels = read_config()
     logging.debug("Experiment config finalized")
     os.makedirs(config.output_directory, exist_ok=True)
-    pg_db = postgres.connect(config_file=".psycopg_connection_job")
+    pg_db = pb.postgres.connect(config_file=".psycopg_connection_job")
     logging.debug("Obtained database connection")
 
     # HOTFIX: the Leading() hint of pg_hint_plan does not work if Postgres decides to use the GeQO
@@ -629,7 +626,7 @@ def main():
     logging.debug("Disabling GeQO")
     pg_db.execute_query("SET geqo = 'off';", cache_enabled=False)
 
-    workload = workloads.job()
+    workload = pb.workloads.job()
     logging.debug("Raw workload read")
 
     if labels:

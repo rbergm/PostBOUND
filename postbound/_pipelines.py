@@ -10,23 +10,26 @@ from __future__ import annotations
 import abc
 from typing import Optional, Protocol
 
+from ._hints import PhysicalOperatorAssignment, PlanParameterization
 from ._qep import QueryPlan
 from ._stages import (
     CardinalityEstimator,
     CompleteOptimizationAlgorithm,
     CostModel,
+    EmptyPreCheck,
     IncrementalOptimizationStep,
     JoinOrderOptimization,
+    OptimizationPreCheck,
     ParameterGeneration,
     PhysicalOperatorSelection,
     PlanEnumerator,
+    UnsupportedQueryError,
+    UnsupportedSystemError,
 )
-from .db import Database, DatabasePool
+from .db._db import Database, DatabasePool
 from .optimizer import validation
-from .optimizer._hints import PhysicalOperatorAssignment, PlanParameterization
-from .optimizer.validation import OptimizationPreCheck
-from .qal import SqlQuery
-from .util import StateError
+from .qal._qal import SqlQuery
+from .util._errors import StateError
 
 
 class OptimizationPipeline(abc.ABC):
@@ -337,7 +340,7 @@ class TextBookOptimizationPipeline(OptimizationPipeline):
         else:
             self._plan_enumerator = DynamicProgrammingEnumerator(target_db=target_db)
 
-        self._support_check = validation.EmptyPreCheck()
+        self._support_check = EmptyPreCheck()
         self._build = False
 
     def target_database(self) -> Database:
@@ -526,7 +529,7 @@ class MultiStageOptimizationPipeline(OptimizationPipeline):
 
     def __init__(self, target_db: Database) -> None:
         self._target_db = target_db
-        self._pre_check: OptimizationPreCheck | None = validation.EmptyPreCheck()
+        self._pre_check: OptimizationPreCheck | None = EmptyPreCheck()
         self._join_order_enumerator: JoinOrderOptimization | None = None
         self._physical_operator_selection: PhysicalOperatorSelection | None = None
         self._plan_parameterization: ParameterGeneration | None = None
@@ -560,7 +563,7 @@ class MultiStageOptimizationPipeline(OptimizationPipeline):
         Returns
         -------
         Optional[OptimizationPreCheck]
-            The current check, if any. Can also be an `validation.EmptyPreCheck` instance.
+            The current check, if any. Can also be an `EmptyPreCheck` instance.
         """
         return self._pre_check
 
@@ -759,9 +762,7 @@ class MultiStageOptimizationPipeline(OptimizationPipeline):
             self._target_db
         )
         if not db_check_result.passed:
-            raise validation.UnsupportedSystemError(
-                self.target_db, db_check_result.failure_reason
-            )
+            raise UnsupportedSystemError(self.target_db, db_check_result.failure_reason)
 
         self._build = True
         return self
@@ -777,9 +778,7 @@ class MultiStageOptimizationPipeline(OptimizationPipeline):
         self._assert_is_build()
         supported_query_check = self._pre_check.check_supported_query(query)
         if not supported_query_check.passed:
-            raise validation.UnsupportedQueryError(
-                query, supported_query_check.failure_reason
-            )
+            raise UnsupportedQueryError(query, supported_query_check.failure_reason)
 
         join_order = (
             None

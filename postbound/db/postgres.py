@@ -39,16 +39,19 @@ from .._core import (
     JoinOperator,
     PhysicalOperator,
     ScanOperator,
+    UnboundColumnError,
+    VirtualTableError,
 )
-from .._qep import QueryPlan, SortKey
-from ..optimizer._hints import (
+from .._hints import (
     HintType,
     PhysicalOperatorAssignment,
     PlanParameterization,
     operators_from_plan,
 )
-from ..optimizer._jointree import JoinTree, jointree_from_plan, parameters_from_plan
-from ..qal import (
+from .._jointree import JoinTree, jointree_from_plan, parameters_from_plan
+from .._qep import QueryPlan, SortKey
+from ..qal import formatter, transform
+from ..qal._qal import (
     AbstractPredicate,
     ArrayAccessExpression,
     BetweenPredicate,
@@ -74,11 +77,7 @@ from ..qal import (
     SubqueryExpression,
     TableReference,
     UnaryPredicate,
-    UnboundColumnError,
-    VirtualTableError,
     WindowExpression,
-    formatter,
-    transform,
 )
 from ..util import StateError, Version, jsondict
 from ._db import (

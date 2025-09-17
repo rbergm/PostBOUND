@@ -17,7 +17,7 @@ import warnings
 from collections.abc import Iterable
 from typing import Optional
 
-from ... import db, util
+from ... import util
 from ..._core import (
     Cardinality,
     ColumnReference,
@@ -27,6 +27,12 @@ from ..._core import (
     ScanOperator,
     TableReference,
 )
+from ..._hints import (
+    PhysicalOperatorAssignment,
+    PlanParameterization,
+    operators_from_plan,
+)
+from ..._jointree import JoinTree, jointree_from_plan, parameters_from_plan
 from ..._qep import QueryPlan
 from ..._stages import (
     CompleteOptimizationAlgorithm,
@@ -35,17 +41,11 @@ from ..._stages import (
     ParameterGeneration,
     PhysicalOperatorSelection,
 )
-from ...db import DatabaseServerError, DatabaseUserError
+from ...db._db import Database, DatabaseServerError, DatabaseUserError
 from ...db.postgres import PostgresInterface
 from ...qal import ColumnExpression, OrderBy, SqlQuery, transform
 from ...util import jsondict
-from .._hints import (
-    PhysicalOperatorAssignment,
-    PlanParameterization,
-    operators_from_plan,
-)
-from .._jointree import JoinTree, jointree_from_plan, parameters_from_plan
-from ..policies.cardinalities import CardinalityGenerator
+from .._cardinalities import CardinalityGenerator
 
 
 class NativeCostModel(CostModel):
@@ -61,7 +61,7 @@ class NativeCostModel(CostModel):
 
     def __init__(self, raise_on_error: bool = False) -> None:
         super().__init__()
-        self._target_db: Optional[db.Database] = None
+        self._target_db: Optional[Database] = None
         self._raise_on_error = raise_on_error
 
     def estimate_cost(self, query: SqlQuery, plan: QueryPlan) -> Cost:
@@ -110,7 +110,7 @@ class NativeCostModel(CostModel):
             else None,
         }
 
-    def initialize(self, target_db: db.Database, query: SqlQuery) -> None:
+    def initialize(self, target_db: Database, query: SqlQuery) -> None:
         self._target_db = target_db
 
     def _cost_index_op(self, query: SqlQuery, plan: QueryPlan) -> Cost:
@@ -389,9 +389,9 @@ class NativeCostModel(CostModel):
 class NativeCardinalityEstimator(CardinalityGenerator):
     """Obtains the cardinality of a query plan by using the cardinality estimator of an actual database system."""
 
-    def __init__(self, target_db: Optional[db.Database] = None) -> None:
+    def __init__(self, target_db: Optional[Database] = None) -> None:
         super().__init__(True)
-        self._target_db: Optional[db.Database] = target_db
+        self._target_db: Optional[Database] = target_db
 
     def calculate_estimate(
         self, query: SqlQuery, intermediate: TableReference | Iterable[TableReference]
@@ -409,7 +409,7 @@ class NativeCardinalityEstimator(CardinalityGenerator):
             else None,
         }
 
-    def initialize(self, target_db: db.Database, query: SqlQuery) -> None:
+    def initialize(self, target_db: Database, query: SqlQuery) -> None:
         self._target_db = target_db
 
 
@@ -422,7 +422,7 @@ class NativeJoinOrderOptimizer(JoinOrderOptimization):
         The target database whose optimization algorithm should be used.
     """
 
-    def __init__(self, db_instance: db.Database) -> None:
+    def __init__(self, db_instance: Database) -> None:
         super().__init__()
         self.db_instance = db_instance
 
@@ -446,7 +446,7 @@ class NativePhysicalOperatorSelection(PhysicalOperatorSelection):
         The target database whose optimization algorithm should be used.
     """
 
-    def __init__(self, db_instance: db.Database) -> None:
+    def __init__(self, db_instance: Database) -> None:
         super().__init__()
         self.db_instance = db_instance
 
@@ -476,7 +476,7 @@ class NativePlanParameterization(ParameterGeneration):
         The target database whose optimization algorithm should be used.
     """
 
-    def __init__(self, db_instance: db.Database) -> None:
+    def __init__(self, db_instance: Database) -> None:
         super().__init__()
         self.db_instance = db_instance
 
@@ -506,7 +506,7 @@ class NativeOptimizer(CompleteOptimizationAlgorithm):
         The target database whose optimization algorithm should be used.
     """
 
-    def __init__(self, db_instance: db.Database) -> None:
+    def __init__(self, db_instance: Database) -> None:
         super().__init__()
         self.db_instance = db_instance
 

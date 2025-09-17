@@ -12,22 +12,23 @@ from typing import Literal, Optional
 
 import networkx as nx
 
-from .._jointree import JoinTree, to_query_plan
-from .._hints import (
-    ScanOperatorAssignment,
+from ..._core import JoinOperator, ScanOperator, TableReference
+from ..._hints import (
     JoinOperatorAssignment,
     PhysicalOperatorAssignment,
+    ScanOperatorAssignment,
 )
-from ..._core import ScanOperator, JoinOperator
+from ..._jointree import JoinTree, to_query_plan
 from ..._qep import QueryPlan
-from ... import db, qal
+from ...db._db import Database, DatabasePool
+from ...qal._qal import SqlQuery
 from ...util import networkx as nx_utils
 
 
 def _merge_nodes(
-    query: qal.SqlQuery,
-    start: JoinTree | qal.TableReference,
-    end: JoinTree | qal.TableReference,
+    query: SqlQuery,
+    start: JoinTree | TableReference,
+    end: JoinTree | TableReference,
 ) -> JoinTree:
     """Provides a join tree that combines two specific trees or tables.
 
@@ -36,9 +37,9 @@ def _merge_nodes(
 
     Parameters
     ----------
-    start : JoinTree | qal.TableReference
+    start : JoinTree | TableReference
         The first tree to merge. If this is a base table, it will be treated as a join tree of just a scan of that table.
-    end : Jointree | qal.TableReference
+    end : Jointree | TableReference
         The second tree to merge. If this is a base table, it will be treated as a join tree of just a scan of that table.
 
     Returns
@@ -47,13 +48,13 @@ def _merge_nodes(
         A join tree combining the input trees. The `start` node will be the outer node of the tree and the `end` node will be
         the inner node.
     """
-    start = JoinTree.scan(start) if isinstance(start, qal.TableReference) else start
-    end = JoinTree.scan(end) if isinstance(end, qal.TableReference) else end
+    start = JoinTree.scan(start) if isinstance(start, TableReference) else start
+    end = JoinTree.scan(end) if isinstance(end, TableReference) else end
     return JoinTree.join(start, end)
 
 
 def _enumerate_join_graph(
-    query: qal.SqlQuery, join_graph: nx.Graph
+    query: SqlQuery, join_graph: nx.Graph
 ) -> Generator[JoinTree, None, None]:
     """Provides all possible join trees based on a join graph.
 
@@ -128,14 +129,12 @@ class ExhaustiveJoinOrderEnumerator:
     ) -> None:
         self._tree_structure = tree_structure
 
-    def all_join_orders_for(
-        self, query: qal.SqlQuery
-    ) -> Generator[JoinTree, None, None]:
+    def all_join_orders_for(self, query: SqlQuery) -> Generator[JoinTree, None, None]:
         """Produces a generator for all possible join trees of a query.
 
         Parameters
         ----------
-        query : qal.SqlQuery
+        query : SqlQuery
             The query to "optimize"
 
         Yields
@@ -180,16 +179,14 @@ class ExhaustiveJoinOrderEnumerator:
             join_order_hashes.add(current_hash)
             yield join_order
 
-    def _linear_join_orders(
-        self, query: qal.SqlQuery
-    ) -> Generator[JoinTree, None, None]:
+    def _linear_join_orders(self, query: SqlQuery) -> Generator[JoinTree, None, None]:
         """Handler method to generate left-deep or right-deep join orders.
 
         The specific kind of join order is inferred based on the `_tree_structure` attribute.
 
         Parameters
         ----------
-        query : qal.SqlQuery
+        query : SqlQuery
             The query to "optimize"
 
         Yields
@@ -250,14 +247,14 @@ class ExhaustiveOperatorEnumerator:
         *,
         include_scans: bool = True,
         include_joins: bool = True,
-        database: Optional[db.Database] = None,
+        database: Optional[Database] = None,
     ) -> None:
         if not include_joins and not include_scans:
             raise ValueError("Cannot exclude both join hints and scan hints")
         self._db = (
             database
             if database is not None
-            else db.DatabasePool.get_instance().current_database()
+            else DatabasePool.get_instance().current_database()
         )
         self._include_scans = include_scans
         self._include_joins = include_joins
@@ -275,7 +272,7 @@ class ExhaustiveOperatorEnumerator:
         )
 
     def all_operator_assignments_for(
-        self, query: qal.SqlQuery, join_order: JoinTree
+        self, query: SqlQuery, join_order: JoinTree
     ) -> Generator[PhysicalOperatorAssignment, None, None]:
         """Produces a generator for all possible operator assignments of the allowed operators.
 
@@ -284,7 +281,7 @@ class ExhaustiveOperatorEnumerator:
 
         Parameters
         ----------
-        query : qal.SqlQuery
+        query : SqlQuery
             The query to "optimize"
         join_order : JoinTree
             The join sequence to use. This contains all required tables to be scanned and joins to be performed.
@@ -324,13 +321,13 @@ class ExhaustiveOperatorEnumerator:
                 yield current_total_assignment
 
     def _all_join_assignments_for(
-        self, query: qal.SqlQuery, join_order: JoinTree
+        self, query: SqlQuery, join_order: JoinTree
     ) -> Generator[PhysicalOperatorAssignment, None, None]:
         """Specialized handler for assignments that only contain join operators.
 
         Parameters
         ----------
-        query : qal.SqlQuery
+        query : SqlQuery
             The query to "optimize"
         join_order : jointree.JoinTree
             The join sequence to use. This contains all required tables to be scanned and joins to be performed.
@@ -351,13 +348,13 @@ class ExhaustiveOperatorEnumerator:
             yield assignment
 
     def _all_scan_assignments_for(
-        self, query: qal.SqlQuery, join_order: JoinTree
+        self, query: SqlQuery, join_order: JoinTree
     ) -> Generator[PhysicalOperatorAssignment, None, None]:
         """Specialized handler for assignments that only contain scan operators.
 
         Parameters
         ----------
-        query : qal.SqlQuery
+        query : SqlQuery
             The query to "optimize"
         join_order : jointree.JoinTree
             The join sequence to use. This contains all required tables to be scanned and joins to be performed.
@@ -410,7 +407,7 @@ class ExhaustivePlanEnumerator:
         self._join_order_generator = ExhaustiveJoinOrderEnumerator(**join_order_args)
         self._operator_generator = ExhaustiveOperatorEnumerator(**operator_args)
 
-    def all_plans_for(self, query: qal.SqlQuery) -> Generator[QueryPlan, None, None]:
+    def all_plans_for(self, query: SqlQuery) -> Generator[QueryPlan, None, None]:
         """Produces a generator for all possible query plans of an input query.
 
         The structure of the provided plans can be restricted by configuring the underlying services. Consult the class-level
@@ -418,7 +415,7 @@ class ExhaustivePlanEnumerator:
 
         Parameters
         ----------
-        query : qal.SqlQuery
+        query : SqlQuery
             The query to "optimize"
 
         Yields

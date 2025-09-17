@@ -4,10 +4,9 @@ from __future__ import annotations
 
 import functools
 import warnings
-from typing import Callable, TypeVar
+from typing import Callable
 
-T = TypeVar("T")
-"""Generic type var placeholder."""
+from .._base import T
 
 
 def deprecated(func: Callable) -> Callable:

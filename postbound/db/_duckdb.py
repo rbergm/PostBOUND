@@ -24,14 +24,15 @@ from .._core import (
     ScanOperator,
     TableReference,
 )
-from .._qep import QueryPlan
-from ..optimizer import (
+from .._hints import (
     HintType,
-    JoinTree,
     PhysicalOperatorAssignment,
     PlanParameterization,
 )
-from ..qal import SqlQuery, transform
+from .._jointree import JoinTree
+from .._qep import QueryPlan
+from ..qal import transform
+from ..qal._qal import SqlQuery
 from ..util import Version, jsondict
 from ._db import (
     Cursor,
@@ -65,6 +66,7 @@ class DuckDBInterface(Database):
         self._cur = duckdb.connect(db)
         self._last_query_runtime = math.nan
 
+        self._stats = DuckDBStatistics(self)
         self._schema = DuckDBSchema(self)
         self._optimizer = DuckDBOptimizer(self)
         self._hinting = DuckDBHintService(self)
@@ -74,19 +76,8 @@ class DuckDBInterface(Database):
     def schema(self) -> DuckDBSchema:
         return self._schema
 
-    def statistics(
-        self,
-        *,
-        emulated: bool = False,
-        enable_emulation_fallback: bool = True,
-        cache_enabled: Optional[bool] = True,
-    ) -> DatabaseStatistics:
-        return DuckDBStatistics(
-            self,
-            emulated=emulated,
-            enable_emulation_fallback=enable_emulation_fallback,
-            cache_enabled=cache_enabled,
-        )
+    def statistics(self) -> DatabaseStatistics:
+        return self._stats
 
     def hinting(self) -> HintService:
         return self._hinting
@@ -415,7 +406,7 @@ def parse_duckdb_plan(raw_plan: dict) -> QueryPlan:
         node_type = operator
 
     base_table = None
-    if operator in ScanOperator:
+    if operator and operator in ScanOperator:
         tab = extras.get("Table", "")
         if tab:
             base_table = TableReference(tab)

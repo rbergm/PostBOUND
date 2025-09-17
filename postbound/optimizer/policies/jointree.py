@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import abc
 
-from ... import qal
-from .. import validation
+from ..._stages import EmptyPreCheck, OptimizationPreCheck
+from ...qal._qal import AbstractPredicate, SqlQuery
 from .._joingraph import JoinGraph
 
 
@@ -27,25 +27,25 @@ class BranchGenerationPolicy(abc.ABC):
         self.name = name
 
     @abc.abstractmethod
-    def setup_for_query(self, query: qal.SqlQuery) -> None:
+    def setup_for_query(self, query: SqlQuery) -> None:
         """Enables the policy to setup of internal data structures.
 
         Parameters
         ----------
-        query : qal.SqlQuery
+        query : SqlQuery
             The query that should be optimized next
         """
         raise NotImplementedError
 
     @abc.abstractmethod
     def generate_subquery_for(
-        self, join: qal.AbstractPredicate, join_graph: JoinGraph
+        self, join: AbstractPredicate, join_graph: JoinGraph
     ) -> bool:
         """Decides whether the given join should be executed in a subquery.
 
         Parameters
         ----------
-        join : qal.AbstractPredicate
+        join : AbstractPredicate
             The join that should be executed **within the subquery**. This is not the predicate that should be used to combine
             the results of two intermediate relations.
         join_graph : JoinGraph
@@ -70,15 +70,15 @@ class BranchGenerationPolicy(abc.ABC):
         """
         raise NotImplementedError
 
-    def pre_check(self) -> validation.OptimizationPreCheck:
+    def pre_check(self) -> OptimizationPreCheck:
         """Provides requirements that an input query has to satisfy in order for the policy to work properly.
 
         Returns
         -------
-        validation.OptimizationPreCheck
+        OptimizationPreCheck
             The requirements check
         """
-        return validation.EmptyPreCheck()
+        return EmptyPreCheck()
 
     def __repr__(self) -> str:
         return str(self)
@@ -93,11 +93,11 @@ class LinearJoinTreeGenerationPolicy(BranchGenerationPolicy):
     def __init__(self):
         super().__init__("Linear subquery policy")
 
-    def setup_for_query(self, query: qal.SqlQuery) -> None:
+    def setup_for_query(self, query: SqlQuery) -> None:
         pass
 
     def generate_subquery_for(
-        self, join: qal.AbstractPredicate, join_graph: JoinGraph
+        self, join: AbstractPredicate, join_graph: JoinGraph
     ) -> bool:
         return False
 

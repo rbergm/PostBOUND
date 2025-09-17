@@ -32,14 +32,14 @@ class RandomJoinOrderOptimizer(pb.JoinOrderOptimization):
             target_db if target_db is not None else pb.db.current_database()
         )
 
-    def optimize_join_order(self, query: pb.SqlQuery) -> pb.opt.LogicalJoinTree:
+    def optimize_join_order(self, query: pb.SqlQuery) -> pb.LogicalJoinTree:
         # This is the most important method that handles the actual join order optimization
 
         # In our optimizer we must maintain two data structures:
         # The join graph stores which tables have already been joined and which joins are available next
         # The join tree stores the join order that we have constructed so far
         join_graph = pb.opt.JoinGraph(query)
-        join_tree = pb.opt.LogicalJoinTree.empty()
+        join_tree = pb.LogicalJoinTree.empty()
 
         # Our algorithm simply joins one table after another, until all tables have inserted into the join order
         while join_graph.contains_free_tables():
@@ -62,7 +62,7 @@ class RandomJoinOrderOptimizer(pb.JoinOrderOptimization):
     def describe(self) -> dict:
         return {"name": "random_linear"}
 
-    def pre_check(self) -> validation.OptimizationPreCheck:
+    def pre_check(self) -> pb.OptimizationPreCheck:
         # Our optimizer only works for queries without cross products (there are no join paths between the different
         # subqueries). Therefore, we must require that it is not executed on "bad" queries via a pre-check.
         query_check = validation.CrossProductPreCheck()

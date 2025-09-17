@@ -30,22 +30,23 @@ from typing import Any, Optional, Protocol, Type, runtime_checkable
 import networkx as nx
 
 from .. import util
-from .._core import Cardinality, Cost
-from .._qep import QueryPlan
-from ..optimizer import (
+from .._core import (
+    Cardinality,
+    ColumnReference,
+    Cost,
+    TableReference,
+    UnboundColumnError,
+    VirtualTableError,
+)
+from .._hints import (
     HintType,
     PhysicalOperator,
     PhysicalOperatorAssignment,
     PlanParameterization,
 )
-from ..optimizer._jointree import JoinTree
-from ..qal import (
-    ColumnReference,
-    SqlQuery,
-    TableReference,
-    UnboundColumnError,
-    VirtualTableError,
-)
+from .._jointree import JoinTree
+from .._qep import QueryPlan
+from ..qal._qal import SqlQuery
 
 ResultRow = tuple
 """Simple type alias to denote a single tuple from a result set."""
@@ -167,6 +168,7 @@ class TimeoutSupport(Protocol):
         """Executes a query with a specific timeout.
 
         For query execution, we use the following rules in contrast to `Database.execute_query`:
+
         1. We never make use of the database interfaces' cache, even if it the query is contained in the cache
         2. We never attempt to simplify the result set, even if this would be possible (e.g., for single-row result sets).
            This is more of a pragmatic decision to be able to indicate a timeout with *None* and distinguishing it from a
@@ -2222,6 +2224,21 @@ class DatabasePool:
 
     def __str__(self) -> str:
         return f"DatabasePool {self._pool}"
+
+
+def current_database() -> Database:
+    """Provides the current database from the `DatabasePool`.
+
+    Returns
+    -------
+    Database
+        The current database instance. If there is not exactly one database in the pool, a `ValueError` is raised.
+
+    See Also
+    --------
+    DatabasePool.current_database
+    """
+    return DatabasePool.get_instance().current_database()
 
 
 class UnsupportedDatabaseFeatureError(RuntimeError):

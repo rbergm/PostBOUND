@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 from . import qal
+from ._core import ColumnReference, TableReference
 
 
-def tab(table: str) -> qal.TableReference:
+def tab(table: str) -> TableReference:
     """Creates a table instance.
 
     Parameters
@@ -15,17 +16,17 @@ def tab(table: str) -> qal.TableReference:
 
     Returns
     -------
-    qal.TableReference
+    TableReference
         The resulting table. This will never be a virtual table.
     """
     if " " in table:
         full_name, alias = table.split(" ")
-        return qal.TableReference(full_name, alias)
+        return TableReference(full_name, alias)
     else:
-        return qal.TableReference(table)
+        return TableReference(table)
 
 
-def col(column: str) -> qal.ColumnReference:
+def col(column: str) -> ColumnReference:
     """Creates a column instance.
 
     Parameters
@@ -35,15 +36,15 @@ def col(column: str) -> qal.ColumnReference:
 
     Returns
     -------
-    qal.ColumnReference
+    ColumnReference
         The resulting column. If a table name is included before the ``.``, it will be parsed according to the rules of
         `tab()`.
     """
     if "." in column:
         table_name, column_name = column.split(".")
-        return qal.ColumnReference(column_name, tab(table_name))
+        return ColumnReference(column_name, tab(table_name))
     else:
-        return qal.ColumnReference(column)
+        return ColumnReference(column)
 
 
 def q(query: str) -> qal.SqlQuery:

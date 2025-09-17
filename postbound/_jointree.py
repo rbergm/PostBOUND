@@ -7,15 +7,22 @@ import warnings
 from collections.abc import Container, Iterable
 from typing import Generic, Literal, Optional, Union
 
-from .. import util
-from .._core import (
+from . import util
+from ._core import (
     Cardinality,
     IntermediateOperator,
     JoinOperator,
     PhysicalOperator,
     ScanOperator,
+    TableReference,
 )
-from .._qep import (
+from ._hints import (
+    PhysicalOperatorAssignment,
+    PlanParameterization,
+    operators_from_plan,
+    read_operator_json,
+)
+from ._qep import (
     JoinDirection,
     PlanEstimates,
     PlanMeasures,
@@ -24,14 +31,9 @@ from .._qep import (
     SortKey,
     Subplan,
 )
-from ..qal import SqlQuery, TableReference, parser
-from ..util import StateError, jsondict
-from ._hints import (
-    PhysicalOperatorAssignment,
-    PlanParameterization,
-    operators_from_plan,
-    read_operator_json,
-)
+from .qal import parser
+from .qal._qal import SqlQuery
+from .util import StateError, jsondict
 
 AnnotationType = typing.TypeVar("AnnotationType")
 """The concrete annotation used to augment information stored in the join tree."""
@@ -838,7 +840,7 @@ def read_query_plan_json(json_data: dict | str) -> QueryPlan:
     QueryPlan
         The corresponding query plan
     """
-    from ..qal import parser  # local import to prevent circular imports
+    from .qal import parser  # local import to prevent circular imports
 
     json_data = json.loads(json_data) if isinstance(json_data, str) else json_data
     node_type: str = json_data["node_type"]

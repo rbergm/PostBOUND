@@ -8,7 +8,7 @@ from datetime import datetime
 
 import pandas as pd
 
-from postbound import optimizer, qal
+from postbound import PlanParameterization, TableReference, qal
 from postbound.db import postgres
 from postbound.experiments import workloads
 from postbound.util import jsonize
@@ -24,14 +24,14 @@ class BenchmarkResult:
     db_config: str
 
 
-def parse_tables_list(tables: str) -> set[qal.TableReference]:
+def parse_tables_list(tables: str) -> set[TableReference]:
     jsonized = json.loads(tables)
-    return {qal.TableReference(tab["full_name"], tab.get("alias")) for tab in jsonized}
+    return {TableReference(tab["full_name"], tab.get("alias")) for tab in jsonized}
 
 
-def true_cardinalities(label: str) -> optimizer.PlanParameterization:
+def true_cardinalities(label: str) -> PlanParameterization:
     relevant_queries = card_df[card_df["label"] == label]
-    plan_params = optimizer.PlanParameterization()
+    plan_params = PlanParameterization()
     for __, row in relevant_queries.iterrows():
         plan_params.add_cardinality(row["tables"], row["cardinality"])
     return plan_params

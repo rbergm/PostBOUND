@@ -11,9 +11,11 @@ import networkx as nx
 
 from .. import db, util
 from .._core import TableReference
+from .._jointree import JoinTree, LogicalJoinTree
 from .._qep import QueryPlan
-from ..optimizer import JoinGraph, JoinTree, LogicalJoinTree
-from ..qal import SqlQuery, relalg, transform
+from ..optimizer._joingraph import JoinGraph
+from ..qal import relalg, transform
+from ..qal._qal import SqlQuery
 from . import trees
 
 
@@ -353,7 +355,7 @@ def _relalg_node_labels(node: relalg.RelNode) -> tuple[str, dict]:
         case relalg.AntiJoin():
             predicate = str(node.predicate)
             node_str = f"{_make_label('▷')} {_make_sub(predicate)}"
-        case relalg.GroupBy():
+        case relalg.Grouping():
             columns_str = ", ".join(str(c) for c in node.group_columns)
             aggregates: list[str] = []
             for group_columns, agg_func in node.aggregates.items():

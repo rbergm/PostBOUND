@@ -41,16 +41,24 @@ from typing import Any, Optional
 import mysql.connector
 
 from .. import qal, util
-from .._core import Cardinality, JoinOperator, PhysicalOperator, ScanOperator
-from .._qep import QueryPlan
-from ..optimizer._hints import (
+from .._core import (
+    Cardinality,
+    JoinOperator,
+    PhysicalOperator,
+    ScanOperator,
+    UnboundColumnError,
+    VirtualTableError,
+)
+from .._hints import (
     HintType,
     PhysicalOperatorAssignment,
     PlanParameterization,
     operators_from_plan,
 )
-from ..optimizer._jointree import JoinTree, jointree_from_plan, parameters_from_plan
-from ..qal import (
+from .._jointree import JoinTree, jointree_from_plan, parameters_from_plan
+from .._qep import QueryPlan
+from ..qal import transform
+from ..qal._qal import (
     CastExpression,
     ColumnReference,
     Explain,
@@ -59,9 +67,6 @@ from ..qal import (
     SqlQuery,
     StaticValueExpression,
     TableReference,
-    UnboundColumnError,
-    VirtualTableError,
-    transform,
 )
 from ..util import Version
 from ._db import (

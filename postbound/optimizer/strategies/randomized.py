@@ -8,27 +8,28 @@ from typing import Literal, Optional
 
 import networkx as nx
 
-from .. import validation
-from .._jointree import JoinTree, to_query_plan
-from .._hints import (
-    PhysicalOperatorAssignment,
+from ..._core import JoinOperator, PhysicalOperator, ScanOperator, TableReference
+from ..._hints import (
     JoinOperatorAssignment,
+    PhysicalOperatorAssignment,
     ScanOperatorAssignment,
 )
-from ..._core import JoinOperator, ScanOperator, PhysicalOperator
+from ..._jointree import JoinTree, to_query_plan
 from ..._qep import QueryPlan
 from ..._stages import (
-    JoinOrderOptimization,
-    PhysicalOperatorSelection,
     CompleteOptimizationAlgorithm,
+    JoinOrderOptimization,
+    OptimizationPreCheck,
+    PhysicalOperatorSelection,
 )
-from ... import db, qal
-from ...qal import TableReference
+from ...db._db import Database, DatabasePool
+from ...qal._qal import SqlQuery
 from ...util import networkx as nx_utils
+from .. import validation
 
 
 def _merge_nodes(
-    query: qal.SqlQuery,
+    query: SqlQuery,
     start: JoinTree | TableReference,
     end: JoinTree | TableReference,
 ) -> JoinTree:
@@ -39,7 +40,7 @@ def _merge_nodes(
 
     Parameters
     ----------
-    query : qal.SqlQuery
+    query : SqlQuery
         The query to which the (partial) join trees belong. This parameter is necessary to generate the correct metadata for
         the join tree
     start : JoinTree | TableReference
@@ -59,7 +60,7 @@ def _merge_nodes(
 
 
 def _sample_join_graph(
-    query: qal.SqlQuery,
+    query: SqlQuery,
     join_graph: nx.Graph,
     *,
     base_table: Optional[TableReference] = None,
@@ -68,7 +69,7 @@ def _sample_join_graph(
 
     Parameters
     ----------
-    query : qal.SqlQuery
+    query : SqlQuery
         The query to which the join graph belongs. This parameter is necessary to generate the correct metadata for the join
         tree.
     join_graph : nx.Graph
@@ -158,13 +159,13 @@ class RandomJoinOrderGenerator:
         self._tree_structure = tree_structure
 
     def random_join_orders_for(
-        self, query: qal.SqlQuery, *, base_table: Optional[TableReference] = None
+        self, query: SqlQuery, *, base_table: Optional[TableReference] = None
     ) -> Generator[JoinTree, None, None]:
         """Provides a generator that successively provides join orders at random.
 
         Parameters
         ----------
-        query : qal.SqlQuery
+        query : SqlQuery
             The query for which the join orders should be generated
         base_table : Optional[TableReference], optional
             An optional table that should always be joined first. If unspecified, base tables are selected at random.
@@ -217,7 +218,7 @@ class RandomJoinOrderGenerator:
 
     def _linear_join_orders(
         self,
-        query: qal.SqlQuery,
+        query: SqlQuery,
         join_graph: nx.Graph,
         *,
         base_table: Optional[TableReference] = None,
@@ -228,7 +229,7 @@ class RandomJoinOrderGenerator:
 
         Parameters
         ----------
-        query : qal.SqlQuery
+        query : SqlQuery
             The query to "optimize"
         join_graph : nx.Graph
             The join graph of the query to optimize
@@ -255,7 +256,7 @@ class RandomJoinOrderGenerator:
 
     def _bushy_join_orders(
         self,
-        query: qal.SqlQuery,
+        query: SqlQuery,
         join_graph: nx.Graph,
         *,
         base_table: Optional[TableReference] = None,
@@ -267,7 +268,7 @@ class RandomJoinOrderGenerator:
 
         Parameters
         ----------
-        query : qal.SqlQuery
+        query : SqlQuery
             The query to "optimize"
         join_graph : nx.Graph
             The join graph of the query to optimize
@@ -304,7 +305,7 @@ class RandomJoinOrderOptimizer(JoinOrderOptimization):
         generator_args = generator_args if generator_args is not None else {}
         self._generator = RandomJoinOrderGenerator(**generator_args)
 
-    def optimize_join_order(self, query: qal.SqlQuery) -> Optional[JoinTree]:
+    def optimize_join_order(self, query: SqlQuery) -> Optional[JoinTree]:
         return next(self._generator.random_join_orders_for(query))
 
     def describe(self) -> dict:
@@ -314,7 +315,7 @@ class RandomJoinOrderOptimizer(JoinOrderOptimization):
             "eliminates_duplicates": self._generator._eliminate_duplicates,
         }
 
-    def pre_check(self) -> validation.OptimizationPreCheck:
+    def pre_check(self) -> OptimizationPreCheck:
         return validation.CrossProductPreCheck()
 
 
@@ -364,14 +365,14 @@ class RandomOperatorGenerator:
         include_scans: bool = True,
         include_joins: bool = True,
         eliminate_duplicates: bool = False,
-        database: Optional[db.Database] = None,
+        database: Optional[Database] = None,
     ) -> None:
         if not include_joins and not include_scans:
             raise ValueError("Cannot exclude both join hints and scan hints")
         self._db = (
             database
             if database is not None
-            else db.DatabasePool.get_instance().current_database()
+            else DatabasePool.get_instance().current_database()
         )
         self._eliminate_duplicates = eliminate_duplicates
         self._include_scans = include_scans
@@ -390,7 +391,7 @@ class RandomOperatorGenerator:
         )
 
     def random_operator_assignments_for(
-        self, query: qal.SqlQuery, join_order: JoinTree
+        self, query: SqlQuery, join_order: JoinTree
     ) -> Generator[PhysicalOperatorAssignment, None, None]:
         """Produces a generator for random operator assignments of the allowed operators.
 
@@ -399,7 +400,7 @@ class RandomOperatorGenerator:
 
         Parameters
         ----------
-        query : qal.SqlQuery
+        query : SqlQuery
             The query to "optimize"
         join_order : jointree.JoinTree
             The join sequence to use. This contains all required tables to be scanned and joins to be performed.
@@ -473,7 +474,7 @@ class RandomOperatorOptimizer(PhysicalOperatorSelection):
         self._generator = RandomOperatorGenerator(**generator_args)
 
     def select_physical_operators(
-        self, query: qal.SqlQuery, join_order: Optional[JoinTree]
+        self, query: SqlQuery, join_order: Optional[JoinTree]
     ) -> PhysicalOperatorAssignment:
         return next(self._generator.random_operator_assignments_for(query, join_order))
 
@@ -490,7 +491,7 @@ class RandomOperatorOptimizer(PhysicalOperatorSelection):
             "eliminates_duplicates": self._generator._eliminate_duplicates,
         }
 
-    def pre_check(self) -> validation.OptimizationPreCheck:
+    def pre_check(self) -> OptimizationPreCheck:
         return validation.SupportedHintCheck(self._generator.necessary_hints())
 
 
@@ -528,7 +529,7 @@ class RandomPlanGenerator:
         eliminate_duplicates: bool = False,
         join_order_args: Optional[dict] = None,
         operator_args: Optional[dict] = None,
-        database: Optional[db.Database] = None,
+        database: Optional[Database] = None,
     ) -> None:
         join_order_args = dict(join_order_args) if join_order_args is not None else {}
         operator_args = dict(operator_args) if operator_args is not None else {}
@@ -539,7 +540,7 @@ class RandomPlanGenerator:
         self._join_order_generator = RandomJoinOrderGenerator(**join_order_args)
         self._operator_generator = RandomOperatorGenerator(**operator_args)
 
-    def random_plans_for(self, query: qal.SqlQuery) -> Generator[QueryPlan, None, None]:
+    def random_plans_for(self, query: SqlQuery) -> Generator[QueryPlan, None, None]:
         """Produces a generator for random query plans of an input query.
 
         The structure of the provided plans can be restricted by configuring the underlying services. Consult the class-level
@@ -547,7 +548,7 @@ class RandomPlanGenerator:
 
         Parameters
         ----------
-        query : qal.SqlQuery
+        query : SqlQuery
             The query to "optimize"
 
         Yields
@@ -611,7 +612,7 @@ class RandomPlanOptimizer(CompleteOptimizationAlgorithm):
         *,
         join_order_args: Optional[dict] = None,
         operator_args: Optional[dict] = None,
-        database: Optional[db.Database] = None,
+        database: Optional[Database] = None,
     ) -> None:
         super().__init__()
         self._generator = RandomPlanGenerator(
@@ -620,7 +621,7 @@ class RandomPlanOptimizer(CompleteOptimizationAlgorithm):
             database=database,
         )
 
-    def optimize_query(self, query: qal.SqlQuery) -> QueryPlan:
+    def optimize_query(self, query: SqlQuery) -> QueryPlan:
         return next(self._generator.random_plans_for(query))
 
     def describe(self) -> dict:
@@ -642,7 +643,7 @@ class RandomPlanOptimizer(CompleteOptimizationAlgorithm):
             "physical_operators": {"scans": scan_ops, "joins": join_ops},
         }
 
-    def pre_check(self) -> validation.OptimizationPreCheck:
+    def pre_check(self) -> OptimizationPreCheck:
         return validation.CompoundCheck(
             validation.CrossProductPreCheck(),
             validation.SupportedHintCheck(

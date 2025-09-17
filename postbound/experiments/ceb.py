@@ -24,13 +24,13 @@ from typing import Any, Literal, NewType, Optional
 import numpy as np
 import tomli
 
-from .workloads import Workload
-from .. import qal
-from ..db import Database, postgres
-from ..qal import ColumnReference, TableReference, SqlQuery
-from ..util.errors import StateError
+from ..db import postgres
+from ..db._db import Database
+from ..qal import formatter, parser
+from ..qal._qal import ColumnReference, SqlQuery, TableReference
+from ..util._errors import StateError
 from ..util.misc import DependencyGraph
-
+from .workloads import Workload
 
 # we introduce a bunch of type aliases to prevent types like dict[str, str]
 TemplatedQuery = NewType("TemplatedQuery", str)
@@ -623,7 +623,7 @@ class QueryTemplate:
     def generate_query(self) -> SqlQuery:
         """Creates a new SQL query by replacing all placeholders in the base query with appropriate values."""
         final_query = self.generate_raw_query()
-        return qal.parse_query(final_query)
+        return parser.parse_query(final_query)
 
     def _lookup_column(self, colname: ColumnName) -> ColumnReference:
         """Generates an actual column reference for a specific column name."""
@@ -839,7 +839,7 @@ def generate_workload(
         db_connection=db_connection,
     )
     workload_queries = {
-        label: qal.parse_query(query) for label, query in raw_workload.items()
+        label: parser.parse_query(query) for label, query in raw_workload.items()
     }
 
     return Workload(workload_queries, name=(name if name else ""), root=template_dir)
@@ -857,7 +857,7 @@ def persist_workload(
         workload.entries() if isinstance(workload, Workload) else workload.items()
     )
     query_formatter = (
-        qal.format_quick if isinstance(workload, Workload) else lambda x: x
+        formatter.format_quick if isinstance(workload, Workload) else lambda x: x
     )
     for label, query in query_iter:
         query_file = path / f"{label}.sql"

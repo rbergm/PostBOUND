@@ -7,12 +7,8 @@ from enum import Enum
 from numbers import Number
 from typing import Optional, Protocol, TypeVar
 
-from .util import jsondict
-from .util.errors import StateError
-
-T = TypeVar("T")
-"""Typed expressions use this generic type variable."""
-
+from .util._errors import StateError
+from .util.jsonize import jsondict
 
 VisitorResult = TypeVar("VisitorResult")
 """Result of visitor invocations."""
@@ -51,8 +47,10 @@ class Cardinality(Number):
     """
 
     @staticmethod
-    def of(value: int | float) -> Cardinality:
+    def of(value: int | float | Cardinality) -> Cardinality:
         """Creates a new cardinality with a specific value. This is just a shorthand for `Cardinality(value)`."""
+        if isinstance(value, Cardinality):
+            return value
         return Cardinality(value)
 
     @staticmethod

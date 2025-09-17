@@ -47,7 +47,10 @@ from typing import Optional
 import natsort
 import pandas as pd
 
-from .. import db, qal, util
+from .. import util
+from ..db._db import DatabasePool
+from ..qal import parser
+from ..qal._qal import SqlQuery
 
 workloads_base_dir: str | pathlib.Path = ""
 """Indicates the PostBOUND directory that contains all natively supported workloads.
@@ -86,7 +89,7 @@ NewLabelType = typing.TypeVar("NewLabelType", bound=Hashable)
 """In case of mutations of the workload labels, this denotes the new type of the labels after the mutation."""
 
 
-class Workload(collections.UserDict[LabelType, qal.SqlQuery]):
+class Workload(collections.UserDict[LabelType, SqlQuery]):
     """A workload collects a number of queries (read: benchmark) and provides utilities to operate on them conveniently.
 
     In addition to the actual queries, each query is annotated by a label that can be used to retrieve the query more
@@ -106,7 +109,7 @@ class Workload(collections.UserDict[LabelType, qal.SqlQuery]):
 
     Parameters
     ----------
-    queries : dict[LabelType, qal.SqlQuery]
+    queries : dict[LabelType, SqlQuery]
         The queries that form the actual workload
     name : str, optional
         A name that can be used to identify or represent the workload, by default ``""``.
@@ -162,7 +165,7 @@ class Workload(collections.UserDict[LabelType, qal.SqlQuery]):
         --------
         pathlib.Path.glob
         """
-        queries: dict[str, qal.SqlQuery] = {}
+        queries: dict[str, SqlQuery] = {}
         root = pathlib.Path(root_dir)
 
         for query_file_path in root.glob(query_file_pattern):
@@ -170,7 +173,7 @@ class Workload(collections.UserDict[LabelType, qal.SqlQuery]):
                 raw_contents = query_file.readlines()
             query_contents = "\n".join([line for line in raw_contents])
             try:
-                parsed_query = qal.parse_query(
+                parsed_query = parser.parse_query(
                     query_contents, bind_columns=bind_columns
                 )
             except Exception as e:
@@ -182,7 +185,7 @@ class Workload(collections.UserDict[LabelType, qal.SqlQuery]):
 
     def __init__(
         self,
-        queries: dict[LabelType, qal.SqlQuery],
+        queries: dict[LabelType, SqlQuery],
         name: str = "",
         root: Optional[pathlib.Path] = None,
     ) -> None:
@@ -191,7 +194,7 @@ class Workload(collections.UserDict[LabelType, qal.SqlQuery]):
         self._root = root
 
         self._sorted_labels = natsort.natsorted(list(self.keys()))
-        self._sorted_queries: list[qal.SqlQuery] = []
+        self._sorted_queries: list[SqlQuery] = []
         self._update_query_order()
 
         self._label_mapping = util.dicts.invert(self.data)
@@ -207,14 +210,14 @@ class Workload(collections.UserDict[LabelType, qal.SqlQuery]):
         """
         return self._name
 
-    def queries(self) -> Sequence[qal.SqlQuery]:
+    def queries(self) -> Sequence[SqlQuery]:
         """Provides all queries in the workload in natural order (according to their labels).
 
         If the natural order was manually destroyed, e.g. by shuffling, the shuffled order is used.
 
         Returns
         -------
-        Sequence[qal.SqlQuery]
+        Sequence[SqlQuery]
             The queries
         """
         return list(self._sorted_queries)
@@ -231,19 +234,19 @@ class Workload(collections.UserDict[LabelType, qal.SqlQuery]):
         """
         return list(self._sorted_labels)
 
-    def entries(self) -> Sequence[tuple[LabelType, qal.SqlQuery]]:
+    def entries(self) -> Sequence[tuple[LabelType, SqlQuery]]:
         """Provides all (label, query) pairs in the workload, in natural order of the query labels.
 
         If the natural order was manually destroyed, e.g. by shuffling, the shuffled order is used.
 
         Returns
         -------
-        Sequence[tuple[LabelType, qal.SqlQuery]]
+        Sequence[tuple[LabelType, SqlQuery]]
             The queries along with their labels
         """
         return list(zip(self._sorted_labels, self._sorted_queries))
 
-    def head(self) -> Optional[tuple[LabelType, qal.SqlQuery]]:
+    def head(self) -> Optional[tuple[LabelType, SqlQuery]]:
         """Provides the first query in the workload.
 
         The first query is determined according to the natural order of the query labels by default. If that order was manually
@@ -253,19 +256,19 @@ class Workload(collections.UserDict[LabelType, qal.SqlQuery]):
 
         Returns
         -------
-        Optional[tuple[LabelType, qal.SqlQuery]]
+        Optional[tuple[LabelType, SqlQuery]]
             The first query, if there is at least one query in the workload. ``None`` otherwise.
         """
         if not self._sorted_labels:
             return None
         return self._sorted_labels[0], self._sorted_queries[0]
 
-    def label_of(self, query: qal.SqlQuery) -> LabelType:
+    def label_of(self, query: SqlQuery) -> LabelType:
         """Provides the label of the given query.
 
         Parameters
         ----------
-        query : qal.SqlQuery
+        query : SqlQuery
             The query to check
 
         Returns
@@ -399,13 +402,13 @@ class Workload(collections.UserDict[LabelType, qal.SqlQuery]):
         return Workload(prefix_queries, name=self._name, root=self._root)
 
     def filter_by(
-        self, predicate: Callable[[LabelType, qal.SqlQuery], bool]
+        self, predicate: Callable[[LabelType, SqlQuery], bool]
     ) -> Workload[LabelType]:
         """Provides all queries from the workload that match a specific predicate.
 
         Parameters
         ----------
-        predicate : Callable[[LabelType, qal.SqlQuery], bool]
+        predicate : Callable[[LabelType, SqlQuery], bool]
             The filter condition. All queries that pass the check are included in the new workload. The filter predicate
             receives the label and the query for each query in the input
 
@@ -423,7 +426,7 @@ class Workload(collections.UserDict[LabelType, qal.SqlQuery]):
         return Workload(matching_queries, name=self._name, root=self._root)
 
     def relabel(
-        self, label_provider: Callable[[LabelType, qal.SqlQuery], NewLabelType]
+        self, label_provider: Callable[[LabelType, SqlQuery], NewLabelType]
     ) -> Workload[NewLabelType]:
         """Constructs a new workload, leaving the queries intact but replacing the labels.
 
@@ -431,7 +434,7 @@ class Workload(collections.UserDict[LabelType, qal.SqlQuery]):
 
         Parameters
         ----------
-        label_provider : Callable[[LabelType, qal.SqlQuery], NewLabelType]
+        label_provider : Callable[[LabelType, SqlQuery], NewLabelType]
             Replacement method that maps all old labels to the new label values. This method has to provide unique labels. If
             that is not the case, conflicts will be resolved but in an arbitrary way. The replacement receives the old label
             as well as the query as input and produces the new label value.
@@ -639,7 +642,7 @@ def read_batch_workload(
     name = name if name else filepath.stem
     with open(filename, "r", encoding=file_encoding) as query_file:
         raw_queries = query_file.readlines()
-        parsed_queries = [qal.parse_query(raw) for raw in raw_queries if raw]
+        parsed_queries = [parser.parse_query(raw) for raw in raw_queries if raw]
         return generate_workload(parsed_queries, name=name, workload_root=filepath)
 
 
@@ -701,7 +704,7 @@ def read_csv_workload(
     workload_df = pd.read_csv(
         filename,
         usecols=columns,
-        converters={query_column: qal.parse_query},
+        converters={query_column: parser.parse_query},
         encoding=file_encoding,
         **pd_args,
     )
@@ -719,10 +722,10 @@ def read_csv_workload(
 
 
 def generate_workload(
-    queries: Iterable[qal.SqlQuery],
+    queries: Iterable[SqlQuery],
     *,
     name: str = "",
-    labels: Optional[dict[qal.SqlQuery, LabelType]] = None,
+    labels: Optional[dict[SqlQuery, LabelType]] = None,
     workload_root: Optional[pathlib.Path] = None,
 ) -> Workload[LabelType]:
     """Wraps a number of queries in a workload object.
@@ -735,12 +738,12 @@ def generate_workload(
 
     Parameters
     ----------
-    queries : Iterable[qal.SqlQuery]
+    queries : Iterable[SqlQuery]
         The queries that should form the workload. This is only enumerated a single time, hence the iterable can "spent" its
         items.
     name : str, optional
         The name of the workload, by default ""
-    labels : Optional[dict[qal.SqlQuery, LabelType]], optional
+    labels : Optional[dict[SqlQuery, LabelType]], optional
         The labels of the workload queries. Defaults to ``None``, in which case numerical labels will be used. In the first
         case the label type is inferred from the dictionary values. In the second case, it will be `int`.
     workload_root : Optional[pathlib.Path], optional
@@ -754,7 +757,7 @@ def generate_workload(
     """
     name = name if name else (workload_root.stem if workload_root else "")
     if not labels:
-        labels: dict[qal.SqlQuery, int] = {
+        labels: dict[SqlQuery, int] = {
             query: idx + 1 for idx, query in enumerate(queries)
         }
     workload_contents = util.dicts.invert(labels)
@@ -877,7 +880,7 @@ def ssb(
     bind_columns = (
         bind_columns
         if bind_columns is not None
-        else not db.DatabasePool.get_instance().empty()
+        else not DatabasePool.get_instance().empty()
     )
     ssb_dir = os.path.join(workloads_base_dir, "SSB-Queries")
     ssb_workload = Workload.read(
@@ -954,7 +957,7 @@ def stack(
     bind_columns = (
         bind_columns
         if bind_columns is not None
-        else not db.DatabasePool.get_instance().empty()
+        else not DatabasePool.get_instance().empty()
     )
     stack_dir = os.path.join(workloads_base_dir, "Stack-Queries")
     if fetch:

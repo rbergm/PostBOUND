@@ -27,12 +27,9 @@ the `db` package.
 
 from __future__ import annotations
 
-from . import _duckdb as duckdb
-from . import postgres
 from ._db import (
     Connection,
     Cursor,
-    Database,
     DatabasePool,
     DatabaseSchema,
     DatabaseServerError,
@@ -47,6 +44,7 @@ from ._db import (
     StopwatchSupport,
     TimeoutSupport,
     UnsupportedDatabaseFeatureError,
+    current_database,
     simplify_result_set,
 )
 
@@ -59,7 +57,6 @@ __all__ = [
     "TimeoutSupport",
     "StopwatchSupport",
     "QueryCacheWarning",
-    "Database",
     "ForeignKeyRef",
     "DatabaseSchema",
     "DatabaseStatistics",
@@ -70,20 +67,6 @@ __all__ = [
     "UnsupportedDatabaseFeatureError",
     "DatabaseServerError",
     "DatabaseUserError",
+    "current_database",
     "simplify_result_set",
 ]
-
-
-def current_database() -> Database:
-    """Provides the current database from the `DatabasePool`.
-
-    Returns
-    -------
-    Database
-        The current database instance. If there is not exactly one database in the pool, a `ValueError` is raised.
-
-    See Also
-    --------
-    DatabasePool.current_database
-    """
-    return DatabasePool.current_database()

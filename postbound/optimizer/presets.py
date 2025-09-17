@@ -7,19 +7,19 @@ from __future__ import annotations
 
 from typing import Literal, Optional
 
-from .policies import cardinalities
-from .strategies import ues, native
 from .._pipelines import (
-    OptimizationSettings,
     JoinOrderOptimization,
+    OptimizationSettings,
     PhysicalOperatorSelection,
-    OptimizationPreCheck,
 )
-from .. import db
+from .._stages import OptimizationPreCheck
+from ..db._db import Database, DatabasePool
 from ..qal import parser
+from .policies import cardinalities
+from .strategies import native, ues
 
 
-def apply_standard_system_options(database: Optional[db.Database] = None) -> None:
+def apply_standard_system_options(database: Optional[Database] = None) -> None:
     """Configures a number of typically used settings for the query optimization process.
 
     This method requires that a working database connection has been set up. If it is not supplied directly, it is retrieved
@@ -35,13 +35,11 @@ def apply_standard_system_options(database: Optional[db.Database] = None) -> Non
 
     Parameters
     ----------
-    database : Optional[db.Database], optional
+    database : Optional[Database], optional
         The database that should be configured. Defaults to ``None``, in which case the system is loaded from the
         `DatabasePool`.
     """
-    database = (
-        database if database else db.DatabasePool.get_instance().current_database()
-    )
+    database = database if database else DatabasePool.get_instance().current_database()
     database.cache_enabled = False
     database.statistics().emulated = True
     database.statistics().cache_enabled = True
@@ -53,7 +51,7 @@ class UESOptimizationSettings(OptimizationSettings):
 
     Parameters
     ----------
-    database : Optional[db.Database], optional
+    database : Optional[Database], optional
         The database for which the optimized queries should be executed. This is necessary to initialize the optimization
         strategies correctly. Defaults to ``None``, in which case the database will be inferred from the `DatabasePool`.
 
@@ -63,9 +61,9 @@ class UESOptimizationSettings(OptimizationSettings):
     .. Hertzschuch et al.: "Simplicity Done Right for Join Ordering", CIDR'2021
     """
 
-    def __init__(self, database: Optional[db.Database] = None):
+    def __init__(self, database: Optional[Database] = None):
         self.database = (
-            database if database else db.DatabasePool.get_instance().current_database()
+            database if database else DatabasePool.get_instance().current_database()
         )
 
     def query_pre_check(self) -> Optional[OptimizationPreCheck]:
@@ -94,12 +92,12 @@ class NativeOptimizationSettings(OptimizationSettings):
 
     Parameters
     ----------
-    database : Optional[db.Database], optional
+    database : Optional[Database], optional
         The database from which the query plans should be retrieved. Defaults to ``None``, in which case the database will be
         inferred from the `DatabasePool`.
     """
 
-    def __init__(self, database: Optional[db.Database] = None) -> None:
+    def __init__(self, database: Optional[Database] = None) -> None:
         self.database = database
 
     def build_join_order_optimizer(self) -> Optional[JoinOrderOptimization]:
@@ -110,7 +108,7 @@ class NativeOptimizationSettings(OptimizationSettings):
 
 
 def fetch(
-    key: Literal["ues", "native"], *, database: Optional[db.Database] = None
+    key: Literal["ues", "native"], *, database: Optional[Database] = None
 ) -> OptimizationSettings:
     """Provides the optimization settings registered under a specific key.
 
@@ -126,7 +124,7 @@ def fetch(
     key : Literal["ues"]
         The key which was used to register the optimization strategy. The comparison happens case-insensitively. Therefore, the
         key can be written unsing any casing.
-    database : Optional[db.Database], optional
+    database : Optional[Database], optional
         The database that is used to optimize and/or execute the optimized queries. The precise usage of this parameter
         depends on the specific optimization strategy and should be documented there. There could also be optimization
         strategies that do not use the this parameter at all. Defaults to ``None``, in which case the behavior once again

@@ -6,18 +6,19 @@ from collections.abc import Collection, Iterable
 from enum import Enum
 from typing import Any, Literal, Optional
 
-from .. import util
-from .._core import (
+from . import util
+from ._base import T
+from ._core import (
     Cardinality,
     IntermediateOperator,
     JoinOperator,
     PhysicalOperator,
     ScanOperator,
-    T,
+    TableReference,
 )
-from .._qep import PlanEstimates, PlanParams, QueryPlan
-from ..qal import TableReference, parser
-from ..util import jsondict
+from ._qep import PlanEstimates, PlanParams, QueryPlan
+from .qal import parser
+from .util import jsondict
 
 
 class ScanOperatorAssignment:
@@ -1119,6 +1120,7 @@ class PlanParameterization:
         cardinality : Cardinality
             The estimated or known cardinality.
         """
+        cardinality = Cardinality.of(cardinality)
         self.cardinalities[frozenset(tables)] = cardinality
 
     def set_workers(self, tables: Iterable[TableReference], num_workers: int) -> None:

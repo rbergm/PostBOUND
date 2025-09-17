@@ -15,10 +15,18 @@ import natsort
 import numpy as np
 import pandas as pd
 
-from .. import db, qal, util
+from .. import _stages, util
 from .._pipelines import OptimizationPipeline
-from ..optimizer import validation
-from . import workloads
+from ..db._db import (
+    Database,
+    PrewarmingSupport,
+    StopwatchSupport,
+    TimeoutSupport,
+    simplify_result_set,
+)
+from ..qal import transform
+from ..qal._qal import Explain, SqlQuery
+from .workloads import Workload, generate_workload
 
 COL_LABEL = "label"
 COL_QUERY = "query"
@@ -47,7 +55,7 @@ PredefLogger = Literal["tqdm"]
 class ExecutionResult:
     """Captures all relevant components of a query optimization and execution result."""
 
-    query: qal.SqlQuery
+    query: SqlQuery
     """The query that was executed. If the query was optimized and transformed, these modifications are included."""
 
     result_set: object = None
@@ -126,31 +134,31 @@ class QueryPreparationService:
         else:
             self.prewarm = prewarm
 
-    def prepare_query(self, query: qal.SqlQuery, *, on: db.Database) -> qal.SqlQuery:
+    def prepare_query(self, query: SqlQuery, *, on: Database) -> SqlQuery:
         """Applies the selected transformations to the given input query and executes the preparatory statements
 
         Parameters
         ----------
-        query : qal.SqlQuery
+        query : SqlQuery
             The query to prepare
-        on : db.Database
+        on : Database
             The database to execute the preparatory statements on
 
         Returns
         -------
-        qal.SqlQuery
+        SqlQuery
             The prepared query
         """
         if self.analyze:
-            query = qal.transform.as_explain(query, qal.Explain.explain_analyze())
+            query = transform.as_explain(query, Explain.explain_analyze())
         elif self.explain:
-            query = qal.transform.as_explain(query, qal.Explain.plan())
+            query = transform.as_explain(query, Explain.plan())
 
         if self.count_star:
-            query = qal.transform.as_count_star_query(query)
+            query = transform.as_count_star_query(query)
 
         if self.prewarm:
-            if not isinstance(on, db.PrewarmingSupport):
+            if not isinstance(on, PrewarmingSupport):
                 warnings.warn(
                     "Ignoring prewarm setting since the database does not support prewarming"
                 )
@@ -164,7 +172,7 @@ class QueryPreparationService:
 
 
 def _failed_execution_result(
-    query: qal.SqlQuery, database: db.Database, repetitions: int = 1
+    query: SqlQuery, database: Database, repetitions: int = 1
 ) -> pd.DataFrame:
     """Constructs a dummy data frame / row for queries that failed the execution.
 
@@ -174,9 +182,9 @@ def _failed_execution_result(
 
     Parameters
     ----------
-    query : qal.SqlQuery
+    query : SqlQuery
         The query that failed the execution
-    database : db.Database
+    database : Database
         The database on which the execution failed
     repetitions : int, optional
         The number of repetitions that should have been used for the query, by default 1
@@ -188,7 +196,7 @@ def _failed_execution_result(
     """
     return pd.DataFrame(
         {
-            COL_QUERY: [qal.transform.drop_hints(query)] * repetitions,
+            COL_QUERY: [transform.drop_hints(query)] * repetitions,
             COL_QUERY_HINTS: [query.hints] * repetitions,
             COL_T_EXEC: [np.nan] * repetitions,
             COL_RESULT: [np.nan] * repetitions,
@@ -218,8 +226,8 @@ def _invoke_post_process(
 
 
 def execute_query(
-    query: qal.SqlQuery,
-    database: db.Database,
+    query: SqlQuery,
+    database: Database,
     *,
     repetitions: int = 1,
     query_preparation: Optional[QueryPreparationService] = None,
@@ -251,9 +259,9 @@ def execute_query(
 
     Parameters
     ----------
-    query : qal.SqlQuery
+    query : SqlQuery
         The query to execute
-    database : db.Database
+    database : Database
         The target database on which to execute the query
     repetitions : int, optional
         The number of times the query should be executed, by default 1
@@ -297,7 +305,7 @@ def execute_query(
     if query_preparation:
         query = query_preparation.prepare_query(query, on=database)
 
-    if timeout is not None and not isinstance(database, db.TimeoutSupport):
+    if timeout is not None and not isinstance(database, TimeoutSupport):
         raise ValueError(f"Database system {database} does not provide timeout support")
 
     query_results = []
@@ -308,7 +316,7 @@ def execute_query(
             start_time = time.perf_counter_ns()
             current_result = database.execute_with_timeout(query, timeout=timeout)
             end_time = time.perf_counter_ns()
-            current_result = db.simplify_result_set(current_result)
+            current_result = simplify_result_set(current_result)
             exec_time = (
                 math.inf if current_result is None else (end_time - start_time) / 10**9
             )  # convert to seconds
@@ -318,7 +326,7 @@ def execute_query(
             end_time = time.perf_counter_ns()
             exec_time = (end_time - start_time) / 10**9  # convert to seconds
 
-        if isinstance(database, db.StopwatchSupport):
+        if isinstance(database, StopwatchSupport):
             exec_time = database.last_query_runtime()
 
         query_results.append(current_result)
@@ -330,7 +338,7 @@ def execute_query(
 
     return pd.DataFrame(
         {
-            COL_QUERY: [qal.transform.drop_hints(original_query)] * repetitions,
+            COL_QUERY: [transform.drop_hints(original_query)] * repetitions,
             COL_QUERY_HINTS: [original_query.hints] * repetitions,
             COL_T_EXEC: execution_times,
             COL_RESULT: query_results,
@@ -341,30 +349,26 @@ def execute_query(
 
 
 def _wrap_workload(
-    queries: Iterable[qal.SqlQuery] | workloads.Workload,
-) -> workloads.Workload:
+    queries: Iterable[SqlQuery] | Workload,
+) -> Workload:
     """Transforms an iterable of queries into a proper workload object to enable execution by the runner methods.
 
     Parameters
     ----------
-    queries : Iterable[qal.SqlQuery] | workloads.Workload
+    queries : Iterable[SqlQuery] | Workload
         The queries to run as a workload. Can already be a workload object, which makes any transformation unnecessary.
 
     Returns
     -------
-    workloads.Workload
+    Workload
         A workload of the given queries.
     """
-    return (
-        queries
-        if isinstance(queries, workloads.Workload)
-        else workloads.generate_workload(queries)
-    )
+    return queries if isinstance(queries, Workload) else generate_workload(queries)
 
 
 def execute_workload(
-    queries: Iterable[qal.SqlQuery] | workloads.Workload,
-    database: db.Database,
+    queries: Iterable[SqlQuery] | Workload,
+    database: Database,
     *,
     workload_repetitions: int = 1,
     per_query_repetitions: int = 1,
@@ -399,9 +403,9 @@ def execute_workload(
 
     Parameters
     ----------
-    queries : Iterable[qal.SqlQuery] | workloads.Workload
+    queries : Iterable[SqlQuery] | Workload
         The workload to execute
-    database : db.Database
+    database : Database
         The target database on which to execute the query
     workload_repetitions : int, optional
         The number of times the entire workload should be repeated, by default ``1``
@@ -528,7 +532,7 @@ def execute_workload(
 
 
 def optimize_and_execute_query(
-    query: qal.SqlQuery,
+    query: SqlQuery,
     optimization_pipeline: OptimizationPipeline,
     *,
     repetitions: int = 1,
@@ -551,7 +555,7 @@ def optimize_and_execute_query(
 
     Parameters
     ----------
-    query : qal.SqlQuery
+    query : SqlQuery
         The query to execute
     optimization_pipeline : OptimizationPipeline
         The optimization settings that should be used to optimize the given query. The pipeline is also used to extract the
@@ -605,7 +609,7 @@ def optimize_and_execute_query(
         execution_result[COL_T_OPT] = optimization_time
         execution_result[COL_OPT_SUCCESS] = True
         execution_result[COL_OPT_FAILURE_REASON] = None
-    except validation.UnsupportedQueryError as e:
+    except _stages.UnsupportedQueryError as e:
         execution_result = _failed_execution_result(
             query, optimization_pipeline.target_database(), repetitions
         )
@@ -620,7 +624,7 @@ def optimize_and_execute_query(
 
 
 def optimize_and_execute_workload(
-    queries: Iterable[qal.SqlQuery] | workloads.Workload,
+    queries: Iterable[SqlQuery] | Workload,
     optimization_pipeline: OptimizationPipeline,
     *,
     workload_repetitions: int = 1,
@@ -644,7 +648,7 @@ def optimize_and_execute_workload(
 
     Parameters
     ----------
-    queries : Iterable[qal.SqlQuery] | workloads.Workload
+    queries : Iterable[SqlQuery] | Workload
         The queries that should be optimized and benchmarked
     optimization_pipeline : OptimizationPipeline
         The optimization settings that should be used to optimize the given workload. The pipeline is also used to extract the

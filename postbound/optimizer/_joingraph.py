@@ -10,9 +10,16 @@ from typing import Literal, Optional
 
 import networkx as nx
 
-from .. import qal, util
-from .._core import DBCatalog
-from ..qal import AbstractPredicate, ColumnReference, TableReference
+from .. import util
+from .._core import ColumnReference, DBCatalog, TableReference
+from ..qal import transform
+from ..qal._qal import (
+    AbstractPredicate,
+    CompoundPredicate,
+    ImplicitSqlQuery,
+    determine_join_equivalence_classes,
+    generate_predicates_for_equivalence_classes,
+)
 
 
 @dataclass(frozen=True)
@@ -378,7 +385,7 @@ class JoinGraph(Mapping[TableReference, TableInfo]):
 
     Parameters
     ----------
-    query : qal.ImplicitSqlQuery
+    query : ImplicitSqlQuery
         The query for which the join graph should be generated
     db_schema : Optional[DBCatalog], optional
         The schema of the database on which the query should be executed. If this is ``None``, the database schema is inferred
@@ -397,7 +404,7 @@ class JoinGraph(Mapping[TableReference, TableInfo]):
 
     def __init__(
         self,
-        query: qal.ImplicitSqlQuery,
+        query: ImplicitSqlQuery,
         db_schema: Optional[DBCatalog] = None,
         *,
         include_predicate_equivalence_classes: bool = False,
@@ -417,13 +424,11 @@ class JoinGraph(Mapping[TableReference, TableInfo]):
         predicate_map: _PredicateMap = collections.defaultdict(list)
         join_predicates = query.predicates().joins()
         if include_predicate_equivalence_classes:
-            join_equivalence_classes = qal.determine_join_equivalence_classes(
+            join_equivalence_classes = determine_join_equivalence_classes(
                 join_predicates
             )
-            equivalence_class_predicates = (
-                qal.generate_predicates_for_equivalence_classes(
-                    join_equivalence_classes
-                )
+            equivalence_class_predicates = generate_predicates_for_equivalence_classes(
+                join_equivalence_classes
             )
             join_predicates = set(join_predicates) | equivalence_class_predicates
         for join_predicate in join_predicates:
@@ -436,7 +441,7 @@ class JoinGraph(Mapping[TableReference, TableInfo]):
 
         for tables, joins in predicate_map.items():
             first_tab, second_tab = tables
-            join_predicate = qal.CompoundPredicate.create_and(joins)
+            join_predicate = CompoundPredicate.create_and(joins)
             edges.append((first_tab, second_tab, {"predicate": join_predicate}))
             for column in join_predicate.columns():
                 self._index_structures[column] = IndexInfo.generate_for(
@@ -527,9 +532,7 @@ class JoinGraph(Mapping[TableReference, TableInfo]):
         """
         components = []
         for component in nx.connected_components(self._graph):
-            component_query = qal.transform.extract_query_fragment(
-                self.query, component
-            )
+            component_query = transform.extract_query_fragment(self.query, component)
             components.append(JoinGraph(component_query, self._db_schema))
         return components
 

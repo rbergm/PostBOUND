@@ -1,19 +1,115 @@
 from __future__ import annotations
 
 import abc
-import math
-from collections.abc import Generator, Iterable
+from collections.abc import Iterable
+from dataclasses import dataclass
 from typing import Optional
 
-from . import db, util
-from ._core import Cardinality, Cost
+from . import util
+from ._core import Cardinality, Cost, TableReference
+from ._hints import PhysicalOperatorAssignment, PlanParameterization
+from ._jointree import JoinTree
 from ._qep import QueryPlan
-from .optimizer import validation
-from .optimizer._hints import PhysicalOperatorAssignment, PlanParameterization
-from .optimizer._jointree import JoinTree
-from .optimizer.validation import OptimizationPreCheck
-from .qal import SqlQuery, TableReference
-from .util import jsondict
+from .db._db import Database, DatabasePool
+from .qal._qal import SqlQuery
+from .util.jsonize import jsondict
+
+
+class OptimizationPreCheck(abc.ABC):
+    """The pre-check interface.
+
+    This is the type that all concrete pre-checks must implement. It contains two check methods that correpond to the checks
+    on the database system and to the check on the input query. Both methods pass on all input data by default and must be
+    overwritten to execute the necessary checks.
+
+    Parameters
+    ----------
+    name : str
+        The name of the check. It should describe what features the check tests and will be used to represent the checks that
+        are present in an optimization pipeline.
+    """
+
+    def __init__(self, name: str) -> None:
+        self.name = name
+
+    def check_supported_query(self, query: SqlQuery) -> PreCheckResult:
+        """Validates that a specific query does not contain any features that cannot be handled by an optimization strategy.
+
+        Examples of such features can be non-equi join predicates, dependent subqueries or aggregations.
+
+        Parameters
+        ----------
+        query : SqlQuery
+            The query to check
+
+        Returns
+        -------
+        PreCheckResult
+            A description of whether the check passed and an indication of the failures.
+        """
+        return PreCheckResult.with_all_passed()
+
+    def check_supported_database_system(
+        self, database_instance: Database
+    ) -> PreCheckResult:
+        """Validates that a specific database system provides all features that are required by an optimization strategy.
+
+        Examples of such features can be support for cardinality hints or specific operators.
+
+        Parameters
+        ----------
+        database_instance : Database
+            The database to check
+
+        Returns
+        -------
+        PreCheckResult
+            A description of whether the check passed and an indication of the failures.
+        """
+        return PreCheckResult.with_all_passed()
+
+    @abc.abstractmethod
+    def describe(self) -> dict:
+        """Provides a JSON-serializable representation of the specific check, as well as important parameters.
+
+        Returns
+        -------
+        dict
+            The description
+
+        See Also
+        --------
+        postbound.postbound.OptimizationPipeline.describe
+        """
+        raise NotImplementedError
+
+    def __contains__(self, item: object) -> bool:
+        return item == self
+
+    def __hash__(self) -> int:
+        return hash(self.name)
+
+    def __eq__(self, other: object) -> bool:
+        return isinstance(other, type(self)) and self.name == other.name
+
+    def __repr__(self) -> str:
+        return f"OptimizationPreCheck [{self.name}]"
+
+    def __str__(self) -> str:
+        return self.name
+
+
+class EmptyPreCheck(OptimizationPreCheck):
+    """Dummy check that does not actually validate anything."""
+
+    def __init__(self) -> None:
+        super().__init__("empty")
+
+    def check_supported_query(self, query: SqlQuery) -> PreCheckResult:
+        return PreCheckResult.with_all_passed()
+
+    def describe(self) -> dict:
+        return {"name": "no_check"}
 
 
 class CompleteOptimizationAlgorithm(abc.ABC):
@@ -61,7 +157,7 @@ class CompleteOptimizationAlgorithm(abc.ABC):
         OptimizationPreCheck
             The check instance. Can be an empty check if no specific requirements exist.
         """
-        return validation.EmptyPreCheck()
+        return EmptyPreCheck()
 
     def __repr__(self) -> str:
         return str(self)
@@ -114,14 +210,14 @@ class CardinalityEstimator(abc.ABC):
         """
         raise NotImplementedError
 
-    def initialize(self, target_db: db.Database, query: SqlQuery) -> None:
+    def initialize(self, target_db: Database, query: SqlQuery) -> None:
         """Hook method that is called before the actual optimization process starts.
 
         This method can be overwritten to set up any necessary data structures, etc. and will be called before each query.
 
         Parameters
         ----------
-        target_db : db.Database
+        target_db : Database
             The database for which the optimized queries should be generated.
         query : SqlQuery
             The query to be optimized
@@ -144,7 +240,7 @@ class CardinalityEstimator(abc.ABC):
         OptimizationPreCheck
             The check instance. Can be an empty check if no specific requirements exist.
         """
-        return validation.EmptyPreCheck()
+        return EmptyPreCheck()
 
     def __repr__(self) -> str:
         return str(self)
@@ -206,14 +302,14 @@ class CostModel(abc.ABC):
         """
         raise NotImplementedError
 
-    def initialize(self, target_db: db.Database, query: SqlQuery) -> None:
+    def initialize(self, target_db: Database, query: SqlQuery) -> None:
         """Hook method that is called before the actual optimization process starts.
 
         This method can be overwritten to set up any necessary data structures, etc. and will be called before each query.
 
         Parameters
         ----------
-        target_db : db.Database
+        target_db : Database
             The database for which the optimized queries should be generated.
         query : SqlQuery
             The query to be optimized
@@ -236,7 +332,7 @@ class CostModel(abc.ABC):
         OptimizationPreCheck
             The check instance. Can be an empty check if no specific requirements exist.
         """
-        return validation.EmptyPreCheck()
+        return EmptyPreCheck()
 
     def __repr__(self) -> str:
         return str(self)
@@ -311,7 +407,7 @@ class PlanEnumerator(abc.ABC):
         OptimizationPreCheck
             The check instance. Can be an empty check if no specific requirements exist.
         """
-        return validation.EmptyPreCheck()
+        return EmptyPreCheck()
 
     def __repr__(self) -> str:
         return str(self)
@@ -379,7 +475,7 @@ class JoinOrderOptimization(abc.ABC):
         OptimizationPreCheck
             The check instance. Can be an empty check if no specific requirements exist.
         """
-        return validation.EmptyPreCheck()
+        return EmptyPreCheck()
 
     def __repr__(self) -> str:
         return str(self)
@@ -469,7 +565,7 @@ class PhysicalOperatorSelection(abc.ABC):
         OptimizationPreCheck
             The check instance. Can be an empty check if no specific requirements exist.
         """
-        return validation.EmptyPreCheck()
+        return EmptyPreCheck()
 
     def __repr__(self) -> str:
         return str(self)
@@ -548,7 +644,7 @@ class ParameterGeneration(abc.ABC):
         OptimizationPreCheck
             The check instance. Can be an empty check if no specific requirements exist.
         """
-        return validation.EmptyPreCheck()
+        return EmptyPreCheck()
 
     def __repr__(self) -> str:
         return str(self)
@@ -608,7 +704,7 @@ class IncrementalOptimizationStep(abc.ABC):
         OptimizationPreCheck
             The check instance. Can be an empty check if no specific requirements exist.
         """
-        return validation.EmptyPreCheck()
+        return EmptyPreCheck()
 
     def __repr__(self) -> str:
         return str(self)
@@ -626,7 +722,7 @@ class _CompleteAlgorithmEmulator(CompleteOptimizationAlgorithm):
 
     Parameters
     ----------
-    database : Optional[db.Database], optional
+    database : Optional[Database], optional
         The database for which the queries should be executed. This is required to obtain complete query plans for the input
         queries. If omitted, the database is inferred from the database pool.
     join_order_optimizer : Optional[JoinOrderOptimization], optional
@@ -645,7 +741,7 @@ class _CompleteAlgorithmEmulator(CompleteOptimizationAlgorithm):
 
     def __init__(
         self,
-        database: Optional[db.Database] = None,
+        database: Optional[Database] = None,
         *,
         join_order_optimizer: Optional[JoinOrderOptimization] = None,
         operator_selection: Optional[PhysicalOperatorSelection] = None,
@@ -655,7 +751,7 @@ class _CompleteAlgorithmEmulator(CompleteOptimizationAlgorithm):
         self.database = (
             database
             if database is not None
-            else db.DatabasePool.get_instance().current_database()
+            else DatabasePool.get_instance().current_database()
         )
         if all(
             stage is None
@@ -724,7 +820,7 @@ class _CompleteAlgorithmEmulator(CompleteOptimizationAlgorithm):
 def as_complete_algorithm(
     stage: JoinOrderOptimization | PhysicalOperatorSelection | ParameterGeneration,
     *,
-    database: Optional[db.Database] = None,
+    database: Optional[Database] = None,
 ) -> CompleteOptimizationAlgorithm:
     """Enables using a partial optimization stage in situations where a complete optimizer is expected.
 
@@ -739,7 +835,7 @@ def as_complete_algorithm(
     ----------
     stage : JoinOrderOptimization | PhysicalOperatorSelection | ParameterGeneration
         The stage that should become a complete optimization algorithm
-    database : Optional[db.Database], optional
+    database : Optional[Database], optional
         The target database to execute the optimized queries in. This is required to fill the gaps of the partial query plans.
         If the database is omitted, it will be inferred based on the database pool.
 
@@ -759,142 +855,167 @@ def as_complete_algorithm(
     )
 
 
-class CardinalityGenerator(ParameterGeneration, CardinalityEstimator, abc.ABC):
-    """End-to-end cardinality estimator.
+@dataclass
+class PreCheckResult:
+    """Wrapper for a validation result.
 
-    Implementations of this service calculate cardinalities for all relevant intermediate results of a query. In turn, these
-    cardinalities can be used by the optimizer of an actual database system to overwrite the native estimates.
+    The result is used in two different ways: to model the check for supported database systems for optimization strategies and
+    to model the check for supported queries for optimization strategies.
 
-    The default implementations of all methods either request cardinality estimates for all possible intermediate results (in
-    the `estimate_cardinalities` method), or for exactly those intermediates that are defined in a specific join order (in the
-    `generate_plan_parameters` method that implements the protocol of the `ParameterGeneration` class). Therefore, developers
-    working on their own cardinality estimation algorithm only need to implement the `calculate_estimate` method. All related
-    processes are provided by the generator with reasonable default strategies.
+    The `ensure_all_passed` method can be used to quickly assert that no problems occurred.
 
-    However, special care is required when considering cross products: depending on the setting intermediates can either allow
-    cross products at all stages (by passing ``allow_cross_products=True`` during instantiation), or to disallow them entirely.
-    Therefore, the `calculate_estimate` method should act accordingly. Implementations of this class should pass the
-    appropriate parameter value to the super *__init__* method. If they support both scenarios, the parameter can also be
-    exposed to the client.
-
-    Notice that this strategies fails for queries which contain actual cross products. That is why the `pre_check` only
-    accepts queries without cross products. Developers should overwrite the relevant methods as needed. See *Warnings* for more
-    details.
-
-    Parameters
+    Attributes
     ----------
-    allow_cross_products : bool
-        Whether the default intermediate generation is allowed to emit cross products between arbitrary tables in the input
-        query.
-
-    Warnings
-    --------
-    The default implementation of this service does not work well for queries that naturally contain cross products. If you
-    intend to use if for workloads that contain cross products, you should overwrite the `generate_intermediates` method to
-    produce exactly those (partial) joins that you want to allow.
+    passed : bool
+        Indicates whether problems were detected
+    failure_reason : str | list[str], optional
+        Gives details about the problem(s) that were detected
     """
 
-    def __init__(self, allow_cross_products: bool) -> None:
-        super().__init__()
-        self.allow_cross_products = allow_cross_products
+    passed: bool = True
+    failure_reason: str | list[str] = ""
 
-    @abc.abstractmethod
-    def calculate_estimate(
-        self, query: SqlQuery, tables: TableReference | Iterable[TableReference]
-    ) -> Cardinality:
-        """Determines the cardinality estimate for a specific intermediate result.
-
-        Ideally this is the only functionality-related method that needs to be implemented by developers using the cardinality
-        generator.
-
-        Parameters
-        ----------
-        query : qal.SqlQuery
-            The query to optimize
-        tables : TableReference | Iterable[TableReference]
-            The intermediate which should be estimated. The intermediate is described by its tables. It should be assumed that
-            all filters and join predicates have been pushed down as far as possible.
+    @staticmethod
+    def with_all_passed() -> PreCheckResult:
+        """Generates a check result without any problems.
 
         Returns
         -------
-        Cardinality
-            The estimated cardinality if it could be computed, *NaN* otherwise.
+        PreCheckResult
+            The check result
         """
-        raise NotImplementedError
+        return PreCheckResult()
 
-    def generate_intermediates(
-        self, query: SqlQuery
-    ) -> Generator[frozenset[TableReference], None, None]:
-        """Provides all intermediate results of a query.
+    @staticmethod
+    def merge(checks: Iterable[PreCheckResult]) -> PreCheckResult:
+        """Merges multiple check results into a single result.
 
-        The inclusion of cross-products between arbitrary tables can be configured via the `allow_cross_products` attribute.
+        The result is passed if all input checks are passed. If any of the checks failed, the failure reasons are merged into
+        a single list.
 
         Parameters
         ----------
-        query : qal.SqlQuery
-            The query for which to generate the intermediates
-
-        Yields
-        ------
-        Generator[frozenset[TableReference], None, None]
-            The intermediates
-
-        Warnings
-        --------
-        The default implementation of this method does not work for queries that naturally contain cross products. If such a
-        query is passed, no intermediates with tables from different partitions of the join graph are yielded.
-        """
-        for candidate_join in util.powerset(query.tables()):
-            if (
-                not candidate_join
-            ):  # skip empty set (which is an artefact of the powerset method)
-                continue
-            if not self.allow_cross_products and not query.predicates().joins_tables(
-                candidate_join
-            ):
-                continue
-            yield frozenset(candidate_join)
-
-    def estimate_cardinalities(self, query: SqlQuery) -> PlanParameterization:
-        """Produces all cardinality estimates for a specific query.
-
-        The default implementation of this method delegates the actual estimation to the `calculate_estimate` method. It is
-        called for each intermediate produced by `generate_intermediates`.
-
-        Parameters
-        ----------
-        query : qal.SqlQuery
-            The query to optimize
+        checks : Iterable[PreCheckResult]
+            The check results to merge
 
         Returns
-        ------
-        PlanParameterization
-            A parameterization containing cardinality hints for all intermediates. Other attributes of the parameterization are
-            not modified.
+        -------
+        PreCheckResult
+            The merged check result
         """
-        parameterization = PlanParameterization()
-        for join in self.generate_intermediates(query):
-            estimate = self.calculate_estimate(query, join)
-            if not math.isnan(estimate):
-                parameterization.add_cardinality(join, estimate)
-        return parameterization
+        failures: list[str] = []
+        for check in checks:
+            if check.passed:
+                continue
+            failures.extend(util.enlist(check.failure_reason))
+        return (
+            PreCheckResult.with_all_passed()
+            if not failures
+            else PreCheckResult.with_failure(failures)
+        )
 
-    def generate_plan_parameters(
-        self,
-        query: SqlQuery,
-        join_order: Optional[JoinTree],
-        operator_assignment: Optional[PhysicalOperatorAssignment],
-    ) -> PlanParameterization:
-        if join_order is None:
-            return self.estimate_cardinalities(query)
+    def with_failure(failure: str | list[str]) -> PreCheckResult:
+        """Generates a check result for a specific failure.
 
-        parameterization = PlanParameterization()
-        for intermediate in join_order.iternodes():
-            estimate = self.calculate_estimate(query, intermediate.tables())
-            if not math.isnan(estimate):
-                parameterization.add_cardinality(intermediate.tables(), estimate)
+        Parameters
+        ----------
+        failure : str | list[str]
+            The failure message(s)
 
-        return parameterization
+        Returns
+        -------
+        PreCheckResult
+            The check result
+        """
+        return PreCheckResult(False, failure)
 
-    def pre_check(self) -> validation.OptimizationPreCheck:
-        return validation.CrossProductPreCheck()
+    def ensure_all_passed(self, context: SqlQuery | Database | None = None) -> None:
+        """Raises an error if the check contains any failures.
+
+        Depending on the context, a more specific error can be raised. The context is used to infer whether an optimization
+        strategy does not work on a database system, or whether an input query is not supported by an optimization strategy.
+
+        Parameters
+        ----------
+        context : SqlQuery | Database | None, optional
+            An indicator of the kind of check that was performed. This influences the kind of error that will be raised in case
+            of failure. Defaults to ``None`` if no further context is available.
+
+        Raises
+        ------
+        util.StateError
+            In case of failure if there is no additional context available
+        UnsupportedQueryError
+            In case of failure if the context is an SQL query
+        UnsupportedSystemError
+            In case of failure if the context is a database interface
+        """
+        if self.passed:
+            return
+        if context is None:
+            raise util.StateError(f"Pre check failed {self._generate_failure_str()}")
+        elif isinstance(context, SqlQuery):
+            raise UnsupportedQueryError(context, self.failure_reason)
+        elif isinstance(context, Database):
+            raise UnsupportedSystemError(context, self.failure_reason)
+
+    def _generate_failure_str(self) -> str:
+        """Creates a nice string of the failure messages from `failure_reason`s.
+
+        Returns
+        -------
+        str
+            The failure message
+        """
+        if not self.failure_reason:
+            return ""
+        elif isinstance(self.failure_reason, str):
+            inner_contents = self.failure_reason
+        elif isinstance(self.failure_reason, Iterable):
+            inner_contents = " | ".join(reason for reason in self.failure_reason)
+        else:
+            raise ValueError(
+                "Unexpected failure reason type: " + str(self.failure_reason)
+            )
+        return f"[{inner_contents}]"
+
+
+class UnsupportedQueryError(RuntimeError):
+    """Error to indicate that a specific query cannot be optimized by a selected algorithms.
+
+    Parameters
+    ----------
+    query : SqlQuery
+        The unsupported query
+    features : str | list[str], optional
+        The features of the query that are unsupported. Defaults to an empty string
+    """
+
+    def __init__(self, query: SqlQuery, features: str | list[str] = "") -> None:
+        if isinstance(features, list):
+            features = ", ".join(features)
+        features_str = f" [{features}]" if features else ""
+
+        super().__init__(f"Query contains unsupported features{features_str}: {query}")
+        self.query = query
+        self.features = features
+
+
+class UnsupportedSystemError(RuntimeError):
+    """Error to indicate that a selected query plan cannot be enforced on a target system.
+
+    Parameters
+    ----------
+    db_instance : Database
+        The database system without a required feature
+    reason : str, optional
+        The features that are not supported. Defaults to an empty string
+    """
+
+    def __init__(self, db_instance: Database, reason: str = "") -> None:
+        error_msg = f"Unsupported database system: {db_instance}"
+        if reason:
+            error_msg += f" ({reason})"
+        super().__init__(error_msg)
+        self.db_system = db_instance
+        self.reason = reason

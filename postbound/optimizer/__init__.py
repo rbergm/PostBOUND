@@ -2,8 +2,7 @@
 
 These include:
 
-- a representation for logical join trees and physical query execution plans in the `jointree` module
-- a representation for join graphs in the `joingraph` module
+- a representation for join trees and join graphs
 - interfaces for policies that can be used to parameterize actual optimization algorithms, e.g. to inject different cardinality
   estimation strategies. These are contained in the `policies` package and need to be imported explicitly.
 - utilities to load pre-configured optimization strategies into optimization pipelines in the `presets` module
@@ -16,23 +15,10 @@ plans and basic hinting support. All other modules need to be imported explicitl
 module and the `strategies` package.
 """
 
-from .._qep import (
-    PlanEstimates,
-    PlanMeasures,
-    PlanParams,
-    QueryPlan,
-    SortKey,
-    Subplan,
-)
-from ._hints import (
+from .._hints import (
     DirectionalJoinOperatorAssignment,
     HintType,
-    JoinOperator,
     JoinOperatorAssignment,
-    PhysicalOperator,
-    PhysicalOperatorAssignment,
-    PlanParameterization,
-    ScanOperator,
     ScanOperatorAssignment,
     operators_from_plan,
     read_operator_assignment_json,
@@ -40,15 +26,8 @@ from ._hints import (
     read_plan_params_json,
     update_plan,
 )
-from ._joingraph import (
-    IndexInfo,
-    JoinGraph,
-    JoinPath,
-    TableInfo,
-)
-from ._jointree import (
+from .._jointree import (
     JoinTree,
-    LogicalJoinTree,
     explode_query_plan,
     jointree_from_plan,
     parameters_from_plan,
@@ -56,18 +35,29 @@ from ._jointree import (
     read_query_plan_json,
     to_query_plan,
 )
+from ._cardinalities import (
+    CardinalityDistortion,
+    NativeCardinalityHintGenerator,
+    PreciseCardinalityHintGenerator,
+    PreComputedCardinalities,
+)
+from ._joingraph import (
+    IndexInfo,
+    JoinGraph,
+    JoinPath,
+    TableInfo,
+)
 
 __all__ = [
+    "CardinalityDistortion",
+    "NativeCardinalityHintGenerator",
+    "PreciseCardinalityHintGenerator",
+    "PreComputedCardinalities",
     "policies",
-    "ScanOperator",
-    "JoinOperator",
-    "PhysicalOperator",
     "ScanOperatorAssignment",
     "JoinOperatorAssignment",
     "DirectionalJoinOperatorAssignment",
     "read_operator_json",
-    "PhysicalOperatorAssignment",
-    "PlanParameterization",
     "operators_from_plan",
     "parameters_from_plan",
     "read_operator_assignment_json",
@@ -75,18 +65,11 @@ __all__ = [
     "update_plan",
     "HintType",
     "JoinTree",
-    "LogicalJoinTree",
     "jointree_from_plan",
     "read_jointree_json",
     "to_query_plan",
     "read_query_plan_json",
     "explode_query_plan",
-    "SortKey",
-    "PlanParams",
-    "PlanEstimates",
-    "PlanMeasures",
-    "Subplan",
-    "QueryPlan",
     "JoinGraph",
     "JoinPath",
     "IndexInfo",

@@ -88,10 +88,10 @@ some require user input):
 2. setting up the optimization pipeline by configuring the different stages (this is done by the user)
 3. building the pipeline
 4. loading a workload to optimize (see the `workloads` module)
-4. optimizing an input query (this is done by the pipeline)
-5. generating the appropriate plan metadata, mostly query hints (this is done by the pipeline and supported by the `db`
+5. optimizing an input query (this is done by the pipeline)
+6. generating the appropriate plan metadata, mostly query hints (this is done by the pipeline and supported by the `db`
    package)
-6. executing the input query with the optimization metadata (either manually or using the `executor` module)
+7. executing the input query with the optimization metadata (either manually or using the `executor` module)
 
 """
 
@@ -107,6 +107,11 @@ from ._core import (
     ScanOperator,
     TableReference,
 )
+from ._hints import (
+    PhysicalOperatorAssignment,
+    PlanParameterization,
+)
+from ._jointree import LogicalJoinTree
 from ._pipelines import (
     IncrementalOptimizationPipeline,
     IntegratedOptimizationPipeline,
@@ -115,31 +120,40 @@ from ._pipelines import (
     OptimizationSettings,
     TextBookOptimizationPipeline,
 )
-from ._qep import QueryPlan
+from ._qep import (
+    PlanEstimates,
+    PlanMeasures,
+    PlanParams,
+    QueryPlan,
+    SortKey,
+    Subplan,
+)
 from ._stages import (
     CardinalityEstimator,
-    CardinalityGenerator,
     CompleteOptimizationAlgorithm,
     CostModel,
     IncrementalOptimizationStep,
     JoinOrderOptimization,
+    OptimizationPreCheck,
     ParameterGeneration,
     PhysicalOperatorSelection,
     PlanEnumerator,
+    PreCheckResult,
+    UnsupportedQueryError,
+    UnsupportedSystemError,
     as_complete_algorithm,
 )
-from .db import Database, duckdb, postgres
+from .db import _duckdb as duckdb
+from .db import postgres
+from .db._db import Database
 from .experiments import analysis, executor, workloads
 from .experiments.executor import execute_workload, optimize_and_execute_workload
-from .optimizer import (
-    LogicalJoinTree,
-    PhysicalOperatorAssignment,
-    PlanParameterization,
-    validation,
-)
-from .qal import SqlQuery, parse_query, relalg, transform
+from .optimizer._cardinalities import CardinalityGenerator
+from .qal import relalg, transform
+from .qal._qal import SqlQuery
+from .qal.parser import parse_query
 
-__version__ = "0.17.3"
+__version__ = "0.18.0"
 
 __all__ = [
     "db",
@@ -159,6 +173,7 @@ __all__ = [
     "CompleteOptimizationAlgorithm",
     "IntegratedOptimizationPipeline",
     "CardinalityEstimator",
+    "CardinalityGenerator",
     "CostModel",
     "PlanEnumerator",
     "TextBookOptimizationPipeline",
@@ -169,6 +184,10 @@ __all__ = [
     "IncrementalOptimizationStep",
     "IncrementalOptimizationPipeline",
     "as_complete_algorithm",
+    "UnsupportedQueryError",
+    "UnsupportedSystemError",
+    "OptimizationPreCheck",
+    "PreCheckResult",
     "OptimizationSettings",
     "Database",
     "postgres",
@@ -177,11 +196,16 @@ __all__ = [
     "transform",
     "SqlQuery",
     "parse_query",
+    "PlanEstimates",
+    "PlanMeasures",
+    "PlanParams",
     "QueryPlan",
+    "SortKey",
+    "Subplan",
     "LogicalJoinTree",
     "PhysicalOperatorAssignment",
     "PlanParameterization",
-    "CardinalityGenerator",
+    "_cardinalities",
     "validation",
     "analysis",
     "workloads",

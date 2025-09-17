@@ -8,7 +8,7 @@ from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass
 from typing import Optional
 
-from ... import db, util
+from ... import util
 from ..._core import (
     Cardinality,
     IntermediateOperator,
@@ -17,10 +17,16 @@ from ..._core import (
     TableReference,
 )
 from ..._qep import QueryPlan, SortKey
-from ..._stages import CardinalityEstimator, CostModel, PlanEnumerator
-from ...db import DatabaseSchema
+from ..._stages import (
+    CardinalityEstimator,
+    CostModel,
+    OptimizationPreCheck,
+    PlanEnumerator,
+)
+from ...db._db import Database, DatabasePool, DatabaseSchema
 from ...db.postgres import PostgresInterface, PostgresJoinHints, PostgresScanHints
-from ...qal import (
+from ...qal import transform
+from ...qal._qal import (
     AbstractPredicate,
     ColumnExpression,
     ColumnReference,
@@ -28,11 +34,9 @@ from ...qal import (
     CompoundPredicate,
     QueryPredicates,
     SqlQuery,
-    transform,
 )
 from ...util import LogicError, jsondict
 from .. import validation
-from ..validation import OptimizationPreCheck
 
 DPTable = dict[frozenset[TableReference], QueryPlan]
 
@@ -101,7 +105,7 @@ class DynamicProgrammingEnumerator(PlanEnumerator):
         The set of join operators that should be considered during the enumeration. This should be a subset of the following
         operators: nested loop join, hash join, sort merge join. If any other operators are included, these are simply never
         considered. By default all operators that are available on the `target_db` are allowed.
-    target_db : Optional[db.Database], optional
+    target_db : Optional[Database], optional
         The target database system for which the optimization pipeline is intended. If not omitted, the database is inferred
         from the `DatabasePool`.
     """
@@ -111,12 +115,12 @@ class DynamicProgrammingEnumerator(PlanEnumerator):
         *,
         supported_scan_ops: Optional[set[ScanOperator]] = None,
         supported_join_ops: Optional[set[JoinOperator]] = None,
-        target_db: Optional[db.Database] = None,
+        target_db: Optional[Database] = None,
     ) -> None:
         target_db = (
             target_db
             if target_db is not None
-            else db.DatabasePool.get_instance().current_database()
+            else DatabasePool.get_instance().current_database()
         )
 
         supported_scan_ops = (
@@ -537,9 +541,9 @@ class PostgresDynProg(PlanEnumerator):
         This is enabled by default.
     add_path_hook : Optional[AddPathHook], optional
         Optional function to implement custom path addition logic. See documentation on `AddPathHook` for more details.
-    target_db : Optional[db.Database], optional
-        The database on which the plans should be executed. This should usually be a Postgres instance. If omitted, the
-        database is inferred from the `DatabasePool`.
+    target_db : Optional[PostgresInterface], optional
+        The database on which the plans should be executed. This has to be a Postgres instance. If omitted, the database is
+        inferred from the `DatabasePool`.
     """
 
     def __init__(
@@ -557,7 +561,7 @@ class PostgresDynProg(PlanEnumerator):
         target_db = (
             target_db
             if target_db is not None
-            else db.DatabasePool.get_instance().current_database()
+            else DatabasePool.get_instance().current_database()
         )
         if not isinstance(target_db, PostgresInterface):
             raise LogicError(

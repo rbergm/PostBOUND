@@ -42,44 +42,43 @@ import typing
 from collections.abc import Generator, Iterable, Sequence
 from typing import Optional
 
+from .. import util
 from . import transform
 from ._qal import (
-    TableReference,
-    ColumnReference,
-    LogicalOperator,
-    CompoundOperator,
-    SetOperator,
-    SqlExpression,
-    ColumnExpression,
-    StaticValueExpression,
-    MathExpression,
-    CastExpression,
-    FunctionExpression,
-    SubqueryExpression,
-    StarExpression,
-    OrderByExpression,
-    WindowExpression,
-    CaseExpression,
     AbstractPredicate,
-    BinaryPredicate,
-    InPredicate,
     BetweenPredicate,
-    UnaryPredicate,
+    BinaryPredicate,
+    CaseExpression,
+    CastExpression,
+    ColumnExpression,
+    ColumnReference,
+    CompoundOperator,
     CompoundPredicate,
-    TableSource,
     DirectTableSource,
-    SubqueryTableSource,
-    JoinTableSource,
-    SqlQuery,
-    ImplicitSqlQuery,
-    SetQuery,
-    SelectStatement,
-    SqlExpressionVisitor,
-    PredicateVisitor,
     ExpressionCollector,
+    FunctionExpression,
+    ImplicitSqlQuery,
+    InPredicate,
+    JoinTableSource,
+    LogicalOperator,
+    MathExpression,
+    OrderByExpression,
+    PredicateVisitor,
+    SelectStatement,
+    SetOperator,
+    SetQuery,
+    SqlExpression,
+    SqlExpressionVisitor,
+    SqlQuery,
+    StarExpression,
+    StaticValueExpression,
+    SubqueryExpression,
+    SubqueryTableSource,
+    TableReference,
+    TableSource,
+    UnaryPredicate,
+    WindowExpression,
 )
-from .. import util
-
 
 # TODO: the creation and mutation of different relnodes should be handled by a dedicated factory class. This solves all issues
 # with mutatbility/immutability and automated linking to parent nodes.
@@ -1373,7 +1372,7 @@ class Projection(RelNode):
         return f"π ({col_str})"
 
 
-class GroupBy(RelNode):
+class Grouping(RelNode):
     """Grouping partitions input tuples according to specific attributes and calculates aggregated values.
 
     Parameters
@@ -1455,7 +1454,7 @@ class GroupBy(RelNode):
         return frozenset(set(self._group_columns) | aggregate_expressions)
 
     def accept_visitor(self, visitor: RelNodeVisitor[VisitorResult]) -> VisitorResult:
-        return visitor.visit_groupby(self)
+        return visitor.visit_grouping(self)
 
     def mutate(
         self,
@@ -1467,7 +1466,7 @@ class GroupBy(RelNode):
         ] = None,
         parent: Optional[RelNode] = None,
         as_root: bool = False,
-    ) -> GroupBy:
+    ) -> Grouping:
         """Creates a new group by with modified attributes.
 
         Parameters
@@ -1483,7 +1482,7 @@ class GroupBy(RelNode):
 
         Returns
         -------
-        GroupBy
+        Grouping
             The modified group by node
 
         See Also
@@ -2487,7 +2486,7 @@ class RelNodeVisitor(abc.ABC, typing.Generic[VisitorResult]):
         raise NotImplementedError
 
     @abc.abstractmethod
-    def visit_groupby(self, grouping: GroupBy) -> VisitorResult:
+    def visit_grouping(self, grouping: Grouping) -> VisitorResult:
         raise NotImplementedError
 
     @abc.abstractmethod
@@ -3581,7 +3580,7 @@ class _ImplicitRelalgParser:
         )
         for agg_func in aggregation_functions:
             aggregates[agg_func.arguments].add(agg_func)
-        groupby_node = GroupBy(
+        groupby_node = Grouping(
             input_node,
             group_columns=group_cols,
             aggregates={

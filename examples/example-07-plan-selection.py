@@ -31,11 +31,11 @@ class PlanSelection(pb.CompleteOptimizationAlgorithm):
 
         # These are all hints that we are going to use to generate different query plans. There are more hints available, but
         # we don't use them for simplicity (and because we would suffer from combinatorial explosion).
-        self._hints: list[pb.opt.PhysicalOperator] = [
-            pb.opt.ScanOperator.SequentialScan,
-            pb.opt.ScanOperator.IndexScan,
-            pb.opt.JoinOperator.NestedLoopJoin,
-            pb.opt.JoinOperator.HashJoin,
+        self._hints: list[pb.PhysicalOperator] = [
+            pb.ScanOperator.SequentialScan,
+            pb.ScanOperator.IndexScan,
+            pb.JoinOperator.NestedLoopJoin,
+            pb.JoinOperator.HashJoin,
         ]
 
     def optimize_query(self, query: pb.SqlQuery) -> pb.QueryPlan:

@@ -16,15 +16,13 @@ import random
 from collections.abc import Iterable, Sequence
 from typing import Any, Optional
 
-from .._jointree import JoinTree, jointree_from_plan
-from .._hints import PhysicalOperatorAssignment, JoinOperatorAssignment
-from ..._core import JoinOperator
+from ... import db, qal, util
+from ..._core import ColumnReference, JoinOperator, TableReference
+from ..._hints import JoinOperatorAssignment, PhysicalOperatorAssignment
+from ..._jointree import JoinTree, jointree_from_plan
 from ..._qep import QueryPlan
 from ..._stages import PhysicalOperatorSelection
-from ... import db, qal, util
-from ...qal import parser as query_parser
-from ...qal import TableReference, ColumnReference
-
+from ...qal import parser
 
 # TODO: there should be more documentation of the technical design of the QEP-S structure
 # More specifically, this documentation should describe the strategies to integrate subquery nodes, and the QEP-S traversal
@@ -1031,12 +1029,9 @@ def _load_qeps_id_from_json(json_data: dict) -> QepsIdentifier:
         If the encoding does not contain any tables
     """
     tables = [
-        query_parser.load_table_json(json_table)
-        for json_table in json_data.get("tables", [])
+        parser.load_table_json(json_table) for json_table in json_data.get("tables", [])
     ]
-    filter_pred = query_parser.load_predicate_json(
-        json_data.get("filter_predicate"), {}
-    )
+    filter_pred = parser.load_predicate_json(json_data.get("filter_predicate"), {})
     return QepsIdentifier(tables, filter_pred)
 
 

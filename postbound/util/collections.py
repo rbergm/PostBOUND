@@ -16,10 +16,8 @@ from collections.abc import (
 )
 from typing import Any, Optional, overload
 
+from .._base import T
 from .dicts import HashableDict
-
-T = typing.TypeVar("T")
-"""The type parameter that is used for all generics in this module."""
 
 ContainerType = typing.TypeVar("ContainerType", list, tuple, set, frozenset)
 """Specifies which types are considered containers.

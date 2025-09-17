@@ -36,17 +36,17 @@ from typing import Generic, Optional
 import numpy as np
 
 from ... import db, qal, util
-from ..._core import Cardinality, JoinOperator
+from ..._core import Cardinality, ColumnReference, JoinOperator, TableReference
+from ..._hints import PhysicalOperatorAssignment
+from ..._jointree import JoinTree, LogicalJoinTree
 from ..._stages import (
     JoinOrderOptimization,
     JoinOrderOptimizationError,
+    OptimizationPreCheck,
     PhysicalOperatorSelection,
 )
-from ...qal import ColumnReference, TableReference
 from .. import validation
-from .._hints import PhysicalOperatorAssignment
 from .._joingraph import JoinGraph, JoinPath
-from .._jointree import JoinTree, LogicalJoinTree
 from ..policies import cardinalities as cardpol
 from ..policies import jointree as treepol
 
@@ -393,10 +393,10 @@ class UESJoinBoundEstimator(cardpol.JoinCardinalityEstimator):
     def describe(self) -> dict:
         return {"name": "ues"}
 
-    def pre_check(self) -> Optional[validation.OptimizationPreCheck]:
+    def pre_check(self) -> Optional[OptimizationPreCheck]:
         # TODO: the UES check is slightly too restrictive here.
         # It suffices to check that there are only conjunctive equi joins.
-        return UESOptimizationPreCheck
+        return UESOptimizationPreCheck  # this is a pre-generated check instance, don't call () it here!
 
     def _estimate_pk_fk_join(
         self, fk_column: ColumnReference, pk_column: ColumnReference
@@ -666,7 +666,7 @@ class UESJoinOrderOptimizer(JoinOrderOptimization):
             },
         }
 
-    def pre_check(self) -> validation.OptimizationPreCheck:
+    def pre_check(self) -> OptimizationPreCheck:
         specified_checks = [
             check
             for check in [

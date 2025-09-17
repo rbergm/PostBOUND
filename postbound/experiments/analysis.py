@@ -10,13 +10,22 @@ from typing import Any, Literal, Optional
 
 import Levenshtein
 
-from .. import util, qal
-from .._core import TableReference, ColumnReference, PhysicalOperator
+from .. import util
+from .._core import ColumnReference, PhysicalOperator, TableReference
+from .._jointree import JoinTree
 from .._qep import QueryPlan
-from ..qal import SqlQuery, AbstractPredicate
-from ..db import Database, DatabasePool
+from ..db._db import Database, DatabasePool
+from ..qal import parser, transform
+from ..qal._qal import (
+    AbstractPredicate,
+    BinaryPredicate,
+    ColumnExpression,
+    CompoundPredicate,
+    SqlQuery,
+    StaticValueExpression,
+    Where,
+)
 from ..util import StateError
-from ..optimizer._jointree import JoinTree
 
 
 def possible_plans_bound(
@@ -177,13 +186,13 @@ def star_query_cardinality(
         )
     fact_table_pk_column = fact_table_pk_column.bind_to(fact_table)
 
-    id_vals_query = qal.parse_query(f"""
+    id_vals_query = parser.parse_query(f"""
                                     SELECT {fact_table_pk_column}, COUNT(*) AS card
                                     FROM {fact_table}
                                     GROUP BY {fact_table_pk_column}""")
     if query.predicates().filters_for(fact_table):
-        filter_clause = qal.Where(query.predicates().filters_for(fact_table))
-        id_vals_query = qal.transform.add_clause(id_vals_query, filter_clause)
+        filter_clause = Where(query.predicates().filters_for(fact_table))
+        id_vals_query = transform.add_clause(id_vals_query, filter_clause)
     id_vals: list[tuple[Any, int]] = database.execute_query(id_vals_query)
 
     base_query_fragments: dict[AbstractPredicate, SqlQuery] = {}
@@ -193,12 +202,10 @@ def star_query_cardinality(
             raise ValueError("Currently only singular joins are supported")
 
         partner_table: ColumnReference = util.simplify(join_partner).table
-        query_fragment = qal.transform.extract_query_fragment(
+        query_fragment = transform.extract_query_fragment(
             query, [fact_table, partner_table]
         )
-        base_query_fragments[join_pred] = qal.transform.as_count_star_query(
-            query_fragment
-        )
+        base_query_fragments[join_pred] = transform.as_count_star_query(query_fragment)
 
     total_cardinality = 0
     total_ids = len(id_vals)
@@ -206,21 +213,21 @@ def star_query_cardinality(
         if value_idx % 1000 == 0:
             logger("--", value_idx, "out of", total_ids, "values processed")
 
-        id_filter = qal.BinaryPredicate.equal(
-            qal.ColumnExpression(fact_table_pk_column),
-            qal.StaticValueExpression(id_value),
+        id_filter = BinaryPredicate.equal(
+            ColumnExpression(fact_table_pk_column),
+            StaticValueExpression(id_value),
         )
 
         for join_pred, base_query in base_query_fragments.items():
             if current_card == 0:
                 break
 
-            expanded_predicate = qal.CompoundPredicate.create_and(
+            expanded_predicate = CompoundPredicate.create_and(
                 [base_query.where_clause.predicate, id_filter]
             )
-            expanded_where_clause = qal.Where(expanded_predicate)
+            expanded_where_clause = Where(expanded_predicate)
 
-            dimension_query = qal.transform.replace_clause(
+            dimension_query = transform.replace_clause(
                 base_query, expanded_where_clause
             )
             dimension_card = database.execute_query(dimension_query)

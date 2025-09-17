@@ -14,8 +14,10 @@ from typing import Any, Generic, Literal, Optional, Type, TypeVar, Union, overlo
 import networkx as nx
 
 from .. import util
-from .._core import ColumnReference, T, TableReference, VisitorResult, quote
-from ..util import StateError, jsondict
+from .._base import T
+from .._core import ColumnReference, TableReference, VisitorResult, quote
+from ..util._errors import StateError
+from ..util.jsonize import jsondict
 
 
 class MathOperator(enum.Enum):
@@ -3972,7 +3974,7 @@ class QueryPredicates:
 
         Raises
         ------
-        errors.StateError
+        StateError
             If the predicates warpper is empty and there is no root predicate.
         """
         self._assert_not_empty()

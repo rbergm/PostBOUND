@@ -2,14 +2,12 @@
 
 from __future__ import annotations
 
-import typing
 from collections.abc import Callable, Sequence
 from typing import Optional
 
 import graphviz as gv
 
-T = typing.TypeVar("T")
-"""Node type of the tree to plot."""
+from .._base import T
 
 
 def _gv_escape(node: T, node_id_generator: Callable[[T], int] = hash) -> str:

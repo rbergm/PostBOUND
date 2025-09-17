@@ -4,12 +4,12 @@ Notice that these tests merely check that the queries are parsed without errors.
 DAGs for correctness. This is because right now we do not have a good and manageable way to check the correctness of these
 structures.
 """
+
 from __future__ import annotations
 
 import unittest
 
-from postbound import qal
-from postbound.qal import relalg, TableReference, ColumnReference
+from postbound import ColumnReference, TableReference, qal, relalg
 
 
 class RelalgParserTests(unittest.TestCase):
@@ -45,17 +45,23 @@ class RelalgParserTests(unittest.TestCase):
         col_s_a = ColumnReference("a", tab_s)
         col_s_b = ColumnReference("b", tab_s)
         scan_s = relalg.Relation(TableReference("S"), [col_s_a, col_s_b])
-        select_s = relalg.Selection(scan_s, qal.as_predicate(col_s_a, qal.LogicalOperator.Equal, 42))
+        select_s = relalg.Selection(
+            scan_s, qal.as_predicate(col_s_a, qal.LogicalOperator.Equal, 42)
+        )
 
         tab_r = TableReference("R")
         col_r_a = ColumnReference("a", tab_r)
         scan_r = relalg.Relation(TableReference("R"), [col_r_a])
 
-        join_node = relalg.ThetaJoin(select_s, scan_r,
-                                     qal.as_predicate(col_s_b, qal.LogicalOperator.Equal, col_r_a))
+        join_node = relalg.ThetaJoin(
+            select_s,
+            scan_r,
+            qal.as_predicate(col_s_b, qal.LogicalOperator.Equal, col_r_a),
+        )
 
-        additional_selection = relalg.Selection(select_s,
-                                                qal.as_predicate(col_s_b, qal.LogicalOperator.Equal, 24))
+        additional_selection = relalg.Selection(
+            select_s, qal.as_predicate(col_s_b, qal.LogicalOperator.Equal, 24)
+        )
         new_root = join_node.mutate(left_input=additional_selection).root()
 
         self.assertNotEqual(join_node, new_root)
@@ -71,8 +77,12 @@ class RelalgParserTests(unittest.TestCase):
         col_r_a = ColumnReference("a", tab_r)
         scan_r = relalg.Relation(TableReference("R"), [col_r_a])
 
-        selection_a = relalg.Selection(scan_r, qal.as_predicate(col_r_a, qal.LogicalOperator.Less, 42))
-        selection_b = relalg.Selection(scan_r, qal.as_predicate(col_r_a, qal.LogicalOperator.Greater, 24))
+        selection_a = relalg.Selection(
+            scan_r, qal.as_predicate(col_r_a, qal.LogicalOperator.Less, 42)
+        )
+        selection_b = relalg.Selection(
+            scan_r, qal.as_predicate(col_r_a, qal.LogicalOperator.Greater, 24)
+        )
         union_node = relalg.Union(selection_a, selection_b)
 
         additional_projection = relalg.Projection(selection_b, [col_r_a])
@@ -103,8 +113,12 @@ class RelalgParserTests(unittest.TestCase):
         # Our new relalg tree: Projection(Join(R, S))
         # The root node receives the new join node as input. The join node receives the previous input of the cross product as
         # its input and the selection's predicate becomes the join predicate
-        join_node = relalg.ThetaJoin(cross_product.left_input, cross_product.right_input, join_pred)
-        new_root: relalg.RelNode = selection.parent_node.mutate(input_node=join_node).root()
+        join_node = relalg.ThetaJoin(
+            cross_product.left_input, cross_product.right_input, join_pred
+        )
+        new_root: relalg.RelNode = selection.parent_node.mutate(
+            input_node=join_node
+        ).root()
 
         self.assertIsInstance(new_root, type(old_root))
         self.assertEqual(new_root.tables(), old_root.tables())
@@ -126,7 +140,9 @@ class RelalgParserTests(unittest.TestCase):
 
         # in an actual application, the precise types of the nodes would need to be checked and appropriate reordering actions
         # need to be taken based on the types.
-        if not isinstance(old_root, relalg.Selection) or not isinstance(old_root.input_node, relalg.CrossProduct):
+        if not isinstance(old_root, relalg.Selection) or not isinstance(
+            old_root.input_node, relalg.CrossProduct
+        ):
             self.fail()
 
         # the selection now receives the previous input of the cross product node as input, this effectively pushes the
@@ -136,7 +152,9 @@ class RelalgParserTests(unittest.TestCase):
 
         # we use an existing node to mutate directly --> no need for cloning
         new_second_node = old_root.mutate(input_node=old_root.input_node.left_input)
-        new_root = old_root.input_node.mutate(left_input=new_second_node, as_root=True).root()
+        new_root = old_root.input_node.mutate(
+            left_input=new_second_node, as_root=True
+        ).root()
 
         self.assertIsInstance(new_root, relalg.CrossProduct)
         self.assertEqual(old_root.tables(), new_root.tables())
@@ -149,9 +167,13 @@ class RelalgParserTests(unittest.TestCase):
 
         # Original structure: Selection1(Projection1(Selection2(R)))
         scan_r = relalg.Relation(tab_r, [col_r_a, col_r_b])
-        selection = relalg.Selection(scan_r, qal.as_predicate(col_r_a, qal.LogicalOperator.Less, 42))
+        selection = relalg.Selection(
+            scan_r, qal.as_predicate(col_r_a, qal.LogicalOperator.Less, 42)
+        )
         projection = relalg.Projection(selection, [col_r_a])
-        old_root = relalg.Selection(projection, qal.as_predicate(col_r_a, qal.LogicalOperator.Greater, 24))
+        old_root = relalg.Selection(
+            projection, qal.as_predicate(col_r_a, qal.LogicalOperator.Greater, 24)
+        )
 
         # Updated structure: Selection1(Projection1(Projection2(Selection2(R)))
         additional_projection = relalg.Projection(selection, [col_r_a, col_r_b])
@@ -210,17 +232,23 @@ class RelalgParserTests(unittest.TestCase):
         self.assertIs(final_join.left_input, sideways_join.left_input)
 
         # Updated structure: ThetaJoin(R, ThetaJoin(R, Projection(S)))
-        pushed_down_projection = s_projection.mutate(input_node=sideways_join.right_input)
+        pushed_down_projection = s_projection.mutate(
+            input_node=sideways_join.right_input
+        )
         pulled_up_join = sideways_join.mutate(right_input=pushed_down_projection)
         updated_root = final_join.mutate(right_input=pulled_up_join)
         self._assert_sound_tree_linkage(updated_root)
 
         self.assertNotEqual(scan_s.parent_node, pushed_down_projection)
-        self.assertNotEqual(scan_r.sideways_pass, pulled_up_join.left_input.sideways_pass)
+        self.assertNotEqual(
+            scan_r.sideways_pass, pulled_up_join.left_input.sideways_pass
+        )
         self.assertIs(updated_root.left_input, updated_root.right_input.left_input)
 
     def test_parse_subquery_in_predicates(self):
-        query = qal.parse_query("SELECT * FROM R WHERE R.a IN (SELECT S.b FROM S WHERE R.a = S.a)")
+        query = qal.parse_query(
+            "SELECT * FROM R WHERE R.a IN (SELECT S.b FROM S WHERE R.a = S.a)"
+        )
         relalg.parse_relalg(query)
 
     def test_parse_subquery_between_predicates(self):
@@ -238,8 +266,10 @@ class RelalgParserTests(unittest.TestCase):
             self.assertIn(root, sideways_node.children())
 
         for child in root.children():
-            self.assertTrue(root in child.sideways_pass or child.parent_node == root,
-                            f"(parent {child.parent_node!r} -> child {child!r}) != {root!r}")
+            self.assertTrue(
+                root in child.sideways_pass or child.parent_node == root,
+                f"(parent {child.parent_node!r} -> child {child!r}) != {root!r}",
+            )
             self._assert_sound_tree_linkage(child)
 
 
