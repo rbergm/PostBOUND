@@ -9,14 +9,15 @@ import warnings
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Literal, Optional
+from typing import Any, Literal, Optional
 
 import natsort
 import numpy as np
 import pandas as pd
 
-from .. import _stages, util
+from .. import util
 from .._pipelines import OptimizationPipeline
+from .._stages import UnsupportedQueryError
 from ..db._db import (
     Database,
     PrewarmingSupport,
@@ -28,27 +29,38 @@ from ..qal import transform
 from ..qal._qal import Explain, SqlQuery
 from .workloads import Workload, generate_workload
 
-COL_LABEL = "label"
-COL_QUERY = "query"
-COL_QUERY_HINTS = "query_hints"
+LabelCol = "label"
+QueryCol = "query"
+QueryHintsCol = "query_hints"
 
-COL_T_EXEC = "exec_time"
-COL_T_OPT = "optimization_time"
-COL_RESULT = "query_result"
+StatusCol = "status"
+ExecTimeCol = "exec_time"
+OptTimeCol = "optimization_time"
+ResultCol = "query_result"
 
-COL_EXEC_IDX = "execution_index"
-COL_REP = "query_repetition"
-COL_WORKLOAD_ITER = "workload_iteration"
+ExecIdxCol = "execution_index"
+RepetitionCol = "query_repetition"
+WorkloadIterCol = "workload_iteration"
+QueryPrepCol = "query_preparation"
 
-COL_ORIG_QUERY = "original_query"
-COL_OPT_SETTINGS = "optimization_settings"
-COL_OPT_SUCCESS = "optimization_success"
-COL_OPT_FAILURE_REASON = "optimization_failure_reason"
+OptSettingsCol = "optimization_settings"
+FailureReasonCol = "failure_reason"
 
-COL_DB_CONFIG = "db_config"
+DbConfCol = "db_config"
 
 
 PredefLogger = Literal["tqdm"]
+ErrorHandling = Literal["raise", "log", "ignore"]
+ExecStatus = Literal["ok", "timeout", "optimization-error", "execution-error"]
+"""Describes the result of a query execution:
+
+- *ok*: The query was executed successfully
+- *timeout*: The query was cancelled due to a timeout
+- *optimization-error*: The query could not be optimized by PostBOUND
+- *execution-error*: The query could not be executed by the database system
+
+For errors, the actual reason is contained in the `failure_reason` column of the resulting data frame.
+"""
 
 
 @dataclass
@@ -58,14 +70,19 @@ class ExecutionResult:
     query: SqlQuery
     """The query that was executed. If the query was optimized and transformed, these modifications are included."""
 
-    result_set: object = None
-    """The raw result set of the query, if it was executed"""
+    status: ExecStatus = "ok"
+    """Whether the query was executed successfully or not."""
+
+    query_result: object = None
+    """The result set of the query or *None* if the query failed."""
 
     optimization_time: float = np.nan
     """The time in seconds it took to optimized the query by PostBOUND.
 
     This does not account for optimization by the actual database system and depends heavily on the quality of the
     implementation of the optimization strategies.
+
+    For queries that were not optimized within PostBOUND, this value is *NaN*.
     """
 
     execution_time: float = np.nan
@@ -76,11 +93,54 @@ class ExecutionResult:
     includes the optimization time by the database system, as well as the entire time for data transfer.
 
     A value of *Inf* indicates that the query did not complete successfully and was cancelled due to a timeout. *NaN* encodes
-    a failure in the execution process.
+    a failure during optimization or execution. See `status` for more details.
     """
 
+    @staticmethod
+    def passed(
+        query: SqlQuery,
+        *,
+        query_result: object,
+        execution_time: float,
+        optimization_time: float = np.nan,
+    ) -> ExecutionResult:
+        """Constructs an `ExecutionResult` for a successfully executed query.
 
-class QueryPreparationService:
+        The optimization time can be omitted if the query was not optimized in PostBOUND.
+        """
+        return ExecutionResult(
+            query=query,
+            status="ok",
+            query_result=query_result,
+            execution_time=execution_time,
+            optimization_time=optimization_time,
+        )
+
+    @staticmethod
+    def execution_error(
+        query: SqlQuery, *, optimization_time: float = np.nan
+    ) -> ExecutionResult:
+        """Constructs an `ExecutionResult` for a query that failed during execution."""
+        return ExecutionResult(
+            query=query,
+            status="execution-error",
+            query_result=None,
+            execution_time=np.nan,
+            optimization_time=optimization_time,
+        )
+
+    @staticmethod
+    def optimization_error(query: SqlQuery) -> ExecutionResult:
+        return ExecutionResult(
+            query=query,
+            status="optimization-error",
+            query_result=None,
+            execution_time=np.nan,
+            optimization_time=np.nan,
+        )
+
+
+class QueryPreparation:
     """This service handles transformations of input queries that are executed before running the query.
 
     These transformations mostly ensure that all queries in a workload provide the same type of result even in face
@@ -117,7 +177,7 @@ class QueryPreparationService:
         analyze: bool = False,
         prewarm: bool = False,
         preparatory_statements: Optional[list[str]] = None,
-    ):
+    ) -> None:
         self.explain = explain
         self.analyze = analyze
         self.count_star = count_star
@@ -170,11 +230,20 @@ class QueryPreparationService:
 
         return query
 
+    def __json__(self) -> util.jsondict:
+        return {
+            "explain": self.explain,
+            "analyze": self.analyze,
+            "count_star": self.count_star,
+            "prewarm": self.prewarm,
+            "preparatory_statements": self.preparatory_stmts,
+        }
 
-def _failed_execution_result(
-    query: SqlQuery, database: Database, repetitions: int = 1
+
+def _failed_optimization_result(
+    query: SqlQuery, error: Exception, *, database: Database, repetitions: int = 1
 ) -> pd.DataFrame:
-    """Constructs a dummy data frame / row for queries that failed the execution.
+    """Constructs a dummy data frame / row for queries that failed in the optimization pipeline.
 
     This data frame can be included in the overall result data frame as a replacement of the original data frame that would
     have been inserted if the query were executed successfully. It contains exactly the same number of rows and columns as the
@@ -194,16 +263,42 @@ def _failed_execution_result(
     pd.DataFrame
         The data frame for the failed query
     """
-    return pd.DataFrame(
-        {
-            COL_QUERY: [transform.drop_hints(query)] * repetitions,
-            COL_QUERY_HINTS: [query.hints] * repetitions,
-            COL_T_EXEC: [np.nan] * repetitions,
-            COL_RESULT: [np.nan] * repetitions,
-            COL_REP: list(range(1, repetitions + 1)),
-            COL_DB_CONFIG: [database.describe()] * repetitions,
-        }
+    res = ExecutionResult.optimization_error(query)
+    df = pd.DataFrame([res] * repetitions)
+    df.insert(0, RepetitionCol, range(1, repetitions + 1))
+    db_config = database.describe()
+    df[DbConfCol] = [db_config] * repetitions
+    df[FailureReasonCol] = (
+        error.features if isinstance(error, UnsupportedQueryError) else str(error)
     )
+    return df
+
+
+def _execute_handler(
+    query: SqlQuery, database: Database, *, timeout: Optional[float] = None
+) -> tuple[Any, float]:
+    """Handler to execute a single query on a given database with optional timeout support."""
+    if timeout is not None and not isinstance(database, TimeoutSupport):
+        raise ValueError(f"Database system {database} does not provide timeout support")
+
+    if timeout is not None:
+        start_time = time.perf_counter_ns()
+        query_result = database.execute_with_timeout(query, timeout=timeout)
+        end_time = time.perf_counter_ns()
+        query_result = simplify_result_set(query_result)
+        exec_time = (
+            math.inf if query_result is None else (end_time - start_time) / 10**9
+        )  # convert to seconds
+    else:
+        start_time = time.perf_counter_ns()
+        query_result = database.execute_query(query, cache_enabled=False)
+        end_time = time.perf_counter_ns()
+        exec_time = (end_time - start_time) / 10**9  # convert to seconds
+
+    if isinstance(database, StopwatchSupport):
+        exec_time = database.last_query_runtime()
+
+    return query_result, exec_time
 
 
 def _invoke_post_process(
@@ -230,12 +325,13 @@ def execute_query(
     database: Database,
     *,
     repetitions: int = 1,
-    query_preparation: Optional[QueryPreparationService] = None,
+    query_preparation: Optional[QueryPreparation] = None,
     post_process: Optional[Callable[[ExecutionResult], None]] = None,
     timeout: Optional[float] = None,
     label: str = "",
     logger: Optional[PredefLogger] = None,
     optimization_time: float = math.nan,
+    error_action: ErrorHandling = "raise",
 ) -> pd.DataFrame:
     """Runs the given query on the provided database.
 
@@ -282,6 +378,10 @@ def execute_query(
     optimization_time : float, optional
         The optimization time that has been spent to generate the input query. If specified, a corresponding column is added
         to the output data frame.
+    error_action : ErrorHandling, optional
+        Configures how errors during optimization or execution are handled. By default, failing queries are still contained
+         in the result data frame, but some columns might not contain meaningful values. Check the *status* column of the
+         data frame to see what happened.
 
     Returns
     -------
@@ -305,47 +405,49 @@ def execute_query(
     if query_preparation:
         query = query_preparation.prepare_query(query, on=database)
 
-    if timeout is not None and not isinstance(database, TimeoutSupport):
-        raise ValueError(f"Database system {database} does not provide timeout support")
-
-    query_results = []
-    execution_times = []
+    results = pd.DataFrame()
+    db_configs: list[dict] = []
 
     for __ in iterations:
-        if timeout is not None:
-            start_time = time.perf_counter_ns()
-            current_result = database.execute_with_timeout(query, timeout=timeout)
-            end_time = time.perf_counter_ns()
-            current_result = simplify_result_set(current_result)
-            exec_time = (
-                math.inf if current_result is None else (end_time - start_time) / 10**9
-            )  # convert to seconds
-        else:
-            start_time = time.perf_counter_ns()
-            current_result = database.execute_query(query, cache_enabled=False)
-            end_time = time.perf_counter_ns()
-            exec_time = (end_time - start_time) / 10**9  # convert to seconds
+        db_configs.append(database.describe())
+        failure_reason = ""
+        try:
+            current_result, exec_time = _execute_handler(
+                query, database, timeout=timeout
+            )
+            execution_result = ExecutionResult(
+                query=query,
+                status="ok" if not math.isinf(exec_time) else "timeout",
+                query_result=current_result,
+                optimization_time=optimization_time,
+                execution_time=exec_time,
+            )
+        except Exception as e:
+            match error_action:
+                case "raise":
+                    raise e
+                case "log":
+                    execution_result = ExecutionResult.execution_error(
+                        query, optimization_time=optimization_time
+                    )
+                case "ignore":
+                    continue
+                case _:
+                    raise ValueError(f"Unknown error handling strategy: {error_action}")
+            failure_reason = str(e)
 
-        if isinstance(database, StopwatchSupport):
-            exec_time = database.last_query_runtime()
+        current_result = pd.DataFrame([execution_result])
+        current_result[FailureReasonCol] = failure_reason
+        results = pd.concat([results, current_result], ignore_index=True)
 
-        query_results.append(current_result)
-        execution_times.append(exec_time)
-        execution_result = ExecutionResult(
-            query, current_result, optimization_time, exec_time
-        )
         _invoke_post_process(execution_result, post_process)
 
-    return pd.DataFrame(
-        {
-            COL_QUERY: [transform.drop_hints(original_query)] * repetitions,
-            COL_QUERY_HINTS: [original_query.hints] * repetitions,
-            COL_T_EXEC: execution_times,
-            COL_RESULT: query_results,
-            COL_REP: list(range(1, repetitions + 1)),
-            COL_DB_CONFIG: [database.describe()] * repetitions,
-        }
-    )
+    results.insert(0, RepetitionCol, len(results))
+    results[QueryCol] = transform.drop_hints(original_query)
+    results.insert(1, QueryHintsCol, original_query.hints)
+    results[DbConfCol] = db_configs
+    results[QueryPrepCol] = query_preparation
+    return results
 
 
 def _wrap_workload(
@@ -373,13 +475,14 @@ def execute_workload(
     workload_repetitions: int = 1,
     per_query_repetitions: int = 1,
     shuffled: bool = False,
-    query_preparation: Optional[QueryPreparationService] = None,
+    query_preparation: Optional[QueryPreparation] = None,
     timeout: Optional[float] = None,
-    include_labels: bool = False,
+    include_labels: bool = True,
     post_process: Optional[Callable[[ExecutionResult], None]] = None,
     post_repetition_callback: Optional[Callable[[int], None]] = None,
     progressive_output: Optional[str | Path] = None,
     logger: Optional[Callable[[str], None] | PredefLogger] = None,
+    error_action: ErrorHandling = "log",
 ) -> pd.DataFrame:
     """Executes all the given queries on the provided database.
 
@@ -391,15 +494,6 @@ def execute_workload(
     also applies for just a single repetition. The `include_labels` parameter expands the resulting data frame with
     another column that contains the query labels as obtained from the workload (integers are used if queries are
     supplied as an iterable rather than a workload object).
-
-    In addition to the columns produced by `execute_query`, the resulting data frame will have the following extra columns:
-
-    - an absolute index indicating which query is being executed (the first query has index 1, the query executed
-      after that has index 2 and so on). This index will be increased for each query and workload repetition. I.e.,
-      if a workload contains two queries, each query should be repeated 3 times and the entire workload should be
-      repeated 4 times, the indexes will be 1..24. This information is contained in the `COL_EXEC_INDEX` column
-    - the `COL_LABEL` column contains the query label if requested
-    - the current workload iteration is described in the `COL_WORKLOAD_ITER` column
 
     Parameters
     ----------
@@ -423,7 +517,7 @@ def execute_workload(
         cancelled and the execution time is set to *Inf*. If this parameter is omitted, no timeout is enforced. Notice that
         timeouts require the database to implement `TimeoutSupport`.
     include_labels : bool, optional
-        Whether to add the label of each query to the workload results, by default *False*
+        Whether to add the label of each query to the workload results, by default *True*
     post_process : Optional[Callable[[ExecutionResult], None]], optional
         A post-process action that should be executed after each repetition of the query has been completed. Defaults to
         *None*, which means no post-processing.
@@ -443,10 +537,34 @@ def execute_workload(
         - referencing a pre-defined logger invokes. Currently, only *tqdm*  is supported. It uses the same library to
           print a progress bar
 
+    error_action : ErrorHandling, optional
+        Configures how errors during optimization or execution are handled. By default, failing queries are still contained
+         in the result data frame, but some columns might not contain meaningful values. Check the *status* column of the
+         data frame to see what happened.
+
     Returns
     -------
     pd.DataFrame
-        The execution results for the input workload
+        The execution results for the input workload. The data frame will be structured as follows:
+
+        - the data frame will contain one row per query repetition
+        - *execution_index* contains an absolute index indicating when the query was executed
+        - *workload_iteration* indicates the current workload repetition
+        - if requested, the *label* column contains an identifier of the current query
+        - *query_repetition* indicates the current per-query repetition (in contrast to repetitions of the entire workload)
+        - *query* contains the original query without any hints applied to it
+        - *query_hints* contains the hints that were contained in the query
+        - *status* indicates whether the query was executed successfully, or whether an error occurred during execution.
+          Possible values are "ok", "timeout", and "execution-error"
+        - *result_set*  is the actual result of the query. Scalar results are represented as-is. In case of an error this will
+          be *None*
+        - *execution_time* contains the time it took to execute the query (in seconds). This includes the entire time from
+          sending the query to the database until the last byte of the result set has been transferred back to PostBOUND.
+          In case of an error this will be *NaN* and for timeouts this will be *Inf*
+        - *failure_reason* contains a description of the error that occurred during execution
+        - *db_config* describes the database (and its state) on which the query was executed
+        - *query_preparation* contains the settings that were used to prepare the query before execution
+        - *failure_reason* contains a description of the error that occurred during execution
 
     See Also
     --------
@@ -489,21 +607,22 @@ def execute_workload(
                 post_process=post_process,
                 label=label,
                 logger="tqdm" if use_tqdm else None,
+                error_action=error_action,
             )
-            execution_result[COL_EXEC_IDX] = list(
+            execution_result[ExecIdxCol] = list(
                 range(
                     current_execution_index,
                     current_execution_index + per_query_repetitions,
                 )
             )
             if include_labels:
-                execution_result[COL_LABEL] = label
+                execution_result.insert(2, LabelCol, label)
 
             current_repetition_results.append(execution_result)
             current_execution_index += per_query_repetitions
 
-        current_df = pd.concat(current_repetition_results)
-        current_df[COL_WORKLOAD_ITER] = i + 1
+        current_df = pd.concat(current_repetition_results, ignore_index=True)
+        current_df[WorkloadIterCol] = i + 1
         results.append(current_df)
 
         if progressive_output and progressive_output.is_file():
@@ -518,17 +637,8 @@ def execute_workload(
         if post_repetition_callback:
             post_repetition_callback(i)
 
-    result_df = pd.concat(results)
-    target_labels = [COL_LABEL] if include_labels else []
-    target_labels += [
-        COL_EXEC_IDX,
-        COL_QUERY,
-        COL_WORKLOAD_ITER,
-        COL_REP,
-        COL_T_EXEC,
-        COL_RESULT,
-    ]
-    return result_df[target_labels].reset_index(drop=True)
+    result_df = pd.concat(results, ignore_index=True)
+    return result_df
 
 
 def optimize_and_execute_query(
@@ -536,22 +646,16 @@ def optimize_and_execute_query(
     optimization_pipeline: OptimizationPipeline,
     *,
     repetitions: int = 1,
-    query_preparation: Optional[QueryPreparationService] = None,
+    query_preparation: Optional[QueryPreparation] = None,
     post_process: Optional[Callable[[ExecutionResult], None]] = None,
     timeout: Optional[float] = None,
     label: str = "",
     logger: Optional[PredefLogger] = None,
+    error_action: ErrorHandling = "raise",
 ) -> pd.DataFrame:
     """Optimizes the a query according to the settings of an optimization pipeline and executes it afterwards.
 
-    This function delegates most of its work to `execute_query`. In addition, the resulting data frame contains the
-    following columns:
-
-    - the time it took PostBOUND to optimize the query is indicated in the `COL_T_OPT` column (in seconds)
-    - whether the query was optimized successfully is indicated in the `COL_OPT_SUCCESS` column
-    - if the optimization failed, the reason(s) for the failure are contained in the `COL_OPT_FAILURE_REASON` column
-    - the original query (i.e. before optimization and query preparation) is provided in the `COL_ORIG_QUERY` column
-    - the selected optimization settings of the optimization pipeline is contained in the `COL_OPT_SETTINGS` column
+    This function delegates most of its work to `execute_query`. See its documentation for more details.
 
     Parameters
     ----------
@@ -577,6 +681,10 @@ def optimize_and_execute_query(
         A label that identifies the query. Currently, this is only used for logging purposes.
     logger : Optional[PredefLogger], optional
         Configures how progress of the repetitions should be logged.
+    error_action : ErrorHandling, optional
+        Configures how errors during optimization or execution are handled. By default, failing queries are still contained
+         in the result data frame, but some columns might not contain meaningful values. Check the *status* column of the
+         data frame to see what happened.
 
     Returns
     -------
@@ -605,21 +713,18 @@ def optimize_and_execute_query(
             optimization_time=optimization_time,
             label=label,
             logger=logger,
+            error_action=error_action,
         )
-        execution_result[COL_T_OPT] = optimization_time
-        execution_result[COL_OPT_SUCCESS] = True
-        execution_result[COL_OPT_FAILURE_REASON] = None
-    except _stages.UnsupportedQueryError as e:
-        execution_result = _failed_execution_result(
-            query, optimization_pipeline.target_database(), repetitions
+    except Exception as e:
+        execution_result = _failed_optimization_result(
+            query,
+            e,
+            database=optimization_pipeline.target_database(),
+            repetitions=repetitions,
         )
-        execution_result[COL_T_OPT] = np.nan
-        execution_result[COL_OPT_SUCCESS] = False
-        execution_result[COL_OPT_FAILURE_REASON] = e.features
 
-    execution_result[COL_ORIG_QUERY] = query
     pipeline_desc = optimization_pipeline.describe()
-    execution_result[COL_OPT_SETTINGS] = [pipeline_desc] * repetitions
+    execution_result[OptSettingsCol] = [pipeline_desc] * repetitions
     return execution_result
 
 
@@ -630,21 +735,21 @@ def optimize_and_execute_workload(
     workload_repetitions: int = 1,
     per_query_repetitions: int = 1,
     shuffled: bool = False,
-    query_preparation: Optional[QueryPreparationService] = None,
+    query_preparation: Optional[QueryPreparation] = None,
     timeout: Optional[float] = None,
-    include_labels: bool = False,
+    include_labels: bool = True,
     post_process: Optional[Callable[[ExecutionResult], None]] = None,
     post_repetition_callback: Optional[Callable[[int], None]] = None,
     progressive_output: Optional[str | Path] = None,
     logger: Optional[Callable[[str], None] | PredefLogger] = None,
+    error_action: ErrorHandling = "log",
 ) -> pd.DataFrame:
     """This function combines the functionality of `execute_workload` and `optimize_query` in one utility.
 
     Each workload iteration starts "from scratch", i.e. with the raw, un-optimized queries. If the post-process actions mutated
     some state, these mutations will however still be reflected.
 
-    Refer to the documentation of the methods under *See Also* for documentation of the provided data frame and execution/
-    optimization details.
+    Refer to the documentation of the methods under *See Also* for documentation of execution/ optimization details.
 
     Parameters
     ----------
@@ -670,7 +775,7 @@ def optimize_and_execute_workload(
         cancelled and the execution time is set to *Inf*. If this parameter is omitted, no timeout is enforced. Notice that
         timeouts require the database to implement `TimeoutSupport`.
     include_labels : bool, optional
-        Whether to add the label of each query to the workload results, by default *False*
+        Whether to add the label of each query to the workload results, by default *True*
     post_process : Optional[Callable[[ExecutionResult], None]], optional
         A post-process action that should be executed after each repetition of the query has been completed. Defaults to
         *None*, which means no post-processing.
@@ -690,10 +795,39 @@ def optimize_and_execute_workload(
         - referencing a pre-defined logger invokes. Currently, only *tqdm*  is supported. It uses the same library to
           print a progress bar
 
+    error_action : ErrorHandling, optional
+        Configures how errors during optimization or execution are handled. By default, failing queries are still contained
+         in the result data frame, but some columns might not contain meaningful values. Check the *status* column of the
+         data frame to see what happened.
+
     Returns
     -------
     pd.DataFrame
-        The optimization and execution results for the given workload
+        The optimization and execution results for the given workload. The data frame will be structured as follows:
+
+        - the data frame will contain one row per query repetition
+        - *execution_index* contains an absolute index indicating when the query was executed
+        - *workload_iteration* indicates the current workload repetition
+        - if requested, the *label* column contains an identifier of the current query
+        - *query_repetition* indicates the current per-query repetition (in contrast to repetitions of the entire workload)
+        - *query* contains the original query without any hints applied to it
+        - *query_hints* contains the hints that were applied to the query during optimization
+        - *status* indicates whether the query was executed successfully, or whether an error occurred during optimization.
+          Possible values are "ok", "timeout", "execution-error", and "optimization-error"
+        - *result_set*  is the actual result of the query. Scalar results are represented as-is. In case of an error this will
+          be *None*
+        - *optimization_time* contains the time it took PostBOUND to optimize the query (in seconds). If an error occurred
+          during optimization, this will be *NaN*
+        - *execution_time* contains the time it took to execute the query (in seconds). This includes the entire time from
+          sending the query to the database until the last byte of the result set has been transferred back to PostBOUND.
+          In case of an error this will be *NaN* and for timeouts this will be *Inf*
+        - *failure_reason* contains a description of the error that occurred during optimization or execution
+        - *db_config* describes the database (and its state) on which the query was executed
+        - *query_preparation* contains the settings that were used to prepare the query before execution
+        - *failure_reason* contains a description of the error that occurred during optimization or execution
+        - *optimization_settings* column contains a description of the pipeline that was used to optimize the query
+
+
 
     See Also
     --------
@@ -737,21 +871,26 @@ def optimize_and_execute_workload(
                 post_process=post_process,
                 label=label,
                 logger="tqdm" if use_tqdm else None,
+                error_action=error_action,
             )
-            execution_result[COL_EXEC_IDX] = list(
-                range(
-                    current_execution_index,
-                    current_execution_index + per_query_repetitions,
-                )
+            execution_result.insert(
+                0,
+                ExecIdxCol,
+                list(
+                    range(
+                        current_execution_index,
+                        current_execution_index + per_query_repetitions,
+                    )
+                ),
             )
+            execution_result.insert(1, WorkloadIterCol, i + 1)
             if include_labels:
-                execution_result[COL_LABEL] = label
+                execution_result.insert(2, LabelCol, label)
 
             current_repetition_results.append(execution_result)
             current_execution_index += per_query_repetitions
 
-        current_df = pd.concat(current_repetition_results)
-        current_df[COL_WORKLOAD_ITER] = i + 1
+        current_df = pd.concat(current_repetition_results, ignore_index=True)
         results.append(current_df)
 
         if progressive_output and progressive_output.is_file():
@@ -766,23 +905,8 @@ def optimize_and_execute_workload(
         if post_repetition_callback:
             post_repetition_callback(i)
 
-    result_df = pd.concat(results)
-    target_labels = [COL_LABEL] if include_labels else []
-    target_labels += [
-        COL_EXEC_IDX,
-        COL_QUERY,
-        COL_WORKLOAD_ITER,
-        COL_REP,
-        COL_T_OPT,
-        COL_T_EXEC,
-        COL_RESULT,
-        COL_OPT_SUCCESS,
-        COL_OPT_FAILURE_REASON,
-        COL_ORIG_QUERY,
-        COL_OPT_SETTINGS,
-        COL_DB_CONFIG,
-    ]
-    return result_df[target_labels].reset_index(drop=True)
+    result_df = pd.concat(results, ignore_index=True)
+    return result_df
 
 
 def prepare_export(results_df: pd.DataFrame) -> pd.DataFrame:
@@ -816,26 +940,26 @@ def prepare_export(results_df: pd.DataFrame) -> pd.DataFrame:
 
     prepared_df = results_df.copy()
 
-    example_result = prepared_df[COL_RESULT].iloc[0]
+    example_result = prepared_df[ResultCol].iloc[0]
     if (
         isinstance(example_result, list)
         or isinstance(example_result, tuple)
         or isinstance(example_result, dict)
     ):
-        prepared_df[COL_RESULT] = prepared_df[COL_RESULT].apply(json.dumps)
+        prepared_df[ResultCol] = prepared_df[ResultCol].apply(json.dumps)
 
-    if COL_OPT_SETTINGS in prepared_df:
-        prepared_df[COL_OPT_SETTINGS] = prepared_df[COL_OPT_SETTINGS].apply(
-            util.to_json
-        )
-    if COL_DB_CONFIG in prepared_df:
-        prepared_df[COL_DB_CONFIG] = prepared_df[COL_DB_CONFIG].apply(util.to_json)
+    if OptSettingsCol in prepared_df:
+        prepared_df[OptSettingsCol] = prepared_df[OptSettingsCol].apply(util.to_json)
+    if DbConfCol in prepared_df:
+        prepared_df[DbConfCol] = prepared_df[DbConfCol].apply(util.to_json)
+    if QueryPrepCol in prepared_df:
+        prepared_df[QueryPrepCol] = prepared_df[QueryPrepCol].apply(util.to_json)
 
     return prepared_df
 
 
 def sort_results(
-    results_df: pd.DataFrame, by_column: str | tuple[str] = (COL_LABEL, COL_EXEC_IDX)
+    results_df: pd.DataFrame, by_column: str | tuple[str] = (LabelCol, ExecIdxCol)
 ) -> pd.DataFrame:
     """Provides a better sorting of the benchmark results in a data frame.
 

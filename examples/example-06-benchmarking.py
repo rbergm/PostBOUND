@@ -25,7 +25,7 @@ ues_pipeline = (
 # Execute the benchmarks: each query should be repeated 3 times and each workload should be repeated 3 times as well
 # After each workload repetition, the execution order of all queries should be changed. Finally, all queries should be executed
 # as COUNT(*) queries
-query_preparation = pb.executor.QueryPreparationService(count_star=True)
+query_preparation = pb.executor.QueryPreparation(count_star=True)
 
 # Benchmark the native workload
 native_results = pb.execute_workload(

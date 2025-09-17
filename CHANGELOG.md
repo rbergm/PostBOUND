@@ -61,10 +61,14 @@ Currently, we plan to implement the following features in the future (in no part
   with a focus on succinctness. For example, the `Database` interface is now only available as `pb.Database` and the duplicate
   import `pb.db.Database` has been removed. Similarly, `SqlQuery` is now only available as `pb.SqlQuery` and no longer as
   `pb.qal.SqlQuery`.
+- Renamed the `QueryPreparationService` to `QueryPreparation` to be more succint and less Java-ish
 - Renamed the attributes of `PlanParameterization` to be more succint
 - 🐘 Migrate to Meson/Ninja for Postgres setup. This seems more stable/reliable across platforms overall (especially MacOS).
 
 ### 📰 Updates
+- `execute_workload()` and `optimize_and_execute_workload()` no longer break for any error during query execution. Instead,
+  the error is logged to the output file and the execution continues with the next query. This behavior can be controlled
+  using the `error_action` parameter.
 - Starting a local Postgres server now supports specifying a log file
 - When the textbook pipeline auto-selects a Postgres-style enumerator, the enumerator is now configured similarly to the target
   database. E.g., if the textbook is setup for a Postgres database that has nested-loop joins disabled, the enumerator will

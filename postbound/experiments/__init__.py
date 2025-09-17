@@ -12,14 +12,14 @@ Specifically, this package provides the following modules:
 """
 
 from .executor import (
-    QueryPreparationService,
+    QueryPreparation,
     execute_query,
     optimize_and_execute_query,
     prepare_export,
 )
 
 __all__ = [
-    "QueryPreparationService",
+    "QueryPreparation",
     "execute_query",
     "optimize_and_execute_query",
     "prepare_export",
