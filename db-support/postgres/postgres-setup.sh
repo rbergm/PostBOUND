@@ -11,6 +11,10 @@ sed_wrapper() {
     fi
 }
 
+version_earlier() {
+    printf '%s\n' "$1" "$2" | sort -C -V
+}
+
 # Assert that we are not sourcing
 if [ -n "$BASH_VERSION" -a "$BASH_SOURCE" != "$0" ] || [ -n "$ZSH_VERSION" -a "$ZSH_EVAL_CONTEXT" != "toplevel" ] ; then
     echo "This script should not be sourced. Please run it as ./postgres-setup.sh" 1>&2
@@ -31,18 +35,20 @@ ENABLE_REMOTE_ACCESS="false"
 USER_PASSWORD=""
 STOP_AFTER="false"
 UUID_LIBRARY="none"
+LLVM_OPTS="auto"
 
 show_help() {
     NEWLINE="\n\t\t\t\t"
     echo -e "Usage: $0 <options>"
     echo -e "Setup a local Postgres server with the given options. The default user is the current UNIX username.\n"
     echo -e "Allowed options:"
-    echo -e "--pg-ver <version>\t\tSetup Postgres with the given version.${NEWLINE}Currently allowed values: 12.4, 14, 15, 16, 17 (default))"
-    echo -e "-d | --dir <directory>\t\tInstall Postgres server to the designated directory (postgres-server by default)."
-    echo -e "-p | --port <port number>\tConfigure the Postgres server to listen on the given port (5432 by default)."
-    echo -e "--remote-password <password>\tEnable remote access for the current user, based on the given password.${NEWLINE}Remote access is disabled if no password is provided."
-    echo -e "--stop\t\t\t\tStop the Postgres server process after installation and setup finished"
-    echo -e "--uuid-lib <library>\t\tSpecify the UUID library to use or 'none' to disable UUID support (default: none).${NEWLINE}Currently supported libraries are 'ossp' and 'e2fs'."
+    echo -e "--pg-ver <version>\t\tSetup Postgres with the given version.${NEWLINE}Currently allowed values: 12, 14, 15, 16, 17 (default).\n"
+    echo -e "-d | --dir <directory>\t\tInstall Postgres server to the designated directory (postgres-server by default).\n"
+    echo -e "-p | --port <port number>\tConfigure the Postgres server to listen on the given port (5432 by default).\n"
+    echo -e "--remote-password <password>\tEnable remote access for the current user, based on the given password.${NEWLINE}Remote access is disabled if no password is provided.\n"
+    echo -e "--stop\t\t\t\tStop the Postgres server process after installation and setup finished.\n"
+    echo -e "--uuid-lib <library>\t\tSpecify the UUID library to use or 'none' to disable UUID support (default: none).${NEWLINE}Currently supported libraries are 'ossp' and 'e2fs'.\n"
+    echo -e "--llvm-jit <on|off|auto>\tEnable or disable LLVM-based JIT compilation (default: on only if LLVM is available).\n"
     exit 1
 }
 
@@ -104,7 +110,7 @@ while [ $# -gt 0 ] ; do
             ;;
         --remote-password)
             ENABLE_REMOTE_ACCESS="true"
-            USER_PASSWORD=$2
+            USER_PASSWORD="$2"
             shift
             shift
             ;;
@@ -127,6 +133,11 @@ while [ $# -gt 0 ] ; do
                     show_help
                     ;;
             esac
+            shift
+            shift
+            ;;
+        --llvm-jit)
+            LLVM_OPTS="$2"
             shift
             shift
             ;;
@@ -158,21 +169,45 @@ curl -L https://github.com/ossc-db/pg_hint_plan/archive/refs/tags/$PG_HINT_PLAN_
 
 echo ".. Building Postgres $PG_VER_PRETTY"
 if [ "$PG_VER_PRETTY" -lt "16" ] ; then
+    # Postgres releases before v16 only support the classic configure/make build system.
+    # In this mode, we need to do most of our customizations manually.
+    #
+    # This check includes some arcane logic to determine whether we can use the LLVM-based JIT or not. The reason is that
+    # Postgres 12 required LLVM 3.x or newer, which is very old by now. Some changes in later LLVM version broke compatibility
+    # with such old PG releases. Therefore, we have to disable LLVM there (and pray that we caught all such cases).
+    if [ "$LLVM_OPTS" == "auto" ] ; then
+        if [ -x "$(command -v llvm-config)" -a  version_earlier "$(llvm-config --version)" "16.0.0"  ] ; then
+            LLVM_OPTS="on"
+        else
+            LLVM_OPTS="off"
+        fi
+    fi
+    if [ "$LLVM_OPTS" == "on" ] ; then
+    echo ".. Enabling LLVM-based JIT compilation"
+        LLVM_OPTS="--with-llvm"
+    else
+        echo ".. Disabling LLVM-based JIT compilation"
+        LLVM_OPTS=""
+    fi
+
     make distclean || true
     ./configure --prefix=$PG_TARGET_DIR/build \
-                --with-ssl=openssl \
-                --with-llvm
+                --with-openssl \
+                --with-icu \
+                $LLVM_OPTS
     make clean && make -j $MAKE_CORES && make install
 else
+    # Postgres v16 introduced the new Meson/Ninja build system. This allows to detect many of the features manually
+    # (depending on whether the required dependencies are installed on the system).
     make distclean || true
     meson setup build --prefix=$PG_TARGET_DIR/build \
         --buildtype=release \
-        -Dplpython=auto \
         -Dicu=enabled \
-        -Dllvm=auto \
+        -Dssl=openssl \
+        -Dplpython=auto \
         -Dlz4=auto \
         -Dzstd=auto \
-        -Dssl=openssl \
+        -Dllvm=$LLVM_OPTS \
         -Duuid=$UUID_LIBRARY
     cd $PG_TARGET_DIR/build
     ninja clean && ninja all && ninja install

@@ -49,7 +49,7 @@ your target :class:`~postbound.db.Database`:
 
     query = stats["q-10"]
     print(pb.qal.format_quick(query))
-    operators = pb.opt.PhysicalOperatorAssignment()
+    operators = pb.PhysicalOperatorAssignment()
     operators.add(pb.JoinOperator.HashJoin, query.tables())
     operators
 
@@ -66,8 +66,8 @@ plans for arbitrary subqueries:
 
     subquery = pb.transform.extract_query_fragment(query, pb.TableReference("posts", "p"))
     print(pb.qal.format_quick(subquery))
-    cards = pb.opt.PlanParameterization()
-    cards.add_cardinality_hint(subquery.tables(), 42)
+    cards = pb.PlanParameterization()
+    cards.add_cardinality(subquery.tables(), 42)
     hinted_subquery = pg_instance.hinting().generate_hints(subquery, plan_parameters=cards)
 
 
