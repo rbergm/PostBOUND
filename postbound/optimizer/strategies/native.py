@@ -48,6 +48,10 @@ from ...util import jsondict
 from .._cardinalities import CardinalityGenerator
 
 
+class CostEstimationWarning(UserWarning):
+    pass
+
+
 class NativeCostModel(CostModel):
     """Obtains the cost of a query plan by using the cost model of an actual database system.
 
@@ -57,12 +61,16 @@ class NativeCostModel(CostModel):
         Whether the cost model should raise an error if anything goes wrong during the estimation. For example, this can
         happen if the query plan cannot be executed on the target database system. If this is off (the default), failure
         results in an infinite cost.
+    verbose : bool, optional
+        Whether the cost model should issue warnings if anything goes wrong during the estimation. This includes cases
+        where the cost of some operators cannot be estimated by the target database system.
     """
 
-    def __init__(self, raise_on_error: bool = False) -> None:
+    def __init__(self, *, raise_on_error: bool = False, verbose: bool = False) -> None:
         super().__init__()
-        self._target_db: Optional[Database] = None
+        self.target_db: Optional[Database] = None
         self._raise_on_error = raise_on_error
+        self._verbose = verbose
 
     def estimate_cost(self, query: SqlQuery, plan: QueryPlan) -> Cost:
         matching_tables = query.tables() == plan.tables()
@@ -90,14 +98,14 @@ class NativeCostModel(CostModel):
                 # No action needed, processing starts below
                 pass
 
-        hinted_query = self._target_db.hinting().generate_hints(
+        hinted_query = self.target_db.hinting().generate_hints(
             query, plan.with_actual_card()
         )
         if self._raise_on_error:
-            cost = self._target_db.optimizer().cost_estimate(hinted_query)
+            cost = self.target_db.optimizer().cost_estimate(hinted_query)
         else:
             try:
-                cost = self._target_db.optimizer().cost_estimate(hinted_query)
+                cost = self.target_db.optimizer().cost_estimate(hinted_query)
             except (DatabaseServerError, DatabaseUserError):
                 cost = math.inf
         return cost
@@ -105,13 +113,13 @@ class NativeCostModel(CostModel):
     def describe(self) -> jsondict:
         return {
             "name": "native",
-            "database_system": self._target_db.describe()
-            if self._target_db is not None
+            "database_system": self.target_db.describe()
+            if self.target_db is not None
             else None,
         }
 
     def initialize(self, target_db: Database, query: SqlQuery) -> None:
-        self._target_db = target_db
+        self.target_db = target_db
 
     def _cost_index_op(self, query: SqlQuery, plan: QueryPlan) -> Cost:
         """Try to estimate the cost of an index scan or index-only scan at the root of a specific query plan.
@@ -119,9 +127,9 @@ class NativeCostModel(CostModel):
         This method purely exists to keep the rather complex logic of index costing out of the main cost estimation method.
         """
         plan = plan.with_actual_card()
-        original_query = self._target_db.hinting().generate_hints(query, plan)
+        original_query = self.target_db.hinting().generate_hints(query, plan)
         try:
-            cost = self._target_db.optimizer().cost_estimate(original_query)
+            cost = self.target_db.optimizer().cost_estimate(original_query)
             return cost
         except (DatabaseServerError, DatabaseUserError):
             pass
@@ -131,9 +139,9 @@ class NativeCostModel(CostModel):
         # it. We have to trick them.
 
         count_query = transform.as_count_star_query(query)
-        count_query = self._target_db.hinting().generate_hints(count_query, plan)
+        count_query = self.target_db.hinting().generate_hints(count_query, plan)
         try:
-            count_plan = self._target_db.optimizer().query_plan(count_query)
+            count_plan = self.target_db.optimizer().query_plan(count_query)
             cost = math.nan
         except (DatabaseServerError, DatabaseUserError):
             cost = math.inf
@@ -190,9 +198,10 @@ class NativeCostModel(CostModel):
         # Our entire strategy is closely aligned with the Postgres planning and execution model. Therefore, we are going to
         # restrict this cost function to Postgres backends.
 
-        if not isinstance(self._target_db, PostgresInterface):
+        if not isinstance(self.target_db, PostgresInterface):
             warnings.warn(
-                "Can only estimate the cost of materialize operators for Postgres."
+                "Can only estimate the cost of materialize operators for Postgres.",
+                category=CostEstimationWarning,
             )
             return math.inf
 
@@ -202,7 +211,8 @@ class NativeCostModel(CostModel):
         candidate_joins = query.predicates().joins_between(free_tables, plan.tables())
         if not candidate_joins:
             warnings.warn(
-                "Could not find a suitable consumer of the materialized table. Returning infinite costs."
+                "Could not find a suitable consumer of the materialized table. Returning infinite costs.",
+                category=CostEstimationWarning,
             )
             return math.inf
         candidate_tables = free_tables & candidate_joins.tables()
@@ -222,14 +232,15 @@ class NativeCostModel(CostModel):
             query, plan.tables() | {topped_table}
         )
         query_fragment = transform.as_star_query(query_fragment)
-        topped_query = self._target_db.hinting().generate_hints(
+        topped_query = self.target_db.hinting().generate_hints(
             query_fragment, topped_plan
         )
         try:
-            topped_explain = self._target_db.optimizer().query_plan(topped_query)
+            topped_explain = self.target_db.optimizer().query_plan(topped_query)
         except (DatabaseServerError, DatabaseUserError):
             warnings.warn(
-                f"Could not estimate the cost of materialize plan {plan}. Returning infinite costs."
+                f"Could not estimate the cost of materialize plan {plan}. Returning infinite costs.",
+                category=CostEstimationWarning,
             )
             return math.inf
 
@@ -240,7 +251,8 @@ class NativeCostModel(CostModel):
         )
         if not intermediate_node:
             warnings.warn(
-                f"Could not estimate cost of materialize plan {plan}. Returning infinite costs."
+                f"Could not estimate cost of materialize plan {plan}. Returning infinite costs.",
+                category=CostEstimationWarning,
             )
             return math.inf
         return intermediate_node.estimated_cost
@@ -278,9 +290,10 @@ class NativeCostModel(CostModel):
         # Our entire strategy is closely aligned with the Postgres planning and execution model. Therefore, we are going to
         # restrict this cost function to Postgres backends.
 
-        if not isinstance(self._target_db, PostgresInterface):
+        if not isinstance(self.target_db, PostgresInterface):
             warnings.warn(
-                "Can only estimate the cost of memoize operators for Postgres. Returning infinte costs."
+                "Can only estimate the cost of memoize operators for Postgres. Returning infinte costs.",
+                category=CostEstimationWarning,
             )
             return math.inf
 
@@ -291,7 +304,8 @@ class NativeCostModel(CostModel):
             )
         if not isinstance(cache_key, ColumnExpression):
             warnings.warn(
-                "Can only estimate the cost of memoize for single column cache keys. Returning infinite costs."
+                "Can only estimate the cost of memoize for single column cache keys. Returning infinite costs.",
+                category=CostEstimationWarning,
             )
             return math.inf
 
@@ -303,7 +317,8 @@ class NativeCostModel(CostModel):
         )
         if not candidate_joins:
             warnings.warn(
-                "Could not find a suitable consumer of the materialized table. Returning infinite costs."
+                "Could not find a suitable consumer of the materialized table. Returning infinite costs.",
+                category=CostEstimationWarning,
             )
             return math.inf
         candidate_tables = free_tables & candidate_joins.tables()
@@ -323,14 +338,15 @@ class NativeCostModel(CostModel):
             query, plan.tables() | {topped_table}
         )
         query_fragment = transform.as_star_query(query_fragment)
-        topped_query = self._target_db.hinting().generate_hints(
+        topped_query = self.target_db.hinting().generate_hints(
             query_fragment, topped_plan
         )
         try:
-            topped_explain = self._target_db.optimizer().query_plan(topped_query)
+            topped_explain = self.target_db.optimizer().query_plan(topped_query)
         except (DatabaseServerError, DatabaseUserError):
             warnings.warn(
-                f"Could not estimate the cost of memoize plan {plan}. Returning infinite costs."
+                f"Could not estimate the cost of memoize plan {plan}. Returning infinite costs.",
+                category=CostEstimationWarning,
             )
             return math.inf
 
@@ -341,7 +357,8 @@ class NativeCostModel(CostModel):
         )
         if not intermediate_node:
             warnings.warn(
-                f"Could not estimate cost of memoize plan {plan}. Returning infinite costs."
+                f"Could not estimate cost of memoize plan {plan}. Returning infinite costs.",
+                category=CostEstimationWarning,
             )
             return math.inf
         return intermediate_node.estimated_cost
@@ -366,7 +383,7 @@ class NativeCostModel(CostModel):
         query_fragment = transform.extract_query_fragment(query, plan.tables())
         query_fragment = transform.as_star_query(query_fragment)
         target_columns: set[ColumnReference] = util.set_union(
-            [self._target_db.schema().columns(tab) for tab in plan.tables()]
+            [self.target_db.schema().columns(tab) for tab in plan.tables()]
         )
 
         orderby_cols: list[ColumnReference] = []
@@ -384,6 +401,11 @@ class NativeCostModel(CostModel):
         query_fragment = transform.add_clause(query_fragment, orderby_clause)
 
         return self.estimate_cost(query_fragment, plan.input_node)
+
+    def _warn(self, msg: str) -> None:
+        if not self._verbose:
+            return
+        warnings.warn(msg, category=CostEstimationWarning)
 
 
 class NativeCardinalityEstimator(CardinalityGenerator):

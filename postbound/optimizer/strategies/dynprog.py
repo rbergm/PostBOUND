@@ -13,6 +13,7 @@ from ..._core import (
     Cardinality,
     IntermediateOperator,
     JoinOperator,
+    PhysicalOperator,
     ScanOperator,
     TableReference,
 )
@@ -37,6 +38,7 @@ from ...qal._qal import (
 )
 from ...util import LogicError, jsondict
 from .. import validation
+from . import native
 
 DPTable = dict[frozenset[TableReference], QueryPlan]
 
@@ -482,6 +484,13 @@ class RelOptInfo:
     def __eq__(self, other: object) -> bool:
         return isinstance(other, RelOptInfo) and self.intermediate == other.intermediate
 
+    def __repr__(self) -> str:
+        return str(self)
+
+    def __str__(self) -> str:
+        tables = ", ".join(sorted(t.identifier() for t in self.intermediate))
+        return f"{{{tables}}}"
+
 
 Sorting = Sequence[SortKey]
 """A specific sort order for some relation."""
@@ -511,6 +520,10 @@ access to the query and database, the selected cost model and cardinality estima
 Finally, the method is allowed to invoke the default path addition logic by calling the `standard_add_path()` method on the
 enumerator.
 """
+
+
+class DPWarning(UserWarning):
+    pass
 
 
 class PostgresDynProg(PlanEnumerator):
@@ -544,6 +557,10 @@ class PostgresDynProg(PlanEnumerator):
     target_db : Optional[PostgresInterface], optional
         The database on which the plans should be executed. This has to be a Postgres instance. If omitted, the database is
         inferred from the `DatabasePool`.
+    verbose : bool, optional
+        Whether the enumerator should issue warnings if it encounters unexpected situations, e.g. if it rejects a path
+        because it is illegal. This includes cases where the cost of some operators cannot be estimated by the target
+        database system.
     """
 
     def __init__(
@@ -557,6 +574,7 @@ class PostgresDynProg(PlanEnumerator):
         max_parallel_workers: Optional[int] = None,
         add_path_hook: Optional[AddPathHook] = None,
         target_db: Optional[PostgresInterface] = None,
+        verbose: bool = False,
     ) -> None:
         target_db = (
             target_db
@@ -599,6 +617,8 @@ class PostgresDynProg(PlanEnumerator):
         self._max_workers = max_parallel_workers if max_parallel_workers else 0
         self._add_path_hook = add_path_hook
 
+        self._verbose = verbose
+
     def infer_settings(self) -> None:
         """Sets all allowed operators according to the configuration of the target database.
 
@@ -624,7 +644,7 @@ class PostgresDynProg(PlanEnumerator):
             allowed_join_ops.append(JoinOperator.SortMergeJoin)
         self._join_ops = set(allowed_join_ops)
 
-        self._enable_materialize = self.target_db.config["enable_materialize"] == "on"
+        self._enable_materialize = self.target_db.config["enable_material"] == "on"
         self._enable_memoize = self.target_db.config["enable_memoize"] == "on"
         self._enable_sort = self.target_db.config["enable_sort"] == "on"
 
@@ -658,7 +678,34 @@ class PostgresDynProg(PlanEnumerator):
         self.cost_model = None
         self.cardinality_estimator = None
 
-        return final_rel.cheapest_path
+        if self._is_pg_cost(cost_model):
+            # This seems weird at first, so let's explain what is going on here:
+            # If we use the actual PG cost model, we can be make better decisions about what the optimal plan is.
+            # The reason is that PG might parallelize a portion of the upper operators (anything that happens after the final
+            # join such as aggregations). With these upper rel parallelizations, a partial plan might become cheaper than its
+            # counterpart that executes the last join in parallel (and which we compute). Consequently, that very path might
+            # become cheaper than the cheapest path that we have computed so far.
+            #
+            # Therefore, we need to explicitly consider all partial paths as well as the sequential ones and retrieve the
+            # final cost estimates for them.
+            # But this only works if know we are using the PG execution engine and cost model.
+
+            plans = final_rel.pathlist + self._generate_pseudo_gather_paths(final_rel)
+
+            hinted_plans = {
+                self.target_db.hinting().generate_hints(query, plan): plan
+                for plan in plans
+            }
+            plan_costs = {
+                hinted_query: self.target_db.optimizer().cost_estimate(hinted_query)
+                for hinted_query in hinted_plans
+            }
+
+            cheapest_hints = util.argmin(plan_costs)
+            cheapest_plan = hinted_plans[cheapest_hints]
+            return cheapest_plan
+        else:
+            return final_rel.cheapest_path
 
     def describe(self) -> jsondict:
         return {
@@ -799,8 +846,8 @@ class PostgresDynProg(PlanEnumerator):
             self._join_search_one_level(level)
 
             for rel in self.join_rel_level[level]:
-                self._set_cheapest(rel)
                 self._generate_gather_paths(rel)
+                self._set_cheapest(rel)
 
         assert len(self.join_rel_level[levels_needed]) == 1, (
             "Final join rel level should only contain one relation."
@@ -825,6 +872,11 @@ class PostgresDynProg(PlanEnumerator):
                 if len(rel1.intermediate & rel2.intermediate) > 0:
                     # don't join anything that we have already joined
                     continue
+                if not self.predicates.joins_between(
+                    rel1.intermediate, rel2.intermediate
+                ):
+                    # don't consider cross products
+                    continue
 
                 # functionality of build_join_rel()
                 intermediate = rel1.intermediate | rel2.intermediate
@@ -843,6 +895,11 @@ class PostgresDynProg(PlanEnumerator):
                 for rel2 in self.join_rel_level[inner_size]:
                     if len(rel1.intermediate & rel2.intermediate) > 0:
                         # don't join anything that we have already joined
+                        continue
+                    if not self.predicates.joins_between(
+                        rel1.intermediate, rel2.intermediate
+                    ):
+                        # don't consider cross products
                         continue
 
                     # functionality of build_join_rel()
@@ -1027,10 +1084,11 @@ class PostgresDynProg(PlanEnumerator):
             join_predicate = self.query.predicates().joins_between(
                 outer_rel.intermediate, inner_rel.intermediate
             )
-            assert join_predicate is not None, (
-                "Cross product detected. This should never happen so deep down in the "
-                "optimization process"
-            )
+            if join_predicate is None:
+                raise LogicError(
+                    "Cross product detected. This should never happen so deep down in the optimization process. "
+                    f"Intermediates {outer_rel} and {inner_rel}"
+                )
 
             for first_col, second_col in join_predicate.join_partners():
                 cache_key = (
@@ -1038,9 +1096,11 @@ class PostgresDynProg(PlanEnumerator):
                     if first_col.table in inner_rel.intermediate
                     else second_col
                 )
-                assert cache_key.table in inner_rel.intermediate, (
-                    "Cache key must be part of the inner relation"
-                )
+                if cache_key.table not in inner_rel.intermediate:
+                    raise LogicError(
+                        "Cache key must be part of the inner relation.",
+                        f"Key was {cache_key}, relation was {inner_rel}",
+                    )
 
                 memo_inner = self._create_memoize_path(inner_path, cache_key=cache_key)
                 memo_nlj = self._create_nestloop_path(
@@ -1068,10 +1128,11 @@ class PostgresDynProg(PlanEnumerator):
             join_predicate = self.query.predicates().joins_between(
                 outer_rel.intermediate, inner_rel.intermediate
             )
-            assert join_predicate is not None, (
-                "Cross product detected. This should never happen so deep down in the "
-                "optimization process"
-            )
+            if join_predicate is None:
+                raise LogicError(
+                    "Cross product detected. This should never happen so deep down in the optimization process. "
+                    f"Intermediates {outer_rel} and {inner_rel}"
+                )
 
             for first_col, second_col in join_predicate.join_partners():
                 cache_key = (
@@ -1079,9 +1140,11 @@ class PostgresDynProg(PlanEnumerator):
                     if first_col.table in inner_rel.intermediate
                     else second_col
                 )
-                assert cache_key.table in inner_rel.intermediate, (
-                    "Cache key must be part of the inner relation"
-                )
+                if cache_key.table not in inner_rel.intermediate:
+                    raise LogicError(
+                        "Cache key must be part of the inner relation.",
+                        f"Key was {cache_key}, relation was {inner_rel}",
+                    )
 
                 memo_inner = self._create_memoize_path(inner_path, cache_key=cache_key)
                 par_nlj = self._create_nestloop_path(
@@ -1135,7 +1198,7 @@ class PostgresDynProg(PlanEnumerator):
 
         if math.isinf(path.estimated_cost):
             # The cost model returns infinite costs for illegal query plans.
-            warnings.warn(f"Rejecting illegal path {path}")
+            self._warn(f"Rejecting illegal path {path}")
             return
 
         if self._add_path_hook:
@@ -1146,12 +1209,12 @@ class PostgresDynProg(PlanEnumerator):
     def _set_cheapest(self, rel: RelOptInfo) -> None:
         """Determines the cheapest path in terms of costs from the pathlist and partial pathlist."""
         if rel.pathlist:
-            cheapest_path = min(rel.pathlist, key=lambda path: path.estimated_cost)
+            rel.pathlist.sort(key=lambda path: path.estimated_cost)
+            cheapest_path = rel.pathlist[0]
             rel.cheapest_path = cheapest_path
         if rel.partial_paths:
-            cheapest_partial = min(
-                rel.partial_paths, key=lambda path: path.estimated_cost
-            )
+            rel.partial_paths.sort(key=lambda path: path.estimated_cost)
+            cheapest_partial = rel.partial_paths[0]
             rel.cheapest_partial_path = cheapest_partial
 
     def _generate_gather_paths(self, rel: RelOptInfo) -> None:
@@ -1169,6 +1232,24 @@ class PostgresDynProg(PlanEnumerator):
             # It is important to not delete the partial path after gathering it. The path might still be useful in an
             # upper-level partial path!
             self._add_path(rel, gather_path)
+
+    def _generate_pseudo_gather_paths(self, rel: RelOptInfo) -> list[QueryPlan]:
+        """Creates partial paths that execute the entire plan in parallel, rather than all joins."""
+        gather_paths: list[QueryPlan] = []
+
+        for partial_path in rel.partial_paths:
+            n_workers = partial_path.get("estimated_workers", None)
+            if n_workers is None:
+                raise LogicError(
+                    f"Partial path does not have estimated workers: {partial_path}"
+                )
+
+            pseudo_node = QueryPlan(
+                node_type="Gather", children=partial_path, parallel_workers=n_workers
+            )
+            gather_paths.append(pseudo_node)
+
+        return gather_paths
 
     def _create_seqscan_path(self, rel: RelOptInfo) -> QueryPlan:
         """Constructs and initializes a sequential scan path for a specific relation.
@@ -1332,6 +1413,10 @@ class PostgresDynProg(PlanEnumerator):
             estimated_workers=workers,
         )
 
+        if self._is_pg_cost(self.cost_model):
+            # cost estimation happens as part of the parent join
+            return memo_path
+
         cost_estimate = self.cost_model.estimate_cost(self.query, memo_path)
         memo_path = memo_path.with_estimates(cost=cost_estimate)
         return memo_path
@@ -1349,6 +1434,10 @@ class PostgresDynProg(PlanEnumerator):
             estimated_cardinality=path.estimated_cardinality,
             estimated_workers=workers,
         )
+
+        if self._is_pg_cost(self.cost_model):
+            # cost estimation happens as part of the parent join
+            return mat_path
 
         cost_estimate = self.cost_model.estimate_cost(self.query, mat_path)
         mat_path = mat_path.with_estimates(cost=cost_estimate)
@@ -1411,8 +1500,56 @@ class PostgresDynProg(PlanEnumerator):
             estimated_workers=workers,
         )
 
-        cost_estimate = self.cost_model.estimate_cost(self.query, nlj_path)
-        nlj_path = nlj_path.with_estimates(cost=cost_estimate)
+        # We need to be very hacky here. Let's explain why:
+        # PG is rather picky about which operators can be used for which queries. For example, it is generally not possible to
+        # perform an index scan for an arbitrary SELECT * FROM relation query. Instead, PG requires the existence of a filter
+        # condition on the indexed column. Likewise, Memoize and Materialize can never be the final operator in a plan, and
+        # must be part of a nested-loop join.
+        # Therefore, it might not be possible to correctly estimate the cost of these operators on their own, but only in
+        # conjunction with a nested-loop join.
+        # To account for this, we check whether we have any of these special/"weird" operators on the inner side of our NLJ.
+        # If we do, and our target cost model is actually PG itself, we ask PG to estimate the cost for the entire NLJ plan
+        # and just extract the costs that we require.
+
+        weird_ops: set[PhysicalOperator] = {
+            ScanOperator.IndexScan,
+            ScanOperator.IndexOnlyScan,
+            IntermediateOperator.Memoize,
+            IntermediateOperator.Materialize,
+        }
+        if self._is_pg_cost(self.cost_model) and inner_path.operator in weird_ops:
+            query_fragment = transform.extract_query_fragment(
+                self.query, join_rel.intermediate
+            )
+            hinted_query = self.target_db.hinting().generate_hints(
+                query_fragment, nlj_path
+            )
+            native_plan = self.target_db.optimizer().query_plan(hinted_query)
+
+            nlj_node = native_plan.find_first_node(
+                lambda n: n.operator == JoinOperator.NestedLoopJoin
+            )
+            weird_node = native_plan.find_first_node(
+                lambda n: n.operator == inner_path.operator, direction="inner"
+            )
+            inner_cost = weird_node.estimated_cost if weird_node else math.inf
+            nlj_cost = (
+                nlj_node.estimated_cost if not math.isinf(inner_cost) else math.inf
+            )
+
+            updated_inner = inner_path.with_estimates(cost=inner_cost)
+            nlj_path = QueryPlan(
+                JoinOperator.NestedLoopJoin,
+                children=[outer_path, updated_inner],
+                estimated_cardinality=join_rel.cardinality,
+                estimated_cost=nlj_cost,
+                filter_predicate=join_condition,
+                estimated_workers=workers,
+            )
+        else:
+            cost_estimate = self.cost_model.estimate_cost(self.query, nlj_path)
+            nlj_path = nlj_path.with_estimates(cost=cost_estimate)
+
         return nlj_path
 
     def _create_mergejoin_path(
@@ -1508,8 +1645,8 @@ class PostgresDynProg(PlanEnumerator):
         n_pages = self.target_db.statistics().n_pages(relation)
         workers = math.log(n_pages, 3)
         if self._max_workers is None:
-            return math.round(workers)
-        return min(self._max_workers, math.round(workers))
+            return round(workers)
+        return min(self._max_workers, round(workers))
 
     def _determine_join_keys(
         self, *, outer_rel: RelOptInfo, inner_rel: RelOptInfo
@@ -1522,8 +1659,11 @@ class PostgresDynProg(PlanEnumerator):
             outer_rel.intermediate, inner_rel.intermediate
         )
         if not join_predicates:
-            # TODO: should we rather raise an error here?
-            return
+            raise LogicError(
+                "Cross product detected. This should never happen so deep down in the "
+                "optimization process. Intermediates are "
+                f"{outer_rel} and {inner_rel}"
+            )
 
         match join_predicates:
             case CompoundPredicate(op, children) if op == CompoundOperator.And:
@@ -1632,3 +1772,14 @@ class PostgresDynProg(PlanEnumerator):
                 return False
 
         return True
+
+    def _warn(self, msg: str) -> None:
+        if not self._verbose:
+            return
+        warnings.warn(msg, category=DPWarning)
+
+    def _is_pg_cost(self, cost_model: CostModel) -> bool:
+        return (
+            isinstance(cost_model, native.NativeCostModel)
+            and cost_model.target_db == self.target_db
+        )

@@ -70,6 +70,7 @@ Currently, we plan to implement the following features in the future (in no part
   the error is logged to the output file and the execution continues with the next query. This behavior can be controlled
   using the `error_action` parameter.
 - Starting a local Postgres server now supports specifying a log file
+- Much improved Postgres-style plan enumeration which should work better around hinting-related issues
 - When the textbook pipeline auto-selects a Postgres-style enumerator, the enumerator is now configured similarly to the target
   database. E.g., if the textbook is setup for a Postgres database that has nested-loop joins disabled, the enumerator will
   also disable these joins.

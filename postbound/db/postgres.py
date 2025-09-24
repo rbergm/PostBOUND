@@ -2059,7 +2059,6 @@ def _generate_pghintplan_hints(
                 category=HintWarning,
             )
 
-    hints.insert(0, "Config(plan_mode=full)")
     hints = [f" {line}" for line in hints]
     hints.insert(0, "/*+")
     hints.append(" */")
@@ -2238,6 +2237,7 @@ def _generate_pglab_plan(
         )
 
     if initial:
+        hints.insert(0, "Config(plan_mode=full)")
         hints = [f"  {line}" for line in hints]
         hints.insert(0, "/*=pg_lab=")
         hints.append(" */")
