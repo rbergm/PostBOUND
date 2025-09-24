@@ -17,23 +17,8 @@ import postbound as pb
 
 warnings.simplefilter("ignore")
 
-# In PostBOUND, there are two optimization pipelines that can work with cardinality estimates:
-# - the TextBookOptimizationPipeline, which models the traditional optimizer architecture with plan enumerator, cost model and
-#   cardinality estimator.
-# - the MultiStageOptimizationPipeline, which first generates a logical join order and afterwards selects the optimal physical
-#   operators for the join order. This pipeline is designed to let the optimizer of the target database to "fill the gaps" and
-#   only perform part of the optimization process. For example, the pipeline can only specify the logical join order, in which
-#   case the native optimizer selects its own physical operators. In this case, the cardinality estimates are used to guide the
-#   operator selection of the native optimizer. (As an extreme case, one can also omit join order and physical operators in the
-#   pipeline. This is equivalent to just overwriting the cardinality estimates)
-#
-# Since both pipelines require different interfaces for cardinality estimation, we would need to choose which one we want to
-# implement. However, cardinality estimation is often agnostic to the specific usage scenario (text book or multi-stage).
-# Therefore, the cardinalities module provides a common interface for both pipelines, called CardinalityGenerator.
-# In this example, we are going to use that interface to implement a cardinality estimator that works in both pipelines.
 
-
-class JitteringCardinalityEstimator(pb.CardinalityGenerator):
+class JitteringCardinalityEstimator(pb.CardinalityEstimator):
     # The entire estimation algorithm is implemented in this class. It satisfies the interface of the corresponding
     # optimization stage.
 
@@ -70,7 +55,7 @@ class JitteringCardinalityEstimator(pb.CardinalityGenerator):
         operator_assignment: Optional[pb.PhysicalOperatorAssignment],
     ) -> pb.PlanParameterization:
         # This method is specific to the MultiStageOptimizationPipeline
-        # We actually do not need to implement this method, the CardinalityHintsGenerator interface already provides a decent
+        # We actually do not need to implement this method, the CardinalityEstimator interface already provides a decent
         # default implementation, which essentially performs the same steps as we do in this method.
         # We just show how we could implement it, if we wanted to or needed to.
 

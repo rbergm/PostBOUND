@@ -35,6 +35,7 @@ from ..._hints import (
 from ..._jointree import JoinTree, jointree_from_plan, parameters_from_plan
 from ..._qep import QueryPlan
 from ..._stages import (
+    CardinalityEstimator,
     CompleteOptimizationAlgorithm,
     CostModel,
     JoinOrderOptimization,
@@ -45,7 +46,6 @@ from ...db._db import Database, DatabaseServerError, DatabaseUserError
 from ...db.postgres import PostgresInterface
 from ...qal import ColumnExpression, OrderBy, SqlQuery, transform
 from ...util import jsondict
-from .._cardinalities import CardinalityGenerator
 
 
 class CostEstimationWarning(UserWarning):
@@ -408,7 +408,7 @@ class NativeCostModel(CostModel):
         warnings.warn(msg, category=CostEstimationWarning)
 
 
-class NativeCardinalityEstimator(CardinalityGenerator):
+class NativeCardinalityEstimator(CardinalityEstimator):
     """Obtains the cardinality of a query plan by using the cardinality estimator of an actual database system."""
 
     def __init__(self, target_db: Optional[Database] = None) -> None:

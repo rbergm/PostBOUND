@@ -8,17 +8,18 @@ The `OptimizationPreCheck` defines the abstract interface that all checks should
 
 from __future__ import annotations
 
+import abc
 from collections.abc import Callable, Iterable
+from dataclasses import dataclass
 from typing import Optional
 
 import networkx as nx
 
-from .. import util
-from .._core import PhysicalOperator
-from .._hints import HintType
-from .._stages import EmptyPreCheck, OptimizationPreCheck, PreCheckResult
-from ..db._db import Database
-from ..qal._qal import (
+from . import util
+from ._core import PhysicalOperator
+from ._hints import HintType
+from .db._db import Database
+from .qal._qal import (
     AbstractPredicate,
     BasePredicate,
     BinaryPredicate,
@@ -47,6 +48,269 @@ DependentSubqueryFailure = "DEPENDENT_SUBQUERY"
 CrossProductFailure = "CROSS_PRODUCT"
 VirtualTablesFailure = "VIRTUAL_TABLES"
 JoinPredicateFailure = "BAD_JOIN_PREDICATE"
+
+
+@dataclass
+class PreCheckResult:
+    """Wrapper for a validation result.
+
+    The result is used in two different ways: to model the check for supported database systems for optimization strategies and
+    to model the check for supported queries for optimization strategies.
+
+    The `ensure_all_passed` method can be used to quickly assert that no problems occurred.
+
+    Attributes
+    ----------
+    passed : bool
+        Indicates whether problems were detected
+    failure_reason : str | list[str], optional
+        Gives details about the problem(s) that were detected
+    """
+
+    passed: bool = True
+    failure_reason: str | list[str] = ""
+
+    @staticmethod
+    def with_all_passed() -> PreCheckResult:
+        """Generates a check result without any problems.
+
+        Returns
+        -------
+        PreCheckResult
+            The check result
+        """
+        return PreCheckResult()
+
+    @staticmethod
+    def merge(checks: Iterable[PreCheckResult]) -> PreCheckResult:
+        """Merges multiple check results into a single result.
+
+        The result is passed if all input checks are passed. If any of the checks failed, the failure reasons are merged into
+        a single list.
+
+        Parameters
+        ----------
+        checks : Iterable[PreCheckResult]
+            The check results to merge
+
+        Returns
+        -------
+        PreCheckResult
+            The merged check result
+        """
+        failures: list[str] = []
+        for check in checks:
+            if check.passed:
+                continue
+            failures.extend(util.enlist(check.failure_reason))
+        return (
+            PreCheckResult.with_all_passed()
+            if not failures
+            else PreCheckResult.with_failure(failures)
+        )
+
+    def with_failure(failure: str | list[str]) -> PreCheckResult:
+        """Generates a check result for a specific failure.
+
+        Parameters
+        ----------
+        failure : str | list[str]
+            The failure message(s)
+
+        Returns
+        -------
+        PreCheckResult
+            The check result
+        """
+        return PreCheckResult(False, failure)
+
+    def ensure_all_passed(self, context: SqlQuery | Database | None = None) -> None:
+        """Raises an error if the check contains any failures.
+
+        Depending on the context, a more specific error can be raised. The context is used to infer whether an optimization
+        strategy does not work on a database system, or whether an input query is not supported by an optimization strategy.
+
+        Parameters
+        ----------
+        context : SqlQuery | Database | None, optional
+            An indicator of the kind of check that was performed. This influences the kind of error that will be raised in case
+            of failure. Defaults to ``None`` if no further context is available.
+
+        Raises
+        ------
+        util.StateError
+            In case of failure if there is no additional context available
+        UnsupportedQueryError
+            In case of failure if the context is an SQL query
+        UnsupportedSystemError
+            In case of failure if the context is a database interface
+        """
+        if self.passed:
+            return
+        if context is None:
+            raise util.StateError(f"Pre check failed {self._generate_failure_str()}")
+        elif isinstance(context, SqlQuery):
+            raise UnsupportedQueryError(context, self.failure_reason)
+        elif isinstance(context, Database):
+            raise UnsupportedSystemError(context, self.failure_reason)
+
+    def _generate_failure_str(self) -> str:
+        """Creates a nice string of the failure messages from `failure_reason`s.
+
+        Returns
+        -------
+        str
+            The failure message
+        """
+        if not self.failure_reason:
+            return ""
+        elif isinstance(self.failure_reason, str):
+            inner_contents = self.failure_reason
+        elif isinstance(self.failure_reason, Iterable):
+            inner_contents = " | ".join(reason for reason in self.failure_reason)
+        else:
+            raise ValueError(
+                "Unexpected failure reason type: " + str(self.failure_reason)
+            )
+        return f"[{inner_contents}]"
+
+
+class UnsupportedQueryError(RuntimeError):
+    """Error to indicate that a specific query cannot be optimized by a selected algorithms.
+
+    Parameters
+    ----------
+    query : SqlQuery
+        The unsupported query
+    features : str | list[str], optional
+        The features of the query that are unsupported. Defaults to an empty string
+    """
+
+    def __init__(self, query: SqlQuery, features: str | list[str] = "") -> None:
+        if isinstance(features, list):
+            features = ", ".join(features)
+        features_str = f" [{features}]" if features else ""
+
+        super().__init__(f"Query contains unsupported features{features_str}: {query}")
+        self.query = query
+        self.features = features
+
+
+class UnsupportedSystemError(RuntimeError):
+    """Error to indicate that a selected query plan cannot be enforced on a target system.
+
+    Parameters
+    ----------
+    db_instance : Database
+        The database system without a required feature
+    reason : str, optional
+        The features that are not supported. Defaults to an empty string
+    """
+
+    def __init__(self, db_instance: Database, reason: str = "") -> None:
+        error_msg = f"Unsupported database system: {db_instance}"
+        if reason:
+            error_msg += f" ({reason})"
+        super().__init__(error_msg)
+        self.db_system = db_instance
+        self.reason = reason
+
+
+class OptimizationPreCheck(abc.ABC):
+    """The pre-check interface.
+
+    This is the type that all concrete pre-checks must implement. It contains two check methods that correpond to the checks
+    on the database system and to the check on the input query. Both methods pass on all input data by default and must be
+    overwritten to execute the necessary checks.
+
+    Parameters
+    ----------
+    name : str
+        The name of the check. It should describe what features the check tests and will be used to represent the checks that
+        are present in an optimization pipeline.
+    """
+
+    def __init__(self, name: str) -> None:
+        self.name = name
+
+    def check_supported_query(self, query: SqlQuery) -> PreCheckResult:
+        """Validates that a specific query does not contain any features that cannot be handled by an optimization strategy.
+
+        Examples of such features can be non-equi join predicates, dependent subqueries or aggregations.
+
+        Parameters
+        ----------
+        query : SqlQuery
+            The query to check
+
+        Returns
+        -------
+        PreCheckResult
+            A description of whether the check passed and an indication of the failures.
+        """
+        return PreCheckResult.with_all_passed()
+
+    def check_supported_database_system(
+        self, database_instance: Database
+    ) -> PreCheckResult:
+        """Validates that a specific database system provides all features that are required by an optimization strategy.
+
+        Examples of such features can be support for cardinality hints or specific operators.
+
+        Parameters
+        ----------
+        database_instance : Database
+            The database to check
+
+        Returns
+        -------
+        PreCheckResult
+            A description of whether the check passed and an indication of the failures.
+        """
+        return PreCheckResult.with_all_passed()
+
+    @abc.abstractmethod
+    def describe(self) -> dict:
+        """Provides a JSON-serializable representation of the specific check, as well as important parameters.
+
+        Returns
+        -------
+        dict
+            The description
+
+        See Also
+        --------
+        postbound.postbound.OptimizationPipeline.describe
+        """
+        raise NotImplementedError
+
+    def __contains__(self, item: object) -> bool:
+        return item == self
+
+    def __hash__(self) -> int:
+        return hash(self.name)
+
+    def __eq__(self, other: object) -> bool:
+        return isinstance(other, type(self)) and self.name == other.name
+
+    def __repr__(self) -> str:
+        return f"OptimizationPreCheck [{self.name}]"
+
+    def __str__(self) -> str:
+        return self.name
+
+
+class EmptyPreCheck(OptimizationPreCheck):
+    """Dummy check that does not actually validate anything."""
+
+    def __init__(self) -> None:
+        super().__init__("empty")
+
+    def check_supported_query(self, query: SqlQuery) -> PreCheckResult:
+        return PreCheckResult.with_all_passed()
+
+    def describe(self) -> dict:
+        return {"name": "no_check"}
 
 
 class CompoundCheck(OptimizationPreCheck):

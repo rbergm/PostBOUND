@@ -22,10 +22,10 @@ from ..._stages import (
     OptimizationPreCheck,
     PhysicalOperatorSelection,
 )
+from ..._validation import CompoundCheck, CrossProductPreCheck, SupportedHintCheck
 from ...db._db import Database, DatabasePool
 from ...qal._qal import SqlQuery
 from ...util import networkx as nx_utils
-from .. import validation
 
 
 def _merge_nodes(
@@ -316,7 +316,7 @@ class RandomJoinOrderOptimizer(JoinOrderOptimization):
         }
 
     def pre_check(self) -> OptimizationPreCheck:
-        return validation.CrossProductPreCheck()
+        return CrossProductPreCheck()
 
 
 class RandomOperatorGenerator:
@@ -492,7 +492,7 @@ class RandomOperatorOptimizer(PhysicalOperatorSelection):
         }
 
     def pre_check(self) -> OptimizationPreCheck:
-        return validation.SupportedHintCheck(self._generator.necessary_hints())
+        return SupportedHintCheck(self._generator.necessary_hints())
 
 
 class RandomPlanGenerator:
@@ -644,9 +644,7 @@ class RandomPlanOptimizer(CompleteOptimizationAlgorithm):
         }
 
     def pre_check(self) -> OptimizationPreCheck:
-        return validation.CompoundCheck(
-            validation.CrossProductPreCheck(),
-            validation.SupportedHintCheck(
-                self._generator._operator_generator.necessary_hints()
-            ),
+        return CompoundCheck(
+            CrossProductPreCheck(),
+            SupportedHintCheck(self._generator._operator_generator.necessary_hints()),
         )

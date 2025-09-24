@@ -1,211 +1,24 @@
 from __future__ import annotations
 
-import abc
 import json
-import math
 import random
-from collections.abc import Generator, Iterable
+from collections.abc import Iterable
 from typing import Literal, Optional
 
 import pandas as pd
 
 from .. import util
 from .._core import Cardinality, TableReference
-from .._hints import PhysicalOperatorAssignment
-from .._jointree import JoinTree
 from .._stages import (
     CardinalityEstimator,
-    OptimizationPreCheck,
-    ParameterGeneration,
-    PlanParameterization,
 )
 from ..db._db import Database, DatabasePool
 from ..experiments.workloads import Workload
 from ..qal import parser, transform
 from ..qal._qal import SqlQuery
-from . import validation
 
 
-class CardinalityGenerator(ParameterGeneration, CardinalityEstimator, abc.ABC):
-    """End-to-end cardinality estimator.
-
-    Implementations of this service calculate cardinalities for all relevant intermediate results of a query. In turn, these
-    cardinalities can be used by the optimizer of an actual database system to overwrite the native estimates.
-
-    The default implementations of all methods either request cardinality estimates for all possible intermediate results (in
-    the `estimate_cardinalities` method), or for exactly those intermediates that are defined in a specific join order (in the
-    `generate_plan_parameters` method that implements the protocol of the `ParameterGeneration` class). Therefore, developers
-    working on their own cardinality estimation algorithm only need to implement the `calculate_estimate` method. All related
-    processes are provided by the generator with reasonable default strategies.
-
-    However, special care is required when considering cross products: depending on the setting intermediates can either allow
-    cross products at all stages (by passing ``allow_cross_products=True`` during instantiation), or to disallow them entirely.
-    Therefore, the `calculate_estimate` method should act accordingly. Implementations of this class should pass the
-    appropriate parameter value to the super *__init__* method. If they support both scenarios, the parameter can also be
-    exposed to the client.
-
-    Notice that this strategies fails for queries which contain actual cross products. That is why the `pre_check` only
-    accepts queries without cross products. Developers should overwrite the relevant methods as needed. See *Warnings* for more
-    details.
-
-    Parameters
-    ----------
-    allow_cross_products : bool
-        Whether the default intermediate generation is allowed to emit cross products between arbitrary tables in the input
-        query.
-
-    Warnings
-    --------
-    The default implementation of this service does not work well for queries that naturally contain cross products. If you
-    intend to use if for workloads that contain cross products, you should overwrite the `generate_intermediates` method to
-    produce exactly those (partial) joins that you want to allow.
-    """
-
-    def __init__(self, allow_cross_products: bool) -> None:
-        super().__init__()
-        self.allow_cross_products = allow_cross_products
-
-    @abc.abstractmethod
-    def calculate_estimate(
-        self, query: SqlQuery, tables: TableReference | Iterable[TableReference]
-    ) -> Cardinality:
-        """Determines the cardinality estimate for a specific intermediate result.
-
-        Ideally this is the only functionality-related method that needs to be implemented by developers using the cardinality
-        generator.
-
-        Parameters
-        ----------
-        query : SqlQuery
-            The query to optimize
-        tables : TableReference | Iterable[TableReference]
-            The intermediate which should be estimated. The intermediate is described by its tables. It should be assumed that
-            all filters and join predicates have been pushed down as far as possible.
-
-        Returns
-        -------
-        Cardinality
-            The estimated cardinality if it could be computed, *NaN* otherwise.
-        """
-        raise NotImplementedError
-
-    def generate_intermediates(
-        self, query: SqlQuery
-    ) -> Generator[frozenset[TableReference], None, None]:
-        """Provides all intermediate results of a query.
-
-        The inclusion of cross-products between arbitrary tables can be configured via the `allow_cross_products` attribute.
-
-        Parameters
-        ----------
-        query : SqlQuery
-            The query for which to generate the intermediates
-
-        Yields
-        ------
-        Generator[frozenset[TableReference], None, None]
-            The intermediates
-
-        Warnings
-        --------
-        The default implementation of this method does not work for queries that naturally contain cross products. If such a
-        query is passed, no intermediates with tables from different partitions of the join graph are yielded.
-        """
-        for candidate_join in util.powerset(query.tables()):
-            if (
-                not candidate_join
-            ):  # skip empty set (which is an artefact of the powerset method)
-                continue
-            if not self.allow_cross_products and not query.predicates().joins_tables(
-                candidate_join
-            ):
-                continue
-            yield frozenset(candidate_join)
-
-    def estimate_cardinalities(self, query: SqlQuery) -> PlanParameterization:
-        """Produces all cardinality estimates for a specific query.
-
-        The default implementation of this method delegates the actual estimation to the `calculate_estimate` method. It is
-        called for each intermediate produced by `generate_intermediates`.
-
-        Parameters
-        ----------
-        query : SqlQuery
-            The query to optimize
-
-        Returns
-        ------
-        PlanParameterization
-            A parameterization containing cardinality hints for all intermediates. Other attributes of the parameterization are
-            not modified.
-        """
-        parameterization = PlanParameterization()
-        for join in self.generate_intermediates(query):
-            estimate = self.calculate_estimate(query, join)
-            if not math.isnan(estimate):
-                parameterization.add_cardinality(join, estimate)
-        return parameterization
-
-    def generate_plan_parameters(
-        self,
-        query: SqlQuery,
-        join_order: Optional[JoinTree],
-        operator_assignment: Optional[PhysicalOperatorAssignment],
-    ) -> PlanParameterization:
-        if join_order is None:
-            return self.estimate_cardinalities(query)
-
-        parameterization = PlanParameterization()
-        for intermediate in join_order.iternodes():
-            estimate = self.calculate_estimate(query, intermediate.tables())
-            if not math.isnan(estimate):
-                parameterization.add_cardinality(intermediate.tables(), estimate)
-
-        return parameterization
-
-    def pre_check(self) -> OptimizationPreCheck:
-        return validation.CrossProductPreCheck()
-
-
-class NativeCardinalityHintGenerator(CardinalityGenerator):
-    """Cardinality estimator that delegates all estiamtes to an actual database system.
-
-    Parameters
-    ----------
-    database : Optional[Database], optional
-        The database system exposing an optimizer along with its cardinality estimates. If omitted, the database system is
-        inferred from the database pool.
-    allow_cross_products : bool, optional
-        Whether cardinality estimates for arbitrary cross products should be included.
-    """
-
-    def __init__(
-        self,
-        database: Optional[Database] = None,
-        *,
-        allow_cross_products: bool = False,
-    ) -> None:
-        super().__init__(allow_cross_products)
-        self.database = (
-            database
-            if database is not None
-            else DatabasePool.get_instance().current_database()
-        )
-
-    def describe(self) -> dict:
-        return {"name": "native-cards", "database": self.database.describe()}
-
-    def calculate_estimate(
-        self, query: SqlQuery, tables: TableReference | Iterable[TableReference]
-    ) -> Cardinality:
-        tables = util.enlist(tables)
-        partial_query = transform.as_star_query(
-            transform.extract_query_fragment(query, tables)
-        )
-        return self.database.optimizer().cardinality_estimate(partial_query)
-
-
-class PreciseCardinalityHintGenerator(CardinalityGenerator):
+class PreciseCardinalityHintGenerator(CardinalityEstimator):
     """Cardinality "estimator" that calculates exact cardinalities.
 
     These cardinalities are determined by actually executing the intermediate query plan and counting the number of result
@@ -281,7 +94,7 @@ def _parse_tables(tabs: str) -> set[TableReference]:
     return {parser.load_table_json(t) for t in json.loads(tabs)}
 
 
-class PreComputedCardinalities(CardinalityGenerator):
+class PreComputedCardinalities(CardinalityEstimator):
     """Re-uses existing cardinalities from an external data source.
 
     The cardinalities have to be stored in a CSV file which follows a certain structure. Some details can be customized (e.g.
@@ -492,7 +305,7 @@ class PreComputedCardinalities(CardinalityGenerator):
         self._true_card_df.to_csv(self._lookup_df_path, index=False)
 
 
-class CardinalityDistortion(CardinalityGenerator):
+class CardinalityDistortion(CardinalityEstimator):
     """Decorator to simulate errors during cardinality estimation.
 
     The distortion service uses cardinality estimates produced by an actual estimator and mofifies its estimations to simulate
@@ -502,7 +315,7 @@ class CardinalityDistortion(CardinalityGenerator):
 
     Parameters
     ----------
-    estimator : CardinalityGenerator
+    estimator : CardinalityEstimator
         The actual estimator that calculates the "correct" cardinalities.
     distortion_factor : float
         How much the cardinalities are allowed to deviate from the original estimations. Values > 1 simulate overestimation
@@ -518,7 +331,7 @@ class CardinalityDistortion(CardinalityGenerator):
 
     def __init__(
         self,
-        estimator: CardinalityGenerator,
+        estimator: CardinalityEstimator,
         distortion_factor: float,
         *,
         distortion_strategy: Literal["fixed", "random"] = "fixed",

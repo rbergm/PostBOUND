@@ -138,17 +138,14 @@ from ._stages import (
     ParameterGeneration,
     PhysicalOperatorSelection,
     PlanEnumerator,
-    PreCheckResult,
-    UnsupportedQueryError,
-    UnsupportedSystemError,
     as_complete_algorithm,
 )
+from ._validation import PreCheckResult, UnsupportedQueryError, UnsupportedSystemError
 from .db import _duckdb as duckdb
 from .db import postgres
 from .db._db import Database
 from .experiments import analysis, executor, workloads
 from .experiments.executor import execute_workload, optimize_and_execute_workload
-from .optimizer._cardinalities import CardinalityGenerator
 from .qal import relalg, transform
 from .qal._qal import SqlQuery
 from .qal.parser import parse_query
@@ -173,7 +170,6 @@ __all__ = [
     "CompleteOptimizationAlgorithm",
     "IntegratedOptimizationPipeline",
     "CardinalityEstimator",
-    "CardinalityGenerator",
     "CostModel",
     "PlanEnumerator",
     "TextBookOptimizationPipeline",

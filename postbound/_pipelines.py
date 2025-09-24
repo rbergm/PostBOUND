@@ -16,18 +16,20 @@ from ._stages import (
     CardinalityEstimator,
     CompleteOptimizationAlgorithm,
     CostModel,
-    EmptyPreCheck,
     IncrementalOptimizationStep,
     JoinOrderOptimization,
-    OptimizationPreCheck,
     ParameterGeneration,
     PhysicalOperatorSelection,
     PlanEnumerator,
+)
+from ._validation import (
+    EmptyPreCheck,
+    OptimizationPreCheck,
     UnsupportedQueryError,
     UnsupportedSystemError,
+    merge_checks,
 )
 from .db._db import Database, DatabasePool
-from .optimizer import validation
 from .qal._qal import SqlQuery
 from .util._errors import StateError
 
@@ -69,7 +71,7 @@ class OptimizationPipeline(abc.ABC):
 
         Raises
         ------
-        validation.UnsupportedQueryError
+        UnsupportedQueryError
             If the selected optimization algorithms cannot be applied to the specific query, e.g. because it contains
             unsupported features.
         """
@@ -118,7 +120,7 @@ class OptimizationPipeline(abc.ABC):
 
         Raises
         ------
-        validation.UnsupportedQueryError
+        UnsupportedQueryError
             If the selected optimization algorithms cannot be applied to the specific query, e.g. because it contains
             unsupported features.
 
@@ -195,11 +197,6 @@ class IntegratedOptimizationPipeline(OptimizationPipeline):
         Database
             The currently selected database system
 
-        Raises
-        ------
-        validation.UnsupportedSystemError
-            If the current optimization algorithm is not compatible with the new target database system
-
         See Also
         --------
         CompleteOptimizationAlgorithm.pre_check
@@ -254,7 +251,7 @@ class IntegratedOptimizationPipeline(OptimizationPipeline):
 
         Raises
         ------
-        validation.UnsupportedSystemError
+        UnsupportedSystemError
             If the new optimization algorithm is not compatible with the current target database system.
 
         See Also
@@ -420,7 +417,7 @@ class TextBookOptimizationPipeline(OptimizationPipeline):
 
         Raises
         ------
-        validation.UnsupportedSystemError
+        UnsupportedSystemError
             If any of the selected optimization stages is not compatible with the `target_db`.
         """
         if self._card_est is None:
@@ -430,7 +427,7 @@ class TextBookOptimizationPipeline(OptimizationPipeline):
         if self._plan_enumerator is None:
             raise StateError("Missing plan enumerator")
 
-        self._support_check = validation.merge_checks(
+        self._support_check = merge_checks(
             [
                 self._card_est.pre_check(),
                 self._cost_model.pre_check(),
@@ -745,7 +742,7 @@ class MultiStageOptimizationPipeline(OptimizationPipeline):
 
         Raises
         ------
-        validation.UnsupportedSystemError
+        UnsupportedSystemError
             If any of the selected optimization stages is not compatible with the `target_db`.
         """
         all_checks = [self.pre_check]
@@ -756,7 +753,7 @@ class MultiStageOptimizationPipeline(OptimizationPipeline):
         if self.plan_parameterization is not None:
             all_checks.append(self.plan_parameterization.pre_check())
 
-        self._pre_check = validation.merge_checks(all_checks)
+        self._pre_check = merge_checks(all_checks)
 
         db_check_result = self._pre_check.check_supported_database_system(
             self._target_db
@@ -875,7 +872,7 @@ class IncrementalOptimizationPipeline(OptimizationPipeline):
 
         Raises
         ------
-        validation.UnsupportedSystemError
+        UnsupportedSystemError
             If any of the optimization steps or the initial plan generator cannot work with the target database
         """
         return self._target_db
@@ -899,7 +896,7 @@ class IncrementalOptimizationPipeline(OptimizationPipeline):
 
         Raises
         ------
-        validation.UnsupportedSystemError
+        UnsupportedSystemError
             If the initial generator does not work with the current `target_db`
         """
         return self._initial_plan_generator
@@ -983,7 +980,7 @@ class IncrementalOptimizationPipeline(OptimizationPipeline):
 
         Raises
         ------
-        validation.UnsupportedSystemError
+        UnsupportedSystemError
             If one of the optimization algorithms is not compatible with the target database
         """
         database = self.target_db if database is None else database
@@ -1028,7 +1025,7 @@ class IncrementalOptimizationPipeline(OptimizationPipeline):
 
         Raises
         ------
-        validation.UnsupportedQueryError
+        UnsupportedQueryError
             If one of the optimization algorithms is not compatible with the input query
         """
         if (

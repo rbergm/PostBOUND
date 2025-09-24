@@ -35,7 +35,7 @@ from typing import Generic, Optional
 
 import numpy as np
 
-from ... import db, qal, util
+from ... import util
 from ..._core import Cardinality, ColumnReference, JoinOperator, TableReference
 from ..._hints import PhysicalOperatorAssignment
 from ..._jointree import JoinTree, LogicalJoinTree
@@ -45,7 +45,16 @@ from ..._stages import (
     OptimizationPreCheck,
     PhysicalOperatorSelection,
 )
-from .. import validation
+from ..._validation import (
+    DependentSubqueryPreCheck,
+    EquiJoinPreCheck,
+    ImplicitQueryPreCheck,
+    SetOperationsPreCheck,
+    VirtualTablesPreCheck,
+    merge_checks,
+)
+from ...db._db import Database, DatabasePool, DatabaseStatistics
+from ...qal._qal import AbstractPredicate, ImplicitSqlQuery, SqlQuery
 from .._joingraph import JoinGraph, JoinPath
 from ..policies import cardinalities as cardpol
 from ..policies import jointree as treepol
@@ -90,7 +99,7 @@ class StatisticsContainer(abc.ABC, Generic[StatsType]):
         This statistic contains the current statistics value for individual columns. This is the main data structure that has
         to be maintained during the query optimization process to update the column statistics once they become part of an
         intermediate result (and get changed as part of the join process).
-    query : Optional[qal.SqlQuery]
+    query : Optional[SqlQuery]
         Stores the query that this container is created for
     """
 
@@ -98,18 +107,18 @@ class StatisticsContainer(abc.ABC, Generic[StatsType]):
         self.base_table_estimates: dict[TableReference, int] = {}
         self.upper_bounds: dict[TableReference | LogicalJoinTree, int] = {}
         self.attribute_frequencies: dict[ColumnReference, StatsType] = {}
-        self.query: Optional[qal.SqlQuery] = None
+        self.query: Optional[SqlQuery] = None
 
     def setup_for_query(
         self,
-        query: qal.SqlQuery,
+        query: SqlQuery,
         base_table_estimator: cardpol.BaseTableCardinalityEstimator,
     ) -> None:
         """Initializes the internal data of the statistics container for a specific query.
 
         Parameters
         ----------
-        query : qal.SqlQuery
+        query : SqlQuery
             The query that
         base_table_estimator : card_policy.BaseTableCardinalityEstimator
             Estimator to inflate the `base_table_estimates` for all tables that are contained in the query. The estimator has
@@ -138,7 +147,7 @@ class StatisticsContainer(abc.ABC, Generic[StatsType]):
         self,
         join_tree: LogicalJoinTree,
         joined_table: TableReference,
-        join_condition: qal.AbstractPredicate,
+        join_condition: AbstractPredicate,
     ) -> None:
         """Updates the `attribute_frequencies` according to a new n:m join.
 
@@ -163,7 +172,7 @@ class StatisticsContainer(abc.ABC, Generic[StatsType]):
             exactly one n:m table join partner. In the first case, no frequency updates are necessary since cardinalities may
             never increase when the foreign key is already part of an intermediate result. In the second case, there is exactly
             one partner table that is denoted by this parameter.
-        join_condition : qal.AbstractPredicate
+        join_condition : AbstractPredicate
             The predicate that was used for the join. This is required to determine the columns that were directly involved in
             the join. These columns have to be updated in a different way compared to other columns in the intermediate result.
         """
@@ -288,7 +297,7 @@ class MaxFrequencyStatsContainer(StatisticsContainer[MaxFrequency]):
     MaxFrequency
     """
 
-    def __init__(self, database_stats: db.DatabaseStatistics):
+    def __init__(self, database_stats: DatabaseStatistics):
         super().__init__()
         self.database_stats = database_stats
 
@@ -353,10 +362,10 @@ class UESJoinBoundEstimator(cardpol.JoinCardinalityEstimator):
 
     def __init__(self) -> None:
         super().__init__("UES join estimator")
-        self.query: qal.ImplicitSqlQuery | None = None
+        self.query: ImplicitSqlQuery | None = None
         self.stats_container: StatisticsContainer[MaxFrequency] | None = None
 
-    def setup_for_query(self, query: qal.SqlQuery) -> None:
+    def setup_for_query(self, query: SqlQuery) -> None:
         self.query = query
 
     def setup_for_stats(
@@ -372,7 +381,7 @@ class UESJoinBoundEstimator(cardpol.JoinCardinalityEstimator):
         self.stats_container = stats_container
 
     def estimate_for(
-        self, join_edge: qal.AbstractPredicate, join_graph: JoinGraph
+        self, join_edge: AbstractPredicate, join_graph: JoinGraph
     ) -> Cardinality:
         current_min_bound = np.inf
 
@@ -493,10 +502,10 @@ class UESSubqueryGenerationPolicy(treepol.BranchGenerationPolicy):
 
     def __init__(self):
         super().__init__("UES subquery policy")
-        self.query: qal.SqlQuery | None = None
+        self.query: SqlQuery | None = None
         self.stats_container: StatisticsContainer | None = None
 
-    def setup_for_query(self, query: qal.SqlQuery) -> None:
+    def setup_for_query(self, query: SqlQuery) -> None:
         self.query = query
 
     def setup_for_stats_container(self, stats_container: StatisticsContainer) -> None:
@@ -510,7 +519,7 @@ class UESSubqueryGenerationPolicy(treepol.BranchGenerationPolicy):
         self.stats_container = stats_container
 
     def generate_subquery_for(
-        self, join: qal.AbstractPredicate, join_graph: JoinGraph
+        self, join: AbstractPredicate, join_graph: JoinGraph
     ) -> bool:
         if join_graph.count_consumed_tables() < 2:
             return False
@@ -582,14 +591,12 @@ class UESJoinOrderOptimizer(JoinOrderOptimization):
         subquery_policy: Optional[treepol.BranchGenerationPolicy] = None,
         stats_container: Optional[StatisticsContainer] = None,
         pull_eager_pk_tables: bool = False,
-        database: Optional[db.Database] = None,
+        database: Optional[Database] = None,
         verbose: bool = False,
     ) -> None:
         super().__init__()
         self.database = (
-            database
-            if database
-            else db.DatabasePool().get_instance().current_database()
+            database if database else DatabasePool().get_instance().current_database()
         )
         self.base_table_estimation = (
             base_table_estimation
@@ -610,8 +617,8 @@ class UESJoinOrderOptimizer(JoinOrderOptimization):
         self._pull_eager_pk_tables = pull_eager_pk_tables
         self._logging_enabled = verbose
 
-    def optimize_join_order(self, query: qal.SqlQuery) -> Optional[LogicalJoinTree]:
-        if not isinstance(query, qal.ImplicitSqlQuery):
+    def optimize_join_order(self, query: SqlQuery) -> Optional[LogicalJoinTree]:
+        if not isinstance(query, ImplicitSqlQuery):
             raise ValueError("UES optimization only works for implicit queries for now")
         if len(query.tables()) < 2:
             return None
@@ -677,16 +684,16 @@ class UESJoinOrderOptimizer(JoinOrderOptimization):
             if check
         ]
         specified_checks.append(UESOptimizationPreCheck)
-        return validation.merge_checks(specified_checks)
+        return merge_checks(specified_checks)
 
     def _default_ues_optimizer(
-        self, query: qal.SqlQuery, join_graph: JoinGraph
+        self, query: SqlQuery, join_graph: JoinGraph
     ) -> LogicalJoinTree:
         """Implementation of our take on the UES algorithm for queries with n:m joins.
 
         Parameters
         ----------
-        query : qal.SqlQuery
+        query : SqlQuery
             The query to optimize.
         join_graph : JoinGraph
             The join graph of the input query. This structure is mutated during the algorithm.
@@ -836,7 +843,7 @@ class UESJoinOrderOptimizer(JoinOrderOptimization):
         return join_tree
 
     def _binary_join_optimization(
-        self, query: qal.ImplicitSqlQuery, join_graph: JoinGraph
+        self, query: ImplicitSqlQuery, join_graph: JoinGraph
     ) -> LogicalJoinTree:
         """Specialized optimization algorithm for queries with just a single join.
 
@@ -847,7 +854,7 @@ class UESJoinOrderOptimizer(JoinOrderOptimization):
 
         Parameters
         ----------
-        query : qal.ImplicitSqlQuery
+        query : ImplicitSqlQuery
             The query to optimize
         join_graph : joingraph.JoinGraph
             The join graph of the query. This structure is mutated during the algorithm.
@@ -879,7 +886,7 @@ class UESJoinOrderOptimizer(JoinOrderOptimization):
         return join_tree
 
     def _star_query_optimizer(
-        self, query: qal.ImplicitSqlQuery, join_graph: JoinGraph
+        self, query: ImplicitSqlQuery, join_graph: JoinGraph
     ) -> LogicalJoinTree:
         """Join ordering algorithm for star queries (i.e. queries which only consist of primary key/foreign key joins).
 
@@ -887,7 +894,7 @@ class UESJoinOrderOptimizer(JoinOrderOptimization):
 
         Parameters
         ----------
-        query : qal.ImplicitSqlQuery
+        query : ImplicitSqlQuery
             The query to optimize
         join_graph : JoinGraph
             The join graph of the input query. This structure is mutated during the algorithm.
@@ -972,7 +979,7 @@ class UESJoinOrderOptimizer(JoinOrderOptimization):
 
     def _apply_pk_fk_join(
         self,
-        query: qal.SqlQuery,
+        query: SqlQuery,
         pk_fk_join: JoinPath,
         *,
         join_bound: int,
@@ -983,7 +990,7 @@ class UESJoinOrderOptimizer(JoinOrderOptimization):
 
         Parameters
         ----------
-        query : qal.SqlQuery
+        query : SqlQuery
             The query that is being optimized
         pk_fk_join : JoinPath
             The actual join that should be performed
@@ -1010,7 +1017,7 @@ class UESJoinOrderOptimizer(JoinOrderOptimization):
 
     def _insert_pk_joins(
         self,
-        query: qal.SqlQuery,
+        query: SqlQuery,
         pk_joins: Iterable[JoinPath],
         join_tree: LogicalJoinTree,
         join_graph: JoinGraph,
@@ -1019,7 +1026,7 @@ class UESJoinOrderOptimizer(JoinOrderOptimization):
 
         Parameters
         ----------
-        query : qal.SqlQuery
+        query : SqlQuery
             The query that is being optimized
         pk_joins : Iterable[joingraph.JoinPath]
             The joins that should be included in the join tree, in the order in which they are inserted
@@ -1088,7 +1095,7 @@ class UESJoinOrderOptimizer(JoinOrderOptimization):
         candidate_table: TableReference,
         pk_joins: Iterable[JoinPath],
         *,
-        join_condition: qal.AbstractPredicate | None = None,
+        join_condition: AbstractPredicate | None = None,
         subquery_join: bool | None = None,
     ) -> None:
         """Displays the current optimizer state.
@@ -1104,7 +1111,7 @@ class UESJoinOrderOptimizer(JoinOrderOptimization):
             The table that is considered as the next join partner
         pk_joins : Iterable[JoinPath]
             Primary key joins that should be applied to the candidate table
-        join_condition : qal.AbstractPredicate | None, optional
+        join_condition : AbstractPredicate | None, optional
             The join condition that was used to find the candidate table. Can be ``None`` to omit this information, e.g. when
             it is not applicable for the current phase.
         subquery_join : bool | None, optional
@@ -1141,7 +1148,7 @@ class UESOperatorSelection(PhysicalOperatorSelection):
 
     Parameters
     ----------
-    database : db.Database
+    database : Database
         The target database on which the optimized query should be executed. This parameter enables a graceful fallback in case
         the database does not support a nested-loop join in the first place. If this situation occurs, nothing is disabled.
 
@@ -1152,12 +1159,12 @@ class UESOperatorSelection(PhysicalOperatorSelection):
     contradict the no-nested-loop join rule.
     """
 
-    def __init__(self, database: db.Database) -> None:
+    def __init__(self, database: Database) -> None:
         super().__init__()
         self.database = database
 
     def select_physical_operators(
-        self, query: qal.SqlQuery, join_order: Optional[JoinTree]
+        self, query: SqlQuery, join_order: Optional[JoinTree]
     ) -> PhysicalOperatorAssignment:
         assignment = PhysicalOperatorAssignment()
         if self.database.hinting().supports_hint(JoinOperator.NestedLoopJoin):
@@ -1172,12 +1179,12 @@ class UESOperatorSelection(PhysicalOperatorSelection):
         return {"name": "ues"}
 
 
-UESOptimizationPreCheck = validation.merge_checks(
-    validation.ImplicitQueryPreCheck(),
-    validation.EquiJoinPreCheck(),
-    validation.DependentSubqueryPreCheck(),
-    validation.SetOperationsPreCheck(),
-    validation.VirtualTablesPreCheck(),
+UESOptimizationPreCheck = merge_checks(
+    ImplicitQueryPreCheck(),
+    EquiJoinPreCheck(),
+    DependentSubqueryPreCheck(),
+    SetOperationsPreCheck(),
+    VirtualTablesPreCheck(),
 )
 """Check for all query features that UES does (not) support.
 

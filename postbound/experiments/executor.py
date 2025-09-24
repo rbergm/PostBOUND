@@ -17,7 +17,7 @@ import pandas as pd
 
 from .. import util
 from .._pipelines import OptimizationPipeline
-from .._stages import UnsupportedQueryError
+from .._validation import UnsupportedQueryError
 from ..db._db import (
     Database,
     PrewarmingSupport,

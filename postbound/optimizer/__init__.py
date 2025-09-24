@@ -15,6 +15,7 @@ plans and basic hinting support. All other modules need to be imported explicitl
 module and the `strategies` package.
 """
 
+from .. import _validation as validation
 from .._hints import (
     DirectionalJoinOperatorAssignment,
     HintType,
@@ -37,7 +38,6 @@ from .._jointree import (
 )
 from ._cardinalities import (
     CardinalityDistortion,
-    NativeCardinalityHintGenerator,
     PreciseCardinalityHintGenerator,
     PreComputedCardinalities,
 )
@@ -49,8 +49,8 @@ from ._joingraph import (
 )
 
 __all__ = [
+    "validation",
     "CardinalityDistortion",
-    "NativeCardinalityHintGenerator",
     "PreciseCardinalityHintGenerator",
     "PreComputedCardinalities",
     "policies",

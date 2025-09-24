@@ -24,6 +24,7 @@ from ..._stages import (
     OptimizationPreCheck,
     PlanEnumerator,
 )
+from ..._validation import CrossProductPreCheck, VirtualTablesPreCheck, EquiJoinPreCheck, InnerJoinPreCheck, SubqueryPreCheck, SetOperationsPreCheck, merge_checks
 from ...db._db import Database, DatabasePool, DatabaseSchema
 from ...db.postgres import PostgresInterface, PostgresJoinHints, PostgresScanHints
 from ...qal import transform
@@ -37,7 +38,6 @@ from ...qal._qal import (
     SqlQuery,
 )
 from ...util import LogicError, jsondict
-from .. import validation
 from . import native
 
 DPTable = dict[frozenset[TableReference], QueryPlan]
@@ -169,13 +169,13 @@ class DynamicProgrammingEnumerator(PlanEnumerator):
         return final_plan
 
     def pre_check(self) -> OptimizationPreCheck:
-        return validation.merge_checks(
-            validation.CrossProductPreCheck(),
-            validation.VirtualTablesPreCheck(),
-            validation.EquiJoinPreCheck(),
-            validation.InnerJoinPreCheck(),
-            validation.SubqueryPreCheck(),
-            validation.SetOperationsPreCheck(),
+        return merge_checks(
+            CrossProductPreCheck(),
+            VirtualTablesPreCheck(),
+            EquiJoinPreCheck(),
+            InnerJoinPreCheck(),
+            SubqueryPreCheck(),
+            SetOperationsPreCheck(),
         )
 
     def describe(self) -> jsondict:
@@ -717,12 +717,12 @@ class PostgresDynProg(PlanEnumerator):
         }
 
     def pre_check(self) -> OptimizationPreCheck:
-        return validation.merge_checks(
-            validation.CrossProductPreCheck(),
-            validation.EquiJoinPreCheck(),
-            validation.InnerJoinPreCheck(),
-            validation.VirtualTablesPreCheck(),
-            validation.SetOperationsPreCheck(),
+        return merge_checks(
+            CrossProductPreCheck(),
+            EquiJoinPreCheck(),
+            InnerJoinPreCheck(),
+            VirtualTablesPreCheck(),
+            SetOperationsPreCheck(),
         )
 
     def standard_add_path(

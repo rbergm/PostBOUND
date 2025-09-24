@@ -58,6 +58,8 @@ Currently, we plan to implement the following features in the future (in no part
 - Added support for the [JOB-Complex workload](https://www.vldb.org/2025/Workshops/VLDB-Workshops-2025/AIDB/AIDB25_8.pdf)
 
 ### 💀 Breaking changes
+- Integrated the `CardinalityGenerator` directly into the `CardinalityEstimator` interface. Each `CardinalityEstimator` can
+  now be used in places where a `ParameterGeneration` is expected.
 - Eliminated all duplicate imports in the public API. Core classes and functions are now only available from a single location
   with a focus on succinctness. For example, the `Database` interface is now only available as `pb.Database` and the duplicate
   import `pb.db.Database` has been removed. Similarly, `SqlQuery` is now only available as `pb.SqlQuery` and no longer as
