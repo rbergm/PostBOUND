@@ -42,7 +42,7 @@ import pathlib
 import random
 import typing
 from collections.abc import Callable, Hashable, Iterable, Sequence
-from typing import Optional
+from typing import Literal, Optional
 
 import natsort
 import pandas as pd
@@ -776,7 +776,11 @@ def _assert_workload_loaded(workload: Workload[LabelType], expected_dir: str) ->
         )
 
 
-def job(file_encoding: str = "utf-8") -> Workload[str]:
+def job(
+    *,
+    flavor: Literal["default", "light", "complex"] = "default",
+    file_encoding: str = "utf-8",
+) -> Workload[str]:
     """Reads the Join Order Benchmark, as shipped with the PostBOUND repository.
 
     Queries will be read from the JOB directory relative to `workloads_base_dir`. The expected layout is:
@@ -785,6 +789,9 @@ def job(file_encoding: str = "utf-8") -> Workload[str]:
 
     Parameters
     ----------
+    flavor : Literal["default", "light", "complex"], optional
+        The flavor of the JOB benchmark to load. The default flavor is the original JOB benchmark. Use "light" or "complex" to
+        load the respective variants.
     file_encoding : str, optional
         The encoding of the query files, by default UTF-8.
 
@@ -798,11 +805,21 @@ def job(file_encoding: str = "utf-8") -> Workload[str]:
     ValueError
         If the workload could not be loaded from the expected location
 
+    See Also
+    --------
+    job_light
+    job_complex
+
     References
     ----------
 
     .. Viktor Leis et al.: "How Good Are Query Optimizers, Really?" (Proc. VLDB Endow. 9, 3 (2015))
     """
+    if flavor == "light":
+        return job_light(file_encoding=file_encoding)
+    elif flavor == "complex":
+        return job_complex(file_encoding=file_encoding)
+
     job_dir = os.path.join(workloads_base_dir, "JOB-Queries")
     # JOB only uses aliases column references, so no need for explicit binding
     job_workload = Workload.read(
@@ -812,7 +829,7 @@ def job(file_encoding: str = "utf-8") -> Workload[str]:
     return job_workload
 
 
-def job_light(file_encoding: str = "utf-8") -> Workload[str]:
+def job_light(*, file_encoding: str = "utf-8") -> Workload[str]:
     """Reads the JOB-light benchmark, as shipped with the PostBOUND repository.
 
     Queries will be read from the JOB directory relative to `workloads_base_dir`. The expected layout is:
@@ -848,8 +865,48 @@ def job_light(file_encoding: str = "utf-8") -> Workload[str]:
     return job_light_workload
 
 
+def job_complex(*, file_encoding: str = "utf-8") -> Workload[str]:
+    """Reads the JOB-complex benchmark, as shipped with the PostBOUND repository.
+
+    Queries will be read from the JOB-complex directory relative to `workloads_base_dir`. The expected layout is:
+    ``<workloads_base_dir>/JOB-Complex-Queries/<queries>``. Labels are inferred from the file names, i.e. queries are
+    accessible as ``1``, ``2``, ``3`` and so on.
+
+    Parameters
+    ----------
+    file_encoding : str, optional
+        The encoding of the query files, by default "utf-8".
+
+    Returns
+    -------
+    Workload[str]
+        The workload
+
+    Raises
+    ------
+    ValueError
+        If the workload could not be loaded from the expected location
+
+    References
+    ----------
+
+    .. Johannes Wehrstein et al.: "JOB-Complex: A Challenging Benchmark for Traditional & Learned Query Optimization"
+       (AIDB'2025)
+    """
+    job_complex_dir = os.path.join(workloads_base_dir, "JOB-Complex-Queries")
+    # JOB-complex only uses aliases column references, so no need for explicit binding
+    job_complex_workload = Workload.read(
+        job_complex_dir,
+        name="JOB-complex",
+        file_encoding=file_encoding,
+        bind_columns=False,
+    )
+    _assert_workload_loaded(job_complex_workload, job_complex_dir)
+    return job_complex_workload
+
+
 def ssb(
-    file_encoding: str = "utf-8", *, bind_columns: Optional[bool] = None
+    *, file_encoding: str = "utf-8", bind_columns: Optional[bool] = None
 ) -> Workload[str]:
     """Reads the Star Schema Benchmark, as shipped with the PostBOUND repository.
 
@@ -909,8 +966,8 @@ def _fetch_stack_queries(path: str) -> None:
 
 
 def stack(
-    file_encoding: str = "utf-8",
     *,
+    file_encoding: str = "utf-8",
     bind_columns: Optional[bool] = None,
     fetch: bool = True,
 ) -> Workload[str]:
@@ -974,7 +1031,7 @@ def stack(
     return stack_workload
 
 
-def stats(file_encoding: str = "utf-8") -> Workload[str]:
+def stats(*, file_encoding: str = "utf-8") -> Workload[str]:
     """Reads the Stats Benchmark, as shipped with the PostBOUND repository.
 
     Queries will be read from the Stats directory relative to `workload_base_dir`. The expected layout is:
