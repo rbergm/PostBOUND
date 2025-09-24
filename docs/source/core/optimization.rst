@@ -122,7 +122,8 @@ Essentially, you can provide any combination of join ordering, operator selectio
     ordering or operator selection. During the plan parameterization stage, estimates for all potential intermediates
     should be generated.
 
-    See the :ref:`Cookbook <cookbook-cardinality-estimation>` for a practical example.
+    See the :ref:`Cookbook <cookbook-cardinality-estimation>` for a practical example. In short, by implementing your own
+    cardinality estimator, you can use it both in a textbook pipeline as well as in a multi-stage pipeline.
 
 Integrated optimization pipeline
 ================================

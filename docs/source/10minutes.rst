@@ -37,13 +37,6 @@ To assess the quality of each candidate plan, a  :class:`CostModel <postbound.Co
 The cost model typically uses the :class:`CardinalityEstimator <postbound.CardinalityEstimator>` to estimate the number of
 rows produced by each operator in the plan.
 
-.. tip::
-
-    If you are only concerned with cardinality estimation, it is best to implement the
-    :class:`CardinalityGenerator <postbound.CardinalityGenerator>` instead of the
-    :class:`CardinalityEstimator <postbound.CardinalityEstimator>`.
-    The reasoning is explained in the the :ref:`Cookbook <cookbook-cardinality-estimation>`.
-
 The :class:`MultiStageOptimizationPipeline <postbound.MultiStageOptimizationPipeline>` performs the query optimization in
 multiple sequential steps.
 Initially, it computes a join order using the :class:`JoinOrderOptimization <postbound.JoinOrderOptimization>` stage.
