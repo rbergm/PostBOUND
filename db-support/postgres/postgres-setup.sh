@@ -176,7 +176,7 @@ if [ "$PG_VER_PRETTY" -lt "16" ] ; then
     # Postgres 12 required LLVM 3.x or newer, which is very old by now. Some changes in later LLVM version broke compatibility
     # with such old PG releases. Therefore, we have to disable LLVM there (and pray that we caught all such cases).
     if [ "$LLVM_OPTS" == "auto" ] ; then
-        if [ -x "$(command -v llvm-config)" -a  version_earlier "$(llvm-config --version)" "16.0.0"  ] ; then
+        if [ -x "$(command -v llvm-config)" ] && version_earlier "$(llvm-config --version)" "16.0.0" ; then
             LLVM_OPTS="on"
         else
             LLVM_OPTS="off"
