@@ -2390,6 +2390,49 @@ class PostgresHintService(HintService):
     def _infer_pg_backend(self) -> None:
         """Determines the hinting backend that is provided by the current Postgres instance."""
 
+        # We first try the easy route: checking whether any of the settings related to the hinting backends are available and
+        # activated. If this is the case, we are already done.
+        # Otherwise, we need to become more creative and rely on more advanced heuristics.
+        # Note that on recent installations of Postgres/pg_hint_plan or pg_lab, we can expect that the easy route does indeed
+        # work. It is just on older versions that the settings were not available.
+
+        cur = self._postgres_db.cursor()
+        try:
+            cur.execute("SHOW pg_hint_plan.enable_hint;")
+            res = cur.fetchone()
+            if res and res[0] == "on":
+                util.logging.print_if(
+                    self._postgres_db.debug,
+                    "Using pg_hint_plan hinting backend",
+                    file=sys.stderr,
+                )
+                self._inactive = False
+                self._backend = "pg_hint_plan"
+                return
+        except psycopg.errors.UndefinedObject:
+            pass
+
+        try:
+            cur.execute("SHOW enable_pglab;")
+            res = cur.fetchone()
+            if res and res[0] == "on":
+                util.logging.print_if(
+                    self._postgres_db.debug,
+                    "Using pg_lab hinting backend",
+                    file=sys.stderr,
+                )
+                self._inactive = False
+                self._backend = "pg_lab"
+                return
+        except psycopg.errors.UndefinedObject:
+            pass
+
+        # At this point the easy route failed and we need to rely on more advanced heuristics.
+        # Specifically, we try to check whether a shared library related to one of the backends is currently loaded
+        # in the backend process. See the later comment for the reasoning.
+        #
+        # All code below should be considered legacy and we might in fact remove it entirely in future versions of PostBOUND.
+
         if os.name != "posix":
             warnings.warn(
                 "It seems you are running PostBOUND on a non-POSIX system. "
@@ -2435,7 +2478,8 @@ class PostgresHintService(HintService):
         # backend detection in the future. Most importantly, the heuristic will pass if we are connected to a remote server
         # on localhost (e.g. via SSH tunneling or WSL instances) and there is a different Postgres server running on the same
         # machine as the PostBOUND process. In this case, our heuristics assume that these are the same servers.
-        # In the future, we might want to check the ports as well, but this probably requires superuser privileges.
+        # In the future, we might want to check the ports as well, but this probably requires superuser privileges
+        # (for netstat).
 
         if hostname not in ["localhost", "127.0.0.1", "::1"] or not found_pg:
             warnings.warn(

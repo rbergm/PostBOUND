@@ -69,6 +69,7 @@ Currently, we plan to implement the following features in the future (in no part
 - 🐘 Migrate to Meson/Ninja for Postgres setup. This seems more stable/reliable across platforms overall (especially MacOS).
 
 ### 📰 Updates
+- Much improved detection of Postgres hinting backends, especially for recent Postgres versions
 - `execute_workload()` and `optimize_and_execute_workload()` no longer break for any error during query execution. Instead,
   the error is logged to the output file and the execution continues with the next query. This behavior can be controlled
   using the `error_action` parameter.
