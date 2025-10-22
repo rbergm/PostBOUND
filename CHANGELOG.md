@@ -57,13 +57,14 @@ to simplify the public API and make PostBOUND much easier to use, especially for
   replacement for the various `setup_XXX()` methods and allow to configure optimization stages in a more fluent way.
 - Added support for parallel plans in the Postgres-style plan enumerator
 - Added support for bushy plans in the Postgres-style plan enumerator
+- Added a `last(n)` method to workloads to retrieve the last _n_ queries
+- Added support for the [JOB-Complex workload](https://www.vldb.org/2025/Workshops/VLDB-Workshops-2025/AIDB/AIDB25_8.pdf)
 - [ 🦆 🐳 ] Added support for DuckDB when setting up a Docker container
+- [ 🐘 ] Added support for Postgres 18
 - [ 🐘 ] Added `start()`, `stop()` and `is_running()` functions to manage a local Postgres server
 - [ 🐘 ] Added `data_dir()` function to retrieve the data directory of the Postgres server
 - [ 🐘 ] Added a `logfile()` method to the Postgres interface to retrieve the log file of a local Postgres server
 - [ 🐘 ] The parallel query executor now supports optional callbacks
-- Added a `last(n)` method to workloads to retrieve the last _n_ queries
-- Added support for the [JOB-Complex workload](https://www.vldb.org/2025/Workshops/VLDB-Workshops-2025/AIDB/AIDB25_8.pdf)
 
 ### 💀 Breaking changes
 - Integrated the `CardinalityGenerator` directly into the `CardinalityEstimator` interface. Each `CardinalityEstimator` can

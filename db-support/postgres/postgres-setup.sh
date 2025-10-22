@@ -25,9 +25,9 @@ set -e  # exit on error
 
 WD=$(pwd)
 USER=$(whoami)
-PG_VER_PRETTY=17
-PG_VERSION=REL_17_STABLE
-PG_HINT_PLAN_VERSION=REL17_1_7_0
+PG_VER_PRETTY=18
+PG_VERSION=REL_18_STABLE
+PG_HINT_PLAN_VERSION=REL18_1_8_0
 PG_TARGET_DIR="$WD/postgres-server"
 PG_DEFAULT_PORT=5432
 PG_PORT=5432
@@ -42,7 +42,7 @@ show_help() {
     echo -e "Usage: $0 <options>"
     echo -e "Setup a local Postgres server with the given options. The default user is the current UNIX username.\n"
     echo -e "Allowed options:"
-    echo -e "--pg-ver <version>\t\tSetup Postgres with the given version.${NEWLINE}Currently allowed values: 12, 14, 15, 16, 17 (default).\n"
+    echo -e "--pg-ver <version>\t\tSetup Postgres with the given version.${NEWLINE}Currently allowed values: 12, 14, 15, 16, 17, 18 (default).\n"
     echo -e "-d | --dir <directory>\t\tInstall Postgres server to the designated directory (postgres-server by default).\n"
     echo -e "-p | --port <port number>\tConfigure the Postgres server to listen on the given port (5432 by default).\n"
     echo -e "--remote-password <password>\tEnable remote access for the current user, based on the given password.${NEWLINE}Remote access is disabled if no password is provided.\n"
@@ -85,6 +85,11 @@ while [ $# -gt 0 ] ; do
                     PG_VER_PRETTY="17"
                     PG_VERSION=REL_17_STABLE
                     PG_HINT_PLAN_VERSION=REL17_1_7_1
+                    ;;
+                18)
+                    PG_VER_PRETTY="18"
+                    PG_VERSION=REL_18_STABLE
+                    PG_HINT_PLAN_VERSION=REL18_1_8_0
                     ;;
                 *)
                     show_help
@@ -190,16 +195,20 @@ if [ "$PG_VER_PRETTY" -lt "16" ] ; then
         LLVM_OPTS=""
     fi
 
-    make distclean || true
     ./configure --prefix=$PG_TARGET_DIR/build \
                 --with-openssl \
                 --with-icu \
                 $LLVM_OPTS
-    make clean && make -j $MAKE_CORES && make install
+    make -j $MAKE_CORES && make install
 else
     # Postgres v16 introduced the new Meson/Ninja build system. This allows to detect many of the features manually
     # (depending on whether the required dependencies are installed on the system).
-    make distclean || true
+
+    if [ -f GNUmakefile ] ; then
+        echo ".. Cleaning previous build"
+        make distclean
+    fi
+
     meson setup build --prefix=$PG_TARGET_DIR/build \
         --buildtype=release \
         -Dicu=enabled \
@@ -210,7 +219,7 @@ else
         -Dllvm=$LLVM_OPTS \
         -Duuid=$UUID_LIBRARY
     cd $PG_TARGET_DIR/build
-    ninja clean && ninja all && ninja install
+    ninja all && ninja install
 fi
 export PATH="$PG_TARGET_DIR/build/bin:$PATH"
 export LD_LIBRARY_PATH="$PG_TARGET_DIR/build/lib:$LD_LIBRARY_PATH"
