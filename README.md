@@ -150,6 +150,7 @@ import random
 
 import postbound as pb
 
+
 # Step 1: define our optimization strategy.
 # In this example we develop a simple join order optimizer that
 # selects a linear join order at random.
@@ -174,6 +175,7 @@ class RandomJoinOrderOptimizer(pb.JoinOrderOptimization):
     def describe(self) -> pb.util.jsondict:
         return {"name": "random-join-order"}
 
+
 # Step 2: connect to the target database, load the workload and
 # setup the optimization pipeline.
 # In our case, we evaluate on the Join Order Benchmark on Postgres
@@ -182,7 +184,7 @@ job = pb.workloads.job()
 
 optimization_pipeline = (
     pb.MultiStageOptimizationPipeline(pg_imdb)
-    .setup_join_order_optimization(RandomJoinOrderOptimizer())
+    .use(RandomJoinOrderOptimizer())
     .build()
 )
 
@@ -192,18 +194,26 @@ optimization_pipeline = (
 # Step 4: execute the workload.
 # We use the QueryPreparationService to prewarm the database buffer and run all
 # queries as EXPLAIN ANALYZE.
-query_prep = pb.experiments.QueryPreparationService(
+query_prep = pb.bench.QueryPreparation(
     prewarm=True, analyze=True, preparatory_statements=["SET geqo TO off;"]
 )
-native_results = pb.execute_workload(
-    job, pg_imdb, query_preparation=query_prep, workload_repetitions=3
+native_results = pb.bench.execute_workload(
+    job,
+    on=pg_imdb,
+    query_preparation=query_prep,
+    workload_repetitions=3,
+    progressive_output="job-results-native.csv",
+    logger="tqdm",
 )
-optimized_results = pb.optimize_and_execute_workload(
-    job, optimization_pipeline, query_preparation=query_prep, workload_repetitions=3
+optimized_results = pb.bench.execute_workload(
+    job,
+    on=optimization_pipeline,
+    query_preparation=query_prep,
+    workload_repetitions=3,
+    progressive_output="job-results-optimized.csv",
+    logger="tqdm",
 )
 
-pb.experiments.prepare_export(native_results).to_csv("job-results-native.csv")
-pb.experiments.prepare_export(optimized_results).to_csv("job-results-optimized.csv")
 ```
 
 

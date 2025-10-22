@@ -25,12 +25,12 @@ ues_pipeline = (
 # Execute the benchmarks: each query should be repeated 3 times and each workload should be repeated 3 times as well
 # After each workload repetition, the execution order of all queries should be changed. Finally, all queries should be executed
 # as COUNT(*) queries
-query_preparation = pb.executor.QueryPreparation(count_star=True)
+query_preparation = pb.bench.QueryPreparation(count_star=True)
 
 # Benchmark the native workload
-native_results = pb.execute_workload(
+native_results = pb.bench.execute_workload(
     job_workload,
-    postgres_db,
+    on=postgres_db,
     workload_repetitions=3,
     per_query_repetitions=3,
     shuffled=True,
@@ -40,9 +40,9 @@ native_results = pb.execute_workload(
 )
 
 # Benchmark the UES workload
-ues_results = pb.optimize_and_execute_workload(
+ues_results = pb.bench.execute_workload(
     job_workload,
-    ues_pipeline,
+    on=ues_pipeline,
     workload_repetitions=3,
     per_query_repetitions=3,
     shuffled=True,

@@ -10,17 +10,3 @@ Specifically, this package provides the following modules:
 - `ceb` provides an implementation of the Cardinality Estimation Benchmark workload generator
 - `interactive` contains a simple interactive join order optimizer
 """
-
-from .executor import (
-    QueryPreparation,
-    execute_query,
-    optimize_and_execute_query,
-    prepare_export,
-)
-
-__all__ = [
-    "QueryPreparation",
-    "execute_query",
-    "optimize_and_execute_query",
-    "prepare_export",
-]

@@ -861,3 +861,16 @@ def as_complete_algorithm(
         operator_selection=operator_selection,
         plan_parameterization=parameter_generation,
     )
+
+
+OptimizationStage = (
+    CompleteOptimizationAlgorithm
+    | JoinOrderOptimization
+    | PhysicalOperatorSelection
+    | ParameterGeneration
+    | PlanEnumerator
+    | CostModel
+    | CardinalityEstimator
+    | IncrementalOptimizationStep
+)
+"""Type alias for all currently supported optimization stages."""

@@ -50,6 +50,9 @@ This is a pretty large release with lots of new features and changes, some of th
 to simplify the public API and make PostBOUND much easier to use, especially for newcomers.
 
 ### 🐣 New features
+- `execute_workload()` now accepts optimization pipelines as well as single optimization stages and automatically optimizes
+  all queries on the fly. This makes `execute_workload()` the single entry point for benchmarking workloads with PostBOUND
+  (see _Breaking changes_ below).
 - Added a new `use()` method to `MultiStageOptimizationPipeline` and `TextBookOptimizationPipeline`. They serve as a
   replacement for the various `setup_XXX()` methods and allow to configure optimization stages in a more fluent way.
 - Added support for parallel plans in the Postgres-style plan enumerator
@@ -70,6 +73,10 @@ to simplify the public API and make PostBOUND much easier to use, especially for
   import `pb.db.Database` has been removed. Similarly, `SqlQuery` is now only available as `pb.SqlQuery` and no longer as
   `pb.qal.SqlQuery`.
 - Renamed the `QueryPreparationService` to `QueryPreparation` to be more succint and less Java-ish
+- Removed the `executor` module and moved its functionality into the `bench` module.
+- Removed `optimize_and_execute_workload()` as well as `execute_query()` and `optimize_and_execute_query()`.
+  `execute_workload()` is now the single entry point for benchmarking. It incorporates all functionality of the removed
+  functions.
 - Renamed the attributes of `PlanParameterization` to be more succint
 - [ 🐘 ] Migrate to Meson/Ninja for Postgres setup. This seems more stable/reliable across platforms overall (especially MacOS).
 

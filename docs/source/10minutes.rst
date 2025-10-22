@@ -171,10 +171,9 @@ Benchmarking
 ------------
 
 Once you have implemented you own optimization algorithm, you can benchmark it using the
-:func:`execute_workload() <postbound.experiments.executor.execute_workload>` and
-:func:`optimize_and_execute_workload() <postbound.experiments.executor.optimize_and_execute_workload>` utilities.
+:func:`execute_workload() <postbound.bench.execute_workload>` utility.
 
-Both take provide a pandas DataFrame with the results of the executed queries:
+It produces a pandas DataFrame with the results of the executed queries:
 
 .. ipython:: python
     :okwarning:
@@ -183,9 +182,11 @@ Both take provide a pandas DataFrame with the results of the executed queries:
     results
 
 If you want to export the results to a CSV file, you can use
-:func:`prepare_export() <postbound.experiments.executor.prepare_export>` to serialize all columns to JSON as necessary.
+:func:`prepare_export() <postbound.experiments.bench.prepare_export>` to serialize all columns to JSON as necessary.
+Even simpler, you can pass a file to the *progressive_output* parameter to automatically flush all results to disk as soon as
+they arrive.
 
-The :class:`QueryPreparationService <postbound.experiments.executor.QueryPreparationService>` enables you to customize the
+The :class:`QueryPreparation <postbound.experiments.bench.QueryPreparation>` enables you to customize the
 execution of the queries.
 For example, you can ensure that all queries are executed as *EXPLAIN ANALYZE* to capture their query plans, or you can
 prewarm the shared buffer before execution to ensure that timing measurements are not affected by I/O activity.

@@ -9,9 +9,8 @@ from typing import Optional
 
 import pandas as pd
 
-from postbound import qal, util
+from postbound import bench, qal, util, workloads
 from postbound.db import postgres
-from postbound.experiments import executor, workloads
 
 workloads.workloads_base_dir = "workloads/"
 
@@ -127,7 +126,7 @@ def determine_intermediates(
             "cardinality": cardinalities,
         }
     )
-    result_df = executor.sort_results(result_df, "label")
+    result_df = bench.sort_results(result_df, "label")
     result_df.to_csv(out_file, index=False)
 
 

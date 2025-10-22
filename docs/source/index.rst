@@ -74,14 +74,19 @@ The implementation is compared to the native PostgreSQL optimizer on the Stats b
   import postbound as pb
 
 
-  class RandomJoinOrder(pb.JoinOrderOptimization):
+  # Step 1: define our optimization strategy.
+  # In this example we develop a simple join order optimizer that
+  # selects a linear join order at random.
+  # We delegate most of the actual work to the pre-defined join grap
+  # that keeps track of free tables.
+  class RandomJoinOrderOptimizer(pb.JoinOrderOptimization):
       def optimize_join_order(self, query: pb.SqlQuery) -> pb.LogicalJoinTree:
-          join_graph = pb.opt.JoinGraph(query)
           join_tree = pb.LogicalJoinTree()
+          join_graph = pb.opt.JoinGraph(query)
 
           while join_graph.contains_free_tables():
               candidate_tables = [
-                  join.target_table for join in join_graph.available_join_paths()
+                  path.target_table for path in join_graph.available_join_paths()
               ]
               next_table = random.choice(candidate_tables)
 
@@ -94,25 +99,43 @@ The implementation is compared to the native PostgreSQL optimizer on the Stats b
           return {"name": "random-join-order"}
 
 
-  pg_instance = pb.postgres.connect(config_file=".psycopg_connection")
-  stats = pb.workloads.stats()
+  # Step 2: connect to the target database, load the workload and
+  # setup the optimization pipeline.
+  # In our case, we evaluate on the Join Order Benchmark on Postgres
+  pg_imdb = pb.postgres.connect(config_file=".psycopg_connection_job")
+  job = pb.workloads.job()
 
-  pipeline = (
-      pb.MultiStageOptimizationPipeline(pg_instance)
-      .setup_join_order_optimization(RandomJoinOrder())
+  optimization_pipeline = (
+      pb.MultiStageOptimizationPipeline(pg_imdb)
+      .use(RandomJoinOrderOptimizer())
       .build()
   )
 
-  query_prep = pb.executor.QueryPreparationService(analyze=True, prewarm=True)
-  native_results = pb.execute_workload(
-      stats, pg_instance, workload_repetitions=3, query_preparation=query_prep
-  )
-  optimized_results = pb.optimize_and_execute_workload(
-      stats, pipeline, workload_repetitions=3, query_preparation=query_prep
-  )
+  # (Step 3): in this example we just compare against the native Postgres optimizer
+  # Therefore, we do not need to setup any additional optimizers.
 
-  pb.executor.prepare_export(native_results).to_csv("results-native.csv")
-  pb.executor.prepare_export(optimized_results).to_csv("results-optimized.csv")
+  # Step 4: execute the workload.
+  # We use the QueryPreparationService to prewarm the database buffer and run all
+  # queries as EXPLAIN ANALYZE.
+  query_prep = pb.bench.QueryPreparation(
+      prewarm=True, analyze=True, preparatory_statements=["SET geqo TO off;"]
+  )
+  native_results = pb.bench.execute_workload(
+      job,
+      on=pg_imdb,
+      query_preparation=query_prep,
+      workload_repetitions=3,
+      progressive_output="job-results-native.csv",
+      logger="tqdm",
+  )
+  optimized_results = pb.bench.execute_workload(
+      job,
+      on=optimization_pipeline,
+      query_preparation=query_prep,
+      workload_repetitions=3,
+      progressive_output="job-results-optimized.csv",
+      logger="tqdm",
+  )
 
 Need more? There are a lot of `basic examples <https://github.com/rbergm/PostBOUND/tree/main/examples>`_ in the PostBOUND
 repository!

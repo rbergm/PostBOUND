@@ -95,6 +95,7 @@ some require user input):
 
 """
 
+from . import _bench as bench
 from . import db, experiments, qal, util
 from . import optimizer as opt
 from ._core import (
@@ -135,6 +136,7 @@ from ._stages import (
     IncrementalOptimizationStep,
     JoinOrderOptimization,
     OptimizationPreCheck,
+    OptimizationStage,
     ParameterGeneration,
     PhysicalOperatorSelection,
     PlanEnumerator,
@@ -144,8 +146,7 @@ from ._validation import PreCheckResult, UnsupportedQueryError, UnsupportedSyste
 from .db import _duckdb as duckdb
 from .db import postgres
 from .db._db import Database
-from .experiments import analysis, executor, workloads
-from .experiments.executor import execute_workload, optimize_and_execute_workload
+from .experiments import analysis, workloads
 from .qal import relalg, transform
 from .qal._qal import SqlQuery
 from .qal.parser import parse_query
@@ -180,6 +181,7 @@ __all__ = [
     "IncrementalOptimizationStep",
     "IncrementalOptimizationPipeline",
     "as_complete_algorithm",
+    "OptimizationStage",
     "UnsupportedQueryError",
     "UnsupportedSystemError",
     "OptimizationPreCheck",
@@ -205,7 +207,5 @@ __all__ = [
     "validation",
     "analysis",
     "workloads",
-    "executor",
-    "execute_workload",
-    "optimize_and_execute_workload",
+    "bench",
 ]
