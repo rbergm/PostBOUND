@@ -404,6 +404,20 @@ class TextBookOptimizationPipeline(OptimizationPipeline):
         self._plan_enumerator = plan_enumerator
         return self
 
+    def use(
+        self, component: PlanEnumerator | CostModel | CardinalityEstimator
+    ) -> TextBookOptimizationPipeline:
+        """Shortcut method to setup the pipeline. Delegates to the appropriate setup_XXX method."""
+        match component:
+            case PlanEnumerator():
+                return self.setup_plan_enumerator(component)
+            case CostModel():
+                return self.setup_cost_model(component)
+            case CardinalityEstimator():
+                return self.setup_cardinality_estimator(component)
+            case _:
+                raise TypeError(f"Unsupported component type: {type(component)}")
+
     def build(self) -> TextBookOptimizationPipeline:
         """Constructs the optimization pipeline.
 
@@ -692,6 +706,23 @@ class MultiStageOptimizationPipeline(OptimizationPipeline):
         self._plan_parameterization = param_generator
         self._build = False
         return self
+
+    def use(
+        self,
+        component: JoinOrderOptimization
+        | PhysicalOperatorSelection
+        | ParameterGeneration,
+    ) -> MultiStageOptimizationPipeline:
+        """Shortcut method to setup the pipeline. Delegates to the appropriate setup_XXX method."""
+        match component:
+            case JoinOrderOptimization():
+                return self.setup_join_order_optimization(component)
+            case PhysicalOperatorSelection():
+                return self.setup_physical_operator_selection(component)
+            case ParameterGeneration():
+                return self.setup_plan_parameterization(component)
+            case _:
+                raise TypeError(f"Unsupported component type: {type(component)}")
 
     def load_settings(
         self, optimization_settings: OptimizationSettings

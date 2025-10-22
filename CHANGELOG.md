@@ -46,14 +46,19 @@ Currently, we plan to implement the following features in the future (in no part
 
 ## ➡ Version 0.18.0 _(planned)_
 
+This is a pretty large release with lots of new features and changes, some of them breaking. Generally, this release tries
+to simplify the public API and make PostBOUND much easier to use, especially for newcomers.
+
 ### 🐣 New features
+- Added a new `use()` method to `MultiStageOptimizationPipeline` and `TextBookOptimizationPipeline`. They serve as a
+  replacement for the various `setup_XXX()` methods and allow to configure optimization stages in a more fluent way.
 - Added support for parallel plans in the Postgres-style plan enumerator
 - Added support for bushy plans in the Postgres-style plan enumerator
-- 🦆 🐳 Added support for DuckDB when setting up a Docker container
-- 🐘 Added `start()`, `stop()` and `is_running()` functions to manage a local Postgres server
-- 🐘 Added `data_dir()` function to retrieve the data directory of the Postgres server
-- 🐘 Added a `logfile()` method to the Postgres interface to retrieve the log file of a local Postgres server
-- 🐘 The parallel query executor now supports optional callbacks
+- [ 🦆 🐳 ] Added support for DuckDB when setting up a Docker container
+- [ 🐘 ] Added `start()`, `stop()` and `is_running()` functions to manage a local Postgres server
+- [ 🐘 ] Added `data_dir()` function to retrieve the data directory of the Postgres server
+- [ 🐘 ] Added a `logfile()` method to the Postgres interface to retrieve the log file of a local Postgres server
+- [ 🐘 ] The parallel query executor now supports optional callbacks
 - Added a `last(n)` method to workloads to retrieve the last _n_ queries
 - Added support for the [JOB-Complex workload](https://www.vldb.org/2025/Workshops/VLDB-Workshops-2025/AIDB/AIDB25_8.pdf)
 
@@ -66,7 +71,7 @@ Currently, we plan to implement the following features in the future (in no part
   `pb.qal.SqlQuery`.
 - Renamed the `QueryPreparationService` to `QueryPreparation` to be more succint and less Java-ish
 - Renamed the attributes of `PlanParameterization` to be more succint
-- 🐘 Migrate to Meson/Ninja for Postgres setup. This seems more stable/reliable across platforms overall (especially MacOS).
+- [ 🐘 ] Migrate to Meson/Ninja for Postgres setup. This seems more stable/reliable across platforms overall (especially MacOS).
 
 ### 📰 Updates
 - Much improved detection of Postgres hinting backends, especially for recent Postgres versions
@@ -79,16 +84,17 @@ Currently, we plan to implement the following features in the future (in no part
   also disable these joins.
 
 ### 🏥 Fixes
-- 🦆 Fixed DuckDB performance regressions when executing query with timeout
-- 🦆 Fixed DuckDB schema interface using a broken cursor variable
-- 🦆 Fixed DuckDB statistics catalog not retaining config across calls. Previously, each call to `statistics()` on the DuckDB
+- [ 🦆 ] Fixed DuckDB performance regressions when executing query with timeout
+- [ 🦆 ] Fixed DuckDB schema interface using a broken cursor variable
+- [ 🦆 ] Fixed DuckDB statistics catalog not retaining config across calls. Previously, each call to `statistics()` on the DuckDB
   interface resulted in a new statistics catalog being created. This made it impossible to configure whether to use emulated
   statistics or not.
-- 🦆 Fixed query execution with timeouts on DuckDB failing on MacOS. It seems that the DuckDB connection is only pickle-able
+- [ 🦆 ] Fixed query execution with timeouts on DuckDB failing on MacOS. It seems that the DuckDB connection is only pickle-able
   on Linux-based systems.
 
 ### 🪲 Known bugs
-- The automatic optimization of the Postgres server configuration as part of the Docker installation does not work on MacOS
+- [ 🐘 🍏 ] The automatic optimization of the Postgres server configuration as part of the Docker installation does not work on
+  MacOS
 
 ---
 
