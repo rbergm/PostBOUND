@@ -23,7 +23,6 @@ References
 from __future__ import annotations
 
 import collections
-import os
 import pathlib
 import random
 import typing
@@ -757,12 +756,13 @@ def generate_workload(
 def _assert_workload_loaded(workload: Workload[LabelType], expected_dir: str) -> None:
     """Ensures that workload queries have been read successfully. The expected directory is used for error messages."""
     if not workload:
-        wdir = os.getcwd()
+        expected_dir = pathlib.Path.home() / ".postbound" / "workloads"
         raise ValueError(
-            f"Could not load {workload.name} workload. This is likely due to a disparity between workload "
-            "location and current value of the workloads_base_dir setting. Make sure to point that variable to "
-            f"the correct path. Your current working directory is '{wdir}' and the expected workload directory "
-            f"is '{expected_dir}'"
+            f"Could not load {workload.name} workload. "
+            f"Please check {expected_dir} and make sure that it contains valid query files. "
+            f"If it does, please open an issue at https://github.com/rbergm/PostBOUND to report the problem."
+            f"If there are no queries in the directory, try re-running the workload access and open an issue if the problem "
+            f"persists."
         )
 
 

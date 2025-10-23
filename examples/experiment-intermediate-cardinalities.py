@@ -12,8 +12,6 @@ import pandas as pd
 from postbound import bench, qal, util, workloads
 from postbound.db import postgres
 
-workloads.workloads_base_dir = "workloads/"
-
 
 @dataclass
 class QueryIntermediate:

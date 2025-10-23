@@ -21,7 +21,6 @@ from postbound.optimizer.strategies import ues
 from postbound.qal import parser, transform
 from tests import regression_suite
 
-workloads.workloads_base_dir = "workloads/"
 pg_connect_dir = "."
 
 

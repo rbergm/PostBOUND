@@ -1,4 +1,3 @@
-
 from __future__ import annotations
 
 import unittest
@@ -6,20 +5,19 @@ import unittest
 import postbound as pb
 from postbound.db import postgres
 from postbound.experiments import workloads
-from postbound.qal import transform
 from postbound.optimizer.strategies import tonic
-
+from postbound.qal import transform
 from tests import regression_suite
 
-
-workloads.workloads_base_dir = "workloads/"
 pg_connect_dir = "."
 
 
 @regression_suite.skip_if_no_db(f"{pg_connect_dir}/.psycopg_connection_job")
 class DefaultTonicTests(unittest.TestCase):
     def setUp(self) -> None:
-        self.db = postgres.connect(config_file=f"{pg_connect_dir}/.psycopg_connection_job")
+        self.db = postgres.connect(
+            config_file=f"{pg_connect_dir}/.psycopg_connection_job"
+        )
         self.job = workloads.job()
 
     def test_optimize_workload(self) -> None:
