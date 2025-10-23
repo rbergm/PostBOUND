@@ -44,6 +44,3 @@ mysql = [
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["postbound*"]
-
-[tool.setuptools.package-data]
-"postbound.workloads" = ["**"]

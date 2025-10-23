@@ -2,36 +2,22 @@
 
 The main abstraction provided by this class is the `Workload`. A number of utility functions to read collections of queries
 from different sources and input formats into workload objects exist as well. The pre-defined workloads include the
-Join Order Benchmark [0]_, Star Schema Benchmark [1]_, Stack Benchmark [2]_ and Stats Benchmark [3]_. In order for the utility
-functions that read those workloads to work, PostBOUND assumes that there is a directory which contains the actual queries
-available somewhere. The precise location can be customized via the `workloads_base_dir` variable.
+Join Order Benchmark [1]_ (including JOB-light [2]_ and JOB-Complex [3]_), Star Schema Benchmark [4]_, Stack Benchmark [5]_
+and Stats Benchmark [6]_.
 
-The expected directory layout is the following:
-
-::
-
-    <workloads_base_dir>
-    ├╴JOB-Queries/
-    │   └╴ <queries>
-    ├╴ SSB-Queries/
-    │   └╴ <queries>
-    ├╴ Stack-Queries/
-    │   └╴ <queries>
-    ├╴ Stats-CEB/
-    |   └╴ queries/
-    |       └╴ <queries>
-
-
-By default, PostBOUND assumes that the workload directory is contained one directory level higher than the root directory that
-contains the PostBOUND source code. The GitHub repository of PostBOUND should have such a file layout by default.
+PostBOUND stores the workload queries in a dedicated directory, located relative to the user's home directory at
+*$HOME/.postbound/*. If a workload is requested for the first time, it will be downloaded automatically. Therefore, the initial
+usage of a novel workload may take slightly longer than usual.
 
 References
 ----------
 
-.. [0] Viktor Leis et al.: How Good Are Query Optimizers, Really? (Proc. VLDB Endow. 9, 3 (2015))
-.. [1] Patrick E. O'Neil et al.: The Star Schema Benchmark and Augmented Fact Table Indexing. (TPCTC'2009)
-.. [2] Ryan Marcus et al.: Bao: Making Learned Query Optimization Practical. (SIGMOD'2021)
-.. [3] Yuxing Han et al.: Cardinality Estimation in DBMS: A Comprehensive Benchmark Evaluation (Proc. VLDB Endow. 15, 4 (2022))
+.. [1] Viktor Leis et al.: How Good Are Query Optimizers, Really? (Proc. VLDB Endow. 9, 3 (2015))
+.. [2] Andreas Kipf et al.: Learned Cardinalities: Estimating Correlated Joins with Deep Learning. (CIDR'2019)
+.. [3] Johannes Wehrstein.: JOB-Complex: A Challenging Benchmark for Traditional & Learned Query Optimization. (AIDB'2025)
+.. [4] Patrick E. O'Neil et al.: The Star Schema Benchmark and Augmented Fact Table Indexing. (TPCTC'2009)
+.. [5] Ryan Marcus et al.: Bao: Making Learned Query Optimization Practical. (SIGMOD'2021)
+.. [6] Yuxing Han et al.: Cardinality Estimation in DBMS: A Comprehensive Benchmark Evaluation (Proc. VLDB Endow. 15, 4 (2022))
 """
 
 from __future__ import annotations
@@ -41,6 +27,8 @@ import os
 import pathlib
 import random
 import typing
+import urllib.request
+import zipfile
 from collections.abc import Callable, Hashable, Iterable, Sequence
 from typing import Literal, Optional
 
@@ -52,34 +40,36 @@ from ..db._db import DatabasePool
 from ..qal import parser
 from ..qal._qal import SqlQuery
 
-workloads_base_dir: str | pathlib.Path = ""
-"""Indicates the PostBOUND directory that contains all natively supported workloads.
+_WorkloadSources = {
+    "job": "https://db4701.inf.tu-dresden.de:8443/public.php/dav/files/qQEBsM2Zx4x9BBW",
+    "job-complex": "https://db4701.inf.tu-dresden.de:8443/public.php/dav/files/MBFejJXSdHbnoix",
+    "job-light": "https://db4701.inf.tu-dresden.de:8443/public.php/dav/files/q4b9Mq6C485CnXw",
+    "ssb": "https://db4701.inf.tu-dresden.de:8443/public.php/dav/files/iXD5p3J5q6DwdbQ",
+    "stack": "https://db4701.inf.tu-dresden.de:8443/public.php/dav/files/AQgxPe9KrNGJ5nT",
+    "stats": "https://db4701.inf.tu-dresden.de:8443/public.php/dav/files/STTdpKR3LB5ojt3",
+}
 
-This setting can be changed to match the project-specific file layout.
 
-By default, PostBOUND tries to guess the location of the workloads directory by checking the following locations in that order:
+def _fetch_workload(name: str) -> pathlib.Path:
+    """Determines the local path of a workload, downloading it if necessary."""
+    name = name.lower()
+    workload_dir = pathlib.Path.home() / ".postbound" / "workloads" / name
+    if workload_dir.exists():
+        return workload_dir
+    workload_dir.mkdir(parents=True, exist_ok=True)
 
-1. If there is a `workloads` directory in the current working directory, this is used.
-2. If there is a `workloads` directory in the parent directory of the current working directory, this is used.
-3. If there is a `workloads` directory in the parent directory of the experiments package, this is used.
-   **This is the setting being triggered when installing PostBOUND as a Python package.**
-4. If there is a `workloads` directory in the user's home directory, under `.local/share/postbound`, this is used.
-"""
+    archive_url = _WorkloadSources.get(name)
+    if not archive_url:
+        raise ValueError(f"No known source for workload '{name}'")
 
-if pathlib.Path("workloads").is_dir():
-    workloads_base_dir = pathlib.Path("workloads").absolute()
-elif (pathlib.Path().parent / "workloads").is_dir():
-    workloads_base_dir = pathlib.Path("../workloads").resolve()
-elif (
-    pathlib.Path(__file__).parent.parent / "workloads"
-).is_dir():  # file into directory into parent
-    # venv installation
-    workloads_base_dir = (pathlib.Path(__file__).parent.parent / "workloads").resolve()
-elif (pathlib.Path().home() / ".local" / "share" / "postbound" / "workloads").is_dir():
-    # last resort: global workloads directory
-    workloads_base_dir = (
-        pathlib.Path().home() / ".local" / "share" / "postbound" / "workloads"
-    ).resolve()
+    archive_file = workload_dir.parent / f"{name}.zip"
+    urllib.request.urlretrieve(archive_url, archive_file)
+
+    with zipfile.ZipFile(archive_file, "r") as zip:
+        zip.extractall(workload_dir)
+
+    archive_file.unlink()
+    return workload_dir
 
 
 LabelType = typing.TypeVar("LabelType", bound=Hashable)
@@ -781,11 +771,8 @@ def job(
     flavor: Literal["default", "light", "complex"] = "default",
     file_encoding: str = "utf-8",
 ) -> Workload[str]:
-    """Reads the Join Order Benchmark, as shipped with the PostBOUND repository.
+    """Reads the Join Order Benchmark, with labels according to the original paper (e.g. *1a*, *21c*, etc.).
 
-    Queries will be read from the JOB directory relative to `workloads_base_dir`. The expected layout is:
-    ``<workloads_base_dir>/JOB-Queries/<queries>``. Labels are inferred from the file names, i.e. queries are accessible as
-    ``1a``, ``8c``, ``33b`` and so on.
 
     Parameters
     ----------
@@ -799,11 +786,6 @@ def job(
     -------
     Workload[str]
         The workload
-
-    Raises
-    ------
-    ValueError
-        If the workload could not be loaded from the expected location
 
     See Also
     --------
@@ -820,21 +802,17 @@ def job(
     elif flavor == "complex":
         return job_complex(file_encoding=file_encoding)
 
-    job_dir = os.path.join(workloads_base_dir, "JOB-Queries")
+    workload_dir = _fetch_workload("JOB")
     # JOB only uses aliases column references, so no need for explicit binding
     job_workload = Workload.read(
-        job_dir, name="JOB", file_encoding=file_encoding, bind_columns=False
+        workload_dir, name="JOB", file_encoding=file_encoding, bind_columns=False
     )
-    _assert_workload_loaded(job_workload, job_dir)
+    _assert_workload_loaded(job_workload, workload_dir)
     return job_workload
 
 
 def job_light(*, file_encoding: str = "utf-8") -> Workload[str]:
-    """Reads the JOB-light benchmark, as shipped with the PostBOUND repository.
-
-    Queries will be read from the JOB directory relative to `workloads_base_dir`. The expected layout is:
-    ``<workloads_base_dir>/JOB-Light-Queries/<queries>``. Labels are inferred from the file names, i.e. queries are
-    accessible as ``1``, ``2``, ``3`` and so on.
+    """Reads the JOB-light benchmark, with numeric query labels (1, 2, 3, ...).
 
     Parameters
     ----------
@@ -846,31 +824,22 @@ def job_light(*, file_encoding: str = "utf-8") -> Workload[str]:
     Workload[str]
         The workload
 
-    Raises
-    ------
-    ValueError
-        If the workload could not be loaded from the expected location
-
     References
     ----------
 
-    .. Andreas Kipf et al.: "Learned Cardinalities: Estimating Correlated Joinswith Deep Learning" (CIDR'2019)
+    .. Andreas Kipf et al.: "Learned Cardinalities: Estimating Correlated Joins with Deep Learning" (CIDR'2019)
     """
-    job_light_dir = os.path.join(workloads_base_dir, "JOB-light-Queries")
+    workload_dir = _fetch_workload("job-light")
     # JOB-light only uses aliases column references, so no need for explicit binding
     job_light_workload = Workload.read(
-        job_light_dir, name="JOB-light", file_encoding=file_encoding, bind_columns=False
+        workload_dir, name="JOB-light", file_encoding=file_encoding, bind_columns=False
     )
-    _assert_workload_loaded(job_light_workload, job_light_dir)
+    _assert_workload_loaded(job_light_workload, workload_dir)
     return job_light_workload
 
 
 def job_complex(*, file_encoding: str = "utf-8") -> Workload[str]:
-    """Reads the JOB-complex benchmark, as shipped with the PostBOUND repository.
-
-    Queries will be read from the JOB-complex directory relative to `workloads_base_dir`. The expected layout is:
-    ``<workloads_base_dir>/JOB-Complex-Queries/<queries>``. Labels are inferred from the file names, i.e. queries are
-    accessible as ``1``, ``2``, ``3`` and so on.
+    """Reads the JOB-complex benchmark, with numeric query labels (1, 2, 3, ...).
 
     Parameters
     ----------
@@ -882,52 +851,42 @@ def job_complex(*, file_encoding: str = "utf-8") -> Workload[str]:
     Workload[str]
         The workload
 
-    Raises
-    ------
-    ValueError
-        If the workload could not be loaded from the expected location
-
     References
     ----------
 
     .. Johannes Wehrstein et al.: "JOB-Complex: A Challenging Benchmark for Traditional & Learned Query Optimization"
        (AIDB'2025)
     """
-    job_complex_dir = os.path.join(workloads_base_dir, "JOB-Complex-Queries")
+    workload_dir = _fetch_workload("job-complex")
     # JOB-complex only uses aliases column references, so no need for explicit binding
     job_complex_workload = Workload.read(
-        job_complex_dir,
+        workload_dir,
         name="JOB-complex",
         file_encoding=file_encoding,
         bind_columns=False,
     )
-    _assert_workload_loaded(job_complex_workload, job_complex_dir)
+    _assert_workload_loaded(job_complex_workload, workload_dir)
     return job_complex_workload
 
 
 def ssb(
     *, file_encoding: str = "utf-8", bind_columns: Optional[bool] = None
 ) -> Workload[str]:
-    """Reads the Star Schema Benchmark, as shipped with the PostBOUND repository.
-
-    Queries will be read from the SSB directory relative to `workloads_base_dir`. The expected layout is:
-    ``<workloads_base_dir>/SSB-Queries/<queries>``. Labels are inferred from the file names, i.e. queries are accessible as
-    ``q1-1``, ``q4-3``, etc.
+    """Reads the Star Schema Benchmark, with labels according to the original data (e.g. *q1-1*, *q3-2*, etc.).
 
     Parameters
     ----------
     file_encoding : str, optional
         The encoding of the query files, by default UTF-8.
+    bind_columns : Optional[bool], optional
+        Whether all columns in the queries should be bound to their respective tables. Since SSB does not use qualified
+        columns names, these must be inferred from the database schema. Thus, an active database connection is required to
+        bind the columns. By default, binding is attempted if there is an active database connection.
 
     Returns
     -------
     Workload[str]
         The workload
-
-    Raises
-    ------
-    ValueError
-        If the workload could not be loaded from the expected location
 
     References
     ----------
@@ -939,72 +898,38 @@ def ssb(
         if bind_columns is not None
         else not DatabasePool.get_instance().empty()
     )
-    ssb_dir = os.path.join(workloads_base_dir, "SSB-Queries")
+    workload_dir = _fetch_workload("ssb")
     ssb_workload = Workload.read(
-        ssb_dir, name="SSB", file_encoding=file_encoding, bind_columns=bind_columns
+        workload_dir, name="SSB", file_encoding=file_encoding, bind_columns=bind_columns
     )
-    _assert_workload_loaded(ssb_workload, f"{workloads_base_dir}/SSB-Queries")
+    _assert_workload_loaded(ssb_workload, workload_dir)
     return ssb_workload
-
-
-def _fetch_stack_queries(path: str) -> None:
-    """Utility method to load the Stack queries if they are not available.
-
-    Parameters
-    ----------
-    path : str
-        The path to the Stack-Queries directory
-    """
-    current_path = os.getcwd()
-    os.chdir(os.path.join(workloads_base_dir, "Stack-Queries"))
-    if "q1" in os.listdir():
-        os.chdir(current_path)
-        return
-
-    os.system("./setup.sh")
-    os.chdir(current_path)
 
 
 def stack(
     *,
     file_encoding: str = "utf-8",
     bind_columns: Optional[bool] = None,
-    fetch: bool = True,
 ) -> Workload[str]:
     """Reads the Stack Benchmark, as shipped with the PostBOUND repository.
 
-    Queries will be read from the Stack directory relative to `workloads_base_dir`. The expected layout is:
-    ``<workloads_base_dir>/Stack-Queries/<sub-directories>/<queries>``. Alternatively, all queries can be contained in
-    the ``Stack-Queries`` directory directly. Labels are inferred from the file names, i.e. queries are accessible as
-    ``q1/q1-001``, ``q4/q4-100``, etc. Notice that there are also some queries with entirely "random" file names, such as
-    ``q16/fc8f97968b9fce81df4011c8175eada15541abe0``.
+    Most queries use semi-numeric labels consisting of the context and the query number, e.g., *q1/q1-001*. However, some
+    queries have completely random names, such as *q16/fc8f97968b9fce81df4011c8175eada15541abe0*. Still, all queries are
+    grouped into one of 16 contexts.
 
     Parameters
     ----------
     file_encoding : str, optional
         The encoding of the query files, by default UTF-8.
     bind_columns : Optional[bool], optional
-        Whether to bind columns in the queries. If omitted, this is determined based on the current database connection.
-    fetch : bool, optional
-        Whether the workload queries should be fetched if they are not loaded already. This requires a working internet
-        connection.
+        Whether all columns in the queries should be bound to their respective tables. Since Stack does not use qualified
+        columns names in some queries, these must be inferred from the database schema. Thus, an active database connection is
+        required to bind the columns. By default, binding is attempted if there is an active database connection.
 
     Returns
     -------
     Workload[str]
         The workload.
-
-    Raises
-    ------
-    ValueError
-        If the workload could not be loaded from the expected location
-
-    Notes
-    -----
-    Notice that the Stack Benchmark is much much larger than the Join Order Benchmark or the Star Schema Benchmark.
-    Therefore, the benchmark queries are not put in version control directly, instead they have to be manually loaded.
-    You can use the `fetch` parameter to load the queries automatically, if it appears that they are not available.
-    See the documentation in the workload directory for details on the loading logic.
 
     References
     ----------
@@ -1016,28 +941,21 @@ def stack(
         if bind_columns is not None
         else not DatabasePool.get_instance().empty()
     )
-    stack_dir = os.path.join(workloads_base_dir, "Stack-Queries")
-    if fetch:
-        _fetch_stack_queries(stack_dir)
+    workload_dir = _fetch_workload("stack")
 
     stack_workload = read_workload(
-        stack_dir,
+        workload_dir,
         "Stack",
         recurse_subdirectories=True,
         file_encoding=file_encoding,
         bind_columns=bind_columns,
     )
-    _assert_workload_loaded(stack_workload, stack_dir)
+    _assert_workload_loaded(stack_workload, workload_dir)
     return stack_workload
 
 
 def stats(*, file_encoding: str = "utf-8") -> Workload[str]:
-    """Reads the Stats Benchmark, as shipped with the PostBOUND repository.
-
-    Queries will be read from the Stats directory relative to `workload_base_dir`. The expected layout is:
-    ``<workloads_base_dir>/Stats-CEB/queries/<queries>``. Labels are inferred from the file names, i.e. queries are accessible
-    as ``q-1``, ``q-2``, etc. This labelling is custom to PostBOUND, since the original workload did not include any meaningful
-    labels or candidates for such.
+    """Reads the Stats Benchmark, with semi-numeric query labels (e.g. *q-1*, *q-2*, etc.).
 
     Parameters
     ----------
@@ -1049,19 +967,14 @@ def stats(*, file_encoding: str = "utf-8") -> Workload[str]:
     Workload[str]
         The workload
 
-    Raises
-    ------
-    ValueError
-        If the workload could not be loaded from the expected location
-
     References
     ----------
 
     .. Yuxing Han et al.: Cardinality Estimation in DBMS: A Comprehensive Benchmark Evaluation (Proc. VLDB Endow. 15, 4 (2022))
     """
-    stats_dir = os.path.join(workloads_base_dir, "Stats-CEB", "queries")
+    workload_dir = _fetch_workload("stats")
     stats_workload = Workload.read(
-        stats_dir, name="Stats", file_encoding=file_encoding, bind_columns=False
+        workload_dir, name="Stats", file_encoding=file_encoding, bind_columns=False
     )
-    _assert_workload_loaded(stats_workload, stats_dir)
+    _assert_workload_loaded(stats_workload, workload_dir)
     return stats_workload

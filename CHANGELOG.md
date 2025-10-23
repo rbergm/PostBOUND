@@ -50,6 +50,10 @@ This is a pretty large release with lots of new features and changes, some of th
 to simplify the public API and make PostBOUND much easier to use, especially for newcomers.
 
 ### 🐣 New features
+- Eliminated the need to store workload queries directly in the Git repository. Instead, workloads are now
+  downloaded on demand and cached locally. This drastically reduces the size of the PostBOUND repository and makes it
+  easier to add new workloads in the future. The access functions for pre-defined workloads (e.g. `workloads.job()`) remain
+  unchanged (but see _Breaking changes_ below).
 - `execute_workload()` now accepts optimization pipelines as well as single optimization stages and automatically optimizes
   all queries on the fly. This makes `execute_workload()` the single entry point for benchmarking workloads with PostBOUND
   (see _Breaking changes_ below).
@@ -67,6 +71,8 @@ to simplify the public API and make PostBOUND much easier to use, especially for
 - [ 🐘 ] The parallel query executor now supports optional callbacks
 
 ### 💀 Breaking changes
+- Removed the `workloads_base_dir` global variable. Pre-defined workloads are now automatically downloaded on demand and cached
+  locally.
 - Integrated the `CardinalityGenerator` directly into the `CardinalityEstimator` interface. Each `CardinalityEstimator` can
   now be used in places where a `ParameterGeneration` is expected.
 - Eliminated all duplicate imports in the public API. Core classes and functions are now only available from a single location
