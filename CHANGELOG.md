@@ -98,6 +98,7 @@ to simplify the public API and make PostBOUND much easier to use, especially for
   also disable these joins.
 
 ### 🏥 Fixes
+- Many smaller fixes throughout the codebase, but especially to Postgres hint generation and query plans
 - [ 🦆 ] Fixed DuckDB performance regressions when executing query with timeout
 - [ 🦆 ] Fixed DuckDB schema interface using a broken cursor variable
 - [ 🦆 ] Fixed DuckDB statistics catalog not retaining config across calls. Previously, each call to `statistics()` on the DuckDB

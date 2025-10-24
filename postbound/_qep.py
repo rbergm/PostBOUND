@@ -1709,9 +1709,8 @@ class QueryPlan:
             return QueryPlan(
                 self.node_type,
                 operator=self.operator,
-                base_table=self.base_table,
                 children=[],
-                plan_params=self.params,
+                plan_params=self.params,  # params include the base table
                 estimates=self.estimates,
                 measures=self.measures,
                 subplan=updated_subplan,
@@ -1745,6 +1744,15 @@ class QueryPlan:
         """
         fields = [] if fields is None else list(fields)
         return _explainify(self, fields=fields)
+
+    def explain(self) -> str:
+        """Alias for `inspect`
+
+        See Also
+        --------
+        inspect
+        """
+        return self.inspect()
 
     def plan_summary(self) -> dict[str, object]:
         """Provides a quick summary of important properties of the query plan, inspired by Panda's *describe* method."""

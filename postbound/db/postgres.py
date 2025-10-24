@@ -1635,7 +1635,7 @@ PGLabOptimizerHints: dict[PhysicalOperator, str] = {
     ScanOperator.SequentialScan: "SeqScan",
     ScanOperator.IndexScan: "IdxScan",
     ScanOperator.IndexOnlyScan: "IdxScan",
-    ScanOperator.BitmapScan: "IdxScan",
+    ScanOperator.BitmapScan: "BitmapScan",
     IntermediateOperator.Materialize: "Material",
     IntermediateOperator.Memoize: "Memo",
 }
@@ -1649,74 +1649,6 @@ References
 .. pg_lab extension: https://github.com/rbergm/pg_lab/blob/main/docs/hinting.md
 
 """
-
-
-def _generate_join_key(tables: Iterable[TableReference]) -> str:
-    """Produces an identifier for the given join that is compatible with the *pg_hint_plan* operator hint syntax.
-
-    Parameters
-    ----------
-    tables : Iterable[TableReference]
-        The join in question, consisting exactly of the given tables.
-
-    Returns
-    -------
-    str
-        A *pg_hint_plan* compatible identifier that can be used to enforce operator hints for the join.
-    """
-    return " ".join(tab.identifier() for tab in tables)
-
-
-def _escape_setting(setting: Any) -> str:
-    """Transforms the value of a setting variable such that it is a valid text for Postgres.
-
-    Most importantly, this involves using the correct quoting for string values and the correct transformation for
-    boolean values.
-
-    Parameters
-    ----------
-    setting : Any
-        The value to escape
-
-    Returns
-    -------
-    str
-        The escaped, string version of the value
-
-    Warnings
-    --------
-    This is not a secure escape routine and does not protect against common security vulnerabilities found in the real
-    world. PostBOUND is not intended for production-level usage and it is incredibly easy for a malicious actor to
-    take over the system. It is a research tool that is only intended for use in a secure and trusted environment. The
-    most important point for this function is that it does not handle nested quoting, so breaking out of the setting is
-    very straightforward.
-    """
-    if isinstance(setting, float) or isinstance(setting, int):
-        return str(setting)
-    elif isinstance(setting, bool):
-        return "TRUE" if setting else "FALSE"
-    return f"'{setting}'"
-
-
-def _apply_hint_block_to_query(query: SqlQuery, hint_block: Optional[Hint]) -> SqlQuery:
-    """Ensures that a hint block is added to a query.
-
-    Since the query abstraction layer consists of immutable data objects, a new query has to be created. This method's
-    only purpose is to catch situations where the hint block is empty.
-
-    Parameters
-    ----------
-    query : SqlQuery
-        The query to apply the hint block to
-    hint_block : Optional[Hint]
-        The hint block to apply. If this is *None*, no modifications are performed.
-
-    Returns
-    -------
-    SqlQuery
-        The input query with the hint block applied
-    """
-    return transform.add_clause(query, hint_block) if hint_block else query
 
 
 PostgresJoinHints = {
@@ -2003,7 +1935,7 @@ def _generate_pghintplan_hints(
             op = PGHintPlanOptimizerHints.get(intermediate_op)
             if not op:
                 warnings.warn(
-                    f"Cannot enforce operator {intermediate_op} with pg_hint_plan. Ignoring additional hints",
+                    f"Cannot enforce operator {intermediate_op} with pg_hint_plan. Ignoring this hint",
                     category=HintWarning,
                 )
                 continue
@@ -2190,10 +2122,13 @@ def _extract_plan_join_order(plan: QueryPlan) -> str:
 
 
 def _generate_pglab_plan(
-    plan: QueryPlan, *, hints: list[str], in_upperrel: bool, used_parallel: bool
+    plan: QueryPlan,
+    *,
+    hints: list[str],
+    in_upperrel: bool,
+    used_parallel: bool,
+    initial: bool = False,
 ) -> Hint:
-    initial = not hints
-
     if in_upperrel and plan.is_join():
         # We found the first join in our query plan. We can now generate the join order hint!
         join_order = _extract_plan_join_order(plan)
@@ -2204,11 +2139,11 @@ def _generate_pglab_plan(
         # the switch
         in_upperrel = False
 
-    if plan.operator is not None:
-        op = PGLabOptimizerHints[plan.operator]
+    operator = PGLabOptimizerHints.get(plan.operator)
+    if operator:
         intermediate = " ".join(tab.identifier() for tab in plan.tables())
         if plan.parallel_workers and not used_parallel:
-            hint = f"{op}({intermediate} (workers={plan.parallel_workers}))"
+            hint = f"{operator}({intermediate} (workers={plan.parallel_workers}))"
             used_parallel = True
         elif plan.parallel_workers and used_parallel:
             warnings.warn(
@@ -2216,11 +2151,11 @@ def _generate_pglab_plan(
                 category=HintWarning,
             )
         else:
-            hint = f"{op}({intermediate})"
+            hint = f"{operator}({intermediate})"
         hints.append(hint)
 
         card = plan.actual_cardinality or plan.estimated_cardinality
-        if card:
+        if card and plan.operator not in IntermediateOperator:
             hints.append(f"Card({intermediate} #{card})")
     elif in_upperrel and plan.parallel_workers and not used_parallel:
         hints.append(f"Result(workers={plan.parallel_workers})")
@@ -2354,7 +2289,7 @@ class PostgresHintService(HintService):
                 )
             case "pg_lab" if plan is not None:
                 hints = _generate_pglab_plan(
-                    plan, hints=[], in_upperrel=True, used_parallel=False
+                    plan, hints=[], in_upperrel=True, used_parallel=False, initial=True
                 )
             case "pg_lab":
                 hints = _generate_pglab_hints(
