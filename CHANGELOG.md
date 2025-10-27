@@ -71,6 +71,8 @@ to simplify the public API and make PostBOUND much easier to use, especially for
 - [ 🐘 ] The parallel query executor now supports optional callbacks
 
 ### 💀 Breaking changes
+- The minimum required Python version is now 3.12. This enables us to use lazy_load to improve the usage of pre-defined
+  optimization strategies (see above).
 - Removed the `workloads_base_dir` global variable. Pre-defined workloads are now automatically downloaded on demand and cached
   locally.
 - Integrated the `CardinalityGenerator` directly into the `CardinalityEstimator` interface. Each `CardinalityEstimator` can

@@ -8,7 +8,7 @@ version = "0.18.0"
 authors = [{ name = "Rico Bergmann", email = "rico.bergmann1@tu-dresden.de" }]
 description = "PostBOUND is an adaptable framework to implement and evaluate database query optimizers"
 readme = "README.md"
-requires-python = ">=3.10"
+requires-python = ">=3.12"
 classifiers = [
     "Programming Language :: Python :: 3",
     "License :: OSI Approved :: Apache Software License",
@@ -16,25 +16,25 @@ classifiers = [
     "Operating System :: OS Independent",
 ]
 dependencies = [
+    "lazy-loader==0.4",
     "levenshtein==0.27.1",
     "natsort==8.4.0",
-    "networkx==3.3",
-    "numpy==2.2.3",
-    "pandas==2.2.3",
-    "pglast==7.2",
-    "psycopg[binary]==3.2.9",
-    "tomli==2.0.1",
-    "tqdm==4.66.5",
+    "networkx==3.5",
+    "numpy==2.3.4",
+    "pandas==2.3.3",
+    "pglast==7.10",
+    "psycopg[binary]==3.2.12",
+    "tqdm==4.67.1",
 ]
 
 [project.optional-dependencies]
 vis = [
-    "matplotlib==3.10.1",
+    "matplotlib==3.10.7",
     "seaborn==0.13.2",
-    "graphviz==0.20.3",
+    "graphviz==0.21",
 ]
 mysql = [
-    "mysql-connector-python==9.0.0"
+    "mysql-connector-python==9.5.0"
 ]
 
 

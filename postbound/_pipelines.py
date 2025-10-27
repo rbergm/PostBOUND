@@ -8,7 +8,7 @@ the smallest common denominator among all pipeline implementations.
 from __future__ import annotations
 
 import abc
-from typing import Optional, Protocol
+from typing import Optional, Protocol, Self
 
 from ._hints import PhysicalOperatorAssignment, PlanParameterization
 from ._qep import QueryPlan
@@ -32,6 +32,7 @@ from ._validation import (
 from .db._db import Database, DatabasePool
 from .qal._qal import SqlQuery
 from .util._errors import StateError
+from .util.jsonize import jsondict
 
 
 class OptimizationPipeline(abc.ABC):
@@ -148,16 +149,16 @@ class OptimizationPipeline(abc.ABC):
         raise NotImplementedError
 
     @abc.abstractmethod
-    def describe(self) -> dict:
+    def describe(self) -> jsondict:
         """Generates a description of the current pipeline configuration.
 
         This description is intended to transparently document which optimization strategies have been selected and
-        how they have been instantiated. It can be JSON-serialized and will be included by most of the output of the
-        utilities in the `runner` module of the `experiments` package.
+        how they have been instantiated. It can be JSON-serialized and will be included in the output of the benchmarking
+        utilities.
 
         Returns
         -------
-        dict
+        jsondict
             The actual description
         """
         raise NotImplementedError
@@ -221,7 +222,7 @@ class IntegratedOptimizationPipeline(OptimizationPipeline):
 
     def setup_optimization_algorithm(
         self, algorithm: CompleteOptimizationAlgorithm
-    ) -> IntegratedOptimizationPipeline:
+    ) -> Self:
         """Configures the pipeline to use the given optimization algorithm.
 
         Parameters
@@ -238,7 +239,7 @@ class IntegratedOptimizationPipeline(OptimizationPipeline):
         self._optimization_algorithm = algorithm
         return self
 
-    def build(self) -> IntegratedOptimizationPipeline:
+    def build(self) -> Self:
         """Constructs the optimization pipeline.
 
         This includes checking the selected optimization algorithm for compatibility with the `target_db`. Afterwards, the
@@ -282,7 +283,7 @@ class IntegratedOptimizationPipeline(OptimizationPipeline):
     def target_database(self) -> Database:
         return self._target_db
 
-    def describe(self) -> dict:
+    def describe(self) -> jsondict:
         algorithm_description = (
             self._optimization_algorithm.describe()
             if self._optimization_algorithm is not None
@@ -343,9 +344,7 @@ class TextBookOptimizationPipeline(OptimizationPipeline):
     def target_database(self) -> Database:
         return self._target_db
 
-    def setup_cardinality_estimator(
-        self, estimator: CardinalityEstimator
-    ) -> TextBookOptimizationPipeline:
+    def setup_cardinality_estimator(self, estimator: CardinalityEstimator) -> Self:
         """Configures the cardinality estimator of the optimizer.
 
         Setting a new algorithm requires the pipeline to be build again.
@@ -364,7 +363,7 @@ class TextBookOptimizationPipeline(OptimizationPipeline):
         self._card_est = estimator
         return self
 
-    def setup_cost_model(self, cost_model: CostModel) -> TextBookOptimizationPipeline:
+    def setup_cost_model(self, cost_model: CostModel) -> Self:
         """Configures the cost model of the optimizer.
 
         Setting a new algorithm requires the pipeline to be build again.
@@ -383,9 +382,7 @@ class TextBookOptimizationPipeline(OptimizationPipeline):
         self._cost_model = cost_model
         return self
 
-    def setup_plan_enumerator(
-        self, plan_enumerator: PlanEnumerator
-    ) -> TextBookOptimizationPipeline:
+    def setup_plan_enumerator(self, plan_enumerator: PlanEnumerator) -> Self:
         """Configures the plan enumerator of the optimizer.
 
         Setting a new algorithm requires the pipeline to be build again.
@@ -404,9 +401,7 @@ class TextBookOptimizationPipeline(OptimizationPipeline):
         self._plan_enumerator = plan_enumerator
         return self
 
-    def use(
-        self, component: PlanEnumerator | CostModel | CardinalityEstimator
-    ) -> TextBookOptimizationPipeline:
+    def use(self, component: PlanEnumerator | CostModel | CardinalityEstimator) -> Self:
         """Shortcut method to setup the pipeline. Delegates to the appropriate setup_XXX method."""
         match component:
             case PlanEnumerator():
@@ -418,7 +413,7 @@ class TextBookOptimizationPipeline(OptimizationPipeline):
             case _:
                 raise TypeError(f"Unsupported component type: {type(component)}")
 
-    def build(self) -> TextBookOptimizationPipeline:
+    def build(self) -> Self:
         """Constructs the optimization pipeline.
 
         This includes checking all strategies for compatibility with the `target_db`. Afterwards, the pipeline is ready to
@@ -464,7 +459,7 @@ class TextBookOptimizationPipeline(OptimizationPipeline):
             query, cardinality_estimator=self._card_est, cost_model=self._cost_model
         )
 
-    def describe(self) -> dict:
+    def describe(self) -> jsondict:
         return {
             "name": "textbook_pipeline",
             "database_system": self._target_db.describe(),
@@ -611,9 +606,7 @@ class MultiStageOptimizationPipeline(OptimizationPipeline):
         """
         return self._plan_parameterization
 
-    def setup_query_support_check(
-        self, check: OptimizationPreCheck
-    ) -> MultiStageOptimizationPipeline:
+    def setup_query_support_check(self, check: OptimizationPreCheck) -> Self:
         """Configures the pre-check that should be executed for each query.
 
         This check will be combined with any additional checks that are required by the actual optimization strategies.
@@ -633,9 +626,7 @@ class MultiStageOptimizationPipeline(OptimizationPipeline):
         self._build = False
         return self
 
-    def setup_join_order_optimization(
-        self, enumerator: JoinOrderOptimization
-    ) -> MultiStageOptimizationPipeline:
+    def setup_join_order_optimization(self, enumerator: JoinOrderOptimization) -> Self:
         """Configures the pipeline to obtain an optimized join order.
 
         The actual strategy can either produce a purely logical join order, or an initial physical query execution plan
@@ -660,7 +651,7 @@ class MultiStageOptimizationPipeline(OptimizationPipeline):
 
     def setup_physical_operator_selection(
         self, selector: PhysicalOperatorSelection
-    ) -> MultiStageOptimizationPipeline:
+    ) -> Self:
         """Configures the algorithm to assign physical operators to the query.
 
         This algorithm receives the input query as well as the join order (if there is one) as input. In a special
@@ -683,9 +674,7 @@ class MultiStageOptimizationPipeline(OptimizationPipeline):
         self._build = False
         return self
 
-    def setup_plan_parameterization(
-        self, param_generator: ParameterGeneration
-    ) -> MultiStageOptimizationPipeline:
+    def setup_plan_parameterization(self, param_generator: ParameterGeneration) -> Self:
         """Configures the algorithm to parameterize the query plan.
 
         This algorithm receives the input query as well as the join order and the physical operators (if those have
@@ -712,7 +701,7 @@ class MultiStageOptimizationPipeline(OptimizationPipeline):
         component: JoinOrderOptimization
         | PhysicalOperatorSelection
         | ParameterGeneration,
-    ) -> MultiStageOptimizationPipeline:
+    ) -> Self:
         """Shortcut method to setup the pipeline. Delegates to the appropriate setup_XXX method."""
         match component:
             case JoinOrderOptimization():
@@ -724,9 +713,7 @@ class MultiStageOptimizationPipeline(OptimizationPipeline):
             case _:
                 raise TypeError(f"Unsupported component type: {type(component)}")
 
-    def load_settings(
-        self, optimization_settings: OptimizationSettings
-    ) -> MultiStageOptimizationPipeline:
+    def load_settings(self, optimization_settings: OptimizationSettings) -> Self:
         """Applies all the optimization settings from a pre-defined optimization strategy to the pipeline.
 
         This is just a shorthand method to skip calling all setup methods individually for a fixed combination of
@@ -760,7 +747,7 @@ class MultiStageOptimizationPipeline(OptimizationPipeline):
         self._build = False
         return self
 
-    def build(self) -> MultiStageOptimizationPipeline:
+    def build(self) -> Self:
         """Constructs the optimization pipeline.
 
         This includes filling all undefined optimization steps with empty strategies and checking all strategies for
@@ -835,7 +822,7 @@ class MultiStageOptimizationPipeline(OptimizationPipeline):
             plan_parameters=plan_parameters,
         )
 
-    def describe(self) -> dict:
+    def describe(self) -> jsondict:
         return {
             "name": "multi_stage_pipeline",
             "database_system": self._target_db.describe(),
@@ -939,9 +926,7 @@ class IncrementalOptimizationPipeline(OptimizationPipeline):
         self._ensure_pipeline_integrity(initial_plan_generator=plan_generator)
         self._initial_plan_generator = plan_generator
 
-    def add_optimization_step(
-        self, next_step: IncrementalOptimizationStep
-    ) -> IncrementalOptimizationPipeline:
+    def add_optimization_step(self, next_step: IncrementalOptimizationStep) -> Self:
         """Expands the optimization pipeline by another stage.
 
         The given step will be applied at the end of the pipeline. The very first optimization steps receives an
@@ -976,7 +961,7 @@ class IncrementalOptimizationPipeline(OptimizationPipeline):
             current_plan = optimization_step.optimize_query(query, current_plan)
         return current_plan
 
-    def describe(self) -> dict:
+    def describe(self) -> jsondict:
         return {
             "name": "incremental_pipeline",
             "database_system": self._target_db.describe(),

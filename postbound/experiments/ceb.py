@@ -18,11 +18,11 @@ from __future__ import annotations
 import collections
 import pathlib
 import random
+import tomllib
 from collections.abc import Iterable
 from typing import Any, Literal, NewType, Optional
 
 import numpy as np
-import tomli
 
 from ..db import postgres
 from ..db._db import Database
@@ -682,7 +682,7 @@ def _parse_template_toml(
     """Generates a full query template instance based on its TOML description."""
     contents = {}
     with open(path, "rb") as toml_file:
-        contents = tomli.load(toml_file)
+        contents = tomllib.load(toml_file)
 
     query_template = QueryTemplate(
         TemplatedQuery(contents["base_sql"]["sql"]),
