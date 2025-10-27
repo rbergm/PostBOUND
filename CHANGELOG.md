@@ -8,48 +8,12 @@ stability. Since we are not ready for the 1.0 release yet, this does not matter 
 
 ---
 
-# ➡ Version 0.17.3 _(current)_
-
-## 🐣 New features
-- 🐘 Added `start()`, `stop()` and `is_running()` functions to manage a local Postgres server
-- 🐘 Added `data_dir()` function to retrieve the data directory of the Postgres server
-- 🐘 The parallel query executor now supports optional callbacks
-
-# 💀 Breaking changes
-- _None_
-
-## 📰 Updates
-- The `to_json()` utility now handles `Path` objects
-- 🐘 Calling  `connect()` now also supports a _Path_-typed param for the config file
-
-## 🏥 Fixes
-- 🐳 Fixed Docker setup when a vanilla Postgres is configured instead of pg_lab
-- 🐘 Fixed Postgres setup with very old server releases (12.4 specifically)
-- 🦆 Fixed DuckDB schema interface using a broken cursor variable
-- 🦆 Fixed query execution with timeouts on DuckDB failing on MacOS. It seems that the DuckDB connection is only pickle-able
-  on Linux-based systems.
-
-## 🪲 Known bugs
-- The automatic optimization of the Postgres server configuration as part of the Docker installation does not work on MacOS
-
----
-
-
-# 🛣 Roadmap
-
-Currently, we plan to implement the following features in the future (in no particular order):
-
-- Providing a Substrait export for query plans
-- Better benchmarking setup, mostly focused on comparing one or multiple optimization pipelines and creating better experiment
-  logs and the ability to cancel/resume long-running benchmarks
-- Adding popular optimization algorithms to the collection of pre-defined optimizers
-
-## ➡ Version 0.18.0 _(planned)_
+# ➡ Version 0.18.0 _(current)_
 
 This is a pretty large release with lots of new features and changes, some of them breaking. Generally, this release tries
 to simplify the public API and make PostBOUND much easier to use, especially for newcomers.
 
-### 🐣 New features
+## 🐣 New features
 - Eliminated the need to store workload queries directly in the Git repository. Instead, workloads are now
   downloaded on demand and cached locally. This drastically reduces the size of the PostBOUND repository and makes it
   easier to add new workloads in the future. The access functions for pre-defined workloads (e.g. `workloads.job()`) remain
@@ -70,7 +34,7 @@ to simplify the public API and make PostBOUND much easier to use, especially for
 - [ 🐘 ] Added a `logfile()` method to the Postgres interface to retrieve the log file of a local Postgres server
 - [ 🐘 ] The parallel query executor now supports optional callbacks
 
-### 💀 Breaking changes
+## 💀 Breaking changes
 - The minimum required Python version is now 3.12. This enables us to use lazy_load to improve the usage of pre-defined
   optimization strategies (see above).
 - Removed the `workloads_base_dir` global variable. Pre-defined workloads are now automatically downloaded on demand and cached
@@ -89,7 +53,7 @@ to simplify the public API and make PostBOUND much easier to use, especially for
 - Renamed the attributes of `PlanParameterization` to be more succint
 - [ 🐘 ] Migrate to Meson/Ninja for Postgres setup. This seems more stable/reliable across platforms overall (especially MacOS).
 
-### 📰 Updates
+## 📰 Updates
 - Much improved detection of Postgres hinting backends, especially for recent Postgres versions
 - `execute_workload()` and `optimize_and_execute_workload()` no longer break for any error during query execution. Instead,
   the error is logged to the output file and the execution continues with the next query. This behavior can be controlled
@@ -99,7 +63,7 @@ to simplify the public API and make PostBOUND much easier to use, especially for
   database. E.g., if the textbook is setup for a Postgres database that has nested-loop joins disabled, the enumerator will
   also disable these joins.
 
-### 🏥 Fixes
+## 🏥 Fixes
 - Many smaller fixes throughout the codebase, but especially to Postgres hint generation and query plans
 - [ 🦆 ] Fixed DuckDB performance regressions when executing query with timeout
 - [ 🦆 ] Fixed DuckDB schema interface using a broken cursor variable
@@ -109,13 +73,52 @@ to simplify the public API and make PostBOUND much easier to use, especially for
 - [ 🦆 ] Fixed query execution with timeouts on DuckDB failing on MacOS. It seems that the DuckDB connection is only pickle-able
   on Linux-based systems.
 
-### 🪲 Known bugs
+## 🪲 Known bugs
 - [ 🐘 🍏 ] The automatic optimization of the Postgres server configuration as part of the Docker installation does not work on
   MacOS
 
 ---
 
+
+# 🛣 Roadmap
+
+Currently, we plan to implement the following features in the future (in no particular order):
+
+- Providing a Substrait export for query plans
+- Better benchmarking setup, mostly focused on comparing one or multiple optimization pipelines and creating better experiment
+  logs and the ability to cancel/resume long-running benchmarks
+- Adding popular optimization algorithms to the collection of pre-defined optimizers
+
+---
+
 # 🕑 Past versions
+
+## 🕑 Version 0.17.3
+
+### 🐣 New features
+- 🐘 Added `start()`, `stop()` and `is_running()` functions to manage a local Postgres server
+- 🐘 Added `data_dir()` function to retrieve the data directory of the Postgres server
+- 🐘 The parallel query executor now supports optional callbacks
+
+## 💀 Breaking changes
+- _None_
+
+### 📰 Updates
+- The `to_json()` utility now handles `Path` objects
+- 🐘 Calling  `connect()` now also supports a _Path_-typed param for the config file
+
+### 🏥 Fixes
+- 🐳 Fixed Docker setup when a vanilla Postgres is configured instead of pg_lab
+- 🐘 Fixed Postgres setup with very old server releases (12.4 specifically)
+- 🦆 Fixed DuckDB schema interface using a broken cursor variable
+- 🦆 Fixed query execution with timeouts on DuckDB failing on MacOS. It seems that the DuckDB connection is only pickle-able
+  on Linux-based systems.
+
+### 🪲 Known bugs
+- The automatic optimization of the Postgres server configuration as part of the Docker installation does not work on MacOS
+
+---
+
 
 ## 🕑 Version 0.17.2
 
