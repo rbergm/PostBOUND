@@ -4,15 +4,16 @@ from __future__ import annotations
 
 import functools
 from collections.abc import Callable, Sequence
-from typing import Literal, Optional
+from typing import Literal, Optional, overload
 
 import graphviz as gv
 import networkx as nx
 
-from .. import db, util
+from .. import util
 from .._core import TableReference
 from .._jointree import JoinTree, LogicalJoinTree
 from .._qep import QueryPlan
+from ..db._db import Database, DatabasePool
 from ..optimizer._joingraph import JoinGraph
 from ..qal import relalg, transform
 from ..qal._qal import SqlQuery
@@ -39,6 +40,7 @@ def _join_tree_traversal(node: JoinTree) -> Sequence[JoinTree]:
 
 
 def plot_join_tree(join_tree: JoinTree) -> gv.Graph:
+    """Creates a Graphviz visualization of a join tree."""
     if not join_tree:
         return gv.Graph()
     return trees.plot_tree(join_tree, _join_tree_labels, _join_tree_traversal)
@@ -56,7 +58,7 @@ def _render_pk_fk_join_edge(
     join_table: TableReference,
     partner_table: TableReference,
 ) -> None:
-    db_schema = db.DatabasePool.get_instance().current_database().schema()
+    db_schema = DatabasePool.get_instance().current_database().schema()
     join_predicate = query.predicates().joins_between(join_table, partner_table)
     if not join_predicate:
         return _fallback_default_join_edge(graph, join_table, partner_table)
@@ -135,6 +137,26 @@ def plot_join_graph(
     out_path: str = "",
     out_format: str = "svg",
 ) -> gv.Graph | gv.Digraph:
+    """Creates a Graphviz visualization of a join graph.
+
+    The join graph can be either supplied directly (in which case it will be visualized as a directed graph), or implicitly
+    through its SQL query. In this case, the join graph is inferred based on the join conditions. Such a graph can be further
+    customized to also highlight primary-key/foreign-key relationships as a directed graph.
+
+    The directed graph variants will point from the foreign key table to the primary key table.
+
+    To customize the information shown on each table node, a custom `table_annotations` function can be provided. Several such
+    functions for common annotations are already provided in this module. Annotation functions have a very simple signature:
+    they take the table currently being rendered as input and return a string containing the metadata to be shown on the node.
+    To add additional context to these methods, it is advisable to use `functools.partial` to bind additional parameters.
+
+    See Also
+    --------
+    estimated_cards
+    annotate_filter_cards
+    annotate_cards
+    merged_annotation
+    """
     if isinstance(query_or_join_graph, SqlQuery):
         graph = _plot_join_graph_from_query(
             query_or_join_graph, table_annotations, include_pk_fk_joins
@@ -153,12 +175,31 @@ def plot_join_graph(
 
 
 def estimated_cards(
-    table: TableReference, *, query: SqlQuery, database: Optional[db.Database] = None
+    table: TableReference, *, query: SqlQuery, database: Optional[Database] = None
 ) -> str:
+    """Annotates the nodes of a join graph with estimated cardinalities.
+
+    Estimated cardinalities are obtained by asking the actual query optimizer from the `database`. Usually, they are calculated
+    after all matching filter predicates have been applied.
+
+    Parameters
+    ----------
+    table : TableReference
+        The table to estimate
+    query : SqlQuery
+        The SQL query being optimized. This is required to infer all filter predicates
+    database : Optional[Database], optional
+        The database whose optimizer is used to estimate the cardinalities. If `None`, the current database from the
+        `DatabasePool` is used.
+
+    See Also
+    --------
+    plot_join_graph
+    """
     database = (
         database
         if database is not None
-        else db.DatabasePool.get_instance().current_database()
+        else DatabasePool.get_instance().current_database()
     )
     filter_query = transform.extract_query_fragment(query, [table])
     filter_query = transform.as_star_query(filter_query)
@@ -167,12 +208,30 @@ def estimated_cards(
 
 
 def annotate_filter_cards(
-    table: TableReference, *, query: SqlQuery, database: Optional[db.Database] = None
+    table: TableReference, *, query: SqlQuery, database: Optional[Database] = None
 ) -> str:
+    """Annotates the nodes of a join graph with true cardinalities *after* filters.
+
+    Cardinalities are calculated by issuing actual *count(\\*)* queries to the `database`. All applicable filter
+    predicates are included in the query.
+
+    Parameters
+    ----------
+    table : TableReference
+        The table to estimate
+    query : SqlQuery
+        The SQL query being optimized. This is required to infer all filter predicates
+    database : Optional[Database], optional
+        The database to calculate the cardinalities on. If `None`, the current database from the `DatabasePool` is used.
+
+    See Also
+    --------
+    plot_join_graph
+    """
     database = (
         database
         if database is not None
-        else db.DatabasePool.get_instance().current_database()
+        else DatabasePool.get_instance().current_database()
     )
     filter_query = transform.extract_query_fragment(query, [table])
     count_query = transform.as_count_star_query(filter_query)
@@ -181,12 +240,32 @@ def annotate_filter_cards(
 
 
 def annotate_cards(
-    table: TableReference, *, query: SqlQuery, database: Optional[db.Database] = None
+    table: TableReference, *, query: SqlQuery, database: Optional[Database] = None
 ) -> str:
+    """Annotates the nodes of a join graph with true cardinalities before and after filters.
+
+    Cardinalities are calculated by issuing actual *count(\\*)* queries to the database. Two values are reported: the total
+    cardinality of the table (before filters) and the cardinality after applying all applicable filter predicates from the
+    query.
+
+
+    Parameters
+    ----------
+    table : TableReference
+        The table to estimate
+    query : SqlQuery
+        The SQL query being optimized. This is required to infer all filter predicates
+    database : Optional[Database], optional
+        The database to calculate the cardinalities on. If `None`, the current database from the `DatabasePool` is used.
+
+    See Also
+    --------
+    plot_join_graph
+    """
     database = (
         database
         if database is not None
-        else db.DatabasePool.get_instance().current_database()
+        else DatabasePool.get_instance().current_database()
     )
     filter_query = transform.extract_query_fragment(query, [table])
     count_query = transform.as_count_star_query(filter_query)
@@ -197,9 +276,27 @@ def annotate_cards(
     return f"|R| = {total_card} |σ(R)| = {filter_card}"
 
 
-def merged_annotation(*annotations) -> Callable[[TableReference], str]:
-    def _merger(table: TableReference) -> str:
-        return "\n".join(annotator(table) for annotator in annotations)
+@overload
+def merged_annotation(
+    *annotations: Callable[[TableReference], str],
+) -> Callable[[TableReference], str]:
+    """Combines multiple annotation functions for join graphs into a single one."""
+    ...
+
+
+@overload
+def merged_annotation(
+    *annotations: Callable[[QueryPlan], str],
+) -> Callable[[QueryPlan], str]:
+    """Combines multiple annotation functions for query plans into a single one."""
+    ...
+
+
+def merged_annotation(
+    *annotations: Callable[[TableReference], str] | Callable[[QueryPlan], str],
+) -> Callable[[TableReference], str] | Callable[[QueryPlan], str]:
+    def _merger(node: TableReference | QueryPlan) -> str:
+        return "\n".join(annotator(node) for annotator in annotations)
 
     return _merger
 
@@ -207,24 +304,21 @@ def merged_annotation(*annotations) -> Callable[[TableReference], str]:
 def setup_annotations(
     *annotations: Literal["estimated-cards", "filter-cards", "true-cards"],
     query: SqlQuery,
-    database: Optional[db.Database] = None,
+    database: Optional[Database] = None,
 ) -> Callable[[TableReference], str]:
-    annotators = []
+    """Annotates the nodes of a join graph with different cardinality estimates."""
+    annotation_fns = {
+        "estimated-cards": estimated_cards,
+        "filter-cards": annotate_filter_cards,
+        "true-cards": annotate_cards,
+    }
+
+    annotators: list[Callable[[TableReference], str]] = []
     for annotator in annotations:
-        if annotator == "estimated-cards":
-            annotators.append(
-                functools.partial(estimated_cards, query=query, database=database)
-            )
-        elif annotator == "filter-cards":
-            annotators.append(
-                functools.partial(annotate_filter_cards, query=query, database=database)
-            )
-        elif annotator == "true-cards":
-            annotators.append(
-                functools.partial(annotate_cards, query=query, database=database)
-            )
-        else:
-            raise ValueError(f"Unknown annotator: '{annotator}'")
+        fn = annotation_fns.get(annotator)
+        if not fn:
+            raise ValueError(f"Unknown annotation: {annotator}")
+        annotators.append(functools.partial(fn, query=query, database=database))
 
     if not annotators:
         raise ValueError("No annotator given")
@@ -279,6 +373,12 @@ def _query_plan_traversal(
 
 
 def annotate_estimates(node: QueryPlan) -> str:
+    """Annotates the nodes of a query plan with estimated cost and cardinality.
+
+    See Also
+    --------
+    plot_query_plan
+    """
     return f"cost={node.estimated_cost} cardinality={node.estimated_cardinality}"
 
 
@@ -289,6 +389,23 @@ def plot_query_plan(
     skip_intermediates: bool = False,
     **kwargs,
 ) -> gv.Graph:
+    """Creates a Graphviz visualization of a query plan.
+
+    By default, each node is just annotated with its operator type and base table (for scans). To add additional information
+    (e.g., estimated or true cardinality), a custom `annotation_generator` function can be provided. Such a function takes the
+    current `QueryPlan` node as input and returns a string containing the metadata to be shown on the node. Since this
+    signature is quite simple, it is advisable to use `functools.partial` to bind additional parameters to the function.
+    This module already provides the most common annotation function: `annotate_estimates`, which adds estimated cost and
+    cardinality.
+
+    For EXPLAIN ANALYZE plans (i.e. plans containing runtime information), the `plot_analyze_plan` function has as meaningful
+    default annotation generator.
+
+    See Also
+    --------
+    annotate_estimates
+    plot_analyze_plan
+    """
     if not plan:
         return gv.Graph()
     return trees.plot_tree(
@@ -313,6 +430,11 @@ def _explain_analyze_annotations(node: QueryPlan) -> str:
 def plot_analyze_plan(
     plan: QueryPlan, *, skip_intermediates: bool = False, **kwargs
 ) -> gv.Graph:
+    """Creates a Graphviz visualization of an EXPLAIN ANALYZE query plan.
+
+    This is a convenience wrapper around `plot_query_plan` that uses a default annotation generator suitable for showing
+    runtime information contained in EXPLAIN ANALYZE plans.
+    """
     if not plan:
         return gv.Graph()
     return trees.plot_tree(
@@ -401,6 +523,10 @@ def _relalg_child_traversal(node: relalg.RelNode) -> Sequence[relalg.RelNode]:
 
 
 def plot_relalg(relnode: relalg.RelNode, **kwargs) -> gv.Graph:
+    """Creates a Graphviz visualization of a relational algebra expression tree.
+
+    Additional keyword arguments are passed to `plot_tree`.
+    """
     return trees.plot_tree(
         relnode,
         _relalg_node_labels,
