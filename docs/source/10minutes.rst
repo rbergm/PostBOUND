@@ -178,15 +178,15 @@ It produces a pandas DataFrame with the results of the executed queries:
 .. ipython:: python
     :okwarning:
 
-    results = pb.execute_workload(stats.first(3), pg_instance)
+    results = pb.bench.execute_workload(stats.first(3), pg_instance)
     results
 
 If you want to export the results to a CSV file, you can use
-:func:`prepare_export() <postbound.experiments.bench.prepare_export>` to serialize all columns to JSON as necessary.
+:func:`prepare_export() <postbound.bench.prepare_export>` to serialize all columns to JSON as necessary.
 Even simpler, you can pass a file to the *progressive_output* parameter to automatically flush all results to disk as soon as
 they arrive.
 
-The :class:`QueryPreparation <postbound.experiments.bench.QueryPreparation>` enables you to customize the
+The :class:`QueryPreparation <postbound.bench.QueryPreparation>` enables you to customize the
 execution of the queries.
 For example, you can ensure that all queries are executed as *EXPLAIN ANALYZE* to capture their query plans, or you can
 prewarm the shared buffer before execution to ensure that timing measurements are not affected by I/O activity.

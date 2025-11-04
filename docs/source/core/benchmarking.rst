@@ -10,7 +10,7 @@ amount of boilerplate required by researchers.
 Benchmarking Functions
 ----------------------
 
-The fundamental benchmarking function is :func:`~postbound.experiments.bench.execute_workload`.
+The fundamental benchmarking function is :func:`~postbound.bench.execute_workload`.
 It runs a collection of benchmark queries on a database system, optionally passing all queries through an
 :doc:`OptimizationPipeline <optimization>`.
 The results are provided as a standard
@@ -18,13 +18,13 @@ The results are provided as a standard
 analysis or to pass into other data science tools such as `Matplotlib <https://matplotlib.org/>`_.
 
 .. tip::
-    To export the benchmark results in a CSV file, make sure to call :func:`~postbound.experiments.bench.prepare_export`
+    To export the benchmark results in a CSV file, make sure to call :func:`~postbound.bench.prepare_export`
     first. This function handles the conversion of all complex objects to an equivalent JSON representation that can be
     easily deserialized later on.
     Even simpler, you can pass a file to the *progressive_output* parameter to automatically flush all results to disk as soon
     as they arrive.
 
-    The :func:`~postbound.experiments.bench.execute_workload` provides many different features available to customize the
+    The :func:`~postbound.bench.execute_workload` provides many different features available to customize the
     benchmarking process. Make sure to check the different parameters to get an overview.
 
 
@@ -37,7 +37,7 @@ applied to each database system or to each individual query just before it is ex
 be used to execute all queries as *EXPLAIN ANALYZE* to capture the query plans along with important runtime statistics.
 Likewise, the shared buffer of the database system can be modified to simulate a perfectly prepared page cache which
 prevents disk I/O from influencing the overall query execution time (i.e. a hot-start experiment).
-All of these modifications are specified in the :class:`~postbound.experiments.bench.QueryPreparation`.
+All of these modifications are specified in the :class:`~postbound.bench.QueryPreparation`.
 Note that for the pre-warming of the shared buffer to work, the target database system needs to support it. This is
 indicated by the :class:`~postbound.db.PrewarmingSupport` protocol. All database interfaces that allow simulated hot starts
 implement this protocol. Notably, this includes the Postgres interface.
