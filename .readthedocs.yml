@@ -17,6 +17,8 @@ build:
       - pkg-config
       - llvm
       - clang
+      - meson
+      - ninja-build
       - libreadline-dev
       - libssl-dev
       - libicu-dev
