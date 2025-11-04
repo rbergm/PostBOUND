@@ -739,6 +739,9 @@ class PostgresInterface(Database):
 
         schema_info: list[jsondict] = []
         for table in self._db_schema.tables():
+            if table.full_name.startswith("pg_"):
+                continue  # skip system tables
+
             column_info: list[jsondict] = []
 
             for column in self._db_schema.columns(table):

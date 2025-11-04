@@ -89,7 +89,26 @@ Currently, we plan to implement the following features in the future (in no part
   logs and the ability to cancel/resume long-running benchmarks
 - Adding popular optimization algorithms to the collection of pre-defined optimizers
 
+## ⏳ Version 0.18.1 _(upcoming)_
+
+### 🐣 New features
+- _None_
+
+## 💀 Breaking changes
+- _None_
+
+### 📰 Updates
+- _None_
+
+### 🏥 Fixes
+- Fixed `describe()` on the Postgres interface not working for Postgres 18. We now ignore all system catalog tables.
+
+### 🪲 Known bugs
+- The automatic optimization of the Postgres server configuration as part of the Docker installation does not work on MacOS.
+  Currently, this should be considered as wontfix.
+
 ---
+
 
 # 🕑 Past versions
 
