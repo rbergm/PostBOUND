@@ -412,7 +412,7 @@ class NativeCardinalityEstimator(CardinalityEstimator):
     """Obtains the cardinality of a query plan by using the cardinality estimator of an actual database system."""
 
     def __init__(self, target_db: Optional[Database] = None) -> None:
-        super().__init__(True)
+        super().__init__(allow_cross_products=True)
         self._target_db: Optional[Database] = target_db
 
     def calculate_estimate(

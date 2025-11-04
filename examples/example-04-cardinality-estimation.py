@@ -23,7 +23,7 @@ class JitteringCardinalityEstimator(pb.CardinalityEstimator):
     # optimization stage.
 
     def __init__(self, native_optimizer: pb.db.OptimizerInterface) -> None:
-        super().__init__(False)
+        super().__init__(allow_cross_products=False)
         self.native_optimizer = native_optimizer
 
     def calculate_estimate(

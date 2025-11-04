@@ -49,7 +49,7 @@ class PreciseCardinalityHintGenerator(CardinalityEstimator):
         enable_cache: bool = False,
         allow_cross_products: bool = False,
     ) -> None:
-        super().__init__(allow_cross_products)
+        super().__init__(allow_cross_products=allow_cross_products)
         self.database = (
             database
             if database is not None
@@ -156,7 +156,7 @@ class PreComputedCardinalities(CardinalityEstimator):
         live_fallback_style: Literal["actual", "estimated"] = "estimated",
         save_live_fallback_results: bool = True,
     ) -> None:
-        super().__init__(include_cross_products)
+        super().__init__(allow_cross_products=include_cross_products)
         self._workload = workload
         self._label_col = label_col
         self._tables_col = tables_col
@@ -336,7 +336,7 @@ class CardinalityDistortion(CardinalityEstimator):
         *,
         distortion_strategy: Literal["fixed", "random"] = "fixed",
     ) -> None:
-        super().__init__(estimator.allow_cross_products)
+        super().__init__(allow_cross_products=estimator.allow_cross_products)
         self.estimator = estimator
         self.distortion_factor = distortion_factor
         self.distortion_strategy = distortion_strategy

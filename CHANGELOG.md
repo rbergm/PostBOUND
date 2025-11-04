@@ -102,6 +102,8 @@ Currently, we plan to implement the following features in the future (in no part
 
 ### 🏥 Fixes
 - Fixed `describe()` on the Postgres interface not working for Postgres 18. We now ignore all system catalog tables.
+- Fixed regression affecting the pre-defined cardinality estimators after the unification of the `CardinalityGenerator` and
+  `CardinalityEstimator` interfaces.
 
 ### 🪲 Known bugs
 - The automatic optimization of the Postgres server configuration as part of the Docker installation does not work on MacOS.
