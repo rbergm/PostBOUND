@@ -120,6 +120,7 @@ As a consequence, PostBOUND requires a connection to a database system for much 
 For Postgres, you can connect to the database like so:
 
 .. ipython:: python
+    :okwarning:
 
     pg_instance = pb.postgres.connect(config_file=".psycopg_connection")
     pg_instance

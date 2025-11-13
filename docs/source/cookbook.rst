@@ -5,6 +5,7 @@ The cookbook demonstrates how to perform certain, frequently used patterns.
 Throughout the examples, we use the following setup:
 
 .. ipython:: python
+    :okwarning:
 
     import postbound as pb
     pg_instance = pb.postgres.connect(config_file=".psycopg_connection")

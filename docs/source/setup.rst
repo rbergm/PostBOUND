@@ -130,6 +130,7 @@ and alternative ways to establish a connection.
 Now, you should be able to connect to the Postgres server using the following code:
 
 .. ipython:: python
+    :okwarning:
 
     import postbound as pb
     pg_instance = pb.postgres.connect(config_file=".psycopg_connection")
