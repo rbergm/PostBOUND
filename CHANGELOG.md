@@ -95,7 +95,7 @@ Currently, we plan to implement the following features in the future (in no part
 - _None_
 
 ## 💀 Breaking changes
-- _None_
+- Removed the (legacy) `policies` package. This was not used outside of UES and is now part of its module.
 
 ### 📰 Updates
 - _None_
