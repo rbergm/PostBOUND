@@ -85,265 +85,7 @@ MostCommonElements = typing.NewType("MostCommonElements", list[tuple[ColumnType,
 """Type alias for top-k lists statistics. The top-k list is generic over the actual column type."""
 
 
-class BaseTableCardinalityEstimator(abc.ABC):
-    """The base table estimator calculates cardinality estimates for filtered base tables.
-
-    Implementations could for example use direct computation based on advanced statistics, sampling strategies or
-    machine learning-based approaches.
-
-    Each strategy provides dict-like access to the estimates: ``estimator[my_table]`` works as expected.
-
-    Parameters
-    ----------
-    name : str
-        The name of the actual estimation strategy.
-    """
-
-    def __init__(self, name: str) -> None:
-        self.name = name
-
-    @abc.abstractmethod
-    def setup_for_query(self, query: SqlQuery) -> None:
-        """Enables the estimator to prepare internal data structures.
-
-        Parameters
-        ----------
-        query : SqlQuery
-            The query for which cardinalities should be estimated.
-        """
-        raise NotImplementedError
-
-    @abc.abstractmethod
-    def estimate_for(self, table: TableReference) -> Cardinality:
-        """Calculates the cardinality for an arbitrary base table of the query.
-
-        If the query is not filtered, this method should fall back to `estimate_total_rows`. Furthermore, the table can be
-        assumed to not be part of any intermediate result, yet.
-
-        Parameters
-        ----------
-        table : TableReference
-            The table to estimate.
-
-        Returns
-        -------
-        Cardinality
-            The estimated number of rows
-        """
-        raise NotImplementedError
-
-    @abc.abstractmethod
-    def estimate_total_rows(self, table: TableReference) -> Cardinality:
-        """Calculates an estimate of the number of rows in the table, ignoring all filter predicates.
-
-        Parameters
-        ----------
-        table : TableReference
-            The table to estimate.
-
-        Returns
-        -------
-        Cardinality
-            The estimated number of rows
-        """
-        raise NotImplementedError
-
-    @abc.abstractmethod
-    def describe(self) -> dict:
-        """Provides a JSON-serializable representation of the selected cardinality estimation strategy.
-
-        Returns
-        -------
-        dict
-            The representation
-        """
-        raise NotImplementedError
-
-    def pre_check(self) -> OptimizationPreCheck:
-        """Provides requirements that an input query has to satisfy in order for the estimator to work properly.
-
-        Returns
-        -------
-        OptimizationPreCheck
-            The requirements check
-        """
-        return EmptyPreCheck()
-
-    def __getitem__(self, item: TableReference) -> int:
-        return self.estimate_for(item)
-
-    def __repr__(self) -> str:
-        return str(self)
-
-    def __str__(self) -> str:
-        return f"BaseTableCardinalityEstimator[{self.name}]"
-
-
-class JoinCardinalityEstimator(abc.ABC):
-    """The join cardinality estimator calculates cardinality estimates for arbitrary n-ary joins.
-
-    Implementations could for example use direct computation based on advanced statistics, sampling strategies or
-    machine learning-based approaches.
-
-    Parameters
-    ----------
-    name : str
-        The name of the actual estimation strategy.
-    """
-
-    def __init__(self, name: str) -> None:
-        self.name = name
-
-    @abc.abstractmethod
-    def setup_for_query(self, query: SqlQuery) -> None:
-        """Enables the estimator to prepare internal data structures.
-
-        Parameters
-        ----------
-        query : SqlQuery
-            The query for which cardinalities should be estimated.
-        """
-        raise NotImplementedError
-
-    @abc.abstractmethod
-    def estimate_for(
-        self, join_edge: AbstractPredicate, join_graph: JoinGraph
-    ) -> Cardinality:
-        """Calculates the cardinality estimate for a specific join predicate, given the current state in the join graph.
-
-        Parameters
-        ----------
-        join_edge : AbstractPredicate
-            The predicate that should be estimated.
-        join_graph : JoinGraph
-            A graph describing the currently joined relations as well as the join types (e.g. primary key/foreign key or n:m
-            joins).
-
-        Returns
-        -------
-        int
-            The estimated join cardinality
-        """
-        raise NotImplementedError
-
-    @abc.abstractmethod
-    def describe(self) -> dict:
-        """Provides a JSON-serializable representation of the selected cardinality estimation strategy.
-
-        Returns
-        -------
-        dict
-            The representation
-        """
-        raise NotImplementedError
-
-    def pre_check(self) -> OptimizationPreCheck:
-        """Provides requirements that an input query has to satisfy in order for the estimator to work properly.
-
-        Returns
-        -------
-        OptimizationPreCheck
-            The requirements check
-        """
-        return EmptyPreCheck()
-
-    def __repr__(self) -> str:
-        return str(self)
-
-    def __str__(self) -> str:
-        return f"JoinCardinalityEstimator[{self.name}]"
-
-
-class NativeCardinalityEstimator(BaseTableCardinalityEstimator):
-    """Provides cardinality estimates for base tables using the optimizer of some database system.
-
-    Parameters
-    ----------
-    database : Database
-        The database system that should be used to obtain the estimates
-    """
-
-    def __init__(self, database: Database) -> None:
-        super().__init__("native_optimizer")
-        self.database = database
-        self.query: SqlQuery | None = None
-
-    def setup_for_query(self, query: SqlQuery) -> None:
-        self.query = query
-
-    def estimate_for(self, table: TableReference) -> Cardinality:
-        filters = self.query.predicates().filters_for(table)
-        if not filters:
-            return self.estimate_total_rows(table)
-
-        select_clause = Select(BaseProjection.star())
-        from_clause = ImplicitFromClause.create_for(table)
-        where_clause = Where(filters) if filters else None
-
-        emulated_query = ImplicitSqlQuery(
-            select_clause=select_clause,
-            from_clause=from_clause,
-            where_clause=where_clause,
-        )
-        return self.database.optimizer().cardinality_estimate(emulated_query)
-
-    def estimate_total_rows(self, table: TableReference) -> Cardinality:
-        return Cardinality(self.database.statistics().total_rows(table, emulated=True))
-
-    def describe(self) -> dict:
-        return {"name": "native", "database": self.database.describe()}
-
-
-class PreciseCardinalityEstimator(BaseTableCardinalityEstimator):
-    """Obtains true cardinality counts by executing COUNT queries against a database system.
-
-    This strategy provides a better reproducibility than the native estimates, but can be more compute-intense if caching is
-    disabled.
-
-    The executed COUNT queries account for all filters on the base table.
-
-    Parameters
-    ----------
-    database : Database
-        The database system that should be used to obtain the estimates
-    """
-
-    def __init__(self, database: Database) -> None:
-        super().__init__("precise_estimates")
-        self.database = database
-        self.query: SqlQuery | None = None
-
-    def setup_for_query(self, query: SqlQuery) -> None:
-        self.query = query
-
-    def estimate_for(self, table: TableReference) -> Cardinality:
-        select_clause = Select(BaseProjection.count_star())
-        from_clause = ImplicitFromClause.create_for(table)
-
-        filters = self.query.predicates().filters_for(table)
-        where_clause = Where(filters) if filters else None
-
-        emulated_query = ImplicitSqlQuery(
-            select_clause=select_clause,
-            from_clause=from_clause,
-            where_clause=where_clause,
-        )
-
-        cache_enabled = (
-            self.database.statistics().cache_enabled
-        )  # this should be treated like a statistics query
-        return Cardinality(
-            self.database.execute_query(emulated_query, cache_enabled=cache_enabled)
-        )
-
-    def estimate_total_rows(self, table: TableReference) -> Cardinality:
-        return Cardinality(self.database.statistics().total_rows(table, emulated=False))
-
-    def describe(self) -> dict:
-        return {"name": "precise", "database": self.database.describe()}
-
-
-class StatisticsContainer(abc.ABC, Generic[StatsType]):
+class StatsContainer(abc.ABC, Generic[StatsType]):
     """The statistics container eases the management of the statistics lifecycle.
 
     It provides means to store different kinds of statistics as attributes and can take care of their update automatically.
@@ -378,7 +120,7 @@ class StatisticsContainer(abc.ABC, Generic[StatsType]):
     def setup_for_query(
         self,
         query: SqlQuery,
-        base_table_estimator: BaseTableCardinalityEstimator,
+        base_table_estimator: BaseTableEstimator,
     ) -> None:
         """Initializes the internal data of the statistics container for a specific query.
 
@@ -488,9 +230,7 @@ class StatisticsContainer(abc.ABC, Generic[StatsType]):
         self.attribute_frequencies = {}
         self.query = None
 
-    def _inflate_base_table_estimates(
-        self, base_table_estimator: BaseTableCardinalityEstimator
-    ):
+    def _inflate_base_table_estimates(self, base_table_estimator: BaseTableEstimator):
         """Retrieves the base table estimate for each table in the current query.
 
         Parameters
@@ -550,7 +290,7 @@ class StatisticsContainer(abc.ABC, Generic[StatsType]):
         raise NotImplementedError
 
 
-class MaxFrequencyStatsContainer(StatisticsContainer[MaxFrequency]):
+class MaxFrequencyStats(StatsContainer[MaxFrequency]):
     """Statistics container that stores the maximum frequency of the join columns.
 
     The frequency updates happen pessimistically, which means that each column frequency of the intermediate result is
@@ -618,18 +358,18 @@ class MaxFrequencyStatsContainer(StatisticsContainer[MaxFrequency]):
         return n_tuples / n_distinct
 
 
-class BranchGenerationPolicy(abc.ABC):
-    """This policy influences the creation of branches in the join tree in contrast to linear join paths.
+class BaseTableEstimator(abc.ABC):
+    """The base table estimator calculates cardinality estimates for filtered base tables.
 
-    The terminology used in this policy treats branches in the join tree and subqueries as synonymous.
+    Implementations could for example use direct computation based on advanced statistics, sampling strategies or
+    machine learning-based approaches.
 
-    If an implementation of this policy requires additional information to work properly, this information should be supplied
-    via custom setup methods.
+    Each strategy provides dict-like access to the estimates: ``estimator[my_table]`` works as expected.
 
     Parameters
     ----------
     name : str
-        The name of the actual branching strategy.
+        The name of the actual estimation strategy.
     """
 
     def __init__(self, name: str) -> None:
@@ -637,40 +377,53 @@ class BranchGenerationPolicy(abc.ABC):
 
     @abc.abstractmethod
     def setup_for_query(self, query: SqlQuery) -> None:
-        """Enables the policy to setup of internal data structures.
+        """Enables the estimator to prepare internal data structures.
 
         Parameters
         ----------
         query : SqlQuery
-            The query that should be optimized next
+            The query for which cardinalities should be estimated.
         """
         raise NotImplementedError
 
     @abc.abstractmethod
-    def generate_subquery_for(
-        self, join: AbstractPredicate, join_graph: JoinGraph
-    ) -> bool:
-        """Decides whether the given join should be executed in a subquery.
+    def estimate_for(self, table: TableReference) -> Cardinality:
+        """Calculates the cardinality for an arbitrary base table of the query.
+
+        If the query is not filtered, this method should fall back to `estimate_total_rows`. Furthermore, the table can be
+        assumed to not be part of any intermediate result, yet.
 
         Parameters
         ----------
-        join : AbstractPredicate
-            The join that should be executed **within the subquery**. This is not the predicate that should be used to combine
-            the results of two intermediate relations.
-        join_graph : JoinGraph
-            The current optimization state, providing information about joined relations and the join types (e.g. primary
-            key/foreign key or n:m joins).
+        table : TableReference
+            The table to estimate.
 
         Returns
         -------
-        bool
-            Whether a branch should be created for the join
+        Cardinality
+            The estimated number of rows
+        """
+        raise NotImplementedError
+
+    @abc.abstractmethod
+    def estimate_total_rows(self, table: TableReference) -> Cardinality:
+        """Calculates an estimate of the number of rows in the table, ignoring all filter predicates.
+
+        Parameters
+        ----------
+        table : TableReference
+            The table to estimate.
+
+        Returns
+        -------
+        Cardinality
+            The estimated number of rows
         """
         raise NotImplementedError
 
     @abc.abstractmethod
     def describe(self) -> dict:
-        """Provides a JSON-serializable representation of the selected branching strategy.
+        """Provides a JSON-serializable representation of the selected cardinality estimation strategy.
 
         Returns
         -------
@@ -680,7 +433,218 @@ class BranchGenerationPolicy(abc.ABC):
         raise NotImplementedError
 
     def pre_check(self) -> OptimizationPreCheck:
-        """Provides requirements that an input query has to satisfy in order for the policy to work properly.
+        """Provides requirements that an input query has to satisfy in order for the estimator to work properly.
+
+        Returns
+        -------
+        OptimizationPreCheck
+            The requirements check
+        """
+        return EmptyPreCheck()
+
+    def __getitem__(self, item: TableReference) -> int:
+        return self.estimate_for(item)
+
+    def __repr__(self) -> str:
+        return str(self)
+
+    def __str__(self) -> str:
+        return f"BaseTableCardinalityEstimator[{self.name}]"
+
+
+class NativeCardinalityEstimator(BaseTableEstimator):
+    """Provides cardinality estimates for base tables using the optimizer of some database system.
+
+    Parameters
+    ----------
+    database : Database
+        The database system that should be used to obtain the estimates
+    """
+
+    def __init__(self, database: Database) -> None:
+        super().__init__("native_optimizer")
+        self.database = database
+        self.query: SqlQuery | None = None
+
+    def setup_for_query(self, query: SqlQuery) -> None:
+        self.query = query
+
+    def estimate_for(self, table: TableReference) -> Cardinality:
+        filters = self.query.predicates().filters_for(table)
+        if not filters:
+            return self.estimate_total_rows(table)
+
+        select_clause = Select(BaseProjection.star())
+        from_clause = ImplicitFromClause.create_for(table)
+        where_clause = Where(filters) if filters else None
+
+        emulated_query = ImplicitSqlQuery(
+            select_clause=select_clause,
+            from_clause=from_clause,
+            where_clause=where_clause,
+        )
+        return self.database.optimizer().cardinality_estimate(emulated_query)
+
+    def estimate_total_rows(self, table: TableReference) -> Cardinality:
+        return Cardinality(self.database.statistics().total_rows(table, emulated=True))
+
+    def describe(self) -> dict:
+        return {"name": "native", "database": self.database.describe()}
+
+
+class PreciseCardinalityEstimator(BaseTableEstimator):
+    """Obtains true cardinality counts by executing COUNT queries against a database system.
+
+    This strategy provides a better reproducibility than the native estimates, but can be more compute-intense if caching is
+    disabled.
+
+    The executed COUNT queries account for all filters on the base table.
+
+    Parameters
+    ----------
+    database : Database
+        The database system that should be used to obtain the estimates
+    """
+
+    def __init__(self, database: Database) -> None:
+        super().__init__("precise_estimates")
+        self.database = database
+        self.query: SqlQuery | None = None
+
+    def setup_for_query(self, query: SqlQuery) -> None:
+        self.query = query
+
+    def estimate_for(self, table: TableReference) -> Cardinality:
+        select_clause = Select(BaseProjection.count_star())
+        from_clause = ImplicitFromClause.create_for(table)
+
+        filters = self.query.predicates().filters_for(table)
+        where_clause = Where(filters) if filters else None
+
+        emulated_query = ImplicitSqlQuery(
+            select_clause=select_clause,
+            from_clause=from_clause,
+            where_clause=where_clause,
+        )
+
+        cache_enabled = (
+            self.database.statistics().cache_enabled
+        )  # this should be treated like a statistics query
+        return Cardinality(
+            self.database.execute_query(emulated_query, cache_enabled=cache_enabled)
+        )
+
+    def estimate_total_rows(self, table: TableReference) -> Cardinality:
+        return Cardinality(self.database.statistics().total_rows(table, emulated=False))
+
+    def describe(self) -> dict:
+        return {"name": "precise", "database": self.database.describe()}
+
+
+class _CardinalityEstimatorWrapper(BaseTableEstimator):
+    def __init__(
+        self, estimator: CardinalityEstimator, *, target_db: Optional[Database] = None
+    ) -> None:
+        super().__init__(type(estimator).__name__)
+        self.estimator = estimator
+        self.target_db = target_db or DatabasePool.get_instance().current_database()
+        self.query: SqlQuery | None = None
+
+    def setup_for_query(self, query: SqlQuery) -> None:
+        self.query = query
+        self.estimator.initialize(self.target_db, query)
+
+    def estimate_for(self, table: TableReference) -> Cardinality:
+        return self.estimator.calculate_estimate(self.query, table)
+
+    def estimate_total_rows(self, table) -> Cardinality:
+        # The implementation of this method is a bit of a hassle since estimation without filters is not really supported
+        # by the CardinalityEstimator interface. To work around this issue, we estimate the cardinality of a new query
+        # that coincides with the total number of rows.
+
+        # First, free all resources of the current query
+        self.estimator.cleanup()
+
+        # Now, create our new query and obtain the cardinality estimate
+        star_query = ImplicitSqlQuery(
+            select_clause=Select.star(),
+            from_clause=ImplicitFromClause.create_for(table),
+        )
+        self.estimator.initialize(self.target_db, star_query)
+        cardinality = self.estimator.calculate_estimate(star_query, table)
+
+        # Lastly, undo all of our temporary changes
+        self.estimator.cleanup()
+        self.estimator.initialize(self.target_db, self.query)
+        return cardinality
+
+    def describe(self) -> util.jsondict:
+        return self.estimator.describe()
+
+    def pre_check(self) -> OptimizationPreCheck:
+        return self.estimator.pre_check()
+
+
+class JoinEstimator(abc.ABC):
+    """The join cardinality estimator calculates cardinality estimates for arbitrary n-ary joins.
+
+    Implementations could for example use direct computation based on advanced statistics, sampling strategies or
+    machine learning-based approaches.
+
+    Parameters
+    ----------
+    name : str
+        The name of the actual estimation strategy.
+    """
+
+    def __init__(self, name: str) -> None:
+        self.name = name
+
+    @abc.abstractmethod
+    def setup_for_query(self, query: SqlQuery) -> None:
+        """Enables the estimator to prepare internal data structures.
+
+        Parameters
+        ----------
+        query : SqlQuery
+            The query for which cardinalities should be estimated.
+        """
+        raise NotImplementedError
+
+    @abc.abstractmethod
+    def estimate_for(
+        self, join_edge: AbstractPredicate, join_graph: JoinGraph
+    ) -> Cardinality:
+        """Calculates the cardinality estimate for a specific join predicate, given the current state in the join graph.
+
+        Parameters
+        ----------
+        join_edge : AbstractPredicate
+            The predicate that should be estimated.
+        join_graph : JoinGraph
+            A graph describing the currently joined relations as well as the join types (e.g. primary key/foreign key or n:m
+            joins).
+
+        Returns
+        -------
+        int
+            The estimated join cardinality
+        """
+        raise NotImplementedError
+
+    @abc.abstractmethod
+    def describe(self) -> dict:
+        """Provides a JSON-serializable representation of the selected cardinality estimation strategy.
+
+        Returns
+        -------
+        dict
+            The representation
+        """
+        raise NotImplementedError
+
+    def pre_check(self) -> OptimizationPreCheck:
+        """Provides requirements that an input query has to satisfy in order for the estimator to work properly.
 
         Returns
         -------
@@ -693,28 +657,10 @@ class BranchGenerationPolicy(abc.ABC):
         return str(self)
 
     def __str__(self) -> str:
-        return f"SubqueryGenerationStrategy[{self.name}]"
+        return f"JoinCardinalityEstimator[{self.name}]"
 
 
-class LinearJoinTreeGenerationPolicy(BranchGenerationPolicy):
-    """Branching strategy that leaves all join paths linear, and therefore does not generate subqueries at all."""
-
-    def __init__(self):
-        super().__init__("Linear subquery policy")
-
-    def setup_for_query(self, query: SqlQuery) -> None:
-        pass
-
-    def generate_subquery_for(
-        self, join: AbstractPredicate, join_graph: JoinGraph
-    ) -> bool:
-        return False
-
-    def describe(self) -> dict:
-        return {"name": "linear"}
-
-
-class UESJoinBoundEstimator(JoinCardinalityEstimator):
+class UESBoundEstimator(JoinEstimator):
     """Implementation of the UES formula to calculate upper bounds of join cardinalities.
 
     The formula distinuishes two cases: n:m joins are estimated according to the maximum frequencies of the join columns.
@@ -725,14 +671,12 @@ class UESJoinBoundEstimator(JoinCardinalityEstimator):
     def __init__(self) -> None:
         super().__init__("UES join estimator")
         self.query: ImplicitSqlQuery | None = None
-        self.stats_container: StatisticsContainer[MaxFrequency] | None = None
+        self.stats_container: StatsContainer[MaxFrequency] | None = None
 
     def setup_for_query(self, query: SqlQuery) -> None:
         self.query = query
 
-    def setup_for_stats(
-        self, stats_container: StatisticsContainer[MaxFrequency]
-    ) -> None:
+    def setup_for_stats(self, stats_container: StatsContainer[MaxFrequency]) -> None:
         """Configures the statistics container that contains the actual frequencies and cardinalities to use.
 
         Parameters
@@ -855,7 +799,103 @@ class UESJoinBoundEstimator(JoinCardinalityEstimator):
         return Cardinality(card)
 
 
-class UESSubqueryGenerationPolicy(BranchGenerationPolicy):
+class BranchingPolicy(abc.ABC):
+    """This policy influences the creation of branches in the join tree in contrast to linear join paths.
+
+    The terminology used in this policy treats branches in the join tree and subqueries as synonymous.
+
+    If an implementation of this policy requires additional information to work properly, this information should be supplied
+    via custom setup methods.
+
+    Parameters
+    ----------
+    name : str
+        The name of the actual branching strategy.
+    """
+
+    def __init__(self, name: str) -> None:
+        self.name = name
+
+    @abc.abstractmethod
+    def setup_for_query(self, query: SqlQuery) -> None:
+        """Enables the policy to setup of internal data structures.
+
+        Parameters
+        ----------
+        query : SqlQuery
+            The query that should be optimized next
+        """
+        raise NotImplementedError
+
+    @abc.abstractmethod
+    def generate_subquery_for(
+        self, join: AbstractPredicate, join_graph: JoinGraph
+    ) -> bool:
+        """Decides whether the given join should be executed in a subquery.
+
+        Parameters
+        ----------
+        join : AbstractPredicate
+            The join that should be executed **within the subquery**. This is not the predicate that should be used to combine
+            the results of two intermediate relations.
+        join_graph : JoinGraph
+            The current optimization state, providing information about joined relations and the join types (e.g. primary
+            key/foreign key or n:m joins).
+
+        Returns
+        -------
+        bool
+            Whether a branch should be created for the join
+        """
+        raise NotImplementedError
+
+    @abc.abstractmethod
+    def describe(self) -> dict:
+        """Provides a JSON-serializable representation of the selected branching strategy.
+
+        Returns
+        -------
+        dict
+            The representation
+        """
+        raise NotImplementedError
+
+    def pre_check(self) -> OptimizationPreCheck:
+        """Provides requirements that an input query has to satisfy in order for the policy to work properly.
+
+        Returns
+        -------
+        OptimizationPreCheck
+            The requirements check
+        """
+        return EmptyPreCheck()
+
+    def __repr__(self) -> str:
+        return str(self)
+
+    def __str__(self) -> str:
+        return f"SubqueryGenerationStrategy[{self.name}]"
+
+
+class LinearJoinTreePolicy(BranchingPolicy):
+    """Branching strategy that leaves all join paths linear, and therefore does not generate subqueries at all."""
+
+    def __init__(self):
+        super().__init__("Linear subquery policy")
+
+    def setup_for_query(self, query: SqlQuery) -> None:
+        pass
+
+    def generate_subquery_for(
+        self, join: AbstractPredicate, join_graph: JoinGraph
+    ) -> bool:
+        return False
+
+    def describe(self) -> dict:
+        return {"name": "linear"}
+
+
+class UESSubqueryPolicy(BranchingPolicy):
     """Implementation of the UES policy to decide when to insert branches into the join order.
 
     In short, the policy generates subqueries whenever they guarantee a reduction of the upper bound of the n:m join partner
@@ -865,12 +905,12 @@ class UESSubqueryGenerationPolicy(BranchGenerationPolicy):
     def __init__(self):
         super().__init__("UES subquery policy")
         self.query: SqlQuery | None = None
-        self.stats_container: StatisticsContainer | None = None
+        self.stats_container: StatsContainer | None = None
 
     def setup_for_query(self, query: SqlQuery) -> None:
         self.query = query
 
-    def setup_for_stats_container(self, stats_container: StatisticsContainer) -> None:
+    def setup_for_stats_container(self, stats_container: StatsContainer) -> None:
         """Configures the statistics container that contains the actual frequencies and bounds to use.
 
         Parameters
@@ -918,15 +958,15 @@ class UESJoinOrderOptimizer(JoinOrderOptimization):
 
     Parameters
     ----------
-    base_table_estimation : Optional[card_policy.BaseTableCardinalityEstimator], optional
+    base_table_estimation : Optional[BaseTableEstimator], optional
         A strategy to estimate the cardinalities/bounds of (filtered) base tables. Defaults to a native estimation by the
         optimizer of the `database`.
-    join_estimation : Optional[card_policy.JoinBoundCardinalityEstimator], optional
-        A strategy to estimate the upper bounds of intermediate joins. Defaults to the `UESJoinBoundEstimator`.
-    subquery_policy : Optional[tree_policy.BranchGenerationPolicy], optional
+    join_estimation : Optional[JoinEstimator], optional
+        A strategy to estimate the upper bounds of intermediate joins. Defaults to the `UESBoundEstimator`.
+    subquery_policy : Optional[BranchingPolicy], optional
         A strategy to determine when to insert subqueries into the resulting join tree. Defaults to the
-        `UESSubqueryGenerationPolicy`.
-    stats_container : Optional[StatisticsContainer], optional
+        `UESSubqueryPolicy`.
+    stats_container : Optional[StatsContainer], optional
         The statistics used to calcualte the different upper bounds. These have to be compatible with the `join_estimation`.
         Defaults to a `MaxFrequencyStatsContainer`.
     pull_eager_pk_tables : bool, optional
@@ -949,11 +989,11 @@ class UESJoinOrderOptimizer(JoinOrderOptimization):
         self,
         *,
         base_table_estimation: Optional[
-            CardinalityEstimator | BaseTableCardinalityEstimator
+            CardinalityEstimator | BaseTableEstimator
         ] = None,
-        join_estimation: Optional[JoinCardinalityEstimator] = None,
-        subquery_policy: Optional[BranchGenerationPolicy] = None,
-        stats_container: Optional[StatisticsContainer] = None,
+        join_estimation: Optional[JoinEstimator] = None,
+        subquery_policy: Optional[BranchingPolicy] = None,
+        stats_container: Optional[StatsContainer] = None,
         pull_eager_pk_tables: bool = False,
         database: Optional[Database] = None,
         verbose: bool = False,
@@ -962,21 +1002,27 @@ class UESJoinOrderOptimizer(JoinOrderOptimization):
         self.database = (
             database if database else DatabasePool().get_instance().current_database()
         )
-        self.base_table_estimation = (
-            base_table_estimation
-            if base_table_estimation
-            else NativeCardinalityEstimator(self.database)
-        )
+
+        match base_table_estimation:
+            case CardinalityEstimator():
+                self.base_table_estimation = _CardinalityEstimatorWrapper(
+                    base_table_estimation, target_db=self.database
+                )
+            case None:
+                self.base_table_estimation = NativeCardinalityEstimator(self.database)
+            case _:
+                self.base_table_estimation = base_table_estimation
+
         self.join_estimation = (
-            join_estimation if join_estimation else UESJoinBoundEstimator()
+            join_estimation if join_estimation else UESBoundEstimator()
         )
         self.subquery_policy = (
-            subquery_policy if subquery_policy else UESSubqueryGenerationPolicy()
+            subquery_policy if subquery_policy else UESSubqueryPolicy()
         )
         self.stats_container = (
             stats_container
             if stats_container
-            else MaxFrequencyStatsContainer(self.database.statistics())
+            else MaxFrequencyStats(self.database.statistics())
         )
         self._pull_eager_pk_tables = pull_eager_pk_tables
         self._logging_enabled = verbose

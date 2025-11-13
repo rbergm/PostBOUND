@@ -70,9 +70,9 @@ class UESOptimizationSettings(OptimizationSettings):
 
     def build_join_order_optimizer(self) -> Optional[JoinOrderOptimization]:
         base_table_estimator = ues.NativeCardinalityEstimator(self.database)
-        join_cardinality_estimator = ues.UESJoinBoundEstimator()
-        subquery_policy = ues.UESSubqueryGenerationPolicy()
-        stats_container = ues.MaxFrequencyStatsContainer(self.database.statistics())
+        join_cardinality_estimator = ues.UESBoundEstimator()
+        subquery_policy = ues.UESSubqueryPolicy()
+        stats_container = ues.MaxFrequencyStats(self.database.statistics())
         enumerator = ues.UESJoinOrderOptimizer(
             base_table_estimation=base_table_estimator,
             join_estimation=join_cardinality_estimator,
