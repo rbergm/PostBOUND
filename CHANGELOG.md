@@ -96,6 +96,10 @@ Currently, we plan to implement the following features in the future (in no part
 
 ## 💀 Breaking changes
 - Removed the (legacy) `policies` package. This was not used outside of UES and is now part of its module.
+- Switched the default mode for the *setup-py-venv.sh* script to no longer build the documentation. It must now be explicitly
+  enabled using the `--include-doc` flag. This drastically speeds up the setup process for most users. At the same time, local
+  documentation is no longer necessary since the online documentation at
+  (ReadTheDocs)[https://postbound.readthedocs.io/en/latest/] was introduced.
 
 ### 📰 Updates
 - _None_

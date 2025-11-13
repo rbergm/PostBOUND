@@ -8,7 +8,7 @@ EXPLICIT_TARGET="false"
 EXTRAS=""
 MINIMAL_EXTRAS=""
 ALL_EXTRAS="[mysql,vis]"
-BUILD_DOC="true"
+BUILD_DOC="false"
 GIT_PULL="true"
 
 show_help() {
@@ -28,8 +28,8 @@ show_help() {
   echo -e "\tOptional extras to install with PostBOUND. These are specified as a comma-separated list."
   echo -e "\tSupported extras are: 'mysql' for installing the MySQL backend and 'vis' for using the visualization utilities."
   echo -e "\tFurthermore, 'all' can be used to install all available extras and 'minimal' only installs the core package."
-  echo -e "\n--skip-doc"
-  echo -e "\tDon't build the documentation."
+  echo -e "\n--include-doc"
+  echo -e "\tAlso build the documentation."
   echo -e "\n--skip-pull"
   echo -e "\tDon't pull the latest version of the repository before building. Notice that a pull will not update this script"
   echo -e "\twhile it is running. If there should be any issues with the setup script, please pull the latest version "
@@ -68,8 +68,8 @@ while [ $# -gt 0 ] ; do
       shift
       shift
       ;;
-    --skip-doc)
-      BUILD_DOC="false"
+    --include-doc)
+      BUILD_DOC="true"
       shift
       ;;
     --skip-pull)
