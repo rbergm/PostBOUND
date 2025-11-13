@@ -10,25 +10,6 @@ build:
    tools:
       python: "3.13"
    apt_packages:
-      - build-essential
-      - flex
-      - bison
-      - curl
-      - pkg-config
-      - llvm
-      - clang
-      - meson
-      - ninja-build
-      - libreadline-dev
-      - libssl-dev
-      - libicu-dev
-      - liblz4-dev
-      - libossp-uuid-dev
-      - python3-dev
-      - git
-      - unzip
-      - zstd
-      - lsof
    jobs:
       pre_create_environment:
          - tools/rtd-setup.sh

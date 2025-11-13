@@ -2,9 +2,4 @@
 
 # Setup script specific to the ReadTheDocs environment
 
-cd db-support/postgres
-./postgres-setup.sh --stop
-. ./postgres-start.sh
-./workload-stats-setup.sh
-./postgres-psycopg-setup.sh stats stats
-cp .psycopg_connection_stats ../../docs/source/.psycopg_connection
+echo "dbname=$PGDATABASE host=$PGHOST user=$PGOWNER password=$PGPASSWORD sslmode=require channel_binding=require" > .psycopg_connection_stats
