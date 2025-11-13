@@ -15,7 +15,6 @@ from .._pipelines import (
 from .._stages import OptimizationPreCheck
 from ..db._db import Database, DatabasePool
 from ..qal import parser
-from .policies import cardinalities
 from .strategies import native, ues
 
 
@@ -70,7 +69,7 @@ class UESOptimizationSettings(OptimizationSettings):
         return ues.UESOptimizationPreCheck
 
     def build_join_order_optimizer(self) -> Optional[JoinOrderOptimization]:
-        base_table_estimator = cardinalities.NativeCardinalityEstimator(self.database)
+        base_table_estimator = ues.NativeCardinalityEstimator(self.database)
         join_cardinality_estimator = ues.UESJoinBoundEstimator()
         subquery_policy = ues.UESSubqueryGenerationPolicy()
         stats_container = ues.MaxFrequencyStatsContainer(self.database.statistics())
