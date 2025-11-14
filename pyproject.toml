@@ -19,25 +19,25 @@ classifiers = [
     "Operating System :: OS Independent",
 ]
 dependencies = [
-    "lazy-loader==0.4",
-    "levenshtein==0.27.1",
-    "natsort==8.4.0",
-    "networkx==3.5",
-    "numpy==2.3.4",
-    "pandas==2.3.3",
-    "pglast==7.10",
-    "psycopg[binary]==3.2.12",
-    "tqdm==4.67.1",
+    "lazy-loader~=0.4",
+    "levenshtein~=0.27",
+    "natsort~=8.4",
+    "networkx~=3.5",
+    "numpy~=2.3",
+    "pandas~=2.3",
+    "pglast~=7.10",
+    "psycopg[binary]~=3.2",
+    "tqdm~=4.67",
 ]
 
 [project.optional-dependencies]
 vis = [
-    "matplotlib==3.10.7",
-    "seaborn==0.13.2",
-    "graphviz==0.21",
+    "matplotlib~=3.10",
+    "seaborn~=0.13",
+    "graphviz~=0.21",
 ]
 mysql = [
-    "mysql-connector-python==9.5.0"
+    "mysql-connector-python~=9.5"
 ]
 
 
