@@ -86,7 +86,7 @@ while [ $# -gt 0 ] ; do
     esac
 done
 
-EXISTING_DBS=$(psql $PG_CONN -l | grep "$DB_NAME" || true)
+EXISTING_DBS=$(psql $PG_CONN -l | grep " $DB_NAME " || true)
 
 if [ ! -z "$EXISTING_DBS" ] && [ $FORCE_CREATION = "false" ] ; then
     echo ".. Stack database exists, doing nothing"

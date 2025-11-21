@@ -105,6 +105,8 @@ Currently, we plan to implement the following features in the future (in no part
 - _None_
 
 ### 🏥 Fixes
+- Fixed workload setup scripts (`workload-job-setup.sh`, etc.) failing if a database with the target name as its suffix
+  existed (e.g. when a database named *imdb* should be created but *imdb-test* already exists).
 - Fixed `describe()` on the Postgres interface not working for Postgres 18. We now ignore all system catalog tables.
 - Fixed regression affecting the pre-defined cardinality estimators after the unification of the `CardinalityGenerator` and
   `CardinalityEstimator` interfaces.
