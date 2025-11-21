@@ -84,7 +84,7 @@ while [ $# -gt 0 ] ; do
     esac
 done
 
-EXISTING_DBS=$(psql $PG_CONN -l | grep "$DB_NAME" || true)
+EXISTING_DBS=$(psql $PG_CONN -l | grep " $DB_NAME " || true)
 
 echo ".. Working directory is $WD"
 
