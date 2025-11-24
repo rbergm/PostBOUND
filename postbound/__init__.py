@@ -151,7 +151,7 @@ from .qal import relalg, transform
 from .qal._qal import SqlQuery
 from .qal.parser import parse_query
 
-__version__ = "0.18.0"
+__version__ = "0.18.1"
 
 __all__ = [
     "db",
