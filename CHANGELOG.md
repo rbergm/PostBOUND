@@ -105,6 +105,9 @@ Currently, we plan to implement the following features in the future (in no part
 - _None_
 
 ### 🏥 Fixes
+- [ 🐘 ] Fixed timeout query execution not terminating the query correctly on the server when a timeout was reached. It turns
+  out psycopg does not cancel the query when the process is terminated. We now explicitly issue a `pg_cancel_backend()` call to
+  cancel the query on the server side.
 - Fixed workload setup scripts (`workload-job-setup.sh`, etc.) failing if a database with the target name as its suffix
   existed (e.g. when a database named *imdb* should be created but *imdb-test* already exists).
 - Fixed `describe()` on the Postgres interface not working for Postgres 18. We now ignore all system catalog tables.
@@ -112,8 +115,8 @@ Currently, we plan to implement the following features in the future (in no part
   `CardinalityEstimator` interfaces.
 
 ### 🪲 Known bugs
-- The automatic optimization of the Postgres server configuration as part of the Docker installation does not work on MacOS.
-  Currently, this should be considered as wontfix.
+- [ 🐘 🍏 ] The automatic optimization of the Postgres server configuration as part of the Docker installation does not work
+  on MacOS. Currently, this should be considered as wontfix.
 
 ---
 

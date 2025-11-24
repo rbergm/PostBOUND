@@ -541,6 +541,8 @@ class PostgresInterface(Database):
         Connection string for `psycopg` to establish a connection to the Postgres server
     system_name : str, optional
         Description of the specific Postgres server, by default *Postgres*
+    application_name : str, optional
+        Identifier for the Postgres server. This will be the name that is shown in the server logs and process lists.
     client_encoding : str, optional
         The client encoding to use for the connection, by default *UTF8*
     cache_enabled : bool, optional
@@ -554,6 +556,7 @@ class PostgresInterface(Database):
         connect_string: str,
         system_name: str = "Postgres",
         *,
+        application_name: str = "PostBOUND",
         client_encoding: str = "UTF8",
         cache_enabled: bool = False,
         debug: bool = False,
@@ -561,12 +564,8 @@ class PostgresInterface(Database):
         self.connect_string = connect_string
         self.debug = debug
         self.config = PostgresConfigInterface(self)
-        self._connection: psycopg.Connection = psycopg.connect(
-            connect_string,
-            application_name="PostBOUND",
-            client_encoding=client_encoding,
-            row_factory=psycopg.rows.tuple_row,
-        )
+        self._application_name = application_name or "PostBOUND"
+        self._client_encoding = client_encoding
         self._init_connection()
 
         self._db_stats = PostgresStatisticsInterface(self)
@@ -652,14 +651,12 @@ class PostgresInterface(Database):
     def execute_with_timeout(
         self, query: SqlQuery | str, timeout: float = 60.0
     ) -> Optional[ResultSet]:
-        current_config = self.current_configuration(runtime_changeable_only=True)
         try:
             result = self.execute_query(
                 query, timeout=timeout, cache_enabled=False, raw=True
             )
             return result
         except TimeoutError:
-            self.apply_configuration(current_config)
             return None
 
     def last_query_runtime(self) -> float:
@@ -773,7 +770,6 @@ class PostgresInterface(Database):
             self._connection.close()
         except psycopg.Error:
             pass
-        self._connection = psycopg.connect(self.connect_string)
         return self._init_connection()
 
     def cursor(self) -> psycopg.Cursor:
@@ -1067,6 +1063,12 @@ class PostgresInterface(Database):
         int
             The backend process ID of the new connection
         """
+        self._connection: psycopg.Connection = psycopg.connect(
+            self.connect_string,
+            application_name=self._application_name,
+            client_encoding=self._client_encoding,
+            row_factory=psycopg.rows.tuple_row,
+        )
         self._connection.autocommit = (
             True  # pg_hint_plan hinting backend currently relies on autocommit!
         )
@@ -2589,6 +2591,7 @@ def _reconnect(name: str, *, pool: DatabasePool) -> PostgresInterface:
 def connect(
     *,
     name: str = "postgres",
+    application_name: str = "",
     connect_string: str | None = None,
     config_file: str | Path | None = ".psycopg_connection",
     encoding: str = "UTF8",
@@ -2614,6 +2617,8 @@ def connect(
     name : str, optional
         A name to identify the current connection if multiple connections to different Postgres instances should be maintained.
         This is used to register the instance on the `DatabasePool`. Defaults to *postgres*.
+    application_name : str, optional
+        Identifier for the Postgres server. This will be the name that is shown in the server logs and process lists.
     connect_string : str | None, optional
         A Psycopg-compatible connect string for the database. Supplying this parameter overwrites any other connection
         data
@@ -2995,7 +3000,7 @@ def _timeout_query_worker(
     pg_config: dict,
     result_send: mp_conn.Connection,
     err_send: mp_conn.Connection,
-    runtime_send: mp_conn.Connection,
+    backend_send: mp_conn.Connection,
     **kwargs,
 ) -> None:
     """Internal function to the `TimeoutQueryExecutor` to run individual queries.
@@ -3014,31 +3019,30 @@ def _timeout_query_worker(
         Pipe connection to send the query result
     err_send : mp_conn.Connection
         Pipe connection to send any errors that occurred during the query execution
-    runtime_send: mp_conn.Connection
-        Pipe connection to send the query runtime
+    backend_send : mp_conn.Connection
+        Pipe connection to send the backend PID
     kwargs : Any
         Additional parameters to pass to the `PostgresInterface.execute_query` method.
     """
     try:
         connect_string = pg_config["connect_string"]
         cache_enabled = pg_config.get("cache_enabled", False)
-        pg_instance = connect(
-            connect_string=connect_string,
+        pg_instance = PostgresInterface(
+            connect_string,
+            application_name="PostBOUND Timeout Worker",
             cache_enabled=cache_enabled,
-            private=True,
-            refresh=True,
         )
+        backend_send.send(pg_instance.backend_pid())
         pg_instance.apply_configuration(pg_config["config"])
 
-        start_time = time.perf_counter_ns()
         result = pg_instance.execute_query(query, **kwargs)
-        end_time = time.perf_counter_ns()
-        runtime = (end_time - start_time) / 10**9  # convert to seconds
+        runtime = pg_instance.last_query_runtime()
 
-        result_send.send(result)
-        runtime_send.send(runtime)
+        result_send.send({"query_result": result, "runtime": runtime})
     except Exception as e:
         err_send.send(e)
+    finally:
+        pg_instance.close()
 
 
 class TimeoutQueryExecutor:
@@ -3068,6 +3072,10 @@ class TimeoutQueryExecutor:
             postgres_instance
             if postgres_instance is not None
             else DatabasePool.get_instance().current_database()
+        )
+        self._timeout_watchdog = psycopg.connect(
+            self._pg_instance.connect_string,
+            application_name="PostBOUND Timeout Watchdog",
         )
 
     def execute_query(self, query: SqlQuery | str, timeout: float, **kwargs) -> Any:
@@ -3099,7 +3107,7 @@ class TimeoutQueryExecutor:
         """
         result_recv, result_send = mp.Pipe(False)
         error_recv, error_send = mp.Pipe(False)
-        runtime_recv, runtime_send = mp.Pipe(False)
+        backend_recv, backend_send = mp.Pipe(False)
         query_worker = mp.Process(
             target=_timeout_query_worker,
             args=(query,),
@@ -3107,7 +3115,7 @@ class TimeoutQueryExecutor:
                 "pg_config": self._pg_fingerprint(),
                 "result_send": result_send,
                 "err_send": error_send,
-                "runtime_send": runtime_send,
+                "backend_send": backend_send,
                 **kwargs,
             },
         )
@@ -3121,33 +3129,40 @@ class TimeoutQueryExecutor:
         # our error checks. This might result in an involuntary increase in the timeout duration. By keeping the timeout check
         # as close to the join() call as possible, we minimize this risk.
         timed_out = query_worker.is_alive()
+        query_worker.terminate()
+        query_worker.join()
 
         # Now that we know whether the worker timed out or not, we need to make sure that it actually terminated properly
         # (or timed out). In case of an error, we just propagate it to the client.
         if error_recv.poll():
-            raise error_recv.recv()
+            self._pg_instance._last_query_runtime = math.nan
+            self._abort_backend(backend_recv.recv())
+            err = error_recv.recv()
+
+            query_worker.close()
+            result_send.close()
+            result_recv.close()
+            error_send.close()
+            error_recv.close()
+
+            raise err
 
         # At this point we know that the worker either terminated in time or that it timed out, but it did not error.
-        # Both the timeout and the termination case can be handled in a pretty straightforward manner. The only important thing
-        # is that in case of a timeout, we reset the connection to ensure that there is no dangling or inconsistent state left
-        # over.
+        # Both the timeout and the termination case can be handled in a pretty straightforward manner.
         if timed_out:
-            query_worker.terminate()
-            query_worker.join()
-            self._pg_instance.reset_connection()
+            self._abort_backend(backend_recv.recv())
             query_result = None
             self._pg_instance._last_query_runtime = timeout
         else:
-            query_result = result_recv.recv()
-            self._pg_instance._last_query_runtime = runtime_recv.recv()
+            raw_result = result_recv.recv()
+            query_result = raw_result["query_result"]
+            self._pg_instance._last_query_runtime = raw_result["runtime"]
 
         query_worker.close()
         result_send.close()
         result_recv.close()
         error_send.close()
         error_recv.close()
-        runtime_send.close()
-        runtime_recv.close()
 
         if timed_out:
             raise TimeoutError(query)
@@ -3163,6 +3178,11 @@ class TimeoutQueryExecutor:
                 runtime_changeable_only=True
             ),
         }
+
+    def _abort_backend(self, pid: int) -> None:
+        with self._timeout_watchdog.cursor() as cursor:
+            cursor.execute(f"SELECT pg_cancel_backend({pid});")
+        self._timeout_watchdog.rollback()
 
     def __call__(self, query: SqlQuery | str, timeout: float, **kwargs) -> Any:
         return self.execute_query(query, timeout, **kwargs)
