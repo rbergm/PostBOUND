@@ -24,7 +24,7 @@ import threading
 import time
 import warnings
 from collections import UserString
-from collections.abc import Callable, Iterable, Sequence
+from collections.abc import Callable, Generator, Iterable, Sequence
 from multiprocessing import connection as mp_conn
 from pathlib import Path
 from typing import Any, Literal, Optional
@@ -2117,8 +2117,7 @@ def _generate_pglab_hints(
 def _extract_plan_join_order(plan: QueryPlan) -> str:
     if plan.is_scan():
         return plan.base_table.identifier()
-
-    if plan.input_node:
+    elif plan.input_node:
         return _extract_plan_join_order(plan.input_node)
 
     outer = _extract_plan_join_order(plan.outer_child)
@@ -2126,61 +2125,67 @@ def _extract_plan_join_order(plan: QueryPlan) -> str:
     return f"({outer} {inner})"
 
 
+def _iter_plan_bfs(plan: QueryPlan) -> Generator[QueryPlan, None, None]:
+    queue = collections.deque([plan])
+    while queue:
+        node = queue.popleft()
+        queue.extend(node.children)
+        yield node
+
+
 def _generate_pglab_plan(
     plan: QueryPlan,
-    *,
-    hints: list[str],
-    in_upperrel: bool,
-    used_parallel: bool,
-    initial: bool = False,
 ) -> Hint:
-    if in_upperrel and plan.is_join():
-        # We found the first join in our query plan. We can now generate the join order hint!
-        join_order = _extract_plan_join_order(plan)
-        hints.append(f"JoinOrder({join_order})")
+    hints: list[str] = ["Config(plan_mode=full)"]
+    join_order = _extract_plan_join_order(plan)
+    hints.append(f"JoinOrder({join_order})")
 
-    if in_upperrel and plan.is_scan() or plan.is_join():
-        # This check needs to be guarded by in_upperrel to prevent sorts appearing after the first joins from resetting
-        # the switch
-        in_upperrel = False
+    used_parallel = False
+    in_upperrel = True
+    par_workers: Optional[int] = None
+    for node in _iter_plan_bfs(plan):
+        if node.is_scan() or node.is_join():
+            in_upperrel = False
 
-    operator = PGLabOptimizerHints.get(plan.operator)
-    if operator:
-        intermediate = " ".join(tab.identifier() for tab in plan.tables())
-        if plan.parallel_workers and not used_parallel:
-            hint = f"{operator}({intermediate} (workers={plan.parallel_workers}))"
+        par_workers = (
+            node.parallel_workers if node.parallel_workers > 0 else par_workers
+        )
+        if in_upperrel and par_workers and not used_parallel:
+            hints.append(f"Result(workers={par_workers})")
             used_parallel = True
-        elif plan.parallel_workers and used_parallel:
+            par_workers = None
+        elif in_upperrel and par_workers and used_parallel:
             warnings.warn(
-                "Cannot set multiple parallel hints for Postgres. Ignoring all additional hints",
+                "Cannot set multiple parallel hints for Postgres. Ignoring additional hints.",
                 category=HintWarning,
             )
-        else:
-            hint = f"{operator}({intermediate})"
-        hints.append(hint)
 
-        card = plan.actual_cardinality or plan.estimated_cardinality
-        if card and plan.operator not in IntermediateOperator:
+        operator = PGLabOptimizerHints.get(node.operator)
+        intermediate = " ".join(tab.identifier() for tab in node.tables())
+
+        if operator:
+            if par_workers and not used_parallel:
+                metadata = f" (workers={par_workers})"
+                par_workers = None
+                used_parallel = True
+            elif par_workers and used_parallel:
+                metadata = ""
+                warnings.warn(
+                    "Cannot set multiple parallel hints for Postgres. Ignoring additional hints.",
+                    category=HintWarning,
+                )
+            else:
+                metadata = ""
+
+            hints.append(f"{operator}({intermediate}{metadata})")
+
+        card = node.actual_cardinality or node.estimated_cardinality
+        if operator and card.is_valid():
             hints.append(f"Card({intermediate} #{card})")
-    elif in_upperrel and plan.parallel_workers and not used_parallel:
-        hints.append(f"Result(workers={plan.parallel_workers})")
-        used_parallel = True
-    elif in_upperrel and plan.parallel_workers and used_parallel:
-        warnings.warn(
-            "Cannot set multiple parallel hints for Postgres. Ignoring all additional hints",
-            category=HintWarning,
-        )
 
-    for child in plan.children:
-        _generate_pglab_plan(
-            child, hints=hints, in_upperrel=in_upperrel, used_parallel=used_parallel
-        )
-
-    if initial:
-        hints.insert(0, "Config(plan_mode=full)")
-        hints = [f"  {line}" for line in hints]
-        hints.insert(0, "/*=pg_lab=")
-        hints.append(" */")
+    hints = [f"  {line}" for line in hints]
+    hints.insert(0, "/*=pg_lab=")
+    hints.append(" */")
     return Hint("", "\n".join(hints))
 
 
@@ -2293,9 +2298,7 @@ class PostgresHintService(HintService):
                     pg_instance=self._postgres_db,
                 )
             case "pg_lab" if plan is not None:
-                hints = _generate_pglab_plan(
-                    plan, hints=[], in_upperrel=True, used_parallel=False, initial=True
-                )
+                hints = _generate_pglab_plan(plan)
             case "pg_lab":
                 hints = _generate_pglab_hints(
                     join_order,
