@@ -61,6 +61,8 @@ Currently, we plan to implement the following features in the future (in no part
   the case anyway).
 - Simplified the access to query predicates. `SqlQuery` now provides direct access to `filters_for()`, `joins_between()`, etc.
   This eliminates the need to constantly access the `QueryPredicates` wrapper and should streamline common use-cases.
+- Added two new powerful database schema introspection methods: `join_equivalence_keys` and `join_equivalence_classes` can be
+  used to retrieve all possible keys that can be equi-joined between two tables.
 
 ### 💀 Breaking changes
 - Removed the `strategies` package. All strategies are now directly available as part of the `optimizer` module.

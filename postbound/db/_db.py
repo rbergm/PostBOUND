@@ -1392,6 +1392,51 @@ class DatabaseSchema(abc.ABC):
 
         return g
 
+    def join_equivalence_keys(self) -> dict[ColumnReference, set[ColumnReference]]:
+        """Calculates the equivalence classes of joinable columns in the database schema.
+
+        Two columns are considered joinable, if they are linked by a foreign key constraint.
+        For example, consider a schema with three tables R, S and T with foreign keys R.a -> S.b and S.b -> T.c.
+        Then, the columns R.a, S.b and T.c are all joinable and form an equivalence class.
+        Likewise, the constraints R.a -> T.c and S.b -> T.c would establish the same equivalence class.
+        On the other hand, the constraints R.a -> S.b and S.c -> T.d create two different equivalence classes.
+
+        Returns
+        -------
+        dict[ColumnReference, set[ColumnReference]]
+            A mapping from each column to its equivalence class, i.e. the set of all columns that are joinable with it
+            (including itself).
+        """
+        columns = util.flatten(self.columns(table) for table in self.tables())
+        g = nx.Graph()
+        for col in columns:
+            edges = [(col, fk_target) for fk_target in self.foreign_keys_on(col)]
+            g.add_edges_from(edges)
+
+        eq_keys: dict[ColumnReference, set[ColumnReference]] = {}
+        for component in nx.connected_components(g):
+            for key in component:
+                eq_keys[key] = component
+
+        return eq_keys
+
+    def join_equivalence_classes(self) -> Iterable[set[ColumnReference]]:
+        """Calculates the quivalence classes of joinable columns in the database schema.
+
+        This method is similar to `join_equivalence_keys`, but returns the different equivalence classes instead of a
+        mapping. See its documentation for more details.
+
+        See Also
+        --------
+        join_equivalence_keys
+        """
+        columns = util.flatten(self.columns(table) for table in self.tables())
+        g = nx.Graph()
+        for col in columns:
+            edges = [(col, fk_target) for fk_target in self.foreign_keys_on(col)]
+            g.add_edges_from(edges)
+        return list(nx.connected_components(g))
+
     def __hash__(self) -> int:
         return hash(self._db)
 
