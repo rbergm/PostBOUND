@@ -10,14 +10,13 @@
 #
 
 import postbound as pb
-from postbound.optimizer import presets
 
 # Setup: we optimize queries from the Join Order Benchmark on a Postgres database
 postgres_db = pb.postgres.connect()
 job_workload = pb.workloads.job().first(3)
 
 # Configure the optimization pipeline for UES
-ues_settings = presets.fetch("ues")
+ues_settings = pb.opt.presets.fetch("ues")
 ues_pipeline = (
     pb.MultiStageOptimizationPipeline(postgres_db).load_settings(ues_settings).build()
 )

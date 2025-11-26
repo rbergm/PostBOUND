@@ -5,7 +5,7 @@ from typing import Optional
 
 import graphviz as gv
 
-from ..optimizer.strategies import tonic
+from ..optimizer import tonic
 
 
 def _unique_node_identifier(identifier: tonic.QepsIdentifier) -> str:

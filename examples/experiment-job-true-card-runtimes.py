@@ -8,9 +8,8 @@ from datetime import datetime
 
 import pandas as pd
 
-from postbound import PlanParameterization, TableReference, qal
+from postbound import PlanParameterization, TableReference, qal, workloads
 from postbound.db import postgres
-from postbound.experiments import workloads
 from postbound.util import jsonize
 
 

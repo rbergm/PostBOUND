@@ -15,7 +15,7 @@ from .._pipelines import (
 from .._stages import OptimizationPreCheck
 from ..db._db import Database, DatabasePool
 from ..qal import parser
-from .strategies import native, ues
+from . import native, ues
 
 
 def apply_standard_system_options(database: Optional[Database] = None) -> None:

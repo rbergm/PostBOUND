@@ -11,7 +11,6 @@
 import math
 
 import postbound as pb
-from postbound.optimizer.strategies import tonic
 
 # Setup: we optimize queries from the Join Order Benchmark on a Postgres database
 postgres_db = pb.postgres.connect()
@@ -25,7 +24,7 @@ test_queries = job_workload - train_queries
 # Pre-train the TONIC model
 # For optimal results, it would be even better to run an "exploratory" training to explore different physical join operators.
 # We leave this step out for simplicity
-tonic_recommender = tonic.TonicOperatorSelection()
+tonic_recommender = pb.opt.tonic.TonicOperatorSelection()
 for train_query in train_queries.queries():
     tonic_recommender.simulate_feedback(train_query)
 

@@ -49,6 +49,31 @@ Currently, we plan to implement the following features in the future (in no part
   logs and the ability to cancel/resume long-running benchmarks
 - Adding popular optimization algorithms to the collection of pre-defined optimizers
 
+
+## ⏳ Version 0.19.0 _(planned)_
+
+### 🐣 New features
+- Introduced lazy imports for all pre-defined optimization strategies. This makes the previous `strategies` package obsolete
+  (see _Breaking changes_ below). Now, all optimization algorithms can be directly used from the `optimizer` package without
+  need for explicit imports. E.g., you can simply do `pb.opt.ues` to access the UES join ordering algorithm. Since the imports
+  are lazy, no unnecessary dependencies are loaded unless the specific strategy is used. In practical terms, you don't need to
+  install pytorch preemptively just because there is some machine learning-based optimizer available (which currently is not
+  the case anyway).
+
+### 💀 Breaking changes
+- Removed the `strategies` package. All strategies are now directly available as part of the `optimizer` module.
+  Instead of doing `from postbound.optimizer.strategies import ues` one can now directly do `pb.opt.ues`.
+
+### 📰 Updates
+- _None_
+
+### 🏥 Fixes
+- Resolved a bunch of issues that caused the Postgres-style dynamic programming enumerator to fail
+
+### 🪲 Known bugs
+- [ 🐘 🍏 ] The automatic optimization of the Postgres server configuration as part of the Docker installation does not work
+  on MacOS. Currently, this should be considered as wontfix.
+
 ---
 
 

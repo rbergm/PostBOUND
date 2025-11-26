@@ -12,17 +12,17 @@ from typing import Literal, Optional
 
 import networkx as nx
 
-from ..._core import JoinOperator, ScanOperator, TableReference
-from ..._hints import (
+from .._core import JoinOperator, ScanOperator, TableReference
+from .._hints import (
     JoinOperatorAssignment,
     PhysicalOperatorAssignment,
     ScanOperatorAssignment,
 )
-from ..._jointree import JoinTree, to_query_plan
-from ..._qep import QueryPlan
-from ...db._db import Database, DatabasePool
-from ...qal._qal import SqlQuery
-from ...util import networkx as nx_utils
+from .._jointree import JoinTree, to_query_plan
+from .._qep import QueryPlan
+from ..db._db import Database, DatabasePool
+from ..qal._qal import SqlQuery
+from ..util import networkx as nx_utils
 
 
 def _merge_nodes(

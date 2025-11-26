@@ -8,8 +8,8 @@ from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass
 from typing import Optional
 
-from ... import util
-from ..._core import (
+from .. import util
+from .._core import (
     Cardinality,
     IntermediateOperator,
     JoinOperator,
@@ -17,14 +17,14 @@ from ..._core import (
     ScanOperator,
     TableReference,
 )
-from ..._qep import QueryPlan, SortKey
-from ..._stages import (
+from .._qep import QueryPlan, SortKey
+from .._stages import (
     CardinalityEstimator,
     CostModel,
     OptimizationPreCheck,
     PlanEnumerator,
 )
-from ..._validation import (
+from .._validation import (
     CrossProductPreCheck,
     EquiJoinPreCheck,
     InnerJoinPreCheck,
@@ -33,10 +33,10 @@ from ..._validation import (
     VirtualTablesPreCheck,
     merge_checks,
 )
-from ...db._db import Database, DatabasePool, DatabaseSchema, DatabaseServerError
-from ...db.postgres import PostgresInterface, PostgresJoinHints, PostgresScanHints
-from ...qal import transform
-from ...qal._qal import (
+from ..db._db import Database, DatabasePool, DatabaseSchema, DatabaseServerError
+from ..db.postgres import PostgresInterface, PostgresJoinHints, PostgresScanHints
+from ..qal import transform
+from ..qal._qal import (
     AbstractPredicate,
     ColumnExpression,
     ColumnReference,
@@ -45,7 +45,7 @@ from ...qal._qal import (
     QueryPredicates,
     SqlQuery,
 )
-from ...util import LogicError, jsondict
+from ..util import LogicError, jsondict
 from . import native
 
 DPTable = dict[frozenset[TableReference], QueryPlan]

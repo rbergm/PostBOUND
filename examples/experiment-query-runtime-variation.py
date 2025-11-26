@@ -19,7 +19,6 @@ import numpy as np
 import pandas as pd
 
 import postbound as pb
-from postbound.optimizer.strategies import enumeration, randomized
 
 StopEvaluation = False
 CancelEvaluation = False
@@ -123,7 +122,7 @@ def execute_query_handler(
 
 def generate_all_join_orders(
     query: pb.SqlQuery,
-    exhaustive_enumerator: enumeration.ExhaustiveJoinOrderEnumerator,
+    exhaustive_enumerator: pb.opt.enumeration.ExhaustiveJoinOrderEnumerator,
     *,
     config: ExperimentConfig = ExperimentConfig.default(),
 ) -> list[pb.LogicalJoinTree]:
@@ -144,7 +143,7 @@ def generate_all_join_orders(
 def generate_random_join_orders(
     query: pb.SqlQuery, *, config: ExperimentConfig = ExperimentConfig.default()
 ) -> list[pb.LogicalJoinTree]:
-    random_enumerator = randomized.RandomJoinOrderGenerator()
+    random_enumerator = pb.opt.randomized.RandomJoinOrderGenerator()
     join_order_plans = []
     random_plan_hashes = set()
     current_plan_idx = 0
@@ -393,7 +392,7 @@ def evaluate_query(
     config: ExperimentConfig = ExperimentConfig.default(),
 ) -> Iterable[EvaluationResult]:
     logging.debug("Building all plans for query %s", label)
-    exhaustive_enumerator = enumeration.ExhaustiveJoinOrderEnumerator()
+    exhaustive_enumerator = pb.opt.enumeration.ExhaustiveJoinOrderEnumerator()
     join_order_plans = generate_all_join_orders(
         query, exhaustive_enumerator, config=config
     )

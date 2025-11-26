@@ -17,8 +17,8 @@ import warnings
 from collections.abc import Iterable
 from typing import Optional
 
-from ... import util
-from ..._core import (
+from .. import util
+from .._core import (
     Cardinality,
     ColumnReference,
     Cost,
@@ -27,14 +27,14 @@ from ..._core import (
     ScanOperator,
     TableReference,
 )
-from ..._hints import (
+from .._hints import (
     PhysicalOperatorAssignment,
     PlanParameterization,
     operators_from_plan,
 )
-from ..._jointree import JoinTree, jointree_from_plan, parameters_from_plan
-from ..._qep import QueryPlan
-from ..._stages import (
+from .._jointree import JoinTree, jointree_from_plan, parameters_from_plan
+from .._qep import QueryPlan
+from .._stages import (
     CardinalityEstimator,
     CompleteOptimizationAlgorithm,
     CostModel,
@@ -42,10 +42,10 @@ from ..._stages import (
     ParameterGeneration,
     PhysicalOperatorSelection,
 )
-from ...db._db import Database, DatabaseServerError, DatabaseUserError
-from ...db.postgres import PostgresInterface
-from ...qal import ColumnExpression, OrderBy, SqlQuery, transform
-from ...util import jsondict
+from ..db._db import Database, DatabaseServerError, DatabaseUserError
+from ..db.postgres import PostgresInterface
+from ..qal import ColumnExpression, OrderBy, SqlQuery, transform
+from ..util import jsondict
 
 
 class CostEstimationWarning(UserWarning):

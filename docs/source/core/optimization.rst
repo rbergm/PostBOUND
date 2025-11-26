@@ -47,10 +47,10 @@ Essentially, you can provide any combination of plan enumerator, cost model, and
 .. tip::
 
     If you do not implement your own plan enumerator, PostBOUND will select a dynamic programming-based algorithm (see
-    :class:`~postbound.optimizer.strategies.dynprog.DynamicProgrammingEnumerator`) by
+    :class:`~postbound.optimizer.dynprog.DynamicProgrammingEnumerator`) by
     default.
     If your target database happens to be a Postgres system, a DP algorithm specifically designed to mimic the Postgres
-    algorithm will be used (see :class:`~postbound.optimizer.strategies.dynprog.PostgresDynProg`).
+    algorithm will be used (see :class:`~postbound.optimizer.dynprog.PostgresDynProg`).
 
     In contrast to the :ref:`multi-stage pipeline <multistage-optimizer>`, we cannot simply let the target database system
     supply its own enumerator, because it is typically the enumerators job to request cost and cardinality estimates.

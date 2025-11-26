@@ -12,16 +12,15 @@
 # standard scenarios, the sub-packages can be imported directly. This also includes parts of the library that are not
 # considered core functionality per se.
 import postbound as pb
-from postbound.optimizer import presets
 
 # Step 1: System setup
 postgres_instance = pb.postgres.connect()
-presets.apply_standard_system_options()
+pb.opt.presets.apply_standard_system_options()
 job_workload = pb.workloads.job()
 
 # Step 2: Optimization pipeline setup
 # If necessary, this step can also include the definition of different optimization strategies
-ues_settings = presets.fetch("ues")
+ues_settings = pb.opt.presets.fetch("ues")
 optimization_pipeline = pb.MultiStageOptimizationPipeline(postgres_instance)
 optimization_pipeline.load_settings(ues_settings)
 optimization_pipeline.build()
