@@ -25,4 +25,7 @@ Optimizing the Server Configuration
 -----------------------------------
 
 
-pg_lab
+.. _postgres-pghintplan-vs-pglab:
+
+Hinting Backends
+-----------------

@@ -1,14 +1,61 @@
 Setup
 =====
 
-PostBOUND can be installed either directly on the system using a manual setup, or as a Docker container.
-Both installation methods are described in the following sections.
+Each installation of PostBOUND consists of two parts: the PostBOUND framework itself, as well as at least one database
+instance (such as PostgreSQL or DuckDB) that is used to actually execute the optimized queries
+(see :ref:`10minutes-db-connection`).
+Depending on your use case, you can use an integrated setup where PostBOUND takes care of installing the framework as well
+as the database instance(s), or you can manage the database instances on your own.
+
+In the following, we describe the different installation methods for PostBOUND:
+
+1. Installing PostBOUND via pip. This requires you to setup and manage the database instances on your own.
+2. A Docker-based installation that automates the entire setup of PostBOUND along with a Postgres and/or DuckDB instance.
+3. A manual installation of PostBOUND. Optionally, you can use the build tools shipped with PostBOUND to setup database
+   instances.
 
 .. tip::
 
-    If you want to update an existing (virtual environment-based) installation of PostBOUND, you can just
-    use the ``tools/setup-py-venv.sh`` script. It takes care of loading the latest PostBOUND release and
-    updating all required packages. This also works within the Docker-based installation.
+    If you do not use the pip-based setup and want to update an existing (virtual environment-based) installation of
+    PostBOUND, you can just use the ``tools/setup-py-venv.sh`` script. It takes care of loading the latest PostBOUND
+    release and updating all required packages. This also works within the Docker-based installation.
+
+
+.. tip::
+
+    For PostgreSQL, we support two different hinting backends: `pg_hint_plan <https://github.com/ossc-db/pg_hint_plan>`__
+    and `pg_lab <https://github.com/rbergm/pg_lab>`__. While the former is widely used and easy to setup, it provides
+    only basic hinting capabilities. In contrast, pg_lab allows for more fine-grained control over the optimizer's
+    behavior. See :ref:`postgres-pghintplan-vs-pglab` for more details on the differences between both backends and which
+    one to choose for your use case.
+
+
+Pip-based installation
+----------------------
+
+This installation method is probably the easiest and fastest way to get started with PostBOUND.
+Simply install the framework using pip:
+
+.. code-block:: bash
+
+    pip install postbound
+
+.. tip::
+
+    It is probably best to install PostBOUND in a new Python virtual environment to avoid dependency hell.
+
+Afterwards, you need to setup and configure the database instances on your own.
+For Postgres, this includes installing the `pg_hint_plan <https://github.com/ossc-db/pg_hint_plan>`__ extension to enable
+query hinting (or `pg_lab <https://github.com/rbergm/pg_lab>`__).
+Finally, create a connection file that contains the connection string to connect to your database.
+See the documentation of :func:`postgres.connect() <postbound.db.postgres.connect>` for details.
+
+If you want to use DuckDB, **do not install the official DuckDB Python package from PyPI**.
+The reason is that DuckDB does not provide any hinting functionality out-of-the-box.
+Therefore, we developed `quacklab <https://github.com/rbergm/quacklab>`__, a fork of DuckDB that adds hinting capabilities
+very similar to pg_lab.
+Follow the installation instructions from the quacklab repository and make sure to install the resulting Python package
+into the same environment where PostBOUND is installed.
 
 
 Manual Installation
