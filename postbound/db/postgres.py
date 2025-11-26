@@ -2594,9 +2594,9 @@ def _reconnect(name: str, *, pool: DatabasePool) -> PostgresInterface:
 def connect(
     *,
     name: str = "postgres",
-    application_name: str = "",
-    connect_string: str | None = None,
-    config_file: str | Path | None = ".psycopg_connection",
+    application_name: str = "PostBOUND",
+    connect_string: str = "",
+    config_file: str | Path = "",
     encoding: str = "UTF8",
     cache_enabled: bool = False,
     refresh: bool = False,
@@ -2605,12 +2605,18 @@ def connect(
 ) -> PostgresInterface:
     """Convenience function to seamlessly connect to a Postgres instance.
 
-    This function obtains a connect-string to the database according to the following rules:
+    This function obtains a connection to a Postgres database by trying the following methods in order:
 
     1. if the connect-string is supplied directly via the `connect_string` parameter, this is used
-    2. if the connect-string is not supplied, it is read from the file indicated by `config_file`. This file has to be located
-       in the current working directory, or the file name has to describe the path to that file.
-    3. if the `config_file` does not exist, an error is raised
+    2. the connect string is read from the `config_file` if this parameter is supplied. This file has to be located in the
+       current working directory, but absolute and relative paths are supported. If the file does not exist, an error is
+       raised.
+    3. the connect string is read from the default connection file *.psycopg_connection* in the current working directory
+    4. the connection parameters are read from the standard Postgres environment variables (e.g. *PGDATABASE*, *PGHOST*, ...).
+       This method is triggered via the presence of the *PGDATABASE* environment variable. Note that this method is generally
+       discouraged due to its implicit and non-obvious nature. A warning is emitted if this method is used.
+
+    If none of these methods worked, an error is raised.
 
     After a connection to the Postgres instance has been obtained, it is registered automatically on the current
     `DatabasePool` instance. This can be changed via the `private` parameter.
@@ -2622,10 +2628,10 @@ def connect(
         This is used to register the instance on the `DatabasePool`. Defaults to *postgres*.
     application_name : str, optional
         Identifier for the Postgres server. This will be the name that is shown in the server logs and process lists.
-    connect_string : str | None, optional
+    connect_string : str, optional
         A Psycopg-compatible connect string for the database. Supplying this parameter overwrites any other connection
-        data
-    config_file : str | Path | None, optional
+        information
+    config_file : str | Path, optional
         A file containing a Psycopg-compatible connect string for the database. This is the default and preferred method of
         connecting to a Postgres database. Defaults to *.psycopg_connection*
     encoding : str, optional
@@ -2655,12 +2661,15 @@ def connect(
 
     .. Psyopg v3: https://www.psycopg.org/psycopg3/ This is used internally by the Postgres interface to interact with the
        database
+    .. Postgres environment variables: https://www.postgresql.org/docs/current/libpq-envars.html
     """
     db_pool = DatabasePool.get_instance()
     if name in db_pool and not refresh:
         return _reconnect(name, pool=db_pool)
 
-    if config_file and not connect_string:
+    if connect_string:
+        connect_string = connect_string.strip()
+    elif config_file:
         config_file = Path(config_file)
         if not config_file.is_file():
             wdir = os.getcwd()
@@ -2672,7 +2681,27 @@ def connect(
             )
         with open(config_file, "r") as f:
             connect_string = f.readline().strip()
-    elif not connect_string:
+    elif Path(".psycopg_connection").is_file():
+        with open(".psycopg_connection", "r") as f:
+            connect_string = f.readline().strip()
+    elif os.getenv("PGDATABASE"):
+        warnings.warn("Using environment variables to construct connection string.")
+        env_vars = {
+            "PGDATABASE": "dbname",
+            "PGHOST": "host",
+            "PGPORT": "port",
+            "PGUSER": "user",
+            "PGPASSWORD": "password",
+            "PGPASSFILE": "passfile",
+        }
+        components: list[str] = []
+        for var, key in env_vars.items():
+            val = os.getenv(var)
+            if not val:
+                continue
+            components.append(f"{key} = '{val}'")
+        connect_string = " ".join(components)
+    else:
         raise ValueError(
             "Failed to obtain a database connection. Please either supply the connect string directly to the "
             "connect() method, or put a configuration file in your working directory. See the documentation of "
@@ -2681,6 +2710,7 @@ def connect(
 
     postgres_db = PostgresInterface(
         connect_string,
+        application_name=application_name,
         system_name=name,
         client_encoding=encoding,
         cache_enabled=cache_enabled,
