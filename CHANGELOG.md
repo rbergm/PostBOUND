@@ -8,30 +8,32 @@ stability. Since we are not ready for the 1.0 release yet, this does not matter 
 
 ---
 
-# ➡ Version 0.18.1 _(current)_
+# ➡ Version 0.19.0 _(current)_
 
 ## 🐣 New features
-- _None_
+- PostBOUND is now directly available from PyPI as the `postbound` package. No need for a manual installation anymore!
+- Introduced lazy imports for all pre-defined optimization strategies. This makes the previous `strategies` package obsolete
+  (see _Breaking changes_ below). Now, all optimization algorithms can be directly used from the `optimizer` package without
+  need for explicit imports. E.g., you can simply do `pb.opt.ues` to access the UES join ordering algorithm. Since the imports
+  are lazy, no unnecessary dependencies are loaded unless the specific strategy is used. In practical terms, you don't need to
+  install pytorch preemptively just because there is some machine learning-based optimizer available (which currently is not
+  the case anyway).
+- Simplified the access to query predicates. `SqlQuery` now provides direct access to `filters_for()`, `joins_between()`, etc.
+  This eliminates the need to constantly access the `QueryPredicates` wrapper and should streamline common use-cases.
+- Added two new powerful database schema introspection methods: `join_equivalence_keys` and `join_equivalence_classes` can be
+  used to retrieve all possible keys that can be equi-joined between two tables.
 
 ## 💀 Breaking changes
-- Removed the (legacy) `policies` package. This was not used outside of UES and is now part of its module.
-- Switched the default mode for the *setup-py-venv.sh* script to no longer build the documentation. It must now be explicitly
-  enabled using the `--include-doc` flag. This drastically speeds up the setup process for most users. At the same time, local
-  documentation is no longer necessary since the online documentation at
-  (ReadTheDocs)[https://postbound.readthedocs.io/en/latest/] was introduced.
+- Removed the `strategies` package. All strategies are now directly available as part of the `optimizer` module.
+  Instead of doing `from postbound.optimizer.strategies import ues` one can now directly do `pb.opt.ues`.
+- Removed the `DefaultPredicateHandler` of the query abstraction layer. This was never actually used and only complicated
+  things, especially for new users.
 
 ## 📰 Updates
 - _None_
 
 ## 🏥 Fixes
-- [ 🐘 ] Fixed timeout query execution not terminating the query correctly on the server when a timeout was reached. It turns
-  out psycopg does not cancel the query when the process is terminated. We now explicitly issue a `pg_cancel_backend()` call to
-  cancel the query on the server side.
-- Fixed workload setup scripts (`workload-job-setup.sh`, etc.) failing if a database with the target name as its suffix
-  existed (e.g. when a database named *imdb* should be created but *imdb-test* already exists).
-- Fixed `describe()` on the Postgres interface not working for Postgres 18. We now ignore all system catalog tables.
-- Fixed regression affecting the pre-defined cardinality estimators after the unification of the `CardinalityGenerator` and
-  `CardinalityEstimator` interfaces.
+- Resolved a bunch of issues that caused the Postgres-style dynamic programming enumerator to fail
 
 ## 🪲 Known bugs
 - [ 🐘 🍏 ] The automatic optimization of the Postgres server configuration as part of the Docker installation does not work
@@ -49,32 +51,35 @@ Currently, we plan to implement the following features in the future (in no part
   logs and the ability to cancel/resume long-running benchmarks
 - Adding popular optimization algorithms to the collection of pre-defined optimizers
 
+---
 
-## ⏳ Version 0.19.0 _(planned)_
+
+# 🕑 Past versions
+
+## 🕑 Version 0.18.1
 
 ### 🐣 New features
-- Introduced lazy imports for all pre-defined optimization strategies. This makes the previous `strategies` package obsolete
-  (see _Breaking changes_ below). Now, all optimization algorithms can be directly used from the `optimizer` package without
-  need for explicit imports. E.g., you can simply do `pb.opt.ues` to access the UES join ordering algorithm. Since the imports
-  are lazy, no unnecessary dependencies are loaded unless the specific strategy is used. In practical terms, you don't need to
-  install pytorch preemptively just because there is some machine learning-based optimizer available (which currently is not
-  the case anyway).
-- Simplified the access to query predicates. `SqlQuery` now provides direct access to `filters_for()`, `joins_between()`, etc.
-  This eliminates the need to constantly access the `QueryPredicates` wrapper and should streamline common use-cases.
-- Added two new powerful database schema introspection methods: `join_equivalence_keys` and `join_equivalence_classes` can be
-  used to retrieve all possible keys that can be equi-joined between two tables.
+- _None_
 
 ### 💀 Breaking changes
-- Removed the `strategies` package. All strategies are now directly available as part of the `optimizer` module.
-  Instead of doing `from postbound.optimizer.strategies import ues` one can now directly do `pb.opt.ues`.
-- Removed the `DefaultPredicateHandler` of the query abstraction layer. This was never actually used and only complicated
-  things, especially for new users.
+- Removed the (legacy) `policies` package. This was not used outside of UES and is now part of its module.
+- Switched the default mode for the *setup-py-venv.sh* script to no longer build the documentation. It must now be explicitly
+  enabled using the `--include-doc` flag. This drastically speeds up the setup process for most users. At the same time, local
+  documentation is no longer necessary since the online documentation at
+  (ReadTheDocs)[https://postbound.readthedocs.io/en/latest/] was introduced.
 
 ### 📰 Updates
 - _None_
 
 ### 🏥 Fixes
-- Resolved a bunch of issues that caused the Postgres-style dynamic programming enumerator to fail
+- [ 🐘 ] Fixed timeout query execution not terminating the query correctly on the server when a timeout was reached. It turns
+  out psycopg does not cancel the query when the process is terminated. We now explicitly issue a `pg_cancel_backend()` call to
+  cancel the query on the server side.
+- Fixed workload setup scripts (`workload-job-setup.sh`, etc.) failing if a database with the target name as its suffix
+  existed (e.g. when a database named *imdb* should be created but *imdb-test* already exists).
+- Fixed `describe()` on the Postgres interface not working for Postgres 18. We now ignore all system catalog tables.
+- Fixed regression affecting the pre-defined cardinality estimators after the unification of the `CardinalityGenerator` and
+  `CardinalityEstimator` interfaces.
 
 ### 🪲 Known bugs
 - [ 🐘 🍏 ] The automatic optimization of the Postgres server configuration as part of the Docker installation does not work
@@ -82,8 +87,6 @@ Currently, we plan to implement the following features in the future (in no part
 
 ---
 
-
-# 🕑 Past versions
 
 ## 🕑 Version 0.18.0 _(current)_
 
