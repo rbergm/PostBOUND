@@ -8,7 +8,9 @@ stability. Since we are not ready for the 1.0 release yet, this does not matter 
 
 ---
 
-# ➡ Version 0.19.0 _(current)_
+# ➡ Version 0.19.1 _(current)_
+
+(due to the short-lived nature of v0.19.0 we include its changelog entries here as well)
 
 ## 🐣 New features
 - PostBOUND is now directly available from PyPI as the `postbound` package. No need for a manual installation anymore!
@@ -22,6 +24,8 @@ stability. Since we are not ready for the 1.0 release yet, this does not matter 
   This eliminates the need to constantly access the `QueryPredicates` wrapper and should streamline common use-cases.
 - Added two new powerful database schema introspection methods: `join_equivalence_keys` and `join_equivalence_classes` can be
   used to retrieve all possible keys that can be equi-joined between two tables.
+- Added a fallback connection mechanism for the Postgres `connect()` method. If neither a connection string nor a config file
+  are supplied, the connection information is now retrieved from the Postgres environment variables.
 
 ## 💀 Breaking changes
 - Removed the `strategies` package. All strategies are now directly available as part of the `optimizer` module.
