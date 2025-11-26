@@ -7,7 +7,6 @@
 #
 
 import postbound as pb
-from postbound.optimizer.strategies import native
 
 # Setup: we optimize queries from the Join Order Benchmark on a Postgres database
 postgres_db = pb.postgres.connect()
@@ -19,7 +18,7 @@ job_workload = pb.workloads.job()
 # database, but execute them on a different system (e.g. calling NativeOptimizer(db_a) but creating OptimizationPipeline(db_b))
 predef_pipeline = (
     pb.IntegratedOptimizationPipeline(postgres_db)
-    .setup_optimization_algorithm(native.NativeOptimizer(postgres_db))
+    .setup_optimization_algorithm(pb.opt.native.NativeOptimizer(postgres_db))
     .build()
 )
 

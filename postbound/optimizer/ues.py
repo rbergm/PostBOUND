@@ -35,18 +35,18 @@ from typing import Generic, Optional
 
 import numpy as np
 
-from ... import util
-from ..._core import Cardinality, ColumnReference, JoinOperator, TableReference
-from ..._hints import PhysicalOperatorAssignment
-from ..._jointree import JoinTree, LogicalJoinTree
-from ..._stages import (
+from .. import util
+from .._core import Cardinality, ColumnReference, JoinOperator, TableReference
+from .._hints import PhysicalOperatorAssignment
+from .._jointree import JoinTree, LogicalJoinTree
+from .._stages import (
     CardinalityEstimator,
     JoinOrderOptimization,
     JoinOrderOptimizationError,
     OptimizationPreCheck,
     PhysicalOperatorSelection,
 )
-from ..._validation import (
+from .._validation import (
     DependentSubqueryPreCheck,
     EmptyPreCheck,
     EquiJoinPreCheck,
@@ -55,8 +55,8 @@ from ..._validation import (
     VirtualTablesPreCheck,
     merge_checks,
 )
-from ...db._db import Database, DatabasePool, DatabaseStatistics
-from ...qal._qal import (
+from ..db._db import Database, DatabasePool, DatabaseStatistics
+from ..qal._qal import (
     AbstractPredicate,
     BaseProjection,
     ImplicitFromClause,
@@ -65,7 +65,7 @@ from ...qal._qal import (
     SqlQuery,
     Where,
 )
-from .._joingraph import JoinGraph, JoinPath
+from ._joingraph import JoinGraph, JoinPath
 
 ColumnType = typing.TypeVar("ColumnType")
 """The type of the columns for which statistics are generated."""

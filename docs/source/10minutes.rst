@@ -106,6 +106,8 @@ For more details on the query abstraction, see the separate :doc:`core/qal` docu
     But this is currently rarely used.
 
 
+.. _10minutes-db-connection:
+
 Database Connection
 -------------------
 

@@ -6,6 +6,11 @@ years.
 These can be used to compare your novel idea against existing approaches.
 In addition to the actual research strategies, there are also some "pseudo-strategies" such as using the native optimizer
 of a database system or just randomly deciding.
+All strategies are directly available form the :mod:`postbound.optimizer` package, e.g. as `pb.opt.ues` for the UES optimizer.
+Internally, the algorithms are available as lazy imports. This prevents unnecessary dependencies from being installed with
+PostBOUND. For example, many learned estimators require Pytorch for their implementation. Lazy imports ensure that you do not
+need to install Pytorch if you do not want to use such an estimator.
+
 Currently, the following optimizers are implemented:
 
 .. important::
@@ -19,17 +24,17 @@ Currently, the following optimizers are implemented:
 +--------------+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------+------------------+-----------------------------------------------------------------+
 | Name         | Description                                                                                                                                                                 | Reference        | Package                                                         |
 +==============+=============================================================================================================================================================================+==================+=================================================================+
-| UES          | Upper-bound driven join order optimizer. Bounds are derived from base statistics, specifically most-common values.                                                          | [Hertzschuch21]_ | :mod:`ues <postbound.optimizer.strategies.ues>`.                |
+| UES          | Upper-bound driven join order optimizer. Bounds are derived from base statistics, specifically most-common values.                                                          | [Hertzschuch21]_ | :mod:`ues <postbound.optimizer.ues>`.                |
 +--------------+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------+------------------+-----------------------------------------------------------------+
-| TONIC        | Learned physical operator selection. Operators are selected based on past experience and optional pretraining. Learning utilizes a prefix tree instead of a neural network. | [Hertzschuch22]_ | :mod:`tonic <postbound.optimizer.strategies.tonic>`             |
+| TONIC        | Learned physical operator selection. Operators are selected based on past experience and optional pretraining. Learning utilizes a prefix tree instead of a neural network. | [Hertzschuch22]_ | :mod:`tonic <postbound.optimizer.tonic>`             |
 +--------------+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------+------------------+-----------------------------------------------------------------+
-| DP           | Dynamic programming-based join order optimizer, with an alternative algorithm that mimics the actual Postgres enumerator.                                                   |                  | :mod:`dynprog <postbound.optimizer.strategies.dynprog>`         |
+| DP           | Dynamic programming-based join order optimizer, with an alternative algorithm that mimics the actual Postgres enumerator.                                                   |                  | :mod:`dynprog <postbound.optimizer.dynprog>`         |
 +--------------+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------+------------------+-----------------------------------------------------------------+
-| *native*     | Native optimization uses the built-in query optimizer of a database system.                                                                                                 |                  | :mod:`native <postbound.optimizer.strategies.native>`           |
+| *native*     | Native optimization uses the built-in query optimizer of a database system.                                                                                                 |                  | :mod:`native <postbound.optimizer.native>`           |
 +--------------+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------+------------------+-----------------------------------------------------------------+
-| *random*     | Random selection of join orders and physical operators.                                                                                                                     |                  | :mod:`randomized <postbound.optimizer.strategies.randomized>`   |
+| *random*     | Random selection of join orders and physical operators.                                                                                                                     |                  | :mod:`randomized <postbound.optimizer.randomized>`   |
 +--------------+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------+------------------+-----------------------------------------------------------------+
-| *exhaustive* | These algorithms do not actually select a plan, but rather enumerate all possible plans (or join orders, or operator assignments).                                          |                  | :mod:`enumeration <postbound.optimizer.strategies.enumeration>` |
+| *exhaustive* | These algorithms do not actually select a plan, but rather enumerate all possible plans (or join orders, or operator assignments).                                          |                  | :mod:`enumeration <postbound.optimizer.enumeration>` |
 +--------------+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------+------------------+-----------------------------------------------------------------+
 
 .. [Hertzschuch21]

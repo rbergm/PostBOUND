@@ -29,7 +29,21 @@ At a high level, PostBOUND has the following goals and features:
 
 ## ⚡️ Quick Start
 
-The fastest way to get an installation of PostBOUND up and running is to use the provided Dockerfile.
+An installation of PostBOUND consists of two parts: the PostBOUND framework itself, as well as a running database instance
+(such as PostgreSQL or DuckDB) that is used to actually execute the optimized queries (see [💡 Essentials](#-essentials)
+below).
+
+The easiest way to install PostBOUND is via Pip:
+
+```sh
+pip install postbound
+```
+
+Afterwards, you can [connect](https://postbound.readthedocs.io/en/latest/10minutes.html#database-connection) it to a
+Postgres server running [pg_hint_plan](https://github.com/ossc-db/pg_hint_plan).
+
+If you prefer a more integrated setup, we provide a Docker image that contains PostBOUND as well as a readily-configured
+Postgres server or DuckDB installation.
 You can build your Docker image with the following command:
 
 ```sh

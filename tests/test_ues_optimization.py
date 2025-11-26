@@ -16,8 +16,7 @@ import postbound as pb
 from postbound import db
 from postbound.db import postgres
 from postbound.experiments import workloads
-from postbound.optimizer import presets
-from postbound.optimizer.strategies import ues
+from postbound.optimizer import presets, ues
 from postbound.qal import parser, transform
 from tests import regression_suite
 

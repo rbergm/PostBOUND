@@ -12,7 +12,6 @@ import warnings
 from typing import Optional
 
 import postbound as pb
-from postbound.optimizer import validation
 
 warnings.simplefilter("ignore")
 
@@ -65,14 +64,14 @@ class RandomJoinOrderOptimizer(pb.JoinOrderOptimization):
     def pre_check(self) -> pb.OptimizationPreCheck:
         # Our optimizer only works for queries without cross products (there are no join paths between the different
         # subqueries). Therefore, we must require that it is not executed on "bad" queries via a pre-check.
-        query_check = validation.CrossProductPreCheck()
+        query_check = pb.opt.validation.CrossProductPreCheck()
 
         # Furthermore, we must ensure that the target database supports enforcing linear join orders. This is exactly, what
         # the SupportedHintCheck does.
-        db_check = validation.SupportedHintCheck(pb.opt.HintType.LinearJoinOrder)
+        db_check = pb.opt.validation.SupportedHintCheck(pb.opt.HintType.LinearJoinOrder)
 
         # No, just combine the individual checks into a single one check
-        return validation.CompoundCheck([query_check, db_check])
+        return pb.opt.validation.CompoundCheck([query_check, db_check])
 
 
 # Setup: we optimize queries from the Join Order Benchmark on a Postgres database
