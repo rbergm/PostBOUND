@@ -8295,6 +8295,77 @@ class SqlQuery:
         self._query_predicates = current_predicate
         return current_predicate
 
+    def filters(self) -> Collection[AbstractPredicate]:
+        """Alias for `predicates().filters()`.
+
+        See Also
+        --------
+        QueryPredicates.filters
+        """
+        return self.predicates().filters()
+
+    def joins(self) -> Collection[AbstractPredicate]:
+        """Alias for `predicates().joins()`.
+
+        See Also
+        --------
+        QueryPredicates.joins
+        """
+        return self.predicates().joins()
+
+    def join_graph(self) -> nx.Graph:
+        """Alias for `predicates().join_graph()`.
+
+        See Also
+        --------
+        QueryPredicates.join_graph
+        """
+        return self.predicates().join_graph()
+
+    def filters_for(self, table: TableReference) -> Optional[AbstractPredicate]:
+        """Alias for `predicates().filters_for(table)`.
+
+        See Also
+        --------
+        QueryPredicates.filters_for
+        """
+        return self.predicates().filters_for(table)
+
+    def joins_for(self, table: TableReference) -> Collection[AbstractPredicate]:
+        """Alias for `predicates().joins_for(table)`.
+
+        See Also
+        --------
+        QueryPredicates.joins_for
+        """
+        return self.predicates().joins_for(table)
+
+    def joins_between(
+        self,
+        table1: TableReference | Iterable[TableReference],
+        table2: TableReference | Iterable[TableReference],
+    ) -> Optional[AbstractPredicate]:
+        """Alias for `predicates().joins_between(table1, table2)`.
+
+        See Also
+        --------
+        QueryPredicates.joins_between
+        """
+        return self.predicates().joins_between(table1, table2)
+
+    def joins_tables(
+        self,
+        tables: TableReference | Iterable[TableReference],
+        *more_tables: TableReference,
+    ) -> bool:
+        """Alias for `predicates().joins_tables(tables, *more_tables)`.
+
+        See Also
+        --------
+        QueryPredicates.joins_tables
+        """
+        return self.predicates().joins_tables(tables, *more_tables)
+
     def subqueries(self) -> Collection[SqlQuery]:
         """Provides all subqueries that are referenced in this query.
 

@@ -59,6 +59,8 @@ Currently, we plan to implement the following features in the future (in no part
   are lazy, no unnecessary dependencies are loaded unless the specific strategy is used. In practical terms, you don't need to
   install pytorch preemptively just because there is some machine learning-based optimizer available (which currently is not
   the case anyway).
+- Simplified the access to query predicates. `SqlQuery` now provides direct access to `filters_for()`, `joins_between()`, etc.
+  This eliminates the need to constantly access the `QueryPredicates` wrapper and should streamline common use-cases.
 
 ### 💀 Breaking changes
 - Removed the `strategies` package. All strategies are now directly available as part of the `optimizer` module.
