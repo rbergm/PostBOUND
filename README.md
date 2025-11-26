@@ -4,7 +4,7 @@
 ![GitHub Release](https://img.shields.io/github/v/release/rbergm/PostBOUND?color=blue)
 
 <p align="center">
-    <img src="docs/figures/postbound-logo.svg" style="width: 150px; margin: 15px;">
+    <img src="https://raw.githubusercontent.com/rbergm/PostBOUND/refs/heads/main/docs/figures/postbound-logo.svg" style="width: 150px; margin: 15px;">
 </p>
 
 PostBOUND is a Python framework for studying query optimization in database systems.
@@ -120,7 +120,7 @@ This is achieved by using query hints which typically encode the optimization de
 In the case of Postgres, this interaction roughly looks like this:
 
 <p align="center">
-  <img src="docs/figures/postbound-pg-interaction.svg" style="width: 600px; margin: 15px;">
+  <img src="https://raw.githubusercontent.com/rbergm/PostBOUND/refs/heads/main/docs/figures/postbound-pg-interaction.svg" style="width: 600px; margin: 15px;">
 </p>
 
 Users implement their optimization strategies in terms of

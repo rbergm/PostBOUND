@@ -9,12 +9,12 @@ authors = [{ name = "Rico Bergmann", email = "rico.bergmann1@tu-dresden.de" }]
 description = "PostBOUND is a research framework to prototype and benchmark database query optimizers"
 readme = "README.md"
 requires-python = ">=3.12"
+license = "Apache-2.0"
 classifiers = [
     "Programming Language :: Python :: 3",
     "Development Status :: 4 - Beta",
-    "License :: OSI Approved :: Apache Software License",
     "Intended Audience :: Science/Research",
-    "Topic :: Database Engines/Servers",
+    "Topic :: Database :: Database Engines/Servers",
     "Topic :: Scientific/Engineering",
     "Operating System :: OS Independent",
 ]
