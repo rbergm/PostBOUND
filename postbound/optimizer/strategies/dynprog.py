@@ -24,8 +24,16 @@ from ..._stages import (
     OptimizationPreCheck,
     PlanEnumerator,
 )
-from ..._validation import CrossProductPreCheck, VirtualTablesPreCheck, EquiJoinPreCheck, InnerJoinPreCheck, SubqueryPreCheck, SetOperationsPreCheck, merge_checks
-from ...db._db import Database, DatabasePool, DatabaseSchema
+from ..._validation import (
+    CrossProductPreCheck,
+    EquiJoinPreCheck,
+    InnerJoinPreCheck,
+    SetOperationsPreCheck,
+    SubqueryPreCheck,
+    VirtualTablesPreCheck,
+    merge_checks,
+)
+from ...db._db import Database, DatabasePool, DatabaseSchema, DatabaseServerError
 from ...db.postgres import PostgresInterface, PostgresJoinHints, PostgresScanHints
 from ...qal import transform
 from ...qal._qal import (
@@ -671,13 +679,6 @@ class PostgresDynProg(PlanEnumerator):
             "No valid plan found for the given query."
         )
 
-        cost_model.cleanup()
-        cardinality_estimator.cleanup()
-        self.query = None
-        self.predicates = None
-        self.cost_model = None
-        self.cardinality_estimator = None
-
         if self._is_pg_cost(cost_model):
             # This seems weird at first, so let's explain what is going on here:
             # If we use the actual PG cost model, we can be make better decisions about what the optimal plan is.
@@ -691,21 +692,18 @@ class PostgresDynProg(PlanEnumerator):
             # But this only works if know we are using the PG execution engine and cost model.
 
             plans = final_rel.pathlist + self._generate_pseudo_gather_paths(final_rel)
-
-            hinted_plans = {
-                self.target_db.hinting().generate_hints(query, plan): plan
-                for plan in plans
-            }
-            plan_costs = {
-                hinted_query: self.target_db.optimizer().cost_estimate(hinted_query)
-                for hinted_query in hinted_plans
-            }
-
-            cheapest_hints = util.argmin(plan_costs)
-            cheapest_plan = hinted_plans[cheapest_hints]
-            return cheapest_plan
+            plan_costs = {plan: self._pg_cost_estimate(plan) for plan in plans}
+            cheapest_plan = util.argmin(plan_costs)
         else:
-            return final_rel.cheapest_path
+            cheapest_plan = final_rel.cheapest_path
+
+        cost_model.cleanup()
+        cardinality_estimator.cleanup()
+        self.query = None
+        self.predicates = None
+        self.cost_model = None
+        self.cardinality_estimator = None
+        return cheapest_plan
 
     def describe(self) -> jsondict:
         return {
@@ -1212,10 +1210,16 @@ class PostgresDynProg(PlanEnumerator):
             rel.pathlist.sort(key=lambda path: path.estimated_cost)
             cheapest_path = rel.pathlist[0]
             rel.cheapest_path = cheapest_path
+        else:
+            raise LogicError("No valid paths for relation found.")
+
         if rel.partial_paths:
             rel.partial_paths.sort(key=lambda path: path.estimated_cost)
             cheapest_partial = rel.partial_paths[0]
             rel.cheapest_partial_path = cheapest_partial
+        else:
+            # Empty partial pathlist is allowed
+            pass
 
     def _generate_gather_paths(self, rel: RelOptInfo) -> None:
         """Scans a RelOpt for partial paths that might be gathered into regular paths."""
@@ -1226,7 +1230,10 @@ class PostgresDynProg(PlanEnumerator):
                     f"Partial path does not have estimated workers: {partial_path}"
                 )
             gather_path = partial_path.parallelize(n_workers)
-            cost_estimate = self.cost_model.estimate_cost(self.query, gather_path)
+            query_fragment = transform.extract_query_fragment(
+                self.query, gather_path.tables()
+            )
+            cost_estimate = self.cost_model.estimate_cost(query_fragment, gather_path)
             gather_path = gather_path.with_estimates(cost=cost_estimate)
 
             # It is important to not delete the partial path after gathering it. The path might still be useful in an
@@ -1268,7 +1275,16 @@ class PostgresDynProg(PlanEnumerator):
             estimated_workers=workers,
         )
 
-        cost = self.cost_model.estimate_cost(self.query, path)
+        # Instead of running the cost estimation on the full query, we transform the into a SELECT * query
+        # This prevents the query optimizer from inserting additional operators that would artifically increase the cost of the
+        # scan.
+        # For example, consider the following JOB query: SELECT min(k.keyword), ... FROM keyword k JOIN ... WHERE ...
+        # If we run the cost estimation without the star transformation, the query fragment for k would end up to be
+        # SELECT min(k.keyword) FROM keyword k WHERE ...
+        # Executing this query would require an additional aggregation step which should no be performed already at this point.
+        # By transforming the query into a star query, we get the plain result set without any additional operators.
+        star_query = transform.as_star_query(self.query)
+        cost = self.cost_model.estimate_cost(star_query, path)
         path = path.with_estimates(cost=cost)
         return path
 
@@ -1339,8 +1355,10 @@ class PostgresDynProg(PlanEnumerator):
                     )
                     index_paths.append(idx_path)
 
+        # See comment in _create_seqscan_path() for explanation of the star query. We do the same here.
+        star_query = transform.as_star_query(self.query)
         for path in index_paths:
-            cost_estimate = self.cost_model.estimate_cost(self.query, path)
+            cost_estimate = self.cost_model.estimate_cost(star_query, path)
             path = path.with_estimates(cost=cost_estimate)
             self._add_path(rel, path)
 
@@ -1387,7 +1405,10 @@ class PostgresDynProg(PlanEnumerator):
             filter_predicate=filter_condition,
             estimated_workers=workers,
         )
-        cost_estimate = self.cost_model.estimate_cost(self.query, bitmap_path)
+
+        # See comment in _create_seqscan_path() for explanation of the star query. We do the same here.
+        star_query = transform.as_star_query(self.query)
+        cost_estimate = self.cost_model.estimate_cost(star_query, bitmap_path)
         bitmap_path = bitmap_path.with_estimates(cost=cost_estimate)
 
         self._add_path(rel, bitmap_path)
@@ -1414,7 +1435,8 @@ class PostgresDynProg(PlanEnumerator):
         )
 
         if self._is_pg_cost(self.cost_model):
-            # cost estimation happens as part of the parent join
+            # Cost estimation happens as part of the parent join, so we just use a dummy here
+            # see comment in generate_execution_plan() for details. We use the same reasoning here.
             return memo_path
 
         cost_estimate = self.cost_model.estimate_cost(self.query, memo_path)
@@ -1436,7 +1458,8 @@ class PostgresDynProg(PlanEnumerator):
         )
 
         if self._is_pg_cost(self.cost_model):
-            # cost estimation happens as part of the parent join
+            # Cost estimation happens as part of the parent join, so we just use a dummy here
+            # see comment in generate_execution_plan() for details. We use the same reasoning here.
             return mat_path
 
         cost_estimate = self.cost_model.estimate_cost(self.query, mat_path)
@@ -1518,34 +1541,33 @@ class PostgresDynProg(PlanEnumerator):
             IntermediateOperator.Materialize,
         }
         if self._is_pg_cost(self.cost_model) and inner_path.operator in weird_ops:
-            query_fragment = transform.extract_query_fragment(
-                self.query, join_rel.intermediate
-            )
-            hinted_query = self.target_db.hinting().generate_hints(
-                query_fragment, nlj_path
-            )
-            native_plan = self.target_db.optimizer().query_plan(hinted_query)
+            native_plan = self._pg_plan(nlj_path)
 
-            nlj_node = native_plan.find_first_node(
-                lambda n: n.operator == JoinOperator.NestedLoopJoin
-            )
-            weird_node = native_plan.find_first_node(
-                lambda n: n.operator == inner_path.operator, direction="inner"
-            )
-            inner_cost = weird_node.estimated_cost if weird_node else math.inf
-            nlj_cost = (
-                nlj_node.estimated_cost if not math.isinf(inner_cost) else math.inf
-            )
+            if native_plan:
+                nlj_node = native_plan.find_first_node(
+                    lambda n: n.operator == JoinOperator.NestedLoopJoin
+                )
+                weird_node = native_plan.find_first_node(
+                    lambda n: n.operator == inner_path.operator, direction="inner"
+                )
+                inner_cost = weird_node.estimated_cost if weird_node else math.inf
+                nlj_cost = (
+                    nlj_node.estimated_cost if not math.isinf(inner_cost) else math.inf
+                )
 
-            updated_inner = inner_path.with_estimates(cost=inner_cost)
-            nlj_path = QueryPlan(
-                JoinOperator.NestedLoopJoin,
-                children=[outer_path, updated_inner],
-                estimated_cardinality=join_rel.cardinality,
-                estimated_cost=nlj_cost,
-                filter_predicate=join_condition,
-                estimated_workers=workers,
-            )
+                updated_inner = inner_path.with_estimates(cost=inner_cost)
+                nlj_path = QueryPlan(
+                    JoinOperator.NestedLoopJoin,
+                    children=[outer_path, updated_inner],
+                    estimated_cardinality=join_rel.cardinality,
+                    estimated_cost=nlj_cost,
+                    filter_predicate=join_condition,
+                    estimated_workers=workers,
+                )
+            else:
+                cost_estimate = self.cost_model.estimate_cost(self.query, nlj_path)
+                nlj_path = nlj_path.with_estimates(cost=cost_estimate)
+
         else:
             cost_estimate = self.cost_model.estimate_cost(self.query, nlj_path)
             nlj_path = nlj_path.with_estimates(cost=cost_estimate)
@@ -1647,6 +1669,30 @@ class PostgresDynProg(PlanEnumerator):
         if self._max_workers is None:
             return round(workers)
         return min(self._max_workers, round(workers))
+
+    def _pg_cost_estimate(self, path: QueryPlan) -> float:
+        query_fragment = transform.extract_query_fragment(self.query, path.tables())
+        hinted_query = self.target_db.hinting().generate_hints(query_fragment, path)
+        try:
+            cost = self.target_db.optimizer().cost_estimate(hinted_query)
+            return cost
+        except DatabaseServerError:
+            return math.inf
+
+    def _is_pg_cost(self, cost_model: CostModel) -> bool:
+        return (
+            isinstance(cost_model, native.NativeCostModel)
+            and cost_model.target_db == self.target_db
+        )
+
+    def _pg_plan(self, path: QueryPlan) -> Optional[QueryPlan]:
+        query_fragment = transform.extract_query_fragment(self.query, path.tables())
+        hinted_query = self.target_db.hinting().generate_hints(query_fragment, path)
+        try:
+            native_plan = self.target_db.optimizer().query_plan(hinted_query)
+            return native_plan
+        except DatabaseServerError:
+            return None
 
     def _determine_join_keys(
         self, *, outer_rel: RelOptInfo, inner_rel: RelOptInfo
@@ -1777,9 +1823,3 @@ class PostgresDynProg(PlanEnumerator):
         if not self._verbose:
             return
         warnings.warn(msg, category=DPWarning)
-
-    def _is_pg_cost(self, cost_model: CostModel) -> bool:
-        return (
-            isinstance(cost_model, native.NativeCostModel)
-            and cost_model.target_db == self.target_db
-        )
