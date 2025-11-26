@@ -63,6 +63,8 @@ Currently, we plan to implement the following features in the future (in no part
 ### 💀 Breaking changes
 - Removed the `strategies` package. All strategies are now directly available as part of the `optimizer` module.
   Instead of doing `from postbound.optimizer.strategies import ues` one can now directly do `pb.opt.ues`.
+- Removed the `DefaultPredicateHandler` of the query abstraction layer. This was never actually used and only complicated
+  things, especially for new users.
 
 ### 📰 Updates
 - _None_

@@ -3929,14 +3929,6 @@ class QueryPredicates:
     for most use-cases. The provided methods revolve around identifying filter and join predicates easily, as well finding the
     predicates that are specified on specific tables.
 
-    To distinguish between filter predicates and join predicates, the default logic provided by the `AbstractPredicate` is
-    used (see `AbstractPredicate.is_join`). If this distinction does not work for a specific usage scenario, a custom strategy
-    to recognize filters and joins can be provided. This is done by creating a subclass of `QueryPredicates` and setting the
-    global `DefaultPredicateHandler` variable to that class. Afterwards, each call to `predicates` on a new `SqlQuery` object
-    will use the updated handler. Notice however, that any change to the defaut handler should also involve changes to the
-    join and filter check of the actual predicates. Otherwise, the query predicates might provide a predicate as a join
-    predicate, but calling `is_join` on that predicate returns *False*. This could break application behaviour.
-
     Parameters
     ----------
     root : Optional[AbstractPredicate]
@@ -4542,19 +4534,6 @@ class QueryPredicates:
 
     def __str__(self) -> str:
         return str(self._root)
-
-
-DefaultPredicateHandler: Type[QueryPredicates] = QueryPredicates
-"""
-The DefaultPredicateHandler designates which QueryPredicates object should be constructed when a query is asked for its
-predicates. Changing this variable means an instance of a different class will be instantiated.
-This might be useful if another differentiation between join and filter predicates is required by a specific use case.
-
-See Also
---------
-QueryPredicates
-AbstractPredicate.is_join
-"""
 
 
 class BaseClause(abc.ABC):
@@ -7982,6 +7961,8 @@ class SqlQuery:
         self._hints = hints
         self._explain = explain
 
+        self._query_predicates: QueryPredicates | None = None
+
         self._hash_val = hash(
             (
                 self._hints,
@@ -8282,7 +8263,6 @@ class SqlQuery:
         """
         return {col for col in self.columns() if col.belongs_to(table)}
 
-    @functools.cache
     def predicates(self) -> QueryPredicates:
         """Provides all predicates in this query.
 
@@ -8294,8 +8274,10 @@ class SqlQuery:
         QueryPredicates
             A predicates wrapper around the conjunction of all individual predicates.
         """
-        predicate_handler = DefaultPredicateHandler
-        current_predicate = predicate_handler.empty_predicate()
+        if self._query_predicates is not None:
+            return self._query_predicates
+
+        current_predicate = QueryPredicates.empty_predicate()
 
         if self.cte_clause:
             for with_query in self.cte_clause.queries:
@@ -8310,6 +8292,7 @@ class SqlQuery:
         if from_predicates:
             current_predicate = current_predicate.and_(from_predicates)
 
+        self._query_predicates = current_predicate
         return current_predicate
 
     def subqueries(self) -> Collection[SqlQuery]:
