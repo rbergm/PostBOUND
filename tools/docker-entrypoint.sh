@@ -81,7 +81,7 @@ if [ -z "$(ls /postbound)" ] ; then
     fi
 
     # Install PostBOUND package
-    cd /postbound && tools/setup-py-venv.sh --venv /postbound/pb-venv --skip-doc
+    cd /postbound && tools/setup-py-venv.sh --venv /postbound/pb-venv
     source /postbound/pb-venv/bin/activate
 
     # Setup DuckDB
