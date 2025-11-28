@@ -184,7 +184,7 @@ class PreComputedCardinalities(CardinalityEstimator):
     def calculate_estimate(
         self, query: SqlQuery, tables: TableReference | Iterable[TableReference]
     ) -> Cardinality:
-        tables = util.enlist(tables)
+        tables = frozenset(util.enlist(tables))
         label = self._workload.label_of(query)
         relevant_samples = self._true_card_df[
             self._true_card_df[self._label_col] == label
@@ -352,7 +352,6 @@ class CardinalityDistortion(CardinalityEstimator):
     def calculate_estimate(
         self, query: SqlQuery, tables: TableReference | Iterable[TableReference]
     ) -> Cardinality:
-        tables = util.enlist(tables)
         card_est = self.estimator.calculate_estimate(query, tables)
         if not card_est.is_valid():
             return Cardinality.unknown()
