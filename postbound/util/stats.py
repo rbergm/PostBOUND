@@ -35,3 +35,9 @@ def score_matrix(
             matrix[i, j] = scoring(elem_i, elem_j)
 
     return matrix
+
+
+def trigrams(text: str) -> list[str]:
+    """Generates the trigrams of a given text."""
+    text = f"  {text.lower()}  "
+    return [text[i : i + 3] for i in range(len(text) - 2)]

@@ -55,6 +55,28 @@ Currently, we plan to implement the following features in the future (in no part
   logs and the ability to cancel/resume long-running benchmarks
 - Adding popular optimization algorithms to the collection of pre-defined optimizers
 
+## ⏳ Version 0.19.2 _(planned)_
+
+
+### 🐣 New features
+- _None_
+
+### 💀 Breaking changes
+- _None_
+
+### 📰 Updates
+- When retrieving a query plan from DuckDB, tables can now be properly aliased by supplying the original query. This
+  circumvents a limitation of DuckDB where the relation aliases are not included in the plan output.
+  This functionality is automatically used when calling `query_plan()` or `analyze_plan()` on the DuckDB optimizer interface
+
+### 🏥 Fixes
+- Fixed a type error in `PreComputedCardinalities` when calling `calculate_estimate()` with a plain table reference
+- [ 🐳 ] Fixed an error that caused the Docker-based setup to not install the PostBOUND package properly
+
+### 🪲 Known bugs
+- [ 🐘 🍏 ] The automatic optimization of the Postgres server configuration as part of the Docker installation does not work
+  on MacOS. Currently, this should be considered as wontfix.
+
 ---
 
 

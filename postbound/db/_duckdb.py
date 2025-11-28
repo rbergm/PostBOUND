@@ -33,7 +33,7 @@ from .._jointree import JoinTree
 from .._qep import QueryPlan
 from ..qal import transform
 from ..qal._qal import SqlQuery
-from ..util import Version, jsondict
+from ..util import Version, dicts, jsondict, stats
 from ._db import (
     Cursor,
     Database,
@@ -371,19 +371,57 @@ class DuckDBStatistics(DatabaseStatistics):
         raise UnsupportedDatabaseFeatureError(self._db, "most common value statistics.")
 
 
-def parse_duckdb_plan(raw_plan: dict) -> QueryPlan:
+def _bind_node_to_table(
+    scan_node: dict, *, query: SqlQuery
+) -> Optional[TableReference]:
+    tables = query.tables()
+    relname = scan_node.get("extra_info", {}).get("Table", "")
+    if not relname:
+        return None
+
+    candidate_tables = [tab for tab in tables if tab.full_name == relname]
+
+    if len(candidate_tables) == 1:
+        # all table names are unique, we can directly match on the full name
+        return candidate_tables[0]
+
+    # some tables are referenced multiple times, we need to determine the correct alias
+    # to avoid parsing the filter predicates backwards, we use a simple trigram-based heuristic here:
+    # for each base table we extract the filter predicates from the query and compare them with the filters
+    # that are applied in the scan node. Than, we select the table whith the highest overlap.
+    query_filters = {
+        candidate: str(query.filters_for(candidate)) for candidate in candidate_tables
+    }
+
+    node_trigram = set(
+        stats.trigrams(scan_node.get("extra_info", {}).get("Filters", ""))
+    )
+    filter_trigrams = {
+        candidate: set(stats.trigrams(pred))
+        for candidate, pred in query_filters.items()
+    }
+
+    scores = {
+        candidate: stats.jaccard(node_trigram, pred_trigram)
+        for candidate, pred_trigram in filter_trigrams.items()
+    }
+    best_match = dicts.argmax(scores)
+    return best_match
+
+
+def parse_duckdb_plan(raw_plan: dict, *, query: Optional[SqlQuery] = None) -> QueryPlan:
     node_type = raw_plan.get("name") or raw_plan.get("operator_name")
     if not node_type:
         assert len(raw_plan["children"]) == 1, (
             "Expected a single child for the root operator"
         )
-        return parse_duckdb_plan(raw_plan["children"][0])
+        return parse_duckdb_plan(raw_plan["children"][0], query=query)
 
     if node_type == "EXPLAIN" or node_type == "EXPLAIN_ANALYZE":
         assert len(raw_plan["children"]) == 1, (
             "Expected a single child for EXPLAIN operator"
         )
-        return parse_duckdb_plan(raw_plan["children"][0])
+        return parse_duckdb_plan(raw_plan["children"][0], query=query)
 
     extras: dict = raw_plan.get("extra_info", {})
     match node_type:
@@ -405,18 +443,21 @@ def parse_duckdb_plan(raw_plan: dict) -> QueryPlan:
     if operator is not None:
         node_type = operator
 
-    base_table = None
     if operator and operator in ScanOperator:
-        tab = extras.get("Table", "")
-        if tab:
-            base_table = TableReference(tab)
+        base_table = (
+            _bind_node_to_table(raw_plan, query=query) if query is not None else None
+        )
+    else:
+        base_table = None
 
     card_est = float(
         extras.get("Estimated Cardinality", math.nan)
     )  # Estimated Cardinality is a string for some reason..
     card_act = raw_plan.get("operator_cardinality", math.nan)
 
-    children = [parse_duckdb_plan(child) for child in raw_plan.get("children", [])]
+    children = [
+        parse_duckdb_plan(child, query=query) for child in raw_plan.get("children", [])
+    ]
 
     own_runtime = extras.get("operator_timing", math.nan)
     total_runtime = own_runtime + sum(child.execution_time for child in children)
@@ -438,21 +479,22 @@ class DuckDBOptimizer(OptimizerInterface):
 
     def query_plan(self, query: SqlQuery | str) -> QueryPlan:
         if isinstance(query, SqlQuery):
-            query = qal.transform.as_explain(query)
-            query = self._db.hinting().format_query(query)
+            explain_query = qal.transform.as_explain(query)
+            explain_query = self._db.hinting().format_query(explain_query)
+        elif not query.strip().upper().startswith("EXPLAIN"):
+            explain_query = f"EXPLAIN (FORMAT JSON) {query}"
         else:
-            normalized = query.strip().upper()
-            if not normalized.startswith("EXPLAIN"):
-                normalized = f"EXPLAIN (FORMAT JSON) {normalized}"
-            query = normalized
+            explain_query = query
 
-        self._db.cursor().execute(query)
+        self._db.cursor().execute(explain_query)
         result_set = self._db.cursor().fetchone()
         assert len(result_set) == 2
 
         raw_explain = result_set[1]
         parsed = json.loads(raw_explain)
-        return parse_duckdb_plan(parsed[0])
+        return parse_duckdb_plan(
+            parsed[0], query=query if isinstance(query, SqlQuery) else None
+        )
 
     def analyze_plan(
         self, query: SqlQuery, *, timeout: Optional[float] = None
@@ -469,7 +511,7 @@ class DuckDBOptimizer(OptimizerInterface):
 
         raw_explain = result_set[1]
         parsed = json.loads(raw_explain)
-        return parse_duckdb_plan(parsed[0])
+        return parse_duckdb_plan(parsed[0], query=query)
 
     def cardinality_estimate(self, query: SqlQuery | str) -> Cardinality:
         plan = self.query_plan(query)

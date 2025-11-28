@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import numpy as np
-
 import collections
 import itertools
 import numbers
@@ -11,6 +9,8 @@ import typing
 import warnings
 from collections.abc import Callable, Iterable, Sequence
 from typing import Optional
+
+import numpy as np
 
 T = typing.TypeVar("T")
 K = typing.TypeVar("K")
@@ -214,6 +214,14 @@ def argmin(mapping: dict[K, numbers.Number]) -> K:
     values `v'` it holds that `v <= v'`.
     """
     return min(mapping, key=mapping.get)
+
+
+def argmax(mapping: dict[K, numbers.Number]) -> K:
+    """
+    For a dict mapping keys to numeric types, returns the key `k` with maximum value `v`, s.t. for all keys `k'` with
+    values `v'` it holds that `v >= v'`.
+    """
+    return max(mapping, key=mapping.get)
 
 
 def dict_to_numpy(data: dict[K, V]) -> np.array[V]:
