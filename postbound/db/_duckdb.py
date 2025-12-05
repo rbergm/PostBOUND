@@ -380,8 +380,9 @@ def _bind_node_to_table(
         return None
 
     candidate_tables = [tab for tab in tables if tab.full_name == relname]
-
-    if len(candidate_tables) == 1:
+    if not candidate_tables:
+        return None
+    elif len(candidate_tables) == 1:
         # all table names are unique, we can directly match on the full name
         return candidate_tables[0]
 
@@ -392,10 +393,14 @@ def _bind_node_to_table(
     query_filters = {
         candidate: str(query.filters_for(candidate)) for candidate in candidate_tables
     }
+    query_filters = {
+        candidate: "".join(pred.split()) for candidate, pred in query_filters.items()
+    }
 
-    node_trigram = set(
-        stats.trigrams(scan_node.get("extra_info", {}).get("Filters", ""))
-    )
+    plan_filter: str = scan_node.get("extra_info", {}).get("Filters", "")
+    plan_filter = "".join(plan_filter.split())
+
+    node_trigram = set(stats.trigrams(plan_filter))
     filter_trigrams = {
         candidate: set(stats.trigrams(pred))
         for candidate, pred in query_filters.items()
@@ -405,11 +410,23 @@ def _bind_node_to_table(
         candidate: stats.jaccard(node_trigram, pred_trigram)
         for candidate, pred_trigram in filter_trigrams.items()
     }
+    score_ranking = sorted(scores.values(), reverse=True)
+    if 0.99 * score_ranking[0] <= score_ranking[1]:
+        warnings.warn(
+            f"Could not unambiguously bind scan node to a table. Candidates are {scores}."
+        )
+        return None
+
     best_match = dicts.argmax(scores)
     return best_match
 
 
-def parse_duckdb_plan(raw_plan: dict, *, query: Optional[SqlQuery] = None) -> QueryPlan:
+def parse_duckdb_plan(
+    raw_plan: dict | str, *, query: Optional[SqlQuery] = None
+) -> QueryPlan:
+    if isinstance(raw_plan, str):
+        raw_plan = json.loads(raw_plan)
+
     node_type = raw_plan.get("name") or raw_plan.get("operator_name")
     if not node_type:
         assert len(raw_plan["children"]) == 1, (
@@ -426,24 +443,22 @@ def parse_duckdb_plan(raw_plan: dict, *, query: Optional[SqlQuery] = None) -> Qu
     extras: dict = raw_plan.get("extra_info", {})
     match node_type:
         case "HASH_JOIN":
-            operator = JoinOperator.HashJoin
+            node_type = JoinOperator.HashJoin
         case (
             "SEQ_SCAN" | "SEQ_SCAN "  # DuckDB has a weird typo in the SEQ_SCAN label
         ) if extras.get("Type", "") == "Sequential Scan":
-            operator = ScanOperator.SequentialScan
+            node_type = ScanOperator.SequentialScan
         case (
             "SEQ_SCAN" | "SEQ_SCAN "  # DuckDB has a weird typo in the SEQ_SCAN label
         ) if extras.get("Type", "") == "Index Scan":
-            operator = ScanOperator.IndexScan
+            node_type = ScanOperator.IndexScan
         case "PROJECTION" | "FILTER" | "UNGROUPED_AGGREGATE" | "PERFECT_HASH_GROUP_BY":
-            operator = None
+            pass
         case _:
             warnings.warn(f"Unknown node type: {node_type}, ({extras})")
-            operator = None
-    if operator is not None:
-        node_type = operator
+            pass
 
-    if operator and operator in ScanOperator:
+    if node_type in ScanOperator:
         base_table = (
             _bind_node_to_table(raw_plan, query=query) if query is not None else None
         )
@@ -464,7 +479,6 @@ def parse_duckdb_plan(raw_plan: dict, *, query: Optional[SqlQuery] = None) -> Qu
 
     return QueryPlan(
         node_type,
-        operator=operator,
         children=children,
         base_table=base_table,
         estimated_cardinality=card_est,

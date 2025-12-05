@@ -59,15 +59,15 @@ Currently, we plan to implement the following features in the future (in no part
 
 
 ### 🐣 New features
-- _None_
+- `parse_duckdb_plan` now also accepts raw plan strings.
 
 ### 💀 Breaking changes
 - _None_
 
 ### 📰 Updates
-- When retrieving a query plan from DuckDB, tables can now be properly aliased by supplying the original query. This
+- When retrieving a query plan from DuckDB, most tables can now be properly aliased by supplying the original query. This
   circumvents a limitation of DuckDB where the relation aliases are not included in the plan output.
-  This functionality is automatically used when calling `query_plan()` or `analyze_plan()` on the DuckDB optimizer interface
+  This functionality is automatically used when calling `query_plan()` or `analyze_plan()` on the DuckDB optimizer interface.
 
 ### 🏥 Fixes
 - Fixed a type error in `PreComputedCardinalities` when calling `calculate_estimate()` with a plain table reference
