@@ -8,36 +8,25 @@ stability. Since we are not ready for the 1.0 release yet, this does not matter 
 
 ---
 
-# ➡ Version 0.19.1 _(current)_
-
-(due to the short-lived nature of v0.19.0 we include its changelog entries here as well)
+# ➡ Version 0.19.2 _(current)_
 
 ## 🐣 New features
-- PostBOUND is now directly available from PyPI as the `postbound` package. No need for a manual installation anymore!
-- Introduced lazy imports for all pre-defined optimization strategies. This makes the previous `strategies` package obsolete
-  (see _Breaking changes_ below). Now, all optimization algorithms can be directly used from the `optimizer` package without
-  need for explicit imports. E.g., you can simply do `pb.opt.ues` to access the UES join ordering algorithm. Since the imports
-  are lazy, no unnecessary dependencies are loaded unless the specific strategy is used. In practical terms, you don't need to
-  install pytorch preemptively just because there is some machine learning-based optimizer available (which currently is not
-  the case anyway).
-- Simplified the access to query predicates. `SqlQuery` now provides direct access to `filters_for()`, `joins_between()`, etc.
-  This eliminates the need to constantly access the `QueryPredicates` wrapper and should streamline common use-cases.
-- Added two new powerful database schema introspection methods: `join_equivalence_keys` and `join_equivalence_classes` can be
-  used to retrieve all possible keys that can be equi-joined between two tables.
-- Added a fallback connection mechanism for the Postgres `connect()` method. If neither a connection string nor a config file
-  are supplied, the connection information is now retrieved from the Postgres environment variables.
+- `parse_duckdb_plan` now also accepts raw plan strings.
+- Added a `indexed_column` method to the Postgres schema. For a specific index name, it returns the column being indexed.
+- Added some introspection functions to version objects, e.g. one can now extract the major version directly via `version.major`
 
 ## 💀 Breaking changes
-- Removed the `strategies` package. All strategies are now directly available as part of the `optimizer` module.
-  Instead of doing `from postbound.optimizer.strategies import ues` one can now directly do `pb.opt.ues`.
-- Removed the `DefaultPredicateHandler` of the query abstraction layer. This was never actually used and only complicated
-  things, especially for new users.
-
-## 📰 Updates
 - _None_
 
+## 📰 Updates
+- When retrieving a query plan from DuckDB, most tables can now be properly aliased by supplying the original query. This
+  circumvents a limitation of DuckDB where the relation aliases are not included in the plan output.
+  This functionality is automatically used when calling `query_plan()` or `analyze_plan()` on the DuckDB optimizer interface.
+
 ## 🏥 Fixes
-- Resolved a bunch of issues that caused the Postgres-style dynamic programming enumerator to fail
+- Fixed a type error in `PreComputedCardinalities` when calling `calculate_estimate()` with a plain table reference
+- [ 🦆 ] Fixed DuckDB plan parser not extracting the plan runtimes
+- [ 🐳 ] Fixed an error that caused the Docker-based setup to not install the PostBOUND package properly
 
 ## 🪲 Known bugs
 - [ 🐘 🍏 ] The automatic optimization of the Postgres server configuration as part of the Docker installation does not work
@@ -55,26 +44,41 @@ Currently, we plan to implement the following features in the future (in no part
   logs and the ability to cancel/resume long-running benchmarks
 - Adding popular optimization algorithms to the collection of pre-defined optimizers
 
-## ⏳ Version 0.19.2 _(planned)_
+---
 
+
+# 🕑 Past versions
+
+## 🕑 Version 0.19.1 _(current)_
+
+(due to the short-lived nature of v0.19.0 we include its changelog entries here as well)
 
 ### 🐣 New features
-- `parse_duckdb_plan` now also accepts raw plan strings.
-- Added a `indexed_column` method to the Postgres schema. For a specific index name, it returns the column being indexed.
-- Added some introspection functions to version objects, e.g. one can now extract the major version directly via `version.major`
+- PostBOUND is now directly available from PyPI as the `postbound` package. No need for a manual installation anymore!
+- Introduced lazy imports for all pre-defined optimization strategies. This makes the previous `strategies` package obsolete
+  (see _Breaking changes_ below). Now, all optimization algorithms can be directly used from the `optimizer` package without
+  need for explicit imports. E.g., you can simply do `pb.opt.ues` to access the UES join ordering algorithm. Since the imports
+  are lazy, no unnecessary dependencies are loaded unless the specific strategy is used. In practical terms, you don't need to
+  install pytorch preemptively just because there is some machine learning-based optimizer available (which currently is not
+  the case anyway).
+- Simplified the access to query predicates. `SqlQuery` now provides direct access to `filters_for()`, `joins_between()`, etc.
+  This eliminates the need to constantly access the `QueryPredicates` wrapper and should streamline common use-cases.
+- Added two new powerful database schema introspection methods: `join_equivalence_keys` and `join_equivalence_classes` can be
+  used to retrieve all possible keys that can be equi-joined between two tables.
+- Added a fallback connection mechanism for the Postgres `connect()` method. If neither a connection string nor a config file
+  are supplied, the connection information is now retrieved from the Postgres environment variables.
 
 ### 💀 Breaking changes
-- _None_
+- Removed the `strategies` package. All strategies are now directly available as part of the `optimizer` module.
+  Instead of doing `from postbound.optimizer.strategies import ues` one can now directly do `pb.opt.ues`.
+- Removed the `DefaultPredicateHandler` of the query abstraction layer. This was never actually used and only complicated
+  things, especially for new users.
 
 ### 📰 Updates
-- When retrieving a query plan from DuckDB, most tables can now be properly aliased by supplying the original query. This
-  circumvents a limitation of DuckDB where the relation aliases are not included in the plan output.
-  This functionality is automatically used when calling `query_plan()` or `analyze_plan()` on the DuckDB optimizer interface.
+- _None_
 
 ### 🏥 Fixes
-- Fixed a type error in `PreComputedCardinalities` when calling `calculate_estimate()` with a plain table reference
-- [ 🦆 ] Fixed DuckDB plan parser not extracting the plan runtimes
-- [ 🐳 ] Fixed an error that caused the Docker-based setup to not install the PostBOUND package properly
+- Resolved a bunch of issues that caused the Postgres-style dynamic programming enumerator to fail
 
 ### 🪲 Known bugs
 - [ 🐘 🍏 ] The automatic optimization of the Postgres server configuration as part of the Docker installation does not work
@@ -82,8 +86,6 @@ Currently, we plan to implement the following features in the future (in no part
 
 ---
 
-
-# 🕑 Past versions
 
 ## 🕑 Version 0.18.1
 
