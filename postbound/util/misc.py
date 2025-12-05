@@ -4,11 +4,11 @@ from __future__ import annotations
 
 import collections
 import re
-from collections.abc import Iterable
+from collections.abc import Generator, Iterable
 from datetime import datetime
-from typing import Any, Generator, Generic, Optional, TypeVar
+from typing import Any, Generic, Optional, TypeVar
 
-from . import jsonize
+from .jsonize import jsondict
 
 T = TypeVar("T")
 
@@ -31,11 +31,28 @@ def _wrap_version(v: Any) -> Version:
     return v if isinstance(v, Version) else Version(v)
 
 
-class Version(jsonize.Jsonizable):
+class Version:
     """Version instances represent versioning information and ensure that comparison operations work as expected.
 
     For example, Version instances can be created for strings such as "14.6" or "1.3.1" and ensure that 14.6 > 1.3.1
     """
+
+    @staticmethod
+    def is_valid(ver: str | int | list[str] | list[int]) -> bool:
+        """Checks whether the provided version representation is valid."""
+        try:
+            _ = _wrap_version(ver)
+            return True
+        except ValueError:
+            return False
+
+    @staticmethod
+    def wrap(ver: Version | str | int | list[str] | list[int]) -> Optional[Version]:
+        """Tries to wrap the provided version representation into a Version instance. Returns None if not possible."""
+        try:
+            return _wrap_version(ver)
+        except ValueError:
+            return None
 
     def __init__(self, ver: str | int | list[str] | list[int]) -> None:
         try:
@@ -50,10 +67,30 @@ class Version(jsonize.Jsonizable):
         except ValueError:
             raise ValueError(f"Unknown version string: '{ver}'")
 
+    @property
+    def major(self) -> int:
+        """Get the major version component."""
+        return self._version[0]
+
+    @property
+    def minor(self) -> Optional[int]:
+        """Get the minor version component, if available."""
+        return self._version[1] if len(self._version) > 1 else None
+
+    @property
+    def patch(self) -> Optional[int]:
+        """Get the patch version component, if available."""
+        return self._version[2] if len(self._version) > 2 else None
+
+    @property
+    def components(self) -> Iterable[int]:
+        """Get all version components as a list of integers."""
+        return self._version.copy()
+
     def formatted(self, *, prefix: str = "", suffix: str = "", separator: str = "."):
         return prefix + separator.join(str(v) for v in self._version) + suffix
 
-    def __json__(self) -> object:
+    def __json__(self) -> jsondict:
         return str(self)
 
     def __eq__(self, __o: object) -> bool:
@@ -68,14 +105,23 @@ class Version(jsonize.Jsonizable):
         except ValueError:
             return False
 
-    def __ge__(self, __o: object) -> bool:
-        return not self < __o
+    def __ge__(self, other: object) -> bool:
+        other = Version.wrap(other)
+        if other is None:
+            return NotImplemented
+        return not self < other
 
-    def __gt__(self, __o: object) -> bool:
-        return not self <= __o
+    def __gt__(self, other: object) -> bool:
+        other = Version.wrap(other)
+        if other is None:
+            return NotImplemented
+        return not self <= other
 
-    def __le__(self, __o: object) -> bool:
-        other = _wrap_version(__o)
+    def __le__(self, other: object) -> bool:
+        other = Version.wrap(other)
+        if other is None:
+            return NotImplemented
+
         for comp in zip(self._version, other._version):
             own_version, other_version = comp
             if own_version < other_version:
@@ -84,8 +130,11 @@ class Version(jsonize.Jsonizable):
                 return False
         return len(self) <= len(other)
 
-    def __lt__(self, __o: object) -> bool:
-        other = _wrap_version(__o)
+    def __lt__(self, other: object) -> bool:
+        other = Version.wrap(other)
+        if other is None:
+            return NotImplemented
+
         for comp in zip(self._version, other._version):
             own_version, other_version = comp
             if own_version < other_version:

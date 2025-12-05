@@ -61,6 +61,7 @@ Currently, we plan to implement the following features in the future (in no part
 ### 🐣 New features
 - `parse_duckdb_plan` now also accepts raw plan strings.
 - Added a `indexed_column` method to the Postgres schema. For a specific index name, it returns the column being indexed.
+- Added some introspection functions to version objects, e.g. one can now extract the major version directly via `version.major`
 
 ### 💀 Breaking changes
 - _None_
