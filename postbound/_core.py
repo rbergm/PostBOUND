@@ -969,6 +969,11 @@ class ColumnReference:
     column itself does not have any physical representation but will be modelled as a column reference nevertheless.
     """
 
+    @staticmethod
+    def create(column: str, *, table: str) -> ColumnReference:
+        """Shortcut method to create a column along with its table."""
+        return ColumnReference(column, TableReference(table))
+
     def __init__(self, name: str, table: Optional[TableReference] = None) -> None:
         if not name:
             raise ValueError("Column name is required")

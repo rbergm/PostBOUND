@@ -1241,6 +1241,41 @@ class PostgresSchemaInterface(DatabaseSchema):
         result_set = self._db.cursor().fetchall()
         return {row[0] for row in result_set}
 
+    def indexed_column(
+        self, index: str, *, schema: str = "public"
+    ) -> Optional[ColumnReference]:
+        """Retrieves the column that is indexed by a specific index.
+
+        Returns
+        -------
+        Optional[ColumnReference]
+            The column or *None*, if the index does not exist (in the given schema). For multi-indexes, i.e. indexes over
+            multiple columns, this returns the first column only.
+        """
+        query_template = textwrap.dedent("""
+            SELECT att.attname, rel.relname
+            FROM pg_index idx
+                JOIN pg_class cls ON idx.indexrelid = cls.oid
+                JOIN pg_class rel ON idx.indrelid = rel.oid
+                JOIN pg_attribute att ON att.attnum = ANY(idx.indkey) AND idx.indrelid = att.attrelid
+                JOIN pg_namespace nsp ON cls.relnamespace = nsp.oid AND rel.relnamespace = nsp.oid
+            WHERE cls.relname = %s
+                AND nsp.nspname = %s
+        """)
+
+        self._db.cursor().execute(query_template, (index, schema))
+        result_set = self._db.cursor().fetchall()
+        if not result_set:
+            return None
+        if len(result_set) > 1:
+            warnings.warn(
+                f"Multi-index {index} detected. Only returning the first column"
+            )
+            result_set = result_set[:1]
+
+        col, tab = result_set[0]
+        return ColumnReference.create(col, table=tab)
+
     def foreign_keys_on(self, column: ColumnReference) -> set[ColumnReference]:
         if not column.table:
             raise UnboundColumnError(column)
