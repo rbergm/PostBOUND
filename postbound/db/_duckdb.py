@@ -474,7 +474,7 @@ def parse_duckdb_plan(
         parse_duckdb_plan(child, query=query) for child in raw_plan.get("children", [])
     ]
 
-    own_runtime = extras.get("operator_timing", math.nan)
+    own_runtime = raw_plan.get("operator_timing", math.nan)
     total_runtime = own_runtime + sum(child.execution_time for child in children)
 
     return QueryPlan(

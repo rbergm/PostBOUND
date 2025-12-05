@@ -73,6 +73,7 @@ Currently, we plan to implement the following features in the future (in no part
 
 ### 🏥 Fixes
 - Fixed a type error in `PreComputedCardinalities` when calling `calculate_estimate()` with a plain table reference
+- [ 🦆 ] Fixed DuckDB plan parser not extracting the plan runtimes
 - [ 🐳 ] Fixed an error that caused the Docker-based setup to not install the PostBOUND package properly
 
 ### 🪲 Known bugs
