@@ -243,6 +243,12 @@ class QueryPreparation:
             "preparatory_statements": self.preparatory_stmts,
         }
 
+    def __repr__(self) -> str:
+        return f"QueryPreparation(explain={self.explain}, analyze={self.analyze}, count_star={self.count_star}, prewarm={self.prewarm}, preparatory_statements={self.preparatory_stmts})"
+
+    def __str__(self) -> str:
+        return repr(self)
+
 
 def _wrap_workload(
     queries: Iterable[SqlQuery] | Workload,

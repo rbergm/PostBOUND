@@ -53,7 +53,7 @@ Currently, we plan to implement the following features in the future (in no part
 - _None_
 
 ### 📰 Updates
-- _None_
+- Added a *str* and *repr* method to `QueryPreparation` for better debugging support
 
 ### 🏥 Fixes
 - _None_
