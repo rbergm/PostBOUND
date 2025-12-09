@@ -44,6 +44,24 @@ Currently, we plan to implement the following features in the future (in no part
   logs and the ability to cancel/resume long-running benchmarks
 - Adding popular optimization algorithms to the collection of pre-defined optimizers
 
+## ⏳ Version 0.19.3 _(planned)_
+
+### 🐣 New features
+- Added `use()` methods to all optimization pipelines that did not have them yet.
+
+### 💀 Breaking changes
+- _None_
+
+### 📰 Updates
+- _None_
+
+### 🏥 Fixes
+- _None_
+
+### 🪲 Known bugs
+- [ 🐘 🍏 ] The automatic optimization of the Postgres server configuration as part of the Docker installation does not work
+  on MacOS. Currently, this should be considered as wontfix.
+
 ---
 
 

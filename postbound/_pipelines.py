@@ -239,6 +239,10 @@ class IntegratedOptimizationPipeline(OptimizationPipeline):
         self._optimization_algorithm = algorithm
         return self
 
+    def use(self, algorithm: CompleteOptimizationAlgorithm) -> Self:
+        """Alias for `setup_optimization_algorithm` to keep a consistent interface across all pipelines."""
+        return self.setup_optimization_algorithm(algorithm)
+
     def build(self) -> Self:
         """Constructs the optimization pipeline.
 
@@ -946,6 +950,19 @@ class IncrementalOptimizationPipeline(OptimizationPipeline):
         self._ensure_pipeline_integrity(additional_optimization_step=next_step)
         self._optimization_steps.append(next_step)
         return self
+
+    def use(
+        self, step: CompleteOptimizationAlgorithm | IncrementalOptimizationStep
+    ) -> Self:
+        """Shortcut method to setup the pipeline."""
+        match step:
+            case CompleteOptimizationAlgorithm():
+                self.initial_plan_generator = step
+                return self
+            case IncrementalOptimizationStep():
+                return self.add_optimization_step(step)
+            case _:
+                raise TypeError(f"Unsupported component type: {type(step)}")
 
     def target_database(self) -> Database:
         return self.target_db
