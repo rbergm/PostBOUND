@@ -3609,7 +3609,7 @@ class PostgresExplainNode:
             None if math.isnan(self.parallel_workers) else self.parallel_workers
         )
 
-        return QueryPlan(
+        plan = QueryPlan(
             self.node_type,
             base_table=table,
             operator=operator,
@@ -3626,6 +3626,14 @@ class PostgresExplainNode:
             subplan_root=subplan_child,
             subplan_name=subplan_name,
         )
+
+        if par_workers and par_workers > 1:
+            # Postgres reports both the estimated and the actual cardinality as per-worker averages.
+            # Our QueryPlan does not make this distinction. Therefore, we need to re-scale the cardinalities
+            # for parallel plans. Note the extra +1 to account for the main process.
+            plan = plan.scale_cardinality(par_workers + 1, kind="both", recursive=True)
+
+        return plan
 
     def inspect(self, *, _indentation: int = 0) -> str:
         """Provides a pretty string representation of the *EXPLAIN* sub-plan that can be printed.

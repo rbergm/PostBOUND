@@ -467,6 +467,12 @@ class PlanEstimates:
         """Get the estimated cost of the operator. Can be *NaN* if no estimate is available."""
         return self._params["cost"]
 
+    @property
+    def additional_estimates(self) -> dict[str, Any]:
+        """Get all additional estimates that are not part of the well-defined attributes."""
+        reserved_keys = ["cardinality", "cost"]
+        return {k: v for k, v in self._params.items() if k not in reserved_keys}
+
     def get(self, key: str, default: Any = None) -> Any:
         """Retrieves the value of a specific key from the estimates.
 
@@ -630,6 +636,12 @@ class PlanMeasures:
         If no measurement is available, *None* is returned.
         """
         return self._params["cache_misses"]
+
+    @property
+    def additional_measures(self) -> dict[str, Any]:
+        """Get all additional estimates that are not part of the well-defined attributes."""
+        reserved_keys = ["cardinality", "execution_time", "cache_hits", "cache_misses"]
+        return {k: v for k, v in self._params.items() if k not in reserved_keys}
 
     def get(self, key: str, default: Any = None) -> Any:
         """Retrieves the value of a specific key from the measures.
@@ -1566,6 +1578,10 @@ class QueryPlan:
         return larger / smaller
 
     def parallelize(self, workers: int) -> QueryPlan:
+        """Creates a parallel version of the query plan with the specified number of workers.
+
+        The original plan is not changed.
+        """
         plan_params = self._plan_params.clone()
         plan_params.parallel_workers = workers
         return QueryPlan(
@@ -1653,7 +1669,9 @@ class QueryPlan:
                 else math.nan
             )
             updated_estimates = PlanEstimates(
-                cardinality=updated_cardinality, cost=updated_cost
+                cardinality=updated_cardinality,
+                cost=updated_cost,
+                **(self._estimates.additional_estimates),
             )
             updated_measures = None
         else:
@@ -1668,6 +1686,77 @@ class QueryPlan:
         if self.subplan:
             updated_subplan_root = self.subplan.root.with_actual_card(
                 cost_estimator=cost_estimator, ignore_nan=ignore_nan
+            )
+            updated_subplan = Subplan(updated_subplan_root, self.subplan.target_name)
+        else:
+            updated_subplan = None
+
+        return QueryPlan(
+            self.node_type,
+            operator=self.operator,
+            children=updated_children,
+            plan_params=self.params,
+            estimates=updated_estimates,
+            measures=updated_measures,
+            subplan=updated_subplan,
+        )
+
+    def scale_cardinality(
+        self,
+        factor: float,
+        *,
+        kind: Literal["estimated", "actual", "both"] = "estimated",
+        recursive: bool = False,
+    ) -> QueryPlan:
+        """Scales the cardinality estimate of the operator by a specific factor.
+
+        Parameters
+        ----------
+        factor : float
+            The factor by which the cardinality estimate should be scaled. For example, a factor of 0.5 reduces the estimate
+            by half, while a factor of 2.0 doubles the estimate.
+        kind : Literal["estimated", "actual", "both"], optional
+            Specifies which cardinality estimates should be scaled. If set to *estimated* (the default), only the estimated
+            cardinality is scaled. If set to *actual*, only the actual cardinality is scaled. If set to *both*, both estimates
+            are scaled.
+        recursive : bool, optional
+            Whether to apply the scaling recursively to all child nodes. By default, this is set to *False*, which only
+            scales the estimate of the current node.
+
+        Returns
+        -------
+        QueryPlan
+            A new query plan with the scaled cardinality estimate. The current plan is not changed.
+        """
+
+        updated_measures = self._measures
+        updated_estimates = self._estimates
+        if kind == "estimated" or kind == "both":
+            updated_estimated = factor * self.estimated_cardinality
+            updated_estimates = PlanEstimates(
+                cardinality=updated_estimated,
+                cost=self.estimated_cost,
+                **(self._estimates.additional_estimates),
+            )
+        if kind == "actual" or kind == "both":
+            updated_actual = factor * self.actual_cardinality
+            updated_measures = PlanMeasures(
+                cardinality=updated_actual,
+                execution_time=self.execution_time,
+                **(self._measures.additional_measures),
+            )
+
+        if recursive:
+            updated_children = [
+                child.scale_cardinality(factor, kind=kind, recursive=True)
+                for child in self.children
+            ]
+        else:
+            updated_children = self.children
+
+        if self.subplan:
+            updated_subplan_root = self.subplan.root.scale_cardinality(
+                factor, kind=kind, recursive=recursive
             )
             updated_subplan = Subplan(updated_subplan_root, self.subplan.target_name)
         else:

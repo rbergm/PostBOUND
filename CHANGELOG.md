@@ -48,6 +48,7 @@ Currently, we plan to implement the following features in the future (in no part
 
 ### 🐣 New features
 - Added `use()` methods to all optimization pipelines that did not have them yet.
+- Added a new `scale_cardinality()` to query plans to scale estimated and/or actual cardinalities by a given factor.
 
 ### 💀 Breaking changes
 - _None_
@@ -56,7 +57,8 @@ Currently, we plan to implement the following features in the future (in no part
 - Added a *str* and *repr* method to `QueryPreparation` for better debugging support
 
 ### 🏥 Fixes
-- _None_
+- [ 🐘 ] Fixed EXPLAIN ANALYZE plans that were extracted from Postgres and converted to a query plan not containing the correct
+  actual cardinalities when parallel workers were used.
 
 ### 🪲 Known bugs
 - [ 🐘 🍏 ] The automatic optimization of the Postgres server configuration as part of the Docker installation does not work
