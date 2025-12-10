@@ -1,8 +1,6 @@
 # Type stubs for postbound.optimizer package
 # See comment in __init__.py for details.
 
-from .. import _validation as validation
-
 # Lazy-loaded modules
 from . import dynprog, enumeration, native, noopt, presets, randomized, tonic, ues
 from ._cardinalities import (
@@ -28,7 +26,6 @@ from ._joingraph import (
 )
 
 __all__ = [
-    "validation",
     "CardinalityDistortion",
     "PreciseCardinalityHintGenerator",
     "PreComputedCardinalities",

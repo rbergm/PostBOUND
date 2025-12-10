@@ -15,7 +15,6 @@ TODO: detailed documentation
 
 import lazy_loader
 
-from .. import _validation as validation
 from ._cardinalities import (
     CardinalityDistortion,
     PreciseCardinalityHintGenerator,

@@ -22,17 +22,17 @@ from ._stages import (
     PhysicalOperatorSelection,
     PlanEnumerator,
 )
-from ._validation import (
+from .db._db import Database, DatabasePool
+from .qal._qal import SqlQuery
+from .util._errors import StateError
+from .util.jsonize import jsondict
+from .validation import (
     EmptyPreCheck,
     OptimizationPreCheck,
     UnsupportedQueryError,
     UnsupportedSystemError,
     merge_checks,
 )
-from .db._db import Database, DatabasePool
-from .qal._qal import SqlQuery
-from .util._errors import StateError
-from .util.jsonize import jsondict
 
 
 class OptimizationPipeline(abc.ABC):
