@@ -24,15 +24,6 @@ from .._stages import (
     OptimizationPreCheck,
     PlanEnumerator,
 )
-from .._validation import (
-    CrossProductPreCheck,
-    EquiJoinPreCheck,
-    InnerJoinPreCheck,
-    SetOperationsPreCheck,
-    SubqueryPreCheck,
-    VirtualTablesPreCheck,
-    merge_checks,
-)
 from ..db._db import Database, DatabasePool, DatabaseSchema, DatabaseServerError
 from ..db.postgres import PostgresInterface, PostgresJoinHints, PostgresScanHints
 from ..qal import transform
@@ -46,6 +37,15 @@ from ..qal._qal import (
     SqlQuery,
 )
 from ..util import LogicError, jsondict
+from ..validation import (
+    CrossProductPreCheck,
+    EquiJoinPreCheck,
+    InnerJoinPreCheck,
+    SetOperationsPreCheck,
+    SubqueryPreCheck,
+    VirtualTablesPreCheck,
+    merge_checks,
+)
 from . import native
 
 DPTable = dict[frozenset[TableReference], QueryPlan]

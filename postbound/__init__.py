@@ -144,14 +144,12 @@ from ._stages import (
     CostModel,
     IncrementalOptimizationStep,
     JoinOrderOptimization,
-    OptimizationPreCheck,
     OptimizationStage,
     ParameterGeneration,
     PhysicalOperatorSelection,
     PlanEnumerator,
     as_complete_algorithm,
 )
-from ._validation import PreCheckResult, UnsupportedQueryError, UnsupportedSystemError
 from .db import _duckdb as duckdb
 from .db import postgres
 from .db._db import Database
@@ -191,10 +189,6 @@ __all__ = [
     "IncrementalOptimizationPipeline",
     "as_complete_algorithm",
     "OptimizationStage",
-    "UnsupportedQueryError",
-    "UnsupportedSystemError",
-    "OptimizationPreCheck",
-    "PreCheckResult",
     "OptimizationSettings",
     "Database",
     "postgres",

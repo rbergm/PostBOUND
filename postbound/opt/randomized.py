@@ -22,10 +22,10 @@ from .._stages import (
     OptimizationPreCheck,
     PhysicalOperatorSelection,
 )
-from .._validation import CompoundCheck, CrossProductPreCheck, SupportedHintCheck
 from ..db._db import Database, DatabasePool
 from ..qal._qal import SqlQuery
 from ..util import networkx as nx_utils
+from ..validation import CompoundCheck, CrossProductPreCheck, SupportedHintCheck
 from ._helpers import to_query_plan
 
 

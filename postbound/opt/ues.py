@@ -45,15 +45,6 @@ from .._stages import (
     OptimizationPreCheck,
     PhysicalOperatorSelection,
 )
-from .._validation import (
-    DependentSubqueryPreCheck,
-    EmptyPreCheck,
-    EquiJoinPreCheck,
-    ImplicitQueryPreCheck,
-    SetOperationsPreCheck,
-    VirtualTablesPreCheck,
-    merge_checks,
-)
 from ..db._db import Database, DatabasePool, DatabaseStatistics
 from ..qal._qal import (
     AbstractPredicate,
@@ -63,6 +54,15 @@ from ..qal._qal import (
     Select,
     SqlQuery,
     Where,
+)
+from ..validation import (
+    DependentSubqueryPreCheck,
+    EmptyPreCheck,
+    EquiJoinPreCheck,
+    ImplicitQueryPreCheck,
+    SetOperationsPreCheck,
+    VirtualTablesPreCheck,
+    merge_checks,
 )
 from ._joingraph import JoinGraph, JoinPath
 
