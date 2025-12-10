@@ -107,11 +107,15 @@ from ._core import (
     ScanOperator,
     TableReference,
 )
-from ._hints import (
+from ._jointree import LogicalJoinTree
+from ._physops import (
+    DirectionalJoinOperatorAssignment,
+    ExecutionMode,
+    JoinOperatorAssignment,
     PhysicalOperatorAssignment,
     PlanParameterization,
+    ScanOperatorAssignment,
 )
-from ._jointree import LogicalJoinTree
 from ._pipelines import (
     IncrementalOptimizationPipeline,
     IntegratedOptimizationPipeline,
@@ -202,7 +206,10 @@ __all__ = [
     "LogicalJoinTree",
     "PhysicalOperatorAssignment",
     "PlanParameterization",
-    "_cardinalities",
+    "ExecutionMode",
+    "DirectionalJoinOperatorAssignment",
+    "JoinOperatorAssignment",
+    "ScanOperatorAssignment",
     "validation",
     "analysis",
     "workloads",

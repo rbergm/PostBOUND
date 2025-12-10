@@ -16,17 +16,6 @@ TODO: detailed documentation
 import lazy_loader
 
 from .. import _validation as validation
-from .._hints import (
-    DirectionalJoinOperatorAssignment,
-    HintType,
-    JoinOperatorAssignment,
-    ScanOperatorAssignment,
-    operators_from_plan,
-    read_operator_assignment_json,
-    read_operator_json,
-    read_plan_params_json,
-    update_plan,
-)
 from .._jointree import (
     JoinTree,
     explode_query_plan,
@@ -40,6 +29,14 @@ from ._cardinalities import (
     CardinalityDistortion,
     PreciseCardinalityHintGenerator,
     PreComputedCardinalities,
+)
+from ._hints import (
+    HintType,
+    operators_from_plan,
+    read_operator_assignment_json,
+    read_operator_json,
+    read_plan_params_json,
+    update_plan,
 )
 from ._joingraph import (
     IndexInfo,
@@ -67,9 +64,6 @@ __all__ = [
     "CardinalityDistortion",
     "PreciseCardinalityHintGenerator",
     "PreComputedCardinalities",
-    "ScanOperatorAssignment",
-    "JoinOperatorAssignment",
-    "DirectionalJoinOperatorAssignment",
     "read_operator_json",
     "operators_from_plan",
     "parameters_from_plan",

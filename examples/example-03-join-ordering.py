@@ -70,7 +70,7 @@ class RandomJoinOrderOptimizer(pb.JoinOrderOptimization):
         # the SupportedHintCheck does.
         db_check = pb.opt.validation.SupportedHintCheck(pb.opt.HintType.LinearJoinOrder)
 
-        # No, just combine the individual checks into a single one check
+        # Now, just combine the individual checks into a single one check
         return pb.opt.validation.CompoundCheck([query_check, db_check])
 
 

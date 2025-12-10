@@ -7,8 +7,8 @@ from typing import Optional
 
 from . import util
 from ._core import Cardinality, Cost, TableReference
-from ._hints import PhysicalOperatorAssignment, PlanParameterization
 from ._jointree import JoinTree
+from ._physops import PhysicalOperatorAssignment, PlanParameterization
 from ._qep import QueryPlan
 from ._validation import CrossProductPreCheck, EmptyPreCheck, OptimizationPreCheck
 from .db._db import Database, DatabasePool

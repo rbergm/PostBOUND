@@ -5,8 +5,8 @@ from __future__ import annotations
 from typing import Optional
 
 from .. import qal
-from .._hints import PhysicalOperatorAssignment, PlanParameterization
 from .._jointree import JoinTree
+from .._physops import PhysicalOperatorAssignment, PlanParameterization
 from .._stages import (
     JoinOrderOptimization,
     ParameterGeneration,
