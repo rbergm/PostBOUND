@@ -8,13 +8,14 @@ pg_connect_dir = "."
 
 
 class ReadmeExampleTests(unittest.TestCase):
-
     @regression_suite.skip_if_no_db(f"{pg_connect_dir}/.psycopg_connection_job")
     def test_example(self) -> None:
         import postbound as pb
-        from postbound.optimizer import presets
+        from postbound.opt import presets
 
-        postgres_instance = pb.postgres.connect(config_file=f"{pg_connect_dir}/.psycopg_connection_job")
+        postgres_instance = pb.postgres.connect(
+            config_file=f"{pg_connect_dir}/.psycopg_connection_job"
+        )
         presets.apply_standard_system_options()
         job_workload = pb.workloads.job()
         ues_settings = presets.fetch("ues")

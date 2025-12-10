@@ -6,7 +6,7 @@ from typing import Optional
 from .._core import TableReference
 from .._jointree import JoinTree, LogicalJoinTree
 from ..db._db import Database, DatabasePool
-from ..optimizer._joingraph import JoinGraph
+from ..opt._joingraph import JoinGraph
 from ..qal import transform
 from ..qal._qal import ImplicitSqlQuery, SqlQuery
 

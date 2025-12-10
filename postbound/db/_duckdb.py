@@ -14,7 +14,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Optional
 
-from .. import optimizer, qal
+from .. import opt, qal
 from .._core import (
     Cardinality,
     ColumnReference,
@@ -646,9 +646,9 @@ class DuckDBHintService(HintService):
             )
 
         if plan is not None:
-            join_order = optimizer.jointree_from_plan(plan)
-            physical_operators = optimizer.operators_from_plan(plan)
-            plan_parameters = optimizer.parameters_from_plan(plan)
+            join_order = opt.jointree_from_plan(plan)
+            physical_operators = opt.operators_from_plan(plan)
+            plan_parameters = opt.parameters_from_plan(plan)
 
         if join_order is not None:
             hint_parts = self._generate_join_order_hint(join_order)
