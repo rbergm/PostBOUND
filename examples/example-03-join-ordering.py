@@ -68,7 +68,7 @@ class RandomJoinOrderOptimizer(pb.JoinOrderOptimization):
 
         # Furthermore, we must ensure that the target database supports enforcing linear join orders. This is exactly, what
         # the SupportedHintCheck does.
-        db_check = pb.opt.validation.SupportedHintCheck(pb.opt.HintType.LinearJoinOrder)
+        db_check = pb.opt.validation.SupportedHintCheck(pb.HintType.LinearJoinOrder)
 
         # Now, just combine the individual checks into a single one check
         return pb.opt.validation.CompoundCheck([query_check, db_check])

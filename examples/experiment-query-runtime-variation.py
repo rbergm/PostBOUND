@@ -176,7 +176,7 @@ def generate_random_join_orders(
 class EvaluationResult:
     label: str
     query: pb.SqlQuery
-    join_order: pb.opt.JoinTree
+    join_order: pb.JoinTree
     query_hints: str
     planner_options: str
     query_plan: dict
@@ -210,11 +210,11 @@ def determine_timeout(
 def assert_correct_query_plan(
     label: str,
     query: pb.SqlQuery,
-    expected_join_order: pb.opt.JoinTree,
+    expected_join_order: pb.JoinTree,
     actual_query_plan: dict,
 ) -> None:
     parsed_actual_plan = pb.postgres.PostgresExplainPlan(actual_query_plan).as_qep()
-    actual_join_order = pb.opt.jointree_from_plan(parsed_actual_plan)
+    actual_join_order = pb.jointree_from_plan(parsed_actual_plan)
     if expected_join_order != actual_join_order:
         logging.error("Join order was not enforced correctly for label %s", label)
 
@@ -224,13 +224,15 @@ OperatorSelection = tuple[
 ]
 
 
-def native_operator_selection(join_order: pb.opt.JoinTree) -> OperatorSelection:
+def native_operator_selection(
+    join_order: pb.JoinTree,
+) -> OperatorSelection:
     plan_params = pb.PlanParameterization()
     plan_params.set_system_settings(geqo="off")
     return None, plan_params
 
 
-def restrict_to_hash_join(join_order: pb.opt.JoinTree) -> OperatorSelection:
+def restrict_to_hash_join(join_order: pb.JoinTree) -> OperatorSelection:
     operator_selection = pb.PhysicalOperatorAssignment()
     operator_selection.set_operator_enabled_globally(
         pb.JoinOperator.NestedLoopJoin, False
@@ -260,7 +262,7 @@ class TrueCardinalityGenerator:
         self._current_label = label
         self._relevant_queries = self._card_df[self._card_df.label == label].copy()
 
-    def __call__(self, join_order: pb.opt.JoinTree) -> OperatorSelection:
+    def __call__(self, join_order: pb.JoinTree) -> OperatorSelection:
         assert self._relevant_queries is not None
         plan_params = pb.PlanParameterization()
         for intermediate_join in join_order.iternodes():
@@ -306,7 +308,7 @@ def execute_single_query(
     n_executed_plans: int = 0,
     total_query_runtime: float = 0,
     db_instance: pb.Database,
-    operator_generator: Callable[[pb.opt.JoinTree], OperatorSelection],
+    operator_generator: Callable[[pb.JoinTree], OperatorSelection],
     config: ExperimentConfig = ExperimentConfig.default(),
 ) -> EvaluationResult:
     query_generator = db_instance.hinting()

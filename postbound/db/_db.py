@@ -38,14 +38,14 @@ from .._core import (
     UnboundColumnError,
     VirtualTableError,
 )
-from .._jointree import JoinTree
-from .._physops import (
+from .._hints import (
+    HintType,
+    JoinTree,
     PhysicalOperator,
     PhysicalOperatorAssignment,
     PlanParameterization,
 )
 from .._qep import QueryPlan
-from ..opt._hints import HintType
 from ..qal._qal import SqlQuery
 
 ResultRow = tuple

@@ -107,14 +107,20 @@ from ._core import (
     ScanOperator,
     TableReference,
 )
-from ._jointree import LogicalJoinTree
-from ._physops import (
+from ._hints import (
     DirectionalJoinOperatorAssignment,
     ExecutionMode,
+    HintType,
     JoinOperatorAssignment,
+    JoinTree,
+    JoinTreeAnnotation,
+    LogicalJoinTree,
     PhysicalOperatorAssignment,
     PlanParameterization,
     ScanOperatorAssignment,
+    jointree_from_plan,
+    operators_from_plan,
+    parameters_from_plan,
 )
 from ._pipelines import (
     IncrementalOptimizationPipeline,
@@ -203,13 +209,19 @@ __all__ = [
     "QueryPlan",
     "SortKey",
     "Subplan",
+    "JoinTreeAnnotation",
+    "JoinTree",
     "LogicalJoinTree",
     "PhysicalOperatorAssignment",
     "PlanParameterization",
     "ExecutionMode",
+    "HintType",
     "DirectionalJoinOperatorAssignment",
     "JoinOperatorAssignment",
     "ScanOperatorAssignment",
+    "jointree_from_plan",
+    "operators_from_plan",
+    "parameters_from_plan",
     "validation",
     "analysis",
     "workloads",

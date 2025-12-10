@@ -1,8 +1,12 @@
 from __future__ import annotations
 
 import math
-from collections.abc import Collection, Iterable
-from typing import Any, Literal, Optional
+from collections.abc import Collection, Container, Iterable
+from enum import Enum
+from typing import Any, Generic, Literal, Optional, TypeVar
+
+from postbound._core import JoinOperator, ScanOperator
+from postbound._qep import QueryPlan
 
 from . import util
 from ._base import T
@@ -14,7 +18,11 @@ from ._core import (
     ScanOperator,
     TableReference,
 )
-from .util import jsondict
+from ._qep import JoinDirection
+from .util import StateError, jsondict
+
+JoinTreeAnnotation = TypeVar("JoinTreeAnnotation")
+"""The concrete annotation used to augment information stored in the join tree."""
 
 
 class PhysicalOperatorAssignment:
@@ -1091,3 +1099,661 @@ class DirectionalJoinOperatorAssignment(JoinOperatorAssignment):
             and self._outer == other._outer
             and super().__eq__(other)
         )
+
+
+class HintType(Enum):
+    """Contains all hint types that are supported by PostBOUND.
+
+    Notice that not all of these hints need to be represented in the `PlanParameterization`, since some of them concern other
+    aspects such as the join order. Furthermore, not all database systems will support all operators. The availability of
+    certain hints can be checked on the database system interface and should be handled as part of the optimization pre-checks.
+    """
+
+    LinearJoinOrder = "Join order"
+    JoinDirection = "Join direction"
+    BushyJoinOrder = "Bushy join order"
+    Operator = "Physical operators"
+    Parallelization = "Par. workers"
+    Cardinality = "Cardinality"
+
+
+class JoinTree(Container[TableReference], Generic[JoinTreeAnnotation]):
+    """A join tree models the sequence in which joins should be performed in a query plan.
+
+    A join tree is a composite structure that contains base tables at its leaves and joins as inner nodes. Each node can
+    optionally be annotated with arbitrary metadata (`annotation` property). While a join tree does usually not contain any
+    information regarding physical operators to execute its joins or scans, we do distinguish between inner and outer relations
+    at the join level.
+
+    Each join tree instance is immutable. To expand the join tree, either use the `join_with` member method or create a new
+    join tree, for example using the `join` factory method. The metadata can be updated using the `update_annotation` method.
+
+    Regular join trees
+    -------------------
+
+    Depending on the specific node, different attributes are available. For leaf nodes, this is just the `base_table`
+    property. For joins, the `outer_child` and `inner_child` properties are available. The specific node type can be checked
+    using the `is_scan` and `is_join` methods respectively. Notice that these methods are "binary": ``is_join() = False``
+    implies ``is_scan() = True`` and vice versa.
+    No matter the specific node type, the `children` property always provides iteration support for the input nodes of the
+    current node (which in case of base tables is just an empty iterable). Likewise, the `annotation` property is always
+    available, but its value is entirely up to the user.
+
+    Empty join trees
+    ----------------
+
+    An empty join tree is a special case that can be created using the `empty` factory method or by calling the constructor
+    without any arguments. Empty join trees should only be used when starting the construction of a join tree and never be
+    returned as a result of the optimization process. Clients are not required to check for emptiness and empty join trees
+    also violate some of the invariants of proper join trees. Consider them syntactic sugar to simplify the construction, but
+    only use them sparingly. If you decide to work with empty join trees, use the `is_empty` method to check for emptiness.
+
+    Parameters
+    ----------
+    base_table : TableReference, optional
+        The base table being scanned. Accessing this property on join nodes raises an error.
+    outer_child : JoinTree[AnnotationType] | None, optional
+        The left child of the join. Accessing this property on base tables raises an error.
+    inner_child : JoinTree[AnnotationType] | None, optional
+        The right child of the join. Accessing this property on base tables raises
+    annotation : AnnotationType | None, optional
+        The annotation for the node. This can be used to store arbitrary data.
+    """
+
+    # Note for maintainers: if you add new methods that return a join tree, make sure to add similar methods with the same
+    # signature to the LogicalJoinTree (and a return type of LogicalJoinTree) to keep the two classes in sync.
+    # Likewise, some methods deliberately have the same signatures as the QueryPlan class to allow for easy duck-typed usage.
+    # These methods should also be kept in sync.
+
+    @staticmethod
+    def scan(
+        table: TableReference, *, annotation: Optional[JoinTreeAnnotation] = None
+    ) -> JoinTree[JoinTreeAnnotation]:
+        """Creates a new join tree with a single base table.
+
+        Parameters
+        ----------
+        table : TableReference
+            The base table to scan
+        annotation : AnnotationType
+            The annotation to attach to the base table node
+
+        Returns
+        -------
+        JoinTree[AnnotationType]
+            The new join tree
+        """
+        return JoinTree(base_table=table, annotation=annotation)
+
+    @staticmethod
+    def join(
+        outer: JoinTree[JoinTreeAnnotation],
+        inner: JoinTree[JoinTreeAnnotation],
+        *,
+        annotation: Optional[JoinTreeAnnotation] = None,
+    ) -> JoinTree[JoinTreeAnnotation]:
+        """Creates a new join tree by combining two existing join trees.
+
+        Parameters
+        ----------
+        outer : JoinTree[AnnotationType]
+            The outer join tree
+        inner : JoinTree[AnnotationType]
+            The inner join tree
+        annotation : AnnotationType
+            The annotation to attach to the intermediate join node
+
+        Returns
+        -------
+        JoinTree[AnnotationType]
+            The new join tree
+        """
+        return JoinTree(outer_child=outer, inner_child=inner, annotation=annotation)
+
+    @staticmethod
+    def empty() -> JoinTree[JoinTreeAnnotation]:
+        """Creates an empty join tree.
+
+        Returns
+        -------
+        JoinTree[AnnotationType]
+            The empty join tree
+        """
+        return JoinTree()
+
+    def __init__(
+        self,
+        *,
+        base_table: TableReference | None = None,
+        outer_child: JoinTree[JoinTreeAnnotation] | None = None,
+        inner_child: JoinTree[JoinTreeAnnotation] | None = None,
+        annotation: JoinTreeAnnotation | None = None,
+    ) -> None:
+        self._table = base_table
+        self._outer = outer_child
+        self._inner = inner_child
+        self._annotation = annotation
+        self._hash_val = hash((base_table, outer_child, inner_child))
+
+    @property
+    def base_table(self) -> TableReference:
+        """Get the base table for join tree leaves.
+
+        Accessing this property on a join node raises an error.
+        """
+        if not self._table:
+            raise StateError("This join tree does not represent a base table.")
+        return self._table
+
+    @property
+    def outer_child(self) -> JoinTree[JoinTreeAnnotation]:
+        """Get the left child of the join node.
+
+        Accessing this property on a base table raises an error.
+        """
+        if not self._outer:
+            raise StateError("This join tree does not represent an intermediate node.")
+        return self._outer
+
+    @property
+    def inner_child(self) -> JoinTree[JoinTreeAnnotation]:
+        """Get the right child of the join node.
+
+        Accessing this property on a base table raises an error.
+        """
+        if not self._inner:
+            raise StateError("This join tree does not represent an intermediate node.")
+        return self._inner
+
+    @property
+    def children(
+        self,
+    ) -> tuple[JoinTree[JoinTreeAnnotation], JoinTree[JoinTreeAnnotation]]:
+        """Get the children of the current node.
+
+        For base tables, this is an empty tuple. For join nodes, this is a tuple of the outer and inner child.
+        """
+        if self.is_empty():
+            raise StateError("This join tree is empty.")
+        if self.is_scan():
+            return ()
+        return self._outer, self._inner
+
+    @property
+    def annotation(self) -> JoinTreeAnnotation:
+        """Get the annotation of the current node."""
+        if self.is_empty():
+            raise StateError("Join tree is empty.")
+        return self._annotation
+
+    def is_empty(self) -> bool:
+        """Check, whether the current join tree is an empty one."""
+        return self._table is None and (self._outer is None or self._inner is None)
+
+    def is_join(self) -> bool:
+        """Check, whether the current join tree node is an intermediate."""
+        return self._table is None
+
+    def is_scan(self) -> bool:
+        """Check, whether the current join tree node is a leaf node."""
+        return self._table is not None
+
+    def is_linear(self) -> bool:
+        """Checks, whether the join tree encodes a linear join sequence.
+
+        In a linear join tree each join node is always a join between a base table and another join node or another base table.
+        As a special case, this implies that join trees that only constist of a single node are also considered to be linear.
+
+        The opposite of linear join trees are bushy join trees. There also exists a `is_base_join` method to check whether a
+        join node joins two base tables directly.
+
+        See Also
+        --------
+        is_bushy
+        """
+        if self.is_empty():
+            raise StateError("An empty join tree does not have a shape.")
+        if self.is_scan():
+            return True
+        return self._outer.is_scan() or self._inner.is_scan()
+
+    def is_bushy(self) -> bool:
+        """Checks, whether the join tree encodes a bushy join sequence.
+
+        In a bushy join tree, at least one join node is a join between two other join nodes. This implies that the join tree is
+        not linear.
+
+        See Also
+        --------
+        is_linear
+        """
+        return not self.is_linear()
+
+    def is_base_join(self) -> bool:
+        """Checks, whether the current join node joins two base tables directly."""
+        return self.is_join() and self._outer.is_scan() and self._inner.is_scan()
+
+    def tables(self) -> set[TableReference]:
+        """Provides all tables that are scanned in the join tree.
+
+        Notice that this does not consider tables that might be stored in the annotation of the join tree nodes.
+        """
+        if self.is_empty():
+            return set()
+        if self.is_scan():
+            return {self._table}
+        return self._outer.tables() | self._inner.tables()
+
+    def plan_depth(self) -> int:
+        """Calculates the depth of the join tree.
+
+        The depth of a join tree is the length of the longest path from the root to a leaf node. The depth of an empty join
+        is defined to be 0, while the depth of a join tree with a single node is 1.
+        """
+        if self.is_empty():
+            return 0
+        if self.is_scan():
+            return 1
+        return 1 + max(self._outer.plan_depth(), self._inner.plan_depth())
+
+    def lookup(
+        self, table: TableReference | Iterable[TableReference]
+    ) -> Optional[JoinTree[JoinTreeAnnotation]]:
+        """Traverses the join tree to find a specific (intermediate) node.
+
+        Parameters
+        ----------
+        table : TableReference | Iterable[TableReference]
+            The tables that should be contained in the intermediate. If a single table is provided (either as-is or as a
+            singleton iterable), the correponding leaf node will be returned. If multiple tables are provided, the join node
+            that calculates the intermediate *exactly* is returned.
+
+        Returns
+        -------
+        Optional[JoinTree[AnnotationType]]
+            The join tree node that contains the specified tables. If no such node exists, *None* is returned.
+        """
+        needle: set[TableReference] = set(util.enlist(table))
+        candidates = self.tables()
+
+        if needle == candidates:
+            return self
+        if not needle.issubset(candidates):
+            return None
+
+        for child in self.children:
+            result = child.lookup(needle)
+            if result is not None:
+                return result
+
+        return None
+
+    def update_annotation(
+        self, new_annotation: JoinTreeAnnotation
+    ) -> JoinTree[JoinTreeAnnotation]:
+        """Creates a new join tree with the same structure, but a different annotation.
+
+        The original join tree is not modified.
+        """
+        if self.is_empty():
+            raise StateError("Cannot update annotation of an empty join tree.")
+        return JoinTree(
+            base_table=self._table,
+            outer_child=self._outer,
+            inner_child=self._inner,
+            annotation=new_annotation,
+        )
+
+    def join_with(
+        self,
+        partner: JoinTree[JoinTreeAnnotation] | TableReference,
+        *,
+        annotation: Optional[JoinTreeAnnotation] = None,
+        partner_annotation: JoinTreeAnnotation | None = None,
+        partner_direction: JoinDirection = "inner",
+    ) -> JoinTree[JoinTreeAnnotation]:
+        """Creates a new join tree by combining the current join tree with another one.
+
+        Both input join trees are not modified. If one of the join trees is empty, the other one is returned as-is. As a
+        special case, joining two empty join trees results once again in an empty join tree.
+
+        Parameters
+        ----------
+        partner : JoinTree[AnnotationType] | TableReference
+            The join tree to join with the current tree. This can also be a base table, in which case it is treated as a scan
+            node of the table. The scan can be further described with the `partner_annotation` parameter.
+        annotation : Optional[AnnotationType], optional
+            The annotation of the new join node.
+        partner_annotation : AnnotationType | None, optional
+            If the join partner is given as a plain table, this annotation is used to describe the corresponding scan node.
+            Otherwise it is ignored.
+        partner_direction : JoinDirection, optional
+            Which role the partner node should play in the new join. Defaults to "inner", which means that the current node
+            becomes the outer node of the new join and the partner becomes the inner child. If set to "outer", the roles are
+            reversed.
+
+        Returns
+        -------
+        JoinTree[AnnotationType]
+            The resulting join tree
+        """
+        if isinstance(partner, JoinTree) and partner.is_empty():
+            return self
+        if self.is_empty():
+            return self._init_empty_join_tree(partner, annotation=partner_annotation)
+
+        if isinstance(partner, JoinTree) and partner_annotation is not None:
+            partner = partner.update_annotation(partner_annotation)
+        elif isinstance(partner, TableReference):
+            partner = JoinTree.scan(partner, annotation=partner_annotation)
+
+        outer, inner = (
+            (self, partner) if partner_direction == "inner" else (partner, self)
+        )
+        return JoinTree.join(outer, inner, annotation=annotation)
+
+    def inspect(self) -> str:
+        """Provides a pretty-printed an human-readable representation of the join tree."""
+        return _inspectify(self)
+
+    def iternodes(self) -> Iterable[JoinTree[JoinTreeAnnotation]]:
+        """Provides all nodes in the join tree, with outer nodes coming first."""
+        if self.is_empty():
+            return []
+        if self.is_scan():
+            return [self]
+        return [self] + self._outer.iternodes() + self._inner.iternodes()
+
+    def itertables(self) -> Iterable[TableReference]:
+        """Provides all tables that are scanned in the join tree. Outer tables appear first."""
+        if self.is_empty():
+            return []
+        if self.is_scan():
+            return [self._table]
+        return self._outer.itertables() + self._inner.itertables()
+
+    def iterjoins(self) -> Iterable[JoinTree[JoinTreeAnnotation]]:
+        """Provides all join nodes in the join tree, with outer nodes coming first."""
+        if self.is_empty() or self.is_scan():
+            return []
+        return self._outer.iterjoins() + self._inner.iterjoins() + [self]
+
+    def _init_empty_join_tree(
+        self,
+        partner: JoinTree[JoinTreeAnnotation] | TableReference,
+        *,
+        annotation: Optional[JoinTreeAnnotation] = None,
+    ) -> JoinTree[JoinTreeAnnotation]:
+        """Handler method to create a new join tree when the current tree is empty."""
+        if isinstance(partner, TableReference):
+            return JoinTree.scan(partner, annotation=annotation)
+
+        if annotation is not None:
+            partner = partner.update_annotation(annotation)
+        return partner
+
+    def __json__(self) -> jsondict:
+        if self.is_scan():
+            return {
+                "type": "join_tree_generic",
+                "table": self._table,
+                "annotation": self._annotation,
+            }
+        return {
+            "type": "join_tree_generic",
+            "outer": self._outer,
+            "inner": self._inner,
+            "annotation": self._annotation,
+        }
+
+    def __contains__(self, x: object) -> bool:
+        return self.lookup(x)
+
+    def __len__(self) -> int:
+        return len(self.tables())
+
+    def __hash__(self) -> int:
+        return self._hash_val
+
+    def __eq__(self, other: object) -> bool:
+        return (
+            isinstance(other, type(self))
+            and self._table == other._table
+            and self._outer == other._outer
+            and self._inner == other._inner
+        )
+
+    def __repr__(self) -> str:
+        return str(self)
+
+    def __str__(self):
+        if self.is_scan():
+            return self._table.identifier()
+        return f"({self._outer} ⋈ {self._inner})"
+
+
+class LogicalJoinTree(JoinTree[Cardinality]):
+    """A logical join tree is a special kind of join tree that has cardinality estimates attached to each node.
+
+    Other than the annotation type, it behaves exactly like a regular `JoinTree`. The cardinality estimates can be directly
+    accessed using the `cardinality` property.
+    """
+
+    @staticmethod
+    def scan(
+        table: TableReference, *, annotation: Optional[Cardinality] = None
+    ) -> LogicalJoinTree:
+        return LogicalJoinTree(table=table, annotation=annotation)
+
+    @staticmethod
+    def join(
+        outer: LogicalJoinTree,
+        inner: LogicalJoinTree,
+        *,
+        annotation: Optional[Cardinality] = None,
+    ) -> LogicalJoinTree:
+        return LogicalJoinTree(outer=outer, inner=inner, annotation=annotation)
+
+    @staticmethod
+    def empty() -> LogicalJoinTree:
+        return LogicalJoinTree()
+
+    def __init__(
+        self,
+        *,
+        table: TableReference | None = None,
+        outer: LogicalJoinTree | None = None,
+        inner: LogicalJoinTree | None = None,
+        annotation: Cardinality | None = None,
+    ) -> None:
+        super().__init__(
+            base_table=table,
+            outer_child=outer,
+            inner_child=inner,
+            annotation=annotation,
+        )
+
+    @property
+    def cardinality(self) -> Cardinality:
+        return self.annotation
+
+    @property
+    def outer_child(self) -> LogicalJoinTree:
+        return super().outer_child
+
+    @property
+    def inner_child(self) -> LogicalJoinTree:
+        return super().inner_child
+
+    @property
+    def children(self) -> tuple[LogicalJoinTree, LogicalJoinTree]:
+        return super().children
+
+    def lookup(
+        self, table: TableReference | Iterable[TableReference]
+    ) -> Optional[LogicalJoinTree]:
+        return super().lookup(table)
+
+    def update_annotation(self, new_annotation: Cardinality) -> LogicalJoinTree:
+        return super().update_annotation(new_annotation)
+
+    def join_with(
+        self,
+        partner: LogicalJoinTree | TableReference,
+        *,
+        annotation: Optional[Cardinality] = None,
+        partner_annotation: Cardinality | None = None,
+        partner_direction: JoinDirection = "inner",
+    ) -> LogicalJoinTree:
+        return super().join_with(
+            partner,
+            annotation=annotation,
+            partner_annotation=partner_annotation,
+            partner_direction=partner_direction,
+        )
+
+    def iternodes(self) -> Iterable[LogicalJoinTree]:
+        return super().iternodes()
+
+    def iterjoins(self) -> Iterable[LogicalJoinTree]:
+        return super().iterjoins()
+
+    def __json__(self) -> jsondict:
+        if self.is_scan():
+            return {
+                "type": "join_tree_logical",
+                "table": self._table,
+                "annotation": self._annotation,
+            }
+        return {
+            "type": "join_tree_logical",
+            "outer": self._outer,
+            "inner": self._inner,
+            "annotation": self._annotation,
+        }
+
+
+def _inspectify(
+    join_tree: JoinTree[JoinTreeAnnotation], *, indentation: int = 0
+) -> str:
+    """Handler method to generate a human-readable string representation of a join tree."""
+    padding = " " * indentation
+    prefix = "<- " if padding else ""
+
+    if join_tree.is_scan():
+        return f"{padding}{prefix}{join_tree.base_table} ({join_tree.annotation})"
+
+    join_node = f"{padding}{prefix}⨝ ({join_tree.annotation})"
+    child_inspections = [
+        _inspectify(child, indentation=indentation + 2) for child in join_tree.children
+    ]
+    return f"{join_node}\n" + "\n".join(child_inspections)
+
+
+def jointree_from_plan(
+    plan: QueryPlan, *, card_source: Literal["estimates", "actual"] = "estimates"
+) -> LogicalJoinTree:
+    """Extracts the join tree encoded in a query plan.
+
+    The cardinality estimates of the join tree can be inferred from either the estimated cardinalities or from the measured
+    actual cardinalities of the query plan.
+    """
+    card = (
+        plan.estimated_cardinality
+        if card_source == "estimates"
+        else plan.actual_cardinality
+    )
+    if plan.is_scan():
+        return JoinTree.scan(plan.base_table, annotation=card)
+    elif plan.is_join():
+        outer = jointree_from_plan(plan.outer_child, card_source=card_source)
+        inner = jointree_from_plan(plan.inner_child, card_source=card_source)
+        return JoinTree.join(outer, inner, annotation=card)
+    else:
+        # auxiliary node handler
+        return jointree_from_plan(plan.input_node, card_source=card_source)
+
+
+def parameters_from_plan(
+    query_plan: QueryPlan | LogicalJoinTree,
+    *,
+    target_cardinality: Literal["estimated", "actual"] = "estimated",
+    fallback_estimated: bool = False,
+) -> PlanParameterization:
+    """Extracts the cardinality estimates from a join tree.
+
+    The join tree can be either a logical representation, in which case the cardinalities are extracted directly. Or, it can be
+    a full query plan, in which case the cardinalities are extracted from the estimates or actual measurements. The cardinality
+    source depends on the `target_cardinality` setting.
+    If actual cardinalities should be used, but some nodes do only have estimates, these can be used as a fallback if
+    `fallback_estimated` is set.
+    """
+    params = PlanParameterization()
+
+    if isinstance(query_plan, LogicalJoinTree):
+        card = query_plan.annotation
+        parallel_workers = None
+    else:
+        if target_cardinality == "estimated":
+            card = query_plan.estimated_cardinality
+        elif target_cardinality == "actual" and not fallback_estimated:
+            card = query_plan.actual_cardinality
+        else:  # we should use actuals, but are allowed to fall back to estimates if necessary
+            card = (
+                query_plan.actual_cardinality
+                if query_plan.actual_cardinality.is_valid()
+                else query_plan.estimated_cardinality
+            )
+        parallel_workers = query_plan.params.parallel_workers
+
+    if not math.isnan(card):
+        params.add_cardinality(query_plan.tables(), card)
+    if parallel_workers:
+        params.set_workers(query_plan.tables(), parallel_workers)
+
+    for child in query_plan.children:
+        child_params = parameters_from_plan(
+            child,
+            target_cardinality=target_cardinality,
+            fallback_estimated=fallback_estimated,
+        )
+        params = params.merge_with(child_params)
+
+    return params
+
+
+def operators_from_plan(
+    query_plan: QueryPlan, *, include_workers: bool = False
+) -> PhysicalOperatorAssignment:
+    """Extracts the operator assignment from a whole query plan.
+
+    Notice that this method only adds parallel workers to the assignment if explicitly told to, since this is generally
+    better handled by the parameterization.
+    """
+    assignment = PhysicalOperatorAssignment()
+    if not query_plan.operator and query_plan.input_node:
+        return operators_from_plan(query_plan.input_node)
+
+    workers = query_plan.parallel_workers if include_workers else math.nan
+    match query_plan.operator:
+        case ScanOperator():
+            operator = ScanOperatorAssignment(
+                query_plan.operator,
+                query_plan.base_table,
+                workers,
+            )
+            assignment.add(operator)
+        case JoinOperator():
+            operator = JoinOperatorAssignment(
+                query_plan.operator,
+                query_plan.tables(),
+                parallel_workers=workers,
+            )
+            assignment.add(operator)
+        case _:
+            assignment.add(query_plan.operator, query_plan.tables())
+
+    for child in query_plan.children:
+        child_assignment = operators_from_plan(child)
+        assignment = assignment.merge_with(child_assignment)
+    return assignment

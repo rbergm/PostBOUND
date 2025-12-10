@@ -9,9 +9,9 @@ from typing import Literal, Optional
 import networkx as nx
 
 from .._core import JoinOperator, PhysicalOperator, ScanOperator, TableReference
-from .._jointree import JoinTree, to_query_plan
-from .._physops import (
+from .._hints import (
     JoinOperatorAssignment,
+    JoinTree,
     PhysicalOperatorAssignment,
     ScanOperatorAssignment,
 )
@@ -26,6 +26,7 @@ from .._validation import CompoundCheck, CrossProductPreCheck, SupportedHintChec
 from ..db._db import Database, DatabasePool
 from ..qal._qal import SqlQuery
 from ..util import networkx as nx_utils
+from ._helpers import to_query_plan
 
 
 def _merge_nodes(
