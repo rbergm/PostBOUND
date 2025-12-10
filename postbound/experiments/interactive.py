@@ -4,7 +4,7 @@ import dataclasses
 from typing import Optional
 
 from .._core import TableReference
-from .._jointree import JoinTree, LogicalJoinTree
+from .._hints import JoinTree, LogicalJoinTree
 from ..db._db import Database, DatabasePool
 from ..opt._joingraph import JoinGraph
 from ..qal import transform

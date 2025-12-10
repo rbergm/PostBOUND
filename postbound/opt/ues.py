@@ -37,8 +37,7 @@ import numpy as np
 
 from .. import util
 from .._core import Cardinality, ColumnReference, JoinOperator, TableReference
-from .._jointree import JoinTree, LogicalJoinTree
-from .._physops import PhysicalOperatorAssignment
+from .._hints import JoinTree, LogicalJoinTree, PhysicalOperatorAssignment
 from .._stages import (
     CardinalityEstimator,
     JoinOrderOptimization,

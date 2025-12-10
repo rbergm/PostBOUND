@@ -14,9 +14,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Optional
 
-import postbound.opt._hints
-
-from .. import opt, qal
+from .. import qal
 from .._core import (
     Cardinality,
     ColumnReference,
@@ -26,13 +24,16 @@ from .._core import (
     ScanOperator,
     TableReference,
 )
-from .._jointree import JoinTree
-from .._physops import (
+from .._hints import (
+    HintType,
+    JoinTree,
     PhysicalOperatorAssignment,
     PlanParameterization,
+    jointree_from_plan,
+    operators_from_plan,
+    parameters_from_plan,
 )
 from .._qep import QueryPlan
-from ..opt._hints import HintType
 from ..qal import transform
 from ..qal._qal import SqlQuery
 from ..util import Version, dicts, jsondict, stats
@@ -648,9 +649,9 @@ class DuckDBHintService(HintService):
             )
 
         if plan is not None:
-            join_order = opt.jointree_from_plan(plan)
-            physical_operators = postbound.opt._hints.operators_from_plan(plan)
-            plan_parameters = opt.parameters_from_plan(plan)
+            join_order = jointree_from_plan(plan)
+            physical_operators = operators_from_plan(plan)
+            plan_parameters = parameters_from_plan(plan)
 
         if join_order is not None:
             hint_parts = self._generate_join_order_hint(join_order)

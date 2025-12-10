@@ -12,7 +12,7 @@ import Levenshtein
 
 from .. import util
 from .._core import ColumnReference, PhysicalOperator, TableReference
-from .._jointree import JoinTree
+from .._hints import JoinTree
 from .._qep import QueryPlan
 from ..db._db import Database, DatabasePool
 from ..qal import parser, transform

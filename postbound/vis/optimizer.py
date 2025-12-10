@@ -11,7 +11,7 @@ import networkx as nx
 
 from .. import util
 from .._core import TableReference
-from .._jointree import JoinTree, LogicalJoinTree
+from .._hints import JoinTree, LogicalJoinTree
 from .._qep import QueryPlan
 from ..db._db import Database, DatabasePool
 from ..opt._joingraph import JoinGraph
