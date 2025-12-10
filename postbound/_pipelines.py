@@ -323,11 +323,11 @@ class TextBookOptimizationPipeline(OptimizationPipeline):
 
     def __init__(self, target_db: Database) -> None:
         from .db.postgres import PostgresInterface
-        from .optimizer.dynprog import (
+        from .opt.dynprog import (
             DynamicProgrammingEnumerator,
             PostgresDynProg,
         )
-        from .optimizer.native import (
+        from .opt.native import (
             NativeCardinalityEstimator,
             NativeCostModel,
         )

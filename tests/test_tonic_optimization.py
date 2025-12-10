@@ -5,7 +5,7 @@ import unittest
 import postbound as pb
 from postbound.db import postgres
 from postbound.experiments import workloads
-from postbound.optimizer import tonic
+from postbound.opt import tonic
 from postbound.qal import transform
 from tests import regression_suite
 
