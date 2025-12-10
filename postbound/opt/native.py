@@ -27,12 +27,11 @@ from .._core import (
     ScanOperator,
     TableReference,
 )
-from .._hints import (
+from .._jointree import JoinTree, jointree_from_plan, parameters_from_plan
+from .._physops import (
     PhysicalOperatorAssignment,
     PlanParameterization,
-    operators_from_plan,
 )
-from .._jointree import JoinTree, jointree_from_plan, parameters_from_plan
 from .._qep import QueryPlan
 from .._stages import (
     CardinalityEstimator,
@@ -46,6 +45,7 @@ from ..db._db import Database, DatabaseServerError, DatabaseUserError
 from ..db.postgres import PostgresInterface
 from ..qal import ColumnExpression, OrderBy, SqlQuery, transform
 from ..util import jsondict
+from ._hints import operators_from_plan
 
 
 class CostEstimationWarning(UserWarning):

@@ -18,8 +18,8 @@ from typing import Any, Optional
 
 from .. import db, qal, util
 from .._core import ColumnReference, JoinOperator, TableReference
-from .._hints import JoinOperatorAssignment, PhysicalOperatorAssignment
 from .._jointree import JoinTree, jointree_from_plan
+from .._physops import JoinOperatorAssignment, PhysicalOperatorAssignment
 from .._qep import QueryPlan
 from .._stages import PhysicalOperatorSelection
 from ..qal import parser

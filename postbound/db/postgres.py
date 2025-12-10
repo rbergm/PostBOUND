@@ -42,14 +42,13 @@ from .._core import (
     UnboundColumnError,
     VirtualTableError,
 )
-from .._hints import (
-    HintType,
+from .._jointree import JoinTree, jointree_from_plan, parameters_from_plan
+from .._physops import (
     PhysicalOperatorAssignment,
     PlanParameterization,
-    operators_from_plan,
 )
-from .._jointree import JoinTree, jointree_from_plan, parameters_from_plan
 from .._qep import QueryPlan, SortKey
+from ..opt._hints import HintType, operators_from_plan
 from ..qal import formatter, transform
 from ..qal._qal import (
     AbstractPredicate,

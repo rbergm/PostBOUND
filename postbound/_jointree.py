@@ -16,11 +16,9 @@ from ._core import (
     ScanOperator,
     TableReference,
 )
-from ._hints import (
+from ._physops import (
     PhysicalOperatorAssignment,
     PlanParameterization,
-    operators_from_plan,
-    read_operator_json,
 )
 from ._qep import (
     JoinDirection,
@@ -31,6 +29,7 @@ from ._qep import (
     SortKey,
     Subplan,
 )
+from .opt._hints import operators_from_plan, read_operator_json
 from .qal import parser
 from .qal._qal import SqlQuery
 from .util import StateError, jsondict

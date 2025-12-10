@@ -1,9 +1,7 @@
 from __future__ import annotations
 
-import json
 import math
 from collections.abc import Collection, Iterable
-from enum import Enum
 from typing import Any, Literal, Optional
 
 from . import util
@@ -16,398 +14,7 @@ from ._core import (
     ScanOperator,
     TableReference,
 )
-from ._qep import PlanEstimates, PlanParams, QueryPlan
-from .qal import parser
 from .util import jsondict
-
-
-class ScanOperatorAssignment:
-    """Models the selection of a scan operator for a specific base table.
-
-    Attributes
-    -------
-    operator : ScanOperators
-        The selected operator
-    table : TableReference
-        The table that is scanned using the operator
-    parallel_workers : float | int
-        The number of parallel processes that should be used to execute the scan. Can be set to 1 to indicate sequential
-        operation. Defaults to NaN to indicate that no choice has been made.
-    """
-
-    def __init__(
-        self,
-        operator: ScanOperator,
-        table: TableReference,
-        parallel_workers: float | int = math.nan,
-    ) -> None:
-        self._operator = operator
-        self._table = table
-        self._parallel_workers = parallel_workers
-        self._hash_val = hash((self._operator, self._table, self._parallel_workers))
-
-    __match_args__ = ("operator", "table", "parallel_workers")
-
-    @property
-    def operator(self) -> ScanOperator:
-        """Get the assigned operator.
-
-        Returns
-        -------
-        ScanOperators
-            The operator
-        """
-        return self._operator
-
-    @property
-    def table(self) -> TableReference:
-        """Get the table being scanned.
-
-        Returns
-        -------
-        TableReference
-            The table
-        """
-        return self._table
-
-    @property
-    def parallel_workers(self) -> int | float:
-        """Get the number of parallel workers used for the scan.
-
-        This number designates the total number of parallel processes. It can be 1 to indicate sequential operation, or even
-        *NaN* if it is unknown.
-
-        Returns
-        -------
-        int | float
-            The number of workers
-        """
-        return self._parallel_workers
-
-    def inspect(self) -> str:
-        """Provides the scan as a natural string.
-
-        Returns
-        -------
-        str
-            A string representation of the assignment
-        """
-        return f"USING {self.operator}" if self.operator else ""
-
-    def __json__(self) -> jsondict:
-        return {
-            "operator": self.operator.value,
-            "table": self.table,
-            "parallel_workers": self.parallel_workers,
-        }
-
-    def __hash__(self) -> int:
-        return self._hash_val
-
-    def __eq__(self, other: object) -> bool:
-        return (
-            isinstance(other, type(self))
-            and self.operator == other.operator
-            and self.table == other.table
-            and self.parallel_workers == other.parallel_workers
-        )
-
-    def __repr__(self) -> str:
-        return str(self)
-
-    def __str__(self) -> str:
-        return f"{self.operator.value}({self.table})"
-
-
-class JoinOperatorAssignment:
-    """Models the selection of a join operator for a specific join of tables.
-
-    Each join is identified by all base tables that are involved in the join. The assignment to intermediate results does not
-    matter here. For example, a join between R ⨝ S and T is expressed as R, S, T even though the actual join combined an
-    intermediate result with as base table.
-
-    A more verbose model is provided by the `DirectionalJoinOperatorAssignment`. In addition to the joined tables, that model
-    also distinguishes between inner and outer relation of the join.
-
-    Parameters
-    ----------
-    operator : JoinOperators
-        The selected operator
-    join : Collection[TableReference]
-        The base tables that are joined using the operator
-    parallel_workers : float | int, optional
-        The number of parallel processes that should be used to execute the join. Can be set to 1 to indicate sequential
-        operation. Defaults to NaN to indicate that no choice has been made.
-
-    Raises
-    ------
-    ValueError
-        If `join` contains less than 2 tables
-    """
-
-    def __init__(
-        self,
-        operator: JoinOperator,
-        join: Collection[TableReference],
-        *,
-        parallel_workers: float | int = math.nan,
-    ) -> None:
-        if len(join) < 2:
-            raise ValueError("At least 2 join tables must be given")
-        self._operator = operator
-        self._join = frozenset(join)
-        self._parallel_workers = parallel_workers
-
-        self._hash_val = hash((self._operator, self._join, self._parallel_workers))
-
-    __match_args__ = ("operator", "join", "parallel_workers")
-
-    @property
-    def operator(self) -> JoinOperator:
-        """Get the operator that was selected for the join
-
-        Returns
-        -------
-        JoinOperators
-            The operator
-        """
-        return self._operator
-
-    @property
-    def join(self) -> frozenset[TableReference]:
-        """Get the tables that are joined together.
-
-        For joins of more than 2 base tables this usually means that the join combines an intermediate result with a base table
-        or another intermediate result. These two cases are not distinguished by the assignment and have to be detected
-        through other information, e.g. the join tree.
-
-        The more verbose model of a `DirectionalJoinOperatorAssignment` also distinguishes between inner and outer relations.
-
-        Returns
-        -------
-        frozenset[TableReference]
-            The tables that are joined together
-        """
-        return self._join
-
-    @property
-    def intermediate(self) -> frozenset[TableReference]:
-        """Alias for `join`"""
-        return self._join
-
-    @property
-    def parallel_workers(self) -> float | int:
-        """Get the number of parallel processes that should be used in the join.
-
-        "Processes" does not necessarily mean "system processes". The database system can also choose to use threads or other
-        means of parallelization. This is not restricted by the join assignment.
-
-        Returns
-        -------
-        float | int
-            The number processes to use. Can be 1 to indicate sequential processing or NaN to indicate that no choice has been
-            made.
-        """
-        return self._parallel_workers
-
-    def inspect(self) -> str:
-        """Provides this assignment as a natural string.
-
-        Returns
-        -------
-        str
-            A string representation of the assignment.
-        """
-        return f"USING {self.operator}" if self.operator else ""
-
-    def is_directional(self) -> bool:
-        """Checks, whether this assignment contains directional information, i.e. regarding inner and outer relation.
-
-        Returns
-        -------
-        bool
-            Whether the assignment explicitly denotes which relation should be the inner relationship and which relation should
-            be the outer relationship
-        """
-        return False
-
-    def __json__(self) -> jsondict:
-        return {
-            "directional": self.is_directional(),
-            "operator": self.operator.value,
-            "join": self.join,
-            "parallel_workers": self.parallel_workers,
-        }
-
-    def __hash__(self) -> int:
-        return self._hash_val
-
-    def __eq__(self, other: object) -> bool:
-        return (
-            isinstance(other, type(self))
-            and self._operator == other._operator
-            and self._join == other._join
-            and self._parallel_workers == other._parallel_workers
-        )
-
-    def __repr__(self) -> str:
-        return str(self)
-
-    def __str__(self) -> str:
-        join_str = ", ".join(str(tab) for tab in self.join)
-        return f"{self.operator.value}({join_str})"
-
-
-class DirectionalJoinOperatorAssignment(JoinOperatorAssignment):
-    """A more verbose model of join operators.
-
-    The directional assignment does not only represent the relations that should be joined together, but also denotes which
-    role they should play for the join. More specifically, the directional assignment provides the *inner* and *outer* relation
-    of the join. The precise semantics of this distinction depends on the specific join operator and is also used
-    inconsistently between different database systems. In PostBOUND we use the following definitions:
-
-    - for nested-loop joins the outer relation corresponds to the outer loop and the inner relation is the inner loop. As a
-      special case for index nested-loop joins ths inner relation is the one that is probed via an index
-    - for hash joins the outer relation is the one that is aggregated in a hash table and the inner relation is the one that
-      is probed against that table
-    - for sort-merge joins the assignment does not matter
-
-    Parameters
-    ----------
-    operator : JoinOperators
-        The selected operator
-    inner : Collection[TableReference]
-        The tables that form the inner relation of the join
-    outer : Collection[TableReference]
-        The tables that form the outer relation of the join
-    parallel_workers : float | int, optional
-        The number of parallel processes that should be used to execute the join. Can be set to 1 to indicate sequential
-        operation. Defaults to NaN to indicate that no choice has been made.
-
-    Raises
-    ------
-    ValueError
-        If either `inner` or `outer` is empty.
-    """
-
-    def __init__(
-        self,
-        operator: JoinOperator,
-        inner: Collection[TableReference],
-        outer: Collection[TableReference],
-        *,
-        parallel_workers: float | int = math.nan,
-    ) -> None:
-        if not inner or not outer:
-            raise ValueError("Both inner and outer relations must be given")
-        self._inner = frozenset(inner)
-        self._outer = frozenset(outer)
-        super().__init__(
-            operator, self._inner | self._outer, parallel_workers=parallel_workers
-        )
-
-    __match_args__ = ("operator", "outer", "inner", "parallel_workers")
-
-    @property
-    def inner(self) -> frozenset[TableReference]:
-        """Get the inner relation of the join.
-
-        Returns
-        -------
-        frozenset[TableReference]
-            The tables of the inner relation
-        """
-        return self._inner
-
-    @property
-    def outer(self) -> frozenset[TableReference]:
-        """Get the outer relation of the join.
-
-        Returns
-        -------
-        frozenset[TableReference]
-            The tables of the outer relation
-        """
-        return self._outer
-
-    def is_directional(self) -> bool:
-        return True
-
-    def __json__(self) -> jsondict:
-        return {
-            "directional": True,
-            "operator": self.operator,
-            "inner": self.inner,
-            "outer": self.outer,
-            "parallel_workers": self.parallel_workers,
-        }
-
-    __hash__ = JoinOperatorAssignment.__hash__
-
-    def __eq__(self, other: object) -> bool:
-        return (
-            isinstance(other, type(self))
-            and self._inner == other._inner
-            and self._outer == other._outer
-            and super().__eq__(other)
-        )
-
-
-def read_operator_json(
-    json_data: dict | str,
-) -> Optional[PhysicalOperator | ScanOperatorAssignment | JoinOperatorAssignment]:
-    """Reads a physical operator assignment from a JSON dictionary.
-
-    Parameters
-    ----------
-    json_data : dict | str
-        Either the JSON dictionary, or a string encoding of the dictionary (which will be parsed by *json.loads*).
-
-    Returns
-    -------
-    Optional[ScanOperators | JoinOperators | ScanOperatorAssignment | JoinOperatorAssignment]
-        The parsed assignment. Whether it is a scan or join assignment is inferred from the JSON dictionary. If the input is
-        empty or *None*, *None* is returned.
-    """
-    if not json_data:
-        return None
-
-    if isinstance(json_data, str):
-        if json_data in {op.value for op in ScanOperator}:
-            return ScanOperator(json_data)
-        elif json_data in {op.value for op in JoinOperator}:
-            return JoinOperator(json_data)
-        elif json_data in {op.value for op in IntermediateOperator}:
-            return IntermediateOperator(json_data)
-        else:
-            json_data = json.loads(json_data)
-
-    parallel_workers = json_data.get("parallel_workers", math.nan)
-
-    if "table" in json_data:
-        parsed_table = parser.load_table_json(json_data["table"])
-        scan_operator = ScanOperator(json_data["operator"])
-        return ScanOperatorAssignment(scan_operator, parsed_table, parallel_workers)
-    elif "join" not in json_data and not (
-        "inner" in json_data and "outer" in json_data
-    ):
-        raise ValueError(
-            f"Malformed operator JSON: either 'table' or 'join' must be given: '{json_data}'"
-        )
-
-    directional = json_data["directional"]
-    join_operator = JoinOperator(json_data["operator"])
-    if directional:
-        inner = [parser.load_table_json(tab) for tab in json_data["inner"]]
-        outer = [parser.load_table_json(tab) for tab in json_data["outer"]]
-        return DirectionalJoinOperatorAssignment(
-            join_operator, inner, outer, parallel_workers=parallel_workers
-        )
-
-    joined_tables = [parser.load_table_json(tab) for tab in json_data["join"]]
-    return JoinOperatorAssignment(
-        join_operator, joined_tables, parallel_workers=parallel_workers
-    )
 
 
 class PhysicalOperatorAssignment:
@@ -935,98 +542,6 @@ class PhysicalOperatorAssignment:
         return f"global=[{global_str}] scans=[{scans_str}] joins=[{joins_str}] intermediates=[{intermediates_str}]"
 
 
-def operators_from_plan(
-    query_plan: QueryPlan, *, include_workers: bool = False
-) -> PhysicalOperatorAssignment:
-    """Extracts the operator assignment from a whole query plan.
-
-    Notice that this method only adds parallel workers to the assignment if explicitly told to, since this is generally
-    better handled by the parameterization.
-    """
-    assignment = PhysicalOperatorAssignment()
-    if not query_plan.operator and query_plan.input_node:
-        return operators_from_plan(query_plan.input_node)
-
-    workers = query_plan.parallel_workers if include_workers else math.nan
-    match query_plan.operator:
-        case ScanOperator():
-            operator = ScanOperatorAssignment(
-                query_plan.operator,
-                query_plan.base_table,
-                workers,
-            )
-            assignment.add(operator)
-        case JoinOperator():
-            operator = JoinOperatorAssignment(
-                query_plan.operator,
-                query_plan.tables(),
-                parallel_workers=workers,
-            )
-            assignment.add(operator)
-        case _:
-            assignment.add(query_plan.operator, query_plan.tables())
-
-    for child in query_plan.children:
-        child_assignment = operators_from_plan(child)
-        assignment = assignment.merge_with(child_assignment)
-    return assignment
-
-
-def read_operator_assignment_json(json_data: dict | str) -> PhysicalOperatorAssignment:
-    """Loads an operator assignment from its JSON representation.
-
-    Parameters
-    ----------
-    json_data : dict | str
-        Either the JSON dictionary, or a string encoding of the dictionary (which will be parsed by *json.loads*).
-
-    Returns
-    -------
-    PhysicalOperatorAssignment
-        The assignment
-    """
-    json_data = json.loads(json_data) if isinstance(json_data, str) else json_data
-    assignment = PhysicalOperatorAssignment()
-
-    for hint in json_data.get("global_settings", []):
-        enabled = hint["enabled"]
-        match hint["kind"]:
-            case "scan":
-                assignment.global_settings[ScanOperator(hint["operator"])] = enabled
-            case "join":
-                assignment.global_settings[JoinOperator(hint["operator"])] = enabled
-            case "intermediate":
-                assignment.global_settings[IntermediateOperator(hint["operator"])] = (
-                    enabled
-                )
-            case _:
-                raise ValueError(f"Unknown operator kind: {hint['kind']}")
-
-    for hint in json_data.get("scan_operators", []):
-        parsed_table = parser.load_table_json(hint["table"])
-        assignment.scan_operators[parsed_table] = ScanOperatorAssignment(
-            ScanOperator(hint["operator"]), parsed_table
-        )
-
-    for hint in json_data.get("join_operators", []):
-        parsed_tables = frozenset(
-            parser.load_table_json(tab) for tab in hint["intermediate"]
-        )
-        assignment.join_operators[parsed_tables] = JoinOperatorAssignment(
-            JoinOperator(hint["operator"]), parsed_tables
-        )
-
-    for hint in json_data.get("intermediate_operators", []):
-        parsed_tables = frozenset(
-            parser.load_table_json(tab) for tab in hint["intermediate"]
-        )
-        assignment.intermediate_operators[parsed_tables] = IntermediateOperator(
-            hint["operator"]
-        )
-
-    return assignment
-
-
 ExecutionMode = Literal["sequential", "parallel"]
 """
 The execution mode indicates whether a query should be executed using either only sequential operators or only parallel
@@ -1246,128 +761,333 @@ class PlanParameterization:
         )
 
 
-def read_plan_params_json(json_data: dict | str) -> PlanParameterization:
-    """Loads a plan parameterization from its JSON representation.
+class ScanOperatorAssignment:
+    """Models the selection of a scan operator for a specific base table.
 
-    Parameters
-    ----------
-    json_data : dict | str
-        Either the JSON dictionary, or a string encoding of the dictionary (which will be parsed by *json.loads*).
-
-    Returns
+    Attributes
     -------
-    PlanParameterization
-        The plan parameterization
+    operator : ScanOperators
+        The selected operator
+    table : TableReference
+        The table that is scanned using the operator
+    parallel_workers : float | int
+        The number of parallel processes that should be used to execute the scan. Can be set to 1 to indicate sequential
+        operation. Defaults to NaN to indicate that no choice has been made.
     """
-    json_data = json.loads(json_data) if isinstance(json_data, str) else json_data
-    params = PlanParameterization()
-    params.cardinalities = {
-        frozenset(parser.load_table_json(tab)): card
-        for tab, card in json_data.get("cardinality_hints", {}).items()
-    }
-    params.parallel_workers = {
-        frozenset(parser.load_table_json(tab)): workers
-        for tab, workers in json_data.get("parallel_worker_hints", {}).items()
-    }
-    return params
 
+    def __init__(
+        self,
+        operator: ScanOperator,
+        table: TableReference,
+        parallel_workers: float | int = math.nan,
+    ) -> None:
+        self._operator = operator
+        self._table = table
+        self._parallel_workers = parallel_workers
+        self._hash_val = hash((self._operator, self._table, self._parallel_workers))
 
-def update_plan(
-    query_plan: QueryPlan,
-    *,
-    operators: Optional[PhysicalOperatorAssignment] = None,
-    params: Optional[PlanParameterization] = None,
-    simplify: bool = True,
-) -> QueryPlan:
-    """Assigns new operators and/or new estimates to a query plan, leaving the join order intact.
+    __match_args__ = ("operator", "table", "parallel_workers")
 
-    Notice that this update method is not particularly smart and only operates on a per-node basis. This means that high-level
-    functions that are composed of multiple operators might not be updated properly. For example, Postgres represents a hash
-    join as a combination of a hash operator (which builds the actual hash table) and a follow-up hash join operator (which
-    performs the probing). If the update changes the hash join to a different join, the hash operator will still exist, likely
-    leading to an invalid query plan. To circumvent such problems, the query plan is by default simplified before processing.
-    Simplification removes all auxiliary non-join and non-scan operators, thereby effectively only leaving those nodes with a
-    corresponding operator. But, there is no free lunch and the simplification might also remove some other important
-    operators, such as using hash-based or sort-based aggregation operators. Therefore, simplification can be disabled by
-    setting the `simplify` parameter to *False*.
+    @property
+    def operator(self) -> ScanOperator:
+        """Get the assigned operator.
 
-    Parameters
-    ----------
-    query_plan : QueryPlan
-        The plan to update.
-    operators : Optional[PhysicalOperatorAssignment], optional
-        The new operators to use. This can be a partial assignment, in which case only the operators that are present in the
-        new assignment are used and all others are left unchanged. If this parameter is not given, no operators are updated.
-    params : Optional[PlanParameterization], optional
-        The new parameters to use. This can be a partial assignment, in which case only the cardinalities/parallel workers in
-        the new assignment are used and all others are left unchanged. If this parameter is not given, no parameters are
-        updated.
-    simplify : bool, optional
-        Whether to simplify the query plan before updating it. For a detailed discussion, see the high-level documentatio of
-        this method. Simplifications is enabled by default.
+        Returns
+        -------
+        ScanOperators
+            The operator
+        """
+        return self._operator
 
-    Returns
-    -------
-    QueryPlan
-        The updated query plan
+    @property
+    def table(self) -> TableReference:
+        """Get the table being scanned.
 
-    See Also
-    --------
-    QueryPlan.simplify
-    """
-    query_plan = query_plan.canonical() if simplify else query_plan
+        Returns
+        -------
+        TableReference
+            The table
+        """
+        return self._table
 
-    updated_operator = (
-        operators.get(query_plan.tables(), query_plan.operator)
-        if operators
-        else query_plan.operator
-    )
-    updated_card_est = (
-        params.cardinalities.get(query_plan.tables(), query_plan.estimated_cardinality)
-        if params
-        else query_plan.estimated_cardinality
-    )
-    updated_workers = (
-        params.parallel_workers.get(
-            query_plan.tables(), query_plan.params.parallel_workers
+    @property
+    def parallel_workers(self) -> int | float:
+        """Get the number of parallel workers used for the scan.
+
+        This number designates the total number of parallel processes. It can be 1 to indicate sequential operation, or even
+        *NaN* if it is unknown.
+
+        Returns
+        -------
+        int | float
+            The number of workers
+        """
+        return self._parallel_workers
+
+    def inspect(self) -> str:
+        """Provides the scan as a natural string.
+
+        Returns
+        -------
+        str
+            A string representation of the assignment
+        """
+        return f"USING {self.operator}" if self.operator else ""
+
+    def __json__(self) -> jsondict:
+        return {
+            "operator": self.operator.value,
+            "table": self.table,
+            "parallel_workers": self.parallel_workers,
+        }
+
+    def __hash__(self) -> int:
+        return self._hash_val
+
+    def __eq__(self, other: object) -> bool:
+        return (
+            isinstance(other, type(self))
+            and self.operator == other.operator
+            and self.table == other.table
+            and self.parallel_workers == other.parallel_workers
         )
-        if params
-        else query_plan.params.parallel_workers
-    )
 
-    updated_params = PlanParams(
-        **(query_plan.params.items() | {"parallel_workers": updated_workers})
-    )
-    updated_estimates = PlanEstimates(
-        **(query_plan.estimates.items() | {"estimated_cardinality": updated_card_est})
-    )
-    updated_children = [
-        update_plan(child, operators=operators, params=params)
-        for child in query_plan.children
-    ]
+    def __repr__(self) -> str:
+        return str(self)
 
-    return QueryPlan(
-        query_plan.node_type,
-        operator=updated_operator,
-        children=updated_children,
-        plan_params=updated_params,
-        estimates=updated_estimates,
-        measures=query_plan.measures,
-        subplan=query_plan.subplan,
-    )
+    def __str__(self) -> str:
+        return f"{self.operator.value}({self.table})"
 
 
-class HintType(Enum):
-    """Contains all hint types that are supported by PostBOUND.
+class JoinOperatorAssignment:
+    """Models the selection of a join operator for a specific join of tables.
 
-    Notice that not all of these hints need to be represented in the `PlanParameterization`, since some of them concern other
-    aspects such as the join order. Furthermore, not all database systems will support all operators. The availability of
-    certain hints can be checked on the database system interface and should be handled as part of the optimization pre-checks.
+    Each join is identified by all base tables that are involved in the join. The assignment to intermediate results does not
+    matter here. For example, a join between R ⨝ S and T is expressed as R, S, T even though the actual join combined an
+    intermediate result with as base table.
+
+    A more verbose model is provided by the `DirectionalJoinOperatorAssignment`. In addition to the joined tables, that model
+    also distinguishes between inner and outer relation of the join.
+
+    Parameters
+    ----------
+    operator : JoinOperators
+        The selected operator
+    join : Collection[TableReference]
+        The base tables that are joined using the operator
+    parallel_workers : float | int, optional
+        The number of parallel processes that should be used to execute the join. Can be set to 1 to indicate sequential
+        operation. Defaults to NaN to indicate that no choice has been made.
+
+    Raises
+    ------
+    ValueError
+        If `join` contains less than 2 tables
     """
 
-    LinearJoinOrder = "Join order"
-    JoinDirection = "Join direction"
-    BushyJoinOrder = "Bushy join order"
-    Operator = "Physical operators"
-    Parallelization = "Par. workers"
-    Cardinality = "Cardinality"
+    def __init__(
+        self,
+        operator: JoinOperator,
+        join: Collection[TableReference],
+        *,
+        parallel_workers: float | int = math.nan,
+    ) -> None:
+        if len(join) < 2:
+            raise ValueError("At least 2 join tables must be given")
+        self._operator = operator
+        self._join = frozenset(join)
+        self._parallel_workers = parallel_workers
+
+        self._hash_val = hash((self._operator, self._join, self._parallel_workers))
+
+    __match_args__ = ("operator", "join", "parallel_workers")
+
+    @property
+    def operator(self) -> JoinOperator:
+        """Get the operator that was selected for the join
+
+        Returns
+        -------
+        JoinOperators
+            The operator
+        """
+        return self._operator
+
+    @property
+    def join(self) -> frozenset[TableReference]:
+        """Get the tables that are joined together.
+
+        For joins of more than 2 base tables this usually means that the join combines an intermediate result with a base table
+        or another intermediate result. These two cases are not distinguished by the assignment and have to be detected
+        through other information, e.g. the join tree.
+
+        The more verbose model of a `DirectionalJoinOperatorAssignment` also distinguishes between inner and outer relations.
+
+        Returns
+        -------
+        frozenset[TableReference]
+            The tables that are joined together
+        """
+        return self._join
+
+    @property
+    def intermediate(self) -> frozenset[TableReference]:
+        """Alias for `join`"""
+        return self._join
+
+    @property
+    def parallel_workers(self) -> float | int:
+        """Get the number of parallel processes that should be used in the join.
+
+        "Processes" does not necessarily mean "system processes". The database system can also choose to use threads or other
+        means of parallelization. This is not restricted by the join assignment.
+
+        Returns
+        -------
+        float | int
+            The number processes to use. Can be 1 to indicate sequential processing or NaN to indicate that no choice has been
+            made.
+        """
+        return self._parallel_workers
+
+    def inspect(self) -> str:
+        """Provides this assignment as a natural string.
+
+        Returns
+        -------
+        str
+            A string representation of the assignment.
+        """
+        return f"USING {self.operator}" if self.operator else ""
+
+    def is_directional(self) -> bool:
+        """Checks, whether this assignment contains directional information, i.e. regarding inner and outer relation.
+
+        Returns
+        -------
+        bool
+            Whether the assignment explicitly denotes which relation should be the inner relationship and which relation should
+            be the outer relationship
+        """
+        return False
+
+    def __json__(self) -> jsondict:
+        return {
+            "directional": self.is_directional(),
+            "operator": self.operator.value,
+            "join": self.join,
+            "parallel_workers": self.parallel_workers,
+        }
+
+    def __hash__(self) -> int:
+        return self._hash_val
+
+    def __eq__(self, other: object) -> bool:
+        return (
+            isinstance(other, type(self))
+            and self._operator == other._operator
+            and self._join == other._join
+            and self._parallel_workers == other._parallel_workers
+        )
+
+    def __repr__(self) -> str:
+        return str(self)
+
+    def __str__(self) -> str:
+        join_str = ", ".join(str(tab) for tab in self.join)
+        return f"{self.operator.value}({join_str})"
+
+
+class DirectionalJoinOperatorAssignment(JoinOperatorAssignment):
+    """A more verbose model of join operators.
+
+    The directional assignment does not only represent the relations that should be joined together, but also denotes which
+    role they should play for the join. More specifically, the directional assignment provides the *inner* and *outer* relation
+    of the join. The precise semantics of this distinction depends on the specific join operator and is also used
+    inconsistently between different database systems. In PostBOUND we use the following definitions:
+
+    - for nested-loop joins the outer relation corresponds to the outer loop and the inner relation is the inner loop. As a
+      special case for index nested-loop joins ths inner relation is the one that is probed via an index
+    - for hash joins the outer relation is the one that is aggregated in a hash table and the inner relation is the one that
+      is probed against that table
+    - for sort-merge joins the assignment does not matter
+
+    Parameters
+    ----------
+    operator : JoinOperators
+        The selected operator
+    inner : Collection[TableReference]
+        The tables that form the inner relation of the join
+    outer : Collection[TableReference]
+        The tables that form the outer relation of the join
+    parallel_workers : float | int, optional
+        The number of parallel processes that should be used to execute the join. Can be set to 1 to indicate sequential
+        operation. Defaults to NaN to indicate that no choice has been made.
+
+    Raises
+    ------
+    ValueError
+        If either `inner` or `outer` is empty.
+    """
+
+    def __init__(
+        self,
+        operator: JoinOperator,
+        inner: Collection[TableReference],
+        outer: Collection[TableReference],
+        *,
+        parallel_workers: float | int = math.nan,
+    ) -> None:
+        if not inner or not outer:
+            raise ValueError("Both inner and outer relations must be given")
+        self._inner = frozenset(inner)
+        self._outer = frozenset(outer)
+        super().__init__(
+            operator, self._inner | self._outer, parallel_workers=parallel_workers
+        )
+
+    __match_args__ = ("operator", "outer", "inner", "parallel_workers")
+
+    @property
+    def inner(self) -> frozenset[TableReference]:
+        """Get the inner relation of the join.
+
+        Returns
+        -------
+        frozenset[TableReference]
+            The tables of the inner relation
+        """
+        return self._inner
+
+    @property
+    def outer(self) -> frozenset[TableReference]:
+        """Get the outer relation of the join.
+
+        Returns
+        -------
+        frozenset[TableReference]
+            The tables of the outer relation
+        """
+        return self._outer
+
+    def is_directional(self) -> bool:
+        return True
+
+    def __json__(self) -> jsondict:
+        return {
+            "directional": True,
+            "operator": self.operator,
+            "inner": self.inner,
+            "outer": self.outer,
+            "parallel_workers": self.parallel_workers,
+        }
+
+    __hash__ = JoinOperatorAssignment.__hash__
+
+    def __eq__(self, other: object) -> bool:
+        return (
+            isinstance(other, type(self))
+            and self._inner == other._inner
+            and self._outer == other._outer
+            and super().__eq__(other)
+        )

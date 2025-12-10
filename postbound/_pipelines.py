@@ -10,7 +10,7 @@ from __future__ import annotations
 import abc
 from typing import Optional, Protocol, Self
 
-from ._hints import PhysicalOperatorAssignment, PlanParameterization
+from ._physops import PhysicalOperatorAssignment, PlanParameterization
 from ._qep import QueryPlan
 from ._stages import (
     CardinalityEstimator,
