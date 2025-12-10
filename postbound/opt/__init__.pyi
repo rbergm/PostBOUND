@@ -1,7 +1,5 @@
 # Type stubs for postbound.optimizer package
-# See comment in __init__.py for details.
 
-# Lazy-loaded modules
 from . import dynprog, enumeration, native, noopt, presets, randomized, tonic, ues
 from ._cardinalities import (
     CardinalityDistortion,
