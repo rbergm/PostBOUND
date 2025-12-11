@@ -5,9 +5,6 @@ from collections.abc import Collection, Container, Iterable
 from enum import Enum
 from typing import Any, Generic, Literal, Optional, TypeVar
 
-from postbound._core import JoinOperator, ScanOperator
-from postbound._qep import QueryPlan
-
 from . import util
 from ._base import T
 from ._core import (
@@ -18,7 +15,7 @@ from ._core import (
     ScanOperator,
     TableReference,
 )
-from ._qep import JoinDirection
+from ._qep import JoinDirection, QueryPlan
 from .util import StateError, jsondict
 
 JoinTreeAnnotation = TypeVar("JoinTreeAnnotation")
@@ -1505,6 +1502,9 @@ class JoinTree(Container[TableReference], Generic[JoinTreeAnnotation]):
             "inner": self._inner,
             "annotation": self._annotation,
         }
+
+    def __bool__(self) -> bool:
+        return not self.is_empty()
 
     def __contains__(self, x: object) -> bool:
         return self.lookup(x)
