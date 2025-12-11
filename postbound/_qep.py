@@ -1323,7 +1323,7 @@ class QueryPlan:
 
         If a plan is a scan branch, `fetch_base_table()` can be used to directly retrieve the base table that is being scanned.
         """
-        return self.is_scan() or self.input_node.is_scan_branch()
+        return self.is_scan() or (self.input_node and self.input_node.is_scan_branch())
 
     def is_base_join(self) -> bool:
         """Checks, whether the current node is a join node that joins two base tables.
