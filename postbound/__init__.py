@@ -95,7 +95,7 @@ some require user input):
 
 """
 
-from . import bench, db, experiments, opt, qal, util, workloads
+from . import bench, db, experiments, opt, qal, util, validation, workloads
 from ._core import (
     Cardinality,
     ColumnReference,
@@ -152,7 +152,6 @@ from ._stages import (
 from .db import _duckdb as duckdb
 from .db import postgres
 from .db._db import Database
-from .experiments import analysis
 from .qal import relalg, transform
 from .qal._qal import SqlQuery
 from .qal.parser import parse_query
@@ -216,7 +215,6 @@ __all__ = [
     "operators_from_plan",
     "parameters_from_plan",
     "validation",
-    "analysis",
     "workloads",
     "bench",
 ]
