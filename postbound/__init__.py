@@ -95,8 +95,7 @@ some require user input):
 
 """
 
-from . import _bench as bench
-from . import db, experiments, opt, qal, util
+from . import bench, db, experiments, opt, qal, util
 from ._core import (
     Cardinality,
     ColumnReference,
