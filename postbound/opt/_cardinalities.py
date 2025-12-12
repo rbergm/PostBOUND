@@ -13,9 +13,9 @@ from .._stages import (
     CardinalityEstimator,
 )
 from ..db._db import Database, DatabasePool
-from ..experiments.workloads import Workload
 from ..qal import parser, transform
 from ..qal._qal import SqlQuery
+from ..workloads import Workload
 
 
 class PreciseCardinalityHintGenerator(CardinalityEstimator):

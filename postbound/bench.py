@@ -38,10 +38,10 @@ from .db._db import (
     TimeoutSupport,
     simplify_result_set,
 )
-from .experiments.workloads import Workload, generate_workload
 from .qal import transform
 from .qal._qal import Explain, SqlQuery
 from .util.jsonize import Jsonizable
+from .workloads import Workload, generate_workload
 
 PredefLogger = Literal["tqdm"]
 """Pre-defined loggers that can be used to track progress during workload execution."""

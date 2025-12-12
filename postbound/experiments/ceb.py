@@ -30,7 +30,7 @@ from ..qal import formatter, parser
 from ..qal._qal import ColumnReference, SqlQuery, TableReference
 from ..util._errors import StateError
 from ..util.misc import DependencyGraph
-from .workloads import Workload
+from ..workloads import Workload
 
 # we introduce a bunch of type aliases to prevent types like dict[str, str]
 TemplatedQuery = NewType("TemplatedQuery", str)
