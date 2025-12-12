@@ -34,10 +34,10 @@ from typing import Literal, Optional
 import natsort
 import pandas as pd
 
-from .. import util
-from ..db._db import DatabasePool
-from ..qal import parser
-from ..qal._qal import SqlQuery
+from . import util
+from .db._db import DatabasePool
+from .qal import parser
+from .qal._qal import SqlQuery
 
 _WorkloadSources = {
     "job": "https://db4701.inf.tu-dresden.de:8443/public.php/dav/files/qQEBsM2Zx4x9BBW",

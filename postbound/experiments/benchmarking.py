@@ -2,8 +2,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from .workloads import Workload
 from ..util import jsondict
+from ..workloads import Workload
 
 
 @dataclass
