@@ -100,6 +100,7 @@ from . import (
     db,
     experiments,
     opt,
+    parser,
     qal,
     relalg,
     transform,
@@ -171,6 +172,7 @@ __version__ = "0.19.2"
 __all__ = [
     "db",
     "opt",
+    "parser",
     "qal",
     "experiments",
     "util",
