@@ -32,7 +32,7 @@ from typing import Any, Literal, Optional
 import psycopg
 import psycopg.rows
 
-from .. import util
+from .. import transform, util
 from .._core import (
     Cardinality,
     IntermediateOperator,
@@ -52,7 +52,7 @@ from .._hints import (
     parameters_from_plan,
 )
 from .._qep import QueryPlan, SortKey
-from ..qal import formatter, transform
+from ..qal import formatter
 from ..qal._qal import (
     AbstractPredicate,
     ArrayAccessExpression,

@@ -16,7 +16,7 @@ import random
 from collections.abc import Iterable, Sequence
 from typing import Any, Optional
 
-from .. import db, qal, util
+from .. import db, qal, transform, util
 from .._core import ColumnReference, JoinOperator, TableReference
 from .._hints import (
     JoinOperatorAssignment,
@@ -165,7 +165,7 @@ def _normalize_filter_predicate(
         for col in filter_predicate.columns()
         if col.table in renamed_tables
     }
-    return qal.transform.rename_columns_in_predicate(filter_predicate, renamed_columns)
+    return transform.rename_columns_in_predicate(filter_predicate, renamed_columns)
 
 
 def _tables_in_qeps_path(

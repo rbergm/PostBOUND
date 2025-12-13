@@ -42,9 +42,8 @@ import typing
 from collections.abc import Generator, Iterable, Sequence
 from typing import Optional
 
-from .. import util
-from . import transform
-from ._qal import (
+from . import transform, util
+from .qal._qal import (
     AbstractPredicate,
     BetweenPredicate,
     BinaryPredicate,

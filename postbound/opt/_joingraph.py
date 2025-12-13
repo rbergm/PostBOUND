@@ -10,9 +10,8 @@ from typing import Literal, Optional
 
 import networkx as nx
 
-from .. import util
+from .. import transform, util
 from .._core import ColumnReference, DBCatalog, TableReference
-from ..qal import transform
 from ..qal._qal import (
     AbstractPredicate,
     CompoundPredicate,

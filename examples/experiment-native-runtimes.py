@@ -7,9 +7,8 @@ from datetime import datetime
 
 import pandas as pd
 
-from postbound import workloads
+from postbound import transform, workloads
 from postbound.db import postgres
-from postbound.qal import transform
 from postbound.util import jsonize
 
 logging_format = "%(asctime)s %(levelname)s %(message)s"

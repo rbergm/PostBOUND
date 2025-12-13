@@ -14,7 +14,7 @@ import natsort
 import numpy as np
 import pandas as pd
 
-from . import util
+from . import transform, util
 from ._pipelines import (
     IntegratedOptimizationPipeline,
     MultiStageOptimizationPipeline,
@@ -38,7 +38,6 @@ from .db._db import (
     TimeoutSupport,
     simplify_result_set,
 )
-from .qal import transform
 from .qal._qal import Explain, SqlQuery
 from .util.jsonize import Jsonizable
 from .workloads import Workload, generate_workload

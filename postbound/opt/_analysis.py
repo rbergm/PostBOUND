@@ -10,12 +10,12 @@ from typing import Any, Literal, Optional
 
 import Levenshtein
 
-from .. import util
+from .. import transform, util
 from .._core import ColumnReference, PhysicalOperator, TableReference
 from .._hints import JoinTree
 from .._qep import QueryPlan
 from ..db._db import Database, DatabasePool
-from ..qal import parser, transform
+from ..qal import parser
 from ..qal._qal import (
     AbstractPredicate,
     BinaryPredicate,

@@ -8,9 +8,7 @@ from datetime import datetime
 
 import pandas as pd
 
-from postbound import PlanParameterization, TableReference, qal, workloads
-from postbound.db import postgres
-from postbound.util import jsonize
+import postbound as pb
 
 
 @dataclass
@@ -23,20 +21,20 @@ class BenchmarkResult:
     db_config: str
 
 
-def parse_tables_list(tables: str) -> set[TableReference]:
+def parse_tables_list(tables: str) -> set[pb.TableReference]:
     jsonized = json.loads(tables)
-    return {TableReference(tab["full_name"], tab.get("alias")) for tab in jsonized}
+    return {pb.TableReference(tab["full_name"], tab.get("alias")) for tab in jsonized}
 
 
-def true_cardinalities(label: str) -> PlanParameterization:
+def true_cardinalities(label: str) -> pb.PlanParameterization:
     relevant_queries = card_df[card_df["label"] == label]
-    plan_params = PlanParameterization()
+    plan_params = pb.PlanParameterization()
     for __, row in relevant_queries.iterrows():
         plan_params.add_cardinality(row["tables"], row["cardinality"])
     return plan_params
 
 
-pg_db = postgres.connect(config_file=".psycopg_connection_job")
+pg_db = pb.postgres.connect(config_file=".psycopg_connection_job")
 pg_db.cache_enabled = False
 db_config = pg_db.describe()
 
@@ -48,7 +46,7 @@ card_df = pd.read_csv(
 
 benchmark_results = []
 print("Starting workload execution")
-for label, query in workloads.job().entries():
+for label, query in pb.workloads.job().entries():
     print("Now executing query", query)
     pg_db.prewarm_tables(query.tables())
     original_query = query
@@ -59,14 +57,14 @@ for label, query in workloads.job().entries():
     pg_db.execute_query(query)
     query_end = datetime.now()
     execution_time = (query_end - query_start).total_seconds()
-    query_plan = pg_db.execute_query(qal.transform.as_explain_analyze(query))
+    query_plan = pg_db.execute_query(pb.transform.as_explain_analyze(query))
     result_wrapper = BenchmarkResult(
         label,
         str(original_query),
         query.hints.query_hints,
         execution_time,
-        jsonize.to_json(query_plan),
-        jsonize.to_json(db_config),
+        pb.util.to_json(query_plan),
+        pb.util.to_json(db_config),
     )
     benchmark_results.append(result_wrapper)
 

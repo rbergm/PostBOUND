@@ -38,10 +38,10 @@ class JitteringCardinalityEstimator(pb.CardinalityEstimator):
         # This is stored in the query_fragment.
 
         tables = pb.util.enlist(tables)
-        query_fragment = pb.qal.transform.extract_query_fragment(query, tables)
+        query_fragment = pb.transform.extract_query_fragment(query, tables)
         if not query_fragment:
             return math.nan
-        query_fragment = pb.qal.transform.as_star_query(query_fragment)
+        query_fragment = pb.transform.as_star_query(query_fragment)
         native_estimate = self.native_optimizer.cardinality_estimate(query_fragment)
 
         distortion_factor = random.random()

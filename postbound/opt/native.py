@@ -17,7 +17,7 @@ import warnings
 from collections.abc import Iterable
 from typing import Optional
 
-from .. import util
+from .. import transform, util
 from .._core import (
     Cardinality,
     ColumnReference,
@@ -46,7 +46,7 @@ from .._stages import (
 )
 from ..db._db import Database, DatabaseServerError, DatabaseUserError
 from ..db.postgres import PostgresInterface
-from ..qal import ColumnExpression, OrderBy, SqlQuery, transform
+from ..qal import ColumnExpression, OrderBy, SqlQuery
 from ..util import jsondict
 
 
