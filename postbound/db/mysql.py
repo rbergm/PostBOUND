@@ -40,7 +40,7 @@ from typing import Any, Optional
 
 import mysql.connector
 
-from .. import qal, util
+from .. import qal, transform, util
 from .._core import (
     Cardinality,
     JoinOperator,
@@ -59,7 +59,6 @@ from .._hints import (
     parameters_from_plan,
 )
 from .._qep import QueryPlan
-from ..qal import transform
 from ..qal._qal import (
     CastExpression,
     ColumnReference,

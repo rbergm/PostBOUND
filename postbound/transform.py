@@ -26,8 +26,8 @@ import warnings
 from collections.abc import Callable, Iterable, Sequence
 from typing import Optional, overload
 
-from .. import util
-from ._qal import (
+from . import util
+from .qal._qal import (
     AbstractPredicate,
     BaseClause,
     BaseProjection,

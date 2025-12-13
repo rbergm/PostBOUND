@@ -3,10 +3,9 @@ from __future__ import annotations
 import unittest
 
 import postbound as pb
-from postbound import workloads
+from postbound import transform, workloads
 from postbound.db import postgres
 from postbound.opt import tonic
-from postbound.qal import transform
 from tests import regression_suite
 
 pg_connect_dir = "."

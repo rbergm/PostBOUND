@@ -95,7 +95,18 @@ some require user input):
 
 """
 
-from . import bench, db, experiments, opt, qal, util, validation, workloads
+from . import (
+    bench,
+    db,
+    experiments,
+    opt,
+    qal,
+    relalg,
+    transform,
+    util,
+    validation,
+    workloads,
+)
 from ._core import (
     Cardinality,
     ColumnReference,
@@ -152,7 +163,6 @@ from ._stages import (
 from .db import _duckdb as duckdb
 from .db import postgres
 from .db._db import Database
-from .qal import relalg, transform
 from .qal._qal import SqlQuery
 from .qal.parser import parse_query
 

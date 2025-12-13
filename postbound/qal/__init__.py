@@ -102,7 +102,6 @@ from __future__ import annotations
 
 from typing import Optional
 
-from . import relalg, transform
 from ._qal import (
     AbstractPredicate,
     AggregateFunctions,
@@ -260,8 +259,6 @@ __all__ = [
     "SelectStatement",
     "SqlStatement",
     "build_query",
-    "relalg",
-    "transform",
     "format_quick",
     "TableReference",
     "ColumnReference",

@@ -9,13 +9,12 @@ from typing import Literal, Optional, overload
 import graphviz as gv
 import networkx as nx
 
-from .. import util
+from .. import relalg, transform, util
 from .._core import TableReference
 from .._hints import JoinTree, LogicalJoinTree
 from .._qep import QueryPlan
 from ..db._db import Database, DatabasePool
 from ..opt._joingraph import JoinGraph
-from ..qal import relalg, transform
 from ..qal._qal import SqlQuery
 from . import trees
 

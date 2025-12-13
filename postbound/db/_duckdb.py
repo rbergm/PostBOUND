@@ -14,7 +14,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Optional
 
-from .. import qal
+from .. import qal, transform
 from .._core import (
     Cardinality,
     ColumnReference,
@@ -34,7 +34,6 @@ from .._hints import (
     parameters_from_plan,
 )
 from .._qep import QueryPlan
-from ..qal import transform
 from ..qal._qal import SqlQuery
 from ..util import Version, dicts, jsondict, stats
 from ._db import (
@@ -496,7 +495,7 @@ class DuckDBOptimizer(OptimizerInterface):
 
     def query_plan(self, query: SqlQuery | str) -> QueryPlan:
         if isinstance(query, SqlQuery):
-            explain_query = qal.transform.as_explain(query)
+            explain_query = transform.as_explain(query)
             explain_query = self._db.hinting().format_query(explain_query)
         elif not query.strip().upper().startswith("EXPLAIN"):
             explain_query = f"EXPLAIN (FORMAT JSON) {query}"
@@ -516,7 +515,7 @@ class DuckDBOptimizer(OptimizerInterface):
     def analyze_plan(
         self, query: SqlQuery, *, timeout: Optional[float] = None
     ) -> Optional[QueryPlan]:
-        query = qal.transform.as_explain_analyze(query, qal.Explain)
+        query = transform.as_explain_analyze(query, qal.Explain)
 
         try:
             result_set = self._db.execute_query(
@@ -635,7 +634,7 @@ class DuckDBHintService(HintService):
         if adapted_query.limit_clause and not isinstance(
             adapted_query.limit_clause, PostgresLimitClause
         ):
-            adapted_query = qal.transform.replace_clause(
+            adapted_query = transform.replace_clause(
                 adapted_query, PostgresLimitClause(adapted_query.limit_clause)
             )
 
@@ -799,7 +798,7 @@ class DuckDBHintService(HintService):
         local_hints.append(" */")
 
         hints = qal.Hint("\n".join(hint_parts.settings), "\n".join(local_hints))
-        return qal.transform.add_clause(query, hints)
+        return transform.add_clause(query, hints)
 
     def _intermediate_to_hint(self, intermediate: Iterable[TableReference]) -> str:
         """Convert an iterable of TableReferences to a string representation."""

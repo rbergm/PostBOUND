@@ -8,7 +8,7 @@ from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass
 from typing import Optional
 
-from .. import util
+from .. import transform, util
 from .._core import (
     Cardinality,
     IntermediateOperator,
@@ -26,7 +26,6 @@ from .._stages import (
 )
 from ..db._db import Database, DatabasePool, DatabaseSchema, DatabaseServerError
 from ..db.postgres import PostgresInterface, PostgresJoinHints, PostgresScanHints
-from ..qal import transform
 from ..qal._qal import (
     AbstractPredicate,
     ColumnExpression,

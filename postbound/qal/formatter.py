@@ -9,7 +9,6 @@ from typing import Literal, Optional
 
 from .. import util
 from .._core import quote
-from . import transform
 from ._qal import (
     AbstractPredicate,
     ArrayAccessExpression,
@@ -1022,6 +1021,8 @@ def format_quick(
     str
         A pretty string representation of the query.
     """
+    from .. import transform
+
     if isinstance(query, SetQuery):
         return _quick_format_set_query(
             query,
