@@ -24,9 +24,10 @@ from typing import Any, Literal, NewType, Optional
 
 import numpy as np
 
+from .. import parser
 from ..db import postgres
 from ..db._db import Database
-from ..qal import formatter, parser
+from ..qal import formatter
 from ..qal._qal import ColumnReference, SqlQuery, TableReference
 from ..util._errors import StateError
 from ..util.misc import DependencyGraph

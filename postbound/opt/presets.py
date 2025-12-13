@@ -7,6 +7,7 @@ from __future__ import annotations
 
 from typing import Literal, Optional
 
+from .. import parser
 from .._pipelines import (
     JoinOrderOptimization,
     OptimizationSettings,
@@ -14,7 +15,6 @@ from .._pipelines import (
 )
 from .._stages import OptimizationPreCheck
 from ..db._db import Database, DatabasePool
-from ..qal import parser
 from . import native, ues
 
 

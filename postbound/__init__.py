@@ -163,8 +163,8 @@ from ._stages import (
 from .db import _duckdb as duckdb
 from .db import postgres
 from .db._db import Database
+from .parser import parse_query
 from .qal._qal import SqlQuery
-from .qal.parser import parse_query
 
 __version__ = "0.19.2"
 
