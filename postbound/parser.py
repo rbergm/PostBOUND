@@ -37,9 +37,10 @@ from typing import Literal, Optional, overload
 
 import pglast
 
-from .. import util
-from .._core import ColumnReference, DBCatalog, TableReference
-from ._qal import (
+from . import util
+from ._core import ColumnReference, DBCatalog, TableReference
+from .db import DatabasePool, DatabaseSchema
+from .qal._qal import (
     AbstractPredicate,
     ArrayAccessExpression,
     BaseClause,
@@ -2122,7 +2123,7 @@ def parse_query(
     *,
     include_hints: bool = True,
     bind_columns: bool | None = None,
-    db_schema: Optional[DBCatalog] = None,
+    db_schema: Optional[DatabaseSchema] = None,
 ) -> SqlQuery: ...
 
 
@@ -2133,7 +2134,7 @@ def parse_query(
     accept_set_query: bool,
     include_hints: bool = True,
     bind_columns: Optional[bool] = None,
-    db_schema: Optional[DBCatalog] = None,
+    db_schema: Optional[DatabaseSchema] = None,
 ) -> SelectStatement: ...
 
 
@@ -2143,7 +2144,7 @@ def parse_query(
     accept_set_query: bool = False,
     include_hints: bool = True,
     bind_columns: Optional[bool] = None,
-    db_schema: Optional[DBCatalog] = None,
+    db_schema: Optional[DatabaseSchema] = None,
 ) -> SelectStatement:
     """Parses a query string into a proper `SqlQuery` object.
 
@@ -2172,7 +2173,7 @@ def parse_query(
         Whether to use *live binding*. This does not control the text-based binding, which is always performed. If this
         parameter is *None* (the default), the global `auto_bind_columns` variable will be queried. Depending on its
         value, live binding will be performed or not.
-    db_schema : Optional[DBCatalog], optional
+    db_schema : Optional[DatabaseSchema], optional
         For live binding, this indicates the database to use. If this is *None* (the default), the database will be
         tried to extract from the `DatabasePool`
 
@@ -2181,15 +2182,11 @@ def parse_query(
     SqlQuery
         The parsed SQL query.
     """
-    # NOTE: this documentation is a 1:1 copy of qal.parse_query. Both should be kept in sync.
     if not query:
         raise ParserError("Empty query")
 
-    if db_schema is None and (
-        bind_columns or (bind_columns is None and auto_bind_columns)
-    ):
-        from ..db import DatabasePool  # local import to prevent circular imports
-
+    bind_columns = bind_columns or (bind_columns is None and auto_bind_columns)
+    if db_schema is None and bind_columns:
         db_schema = (
             None
             if DatabasePool.get_instance().empty()

@@ -5,6 +5,7 @@ import math
 import warnings
 from typing import Literal, Optional, Union
 
+from .. import parser
 from .._core import (
     IntermediateOperator,
     JoinOperator,
@@ -25,7 +26,6 @@ from .._hints import (
     parameters_from_plan,
 )
 from .._qep import PlanEstimates, PlanMeasures, PlanParams, QueryPlan, SortKey, Subplan
-from ..qal import parser
 from ..qal._qal import SqlQuery
 
 

@@ -34,9 +34,8 @@ from typing import Literal, Optional
 import natsort
 import pandas as pd
 
-from . import util
+from . import parser, util
 from .db._db import DatabasePool
-from .qal import parser
 from .qal._qal import SqlQuery
 
 _WorkloadSources = {

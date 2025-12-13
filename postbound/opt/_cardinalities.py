@@ -7,13 +7,12 @@ from typing import Literal, Optional
 
 import pandas as pd
 
-from .. import transform, util
+from .. import parser, transform, util
 from .._core import Cardinality, TableReference
 from .._stages import (
     CardinalityEstimator,
 )
 from ..db._db import Database, DatabasePool
-from ..qal import parser
 from ..qal._qal import SqlQuery
 from ..workloads import Workload
 

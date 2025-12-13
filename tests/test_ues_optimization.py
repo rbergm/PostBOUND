@@ -13,10 +13,9 @@ import os
 import unittest
 
 import postbound as pb
-from postbound import db, transform, workloads
+from postbound import db, parser, transform, workloads
 from postbound.db import postgres
 from postbound.opt import presets, ues
-from postbound.qal import parser
 from tests import regression_suite
 
 pg_connect_dir = "."

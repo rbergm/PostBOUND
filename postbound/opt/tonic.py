@@ -16,7 +16,7 @@ import random
 from collections.abc import Iterable, Sequence
 from typing import Any, Optional
 
-from .. import db, qal, transform, util
+from .. import db, parser, qal, transform, util
 from .._core import ColumnReference, JoinOperator, TableReference
 from .._hints import (
     JoinOperatorAssignment,
@@ -26,7 +26,6 @@ from .._hints import (
 )
 from .._qep import QueryPlan
 from .._stages import PhysicalOperatorSelection
-from ..qal import parser
 
 # TODO: there should be more documentation of the technical design of the QEP-S structure
 # More specifically, this documentation should describe the strategies to integrate subquery nodes, and the QEP-S traversal

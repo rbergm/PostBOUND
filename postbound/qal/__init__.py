@@ -100,8 +100,6 @@ precomputed value during hashing. This helps to speed up several hot loops at op
 
 from __future__ import annotations
 
-from typing import Optional
-
 from ._qal import (
     AbstractPredicate,
     AggregateFunctions,
@@ -181,7 +179,6 @@ from ._qal import (
     generate_predicates_for_equivalence_classes,
 )
 from .formatter import format_quick
-from .parser import DBCatalog
 
 __all__ = [
     "MathOperator",
@@ -252,6 +249,7 @@ __all__ = [
     "SetOperationClause",
     "collect_subqueries_in_expression",
     "FromClauseType",
+    "SqlQuery",
     "ImplicitSqlQuery",
     "ExplicitSqlQuery",
     "MixedSqlQuery",
@@ -260,81 +258,4 @@ __all__ = [
     "SqlStatement",
     "build_query",
     "format_quick",
-    "TableReference",
-    "ColumnReference",
-    "parse_query",
-    "parse_full_query",
 ]
-
-
-def parse_query(
-    query: str,
-    *,
-    include_hints: bool = True,
-    bind_columns: Optional[bool] = None,
-    db_schema: Optional[DBCatalog] = None,
-) -> SqlQuery:
-    """Parses a query string into a proper `SqlQuery` object.
-
-    During parsing, the appropriate type of SQL query (i.e. with implicit, explicit or mixed *FROM* clause) will be
-    inferred automatically. Therefore, this method can potentially return a subclass of `SqlQuery`.
-
-    Once the query has been transformed, a text-based binding process is executed. During this process, the referenced
-    tables are normalized such that column references using the table alias are linked to the correct tables that are
-    specified in the *FROM* clause (see the module-level documentation for an example). The parsing process can
-    optionally also involve a binding process based on the schema of a live database. This is important for all
-    remaining columns where the text-based parsing was not possible, e.g. because the column was specified without a
-    table alias.
-
-    Parameters
-    ----------
-    query : str
-        The query to parse
-    include_hints : bool, optional
-        Whether to include hints in the parsed query. If this is *True* (the default), any preceding comments in the query
-        text will be parsed as a hint block. Otherwise, these comments are simply ignored.
-    bind_columns : bool | None, optional
-        Whether to use *live binding*. This does not control the text-based binding, which is always performed. If this
-        parameter is *None* (the default), the global `auto_bind_columns` variable will be queried. Depending on its
-        value, live binding will be performed or not.
-    db_schema : Optional[DBCatalog], optional
-        For live binding, this indicates the database to use. If this is *None* (the default), the database will be
-        tried to extract from the `DatabasePool`
-
-    Returns
-    -------
-    SqlQuery
-        The parsed SQL query.
-    """
-    from .parser import parse_query as parse_worker
-
-    return parse_worker(
-        query,
-        accept_set_query=False,
-        include_hints=include_hints,
-        bind_columns=bind_columns,
-        db_schema=db_schema,
-    )
-
-
-def parse_full_query(
-    statement: str,
-    *,
-    bind_columns: Optional[bool] = None,
-    db_schema: Optional[DBCatalog] = None,
-) -> SelectStatement:
-    """This method is very similar to `parse_query`, but it also support set queries (i.e. queries with **UNION**, etc.).
-
-    See Also
-    --------
-    parse_query : The simpler version of this method that only supports "plain" queries without set operations.
-    """
-    from .parser import parse_query as parse_worker
-
-    return parse_worker(
-        statement,
-        accept_set_query=True,
-        include_hints=True,
-        bind_columns=bind_columns,
-        db_schema=db_schema,
-    )
