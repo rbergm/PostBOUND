@@ -32,7 +32,7 @@ from typing import Any, Literal, Optional
 import psycopg
 import psycopg.rows
 
-from .. import transform, util
+from .. import qal, transform, util
 from .._core import (
     Cardinality,
     IntermediateOperator,
@@ -52,7 +52,6 @@ from .._hints import (
     parameters_from_plan,
 )
 from .._qep import QueryPlan, SortKey
-from ..qal import formatter
 from ..qal._qal import (
     AbstractPredicate,
     ArrayAccessExpression,
@@ -2351,7 +2350,7 @@ class PostgresHintService(HintService):
             query = transform.replace_clause(
                 query, PostgresExplainClause(query.explain)
             )
-        return formatter.format_quick(query, flavor="postgres")
+        return qal.format_quick(query, flavor="postgres")
 
     def supports_hint(self, hint: PhysicalOperator | HintType) -> bool:
         self._assert_active_backend()

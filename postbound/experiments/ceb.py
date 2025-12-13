@@ -27,7 +27,7 @@ import numpy as np
 from .. import parser
 from ..db import postgres
 from ..db._db import Database
-from ..qal import formatter
+from ..qal import format_quick
 from ..qal._qal import ColumnReference, SqlQuery, TableReference
 from ..util._errors import StateError
 from ..util.misc import DependencyGraph
@@ -857,9 +857,7 @@ def persist_workload(
     query_iter = (
         workload.entries() if isinstance(workload, Workload) else workload.items()
     )
-    query_formatter = (
-        formatter.format_quick if isinstance(workload, Workload) else lambda x: x
-    )
+    query_formatter = format_quick if isinstance(workload, Workload) else lambda x: x
     for label, query in query_iter:
         query_file = path / f"{label}.sql"
         with open(query_file, "w") as query_file:

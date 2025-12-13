@@ -100,6 +100,7 @@ precomputed value during hashing. This helps to speed up several hot loops at op
 
 from __future__ import annotations
 
+from ._formatter import format_quick
 from ._qal import (
     AbstractPredicate,
     AggregateFunctions,
@@ -178,7 +179,6 @@ from ._qal import (
     determine_join_equivalence_classes,
     generate_predicates_for_equivalence_classes,
 )
-from .formatter import format_quick
 
 __all__ = [
     "MathOperator",
