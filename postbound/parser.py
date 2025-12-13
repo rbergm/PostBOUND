@@ -38,7 +38,7 @@ from typing import Literal, Optional, overload
 import pglast
 
 from . import util
-from ._core import ColumnReference, DBCatalog, TableReference
+from ._core import ColumnReference, TableReference
 from .db import DatabasePool, DatabaseSchema
 from .qal._qal import (
     AbstractPredicate,
@@ -109,13 +109,13 @@ class SchemaCache:
         The schema to cache. If not provided, the cache cannot resolve column bindings.
     """
 
-    def __init__(self, schema: Optional[DBCatalog] = None) -> None:
+    def __init__(self, schema: Optional[DatabaseSchema] = None) -> None:
         self._schema = schema
         self._lookup_cache: dict[TableReference, tuple[list[str], set[str]]] = (
             collections.defaultdict(set)
         )
 
-    def initialize_with(self, schema: Optional[DBCatalog]) -> None:
+    def initialize_with(self, schema: Optional[DatabaseSchema]) -> None:
         """Sets the catalog if necessary"""
         if self._schema is not None and self._schema != schema:
             warnings.warn("Parsing query for new schema. Dropping old schema cache.")
