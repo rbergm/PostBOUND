@@ -11,7 +11,8 @@ from typing import Literal, Optional
 import networkx as nx
 
 from .. import transform, util
-from .._core import ColumnReference, DBCatalog, TableReference
+from .._core import ColumnReference, TableReference
+from ..db import DatabasePool, DatabaseSchema
 from ..qal._qal import (
     AbstractPredicate,
     CompoundPredicate,
@@ -171,14 +172,14 @@ class IndexInfo:
         return IndexInfo(column, "none")
 
     @staticmethod
-    def generate_for(column: ColumnReference, db_schema: DBCatalog) -> IndexInfo:
+    def generate_for(column: ColumnReference, db_schema: DatabaseSchema) -> IndexInfo:
         """Determines available indexes for a specific column.
 
         Parameters
         ----------
         column : ColumnReference
             The column. It has to be connected to a valid, non-virtual table reference
-        db_schema : DBCatalog
+        db_schema : DatabaseSchema
             The schema of the database to which the column belongs.
 
         Returns
@@ -386,7 +387,7 @@ class JoinGraph(Mapping[TableReference, TableInfo]):
     ----------
     query : ImplicitSqlQuery
         The query for which the join graph should be generated
-    db_schema : Optional[DBCatalog], optional
+    db_schema : Optional[DatabaseSchema], optional
         The schema of the database on which the query should be executed. If this is ``None``, the database schema is inferred
         based on the `DatabasePool`.
     include_predicate_equivalence_classes : bool, optional
@@ -404,14 +405,12 @@ class JoinGraph(Mapping[TableReference, TableInfo]):
     def __init__(
         self,
         query: ImplicitSqlQuery,
-        db_schema: Optional[DBCatalog] = None,
+        db_schema: Optional[DatabaseSchema] = None,
         *,
         include_predicate_equivalence_classes: bool = False,
     ) -> None:
         if db_schema is None:
-            from .. import db  # local import to avoid circular dependencies
-
-            db_schema = db.DatabasePool.get_instance().current_database().schema()
+            db_schema = DatabasePool.get_instance().current_database().schema()
 
         self.query = query
         self._db_schema = db_schema
