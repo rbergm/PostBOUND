@@ -20,7 +20,7 @@ class QueryIntermediate:
 
 
 def iter_intermediates(
-    workload: pb.workloads.Workload,
+    workload: pb.Workload,
 ) -> Generator[QueryIntermediate, None, None]:
     for label, query in workload.entries():
         if not isinstance(query, pb.qal.ImplicitSqlQuery):
@@ -47,7 +47,7 @@ def iter_intermediates(
             yield QueryIntermediate(label, query, query_fragment)
 
 
-def simulate_intermediate_generation(out_file: str, workload: pb.workloads.Workload):
+def simulate_intermediate_generation(out_file: str, workload: pb.Workload):
     unique_intermediates = set()
     intermediates_per_query: dict[pb.SqlQuery, int] = collections.defaultdict(int)
     for intermediate in iter_intermediates(workload):
@@ -67,7 +67,7 @@ def simulate_intermediate_generation(out_file: str, workload: pb.workloads.Workl
 
 
 def determine_intermediates(
-    benchmark: pb.workloads.Workload[str],
+    benchmark: pb.Workload[str],
     *,
     out_file: str,
     pg_conf: str = ".psycopg_connection",

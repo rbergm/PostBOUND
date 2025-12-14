@@ -30,6 +30,7 @@ from __future__ import annotations
 from ._db import (
     Connection,
     Cursor,
+    Database,
     DatabasePool,
     DatabaseSchema,
     DatabaseServerError,
@@ -49,14 +50,13 @@ from ._db import (
 )
 
 __all__ = [
-    "postgres",
-    "duckdb",
     "Cursor",
     "Connection",
     "PrewarmingSupport",
     "TimeoutSupport",
     "StopwatchSupport",
     "QueryCacheWarning",
+    "Database",
     "ForeignKeyRef",
     "DatabaseSchema",
     "DatabaseStatistics",
