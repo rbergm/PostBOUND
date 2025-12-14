@@ -599,7 +599,7 @@ class ParserTests(regression_suite.QueryTestCase):
 @regression_suite.skip_if_no_db(f"{pg_connect_dir}/.psycopg_connection_job")
 class JobWorkloadTests(regression_suite.DatabaseTestCase):
     def setUp(self):
-        self.db = pb.db.postgres.connect(
+        self.db = pb.postgres.connect(
             config_file=f"{pg_connect_dir}/.psycopg_connection_job"
         )
 
@@ -623,7 +623,7 @@ class JobWorkloadTests(regression_suite.DatabaseTestCase):
 @regression_suite.skip_if_no_db(f"{pg_connect_dir}/.psycopg_connection_stats")
 class StatsWorkloadTests(regression_suite.DatabaseTestCase):
     def setUp(self):
-        self.db = pb.db.postgres.connect(
+        self.db = pb.postgres.connect(
             config_file=f"{pg_connect_dir}/.psycopg_connection_stats"
         )
 

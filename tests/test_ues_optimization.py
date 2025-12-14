@@ -13,8 +13,7 @@ import os
 import unittest
 
 import postbound as pb
-from postbound import db, parser, transform, workloads
-from postbound.db import postgres
+from postbound import db, parser, postgres, transform, workloads
 from postbound.opt import presets, ues
 from tests import regression_suite
 

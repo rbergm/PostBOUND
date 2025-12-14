@@ -24,8 +24,7 @@ from typing import Any, Literal, NewType, Optional
 
 import numpy as np
 
-from .. import parser
-from ..db import postgres
+from .. import parser, postgres
 from ..db._db import Database
 from ..qal import format_quick
 from ..qal._qal import ColumnReference, SqlQuery, TableReference

@@ -3,8 +3,7 @@ from __future__ import annotations
 import unittest
 
 import postbound as pb
-from postbound import transform, workloads
-from postbound.db import postgres
+from postbound import postgres, transform, workloads
 from postbound.opt import tonic
 from tests import regression_suite
 

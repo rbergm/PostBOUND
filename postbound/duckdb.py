@@ -14,8 +14,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Optional
 
-from .. import qal, transform
-from .._core import (
+from . import qal, transform
+from ._core import (
     Cardinality,
     ColumnReference,
     Cost,
@@ -24,7 +24,7 @@ from .._core import (
     ScanOperator,
     TableReference,
 )
-from .._hints import (
+from ._hints import (
     HintType,
     JoinTree,
     PhysicalOperatorAssignment,
@@ -33,10 +33,8 @@ from .._hints import (
     operators_from_plan,
     parameters_from_plan,
 )
-from .._qep import QueryPlan
-from ..qal._qal import SqlQuery
-from ..util import Version, dicts, jsondict, stats
-from ._db import (
+from ._qep import QueryPlan
+from .db._db import (
     Cursor,
     Database,
     DatabasePool,
@@ -49,6 +47,18 @@ from ._db import (
     simplify_result_set,
 )
 from .postgres import PostgresLimitClause
+from .qal._qal import SqlQuery
+from .util import Version, dicts, jsondict, stats
+
+# We need to resolve the name clash between our duckdb module and the official duckdb package.
+# To achieve this, we first use an absolute import on our own module. This prevents th relative
+# import from trying to load local module first.
+# This is obviously a hacky solution, and we are definitely going to change it once the quacklab
+# packaging has been reworked.
+__import_breaker = 42
+from .duckdb import __import_breaker  # noqa: F401, E402
+
+import duckdb  # noqa: E402, isort:skip
 
 
 class DuckDBInterface(Database):
@@ -59,8 +69,6 @@ class DuckDBInterface(Database):
         system_name: str = "DuckDB",
         cache_enabled: bool = False,
     ) -> None:
-        import duckdb
-
         super().__init__(system_name=system_name, cache_enabled=cache_enabled)
 
         self._dbfile = db
@@ -177,13 +185,9 @@ class DuckDBInterface(Database):
         self._cur.close()
 
     def reconnect(self) -> None:
-        import duckdb
-
         self._cur = duckdb.connect(self._dbfile)
 
     def reset_connection(self) -> None:
-        import duckdb
-
         try:
             self.close()
         except Exception:
@@ -806,8 +810,6 @@ class DuckDBHintService(HintService):
 
 
 def _reconnect(name: str, *, pool: DatabasePool) -> DuckDBInterface:
-    import duckdb
-
     current_conn: DuckDBInterface = pool.retrieve_database(name)
 
     try:

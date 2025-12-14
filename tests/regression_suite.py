@@ -6,8 +6,7 @@ import unittest
 
 import psycopg
 
-from postbound import QueryPlan
-from postbound.db import postgres
+from postbound import QueryPlan, postgres
 
 
 def _rebuild_result_set(result_set: object) -> list[tuple[object]]:

@@ -40,8 +40,8 @@ from typing import Any, Optional
 
 import mysql.connector
 
-from .. import qal, transform, util
-from .._core import (
+from . import qal, transform, util
+from ._core import (
     Cardinality,
     JoinOperator,
     PhysicalOperator,
@@ -49,7 +49,7 @@ from .._core import (
     UnboundColumnError,
     VirtualTableError,
 )
-from .._hints import (
+from ._hints import (
     HintType,
     JoinTree,
     PhysicalOperatorAssignment,
@@ -58,8 +58,18 @@ from .._hints import (
     operators_from_plan,
     parameters_from_plan,
 )
-from .._qep import QueryPlan
-from ..qal._qal import (
+from ._qep import QueryPlan
+from .db._db import (
+    Cursor,
+    Database,
+    DatabasePool,
+    DatabaseSchema,
+    DatabaseStatistics,
+    HintService,
+    OptimizerInterface,
+    UnsupportedDatabaseFeatureError,
+)
+from .qal._qal import (
     CastExpression,
     ColumnReference,
     Explain,
@@ -69,16 +79,11 @@ from ..qal._qal import (
     StaticValueExpression,
     TableReference,
 )
-from ..util import Version
-from ._db import (
-    Cursor,
-    Database,
-    DatabasePool,
-    DatabaseSchema,
-    DatabaseStatistics,
-    HintService,
-    OptimizerInterface,
-    UnsupportedDatabaseFeatureError,
+from .util import Version
+
+warnings.warn(
+    "The MySQL interface is experimental and may be incomplete. Use it at your own risk.",
+    UserWarning,
 )
 
 
