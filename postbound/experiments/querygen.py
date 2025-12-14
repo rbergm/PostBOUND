@@ -8,9 +8,8 @@ from typing import Optional
 
 import networkx as nx
 
-from .. import util
+from .. import postgres, util
 from .._core import ColumnReference, TableReference
-from ..db import postgres
 from ..db._db import Database, DatabasePool, ForeignKeyRef
 from ..qal._qal import (
     AbstractPredicate,

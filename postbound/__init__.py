@@ -98,14 +98,18 @@ some require user input):
 from . import (
     bench,
     db,
+    duckdb,
     experiments,
+    mysql,
     opt,
     parser,
+    postgres,
     qal,
     relalg,
     transform,
     util,
     validation,
+    vis,
     workloads,
 )
 from ._core import (
@@ -161,8 +165,6 @@ from ._stages import (
     PlanEnumerator,
     as_complete_algorithm,
 )
-from .db import _duckdb as duckdb
-from .db import postgres
 from .db._db import Database
 from .parser import parse_query
 from .qal._qal import SqlQuery
@@ -170,12 +172,21 @@ from .qal._qal import SqlQuery
 __version__ = "0.19.2"
 
 __all__ = [
+    "bench",
     "db",
+    "duckdb",
+    "experiments",
+    "mysql",
     "opt",
     "parser",
+    "postgres",
     "qal",
-    "experiments",
+    "relalg",
+    "transform",
     "util",
+    "validation",
+    "vis",
+    "workloads",
     "Cost",
     "Cardinality",
     "TableReference",
@@ -201,10 +212,6 @@ __all__ = [
     "OptimizationStage",
     "OptimizationSettings",
     "Database",
-    "postgres",
-    "duckdb",
-    "relalg",
-    "transform",
     "SqlQuery",
     "parse_query",
     "PlanEstimates",
@@ -226,7 +233,4 @@ __all__ = [
     "jointree_from_plan",
     "operators_from_plan",
     "parameters_from_plan",
-    "validation",
-    "workloads",
-    "bench",
 ]

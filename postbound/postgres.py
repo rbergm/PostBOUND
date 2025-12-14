@@ -32,8 +32,8 @@ from typing import Any, Literal, Optional
 import psycopg
 import psycopg.rows
 
-from .. import qal, transform, util
-from .._core import (
+from . import qal, transform, util
+from ._core import (
     Cardinality,
     IntermediateOperator,
     JoinOperator,
@@ -42,7 +42,7 @@ from .._core import (
     UnboundColumnError,
     VirtualTableError,
 )
-from .._hints import (
+from ._hints import (
     HintType,
     JoinTree,
     PhysicalOperatorAssignment,
@@ -51,8 +51,22 @@ from .._hints import (
     operators_from_plan,
     parameters_from_plan,
 )
-from .._qep import QueryPlan, SortKey
-from ..qal._qal import (
+from ._qep import QueryPlan, SortKey
+from .db._db import (
+    Database,
+    DatabasePool,
+    DatabaseSchema,
+    DatabaseServerError,
+    DatabaseStatistics,
+    DatabaseUserError,
+    HintService,
+    HintWarning,
+    OptimizerInterface,
+    ResultSet,
+    UnsupportedDatabaseFeatureError,
+    simplify_result_set,
+)
+from .qal._qal import (
     AbstractPredicate,
     ArrayAccessExpression,
     BetweenPredicate,
@@ -80,21 +94,7 @@ from ..qal._qal import (
     UnaryPredicate,
     WindowExpression,
 )
-from ..util import StateError, Version, jsondict
-from ._db import (
-    Database,
-    DatabasePool,
-    DatabaseSchema,
-    DatabaseServerError,
-    DatabaseStatistics,
-    DatabaseUserError,
-    HintService,
-    HintWarning,
-    OptimizerInterface,
-    ResultSet,
-    UnsupportedDatabaseFeatureError,
-    simplify_result_set,
-)
+from .util import StateError, Version, jsondict
 
 _SignificantPostgresSettings = {
     # Resource consumption settings (see https://www.postgresql.org/docs/current/runtime-config-resource.html)

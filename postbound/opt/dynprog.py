@@ -25,7 +25,7 @@ from .._stages import (
     PlanEnumerator,
 )
 from ..db._db import Database, DatabasePool, DatabaseSchema, DatabaseServerError
-from ..db.postgres import PostgresInterface, PostgresJoinHints, PostgresScanHints
+from ..postgres import PostgresInterface, PostgresJoinHints, PostgresScanHints
 from ..qal._qal import (
     AbstractPredicate,
     ColumnExpression,

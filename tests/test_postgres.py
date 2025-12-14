@@ -1,5 +1,5 @@
 import postbound as pb
-from postbound.db.postgres import PostgresConfiguration, PostgresSetting
+from postbound.postgres import PostgresConfiguration, PostgresSetting
 from tests import regression_suite
 
 pg_connect_dir = "."

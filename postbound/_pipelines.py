@@ -23,6 +23,7 @@ from ._stages import (
     PlanEnumerator,
 )
 from .db._db import Database, DatabasePool
+from .postgres import PostgresInterface
 from .qal._qal import SqlQuery
 from .util._errors import StateError
 from .util.jsonize import jsondict
@@ -322,7 +323,6 @@ class TextBookOptimizationPipeline(OptimizationPipeline):
     """
 
     def __init__(self, target_db: Database) -> None:
-        from .db.postgres import PostgresInterface
         from .opt.dynprog import (
             DynamicProgrammingEnumerator,
             PostgresDynProg,
