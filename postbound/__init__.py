@@ -168,6 +168,7 @@ from ._stages import (
 from .db._db import Database
 from .parser import parse_query
 from .qal._qal import SqlQuery
+from .workloads import Workload
 
 __version__ = "0.19.2"
 
@@ -213,6 +214,7 @@ __all__ = [
     "OptimizationSettings",
     "Database",
     "SqlQuery",
+    "Workload",
     "parse_query",
     "PlanEstimates",
     "PlanMeasures",

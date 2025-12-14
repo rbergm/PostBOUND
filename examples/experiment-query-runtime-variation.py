@@ -55,10 +55,10 @@ class ExperimentConfig:
 
 
 def skip_existing_results(
-    workload: pb.workloads.Workload,
+    workload: pb.Workload,
     *,
     config: ExperimentConfig = ExperimentConfig.default(),
-) -> pb.workloads.Workload:
+) -> pb.Workload:
     if not config.skip_existing_results:
         return workload
     existing_results = set()
@@ -83,9 +83,7 @@ def skip_existing_results(
     return skipped_workload
 
 
-def filter_for_label(
-    workload: pb.workloads.Workload, labels: Sequence[str]
-) -> pb.workloads.Workload:
+def filter_for_label(workload: pb.Workload, labels: Sequence[str]) -> pb.Workload:
     if not len(labels):
         return workload
     if len(labels) == 1:
