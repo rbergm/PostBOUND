@@ -23,7 +23,7 @@ from ..qal._qal import (
     as_predicate,
     build_query,
 )
-from ..util import networkx as nx_utils
+from ..util import nx as nx_utils
 
 
 def _generate_join_predicates(
