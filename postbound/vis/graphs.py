@@ -9,16 +9,16 @@ import networkx as nx
 
 
 @typing.overload
-def draw_graph(graph: nx.Graph) -> gv.Graph:
+def plot_graph(graph: nx.Graph) -> gv.Graph:
     pass
 
 
 @typing.overload
-def draw_graph(graph: nx.DiGraph) -> gv.Digraph:
+def plot_graph(graph: nx.DiGraph) -> gv.Digraph:
     pass
 
 
-def draw_graph(
+def plot_graph(
     graph: nx.Graph | nx.DiGraph, *, directed: Optional[bool] = None, color: str = ""
 ) -> gv.Graph | gv.Digraph:
     if directed is None:
