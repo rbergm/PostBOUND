@@ -1,5 +1,8 @@
 """Contains utilities to visualize different PostBOUND objects."""
 
-from . import fdl, graphs, optimizer as opt, plots, tonic, trees
+import lazy_loader
 
-__all__ = ["fdl", "graphs", "opt", "plots", "tonic", "trees"]
+__getattr__, __dir__, __all__ = lazy_loader.attach_stub(
+    __name__,
+    __file__,
+)
