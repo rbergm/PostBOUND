@@ -36,10 +36,16 @@ def determine_disk(directory: str) -> str:
     # df output format:
     # Filesystem     1K-blocks      Used Available Use% Mounted on
     # /dev/sda1       12345678    123456  12345678   1% /mnt
-    current_disk = subprocess.check_output(f"df {directory} | grep '^/' | cut -d' ' -f1", shell=True, text=True).strip()
+    current_disk = subprocess.check_output(
+        f"df {directory} | grep '^/' | cut -d' ' -f1", shell=True, text=True
+    ).strip()
 
     # Resolve logical volumes
-    full_path = subprocess.check_output(["realpath", current_disk], text=True).strip().split("/")[-1]
+    full_path = (
+        subprocess.check_output(["realpath", current_disk], text=True)
+        .strip()
+        .split("/")[-1]
+    )
     return full_path
 
 
@@ -76,7 +82,9 @@ class SystemInfo:
         return SystemInfo(
             n_cores=determine_number_of_cores(),
             memory_mb=determine_memory_size_mb(),
-            disk_type=disk_type if disk_type else determine_disk_type(determine_disk(db_directory))
+            disk_type=disk_type
+            if disk_type
+            else determine_disk_type(determine_disk(db_directory)),
         )
 
     @property
@@ -101,7 +109,7 @@ def generate_pg_config(system_info: SystemInfo) -> dict[str, str]:
     effective_cache_size_mb = round(0.75 * system_info.memory_mb)
     pg_config["effective_cache_size"] = f"{effective_cache_size_mb}MB"
 
-    maintenance_work_mem_gb = min(2, round(1/8 * system_info.memory_gb))
+    maintenance_work_mem_gb = min(2, round(1 / 8 * system_info.memory_gb))
     pg_config["maintenance_work_mem"] = f"{maintenance_work_mem_gb}GB"
 
     pg_config["min_wal_size"] = "4GB"
@@ -128,10 +136,13 @@ def generate_pg_config(system_info: SystemInfo) -> dict[str, str]:
     pg_config["max_parallel_maintenance_workers"] = maintenance_workers
 
     work_mem_mb = round(
-        ((system_info.memory_mb - shared_buffers_mb)
-         / (3 * max_connections)
-         / max_parallel_workers_per_gather
-         / 2))
+        (
+            (system_info.memory_mb - shared_buffers_mb)
+            / (3 * max_connections)
+            / max_parallel_workers_per_gather
+            / 2
+        )
+    )
     pg_config["work_mem"] = f"{work_mem_mb}MB"
 
     return {conf_key: str(conf_value) for conf_key, conf_value in pg_config.items()}
@@ -148,8 +159,13 @@ def make_config_head(db_directory: str) -> str:
                            """)
 
 
-def export_pg_config(pg_config: dict[str, str], *, db_directory: str, out_path: str) -> None:
-    alter_statements = [f"ALTER SYSTEM SET {conf_key} = '{conf_value}';" for conf_key, conf_value in pg_config.items()]
+def export_pg_config(
+    pg_config: dict[str, str], *, db_directory: str, out_path: str
+) -> None:
+    alter_statements = [
+        f"ALTER SYSTEM SET {conf_key} = '{conf_value}';"
+        for conf_key, conf_value in pg_config.items()
+    ]
     config_body = "\n".join(alter_statements) + "\n"
     header = make_config_head(db_directory)
 
@@ -159,14 +175,29 @@ def export_pg_config(pg_config: dict[str, str], *, db_directory: str, out_path: 
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Generate an optimized PostgreSQL configuration file",
-                                     epilog="Generation rules are based on PGTune by le0pard (https://pgtune.leopard.in.ua/)")
-    parser.add_argument("db_directory", default="postgres-server/data", nargs="?",
-                        help="The Postgres data/ directory containing the database files")
-    parser.add_argument("--out", "-o", default="pg-conf.sql", help="The output file for the generated configuration")
-    parser.add_argument("--disk-type", default="", choices=["", "SSD", "HDD"],
-                        help="Whether the configuration should be optimized for SSD or HDD. If not provided, the disk type is "
-                        "determined automatically based on the data/ directory.")
+    parser = argparse.ArgumentParser(
+        description="Generate an optimized PostgreSQL configuration file",
+        epilog="Generation rules are based on PGTune by le0pard (https://pgtune.leopard.in.ua/)",
+    )
+    parser.add_argument(
+        "db_directory",
+        default="postgres-server/data",
+        nargs="?",
+        help="The Postgres data/ directory containing the database files",
+    )
+    parser.add_argument(
+        "--out",
+        "-o",
+        default="pg-conf.sql",
+        help="The output file for the generated configuration",
+    )
+    parser.add_argument(
+        "--disk-type",
+        default="",
+        choices=["", "SSD", "HDD", "ssd", "hdd"],
+        help="Whether the configuration should be optimized for SSD or HDD. If not provided, the disk type is "
+        "determined automatically based on the data/ directory.",
+    )
 
     args = parser.parse_args()
 
