@@ -35,6 +35,7 @@ import natsort
 import pandas as pd
 
 from . import parser, util
+from ._base import pbdir
 from .db._db import DatabasePool
 from .qal._qal import SqlQuery
 
@@ -51,7 +52,7 @@ _WorkloadSources = {
 def _fetch_workload(name: str) -> pathlib.Path:
     """Determines the local path of a workload, downloading it if necessary."""
     name = name.lower()
-    workload_dir = pathlib.Path.home() / ".postbound" / "workloads" / name
+    workload_dir = pbdir / "workloads" / name
     if workload_dir.exists():
         return workload_dir
     workload_dir.mkdir(parents=True, exist_ok=True)

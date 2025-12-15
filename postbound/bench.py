@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import time
 import warnings
 from collections.abc import Callable, Iterable
@@ -279,6 +280,104 @@ def _wrap_optimization_stage(stage: OptimizationStage) -> OptimizationPipeline:
         case _:
             raise TypeError(f"Unsupported optimization stage: {stage}")
     return pipeline
+
+
+@dataclass
+class _BenchmarkConfig:
+    workload: Workload
+    target_db: Database
+    optimizer: OptimizationPipeline | None
+    output: Path | None
+    workload_repetitions: int
+    per_query_repetitions: int
+    shuffled: bool
+    query_prep: QueryPreparation | None
+    timeout: float | None
+    exec_callback: Callable[[ExecutionResult], None] | None
+    log: _LoggerImpl
+    error_action: ErrorHandling
+    start_time: datetime | None = None
+
+
+def _init_benchmark_log(experiment: str, *, cfg: _BenchmarkConfig) -> None:
+    if not cfg.output:
+        return
+    out_dir = cfg.output.parent
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    start_timestamp = datetime.now()
+    cfg.start_time = start_timestamp
+
+    log_data = {
+        "experiment": experiment,
+        "start_time": start_timestamp.isoformat(),
+        "end_time": None,
+        "status": "running",
+        "workload": {"name": cfg.workload.name, "queries": {}},
+        "target_db": cfg.target_db.describe(),
+        "optimizer": cfg.optimizer.describe() if cfg.optimizer else None,
+        "result_file": cfg.output.expanduser().resolve(),
+        "workload_repetitions": cfg.workload_repetitions,
+        "per_query_repetitions": cfg.per_query_repetitions,
+        "shuffled": cfg.shuffled,
+        "query_preparation": cfg.query_prep,
+        "query_timeout": cfg.timeout,
+    }
+    for label, query in cfg.workload.entries():
+        log_data["workload"]["queries"][label] = {
+            "query": str(query),
+        }
+
+    log_file = out_dir / "experiment_log.json"
+    if not log_file.exists():
+        with open(log_file, "w", encoding="utf-8") as f:
+            util.to_json_dump([log_data], f)
+        return
+
+    with open(log_file, "r+", encoding="utf-8") as f:
+        existing_logs = json.load(f)
+        complete_log = existing_logs + [util.to_json(log_data)]
+        f.seek(0)
+        util.to_json_dump(complete_log, f)
+
+
+def _finalize_benchmark_log(experiment: str, *, cfg: _BenchmarkConfig) -> None:
+    if not cfg.output:
+        return
+    out_dir = cfg.output.parent
+    log_file = out_dir / "experiment_log.json"
+    with open(log_file, "r+", encoding="utf-8") as f:
+        existing_logs = json.load(f)
+        for log_entry in existing_logs:
+            same_experiment = log_entry["experiment"] == experiment
+            same_iteration = log_entry["start_time"] == cfg.start_time.isoformat()
+            if not same_experiment or not same_iteration:
+                continue
+            log_entry["end_time"] = datetime.now().isoformat()
+            log_entry["status"] = "completed"
+        f.seek(0)
+        json.dump(existing_logs, f, indent=2)
+
+
+def _failed_benchmark_log(
+    experiment: str, *, cfg: _BenchmarkConfig, error: Exception
+) -> None:
+    if not cfg.output:
+        return
+    out_dir = cfg.output.parent
+    log_file = out_dir / "experiment_log.json"
+    with open(log_file, "r+", encoding="utf-8") as f:
+        existing_logs = json.load(f)
+        for log_entry in existing_logs:
+            same_experiment = log_entry["experiment"] == experiment
+            same_iteration = log_entry["start_time"] == cfg.start_time.isoformat()
+            if not same_experiment or not same_iteration:
+                continue
+            log_entry["end_time"] = datetime.now().isoformat()
+            log_entry["status"] = "failed"
+            log_entry["error"] = {"type": type(error).__name__, "message": str(error)}
+        f.seek(0)
+        json.dump(existing_logs, f, indent=2)
 
 
 ExecutionTarget = Database | OptimizationPipeline | OptimizationStage
@@ -674,19 +773,6 @@ class _ExecutionResults:
         return pd.concat(samples, ignore_index=True)
 
 
-@dataclass
-class _BenchmarkConfig:
-    target_db: Database
-    optimizer: OptimizationPipeline | None
-    output: Path | None
-    per_query_repetitions: int
-    timeout: float | None
-    query_prep: QueryPreparation | None
-    exec_callback: Callable[[ExecutionResult], None] | None
-    log: _LoggerImpl
-    error_action: ErrorHandling
-
-
 def _exec_ctl_loop(
     query: SqlQuery,
     *,
@@ -777,6 +863,7 @@ def execute_workload(
     queries: Iterable[SqlQuery] | Workload,
     on: ExecutionTarget,
     *,
+    name: str = "<unnamed>",
     workload_repetitions: int = 1,
     per_query_repetitions: int = 1,
     shuffled: bool = False,
@@ -802,6 +889,9 @@ def execute_workload(
         pipeline to optimize the queries. If a pipeline is provided, all queries are first passed through the pipeline before
         executing them on the pipeline's target database. It is even possible to provide a single optimization stage, in which
         case the stage is first expanded into a full optimization pipeline.
+    name : str, optional
+        A human-readable name that describes the current experiment. This is only used in log files, etc. to identify the
+        the experiment.
     workload_repetitions : int, optional
         The number of times the entire workload should be repeated. By default, the workload is only executed once.
     per_query_repetitions : int, optional
@@ -906,10 +996,13 @@ def execute_workload(
         log = _NoOpLogger()
 
     cfg = _BenchmarkConfig(
+        workload=queries,
         target_db=target_db,
         optimizer=optimizer,
         output=progressive_output,
+        workload_repetitions=workload_repetitions,
         per_query_repetitions=per_query_repetitions,
+        shuffled=shuffled,
         timeout=timeout,
         query_prep=query_preparation,
         exec_callback=exec_callback,
@@ -920,6 +1013,8 @@ def execute_workload(
         query_reps=per_query_repetitions, query_prep=query_preparation
     )
 
+    _init_benchmark_log(name, cfg=cfg)
+
     # The overall control flow looks rougly like this:
     #   ++ workload repetitions [handled here]
     #        ++ workload control loop [handled by _workload_ctl_loop]
@@ -928,22 +1023,27 @@ def execute_workload(
     #             ++ high-level query execution and result generation [handled by _exec_ctl_loop]
     #                  ++ low-level query execution [handled by _execute_query]
 
-    for i in range(workload_repetitions):
-        log.next_workload_iter()
-        results.next_workload_repetition()
-        if shuffled:
-            queries = queries.shuffle()
+    try:
+        for i in range(workload_repetitions):
+            log.next_workload_iter()
+            results.next_workload_repetition()
+            if shuffled:
+                queries = queries.shuffle()
 
-        _workload_ctl_loop(
-            queries,
-            results=results,
-            cfg=cfg,
-        )
+            _workload_ctl_loop(
+                queries,
+                results=results,
+                cfg=cfg,
+            )
 
-        if repetition_callback:
-            repetition_callback(i + 1)
+            if repetition_callback:
+                repetition_callback(i + 1)
+    except Exception as e:
+        _failed_benchmark_log(name, cfg=cfg, error=e)
+        raise e
 
     log.next_workload_iter()  # to finalize progress bars
+    _finalize_benchmark_log(name, cfg=cfg)
     return results.to_df()
 
 
