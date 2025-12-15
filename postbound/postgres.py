@@ -846,7 +846,7 @@ class PostgresInterface(Database):
         if not tables:
             return
         tables = set(
-            tab.full_name for tab in tables
+            tab.full_name for tab in tables if not tab.virtual
         )  # eliminate duplicates if tables are selected multiple times
 
         table_indexes = (
