@@ -10,8 +10,8 @@ import networkx as nx
 
 from .. import postgres, util
 from .._core import ColumnReference, TableReference
-from ..db._db import Database, DatabasePool, ForeignKeyRef
-from ..qal._qal import (
+from ..db import Database, DatabasePool, ForeignKeyRef
+from ..qal import (
     AbstractPredicate,
     CompoundOperator,
     CompoundPredicate,

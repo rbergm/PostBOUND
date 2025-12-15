@@ -34,7 +34,7 @@ from ._hints import (
     parameters_from_plan,
 )
 from ._qep import QueryPlan
-from .db._db import (
+from .db import (
     Cursor,
     Database,
     DatabasePool,
@@ -47,7 +47,7 @@ from .db._db import (
     simplify_result_set,
 )
 from .postgres import PostgresLimitClause
-from .qal._qal import SqlQuery
+from .qal import SqlQuery
 from .util import Version, dicts, jsondict, stats
 
 # We need to resolve the name clash between our duckdb module and the official duckdb package.

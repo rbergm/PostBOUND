@@ -22,8 +22,8 @@ from .._stages import (
     OptimizationPreCheck,
     PhysicalOperatorSelection,
 )
-from ..db._db import Database, DatabasePool
-from ..qal._qal import SqlQuery
+from ..db import Database, DatabasePool
+from ..qal import SqlQuery
 from ..util import nx as nx_utils
 from ..validation import CompoundCheck, CrossProductPreCheck, SupportedHintCheck
 from ._helpers import to_query_plan

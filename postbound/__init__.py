@@ -165,9 +165,9 @@ from ._stages import (
     PlanEnumerator,
     as_complete_algorithm,
 )
-from .db._db import Database
+from .db import Database
 from .parser import parse_query
-from .qal._qal import SqlQuery
+from .qal import SqlQuery
 from .workloads import Workload
 
 __version__ = "0.19.2"

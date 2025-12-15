@@ -44,7 +44,7 @@ from .._stages import (
     ParameterGeneration,
     PhysicalOperatorSelection,
 )
-from ..db._db import Database, DatabaseServerError, DatabaseUserError
+from ..db import Database, DatabaseServerError, DatabaseUserError
 from ..postgres import PostgresInterface
 from ..qal import ColumnExpression, OrderBy, SqlQuery
 from ..util import jsondict

@@ -45,8 +45,8 @@ from .._stages import (
     OptimizationPreCheck,
     PhysicalOperatorSelection,
 )
-from ..db._db import Database, DatabasePool, DatabaseStatistics
-from ..qal._qal import (
+from ..db import Database, DatabasePool, DatabaseStatistics
+from ..qal import (
     AbstractPredicate,
     BaseProjection,
     ImplicitFromClause,

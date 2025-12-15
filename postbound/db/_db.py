@@ -46,7 +46,7 @@ from .._hints import (
     PlanParameterization,
 )
 from .._qep import QueryPlan
-from ..qal._qal import SqlQuery
+from ..qal import SqlQuery
 
 ResultRow = tuple
 """Simple type alias to denote a single tuple from a result set."""

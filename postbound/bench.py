@@ -31,7 +31,7 @@ from ._stages import (
     PhysicalOperatorSelection,
     PlanEnumerator,
 )
-from .db._db import (
+from .db import (
     Database,
     DatabasePool,
     PrewarmingSupport,
@@ -39,7 +39,7 @@ from .db._db import (
     TimeoutSupport,
     simplify_result_set,
 )
-from .qal._qal import Explain, SqlQuery
+from .qal import Explain, SqlQuery
 from .util.jsonize import Jsonizable
 from .workloads import Workload, generate_workload
 

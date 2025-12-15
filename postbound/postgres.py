@@ -35,10 +35,12 @@ import psycopg.rows
 from . import qal, transform, util
 from ._core import (
     Cardinality,
+    ColumnReference,
     IntermediateOperator,
     JoinOperator,
     PhysicalOperator,
     ScanOperator,
+    TableReference,
     UnboundColumnError,
     VirtualTableError,
 )
@@ -52,7 +54,7 @@ from ._hints import (
     parameters_from_plan,
 )
 from ._qep import QueryPlan, SortKey
-from .db._db import (
+from .db import (
     Database,
     DatabasePool,
     DatabaseSchema,
@@ -66,7 +68,7 @@ from .db._db import (
     UnsupportedDatabaseFeatureError,
     simplify_result_set,
 )
-from .qal._qal import (
+from .qal import (
     AbstractPredicate,
     ArrayAccessExpression,
     BetweenPredicate,
@@ -74,7 +76,6 @@ from .qal._qal import (
     CaseExpression,
     CastExpression,
     ColumnExpression,
-    ColumnReference,
     CompoundOperator,
     CompoundPredicate,
     Explain,
@@ -90,7 +91,6 @@ from .qal._qal import (
     StarExpression,
     StaticValueExpression,
     SubqueryExpression,
-    TableReference,
     UnaryPredicate,
     WindowExpression,
 )

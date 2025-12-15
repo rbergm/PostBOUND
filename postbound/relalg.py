@@ -43,14 +43,14 @@ from collections.abc import Generator, Iterable, Sequence
 from typing import Optional
 
 from . import transform, util
-from .qal._qal import (
+from ._core import ColumnReference, TableReference
+from .qal import (
     AbstractPredicate,
     BetweenPredicate,
     BinaryPredicate,
     CaseExpression,
     CastExpression,
     ColumnExpression,
-    ColumnReference,
     CompoundOperator,
     CompoundPredicate,
     DirectTableSource,
@@ -73,7 +73,6 @@ from .qal._qal import (
     StaticValueExpression,
     SubqueryExpression,
     SubqueryTableSource,
-    TableReference,
     TableSource,
     UnaryPredicate,
     WindowExpression,

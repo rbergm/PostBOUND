@@ -12,8 +12,8 @@ from .._core import Cardinality, TableReference
 from .._stages import (
     CardinalityEstimator,
 )
-from ..db._db import Database, DatabasePool
-from ..qal._qal import SqlQuery
+from ..db import Database, DatabasePool
+from ..qal import SqlQuery
 from ..workloads import Workload
 
 

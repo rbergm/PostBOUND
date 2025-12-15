@@ -43,9 +43,11 @@ import mysql.connector
 from . import qal, transform, util
 from ._core import (
     Cardinality,
+    ColumnReference,
     JoinOperator,
     PhysicalOperator,
     ScanOperator,
+    TableReference,
     UnboundColumnError,
     VirtualTableError,
 )
@@ -59,7 +61,7 @@ from ._hints import (
     parameters_from_plan,
 )
 from ._qep import QueryPlan
-from .db._db import (
+from .db import (
     Cursor,
     Database,
     DatabasePool,
@@ -69,15 +71,13 @@ from .db._db import (
     OptimizerInterface,
     UnsupportedDatabaseFeatureError,
 )
-from .qal._qal import (
+from .qal import (
     CastExpression,
-    ColumnReference,
     Explain,
     Hint,
     SqlExpression,
     SqlQuery,
     StaticValueExpression,
-    TableReference,
 )
 from .util import Version
 

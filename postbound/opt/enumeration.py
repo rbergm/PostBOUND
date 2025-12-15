@@ -20,8 +20,8 @@ from .._hints import (
     ScanOperatorAssignment,
 )
 from .._qep import QueryPlan
-from ..db._db import Database, DatabasePool
-from ..qal._qal import SqlQuery
+from ..db import Database, DatabasePool
+from ..qal import SqlQuery
 from ..util import nx as nx_utils
 from ._helpers import to_query_plan
 

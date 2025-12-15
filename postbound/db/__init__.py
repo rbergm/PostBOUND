@@ -42,6 +42,8 @@ from ._db import (
     OptimizerInterface,
     PrewarmingSupport,
     QueryCacheWarning,
+    ResultRow,
+    ResultSet,
     StopwatchSupport,
     TimeoutSupport,
     UnsupportedDatabaseFeatureError,
@@ -69,4 +71,6 @@ __all__ = [
     "DatabaseUserError",
     "current_database",
     "simplify_result_set",
+    "ResultSet",
+    "ResultRow",
 ]

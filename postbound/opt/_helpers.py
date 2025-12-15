@@ -26,7 +26,7 @@ from .._hints import (
     parameters_from_plan,
 )
 from .._qep import PlanEstimates, PlanMeasures, PlanParams, QueryPlan, SortKey, Subplan
-from ..qal._qal import SqlQuery
+from ..qal import SqlQuery
 
 
 def read_operator_json(
