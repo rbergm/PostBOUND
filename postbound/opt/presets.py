@@ -14,7 +14,7 @@ from .._pipelines import (
     PhysicalOperatorSelection,
 )
 from .._stages import OptimizationPreCheck
-from ..db._db import Database, DatabasePool
+from ..db import Database, DatabasePool
 from . import native, ues
 
 

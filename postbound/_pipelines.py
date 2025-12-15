@@ -22,9 +22,9 @@ from ._stages import (
     PhysicalOperatorSelection,
     PlanEnumerator,
 )
-from .db._db import Database, DatabasePool
+from .db import Database, DatabasePool
 from .postgres import PostgresInterface
-from .qal._qal import SqlQuery
+from .qal import SqlQuery
 from .util._errors import StateError
 from .util.jsonize import jsondict
 from .validation import (

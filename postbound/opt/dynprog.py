@@ -11,6 +11,7 @@ from typing import Optional
 from .. import transform, util
 from .._core import (
     Cardinality,
+    ColumnReference,
     IntermediateOperator,
     JoinOperator,
     PhysicalOperator,
@@ -24,12 +25,11 @@ from .._stages import (
     OptimizationPreCheck,
     PlanEnumerator,
 )
-from ..db._db import Database, DatabasePool, DatabaseSchema, DatabaseServerError
+from ..db import Database, DatabasePool, DatabaseSchema, DatabaseServerError
 from ..postgres import PostgresInterface, PostgresJoinHints, PostgresScanHints
-from ..qal._qal import (
+from ..qal import (
     AbstractPredicate,
     ColumnExpression,
-    ColumnReference,
     CompoundOperator,
     CompoundPredicate,
     QueryPredicates,

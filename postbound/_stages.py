@@ -9,8 +9,8 @@ from . import util
 from ._core import Cardinality, Cost, TableReference
 from ._hints import JoinTree, PhysicalOperatorAssignment, PlanParameterization
 from ._qep import QueryPlan
-from .db._db import Database, DatabasePool
-from .qal._qal import SqlQuery
+from .db import Database, DatabasePool
+from .qal import SqlQuery
 from .util.jsonize import jsondict
 from .validation import CrossProductPreCheck, EmptyPreCheck, OptimizationPreCheck
 

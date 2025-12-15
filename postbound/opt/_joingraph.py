@@ -13,7 +13,7 @@ import networkx as nx
 from .. import transform, util
 from .._core import ColumnReference, TableReference
 from ..db import DatabasePool, DatabaseSchema
-from ..qal._qal import (
+from ..qal import (
     AbstractPredicate,
     CompoundPredicate,
     ImplicitSqlQuery,

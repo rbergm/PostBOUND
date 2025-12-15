@@ -27,7 +27,8 @@ from collections.abc import Callable, Iterable, Sequence
 from typing import Optional, overload
 
 from . import util
-from .qal._qal import (
+from ._core import ColumnReference, TableReference
+from .qal import (
     AbstractPredicate,
     BaseClause,
     BaseProjection,
@@ -37,7 +38,6 @@ from .qal._qal import (
     CastExpression,
     ClauseVisitor,
     ColumnExpression,
-    ColumnReference,
     CommonTableExpression,
     CompoundOperator,
     CompoundPredicate,
@@ -74,7 +74,6 @@ from .qal._qal import (
     StaticValueExpression,
     SubqueryExpression,
     SubqueryTableSource,
-    TableReference,
     TableSource,
     UnaryPredicate,
     UnionClause,

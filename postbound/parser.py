@@ -40,7 +40,7 @@ import pglast
 from . import util
 from ._core import ColumnReference, TableReference
 from .db import DatabasePool, DatabaseSchema
-from .qal._qal import (
+from .qal import (
     AbstractPredicate,
     ArrayAccessExpression,
     BaseClause,

@@ -18,8 +18,8 @@ import networkx as nx
 from . import util
 from ._core import PhysicalOperator
 from ._hints import HintType
-from .db._db import Database
-from .qal._qal import (
+from .db import Database
+from .qal import (
     AbstractPredicate,
     BasePredicate,
     BinaryPredicate,

@@ -13,9 +13,9 @@ from .. import relalg, transform, util
 from .._core import TableReference
 from .._hints import JoinTree, LogicalJoinTree
 from .._qep import QueryPlan
-from ..db._db import Database, DatabasePool
+from ..db import Database, DatabasePool
 from ..opt._joingraph import JoinGraph
-from ..qal._qal import SqlQuery
+from ..qal import SqlQuery
 from . import trees
 
 
