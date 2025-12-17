@@ -72,7 +72,7 @@ if [ -d "$TARGET_DIR" ] ; then
         git fetch --tags
     fi
 else
-    git clone https://github.com/rbergm/quacklab.git "$TARGET_DIR"
+    git clone https://github.com/rbergm/quacklab-legacy.git "$TARGET_DIR"
     cd "$TARGET_DIR"
     git fetch --tags
 fi
@@ -81,7 +81,7 @@ source "$VENV/bin/activate"
 
 python3 -m pip install --upgrade pip
 
-GEN=Ninja BUILD_PYTHON=1 make release
+GEN=ninja BUILD_PYTHON=1 make release
 
 if [ -n "$BASH_VERSION" -a "$BASH_SOURCE" != "$0" ] || [ -n "$ZSH_VERSION" -a "$ZSH_EVAL_CONTEXT" != "toplevel" ] ; then
     echo ".. Adding DuckDB executable to the system PATH"
