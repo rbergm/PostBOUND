@@ -1198,7 +1198,9 @@ class QueryPlan:
 
     @property
     def execution_time(self) -> float:
-        """Get the actual execution time of the operator.
+        """Get the actual execution time (in seconds) of the operator.
+
+        The execution time is cumulative, i.e. it includes the time spent in all child operators as well.
 
         This is just a shorthand for accessing the measures manually.
 
@@ -1207,6 +1209,22 @@ class QueryPlan:
         PlanMeasures.execution_time
         """
         return self._measures.execution_time
+
+    @property
+    def operator_time(self) -> float:
+        """Get the actual execution time (in seconds) spent in this operator only.
+
+        The operator time excludes the time spent in child operators.
+
+        Returns
+        -------
+        float
+            The operator execution time in seconds. If no measurement is available, *NaN* is returned.
+        """
+        if not self.is_analyze():
+            return math.nan
+        child_time = sum(child.execution_time for child in self.children)
+        return self.execution_time - child_time
 
     @property
     def subplan(self) -> Optional[Subplan]:
