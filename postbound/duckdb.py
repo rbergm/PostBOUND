@@ -14,6 +14,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Optional
 
+import quacklab
+
 from . import qal, transform
 from ._core import (
     Cardinality,
@@ -50,16 +52,6 @@ from .postgres import PostgresLimitClause
 from .qal import SqlQuery
 from .util import Version, dicts, jsondict, stats
 
-# We need to resolve the name clash between our duckdb module and the official duckdb package.
-# To achieve this, we first use an absolute import on our own module. This prevents th relative
-# import from trying to load local module first.
-# This is obviously a hacky solution, and we are definitely going to change it once the quacklab
-# packaging has been reworked.
-__import_breaker = 42
-from .duckdb import __import_breaker  # noqa: F401, E402
-
-import duckdb  # noqa: E402, isort:skip
-
 
 class DuckDBInterface(Database):
     def __init__(
@@ -73,7 +65,7 @@ class DuckDBInterface(Database):
 
         self._dbfile = db
 
-        self._cur = duckdb.connect(db)
+        self._cur = quacklab.connect(db)
         self._last_query_runtime = math.nan
 
         self._stats = DuckDBStatistics(self)
@@ -185,7 +177,7 @@ class DuckDBInterface(Database):
         self._cur.close()
 
     def reconnect(self) -> None:
-        self._cur = duckdb.connect(self._dbfile)
+        self._cur = quacklab.connect(self._dbfile)
 
     def reset_connection(self) -> None:
         try:
@@ -193,7 +185,7 @@ class DuckDBInterface(Database):
         except Exception:
             pass
 
-        self._cur = duckdb.connect(self._dbfile)
+        self._cur = quacklab.connect(self._dbfile)
 
     def describe(self) -> jsondict:
         base_info = {
@@ -815,7 +807,7 @@ def _reconnect(name: str, *, pool: DatabasePool) -> DuckDBInterface:
     try:
         # check if the connection is still active
         current_conn.execute_query("SELECT 1", cache_enabled=False, raw=True)
-    except duckdb.ConnectionException as e:
+    except quacklab.ConnectionException as e:
         # otherwise re-establish the connection
         if "Connection Error: Connection already closed!" in e.args:
             current_conn.reconnect()

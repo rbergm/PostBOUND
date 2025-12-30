@@ -247,12 +247,12 @@ class QueryCacheWarning(UserWarning):
         super().__init__(msg)
 
 
-def simplify_result_set(result_set: list[tuple[Any]]) -> Any:
+def simplify_result_set(result_set: ResultSet) -> Any:
     """Default implementation of the result set simplification logic outlined in `Database.execute_query`.
 
     Parameters
     ----------
-    result_set : list[tuple[Any]]
+    result_set : ResultSet
         Result set to simplify: each entry in the list corresponds to one row in the result set and each component of the
         tuples corresponds to one column in the result set
 
