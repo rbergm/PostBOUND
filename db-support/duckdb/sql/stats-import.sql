@@ -1,5 +1,4 @@
 
-.print 'importing table users'
 COPY users (
     Id,
     Reputation,
@@ -19,12 +18,10 @@ FROM 'users.csv'
 DELIMITER ',' NULL 'NULL' CSV HEADER;
 
 
-.print 'importing table badges'
 COPY badges (Id, UserId, Name, Date)
 FROM 'badges.csv'
 DELIMITER ',' NULL 'NULL' CSV HEADER;
 
-.print 'importing table posts'
 COPY posts (
     Id,
     PostTypeId,
@@ -50,17 +47,14 @@ COPY posts (
 FROM 'posts.csv'
 DELIMITER ',' NULL 'NULL' CSV HEADER;
 
-.print 'importing table tags'
 COPY tags (Id, TagName, Count, ExcerptPostId, WikiPostId)
 FROM 'tags.csv'
 DELIMITER ',' NULL 'NULL' CSV HEADER;
 
-.print 'importing table postLinks'
 COPY postLinks (Id, CreationDate, PostId, RelatedPostId, LinkTypeId)
 FROM 'postLinks.csv'
 DELIMITER ',' NULL 'NULL' CSV HEADER;
 
-.print 'importing table postHistory'
 COPY postHistory (
     Id,
     PostHistoryTypeId,
@@ -74,7 +68,6 @@ COPY postHistory (
 FROM 'postHistory.csv'
 DELIMITER ',' NULL 'NULL' CSV HEADER;
 
-.print 'importing table comments'
 COPY comments (
     Id,
     PostId,
@@ -86,7 +79,6 @@ COPY comments (
 FROM 'comments.csv'
 DELIMITER ',' NULL 'NULL' CSV HEADER;
 
-.print 'importing table votes'
 COPY votes (Id, PostId, VoteTypeId, CreationDate, UserId, BountyAmount)
 FROM 'votes.csv'
 DELIMITER ',' NULL 'NULL' CSV HEADER;

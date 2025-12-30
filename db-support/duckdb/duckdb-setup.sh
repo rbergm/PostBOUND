@@ -1,18 +1,35 @@
 #!/bin/bash
 
-WD=$(pwd)
-VENV="$WD/../../pb-venv"
+WD="$(pwd)"
+VENV="$WD/.venv"
 EXPLICIT_VENV="false"
+DUCKDB_VER="v1.4-andium"
 TARGET_DIR="$WD/quacklab"
 SKIP_PULL="false"
+SKIP_INSTALL="false"
 
 function show_help() {
     RET=$1
     echo "Usage: $0 <options>"
     echo "Allowed options:"
-    echo -e "--venv <venv>\tpath to the Python virtual environment to install the DuckDB package into. Defaults to '$VENV'."
-    echo -e "-d | --dir <directory>\tthe directory to install the DuckDB binary distribution in. Defaults to '$TARGET_DIR'."
-    echo -e "--no-update\tdon't try to pull the latest DuckDB version"
+
+    echo -e "\n--venv <venv>"
+    echo -e "\tPath to the Python virtual environment to setup the build environment."
+    echo -e "\tIf an environment is already active, it will be used unless this option is provided."
+    echo -e "\tIf the specified environment does not exist, it will be created."
+
+    echo -e "\n--duckdb-ver"
+    echo -eecho ".. Activating virtual environment at $VENV" "\tThe DuckDB version to install. Defaults to $DUCKDB_VER."
+
+    echo -e "\n-d | --dir <directory>"
+    echo -e "\tThe directory to install the DuckDB binary distribution in."
+    echo -e "\tDefaults to '$TARGET_DIR'."
+
+    echo -e "\n--no-update"
+    echo -e "\tDon't try to pull the latest DuckDB version"
+
+    echo -e "\n--no-install"
+    echo -e "\tDon't install quacklab package into venv. Only create the wheel."
     exit $RET
 }
 
@@ -28,6 +45,11 @@ while [ $# -gt 0 ] ; do
             shift
             shift
             ;;
+        --duckdb-ver)
+            DUCKDB_VER=$2
+            shift
+            shift
+            ;;
         -d|--dir)
             if [[ "$2" = /* ]] ; then
                 TARGET_DIR="$2"
@@ -39,6 +61,10 @@ while [ $# -gt 0 ] ; do
             ;;
         --no-update)
             SKIP_PULL="true"
+            shift
+            ;;
+        --no-install)
+            SKIP_INSTALL="true"
             shift
             ;;
         --help)
@@ -61,32 +87,55 @@ if [ -z "$VIRTUAL_ENV" ] || [ "$EXPLICIT_VENV" = "true" ] ; then
 
 fi
 
-echo ".. Setting up hinting-aware DuckDB"
+if [ -z "$VIRTUAL_ENV" ] && [  "$EXPLICIT_VENV" = "false" ] ; then
+    echo ".. Using default virtual environment at $VENV"
 
-if [ -d "$TARGET_DIR" ] ; then
-    echo ".. Re-using existing DuckDB build directory at $TARGET_DIR"
-    cd "$TARGET_DIR"
-
-    if [ "$SKIP_PULL" = "false" ] ; then
-        git pull
-        git fetch --tags
+    if [ ! -d "$VENV" ] ; then
+        python3 -m venv "$VENV"
     fi
-else
-    git clone https://github.com/rbergm/quacklab-legacy.git "$TARGET_DIR"
-    cd "$TARGET_DIR"
-    git fetch --tags
+fi
+
+if [[ "$DUCKDB_VER" != quacklab-* ]] ; then
+    DUCKDB_VER="quacklab-$DUCKDB_VER"
 fi
 
 source "$VENV/bin/activate"
-
 python3 -m pip install --upgrade pip
 
-GEN=ninja BUILD_PYTHON=1 make release
+if [ ! $(command -v uv) ] ; then
+    echo ".. Setting up uv"
+    python3 -m pip install uv
+fi
 
-if [ -n "$BASH_VERSION" -a "$BASH_SOURCE" != "$0" ] || [ -n "$ZSH_VERSION" -a "$ZSH_EVAL_CONTEXT" != "toplevel" ] ; then
-    echo ".. Adding DuckDB executable to the system PATH"
-    export PATH="$TARGET_DIR/build/release:$PATH"
+echo ".. Setting up hinting-aware DuckDB"
+if [ ! -d "$TARGET_DIR" ] ; then
+    git clone --recurse-submodules https://github.com/rbergm/quacklab-python.git "$TARGET_DIR"
+elif [ "$SKIP_PULL" = "false" ] ; then
+    cd "$TARGET_DIR"
+    git pull --recurse-submodules
+    git fetch --tags
+    cd "$TARGET_DIR/external/duckdb"
+    git fetch --tags
+fi
+
+cd "$TARGET_DIR"
+git switch "$DUCKDB_VER"
+
+echo ".. Building quacklab hinting grammar"
+cd "$TARGET_DIR/external/duckdb/third_party/antlr4"
+java -jar antlr-4.13.2-complete.jar -Dlanguage=Cpp "$TARGET_DIR/external/duckdb/src/hinting/grammar/HintBlock.g4"
+
+echo ".. Compiling DuckDB and building Python package"
+cd "$TARGET_DIR"
+uv build
+
+LATEST_WHEEL=$(ls dist/*.whl | sort -V | tail -n 1)
+cp "$LATEST_WHEEL" "$WD"
+
+if [ "$SKIP_INSTALL" = "false" ] ; then
+    echo ".. Installing quacklab package into $VENV"
+    python3 -m pip install "$LATEST_WHEEL"
 fi
 
 echo ".. Done."
-cd $WD
+cd "$WD"
