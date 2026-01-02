@@ -53,6 +53,10 @@ while [ $# -gt 0 ] ; do
     esac
 done
 
+echo ".. WARNING: This script requires duckdb to be available in your PATH."
+echo "            This is not the case for a quacklab installation."
+echo "            Please use the workload-setup.py utility for quacklab-based setups."
+
 echo ".. Working directory is $WD"
 
 if [ -f "$DB_NAME" ] && [ $FORCE_CREATION = "false" ] ; then

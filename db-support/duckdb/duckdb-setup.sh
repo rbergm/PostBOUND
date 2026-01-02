@@ -10,8 +10,8 @@ SKIP_INSTALL="false"
 
 function show_help() {
     RET=$1
-    echo "Usage: $0 <options>"
-    echo "Allowed options:"
+    echo -e "Usage: $0 <options>\n"
+    echo -e "Allowed options:"
 
     echo -e "\n--venv <venv>"
     echo -e "\tPath to the Python virtual environment to setup the build environment."
@@ -19,10 +19,10 @@ function show_help() {
     echo -e "\tIf the specified environment does not exist, it will be created."
 
     echo -e "\n--duckdb-ver"
-    echo -eecho ".. Activating virtual environment at $VENV" "\tThe DuckDB version to install. Defaults to $DUCKDB_VER."
+    echo -e "\tThe DuckDB version to install. Defaults to $DUCKDB_VER."
 
     echo -e "\n-d | --dir <directory>"
-    echo -e "\tThe directory to install the DuckDB binary distribution in."
+    echo -e "\tThe directory to pull the quacklab source code. If this directory exists, it will be re-used."
     echo -e "\tDefaults to '$TARGET_DIR'."
 
     echo -e "\n--no-update"
@@ -131,6 +131,7 @@ uv build
 
 LATEST_WHEEL=$(ls dist/*.whl | sort -V | tail -n 1)
 cp "$LATEST_WHEEL" "$WD"
+echo ".. Created wheel $LATEST_WHEEL at $WD"
 
 if [ "$SKIP_INSTALL" = "false" ] ; then
     echo ".. Installing quacklab package into $VENV"
