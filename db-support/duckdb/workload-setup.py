@@ -53,7 +53,7 @@ def fetch_archive(archive_file: Path, *, workload: SupportedDBs) -> None:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser()
+    parser = argparse.ArgumentParser(description="")
     parser.add_argument(
         "--workload",
         "-w",
@@ -75,7 +75,7 @@ def main() -> None:
         type=Path,
         required=False,
         default=None,
-        help="Directory containing raw input data.",
+        help="Directory containing raw input data. If the directory does not exist, it will be created and populated.",
     )
     parser.add_argument(
         "--force",
@@ -95,7 +95,7 @@ def main() -> None:
     cwd = Path.cwd()
     root = Path(__file__).parent.resolve()
 
-    target_db: Path = args.target or Path(args.workload)
+    target_db: Path = args.target or Path(f"{args.workload}.duckdb")
     target_db = target_db.expanduser().resolve()
     if target_db.is_file() and not args.force:
         log(".. Database exists, doing nothing")
