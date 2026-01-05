@@ -84,6 +84,13 @@ class SetOperator(enum.Enum):
     Except = "EXCEPT"
 
 
+class QuantifierOperator(enum.Enum):
+    """The supported quantifier operators."""
+
+    All = "ALL"
+    Any = "ANY"
+
+
 class SqlExpression(abc.ABC):
     """Base class for all expressions.
 
@@ -213,8 +220,8 @@ class StaticValueExpression(SqlExpression, Generic[T]):
 
     This is one of the leaf expressions that does not contain any further child expressions.
 
-    **NULL** values are represented by **None**, you can use `StaticValueExpression.null()` to create such an expression and
-    `is_null()` to check whether the value is **NULL**.
+    *NULL* values are represented by *None*, you can use `StaticValueExpression.null()` to create such an expression and
+    `is_null()` to check whether the value is *NULL*.
 
     Parameters
     ----------
@@ -230,7 +237,7 @@ class StaticValueExpression(SqlExpression, Generic[T]):
 
     @staticmethod
     def null() -> StaticValueExpression[None]:
-        """Create a static value expression that represents a **NULL** value."""
+        """Create a static value expression that represents a *NULL* value."""
         return StaticValueExpression(None)
 
     def __init__(self, value: T) -> None:
@@ -252,13 +259,7 @@ class StaticValueExpression(SqlExpression, Generic[T]):
         return self._value
 
     def is_null(self) -> bool:
-        """Checks, whether the value is **NULL**.
-
-        Returns
-        -------
-        bool
-            Whether the value is **NULL**
-        """
+        """Checks, whether the value is *NULL*."""
         return self._value is None
 
     def tables(self) -> set[TableReference]:
@@ -1468,6 +1469,77 @@ class CaseExpression(SqlExpression):
         return f"CASE {cases_str}{else_str} END"
 
 
+class QuantifierExpression(SqlExpression):
+    """An ANY/ALL expression.
+
+    For a predicate such as ``R.a > ALL (SELECT b FROM S)`` this expression is used to represent the right-hand side of the
+    predicate. It typically appears as a child expression of a `BinaryPredicate`.
+
+    Parameters
+    ----------
+    expression : SqlExpression
+        The expression being quantified. Typically this is a `SubqueryExpression`, but some database systems also allow
+        comparing against arrays or other collection types.
+    quantifier : QuantifierOperator
+        The quantifier operator (_ANY_ or _ALL_).
+    """
+
+    def __init__(
+        self, expression: SqlExpression, *, quantifier: QuantifierOperator
+    ) -> None:
+        self._expression = expression
+        self._quantifier = quantifier
+
+        hash_val = hash((self._expression, self._quantifier))
+        super().__init__(hash_val)
+
+    __slots__ = ("_expression", "_quantifier")
+    __match_args__ = ("expression", "quantifier")
+
+    @property
+    def expression(self) -> SqlExpression:
+        """Get the expression that is being compared.
+
+        Typically, this will be a `SubqueryExpression` that produces a relation with a single column. Some database systems
+        also allow comparing against arrays or other collection types.
+        """
+        return self._expression
+
+    @property
+    def quantifier(self) -> QuantifierOperator:
+        """Get the actual quantifier."""
+        return self._quantifier
+
+    def tables(self) -> set[TableReference]:
+        return self._expression.tables()
+
+    def columns(self) -> set[ColumnReference]:
+        return self._expression.columns()
+
+    def itercolumns(self) -> Iterable[ColumnReference]:
+        return self._expression.itercolumns()
+
+    def iterchildren(self) -> Iterable[SqlExpression]:
+        return [self._expression]
+
+    def accept_visitor(
+        self, visitor: SqlExpressionVisitor[VisitorResult], *args, **kwargs
+    ) -> VisitorResult:
+        return visitor.visit_quantifier_expr(self, *args, **kwargs)
+
+    __hash__ = SqlExpression.__hash__
+
+    def __eq__(self, other: object) -> bool:
+        return (
+            isinstance(other, type(self))
+            and self.expression == other.expression
+            and self.quantifier == other.quantifier
+        )
+
+    def __str__(self) -> str:
+        return f"{self.quantifier.value} {self.expression}"
+
+
 class SqlExpressionVisitor(abc.ABC, Generic[VisitorResult]):
     """Basic visitor to operator on arbitrary expression trees.
 
@@ -1525,6 +1597,12 @@ class SqlExpressionVisitor(abc.ABC, Generic[VisitorResult]):
 
     @abc.abstractmethod
     def visit_case_expr(self, expr: CaseExpression, *args, **kwargs) -> VisitorResult:
+        raise NotImplementedError
+
+    @abc.abstractmethod
+    def visit_quantifier_expr(
+        self, expr: QuantifierExpression, *args, **kwargs
+    ) -> VisitorResult:
         raise NotImplementedError
 
     @abc.abstractmethod
@@ -1589,6 +1667,11 @@ class ExpressionCollector(SqlExpressionVisitor[set[SqlExpression]]):
         return self._check_match(expression)
 
     def visit_case_expr(self, expression: CaseExpression) -> set[SqlExpression]:
+        return self._check_match(expression)
+
+    def visit_quantifier_expr(
+        self, expression: QuantifierExpression
+    ) -> set[SqlExpression]:
         return self._check_match(expression)
 
     def visit_predicate_expr(self, expression: AbstractPredicate) -> set[SqlExpression]:

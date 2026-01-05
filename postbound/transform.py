@@ -64,6 +64,7 @@ from .qal import (
     OrderBy,
     OrderByExpression,
     PredicateVisitor,
+    QuantifierExpression,
     Select,
     SelectStatement,
     SetQuery,
@@ -1423,6 +1424,8 @@ def rename_columns_in_expression(
             if expression.column in available_renamings
             else expression
         )
+    elif isinstance(expression, AbstractPredicate):
+        return rename_columns_in_predicate(expression, available_renamings)
     elif isinstance(expression, CastExpression):
         renamed_child = rename_columns_in_expression(
             expression.casted_expression, available_renamings
@@ -1492,6 +1495,11 @@ def rename_columns_in_expression(
             else None
         )
         return CaseExpression(renamed_cases, else_expr=renamed_else)
+    elif isinstance(expression, QuantifierExpression):
+        renamed_child = rename_columns_in_expression(
+            expression.expression, available_renamings
+        )
+        return QuantifierExpression(renamed_child, quantifier=expression.quantifier)
     else:
         raise ValueError("Unknown expression type: " + str(expression))
 
@@ -2062,6 +2070,13 @@ class _TableReferenceRenamer(
             expr.default_case.accept_visitor(self) if expr.default_case else None
         )
         return CaseExpression(renamed_cases, else_expr=renamed_default)
+
+    def visit_quantifier_expr(
+        self,
+        expr: QuantifierExpression,
+    ) -> QuantifierExpression:
+        renamed_child = expr.expression.accept_visitor(self)
+        return QuantifierExpression(expr.quantifier, quantifier=renamed_child)
 
     def visit_predicate_expr(self, expr: AbstractPredicate) -> AbstractPredicate:
         return expr.accept_visitor(self)

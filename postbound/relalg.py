@@ -63,6 +63,7 @@ from .qal import (
     MathExpression,
     OrderByExpression,
     PredicateVisitor,
+    QuantifierExpression,
     SelectStatement,
     SetOperator,
     SetQuery,
@@ -2921,6 +2922,9 @@ class _SubqueryDetector(
     def visit_case_expr(self, expression: CaseExpression) -> _SubquerySet:
         return self._traverse_nested_expressions(expression)
 
+    def visit_quantifier_expr(self, expr: QuantifierExpression) -> _SubquerySet:
+        return self._traverse_nested_expressions(expr)
+
     def visit_predicate_expr(self, expression: AbstractPredicate) -> _SubquerySet:
         return self._traverse_nested_expressions(expression)
 
@@ -3051,8 +3055,15 @@ class _BaseTableLookup(
         return None
 
     def visit_case_expr(self, expression: CaseExpression) -> Optional[TableReference]:
-        # base tables can only appear in predicates and we only support case expressions in SELECT statements
-        return None
+        referenced_tables = {
+            child.accept_visitor(self) for child in expression.iterchildren()
+        }
+        return self._fetch_valid_base_tables(referenced_tables, accept_empty=True)
+
+    def visit_quantifier_expr(
+        self, expr: QuantifierExpression
+    ) -> Optional[TableReference]:
+        return expr.expression.accept_visitor(self)
 
     def visit_predicate_expr(self, expression: AbstractPredicate) -> TableReference:
         return expression.accept_visitor(self)
