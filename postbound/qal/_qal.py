@@ -32,10 +32,7 @@ class MathOperator(enum.Enum):
 
 
 class LogicalOperator(enum.Enum):
-    """The supported unary and binary operators.
-
-    Notice that the predicates which make heavy use of these operators are specified in the `predicates` module.
-    """
+    """The supported unary and binary operators."""
 
     Equal = "="
     NotEqual = "<>"
@@ -53,6 +50,11 @@ class LogicalOperator(enum.Enum):
     IsNot = "IS NOT"
     Between = "BETWEEN"
 
+    # Postgres-style operators
+    Contains = "@>"
+    ContainedBy = "<@"
+    Overlaps = "&&"
+
 
 UnarySqlOperators = frozenset(
     {LogicalOperator.Exists, LogicalOperator.Is, LogicalOperator.IsNot}
@@ -61,10 +63,7 @@ UnarySqlOperators = frozenset(
 
 
 class CompoundOperator(enum.Enum):
-    """The supported compound operators.
-
-    Notice that predicates which make heavy use of these operators are specified in the `predicates` module.
-    """
+    """The supported compound operators."""
 
     And = "AND"
     Or = "OR"
@@ -311,6 +310,8 @@ class CastExpression(SqlExpression):
         Additional arguments to parameterize the type, such as in *NUMERIC(4, 2)* or *VARCHAR(255)*. For example, when casting
         to *VARCHAR(255)*, the *255* would be an additional parameter, represented as a single static value expression. When
         casting to *NUMERIC(4, 2)*, the *4* and *2* would be the additional parameters (in that order).
+    array_type : bool, optional
+        Whether the target type is an array type.
 
     Raises
     ------
@@ -324,18 +325,27 @@ class CastExpression(SqlExpression):
         target_type: str,
         *,
         type_params: Optional[Sequence[SqlExpression]] = None,
+        array_type: bool = False,
     ) -> None:
         if not expression or not target_type:
             raise ValueError("Expression and target type are required")
         self._casted_expression = expression
         self._target_type = target_type
         self._type_params = tuple(type_params) if type_params else ()
+        self._array_type = array_type
 
-        hash_val = hash((self._casted_expression, self._target_type, self._type_params))
+        hash_val = hash(
+            (
+                self._casted_expression,
+                self._target_type,
+                self._type_params,
+                self._array_type,
+            )
+        )
         super().__init__(hash_val)
 
-    __slots__ = ("_casted_expression", "_target_type", "_type_params")
-    __match_args__ = ("casted_expression", "target_type", "type_params")
+    __slots__ = ("_casted_expression", "_target_type", "_type_params", "_array_type")
+    __match_args__ = ("casted_expression", "target_type", "type_params", "array_type")
 
     @property
     def casted_expression(self) -> SqlExpression:
@@ -373,6 +383,11 @@ class CastExpression(SqlExpression):
         """
         return self._type_params
 
+    @property
+    def array_type(self) -> bool:
+        """Get whether the target type is an array type."""
+        return self._array_type
+
     def tables(self) -> set[TableReference]:
         return self._casted_expression.tables() | util.set_union(
             expr.tables() for expr in self._type_params
@@ -404,6 +419,7 @@ class CastExpression(SqlExpression):
             and self.casted_expression == other.casted_expression
             and self.target_type == other.target_type
             and self.type_params == other.type_params
+            and self.array_type == other.array_type
         )
 
     def __str__(self) -> str:
@@ -412,6 +428,10 @@ class CastExpression(SqlExpression):
             type_str = f"{self.target_type}({type_args})"
         else:
             type_str = self.target_type
+
+        if self.array_type:
+            type_str = f"{type_str}[]"
+
         casted_str = (
             str(self.casted_expression)
             if isinstance(
@@ -951,6 +971,73 @@ class FunctionExpression(SqlExpression):
         )
         filter_str = f" FILTER (WHERE {self._filter_expr})" if self._filter_expr else ""
         return f"{self._function}{parameterization}{filter_str}"
+
+
+class ArrayExpression(SqlExpression):
+    """Models an array literal expression, such as ``ARRAY[1, 2, 3]``.
+
+    Our array abstraction also permits the array to contain arbitrary expressions, as long as they are all of the same type
+    (which we assume but cannot check), e.g. ``ARRAY[41, (SELECT 42), 43]``.
+
+    Parameters
+    ----------
+    elements: Sequence[SqlExpression]
+        The elements of the array. Notice that all elements have to be valid `SqlExpression` instances, raw values are not
+        permitted.
+    """
+
+    def __init__(self, elements: Sequence[SqlExpression]) -> None:
+        raw_elements = [
+            (idx, elem)
+            for idx, elem in enumerate(elements)
+            if not isinstance(elem, SqlExpression)
+        ]
+        if raw_elements:
+            details = ", ".join(
+                f"{idx}: {type(elem)} ({elem})" for idx, elem in raw_elements
+            )
+            raise TypeError(
+                "Cannot create ArrayExpression. ",
+                f"All elements must be SqlExpression instances, but found invalid elements at positions: {details}",
+            )
+
+        self._elements = tuple(elements)
+        hash_val = hash(self._elements)
+        super().__init__(hash_val)
+
+    __slots__ = ("_elements",)
+    __match_args__ = ("elements",)
+
+    @property
+    def elements(self) -> Sequence[SqlExpression]:
+        """Get the elements of the array."""
+        return self._elements
+
+    def tables(self) -> set[TableReference]:
+        return util.set_union(elem.tables() for elem in self._elements)
+
+    def columns(self) -> set[ColumnReference]:
+        return util.set_union(elem.columns() for elem in self._elements)
+
+    def itercolumns(self) -> Iterable[ColumnReference]:
+        return util.flatten(elem.itercolumns() for elem in self._elements)
+
+    def iterchildren(self) -> Iterable[SqlExpression]:
+        return list(self._elements)
+
+    def accept_visitor(
+        self, visitor: SqlExpressionVisitor[VisitorResult], *args, **kwargs
+    ) -> VisitorResult:
+        return visitor.visit_array_expr(self, *args, **kwargs)
+
+    __hash__ = SqlExpression.__hash__
+
+    def __eq__(self, other) -> bool:
+        return isinstance(other, type(self)) and self.elements == other.elements
+
+    def __str__(self) -> str:
+        elements_str = ", ".join(str(elem) for elem in self._elements)
+        return f"ARRAY[{elements_str}]"
 
 
 class ArrayAccessExpression(FunctionExpression):
@@ -1611,6 +1698,10 @@ class SqlExpressionVisitor(abc.ABC, Generic[VisitorResult]):
     ) -> VisitorResult:
         raise NotImplementedError
 
+    @abc.abstractmethod
+    def visit_array_expr(self, expr: ArrayExpression, *args, **kwargs) -> VisitorResult:
+        raise NotImplementedError
+
     def visit_array_access_expr(
         self, expr: ArrayAccessExpression, *args, **kwargs
     ) -> VisitorResult:
@@ -1672,6 +1763,9 @@ class ExpressionCollector(SqlExpressionVisitor[set[SqlExpression]]):
     def visit_quantifier_expr(
         self, expression: QuantifierExpression
     ) -> set[SqlExpression]:
+        return self._check_match(expression)
+
+    def visit_array_expr(self, expression: ArrayExpression) -> set[SqlExpression]:
         return self._check_match(expression)
 
     def visit_predicate_expr(self, expression: AbstractPredicate) -> set[SqlExpression]:
@@ -3072,6 +3166,10 @@ class CompoundPredicate(AbstractPredicate):
             else self._children
         )
 
+    def is_negation(self) -> bool:
+        """Checks whether this is a NOT predicate."""
+        return self.operation == CompoundOperator.Not
+
     def is_compound(self) -> bool:
         return True
 
@@ -3376,7 +3474,7 @@ def _unwrap_expression(expression: SqlExpression) -> ColumnReference | object:
             return val
         case ColumnExpression(col):
             return col
-        case CastExpression(castee, _):
+        case CastExpression(castee):
             return _unwrap_expression(castee)
         case _:
             raise ValueError("Cannot unwrap expression " + str(expression))
@@ -7862,9 +7960,58 @@ def _create_ast(item: Any, *, indentation: int = 0) -> str:
     prefix = " " * indentation
     item_str = type(item).__name__
     match item:
+        # Predicates
+        case CompoundPredicate() if not item.is_negation():
+            children = [
+                _create_ast(c, indentation=indentation + 2) for c in item.children
+            ]
+            child_str = "\n".join(children)
+            item_str = f"{item_str} [{item.operation.value}]"
+            return f"{prefix}+-{item_str}\n{child_str}"
+        case CompoundPredicate() if item.is_negation():
+            child = _create_ast(item.children, indentation=indentation + 2)
+            item_str = f"{item_str} [NOT]"
+            return f"{prefix}+-{item_str}\n{child}"
+        case UnaryPredicate():
+            child = _create_ast(item.column, indentation=indentation + 2)
+            item_str = (
+                f"{item_str} [{item.operation.value}]" if item.operation else item_str
+            )
+            return f"{prefix}+-{item_str}\n{child}"
+        case BinaryPredicate():
+            lhs = _create_ast(item.first_argument, indentation=indentation + 2)
+            rhs = _create_ast(item.second_argument, indentation=indentation + 2)
+            item_str = f"{item_str} [{item.operation.value}]"
+            return f"{prefix}+-{item_str}\n{lhs}\n{rhs}"
+        case AbstractPredicate():
+            expressions = [
+                _create_ast(e, indentation=indentation + 2)
+                for e in item.iterexpressions()
+            ]
+            expression_str = "\n".join(expressions)
+            return f"{prefix}+-{item_str}\n{expression_str}"
+
+        # Expressions
         case ColumnExpression():
             return f"{prefix}+ {item_str} [{item.column}]"
+        case CastExpression():
+            child = _create_ast(item.casted_expression, indentation=indentation + 2)
+            target_type = (
+                f"{item.target_type}[]" if item.array_type else item.target_type
+            )
+            return f"{prefix}+-{item_str} [{target_type}]\n{child}"
+        case QuantifierExpression():
+            child = _create_ast(item.expression, indentation=indentation + 2)
+            return f"{prefix}+-{item_str} [{item.quantifier.value}]\n{child}"
+        case FunctionExpression():
+            arguments = [
+                _create_ast(arg, indentation=indentation + 2) for arg in item.arguments
+            ]
+            argument_str = "\n".join(arguments)
+            item_str = f"{item_str} [{item.function}]"
+            return f"{prefix}+-{item_str}\n{argument_str}"
         case SqlExpression():
+            # NB: This has to be the last expression/predicate handler since they all inherit from SqlExpression
             expressions = [
                 _create_ast(e, indentation=indentation + 2) for e in item.iterchildren()
             ]
@@ -7874,19 +8021,8 @@ def _create_ast(item: Any, *, indentation: int = 0) -> str:
                 if expressions
                 else f"{prefix}+-{item_str} [{item}]"
             )
-        case CompoundPredicate():
-            children = [
-                _create_ast(c, indentation=indentation + 2) for c in item.children
-            ]
-            child_str = "\n".join(children)
-            return f"{prefix}+-{item_str}\n{child_str}"
-        case AbstractPredicate():
-            expressions = [
-                _create_ast(e, indentation=indentation + 2)
-                for e in item.iterexpressions()
-            ]
-            expression_str = "\n".join(expressions)
-            return f"{prefix}+-{item_str}\n{expression_str}"
+
+        # Clauses
         case Where() | Having():
             predicate_str = _create_ast(item.predicate, indentation=indentation + 2)
             return f"{prefix}+-{item_str}\n{predicate_str}"
@@ -7896,6 +8032,11 @@ def _create_ast(item: Any, *, indentation: int = 0) -> str:
             left_str = _create_ast(item.left, indentation=indentation + 2)
             right_str = _create_ast(item.right, indentation=indentation + 2)
             return f"{prefix}+-{item_str}\n{left_str}\n{right_str}"
+        case SubqueryTableSource():
+            subquery_str = _create_ast(item.query, indentation=indentation + 2)
+            if item.target_name:
+                item_str = f"{item_str} [{item.target_name}]"
+            return f"{prefix}+-{item_str}\n{subquery_str}"
         case ValuesTableSource():
             return f"{prefix}+-{item_str}"
         case From():
@@ -7917,6 +8058,7 @@ def _create_ast(item: Any, *, indentation: int = 0) -> str:
             return f"{prefix}+-{item_str}"
         case WithQuery():
             child_expression = _create_ast(item.query, indentation=indentation + 2)
+            item_str = f"{item_str} [{item.target_name}]"
             return f"{prefix}+-{item_str}\n{child_expression}"
         case SetQuery():
             subqueries = [

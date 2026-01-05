@@ -43,6 +43,7 @@ from .db import DatabasePool, DatabaseSchema
 from .qal import (
     AbstractPredicate,
     ArrayAccessExpression,
+    ArrayExpression,
     BaseClause,
     BaseProjection,
     BetweenPredicate,
@@ -641,6 +642,9 @@ _PglastOperatorMap: dict[str, SqlOperator] = {
     "/": MathOperator.Divide,
     "%": MathOperator.Modulo,
     "||": MathOperator.Concatenate,
+    "@>": LogicalOperator.Contains,
+    "<@": LogicalOperator.ContainedBy,
+    "&&": LogicalOperator.Overlaps,
 }
 """Map from the internal representation of Postgres operators to our standardized QAL operators."""
 
@@ -813,37 +817,14 @@ def _pglast_parse_expression(
             "AEXPR_ILIKE",
             "AEXPR_BETWEEN",
             "AEXPR_IN",
+            "AEXPR_OP_ANY",
+            "AEXPR_OP_ALL",
         }:
             # we need to parse a predicate in disguise
             predicate = _pglast_parse_predicate(
                 pglast_data, namespace=namespace, query_txt=query_txt
             )
             return predicate
-
-        case "A_Expr" if pglast_data["A_Expr"]["kind"] in [
-            "AEXPR_OP_ALL",
-            "AEXPR_OP_ANY",
-        ]:
-            expression = pglast_data["A_Expr"]
-            operation = _pglast_parse_operator(expression["name"])
-            left = _pglast_parse_expression(
-                expression["lexpr"], namespace=namespace, query_txt=query_txt
-            )
-            right = _pglast_parse_expression(
-                expression["rexpr"], namespace=namespace, query_txt=query_txt
-            )
-
-            match expression["kind"]:
-                case "AEXPR_OP_ALL":
-                    quantifier = QuantifierOperator.All
-                case "AEXPR_OP_ANY":
-                    quantifier = QuantifierOperator.Any
-                case _:
-                    raise ParserError("Unknown quantifier operator: " + str(expression))
-
-            return BinaryPredicate(
-                operation, left, QuantifierExpression(right, quantifier=quantifier)
-            )
 
         case "NullTest":
             predicate = _pglast_parse_predicate(
@@ -950,9 +931,13 @@ def _pglast_parse_expression(
                 )
                 for param in expression["typeName"].get("typmods", [])
             ]
+            array_type = "arrayBounds" in expression["typeName"]
 
             return CastExpression(
-                casted_expression, target_type, type_params=type_params
+                casted_expression,
+                target_type,
+                type_params=type_params,
+                array_type=array_type,
             )
 
         case "CaseExpr":
@@ -1009,6 +994,14 @@ def _pglast_parse_expression(
                 )
 
             return array_expression
+
+        case "A_ArrayExpr":
+            expression: dict = pglast_data["A_ArrayExpr"]
+            elems = [
+                _pglast_parse_expression(elem, namespace=namespace, query_txt=query_txt)
+                for elem in expression.get("elements", [])
+            ]
+            return ArrayExpression(elems)
 
         case _:
             raise ParserError("Unknown expression type: " + str(pglast_data))
@@ -1573,6 +1566,31 @@ def _pglast_parse_predicate(
             else:
                 raise ParserError("Invalid IN operator: " + operator)
 
+        case "A_Expr" if pglast_data["A_Expr"]["kind"] in [
+            "AEXPR_OP_ANY",
+            "AEXPR_OP_ALL",
+        ]:
+            expression = pglast_data["A_Expr"]
+            operation = _pglast_parse_operator(expression["name"])
+            left = _pglast_parse_expression(
+                expression["lexpr"], namespace=namespace, query_txt=query_txt
+            )
+            right = _pglast_parse_expression(
+                expression["rexpr"], namespace=namespace, query_txt=query_txt
+            )
+
+            match expression["kind"]:
+                case "AEXPR_OP_ALL":
+                    quantifier = QuantifierOperator.All
+                case "AEXPR_OP_ANY":
+                    quantifier = QuantifierOperator.Any
+                case _:
+                    raise ParserError("Unknown quantifier operator: " + str(expression))
+
+            return BinaryPredicate(
+                operation, left, QuantifierExpression(right, quantifier=quantifier)
+            )
+
         case "BoolExpr":
             expression = pglast_data["BoolExpr"]
             operator = _PglastOperatorMap[expression["boolop"]]
@@ -1630,11 +1648,22 @@ def _pglast_parse_predicate(
             else:
                 raise NotImplementedError("Subquery handling is not yet implemented")
 
-        case _:
+        case "A_Const":
+            # We could encouter a plain const in the WHERE clause for cases such as SELECT * FROM t WHERE TRUE
             expression = _pglast_parse_expression(
                 pglast_data, namespace=namespace, query_txt=query_txt
             )
             return UnaryPredicate(expression)
+
+        case "ColumnRef":
+            # We could encouter a plain column reference in the WHERE clause for cases such as SELECT * FROM t WHERE col1
+            expression = _pglast_parse_expression(
+                pglast_data, namespace=namespace, query_txt=query_txt
+            )
+            return UnaryPredicate(expression)
+
+        case _:
+            raise ParserError(f"Unknown predicate type {expr_key}")
 
 
 def _pglast_parse_where(
