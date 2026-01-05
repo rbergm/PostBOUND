@@ -30,6 +30,8 @@ from . import util
 from ._core import ColumnReference, TableReference
 from .qal import (
     AbstractPredicate,
+    ArrayAccessExpression,
+    ArrayExpression,
     BaseClause,
     BaseProjection,
     BetweenPredicate,
@@ -1430,7 +1432,20 @@ def rename_columns_in_expression(
         renamed_child = rename_columns_in_expression(
             expression.casted_expression, available_renamings
         )
-        return CastExpression(renamed_child, expression.target_type)
+        renamed_params = (
+            [
+                rename_columns_in_expression(param, available_renamings)
+                for param in expression.type_params
+            ]
+            if expression.type_params
+            else None
+        )
+        return CastExpression(
+            renamed_child,
+            expression.target_type,
+            type_params=renamed_params,
+            array_type=expression.array_type,
+        )
     elif isinstance(expression, MathExpression):
         renamed_first_arg = rename_columns_in_expression(
             expression.first_arg, available_renamings
@@ -1440,6 +1455,33 @@ def rename_columns_in_expression(
         )
         return MathExpression(
             expression.operator, renamed_first_arg, renamed_second_arg
+        )
+    elif isinstance(expression, ArrayAccessExpression):
+        # NB: ArrayAccessExpression needs to be checked before FunctionExpression, since it is a subclass of it
+
+        renamed_array = rename_columns_in_expression(
+            expression.array, available_renamings
+        )
+        renamed_idx = (
+            rename_columns_in_expression(expression.index, available_renamings)
+            if expression.index
+            else None
+        )
+        renamed_lower = (
+            rename_columns_in_expression(expression.lower_index, available_renamings)
+            if expression.lower_index
+            else None
+        )
+        renamed_upper = (
+            rename_columns_in_expression(expression.upper_index, available_renamings)
+            if expression.upper_index
+            else None
+        )
+        return ArrayAccessExpression(
+            renamed_array,
+            index=renamed_idx,
+            lower_index=renamed_lower,
+            upper_index=renamed_upper,
         )
     elif isinstance(expression, FunctionExpression):
         renamed_arguments = [
@@ -1500,6 +1542,12 @@ def rename_columns_in_expression(
             expression.expression, available_renamings
         )
         return QuantifierExpression(renamed_child, quantifier=expression.quantifier)
+    elif isinstance(expression, ArrayExpression):
+        renamed_elements = [
+            rename_columns_in_expression(elem, available_renamings)
+            for elem in expression.elements
+        ]
+        return ArrayExpression(renamed_elements)
     else:
         raise ValueError("Unknown expression type: " + str(expression))
 
@@ -2003,7 +2051,17 @@ class _TableReferenceRenamer(
 
     def visit_cast_expr(self, expr: CastExpression) -> CastExpression:
         renamed_child = expr.casted_expression.accept_visitor(self)
-        return CastExpression(renamed_child, expr.target_type)
+        renamed_params = (
+            [param.accept_visitor(self) for param in expr.type_params]
+            if expr.type_params
+            else None
+        )
+        return CastExpression(
+            renamed_child,
+            expr.target_type,
+            type_params=renamed_params,
+            array_type=expr.array_type,
+        )
 
     def visit_math_expr(self, expr: MathExpression) -> MathExpression:
         renamed_lhs = expr.first_arg.accept_visitor(self)
@@ -2067,7 +2125,7 @@ class _TableReferenceRenamer(
             renamed_cases.append((renamed_condition, renamed_value))
 
         renamed_default = (
-            expr.default_case.accept_visitor(self) if expr.default_case else None
+            expr.else_expression.accept_visitor(self) if expr.else_expression else None
         )
         return CaseExpression(renamed_cases, else_expr=renamed_default)
 
@@ -2077,6 +2135,28 @@ class _TableReferenceRenamer(
     ) -> QuantifierExpression:
         renamed_child = expr.expression.accept_visitor(self)
         return QuantifierExpression(expr.quantifier, quantifier=renamed_child)
+
+    def visit_array_expr(self, expr: ArrayExpression) -> ArrayExpression:
+        renamed_elems = [elem.accept_visitor(self) for elem in expr.elements]
+        return ArrayExpression(renamed_elems)
+
+    def visit_array_access_expr(
+        self, expr: ArrayAccessExpression
+    ) -> ArrayAccessExpression:
+        renamed_array = expr.array.accept_visitor(self)
+        renamed_idx = expr.lower_index.accept_visitor(self) if expr.index else None
+        renamed_lower = (
+            expr.lower_index.accept_visitor(self) if expr.lower_index else None
+        )
+        renamed_upper = (
+            expr.upper_index.accept_visitor(self) if expr.upper_index else None
+        )
+        return ArrayAccessExpression(
+            renamed_array,
+            idx=renamed_idx,
+            lower_index=renamed_lower,
+            upper_index=renamed_upper,
+        )
 
     def visit_predicate_expr(self, expr: AbstractPredicate) -> AbstractPredicate:
         return expr.accept_visitor(self)

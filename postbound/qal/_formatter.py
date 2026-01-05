@@ -12,6 +12,7 @@ from .._core import quote
 from ._qal import (
     AbstractPredicate,
     ArrayAccessExpression,
+    ArrayExpression,
     BetweenPredicate,
     BinaryPredicate,
     CaseExpression,
@@ -36,6 +37,7 @@ from ._qal import (
     MathExpression,
     OrderBy,
     OrderByExpression,
+    QuantifierExpression,
     Select,
     SelectStatement,
     SetQuery,
@@ -683,7 +685,7 @@ def _expression_prettifier(
             return FormattingCaseExpression(
                 replaced_cases, else_expr=replaced_else, indentation=indentation
             )
-        case CastExpression(casted_expression, typ, params):
+        case CastExpression(casted_expression, typ, params, array):
             replaced_cast = _expression_prettifier(
                 casted_expression,
                 flavor=flavor,
@@ -693,7 +695,9 @@ def _expression_prettifier(
             return (
                 target(replaced_cast, typ, type_params=params)
                 if flavor == "vanilla"
-                else _PostgresCastExpression(replaced_cast, typ, type_params=params)
+                else _PostgresCastExpression(
+                    replaced_cast, typ, type_params=params, array_type=array
+                )
             )
         case MathExpression(op, lhs, rhs):
             replaced_lhs = _expression_prettifier(
@@ -750,6 +754,12 @@ def _expression_prettifier(
                 lower_idx=replaced_lo,
                 upper_idx=replaced_hi,
             )
+        case ArrayAccessExpression(arr, idx, lo, hi):
+            # This has to be implemented before the FunctionExpression since that is a supertype of this
+            pretty_array = _expression_prettifier(
+                arr, flavor=flavor, inline_hints=inline_hints, indentation=indentation
+            )
+            return target(pretty_array, idx=idx, lower_idx=lo, upper_idx=hi)
         case FunctionExpression(fn, args, distinct, cond):
             replaced_args = [
                 _expression_prettifier(
@@ -818,6 +828,22 @@ def _expression_prettifier(
                 ordering=replaced_ordering,
                 filter_condition=replaced_cond,
             )
+        case ArrayExpression(elems):
+            pretty_elems = [
+                _expression_prettifier(
+                    elem,
+                    flavor=flavor,
+                    inline_hints=inline_hints,
+                    indentation=indentation,
+                )
+                for elem in elems
+            ]
+            return target(pretty_elems)
+        case QuantifierExpression(child, quantifier):
+            replaced_child = _expression_prettifier(
+                child, flavor=flavor, inline_hints=inline_hints, indentation=indentation
+            )
+            return target(replaced_child, quantifier=quantifier)
         case BinaryPredicate(op, lhs, rhs):
             replaced_lhs = _expression_prettifier(
                 lhs, flavor=flavor, inline_hints=inline_hints, indentation=indentation
@@ -963,8 +989,11 @@ class _PostgresCastExpression(CastExpression):
         target_type: str,
         *,
         type_params: Optional[Sequence[SqlExpression]] = None,
+        array_type: bool = False,
     ) -> None:
-        super().__init__(expression, target_type, type_params=type_params)
+        super().__init__(
+            expression, target_type, type_params=type_params, array_type=array_type
+        )
 
     def __str__(self) -> str:
         if self.type_params:
@@ -972,6 +1001,8 @@ class _PostgresCastExpression(CastExpression):
             type_str = f"{self.target_type}({type_args})"
         else:
             type_str = self.target_type
+        if self.array_type:
+            type_str = f"{type_str}[]"
         casted_str = (
             str(self.casted_expression)
             if isinstance(

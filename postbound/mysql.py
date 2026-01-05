@@ -475,6 +475,10 @@ class _MysqlStaticValueExpression(StaticValueExpression):
 
 class _MysqlCastExpression(CastExpression):
     def __init__(self, original_expression: CastExpression) -> None:
+        if original_expression.array_type:
+            warnings.warn(
+                "MySQL does not support array types in CAST expressions. Ignoring array type."
+            )
         super().__init__(
             original_expression.casted_expression, original_expression.target_type
         )

@@ -69,30 +69,10 @@ from .db import (
     simplify_result_set,
 )
 from .qal import (
-    AbstractPredicate,
-    ArrayAccessExpression,
-    BetweenPredicate,
-    BinaryPredicate,
-    CaseExpression,
-    CastExpression,
-    ColumnExpression,
-    CompoundOperator,
-    CompoundPredicate,
     Explain,
-    FunctionExpression,
     Hint,
-    InPredicate,
     Limit,
-    MathExpression,
-    OrderBy,
-    OrderByExpression,
-    SqlExpression,
     SqlQuery,
-    StarExpression,
-    StaticValueExpression,
-    SubqueryExpression,
-    UnaryPredicate,
-    WindowExpression,
 )
 from .util import StateError, Version, jsondict
 
@@ -1768,133 +1748,6 @@ class PostgresLimitClause(Limit):
             return f"OFFSET {self.offset}"
         else:
             return ""
-
-
-def _replace_postgres_cast_expressions(expression: SqlExpression) -> SqlExpression:
-    """Wraps a given expression by a `_PostgresCastExpression` if necessary.
-
-    This is the replacment method required by the `replace_expressions` transformation. It wraps all `CastExpression`
-    instances by a `_PostgresCastExpression` and leaves all other expressions intact.
-
-    Parameters
-    ----------
-    expression : SqlExpression
-        The expression to check
-
-    Returns
-    -------
-    SqlExpression
-        A potentially wrapped version of the original expression
-
-    See Also
-    --------
-    transform.replace_expressions
-    """
-    target = type(expression)
-    match expression:
-        case StaticValueExpression() | ColumnExpression() | StarExpression():
-            return expression
-        case SubqueryExpression(query):
-            replaced_subquery = transform.replace_expressions(
-                query, _replace_postgres_cast_expressions
-            )
-            return target(replaced_subquery)
-        case CaseExpression(cases, else_expr):
-            replaced_cases: list[tuple[AbstractPredicate, SqlExpression]] = []
-            for condition, result in cases:
-                replaced_condition = _replace_postgres_cast_expressions(condition)
-                replaced_result = _replace_postgres_cast_expressions(result)
-                replaced_cases.append((replaced_condition, replaced_result))
-            replaced_else = (
-                _replace_postgres_cast_expressions(else_expr) if else_expr else None
-            )
-            return target(replaced_cases, else_expr=replaced_else)
-        case CastExpression(cast, typ, params):
-            replaced_cast = _replace_postgres_cast_expressions(cast)
-            #  return _PostgresCastExpression(replaced_cast, typ, type_params=params)
-            return CastExpression(replaced_cast, typ, params)
-        case MathExpression(op, lhs, rhs):
-            replaced_lhs = _replace_postgres_cast_expressions(lhs)
-            rhs = util.enlist(rhs) if rhs else []
-            replaced_rhs = [_replace_postgres_cast_expressions(expr) for expr in rhs]
-            return target(op, replaced_lhs, replaced_rhs)
-        case ArrayAccessExpression(array, ind, lo, hi):
-            replaced_arr = _replace_postgres_cast_expressions(array)
-            replaced_ind = (
-                _replace_postgres_cast_expressions(ind) if ind is not None else None
-            )
-            replaced_lo = (
-                _replace_postgres_cast_expressions(lo) if lo is not None else None
-            )
-            replaced_hi = (
-                _replace_postgres_cast_expressions(hi) if hi is not None else None
-            )
-            return target(
-                replaced_arr,
-                idx=replaced_ind,
-                lower_idx=replaced_lo,
-                upper_idx=replaced_hi,
-            )
-        case FunctionExpression(fn, args, distinct, cond):
-            replaced_args = [_replace_postgres_cast_expressions(arg) for arg in args]
-            replaced_cond = _replace_postgres_cast_expressions(cond) if cond else None
-            return FunctionExpression(
-                fn, replaced_args, distinct=distinct, filter_where=replaced_cond
-            )
-        case WindowExpression(fn, parts, ordering, cond):
-            replaced_fn = _replace_postgres_cast_expressions(fn)
-            replaced_parts = [
-                _replace_postgres_cast_expressions(part) for part in parts
-            ]
-            replaced_cond = _replace_postgres_cast_expressions(cond) if cond else None
-
-            replaced_order_exprs: list[OrderByExpression] = []
-            for order in ordering or []:
-                replaced_expr = _replace_postgres_cast_expressions(order.column)
-                replaced_order_exprs.append(
-                    OrderByExpression(replaced_expr, order.ascending, order.nulls_first)
-                )
-            replaced_ordering = (
-                OrderBy(replaced_order_exprs) if replaced_order_exprs else None
-            )
-
-            return target(
-                replaced_fn,
-                partitioning=replaced_parts,
-                ordering=replaced_ordering,
-                filter_condition=replaced_cond,
-            )
-        case BinaryPredicate(op, lhs, rhs):
-            replaced_lhs = _replace_postgres_cast_expressions(lhs)
-            replaced_rhs = _replace_postgres_cast_expressions(rhs)
-            return target(op, replaced_lhs, replaced_rhs)
-        case BetweenPredicate(col, lo, hi):
-            replaced_col = _replace_postgres_cast_expressions(col)
-            replaced_lo = _replace_postgres_cast_expressions(lo)
-            replaced_hi = _replace_postgres_cast_expressions(hi)
-            return BetweenPredicate(replaced_col, (replaced_lo, replaced_hi))
-        case InPredicate(col, vals):
-            replaced_col = _replace_postgres_cast_expressions(col)
-            replaced_vals = [_replace_postgres_cast_expressions(val) for val in vals]
-            return target(replaced_col, replaced_vals)
-        case UnaryPredicate(col, op):
-            replaced_col = _replace_postgres_cast_expressions(col)
-            return target(replaced_col, op)
-        case CompoundPredicate(op, children) if op in {
-            CompoundOperator.And,
-            CompoundOperator.Or,
-        }:
-            replaced_children = [
-                _replace_postgres_cast_expressions(child) for child in children
-            ]
-            return target(op, replaced_children)
-        case CompoundPredicate(op, child) if op == CompoundOperator.Not:
-            replaced_child = _replace_postgres_cast_expressions(child)
-            return target(op, replaced_child)
-        case _:
-            raise ValueError(
-                f"Unsupported expression type {type(expression)}: {expression}"
-            )
 
 
 PostgresHintingBackend = Literal["pg_hint_plan", "pg_lab", "none"]
