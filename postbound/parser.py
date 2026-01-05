@@ -72,6 +72,8 @@ from .qal import (
     MathOperator,
     OrderBy,
     OrderByExpression,
+    QuantifierExpression,
+    QuantifierOperator,
     Select,
     SelectStatement,
     SetOperator,
@@ -817,6 +819,31 @@ def _pglast_parse_expression(
                 pglast_data, namespace=namespace, query_txt=query_txt
             )
             return predicate
+
+        case "A_Expr" if pglast_data["A_Expr"]["kind"] in [
+            "AEXPR_OP_ALL",
+            "AEXPR_OP_ANY",
+        ]:
+            expression = pglast_data["A_Expr"]
+            operation = _pglast_parse_operator(expression["name"])
+            left = _pglast_parse_expression(
+                expression["lexpr"], namespace=namespace, query_txt=query_txt
+            )
+            right = _pglast_parse_expression(
+                expression["rexpr"], namespace=namespace, query_txt=query_txt
+            )
+
+            match expression["kind"]:
+                case "AEXPR_OP_ALL":
+                    quantifier = QuantifierOperator.All
+                case "AEXPR_OP_ANY":
+                    quantifier = QuantifierOperator.Any
+                case _:
+                    raise ParserError("Unknown quantifier operator: " + str(expression))
+
+            return BinaryPredicate(
+                operation, left, QuantifierExpression(right, quantifier=quantifier)
+            )
 
         case "NullTest":
             predicate = _pglast_parse_predicate(
