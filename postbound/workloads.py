@@ -21,12 +21,14 @@ References
 """
 
 from __future__ import annotations
+from pygments.lexer import include
 
 import collections
 import pathlib
 import random
 import typing
 import urllib.request
+import warnings
 import zipfile
 from collections.abc import Callable, Hashable, Iterable, Sequence
 from typing import Literal, Optional
@@ -122,6 +124,8 @@ class Workload(collections.UserDict[LabelType, SqlQuery]):
         label_prefix: str = "",
         file_encoding: str = "utf-8",
         bind_columns: bool = True,
+        include_hints: bool = True,
+        on_error: Literal["raise", "warn", "ignore"] = "raise",
     ) -> Workload[str]:
         """Reads all SQL queries from a specific directory into a workload object.
 
@@ -144,6 +148,13 @@ class Workload(collections.UserDict[LabelType, SqlQuery]):
             separator character is inserted. If a separator is desired, it has to be part of the prefix.
         file_encoding : str, optional
             The encoding of the query files. All files must share the same encoding. Defaults to UTF-8 encoding.
+        bind_columns : bool, optional
+            Whether the parser should try to infer tables for all column references which do not use the explicit *alias.column*
+            syntax. This requires an active database connection. If no such connection exists, this setting is ignored.
+        include_hints : bool, optional
+            Whether the parser should try to infer and extract hint blocks from the queries
+        on_error : Literal["raise", "warn", "ignore"], optional
+            How to react to parser errors. By default, the exception is propagated to the parent process.
 
         Returns
         -------
@@ -153,6 +164,7 @@ class Workload(collections.UserDict[LabelType, SqlQuery]):
         See Also
         --------
         pathlib.Path.glob
+        parser.parse_query
         """
         queries: dict[str, SqlQuery] = {}
         root = pathlib.Path(root_dir)
@@ -161,12 +173,20 @@ class Workload(collections.UserDict[LabelType, SqlQuery]):
             with open(query_file_path, "r", encoding=file_encoding) as query_file:
                 raw_contents = query_file.readlines()
             query_contents = "\n".join([line for line in raw_contents])
+
             try:
                 parsed_query = parser.parse_query(
-                    query_contents, bind_columns=bind_columns
+                    query_contents, include_hints=include_hints, bind_columns=bind_columns
                 )
             except Exception as e:
-                raise ValueError(f"Could not parse query from {query_file_path}", e)
+                match on_error:
+                    case "raise":
+                        raise ValueError(f"Could not parse query from {query_file_path}", e)
+                    case "warn":
+                        warnings.warn(f"Could not parse query {query_file_path}: {e} ({type(e)})")
+                    case "ignore":
+                        pass
+
             query_label = query_file_path.stem
             queries[label_prefix + query_label] = parsed_query
 
