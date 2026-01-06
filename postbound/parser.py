@@ -645,6 +645,8 @@ _PglastOperatorMap: dict[str, SqlOperator] = {
     "@>": LogicalOperator.Contains,
     "<@": LogicalOperator.ContainedBy,
     "&&": LogicalOperator.Overlaps,
+    "AEXPR_DISTINCT": LogicalOperator.DistinctFrom,
+    "AEXPR_NOT_DISTINCT": LogicalOperator.NotDistinctFrom,
 }
 """Map from the internal representation of Postgres operators to our standardized QAL operators."""
 
@@ -878,6 +880,13 @@ def _pglast_parse_expression(
                 return CompoundPredicate.create_not(predicate)
             else:
                 raise ParserError("Invalid IN operator: " + operator)
+
+        case "A_Expr" if pglast_data["A_Expr"]["kind"] in ["AEXPR_DISTINCT", "AEXPR_NOT_DISTINCT"]:
+            expression = pglast_data["A_Expr"]
+            operator = _PglastOperatorMap[expression["kind"]]
+            left = _pglast_parse_expression(expression["lexpr"], namespace=namespace, query_txt=query_txt)
+            right = _pglast_parse_expression(expression["rexpr"], namespace=namespace, query_txt=query_txt)
+            return BinaryPredicate(operator, left, right)
 
         case "A_Expr" if pglast_data["A_Expr"]["kind"] in [
             "AEXPR_OP_ANY",
