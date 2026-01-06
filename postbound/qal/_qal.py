@@ -1624,7 +1624,7 @@ class QuantifierExpression(SqlExpression):
         )
 
     def __str__(self) -> str:
-        return f"{self.quantifier.value} {self.expression}"
+        return f"{self.quantifier.value} ({self.expression})"
 
 
 class SqlExpressionVisitor(abc.ABC, Generic[VisitorResult]):
