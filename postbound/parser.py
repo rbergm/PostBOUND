@@ -228,7 +228,7 @@ class QueryNamespace:
         self._subquery_children: dict[str, QueryNamespace] = {}
         """Nested namespaces that are provided as part of subqueries. Entries map alias -> query."""
 
-        self._setop_children: list[QueryNamespace, QueryNamespace] = []
+        self._setop_children: list[QueryNamespace] = []
         """Namespace of the queries that form a set operation in the current namespace."""
 
         self._current_ctx: list[TableReference] = []
@@ -812,31 +812,118 @@ def _pglast_parse_expression(
 
             return MathExpression(operation, left, right)
 
-        case "A_Expr" if pglast_data["A_Expr"]["kind"] in {
-            "AEXPR_LIKE",
-            "AEXPR_ILIKE",
-            "AEXPR_BETWEEN",
-            "AEXPR_IN",
+        case "A_Expr" if pglast_data["A_Expr"]["kind"] == "AEXPR_LIKE":
+            expression = pglast_data["A_Expr"]
+            operator = (
+                LogicalOperator.Like
+                if expression["name"][0]["String"]["sval"] == "~~"
+                else LogicalOperator.NotLike
+            )
+            left = _pglast_parse_expression(
+                expression["lexpr"], namespace=namespace, query_txt=query_txt
+            )
+            right = _pglast_parse_expression(
+                expression["rexpr"], namespace=namespace, query_txt=query_txt
+            )
+            return BinaryPredicate(operator, left, right)
+
+        case "A_Expr" if pglast_data["A_Expr"]["kind"] == "AEXPR_ILIKE":
+            expression = pglast_data["A_Expr"]
+            operator = (
+                LogicalOperator.ILike
+                if expression["name"][0]["String"]["sval"] == "~~*"
+                else LogicalOperator.NotILike
+            )
+            left = _pglast_parse_expression(
+                expression["lexpr"], namespace=namespace, query_txt=query_txt
+            )
+            right = _pglast_parse_expression(
+                expression["rexpr"], namespace=namespace, query_txt=query_txt
+            )
+            return BinaryPredicate(operator, left, right)
+
+        case "A_Expr" if pglast_data["A_Expr"]["kind"] == "AEXPR_BETWEEN":
+            expression = pglast_data["A_Expr"]
+            left = _pglast_parse_expression(
+                expression["lexpr"], namespace=namespace, query_txt=query_txt
+            )
+            raw_interval = expression["rexpr"]["List"]["items"]
+            if len(raw_interval) != 2:
+                raise ParserError("Invalid BETWEEN interval: " + str(raw_interval))
+            lower = _pglast_parse_expression(
+                raw_interval[0], namespace=namespace, query_txt=query_txt
+            )
+            upper = _pglast_parse_expression(
+                raw_interval[1], namespace=namespace, query_txt=query_txt
+            )
+            return BetweenPredicate(left, (lower, upper))
+
+        case "A_Expr" if pglast_data["A_Expr"]["kind"] == "AEXPR_IN":
+            expression = pglast_data["A_Expr"]
+            left = _pglast_parse_expression(
+                expression["lexpr"], namespace=namespace, query_txt=query_txt
+            )
+            raw_values = expression["rexpr"]["List"]["items"]
+            values = [
+                _pglast_parse_expression(
+                    value, namespace=namespace, query_txt=query_txt
+                )
+                for value in raw_values
+            ]
+            predicate = InPredicate(left, values)
+            operator = expression["name"][0]["String"]["sval"]
+            if operator == "=":
+                return predicate
+            elif operator == "<>":
+                return CompoundPredicate.create_not(predicate)
+            else:
+                raise ParserError("Invalid IN operator: " + operator)
+
+        case "A_Expr" if pglast_data["A_Expr"]["kind"] in [
             "AEXPR_OP_ANY",
             "AEXPR_OP_ALL",
-        }:
-            # we need to parse a predicate in disguise
-            predicate = _pglast_parse_predicate(
-                pglast_data, namespace=namespace, query_txt=query_txt
+        ]:
+            expression = pglast_data["A_Expr"]
+            operation = _pglast_parse_operator(expression["name"])
+            left = _pglast_parse_expression(
+                expression["lexpr"], namespace=namespace, query_txt=query_txt
             )
-            return predicate
+            right = _pglast_parse_expression(
+                expression["rexpr"], namespace=namespace, query_txt=query_txt
+            )
 
-        case "NullTest":
-            predicate = _pglast_parse_predicate(
-                pglast_data, namespace=namespace, query_txt=query_txt
+            match expression["kind"]:
+                case "AEXPR_OP_ALL":
+                    quantifier = QuantifierOperator.All
+                case "AEXPR_OP_ANY":
+                    quantifier = QuantifierOperator.Any
+                case _:
+                    raise ParserError("Unknown quantifier operator: " + str(expression))
+
+            return BinaryPredicate(
+                operation, left, QuantifierExpression(right, quantifier=quantifier)
             )
-            return predicate
 
         case "BoolExpr":
-            predicate = _pglast_parse_predicate(
-                pglast_data, namespace=namespace, query_txt=query_txt
+            expression = pglast_data["BoolExpr"]
+            operator = _PglastOperatorMap[expression["boolop"]]
+            children = [
+                _pglast_parse_predicate(child, namespace=namespace, query_txt=query_txt)
+                for child in expression["args"]
+            ]
+            return CompoundPredicate(operator, children)
+
+        case "NullTest":
+            expression = pglast_data["NullTest"]
+            testexpr = _pglast_parse_expression(
+                expression["arg"], namespace=namespace, query_txt=query_txt
             )
-            return predicate
+            operation = (
+                LogicalOperator.Is
+                if expression["nulltesttype"] == "IS_NULL"
+                else LogicalOperator.IsNot
+            )
+            return BinaryPredicate(operation, testexpr, StaticValueExpression.null())
 
         case "FuncCall" if (
             "over" not in pglast_data["FuncCall"]
@@ -945,13 +1032,37 @@ def _pglast_parse_expression(
                 pglast_data["CaseExpr"], namespace=namespace, query_txt=query_txt
             )
 
-        case "SubLink" if pglast_data["SubLink"]["subLinkType"] == "EXPR_SUBLINK":
+        case "SubLink":
+            expression = pglast_data["SubLink"]
+            sublink_type = expression["subLinkType"]
+
             subquery = _pglast_parse_query(
-                pglast_data["SubLink"]["subselect"]["SelectStmt"],
-                query_txt=query_txt,
+                expression["subselect"]["SelectStmt"],
                 namespace=namespace.open_nested(source="temporary"),
+                query_txt=query_txt,
             )
-            return SubqueryExpression(subquery)
+            if sublink_type == "EXISTS_SUBLINK":
+                return UnaryPredicate.exists(subquery)
+            elif sublink_type == "EXPR_SUBLINK":
+                return SubqueryExpression(subquery)
+
+            testexpr = _pglast_parse_expression(
+                expression["testexpr"], namespace=namespace, query_txt=query_txt
+            )
+
+            if sublink_type == "ANY_SUBLINK" and "operName" not in expression:
+                return InPredicate.subquery(testexpr, subquery)
+
+            if sublink_type == "ANY_SUBLINK":
+                operator = _PglastOperatorMap[expression["operName"]]
+                subquery_expression = FunctionExpression.any_func(subquery)
+                return BinaryPredicate(operator, testexpr, subquery_expression)
+            elif sublink_type == "ALL_SUBLINK":
+                operator = _PglastOperatorMap[expression["operName"]]
+                subquery_expression = FunctionExpression.all_func(subquery)
+                return BinaryPredicate(operator, testexpr, subquery_expression)
+            else:
+                raise NotImplementedError("Subquery handling is not yet implemented")
 
         case "A_Indirection":
             expression: dict = pglast_data["A_Indirection"]
@@ -1485,185 +1596,9 @@ def _pglast_parse_predicate(
     AbstractPredicate
         The parsed predicate.
     """
-    pglast_data.pop("location", None)
-    expr_key = util.dicts.key(pglast_data)
-    match expr_key:
-        case "A_Expr" if pglast_data["A_Expr"]["kind"] == "AEXPR_OP":
-            expression = pglast_data["A_Expr"]
-            operator = _pglast_parse_operator(expression["name"])
-            left = _pglast_parse_expression(
-                expression["lexpr"], namespace=namespace, query_txt=query_txt
-            )
-            right = _pglast_parse_expression(
-                expression["rexpr"], namespace=namespace, query_txt=query_txt
-            )
-            return BinaryPredicate(operator, left, right)
+    predicate = _pglast_parse_expression(pglast_data, namespace=namespace, query_txt=query_txt)
+    return predicate if isinstance(predicate, AbstractPredicate) else UnaryPredicate(predicate)
 
-        case "A_Expr" if pglast_data["A_Expr"]["kind"] == "AEXPR_LIKE":
-            expression = pglast_data["A_Expr"]
-            operator = (
-                LogicalOperator.Like
-                if expression["name"][0]["String"]["sval"] == "~~"
-                else LogicalOperator.NotLike
-            )
-            left = _pglast_parse_expression(
-                expression["lexpr"], namespace=namespace, query_txt=query_txt
-            )
-            right = _pglast_parse_expression(
-                expression["rexpr"], namespace=namespace, query_txt=query_txt
-            )
-            return BinaryPredicate(operator, left, right)
-
-        case "A_Expr" if pglast_data["A_Expr"]["kind"] == "AEXPR_ILIKE":
-            expression = pglast_data["A_Expr"]
-            operator = (
-                LogicalOperator.ILike
-                if expression["name"][0]["String"]["sval"] == "~~*"
-                else LogicalOperator.NotILike
-            )
-            left = _pglast_parse_expression(
-                expression["lexpr"], namespace=namespace, query_txt=query_txt
-            )
-            right = _pglast_parse_expression(
-                expression["rexpr"], namespace=namespace, query_txt=query_txt
-            )
-            return BinaryPredicate(operator, left, right)
-
-        case "A_Expr" if pglast_data["A_Expr"]["kind"] == "AEXPR_BETWEEN":
-            expression = pglast_data["A_Expr"]
-            left = _pglast_parse_expression(
-                expression["lexpr"], namespace=namespace, query_txt=query_txt
-            )
-            raw_interval = expression["rexpr"]["List"]["items"]
-            if len(raw_interval) != 2:
-                raise ParserError("Invalid BETWEEN interval: " + str(raw_interval))
-            lower = _pglast_parse_expression(
-                raw_interval[0], namespace=namespace, query_txt=query_txt
-            )
-            upper = _pglast_parse_expression(
-                raw_interval[1], namespace=namespace, query_txt=query_txt
-            )
-            return BetweenPredicate(left, (lower, upper))
-
-        case "A_Expr" if pglast_data["A_Expr"]["kind"] == "AEXPR_IN":
-            expression = pglast_data["A_Expr"]
-            left = _pglast_parse_expression(
-                expression["lexpr"], namespace=namespace, query_txt=query_txt
-            )
-            raw_values = expression["rexpr"]["List"]["items"]
-            values = [
-                _pglast_parse_expression(
-                    value, namespace=namespace, query_txt=query_txt
-                )
-                for value in raw_values
-            ]
-            predicate = InPredicate(left, values)
-            operator = expression["name"][0]["String"]["sval"]
-            if operator == "=":
-                return predicate
-            elif operator == "<>":
-                return CompoundPredicate.create_not(predicate)
-            else:
-                raise ParserError("Invalid IN operator: " + operator)
-
-        case "A_Expr" if pglast_data["A_Expr"]["kind"] in [
-            "AEXPR_OP_ANY",
-            "AEXPR_OP_ALL",
-        ]:
-            expression = pglast_data["A_Expr"]
-            operation = _pglast_parse_operator(expression["name"])
-            left = _pglast_parse_expression(
-                expression["lexpr"], namespace=namespace, query_txt=query_txt
-            )
-            right = _pglast_parse_expression(
-                expression["rexpr"], namespace=namespace, query_txt=query_txt
-            )
-
-            match expression["kind"]:
-                case "AEXPR_OP_ALL":
-                    quantifier = QuantifierOperator.All
-                case "AEXPR_OP_ANY":
-                    quantifier = QuantifierOperator.Any
-                case _:
-                    raise ParserError("Unknown quantifier operator: " + str(expression))
-
-            return BinaryPredicate(
-                operation, left, QuantifierExpression(right, quantifier=quantifier)
-            )
-
-        case "BoolExpr":
-            expression = pglast_data["BoolExpr"]
-            operator = _PglastOperatorMap[expression["boolop"]]
-            children = [
-                _pglast_parse_predicate(child, namespace=namespace, query_txt=query_txt)
-                for child in expression["args"]
-            ]
-            return CompoundPredicate(operator, children)
-
-        case "NullTest":
-            expression = pglast_data["NullTest"]
-            testexpr = _pglast_parse_expression(
-                expression["arg"], namespace=namespace, query_txt=query_txt
-            )
-            operation = (
-                LogicalOperator.Is
-                if expression["nulltesttype"] == "IS_NULL"
-                else LogicalOperator.IsNot
-            )
-            return BinaryPredicate(operation, testexpr, StaticValueExpression.null())
-
-        case "FuncCall":
-            expression = _pglast_parse_expression(
-                pglast_data, namespace=namespace, query_txt=query_txt
-            )
-            return UnaryPredicate(expression)
-
-        case "SubLink":
-            expression = pglast_data["SubLink"]
-            sublink_type = expression["subLinkType"]
-
-            subquery = _pglast_parse_query(
-                expression["subselect"]["SelectStmt"],
-                namespace=namespace.open_nested(source="temporary"),
-                query_txt=query_txt,
-            )
-            if sublink_type == "EXISTS_SUBLINK":
-                return UnaryPredicate.exists(subquery)
-
-            testexpr = _pglast_parse_expression(
-                expression["testexpr"], namespace=namespace, query_txt=query_txt
-            )
-
-            if sublink_type == "ANY_SUBLINK" and "operName" not in expression:
-                return InPredicate.subquery(testexpr, subquery)
-
-            if sublink_type == "ANY_SUBLINK":
-                operator = _PglastOperatorMap[expression["operName"]]
-                subquery_expression = FunctionExpression.any_func(subquery)
-                return BinaryPredicate(operator, testexpr, subquery_expression)
-            elif sublink_type == "ALL_SUBLINK":
-                operator = _PglastOperatorMap[expression["operName"]]
-                subquery_expression = FunctionExpression.all_func(subquery)
-                return BinaryPredicate(operator, testexpr, subquery_expression)
-            else:
-                raise NotImplementedError("Subquery handling is not yet implemented")
-
-        case "A_Const":
-            # We could encouter a plain const in the WHERE clause for cases such as SELECT * FROM t WHERE TRUE
-            expression = _pglast_parse_expression(
-                pglast_data, namespace=namespace, query_txt=query_txt
-            )
-            return UnaryPredicate(expression)
-
-        case "ColumnRef":
-            # We could encouter a plain column reference in the WHERE clause for cases such as SELECT * FROM t WHERE col1
-            expression = _pglast_parse_expression(
-                pglast_data, namespace=namespace, query_txt=query_txt
-            )
-            return UnaryPredicate(expression)
-
-        case _:
-            raise ParserError(f"Unknown predicate type {expr_key}")
 
 
 def _pglast_parse_where(
