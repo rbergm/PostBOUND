@@ -63,7 +63,7 @@ while [ $# -gt 0 ] ; do
                     ;;
                 12.4)
                     PG_VER_PRETTY="12"
-                    PG_VERSION=REL_12_STABLE
+                    PG_VERSION=REL_12_4
                     PG_HINT_PLAN_VERSION=REL12_1_3_10
                     ;;
                 14)
