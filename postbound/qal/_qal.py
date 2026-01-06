@@ -49,6 +49,8 @@ class LogicalOperator(enum.Enum):
     Is = "IS"
     IsNot = "IS NOT"
     Between = "BETWEEN"
+    DistinctFrom = "IS DISTINCT FROM"
+    NotDistinctFrom = "IS NOT DISTINCT FROM"
 
     # Postgres-style operators
     Contains = "@>"
@@ -9138,10 +9140,6 @@ class SetQuery:
         hints: Optional[Hint] = None,
         explain_clause: Optional[Explain] = None,
     ) -> None:
-        if left_query.is_ordered() or right_query.is_ordered():
-            raise ValueError(
-                "SQL does not allow ORDER BY in the inner queries of a set operation"
-            )
         if left_query.is_explain():
             warnings.warn(
                 "Left query is an EXPLAIN query. Ignoring the EXPLAIN clause."
