@@ -12,6 +12,7 @@ from __future__ import annotations
 import collections
 import concurrent
 import concurrent.futures
+import datetime
 import math
 import multiprocessing as mp
 import os
@@ -31,6 +32,7 @@ from typing import Any, Literal, Optional
 
 import psycopg
 import psycopg.rows
+import psycopg.types.datetime as psycopg_datetime
 
 from . import qal, transform, util
 from ._core import (
@@ -509,6 +511,112 @@ References
 
 .. Pattern debugging: https://regex101.com/r/UTQkfa/1
 """
+
+
+#
+# Psycopg struggles with infinity date/time values.
+# These are valid Postgres values, e.g. SELECT date 'infinity'; is a completely valid PG query. However, they cannot be
+# converted to a Python object because Python has no concept of infinity in this context. What is even worse, Postgres
+# allows for dates that are larger than the largest date that can be represented in Python. As of Python 3.14 this is
+# any date starting on 10000-01-01 or later. For Postgres this is once again completely valid. To mitigate these issues across
+# the different date/time types, we introduce a number of custom loaders that handle these values appropriately.
+# Likewise, we also introduce some dumpers to send the correct value back to the Postgres session.
+#
+
+
+class _PsycopgDateDumper(psycopg_datetime.DateDumper):
+    def dump(self, obj):
+        if obj == datetime.date.max:
+            return b"infinity"
+        elif obj == datetime.date.min:
+            return b"-infinity"
+
+        return super().dump(obj)
+
+
+class _PsycopgDateLoader(psycopg_datetime.DateLoader):
+    def load(self, data):
+        if data == b"infinity":
+            return datetime.date.max
+        elif data == b"-infinity":
+            return datetime.date.min
+
+        try:
+            return super().load(data)
+        except psycopg.errors.DataError as e:
+            if not e.args:
+                raise e
+            msg = e.args[0]
+            if not isinstance(msg, str) or not msg.startswith("date too large"):
+                raise e
+            return datetime.date.max
+
+
+class _PsycopgTimestampDumper(psycopg_datetime.DatetimeNoTzDumper):
+    def dump(self, obj):
+        if obj == datetime.datetime.max:
+            return b"infinity"
+        elif obj == datetime.datetime.min:
+            return b"-infinity"
+
+        return super().dump(obj)
+
+
+class _PsycopgTimestampLoader(psycopg_datetime.TimestampLoader):
+    def load(self, data):
+        if data == b"infinity":
+            return datetime.datetime.max
+        elif data == b"-infinity":
+            return datetime.datetime.min
+
+        try:
+            return super().load(data)
+        except psycopg.errors.DataError as e:
+            if not e.args:
+                raise e
+            msg = e.args[0]
+            if not isinstance(msg, str) or not msg.startswith("timestamp too large"):
+                raise e
+            return datetime.datetime.max
+
+
+class _PsycopgTimestampTzDumper(psycopg_datetime.DatetimeDumper):
+    def dump(self, obj):
+        if obj == datetime.datetime.max:
+            return b"infinity"
+        elif obj == datetime.datetime.min:
+            return b"-infinity"
+
+        return super().dump(obj)
+
+
+class _PsycopgTimestampTzLoader(psycopg_datetime.TimestamptzLoader):
+    def load(self, data):
+        if data == b"infinity":
+            return datetime.datetime.max.replace(tzinfo=datetime.timezone.utc)
+        elif data == b"-infinity":
+            return datetime.datetime.min.replace(tzinfo=datetime.timezone.utc)
+
+        try:
+            return super().load(data)
+        except psycopg.errors.DataError as e:
+            if not e.args:
+                raise e
+            msg = e.args[0]
+            if not isinstance(msg, str) or not msg.startswith("timestamp too large"):
+                raise e
+            return datetime.datetime.max.replace(tzinfo=datetime.timezone.utc)
+
+
+class _PsycopgIntervalLoader(psycopg_datetime.IntervalLoader):
+    def load(self, data):
+        if data == b"infinity":
+            return datetime.timedelta.max
+        elif data == b"-infinity":
+            return datetime.timedelta.min
+
+        # Python and Postgres can represent the same range of intervals/timedeltas
+        return super().load(data)
 
 
 class PostgresInterface(Database):
@@ -1054,6 +1162,21 @@ class PostgresInterface(Database):
             True  # pg_hint_plan hinting backend currently relies on autocommit!
         )
         self._connection.prepare_threshold = None
+
+        self._connection.adapters.register_dumper(datetime.date, _PsycopgDateDumper)
+        self._connection.adapters.register_dumper(
+            datetime.datetime, _PsycopgTimestampDumper
+        )
+        self._connection.adapters.register_dumper(
+            datetime.datetime, _PsycopgTimestampTzDumper
+        )
+        self._connection.adapters.register_loader("date", _PsycopgDateLoader)
+        self._connection.adapters.register_loader("timestamp", _PsycopgTimestampLoader)
+        self._connection.adapters.register_loader(
+            "timestamptz", _PsycopgTimestampTzLoader
+        )
+        self._connection.adapters.register_loader("interval", _PsycopgIntervalLoader)
+
         self._cursor: psycopg.Cursor = self._connection.cursor()
         return self.backend_pid()
 
