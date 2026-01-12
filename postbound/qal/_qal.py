@@ -6684,7 +6684,14 @@ class From(BaseClause, Generic[TableType]):
         If no items are specified
     """
 
-    def __init__(self, items: TableSource | Iterable[TableSource]):
+    @staticmethod
+    def create_for(
+        items: TableReference | Iterable[TableReference],
+    ) -> ImplicitFromClause:
+        """Shorthand method to create a *FROM* clause for a set of table references."""
+        return ImplicitFromClause.create_for(items)
+
+    def __init__(self, items: TableSource | Iterable[TableSource]) -> None:
         items = util.enlist(items)
         if not items:
             raise ValueError("At least one source is required")
@@ -7080,6 +7087,18 @@ class OrderByExpression:
         which indicates that the system-default behaviour should be used.
     """
 
+    @staticmethod
+    def create_for(
+        column: ColumnReference,
+        *,
+        ascending: Optional[bool] = None,
+        nulls_first: Optional[bool] = None,
+    ) -> OrderByExpression:
+        """Shorthand method to create an `OrderByExpression` for a specific column reference."""
+        return OrderByExpression(
+            ColumnExpression(column), ascending=ascending, nulls_first=nulls_first
+        )
+
     def __init__(
         self,
         column: SqlExpression,
@@ -7177,9 +7196,23 @@ class OrderBy(BaseClause):
     """
 
     @staticmethod
-    def create_for(*columns: ColumnReference) -> OrderBy:
-        """Shorthand method to create an *ORDER BY* clause for a set of column references."""
-        return OrderBy([OrderByExpression(col) for col in columns])
+    def create_for(
+        *columns: ColumnReference | Iterable[ColumnReference],
+        ascending: Optional[bool] = None,
+        nulls_first: Optional[bool] = None,
+    ) -> OrderBy:
+        """Shorthand method to create an *ORDER BY* clause for a set of column references.
+
+        Additional ordering parameters are assigned to all columns.
+        """
+        columns = util.enlist(columns)
+        columns = util.flatten(columns)
+        return OrderBy(
+            [
+                OrderByExpression(col, ascending=ascending, nulls_first=nulls_first)
+                for col in columns
+            ]
+        )
 
     def __init__(
         self, expressions: Iterable[OrderByExpression] | OrderByExpression
