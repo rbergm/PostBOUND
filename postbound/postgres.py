@@ -66,6 +66,7 @@ from .db import (
     HintService,
     HintWarning,
     OptimizerInterface,
+    QueryCacheWarning,
     ResultSet,
     UnsupportedDatabaseFeatureError,
     simplify_result_set,
@@ -683,6 +684,9 @@ class PostgresInterface(Database):
         raw: bool = False,
         timeout: Optional[float] = None,
     ) -> Any:
+        # NB: some of the execution logic is duplicated in TimeoutQueryExecutor.execute_query.
+        # Make sure to keep both implementations in sync.
+
         if timeout is not None and timeout > 0:
             return self._timeout_executor.execute_query(
                 query, timeout=timeout, cache_enabled=cache_enabled, raw=raw
@@ -3077,11 +3081,54 @@ def _timeout_query_worker(
             application_name="PostBOUND Timeout Worker",
             cache_enabled=cache_enabled,
         )
-        backend_send.send(pg_instance.backend_pid())
         pg_instance.apply_configuration(pg_config["config"])
+        cursor = pg_instance.cursor()
 
-        result = pg_instance.execute_query(query, **kwargs)
-        runtime = pg_instance.last_query_runtime()
+        # NB: The query execution logic is a slightly modified version of the one in PostgresInterface.execute_query
+        # Make sure to keep them in sync.
+        # We duplicate the logic here rather than calling the method directly to make the timeout measurement as accurate
+        # as possible. By just delegating to execute_query(), we would also include stuff like caching checks and result
+        # simplification in the timeout measurement, which is not desired.
+
+        try:
+            backend_send.send(pg_instance.backend_pid())
+            start_time = time.perf_counter_ns()
+            cursor.execute(query)
+            end_time = time.perf_counter_ns()
+            backend_send.send(None)  # Indicate that the query has finished
+        except (psycopg.InternalError, psycopg.OperationalError) as e:
+            backend_send.send(None)  # Indicate that the query has finished
+            msg = "\n".join(
+                [
+                    f"At {util.timestamp()}",
+                    "For query:",
+                    str(query),
+                    "Message:",
+                    str(e),
+                ]
+            )
+            raise DatabaseServerError(msg, e)
+        except psycopg.Error as e:
+            backend_send.send(None)  # Indicate that the query has finished
+            msg = "\n".join(
+                [
+                    f"At {util.timestamp()}",
+                    "For query:",
+                    str(query),
+                    "Message:",
+                    str(e),
+                ]
+            )
+            raise DatabaseUserError(msg, e)
+
+        runtime = (end_time - start_time) / 10**9
+        pg_instance._last_query_runtime = runtime
+
+        raw_result_set = cursor.fetchall()
+        if kwargs.get("raw", False):
+            result = raw_result_set
+        else:
+            result = simplify_result_set(raw_result_set)
 
         result_send.send({"query_result": result, "runtime": runtime})
     except Exception as e:
@@ -3150,6 +3197,13 @@ class TimeoutQueryExecutor:
         PostgresInterface.execute_query
         PostgresInterface.reset_connection
         """
+        cached_query: bool = (
+            kwargs.get("cache_enabled", False)
+            and query in self._pg_instance._query_cache
+        )
+        if cached_query:
+            return self._pg_instance._query_cache[query]
+
         result_recv, result_send = mp.Pipe(False)
         error_recv, error_send = mp.Pipe(False)
         backend_recv, backend_send = mp.Pipe(False)
@@ -3166,6 +3220,18 @@ class TimeoutQueryExecutor:
         )
 
         query_worker.start()
+
+        # We must wait until the worker has successfully established a backend connection to the database server.
+        # Once this is done, it will start executing the query and we are ready to start the countdown until timeout.
+        # It is important to wait until the backend PID is available to prevent issues with very short timeouts.
+        # If we don't wait here, the timeout might occur before the worker has even connected to the server. In this case
+        # it does not know the backend PID and we cannot abort the query properly. This would result in the watchdog waiting
+        # forever for the backend PID and we would effectively hang.
+        # As a tradeoff, the query receives a small boost in execution time: the worker proceeds immediately with executing
+        # the query after sending the backend PID. However, the main process must wait until it has received the PID before
+        # it can start the timeout. This IPC overhead is used as extra execution time by the query worker. In practice,
+        # this should be negligible.
+        backend_pid: int = backend_recv.recv()
         query_worker.join(timeout)
 
         # We perform the timeout check before doing anything else to make sure that the worker process cannot terminate
@@ -3173,7 +3239,12 @@ class TimeoutQueryExecutor:
         # If we would now proceed to check the error-pipe, the query would have more time to terminate while we are performing
         # our error checks. This might result in an involuntary increase in the timeout duration. By keeping the timeout check
         # as close to the join() call as possible, we minimize this risk.
-        timed_out = query_worker.is_alive()
+        #
+        # Instead of calling is_alive() on the worker process (as we did previously), we now check the backend_recv pipe again.
+        # The worker sends a dummy value to this pipe once the query has finished. This way, we also prevent situations where
+        # the query execution itself has finished but the worker is still busy with all post-processing steps (creating result
+        # data, simplifying the result set, ...) when the timeout is triggered.
+        timed_out = not backend_recv.poll()
         query_worker.terminate()
         query_worker.join()
 
@@ -3181,7 +3252,7 @@ class TimeoutQueryExecutor:
         # (or timed out). In case of an error, we just propagate it to the client.
         if error_recv.poll():
             self._pg_instance._last_query_runtime = math.nan
-            self._abort_backend(backend_recv.recv())
+            self._abort_backend(backend_pid)
             err = error_recv.recv()
 
             query_worker.close()
@@ -3195,7 +3266,7 @@ class TimeoutQueryExecutor:
         # At this point we know that the worker either terminated in time or that it timed out, but it did not error.
         # Both the timeout and the termination case can be handled in a pretty straightforward manner.
         if timed_out:
-            self._abort_backend(backend_recv.recv())
+            self._abort_backend(backend_pid)
             query_result = None
             self._pg_instance._last_query_runtime = timeout
         else:
@@ -3208,6 +3279,12 @@ class TimeoutQueryExecutor:
         result_recv.close()
         error_send.close()
         error_recv.close()
+
+        if not timed_out and kwargs.get("cache_enabled", False):
+            warnings.warn(
+                "Cannot cache query results that were obtained with a timeout.",
+                category=QueryCacheWarning,
+            )
 
         if timed_out:
             raise TimeoutError(query)
