@@ -12,7 +12,10 @@ from __future__ import annotations
 import collections
 import concurrent
 import concurrent.futures
+import configparser
 import datetime
+import functools
+import json
 import math
 import multiprocessing as mp
 import os
@@ -23,12 +26,13 @@ import sys
 import textwrap
 import threading
 import time
+import tomllib
 import warnings
 from collections import UserString
 from collections.abc import Callable, Generator, Iterable, Sequence
 from multiprocessing import connection as mp_conn
 from pathlib import Path
-from typing import Any, Literal, Optional
+from typing import Any, Literal, Optional, TextIO
 
 import psycopg
 import psycopg.rows
@@ -2607,6 +2611,49 @@ def _reconnect(name: str, *, pool: DatabasePool) -> PostgresInterface:
     return current_instance
 
 
+def _ini_config_reader(file: TextIO, *, path: Path) -> dict[str, str]:
+    config = configparser.ConfigParser()
+    config.read_file(file)
+    if len(config.sections()) != 1:
+        raise ValueError(
+            f"Malformed INI file '{path}': INI config file must contain exactly one section."
+        )
+    section = config.sections()[0]
+    return dict(config.items(section))
+
+
+def _read_connection_from_file(config_file: Path) -> str:
+    extension = config_file.suffix.lower()
+    if extension == "":
+        with open(config_file, "r") as f:
+            return f.readline().strip()
+
+    match extension:
+        case ".toml":
+            reader = tomllib.load
+            mode = "rb"
+        case ".json":
+            reader = json.load
+            mode = "r"
+        case ".ini":
+            reader = functools.partial(_ini_config_reader, path=config_file)
+            mode = "r"
+        case ".yml" | ".yaml":
+            import yaml
+
+            reader = yaml.safe_load
+            mode = "r"
+        case _:
+            raise ValueError(
+                f"Unsupported config file format. Could read config file '{config_file}'."
+            )
+
+    with open(config_file, mode) as f:
+        config_data = reader(f)
+    parts = (f"{param} = '{value}'" for param, value in config_data.items())
+    return " ".join(parts)
+
+
 def connect(
     *,
     name: str = "postgres",
@@ -2637,6 +2684,22 @@ def connect(
     After a connection to the Postgres instance has been obtained, it is registered automatically on the current
     `DatabasePool` instance. This can be changed via the `private` parameter.
 
+    Config file formats
+    -------------------
+
+    The configuration file can be supplied in different formats. Currently supported are:
+
+    - Plain text files (no extension), such as *.psycopg_connection*: The entire file contents are read as a single
+      psycopg-compatible connect string
+    - INI files (*.ini*): The file must contain exactly one section. All key-value pairs in this section are treated as
+      connection parameters.
+    - TOML files (*.toml*): The file is parsed as a TOML document. All top-level key-value pairs are treated as connection
+      parameters.
+    - JSON files (*.json*): The file is parsed as a JSON document. All top
+      level key-value pairs are treated as connection parameters.
+    - YAML files (*.yml* or *.yaml*): The file is parsed as a YAML document. All top-level key-value pairs are treated as
+      connection parameters. This requires the PyYAML package to be installed.
+
     Parameters
     ----------
     name : str, optional
@@ -2650,6 +2713,8 @@ def connect(
     config_file : str | Path, optional
         A file containing a Psycopg-compatible connect string for the database. This is the default and preferred method of
         connecting to a Postgres database. Defaults to *.psycopg_connection*
+        See the section on config_file formats for supported file types. The appropriate parser is selected based on the
+        file extension.
     encoding : str, optional
         The client enconding of the connection. Defaults to *UTF8*.
     cache_enabled : bool, optional
@@ -2695,8 +2760,7 @@ def connect(
                 "Please either supply the connect string directly to the connect() method, or ensure that the "
                 "config file exists."
             )
-        with open(config_file, "r") as f:
-            connect_string = f.readline().strip()
+        connect_string = _read_connection_from_file(config_file)
     elif Path(".psycopg_connection").is_file():
         with open(".psycopg_connection", "r") as f:
             connect_string = f.readline().strip()
