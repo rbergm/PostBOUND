@@ -3147,6 +3147,10 @@ def _timeout_query_worker(
         )
         pg_instance.apply_configuration(pg_config["config"])
         cursor = pg_instance.cursor()
+        if isinstance(query, SqlQuery):
+            query = pg_instance._hinting_backend.format_query(query)
+        elif isinstance(query, UserString):
+            query = str(query)
 
         # NB: The query execution logic is a slightly modified version of the one in PostgresInterface.execute_query
         # Make sure to keep them in sync.
