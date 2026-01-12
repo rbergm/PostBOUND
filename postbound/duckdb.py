@@ -140,7 +140,8 @@ class DuckDBInterface(Database):
 
         promise = self._timeout_executor.submit(self._execute_worker, query)
         try:
-            result_set = promise.result(timeout=timeout)
+            promise.result(timeout=timeout)
+            result_set = self._cur.fetchall()
             return result_set
         except concurrent.futures.TimeoutError:
             self._cur.interrupt()
@@ -219,13 +220,11 @@ class DuckDBInterface(Database):
         base_info["schema_info"] = schema_info
         return base_info
 
-    def _execute_worker(self, query: str) -> ResultSet:
+    def _execute_worker(self, query: str) -> None:
         start_time = time.perf_counter_ns()
         self._cur.execute(query)
         end_time = time.perf_counter_ns()
-        result_set = self._cur.fetchall()
         self._last_query_runtime = (end_time - start_time) / 10**9  # convert to seconds
-        return result_set
 
 
 class DuckDBSchema(DatabaseSchema):
