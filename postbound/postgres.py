@@ -624,6 +624,14 @@ class _PsycopgIntervalLoader(psycopg_datetime.IntervalLoader):
         return super().load(data)
 
 
+def _apply_preparatory_statements(query: SqlQuery, *, cur: psycopg.Cursor) -> SqlQuery:
+    if not query.hints or not query.hints.preparatory_statements:
+        return query
+
+    cur.execute(query.hints.preparatory_statements)
+    return transform.drop_hints(query, preparatory_statements_only=True)
+
+
 class PostgresInterface(Database):
     """Database implementation for PostgreSQL backends.
 
@@ -700,6 +708,11 @@ class PostgresInterface(Database):
         if isinstance(query, UserString):
             query = str(query)
         elif isinstance(query, SqlQuery):
+            # If there are any preparatory statements we must execute them now. If we would simply include them in the query,
+            # psycopg would use the first statement to determine the result type of the entire query. If this were a SET
+            # statement, no results could be fetched. _apply_preparatory_statements takes care of these and gives a cleaned-up
+            # query to execute.
+            query = _apply_preparatory_statements(query, cur=self._cursor)
             query = self._hinting_backend.format_query(query)
 
         if cache_enabled and query in self._query_cache:
@@ -3148,6 +3161,7 @@ def _timeout_query_worker(
         pg_instance.apply_configuration(pg_config["config"])
         cursor = pg_instance.cursor()
         if isinstance(query, SqlQuery):
+            query = _apply_preparatory_statements(query, cur=cursor)
             query = pg_instance._hinting_backend.format_query(query)
         elif isinstance(query, UserString):
             query = str(query)
