@@ -3214,9 +3214,10 @@ def _timeout_query_worker(
 
         result_send.send({"query_result": result, "runtime": runtime})
     except Exception as e:
-        err_send.send(e)
+        err_send.send({"success": False, "exception": e})
     finally:
         pg_instance.close()
+        err_send.send({"success": True, "exception": None})
 
 
 class TimeoutQueryExecutor:
@@ -3286,9 +3287,20 @@ class TimeoutQueryExecutor:
         if cached_query:
             return self._pg_instance._query_cache[query]
 
+        # The result pipe is used to send the actual query result set back to the main process
         result_recv, result_send = mp.Pipe(False)
+
+        # The error pipe is used to send the execution status and any eventual errors back to the main process.
+        # It receives a dict {"success": bool, "exception": Optional[Exception]}
         error_recv, error_send = mp.Pipe(False)
+
+        # The backend pipe is used to send the worker status back to the main process. It uses the following protocol:
+        # 1. the worker sends the backend PID as soon as it has established a connection to the database server and prepared
+        #    the query for execution
+        # 2. as soon as the query has finished, the worker sends a second message (a dummy value) to indicate this event
+        #    the precise message is an implementation detail and should not be relied upon. It should only be polled.
         backend_recv, backend_send = mp.Pipe(False)
+
         query_worker = mp.Process(
             target=_timeout_query_worker,
             args=(query,),
@@ -3326,16 +3338,25 @@ class TimeoutQueryExecutor:
         # The worker sends a dummy value to this pipe once the query has finished. This way, we also prevent situations where
         # the query execution itself has finished but the worker is still busy with all post-processing steps (creating result
         # data, simplifying the result set, ...) when the timeout is triggered.
+        #
+        # In addition, we also have to check whether any errors occured at this point in time. This is done by receiving from
+        # the error pipe. This pipe will always transmit a message once the worker terminates (no matter whether the
+        # termination was normal or due to an error)
         timed_out = not backend_recv.poll()
-        query_worker.terminate()
+        status_msg: dict | None = None if timed_out else error_recv.recv()
+        if status_msg is not None and not status_msg["success"]:
+            error = status_msg["exception"]
+        else:
+            error = None
+
+        query_worker.terminate()  # terminate in case of timeouts
         query_worker.join()
 
         # Now that we know whether the worker timed out or not, we need to make sure that it actually terminated properly
         # (or timed out). In case of an error, we just propagate it to the client.
-        if error_recv.poll():
+        if error is not None:
             self._pg_instance._last_query_runtime = math.nan
             self._abort_backend(backend_pid)
-            err = error_recv.recv()
 
             query_worker.close()
             result_send.close()
@@ -3343,7 +3364,7 @@ class TimeoutQueryExecutor:
             error_send.close()
             error_recv.close()
 
-            raise err
+            raise error
 
         # At this point we know that the worker either terminated in time or that it timed out, but it did not error.
         # Both the timeout and the termination case can be handled in a pretty straightforward manner.
