@@ -90,19 +90,18 @@ if [ -z "$(ls /postbound)" ] ; then
     if [ "$SETUP_DUCKDB" = "true" ] ; then
         echo "[setup] Setting up DuckDB"
         cd /postbound/db-support/duckdb
-        ./duckdb-setup.sh
-        . ./duckdb-env.sh
+        ./duckdb-setup.sh --venv /postbound/pb-venv
     fi
 
     if [ "$SETUP_DUCKDB" = "true" -a "$SETUP_IMDB" = "true" ] ; then
         echo "[setup] Setting up IMDB benchmark for DuckDB"
         cd /postbound/db-support/duckdb
-        ./workload-job-setup.sh
+        python3 ./workload-setup.py --workload imdb
     fi
     if [ "$SETUP_DUCKDB" = "true" -a "$SETUP_STATS" = "true" ] ; then
         echo "[setup] Setting up Stats benchmark for DuckDB"
         cd /postbound/db-support/duckdb
-        ./workload-stats-setup.sh
+        python3 ./workload-setup.py --workload stats
     fi
     mv /postbound/db-support/duckdb/*.duckdb /postbound
 
@@ -121,10 +120,12 @@ if [ -z "$(ls /postbound)" ] ; then
         echo "source ./postgres-load-env.sh" >> /home/$USERNAME/.bashrc
     fi
 
-    if [ "$SETUP_DUCKDB" = "true" ] ; then
-        echo "cd /postbound/db-support/duckdb" >> /home/$USERNAME/.bashrc
-        echo "source ./duckdb-env.sh" >> /home/$USERNAME/.bashrc
-    fi
+    # Currently the DuckDB/quacklab setup does not create a duckdb executable.
+    # Re-enable this once we found a way to build both the Python package and the CLI tool in one step.
+    # if [ "$SETUP_DUCKDB" = "true" ] ; then
+    #     echo "cd /postbound/db-support/duckdb" >> /home/$USERNAME/.bashrc
+    #     echo "source ./duckdb-env.sh" >> /home/$USERNAME/.bashrc
+    # fi
 
     echo "cd /postbound" >> /home/$USERNAME/.bashrc
     echo "source /postbound/pb-venv/bin/activate" >> /home/$USERNAME/.bashrc
