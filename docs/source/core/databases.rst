@@ -29,6 +29,17 @@ Each instance of the :class:`~postbound.db.Database` class is connected to an ac
     :ref:`query cache <query-cache>` before executing any queries.
 
 
+Database Backends
+-----------------
+
+.. toctree::
+    :maxdepth: 1
+
+    postgres
+    duckdb
+    mysql
+
+
 Query execution
 ---------------
 
@@ -96,6 +107,8 @@ Most of the schema information is accessible via dedicated methods, such as :met
 `networkx-based directed graph <https://networkx.org/>`_ with edges that correspond to primary key/foreign key
 relationships in the schema.
 
+
+.. _database-statistics:
 
 Statistics catalog
 ------------------
