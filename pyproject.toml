@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "PostBOUND"
-version = "0.19.2"
+version = "0.20.0-alpha"
 authors = [{ name = "Rico Bergmann", email = "rico.bergmann1@tu-dresden.de" }]
 description = "PostBOUND is a research framework to prototype and benchmark database query optimizers"
 readme = "README.md"
@@ -47,3 +47,10 @@ mysql = [
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["postbound*"]
+
+[dependency-groups]
+doc = [
+    "ipython>=9.8.0",
+    "sphinx>=9.1.0",
+    "sphinx-book-theme>=1.1.4",
+]
