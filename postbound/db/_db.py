@@ -1824,6 +1824,7 @@ class DatabaseStatistics(abc.ABC):
         return self._db.execute_query(
             query_template,
             cache_enabled=self._determine_caching_behavior(cache_enabled),
+            raw=True,
         )
 
     @abc.abstractmethod
