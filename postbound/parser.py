@@ -881,11 +881,18 @@ def _pglast_parse_expression(
             else:
                 raise ParserError("Invalid IN operator: " + operator)
 
-        case "A_Expr" if pglast_data["A_Expr"]["kind"] in ["AEXPR_DISTINCT", "AEXPR_NOT_DISTINCT"]:
+        case "A_Expr" if pglast_data["A_Expr"]["kind"] in [
+            "AEXPR_DISTINCT",
+            "AEXPR_NOT_DISTINCT",
+        ]:
             expression = pglast_data["A_Expr"]
             operator = _PglastOperatorMap[expression["kind"]]
-            left = _pglast_parse_expression(expression["lexpr"], namespace=namespace, query_txt=query_txt)
-            right = _pglast_parse_expression(expression["rexpr"], namespace=namespace, query_txt=query_txt)
+            left = _pglast_parse_expression(
+                expression["lexpr"], namespace=namespace, query_txt=query_txt
+            )
+            right = _pglast_parse_expression(
+                expression["rexpr"], namespace=namespace, query_txt=query_txt
+            )
             return BinaryPredicate(operator, left, right)
 
         case "A_Expr" if pglast_data["A_Expr"]["kind"] in [
@@ -1575,6 +1582,12 @@ def _pglast_parse_from(
                 contains_mixed = True
             case ValuesTableSource():
                 contains_mixed = True
+            case FunctionTableSource():
+                contains_mixed = True
+            case _:
+                raise ParserError(
+                    f"Unknown table source type: {type(current_table_source).__name__}"
+                )
 
     if not contains_join and not contains_mixed:
         return ImplicitFromClause(table_sources)
@@ -1605,9 +1618,14 @@ def _pglast_parse_predicate(
     AbstractPredicate
         The parsed predicate.
     """
-    predicate = _pglast_parse_expression(pglast_data, namespace=namespace, query_txt=query_txt)
-    return predicate if isinstance(predicate, AbstractPredicate) else UnaryPredicate(predicate)
-
+    predicate = _pglast_parse_expression(
+        pglast_data, namespace=namespace, query_txt=query_txt
+    )
+    return (
+        predicate
+        if isinstance(predicate, AbstractPredicate)
+        else UnaryPredicate(predicate)
+    )
 
 
 def _pglast_parse_where(
