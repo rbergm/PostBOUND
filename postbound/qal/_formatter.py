@@ -713,6 +713,7 @@ def _expression_prettifier(
                 )
                 for expr in rhs
             ]
+            replaced_rhs = util.simplify(replaced_rhs)
             return target(op, replaced_lhs, replaced_rhs)
         case ArrayAccessExpression(array, ind, lo, hi):
             replaced_array = _expression_prettifier(
