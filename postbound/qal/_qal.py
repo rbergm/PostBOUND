@@ -482,6 +482,8 @@ class MathExpression(SqlExpression):
                 self._second_arg = None
             case Sequence():
                 self._second_arg = util.simplify(second_argument)
+                if isinstance(self._second_arg, Sequence):
+                    self._second_arg = tuple(self._second_arg)
             case _:
                 raise ValueError(
                     "Second argument must be a single expression or a sequence of expressions, "
@@ -9859,10 +9861,13 @@ def build_query(query_clauses: Iterable[BaseClause]) -> SqlQuery:
             setop = (
                 SetOperator.UnionAll if union_clause.union_all else SetOperator.Union
             )
+            lhs, rhs = union_clause.left_query, union_clause.right_query
         elif except_clause is not None:
             setop = SetOperator.Except
+            lhs, rhs = except_clause.left_query, except_clause.right_query
         elif intersect_clause is not None:
             setop = SetOperator.Intersect
+            lhs, rhs = intersect_clause.left_query, intersect_clause.right_query
         else:
             raise ValueError("Unknown set operation")
 
@@ -9880,8 +9885,8 @@ def build_query(query_clauses: Iterable[BaseClause]) -> SqlQuery:
             )
 
         return SetQuery(
-            union_clause.left_query,
-            union_clause.right_query,
+            lhs,
+            rhs,
             set_operation=setop,
             cte_clause=cte_clause,
             orderby_clause=orderby_clause,

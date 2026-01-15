@@ -1057,7 +1057,9 @@ def _replace_expression_in_table_source(
             )
         case FunctionTableSource():
             replaced_function = replacement(table_source.function)
-            return FunctionTableSource(replaced_function, table_source.target_table)
+            return FunctionTableSource(
+                replaced_function, alias=table_source.target_table
+            )
         case _:
             raise TypeError("Unknown table source type: " + str(table_source))
 
@@ -1736,7 +1738,9 @@ def _rename_columns_in_table_source(
             renamed_function = rename_columns_in_expression(
                 table_source.function, available_renamings
             )
-            return FunctionTableSource(renamed_function, table_source.target_table)
+            return FunctionTableSource(
+                renamed_function, alias=table_source.target_table
+            )
 
         case _:
             raise TypeError("Unknown table source type: " + str(table_source))
@@ -2194,7 +2198,7 @@ class _TableReferenceRenamer(
             case FunctionTableSource(function, alias):
                 renamed_function = function.accept_visitor(self)
                 renamed_alias = self._rename_table(alias) if alias else ""
-                return FunctionTableSource(renamed_function, renamed_alias)
+                return FunctionTableSource(renamed_function, alias=renamed_alias)
 
             case _:
                 raise ValueError("Unknown table source type: " + str(source))
