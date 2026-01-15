@@ -21,7 +21,6 @@ References
 """
 
 from __future__ import annotations
-from pygments.lexer import include
 
 import collections
 import pathlib
@@ -35,6 +34,7 @@ from typing import Literal, Optional
 
 import natsort
 import pandas as pd
+import tqdm
 
 from . import parser, util
 from ._base import pbdir
@@ -126,6 +126,7 @@ class Workload(collections.UserDict[LabelType, SqlQuery]):
         bind_columns: bool = True,
         include_hints: bool = True,
         on_error: Literal["raise", "warn", "ignore"] = "raise",
+        verbose: bool = False,
     ) -> Workload[str]:
         """Reads all SQL queries from a specific directory into a workload object.
 
@@ -155,6 +156,8 @@ class Workload(collections.UserDict[LabelType, SqlQuery]):
             Whether the parser should try to infer and extract hint blocks from the queries
         on_error : Literal["raise", "warn", "ignore"], optional
             How to react to parser errors. By default, the exception is propagated to the parent process.
+        verbose : bool, optional
+            Whether progress information should be printed.
 
         Returns
         -------
@@ -169,21 +172,33 @@ class Workload(collections.UserDict[LabelType, SqlQuery]):
         queries: dict[str, SqlQuery] = {}
         root = pathlib.Path(root_dir)
 
-        for query_file_path in root.glob(query_file_pattern):
+        if verbose:
+            matching_files = list(root.glob(query_file_pattern))
+            matching_files = tqdm.tqdm(matching_files, desc=root.name, unit="q")
+        else:
+            matching_files = root.glob(query_file_pattern)
+
+        for query_file_path in matching_files:
             with open(query_file_path, "r", encoding=file_encoding) as query_file:
                 raw_contents = query_file.readlines()
             query_contents = "\n".join([line for line in raw_contents])
 
             try:
                 parsed_query = parser.parse_query(
-                    query_contents, include_hints=include_hints, bind_columns=bind_columns
+                    query_contents,
+                    include_hints=include_hints,
+                    bind_columns=bind_columns,
                 )
             except Exception as e:
                 match on_error:
                     case "raise":
-                        raise ValueError(f"Could not parse query from {query_file_path}", e)
+                        raise ValueError(
+                            f"Could not parse query from {query_file_path}", e
+                        )
                     case "warn":
-                        warnings.warn(f"Could not parse query {query_file_path}: {e} ({type(e)})")
+                        warnings.warn(
+                            f"Could not parse query {query_file_path}: {e} ({type(e)})"
+                        )
                     case "ignore":
                         pass
 
@@ -557,6 +572,9 @@ def read_workload(
     query_label_prefix: str = "",
     file_encoding: str = "utf-8",
     bind_columns: bool = True,
+    include_hints: bool = True,
+    on_error: Literal["raise", "warn", "ignore"] = "raise",
+    verbose: bool = False,
 ) -> Workload[str]:
     """Loads a workload consisting of multiple different files, potentially scattered in multiple directories
 
@@ -582,6 +600,12 @@ def read_workload(
         string.
     file_encoding : str, optional
         The encoding of the query files. All files must share a common encoding. Defaults to UTF-8
+    include_hints : bool, optional
+        Whether the parser should try to infer and extract hint blocks from the queries
+    on_error : Literal["raise", "warn", "ignore"], optional
+        How to react to parser errors. By default, the exception is propagated to the parent process.
+    verbose : bool, optional
+            Whether progress information should be printed.
 
     Returns
     -------
@@ -595,6 +619,9 @@ def read_workload(
         label_prefix=query_label_prefix,
         file_encoding=file_encoding,
         bind_columns=bind_columns,
+        include_hints=include_hints,
+        on_error=on_error,
+        verbose=verbose,
     )
     if not recurse_subdirectories:
         return base_dir_workload
@@ -616,6 +643,9 @@ def read_workload(
             recurse_subdirectories=True,
             query_label_prefix=subdir_prefix,
             bind_columns=bind_columns,
+            include_hints=include_hints,
+            on_error=on_error,
+            verbose=verbose,
         )
         merged_queries |= subdir_workload.data
     return Workload(merged_queries, name, root_dir)
