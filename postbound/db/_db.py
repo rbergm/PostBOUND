@@ -2103,6 +2103,10 @@ class OptimizerInterface(abc.ABC):
         """
         raise NotImplementedError
 
+    def explain(self, query: SqlQuery | str) -> QueryPlan:
+        """Alias for `query_plan`."""
+        return self.query_plan(query)
+
     @abc.abstractmethod
     def analyze_plan(self, query: SqlQuery) -> QueryPlan:
         """Executes a specific query and provides the query execution plan supplemented with runtime information.
@@ -2122,6 +2126,10 @@ class OptimizerInterface(abc.ABC):
             counts)
         """
         raise NotImplementedError
+
+    def explain_analyze(self, query: SqlQuery) -> QueryPlan:
+        """Alias for `analyze_plan`."""
+        return self.analyze_plan(query)
 
     @abc.abstractmethod
     def cardinality_estimate(self, query: SqlQuery | str) -> Cardinality:
