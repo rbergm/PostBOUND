@@ -232,12 +232,17 @@ class QueryNamespace:
     """
 
     @staticmethod
-    def empty(schema: Optional["DatabaseSchema"] = None) -> QueryNamespace:  # type: ignore # noqa: F821
+    def empty(
+        schema: Optional[DatabaseSchema] = None, *, top_level: bool = False
+    ) -> QueryNamespace:
         QueryNamespace._schema_cache.initialize_with(schema)
-        return QueryNamespace()
+        return QueryNamespace(top_level=top_level)
 
-    def __init__(self, *, parent: Optional[QueryNamespace] = None) -> None:
+    def __init__(
+        self, *, parent: Optional[QueryNamespace] = None, top_level: bool = False
+    ) -> None:
         self._parent = parent
+        self._top_level = top_level
 
         self._subquery_children: dict[str, QueryNamespace] = {}
         """Nested namespaces that are provided as part of subqueries. Entries map alias -> query."""
@@ -351,7 +356,10 @@ class QueryNamespace:
                             raise ParserError(f"No namespace found for table '{table}'")
                         self._output_shape.extend(defining_nsp._output_shape)
 
-                case _:
+                case _ if self._top_level:
+                    pass
+
+                case _ if not self._top_level:
                     # Do nothing, this is an expression that cannot be referenced later on!
                     # Or at least, it is highly system-dependent how the expression would be named.
                     # For example, Postgres uses the function names for function calls without alias
@@ -2272,7 +2280,7 @@ def parse_query(
     stmt = raw_query["SelectStmt"]
 
     parsed_query = _pglast_parse_query(
-        stmt, namespace=QueryNamespace.empty(db_schema), query_txt=query
+        stmt, namespace=QueryNamespace.empty(db_schema, top_level=True), query_txt=query
     )
     if not accept_set_query and isinstance(query, SetQuery):
         raise ParserError("Input query is a set query")
