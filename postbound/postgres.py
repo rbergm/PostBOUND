@@ -30,6 +30,7 @@ import tomllib
 import warnings
 from collections import UserString
 from collections.abc import Callable, Generator, Iterable, Sequence
+from dataclasses import dataclass
 from multiprocessing import connection as mp_conn
 from pathlib import Path
 from typing import Any, Literal, Optional, TextIO
@@ -3120,13 +3121,140 @@ class ParallelQueryExecutor:
         )
 
 
+@dataclass
+class _BackendConnectedEvent:
+    backend_pid: int
+
+
+@dataclass
+class _WorkerErrorEvent:
+    error: Exception
+
+
+@dataclass
+class _QueryReadyEvent:
+    pass
+
+
+@dataclass
+class _QueryFinishedEvent:
+    pass
+
+
+@dataclass
+class _ResultEvent:
+    status: Literal["success", "timeout", "failure"]
+    result_set: ResultSet | None
+    exec_time: float
+    error: Exception | None = None
+
+    @staticmethod
+    def ok(result_set: ResultSet, exec_time: float) -> _ResultEvent:
+        return _ResultEvent("success", result_set, exec_time)
+
+    @staticmethod
+    def timeout(duration: float) -> _ResultEvent:
+        return _ResultEvent("timeout", None, duration)
+
+    @staticmethod
+    def failed(error: Exception) -> _ResultEvent:
+        return _ResultEvent("failure", None, math.nan, error=error)
+
+
+def _timeout_worker_ctl(
+    status_pipe: mp_conn.Connection, *, timeout: float, executor: TimeoutQueryExecutor
+) -> _ResultEvent:
+    event = status_pipe.recv()
+    match event:
+        case _BackendConnectedEvent(pid):
+            return _timeout_worker_prep(
+                status_pipe, timeout=timeout, backend_pid=pid, executor=executor
+            )
+        case _WorkerErrorEvent(e):
+            return _ResultEvent.failed(e)
+        case _:
+            raise StateError("Unexpected event", event)
+
+
+def _timeout_worker_prep(
+    status_pipe: mp_conn.Connection,
+    *,
+    timeout: float,
+    backend_pid: int,
+    executor: TimeoutQueryExecutor,
+) -> _ResultEvent:
+    event = status_pipe.recv()
+    match event:
+        case _QueryReadyEvent():
+            return _timeout_worker_run_query(
+                status_pipe, timeout=timeout, backend_pid=backend_pid, executor=executor
+            )
+        case _WorkerErrorEvent(e):
+            _timeout_worker_abort(e, backend_pid, executor=executor)
+            return _ResultEvent.failed(e)
+        case _:
+            raise StateError("Unexpected event", event)
+
+
+def _timeout_worker_run_query(
+    status_pipe: mp_conn.Connection,
+    *,
+    timeout: float,
+    backend_pid: int,
+    executor: TimeoutQueryExecutor,
+) -> _ResultEvent:
+    query_finished = status_pipe.poll(timeout)
+    if not query_finished:
+        return _timeout_worker_timeout(
+            timeout, backend_pid=backend_pid, executor=executor
+        )
+
+    event = status_pipe.recv()
+    match event:
+        case _QueryFinishedEvent():
+            return _timeout_worker_await_result(
+                status_pipe, backend_pid=backend_pid, executor=executor
+            )
+        case _WorkerErrorEvent(e):
+            _timeout_worker_abort(e, backend_pid, executor=executor)
+            return _ResultEvent.failed(e)
+        case _:
+            raise StateError("Unexpected event", event)
+
+
+def _timeout_worker_await_result(
+    status_pipe: mp_conn.Connection, *, backend_pid: int, executor: TimeoutQueryExecutor
+) -> _ResultEvent:
+    event = status_pipe.recv()
+    match event:
+        case _ResultEvent():
+            return event
+        case _WorkerErrorEvent(e):
+            _timeout_worker_abort(e, backend_pid, executor=executor)
+            return _ResultEvent.failed(e)
+        case _:
+            raise StateError("Unexpected event", event)
+
+
+def _timeout_worker_timeout(
+    timeout: float, *, backend_pid: int, executor: TimeoutQueryExecutor
+) -> _ResultEvent:
+    executor._abort_backend(backend_pid)
+    return _ResultEvent.timeout(timeout)
+
+
+def _timeout_worker_abort(
+    error: Exception, backend_pid: int, *, executor: TimeoutQueryExecutor
+) -> _ResultEvent:
+    executor._abort_backend(backend_pid)
+    return _ResultEvent.failed(error)
+
+
 def _timeout_query_worker(
     query: SqlQuery | str,
     *,
     pg_config: dict,
-    result_send: mp_conn.Connection,
-    err_send: mp_conn.Connection,
-    backend_send: mp_conn.Connection,
+    status_pipe: mp_conn.Connection,
     **kwargs,
 ) -> None:
     """Internal function to the `TimeoutQueryExecutor` to run individual queries.
@@ -3158,6 +3286,7 @@ def _timeout_query_worker(
             application_name="PostBOUND Timeout Worker",
             cache_enabled=cache_enabled,
         )
+        status_pipe.send(_BackendConnectedEvent(pg_instance.backend_pid()))
         pg_instance.apply_configuration(pg_config["config"])
         cursor = pg_instance.cursor()
         if isinstance(query, SqlQuery):
@@ -3173,13 +3302,12 @@ def _timeout_query_worker(
         # simplification in the timeout measurement, which is not desired.
 
         try:
-            backend_send.send(pg_instance.backend_pid())
+            status_pipe.send(_QueryReadyEvent())
             start_time = time.perf_counter_ns()
             cursor.execute(query)
             end_time = time.perf_counter_ns()
-            backend_send.send(None)  # Indicate that the query has finished
+            status_pipe.send(_QueryFinishedEvent())
         except (psycopg.InternalError, psycopg.OperationalError) as e:
-            backend_send.send(None)  # Indicate that the query has finished
             msg = "\n".join(
                 [
                     f"At {util.timestamp()}",
@@ -3191,7 +3319,6 @@ def _timeout_query_worker(
             )
             raise DatabaseServerError(msg, e)
         except psycopg.Error as e:
-            backend_send.send(None)  # Indicate that the query has finished
             msg = "\n".join(
                 [
                     f"At {util.timestamp()}",
@@ -3212,12 +3339,11 @@ def _timeout_query_worker(
         else:
             result = simplify_result_set(raw_result_set)
 
-        result_send.send({"query_result": result, "runtime": runtime})
+        status_pipe.send(_ResultEvent.ok(result, runtime))
     except Exception as e:
-        err_send.send({"success": False, "exception": e})
+        status_pipe.send(_WorkerErrorEvent(e))
     finally:
         pg_instance.close()
-        err_send.send({"success": True, "exception": None})
 
 
 class TimeoutQueryExecutor:
@@ -3287,101 +3413,66 @@ class TimeoutQueryExecutor:
         if cached_query:
             return self._pg_instance._query_cache[query]
 
-        # The result pipe is used to send the actual query result set back to the main process
-        result_recv, result_send = mp.Pipe(False)
+        # We implement the timeout mechanism in a separate worker process. The main process keeps track of the progress of that
+        # worker using a state pattern. Each major step in the process is represented by a separate event that is in turn
+        # processed by a separate state handler (implement as a simple function). The protocol looks like this:
+        #
+        # 1. The worker process is started and establishes a connection to the database. Once connected, it sends a
+        #    _BackendConnectedEvent to the state machine entry (_timeout_worker_ctl). This event contains the backend PID of
+        #    the connection. In case of any errors later on, we use this PID to cancel the query (especially if there is a
+        #    timeout). If an error occurs during connection establishment, a _WorkerErrorEvent is sent instead. This
+        #    effectively cancels the entire query execution.
+        # 2. Upon receiving the _BackendConnectedEvent, the state machine transitions to the query preparation state
+        #    (_timeout_worker_prep). In parallel, the worker prepares the query for execution, which involves applying any
+        #    necessary configuration settings, running preparatory statements, etc. Once the query is ready to be executed, a
+        #    _QueryReadyEvent is sent and the state machine transitions to the query execution state. In case of any errors we
+        #    shut down the backend.
+        # 3. The worker starts executing the query and the state machine starts the timeout countdown
+        #    (_timeout_worker_run_query). We only start the timeout now because connection establishment takes some time and we
+        #    have seen that this can lead to spurious timeouts if the timeout is very short.
+        # 4. As soon as the query terminates, the worker sends a _QueryFinishedEvent. In the meantime, the main process waits
+        #    for this event with the designated timeout. If the timeout is reached before the event arrives, the query did not
+        #    finish in time and we proceed to cancel it (_timeout_worker_timeout). If the query finishes in time, we transition
+        #    to wait for the final result (_timeout_worker_await_result).
+        # 5. The worker prepares the final result set (mostly simplification) and calculates the actual execution time. This
+        #    is wrapped in a _ResultEvent and sent to the main process. Afterwards, the worker proceeds to close the
+        #    backend connection.
+        # 6. The main process receives the _ResultEvent and the timeout executor proceeds to shut down the worker process.
+        # 7. The main process checks and handles the _ResultEvent as necessary.
 
-        # The error pipe is used to send the execution status and any eventual errors back to the main process.
-        # It receives a dict {"success": bool, "exception": Optional[Exception]}
-        error_recv, error_send = mp.Pipe(False)
-
-        # The backend pipe is used to send the worker status back to the main process. It uses the following protocol:
-        # 1. the worker sends the backend PID as soon as it has established a connection to the database server and prepared
-        #    the query for execution
-        # 2. as soon as the query has finished, the worker sends a second message (a dummy value) to indicate this event
-        #    the precise message is an implementation detail and should not be relied upon. It should only be polled.
-        backend_recv, backend_send = mp.Pipe(False)
+        status_recv, status_send = mp.Pipe(False)
 
         query_worker = mp.Process(
             target=_timeout_query_worker,
             args=(query,),
             kwargs={
                 "pg_config": self._pg_fingerprint(),
-                "result_send": result_send,
-                "err_send": error_send,
-                "backend_send": backend_send,
+                "status_pipe": status_send,
                 **kwargs,
             },
         )
 
         query_worker.start()
-
-        # We must wait until the worker has successfully established a backend connection to the database server.
-        # Once this is done, it will start executing the query and we are ready to start the countdown until timeout.
-        # It is important to wait until the backend PID is available to prevent issues with very short timeouts.
-        # If we don't wait here, the timeout might occur before the worker has even connected to the server. In this case
-        # it does not know the backend PID and we cannot abort the query properly. This would result in the watchdog waiting
-        # forever for the backend PID and we would effectively hang.
-        # As a tradeoff, the query receives a small boost in execution time: the worker proceeds immediately with executing
-        # the query after sending the backend PID. However, the main process must wait until it has received the PID before
-        # it can start the timeout. This IPC overhead is used as extra execution time by the query worker. In practice,
-        # this should be negligible.
-        backend_pid: int = backend_recv.recv()
-        query_worker.join(timeout)
-
-        # We perform the timeout check before doing anything else to make sure that the worker process cannot terminate
-        # immediately after the timeout has been reached. E.g., suppose that  the query is still running after calling join().
-        # If we would now proceed to check the error-pipe, the query would have more time to terminate while we are performing
-        # our error checks. This might result in an involuntary increase in the timeout duration. By keeping the timeout check
-        # as close to the join() call as possible, we minimize this risk.
-        #
-        # Instead of calling is_alive() on the worker process (as we did previously), we now check the backend_recv pipe again.
-        # The worker sends a dummy value to this pipe once the query has finished. This way, we also prevent situations where
-        # the query execution itself has finished but the worker is still busy with all post-processing steps (creating result
-        # data, simplifying the result set, ...) when the timeout is triggered.
-        #
-        # In addition, we also have to check whether any errors occured at this point in time. This is done by receiving from
-        # the error pipe. This pipe will always transmit a message once the worker terminates (no matter whether the
-        # termination was normal or due to an error)
-        timed_out = not backend_recv.poll()
-        status_msg: dict | None = None if timed_out else error_recv.recv()
-        if status_msg is not None and not status_msg["success"]:
-            error = status_msg["exception"]
-        else:
-            error = None
-
-        query_worker.terminate()  # terminate in case of timeouts
-        query_worker.join()
-
-        # Now that we know whether the worker timed out or not, we need to make sure that it actually terminated properly
-        # (or timed out). In case of an error, we just propagate it to the client.
-        if error is not None:
-            self._pg_instance._last_query_runtime = math.nan
-            self._abort_backend(backend_pid)
-
-            query_worker.close()
-            result_send.close()
-            result_recv.close()
-            error_send.close()
-            error_recv.close()
-
-            raise error
-
-        # At this point we know that the worker either terminated in time or that it timed out, but it did not error.
-        # Both the timeout and the termination case can be handled in a pretty straightforward manner.
+        result = _timeout_worker_ctl(status_recv, timeout=timeout, executor=self)
+        timed_out = result.status == "timeout"
         if timed_out:
-            self._abort_backend(backend_pid)
-            query_result = None
-            self._pg_instance._last_query_runtime = timeout
-        else:
-            raw_result = result_recv.recv()
-            query_result = raw_result["query_result"]
-            self._pg_instance._last_query_runtime = raw_result["runtime"]
+            query_worker.terminate()
 
+        query_worker.join()
         query_worker.close()
-        result_send.close()
-        result_recv.close()
-        error_send.close()
-        error_recv.close()
+        status_send.close()
+        status_recv.close()
+
+        match result.status:
+            case "success" | "timeout":
+                self._pg_instance._last_query_runtime = result.exec_time
+                query_result = result.result_set
+            case "failure":
+                assert result.error is not None
+                self._pg_instance._last_query_runtime = math.nan
+                raise result.error
+            case _:
+                raise StateError("Unexpected result status", result.status)
 
         if not timed_out and kwargs.get("cache_enabled", False):
             warnings.warn(
