@@ -5861,6 +5861,14 @@ class Select(BaseClause):
             output[projection.target_name] = util.simplify(source_columns)
         return output
 
+    def local_columns(self) -> set[str]:
+        """Get all column names that are defined by the *SELECT* clause and not provided by the underlying tables.
+
+        For example, consider a query ``SELECT R.a, R.b AS foo FROM R``. This query defines the local column *foo*,
+        while *R.a* is provided by the underlying table *R*.
+        """
+        return {target.target_name for target in self.targets if target.target_name}
+
     def accept_visitor(
         self, visitor: ClauseVisitor[VisitorResult], *args, **kwargs
     ) -> VisitorResult:

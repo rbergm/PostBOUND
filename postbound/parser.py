@@ -33,6 +33,7 @@ import collections
 import json
 import warnings
 from collections.abc import Iterable
+from pathlib import Path
 from typing import Literal, Optional, overload
 
 import pglast
@@ -99,6 +100,19 @@ from .qal import (
 
 auto_bind_columns: bool = True
 """Indicates whether the parser should use the database catalog to obtain column bindings."""
+
+
+class ParserWarning(UserWarning):
+    """A warning that is raised during parsing, but does not prevent successful parsing."""
+
+    pass
+
+
+class ParserError(RuntimeError):
+    """An error that is raised when parsing fails."""
+
+    def __init__(self, msg: str) -> None:
+        super().__init__(msg)
 
 
 class SchemaCache:
@@ -269,6 +283,13 @@ class QueryNamespace:
         columns (which arguably they are, just not for our purposes).
         """
 
+        self._produced_columns: set[str] = set()
+        """Column names that are produced by the SELECT clause of this namespace.
+
+        This includes all aliases that are defined in this select clause. These columns cannot be bound to any table in the
+        current context, but have to be bound to the aliased table for subqueries, etc.
+        """
+
         self._column_cache: dict[str, TableReference] = {}
         """A cache to resolve common columns in the current context more quickly."""
 
@@ -291,16 +312,21 @@ class QueryNamespace:
 
         for projection in select_clause:
             if isinstance(projection, (str, ColumnReference)):
-                self._output_shape.append(
+                # this is for temporary tables (CTEs or VALUES) that define their schema
+                colname = (
                     projection.name
                     if isinstance(projection, ColumnReference)
                     else projection
                 )
+                self._output_shape.append(colname)
+                self._produced_columns.add(colname)
                 continue
 
-            # must be BaseProjection
+            # Must be BaseProjection of a SELECT clause
             if projection.target_name:
+                # If we have an alias on the projection, we need to use this alias to reference to the column in the future
                 self._output_shape.append(projection.target_name)
+                self._produced_columns.add(projection.target_name)
                 continue
 
             match projection.expression:
@@ -326,8 +352,14 @@ class QueryNamespace:
                         self._output_shape.extend(defining_nsp._output_shape)
 
                 case _:
-                    # do nothing, this is an expression that cannot be referenced later on!
-                    pass
+                    # Do nothing, this is an expression that cannot be referenced later on!
+                    # Or at least, it is highly system-dependent how the expression would be named.
+                    # For example, Postgres uses the function names for function calls without alias
+                    warnings.warn(
+                        f"Found complex expression without an alias: '{projection.expression}'. "
+                        "Such expressions may currently not be referenced later on.",
+                        category=ParserWarning,
+                    )
 
     def register_table(self, table: TableReference) -> None:
         """Adds a "physical" table to the current namespace.
@@ -354,6 +386,10 @@ class QueryNamespace:
 
         If no table is found , *None* is returned.
         """
+        if key in self._produced_columns:
+            # This is a column that we just "created" in our select clause. It cannot (yet) belong to any table.
+            return None
+
         cached_table = self._column_cache.get(key)
         if cached_table:
             return cached_table
@@ -1156,7 +1192,7 @@ def _pglast_parse_values_cte(
     Returns
     -------
     tuple[ValuesList, list[str]]
-        The parsed *VALUES* expression and the column names.
+        The parsed *VALUES* expression and their column names.
     """
     values: ValuesList = []
     for row in pglast_data["ctequery"]["SelectStmt"]["valuesLists"]:
@@ -2249,11 +2285,31 @@ def parse_query(
     return parsed_query
 
 
-class ParserError(RuntimeError):
-    """An error that is raised when parsing fails."""
+def load_query(
+    path: str | Path,
+    *,
+    accept_set_query: bool = False,
+    include_hints: bool = True,
+    bind_columns: Optional[bool] = None,
+    db_schema: Optional[DatabaseSchema] = None,
+) -> SelectStatement:
+    """Loads and parses a single query from a file.
 
-    def __init__(self, msg: str) -> None:
-        super().__init__(msg)
+    All parameters other than the query path are forwarded to the `parse_query` method.
+
+    See Also
+    --------
+    parse_query : For parameter documentation.
+    """
+    path = Path(path)
+    query_text = path.read_text()
+    return parse_query(
+        query_text,
+        accept_set_query=accept_set_query,
+        include_hints=include_hints,
+        bind_columns=bind_columns,
+        db_schema=db_schema,
+    )
 
 
 def load_table_json(json_data: dict | str) -> Optional[TableReference]:
