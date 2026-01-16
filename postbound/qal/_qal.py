@@ -1461,10 +1461,13 @@ class CaseExpression(SqlExpression):
 
     Parameters:
     -----------
-    cases : Sequence[tuple[AbstractPredicate, SqlExpression]]
+    cases : Sequence[tuple[SqlExpression]]
         A sequence of tuples representing the cases in the case expression. The cases are passed as a sequence rather than a
         dictionary, because the evaluation order of the cases is important. The first case that evaluates to true determines
         the result of the entire case statement.
+    simple_expr: Optional[SqlExpression], optional
+        The expression to evaluate against the cases. This "simple form" compares the `expression` directly against each
+        of the values in `cases`, similar to a switch statement.
     else_expr : Optional[SqlExpression], optional
         The expression to be evaluated if none of the cases match. If no case matches and no else expression is provided, the
         entire case expression should evaluate to NULL.
@@ -1472,31 +1475,52 @@ class CaseExpression(SqlExpression):
 
     def __init__(
         self,
-        cases: Sequence[tuple[AbstractPredicate, SqlExpression]],
+        cases: Sequence[tuple[SqlExpression]],
         *,
+        simple_expr: Optional[SqlExpression] = None,
         else_expr: Optional[SqlExpression] = None,
     ) -> None:
         if not cases:
             raise ValueError("At least one case is required")
         self._cases = tuple(cases)
+        self._simple_expr = simple_expr
         self._else_expr = else_expr
 
-        hash_val = hash((self._cases, self._else_expr))
+        hash_val = hash((self._cases, self._simple_expr, self._else_expr))
         super().__init__(hash_val)
 
-    __slots__ = ("_cases", "_else_expr")
-    __match_args__ = ("cases", "else_expression")
+    __slots__ = ("_cases", "_simple_expr", "_else_expr")
+    __match_args__ = ("cases", "simple_expression", "else_expression")
 
     @property
-    def cases(self) -> Sequence[tuple[AbstractPredicate, SqlExpression]]:
+    def cases(self) -> Sequence[tuple[SqlExpression]]:
         """Get the different cases.
 
         Returns
         -------
-        Sequence[tuple[AbstractPredicate, SqlExpression]]
+        Sequence[tuple[SqlExpression]]
             The cases. At least one case will be present.
         """
         return self._cases
+
+    @property
+    def simple_expression(self) -> Optional[SqlExpression]:
+        """Get the expression to evaluate against the cases.
+
+        This is only set for the "simple form" of the case expression, where the expression is compared directly against
+        the values in the cases. In this form, each case has to be a plain value instead of a full predicate, similar to a
+        switch statement:
+
+        .. code-block:: sql
+            SELECT  CASE R.a
+                        WHEN 1 THEN 'one'
+                        WHEN 2 THEN 'two'
+                        ELSE 'other'
+                    END AS foo
+            FROM R;
+
+        """
+        return self._simple_expr
 
     @property
     def else_expression(self) -> Optional[SqlExpression]:
@@ -1523,10 +1547,13 @@ class CaseExpression(SqlExpression):
             list(pred.iterexpressions()) + list(expr.iterchildren())
             for pred, expr in self.cases
         )
+        expression_children = (
+            self.simple_expression.iterchildren() if self.simple_expression else []
+        )
         else_children = (
             self.else_expression.iterchildren() if self.else_expression else []
         )
-        return case_children + else_children
+        return case_children + expression_children + else_children
 
     def accept_visitor(
         self, visitor: SqlExpressionVisitor[VisitorResult], *args, **kwargs
@@ -1545,10 +1572,12 @@ class CaseExpression(SqlExpression):
         return (
             isinstance(other, type(self))
             and self.cases == other.cases
+            and self.simple_expression == other.simple_expression
             and self.else_expression == other.else_expression
         )
 
     def __str__(self) -> str:
+        expression = f"{self.simple_expression} " if self.simple_expression else ""
         cases_str = " ".join(
             f"WHEN {pred} THEN {self._braketify(expr)}" for pred, expr in self.cases
         )
@@ -1557,7 +1586,7 @@ class CaseExpression(SqlExpression):
             if self.else_expression
             else ""
         )
-        return f"CASE {cases_str}{else_str} END"
+        return f"CASE {expression}{cases_str}{else_str} END"
 
 
 class QuantifierExpression(SqlExpression):

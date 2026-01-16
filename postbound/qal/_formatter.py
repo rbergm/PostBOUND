@@ -141,13 +141,16 @@ class FormattingSubqueryExpression(SubqueryExpression):
 
 
 class FormattingCaseExpression(CaseExpression):
-    def __init__(self, cases, *, else_expr, indentation: int) -> None:
-        super().__init__(cases, else_expr=else_expr)
+    def __init__(self, cases, *, simple_expr, else_expr, indentation: int) -> None:
+        super().__init__(cases, simple_expr=simple_expr, else_expr=else_expr)
         self._indentation = indentation
 
     def __str__(self) -> str:
         case_indentation = " " * (self._indentation + 2)
-        case_block_entries: list[str] = ["CASE"]
+        preamble = (
+            f"CASE {self.simple_expression}" if self.simple_expression else "CASE"
+        )
+        case_block_entries = [preamble]
         for case, value in self.cases:
             case_block_entries.append(f"{case_indentation}WHEN {case} THEN {value}")
         if self.else_expression is not None:
@@ -656,7 +659,7 @@ def _expression_prettifier(
                 inline_hint_block=inline_hints,
                 indentation=indentation,
             )
-        case CaseExpression(cases, else_expr):
+        case CaseExpression(cases, simple_expr, else_expr):
             replaced_cases: list[tuple[AbstractPredicate, SqlExpression]] = []
             for condition, result in cases:
                 replaced_condition = _expression_prettifier(
@@ -672,6 +675,16 @@ def _expression_prettifier(
                     indentation=indentation + 2,
                 )
                 replaced_cases.append((replaced_condition, replaced_result))
+            replaced_simple = (
+                _expression_prettifier(
+                    simple_expr,
+                    flavor=flavor,
+                    inline_hints=inline_hints,
+                    indentation=indentation + 2,
+                )
+                if simple_expr
+                else None
+            )
             replaced_else = (
                 _expression_prettifier(
                     else_expr,
@@ -683,7 +696,10 @@ def _expression_prettifier(
                 else None
             )
             return FormattingCaseExpression(
-                replaced_cases, else_expr=replaced_else, indentation=indentation
+                replaced_cases,
+                simple_expr=replaced_simple,
+                else_expr=replaced_else,
+                indentation=indentation,
             )
         case CastExpression(casted_expression, typ, params, array):
             replaced_cast = _expression_prettifier(

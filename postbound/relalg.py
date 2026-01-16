@@ -3158,11 +3158,18 @@ def _collect_all_expressions(
 def _determine_expression_phase(expression: SqlExpression) -> EvaluationPhase:
     """Calculates the evaluation phase during which an expression can be evaluated at the earliest."""
     match expression:
-        case ColumnExpression():
+        case ColumnExpression() | StaticValueExpression():
             return EvaluationPhase.BaseTable
         case FunctionExpression() if expression.is_aggregate():
             return EvaluationPhase.PostAggregation
-        case FunctionExpression() | MathExpression() | CastExpression():
+        case (
+            FunctionExpression()
+            | MathExpression()
+            | CastExpression()
+            | CaseExpression()
+            | QuantifierExpression()
+            | ArrayExpression()
+        ):
             own_phase = (
                 EvaluationPhase.Join
                 if len(expression.tables()) > 1
@@ -3182,7 +3189,7 @@ def _determine_expression_phase(expression: SqlExpression) -> EvaluationPhase:
         case StarExpression() | StaticValueExpression():
             # TODO: should we rather raise an error in this case?
             return EvaluationPhase.BaseTable
-        case WindowExpression() | CaseExpression() | StaticValueExpression():
+        case WindowExpression():
             # these expressions can currently only appear within SELECT clauses
             return EvaluationPhase.PostAggregation
         case _:
