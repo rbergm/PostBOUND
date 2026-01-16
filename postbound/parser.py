@@ -742,6 +742,13 @@ def _pglast_parse_case(
         )
         cases.append((current_case, current_result))
 
+    if "arg" in pglast_data:
+        simple_expr = _pglast_parse_expression(
+            pglast_data["arg"], namespace=namespace, query_txt=query_txt
+        )
+    else:
+        simple_expr = None
+
     if "defresult" in pglast_data:
         default_result = _pglast_parse_expression(
             pglast_data["defresult"], namespace=namespace, query_txt=query_txt
@@ -749,7 +756,7 @@ def _pglast_parse_case(
     else:
         default_result = None
 
-    return CaseExpression(cases, else_expr=default_result)
+    return CaseExpression(cases, simple_expr=simple_expr, else_expr=default_result)
 
 
 def _pglast_parse_expression(

@@ -1531,6 +1531,13 @@ def rename_columns_in_expression(
             )
             for condition, result in expression.cases
         ]
+        renamed_simple = (
+            rename_columns_in_expression(
+                expression.simple_expression, available_renamings
+            )
+            if expression.simple_expression
+            else None
+        )
         renamed_else = (
             rename_columns_in_expression(
                 expression.else_expression, available_renamings
@@ -1538,7 +1545,9 @@ def rename_columns_in_expression(
             if expression.else_expression
             else None
         )
-        return CaseExpression(renamed_cases, else_expr=renamed_else)
+        return CaseExpression(
+            renamed_cases, simple_expr=renamed_simple, else_expr=renamed_else
+        )
     elif isinstance(expression, QuantifierExpression):
         renamed_child = rename_columns_in_expression(
             expression.expression, available_renamings
@@ -2128,10 +2137,18 @@ class _TableReferenceRenamer(
             renamed_value = value.accept_visitor(self)
             renamed_cases.append((renamed_condition, renamed_value))
 
+        renamed_simple = (
+            expr.simple_expression.accept_visitor(self)
+            if expr.simple_expression
+            else None
+        )
+
         renamed_default = (
             expr.else_expression.accept_visitor(self) if expr.else_expression else None
         )
-        return CaseExpression(renamed_cases, else_expr=renamed_default)
+        return CaseExpression(
+            renamed_cases, simple_expr=renamed_simple, else_expr=renamed_default
+        )
 
     def visit_quantifier_expr(
         self,
