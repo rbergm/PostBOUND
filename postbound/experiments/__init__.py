@@ -1,16 +1,18 @@
-"""Contains utilities to conveniently execute individual queries or entire workloads and to evaluate their results.
+"""Contains simple tools to generate query workloads for experiments.
 
-This module provides direct access to some frequently-used functionality, mostly related to workload modelling and execution.
-Other modules need to be imported explicitly.
-
-Specifically, this package provides the following modules:
-
-- `analysis` provides a loose collection of utilities and formulas somewhat related to query optimization
 - `querygen` provides a simple random query generator
 - `ceb` provides an implementation of the Cardinality Estimation Benchmark workload generator
-- `interactive` contains a simple interactive join order optimizer
 """
 
+import warnings
+
 import lazy_loader
+
+warnings.warn(
+    "The 'postbound.experiments' module is deprecated and will be moved to the "
+    "separate optimizer repository with version 0.21.0",
+    category=DeprecationWarning,
+    stacklevel=2,
+)
 
 __getattr__, __dir__, __all__ = lazy_loader.attach_stub(__name__, __file__)

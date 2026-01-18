@@ -13,6 +13,7 @@ import itertools
 import json
 import math
 import random
+import warnings
 from collections.abc import Iterable, Sequence
 from typing import Any, Optional
 
@@ -26,6 +27,13 @@ from .._hints import (
 )
 from .._qep import QueryPlan
 from .._stages import PhysicalOperatorSelection
+
+warnings.warn(
+    "The 'postbound.opt.ues' module is deprecated and will be moved to the "
+    "separate optimizer repository with version 0.21.0",
+    category=DeprecationWarning,
+    stacklevel=2,
+)
 
 # TODO: there should be more documentation of the technical design of the QEP-S structure
 # More specifically, this documentation should describe the strategies to integrate subquery nodes, and the QEP-S traversal
