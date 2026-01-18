@@ -30,6 +30,7 @@ import copy
 import math
 import operator
 import typing
+import warnings
 from collections.abc import Iterable
 from typing import Generic, Optional
 
@@ -65,6 +66,13 @@ from ..validation import (
     merge_checks,
 )
 from ._joingraph import JoinGraph, JoinPath
+
+warnings.warn(
+    "The 'postbound.opt.ues' module is deprecated and will be moved to the "
+    "separate optimizer repository with version 0.21.0",
+    category=DeprecationWarning,
+    stacklevel=2,
+)
 
 ColumnType = typing.TypeVar("ColumnType")
 """The type of the columns for which statistics are generated."""
