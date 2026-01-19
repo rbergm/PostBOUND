@@ -46,7 +46,7 @@ Contents
   core/index
   advanced/index
   cookbook
-  API <generated/modules>
+  api/index
 
 .. important ::
 

@@ -5,6 +5,7 @@ The current design of the presets is targeted at the `MultiStageOptimizationPipe
 
 from __future__ import annotations
 
+import warnings
 from typing import Literal, Optional
 
 from .. import parser
@@ -16,6 +17,15 @@ from .._pipelines import (
 from .._stages import OptimizationPreCheck
 from ..db import Database, DatabasePool
 from . import native, ues
+
+warnings.warn(
+    warnings.warn(
+        "The 'postbound.opt.presets' module is deprecated and will be moved to the "
+        "separate optimizer repository with version 0.21.0",
+        category=DeprecationWarning,
+        stacklevel=2,
+    )
+)
 
 
 def apply_standard_system_options(database: Optional[Database] = None) -> None:

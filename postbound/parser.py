@@ -467,6 +467,7 @@ class QueryNamespace:
             The name of the namespace. This is only relevant for CTEs and subqueries in the FROM clause.
         source : Literal["cte", "subquery", "setop", "values", "temporary"]
             The type of nested query. This value is used to determine the use of the subquery namespace as follows:
+
             - "cte": The namespace is a CTE that is part of the query.
             - "subquery": The namespace is a subquery in the FROM clause.
             - "setop": The namespace is part of a set operation. No alias is required, but the namespace might be used to
@@ -474,6 +475,7 @@ class QueryNamespace:
             - "values": The namespace is a temporary table that is part of a VALUES clause.
             - "temporary": The namespace is a temporary table that is part of a subquery which is not used in the FROM clause,
               e.g. as a filter condition.
+
         """
         if source != "temporary":
             self._invalidate_column_cache()

@@ -45,17 +45,18 @@ Simply install the framework using pip:
     It is probably best to install PostBOUND in a new Python virtual environment to avoid dependency hell.
 
 Afterwards, you need to setup and configure the database instances on your own.
-For Postgres, this includes installing the `pg_hint_plan <https://github.com/ossc-db/pg_hint_plan>`__ extension to enable
-query hinting (or `pg_lab <https://github.com/rbergm/pg_lab>`__).
+For Postgres, this includes installing the `pg_hint_plan <https://github.com/ossc-db/pg_hint_plan>`_ extension to enable
+query hinting (or `pg_lab <https://github.com/rbergm/pg_lab>`_).
 Finally, create a connection file that contains the connection string to connect to your database.
-See the documentation of :func:`postgres.connect() <postbound.db.postgres.connect>` for details.
+See the documentation of :func:`postgres.connect() <postbound.postgres.connect>` for details.
 
 If you want to use DuckDB, **do not install the official DuckDB Python package from PyPI**.
 The reason is that DuckDB does not provide any hinting functionality out-of-the-box.
-Therefore, we developed `quacklab <https://github.com/rbergm/quacklab>`__, a fork of DuckDB that adds hinting capabilities
-very similar to pg_lab.
-Follow the installation instructions from the quacklab repository and make sure to install the resulting Python package
-into the same environment where PostBOUND is installed.
+Therefore, we developed `quacklab <https://github.com/rbergm/quacklab>`_, a fork of DuckDB that adds hinting capabilities
+very similar to pg_lab. It has Python bindings available via
+`quacklab-python <https://github.com/rbergm/quacklab-python>`_.
+Follow the installation instructions from the quacklab-python repository and make sure to install the resulting Python
+package into the same environment where PostBOUND is installed.
 
 
 Manual Installation
@@ -88,8 +89,8 @@ environment. Notably, a manual installation of PostBOUND and a Docker-based inst
 Basically, there are three different options to setup a Postgres server:
 
 1. Installing Postgres on your own using the package manager or a binary distribution. This requires you to also install
-   the `pg_hint_plan <https://github.com/ossc-db/pg_hint_plan>`__ extension to enable query hinting.
-2. Installing Postgres using the `pg_lab <https://github.com/rbergm/pg_lab>`__ build tools. This provides the most complete
+   the `pg_hint_plan <https://github.com/ossc-db/pg_hint_plan>`_ extension to enable query hinting.
+2. Installing Postgres using the `pg_lab <https://github.com/rbergm/pg_lab>`_ build tools. This provides the most complete
    hinting functionality, e.g. with support for base table cardinalities and parallel query plans.
 3. Using the build tools that are shipped with PostBOUND. These create a local Postgres server by compiling from source and
    take care of setting up all required extensions (such as *pg_hint_plan*). The remainder of this section documents this
@@ -168,10 +169,10 @@ Once again, you can use the ``--help`` option to view the available options (inc
 parameters).
 
 One last question is how to connect to the database server from within PostBOUND.
-Internally, PostBOUND uses the `psycopg <https://www.psycopg.org/>`__ library to connect to Postgres.
+Internally, PostBOUND uses the `psycopg <https://www.psycopg.org/>`_ library to connect to Postgres.
 You can use the ``postgres-psycopg-setup.sh`` script to create a connection file with the necessary parameters to connect
 to the Postgres.
-See the documentation of :func:`postgres.connect() <postbound.db.postgres.connect>` for more details on the config file
+See the documentation of :func:`postgres.connect() <postbound.postgres.connect>` for more details on the config file
 and alternative ways to establish a connection.
 
 Now, you should be able to connect to the Postgres server using the following code:
@@ -202,20 +203,18 @@ See the ``--help`` options for more details.
 .. tip::
 
     DuckDB does not provide any hinting functionality out-of-the-box.
-    Therefore, the setup creates a special version of DuckDB called `quacklab <https://github.com/rbergm/quacklab>`__,
+    Therefore, the setup creates a special version of DuckDB called `quacklab <https://github.com/rbergm/quacklab>`_,
     that adds basic hinting capabilities to DuckDB.
     This is also the reason why the setup compiles DuckDB from source instead of using a binary distribution.
-
-Once the DuckDB compilation is completed, you can include the _duckdb_ executable in your *PATH* by sourcing the
-``duckdb-load-env.sh`` script.
-Lastly, you can import popular benchmarks like JOB or Stats using the workload setup scripts:
+    Sadly, the official build system of the Python extension does not include the DuckDB binary itself. If you want to
+    use the DuckDB CLI with hinting capabilities, you also need to compile quacklab in addition to quacklab-python.
 
 .. code-block:: bash
 
+    source pb-venv/bin/activate  # make sure to activate the venv which contains quacklab
     cd db-support/duckdb
     ./duckdb-setup.sh
-    . ./duckdb-load-env.sh
-    ./workload-job-setup.sh  # this requires the duckdb executable to be on your PATH
+    ./workload-setup.py --workload imdb
 
 
 Docker Installation
@@ -228,7 +227,7 @@ Optionally, you can also obtain an optimized Postgres server configuration and s
 
 To create the Docker image, simply run ``docker build`` in the main PostBOUND directory.
 You can specify the timezone of the image using the ``TIMEZONE`` ``--build-arg`` (see below).
-You can customize the container with the following options via ``--env`` parameters (with the exception of _TIMEZONE_,
+You can customize the container with the following options via ``--env`` parameters (with the exception of *TIMEZONE*,
 which must be specified as a `--build-arg` when creating the image).
 Please note that the *run* command will invoke a lot of setup logic.
 Hence, it will take a substantial amount of time to complete the installation (think hours).

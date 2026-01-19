@@ -264,6 +264,7 @@ class RelNode(abc.ABC):
         default implementation:
 
         .. code-block:: python
+
             params = {param: val for param, val in locals().items() if param != "self" and not param.startswith("__")}
             return super().mutate(**params)
 

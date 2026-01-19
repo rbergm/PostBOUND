@@ -10,10 +10,10 @@ Databases serve two main purposes in PostBOUND:
 
 Both use cases are described in this document. For specifics on the Postgres interaction, see the
 :doc:`separate document <postgres>`.
-All of the functionality is handled by the central :class:`~postbound.db.Database` interface. Specific database systems
+All of the functionality is handled by the central :class:`~postbound.Database` interface. Specific database systems
 implement this interface to provide connections for their respective systems. The idea behind this decision is to allow
 researchers to implement their algorithms independently of the underlying DBMS since access to statistics, etc. is unified.
-Each instance of the :class:`~postbound.db.Database` class is connected to an actual database server.
+Each instance of the :class:`~postbound.Database` class is connected to an actual database server.
 
 .. note::
 
@@ -43,8 +43,8 @@ Database Backends
 Query execution
 ---------------
 
-Queries can be executed via the :func:`~postbound.db.Database.execute_query` method. This method takes an
-:class:`~postbound.qal.SqlQuery` or a raw query string as input and provides the result set of the query as output.
+Queries can be executed via the :func:`~postbound.Database.execute_query` method. This method takes an
+:class:`~postbound.SqlQuery` or a raw query string as input and provides the result set of the query as output.
 By default, the database tries to simplify the result set to make it easier to work with. Specifically, if the query
 returns just a single row with a single column, the result is returned as a scalar value instead of a nested list. See the
 method documentation for more details on the simplification logic.
@@ -60,9 +60,9 @@ This behavior can be controlled with the ``raw`` parameter.
 
 Since the underlying database is usually assumed to be static, you can use a query cache to prevent repeated execution of
 non-benchmark queries. This can be especially useful when running complex queries to calculate advanced statistics.
-Caching can be controlled either globally via the :attr:`~postbound.db.Database.cache_enabled` property, or by setting
-the parameter on :func:`~postbound.db.Database.execute_query` calls. See the documentation on
-:class:`~postbound.db.Database` for more details.
+Caching can be controlled either globally via the :attr:`~postbound.Database.cache_enabled` property, or by setting
+the parameter on :func:`~postbound.Database.execute_query` calls. See the documentation on
+:class:`~postbound.Database` for more details.
 
 If the query execution fails for some reason, a :exc:`~postbound.db.DatabaseServerError` or
 :exc:`~postbound.db.DatabaseUserError` is raised - depending on the error's cause.
@@ -78,7 +78,7 @@ the actual database system. Its behavior is entirely specific to the database. H
 itself. Instead, the hinting interface provides a transformed version of the query depending on the database system's
 requirements.
 
-The hint service of each database can be accessed via :meth:`~postbound.db.Database.hinting`.
+The hint service of each database can be accessed via :meth:`~postbound.Database.hinting`.
 
 
 Optimizer interaction
@@ -86,12 +86,12 @@ Optimizer interaction
 
 Each database provides simple access to some core optimizer functionality as part of the
 :class:`~postbound.db.OptimizerInterface`. This includes retrieving query plans or estimates for cost and cardinalities.
-The optimizer functionality can be accessed by calling :meth:`~postbound.db.Database.optimizer`.
+The optimizer functionality can be accessed by calling :meth:`~postbound.Database.optimizer`.
 
 .. tip::
 
     To obtain the cost or cardinality estimate for an arbitrary query plan, combine the :ref:`hinting-interface` with the
-    optimizer interface. This can be further combined with :func:`~postbound.qal.transform.extract_query_fragment` to
+    optimizer interface. This can be further combined with :func:`~postbound.transform.extract_query_fragment` to
     get estimates or plans for subqueries.
 
 .. _database-infrastructure:
@@ -100,7 +100,7 @@ Schema access
 -------------
 
 Information about tables, columns, indexes, datatypes, etc. of the database are captured in the
-:class:`~postbound.db.DatabaseSchema`. Use :meth:`~postbound.db.Database.schema` to get the schema of the current database.
+:class:`~postbound.db.DatabaseSchema`. Use :meth:`~postbound.Database.schema` to get the schema of the current database.
 Most of the schema information is accessible via dedicated methods, such as :meth:`~postbound.db.DatabaseSchema.tables` or
 :meth:`~postbound.db.DatabaseSchema.datatype`. You can also access a compact representation of the schema via
 :meth:`~postbound.db.DatabaseSchema.as_graph`. This method provides a
@@ -115,7 +115,7 @@ Statistics catalog
 
 The :class:`~postbound.db.DatabaseStatistics` serves as a unified statistics catalog. It is the central repository for all
 base statistics that are typically maintained by database systems. The catalog can be used to retrieve table cardinalities,
-most common values, etc. Use :meth:`~postbound.db.Database.statistics` to access the them.
+most common values, etc. Use :meth:`~postbound.Database.statistics` to access the them.
 
 One important design consideration of the statistics catalog is that different systems maintain vastly different kinds of
 statistics. For example, Postgres does not keep track of minimum or maximum values for columns, but derives them from the
@@ -154,7 +154,7 @@ In addition to the core interfaces, the database module also provides some conve
 databases.
 
 The :class:`~postbound.db.DatabasePool` is used to keep track of active database connections. It is mostly used to quickly
-get :class:`~postbound.db.Database` instances for the currently active database system. Throughout PostBOUND's source code
+get :class:`~postbound.Database` instances for the currently active database system. Throughout PostBOUND's source code
 you will frequently see the following pattern in function signatures: ``db: Optional[Database] = None``. If no database is
 provided, the current database is inferred from the database pool. This allows you to just safe some typing.
 You can also use :func:`~postbound.db.current_database` to retrieve the active database instance, provided that there is
@@ -166,11 +166,11 @@ provides means to simulate query execution on a perfectly pre-warmed database (i
 shared buffer). This is achieved via the :meth:`~postbound.db.PrewarmingSupport.prewarm_tables` method. Since not all
 database provide this kind of functionality and it is also not a core feature of the database interface, this method is
 part of an extra :class:`~postbound.db.PrewarmingSupport` protocol. Notably, the
-:class:`~postbound.db.postgres.PostgresInterface` provides full prewarming support.
+:class:`~postbound.postgres.PostgresInterface` provides full prewarming support.
 For other systems, you can use simple ``isinstance`` checks to see if the database supports prewarming.
 
 .. tip::
 
     `pg_lab <https://github.com/rbergm/pg_lab>`_-based installations of Postgres also provide support for proper cold
-    starts in Postgres. The :class:`~postbound.db.postgres.PostgresInterface` has a corresponding
-    :meth:`~postbound.db.postgres.PostgresInterface.cooldown_tables` method.
+    starts in Postgres. The :class:`~postbound.postgres.PostgresInterface` has a corresponding
+    :meth:`~postbound.postgres.PostgresInterface.cooldown_tables` method.

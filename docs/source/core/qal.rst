@@ -20,7 +20,7 @@ In the next sections, we are going to use the following example query:
         ORDER BY avg(p.Score) DESC
     """
 
-You can parse this query into a proper :class:`~postbound.qal.SqlQuery` object using the :func:`~postbound.qal.parse_query`
+You can parse this query into a proper :class:`~postbound.SqlQuery` object using the :func:`~postbound.parse_query`
 function:
 
 .. ipython:: python
@@ -34,14 +34,14 @@ Basic query structure
 
 PostBOUND uses a query abstraction that consists of three main components:
 
-1. The top-level :class:`~postbound.qal.SqlQuery` object, which represents an entire, ready-to-run SQL query
+1. The top-level :class:`~postbound.SqlQuery` object, which represents an entire, ready-to-run SQL query
 2. Each query consists of one or multiple clauses, such as *SELECT*, *FROM*, *WHERE*, etc. These are represented by
    subclasses of the abstract :class:`~postbound.qal.BaseClause`.
 3. Clauses are composed of expressions. These can be simple predicates, function calls, or even subqueries (which in turn
-   contain :class:`~postbound.qal.SqlQuery` instances). Expressions are represented by subclasses of the abstract
+   contain :class:`~postbound.SqlQuery` instances). Expressions are represented by subclasses of the abstract
    :class:`~postbound.qal.SqlExpression`.
 
-Use the :meth:`~postbound.qal.SqlQuery.ast` method to inspect the structure of a query. For example, our example query
+Use the :meth:`~postbound.SqlQuery.ast` method to inspect the structure of a query. For example, our example query
 looks like this:
 
 .. ipython:: python
@@ -66,7 +66,7 @@ Working with queries
 An important design decision of our query abstraction is that all queries are **immutable**.
 This means that once created, a query cannot be changed anymore.
 Instead, you need to create a new query object that contains your desired changes.
-The :mod:`~postbound.qal.transform` module has a large suite of functions that make these updates much easier:
+The :mod:`~postbound.transform` module has a large suite of functions that make these updates much easier:
 
 .. ipython:: python
 
@@ -170,29 +170,29 @@ Many query optimizers derive **equivalence classes** from the query predicates t
 explicitly listed in the query. You can do the same (currently somewhat clunkily) by adding all predicates that can be
 derived from equivalence classes to the query. Use :func:`~postbound.qal.determine_join_equivalence_classes` and
 :func:`~postbound.qal.generate_predicates_for_equivalence_classes` or the shorthand transformation
-:func:`~postbound.qal.transform.add_ec_predicates`.
+:func:`~postbound.transform.add_ec_predicates`.
 
 
-DML and DDL queries
+DML and DDL queries 
 -------------------
 
-Sadly, the :class:`~postbound.qal.SqlQuery` abstraction is currently limited to plain ``SELECT`` queries.
+Sadly, the :class:`~postbound.SqlQuery` abstraction is currently limited to plain ``SELECT`` queries.
 Since large portions of the code base rely on this assumption, it is unlikely to change in the future. This also applies to
 queries with set operations such as ``UNION`` or ``INTERSECT``. These are handled by a dedicated
-:class:`~postbound.qal.SetQuery`. See the class documentations for more details on how to use them.
+:class:`~postbound.SetQuery`. See the class documentations for more details on how to use them.
 
 If, at some point in the future, PostBOUND has proper support for DML or DDL queries, these will properly be represented
 by separate query classes similar to the :class:`~postbound.qal.SetQuery`. To make clear that API functions can work with
-queries beyond plain ``SELECT``, we use the :type:`SqlStatement <postbound.qal.SqlStatement>`. If you only want
-``SELECT`` queries but are fine with set operations, use :type:`SelectStatement <postbound.qal.SelectStatement>`.
+queries beyond plain ``SELECT``, we use the :class:`~postbound.qal.SqlStatement`. If you only want
+``SELECT`` queries but are fine with set operations, use :class:`~postbound.qal.SelectStatement`.
 
 
 Relational algebra
 ------------------
 
-PostBOUND also provides a simple version of relational algebra. Check out the :mod:`postbound.qal.relalg` module for more
-details. In short, use :func:`~postbound.qal.relalg.parse_relalg` to convert an :class:`~postbound.qal.SqlQuery` to an
-equivalent tree of :class:`~postbound.qal.relalg.RelNode` instances.
+PostBOUND also provides a simple version of relational algebra. Check out the :mod:`postbound.relalg` module for more
+details. In short, use :func:`~postbound.relalg.parse_relalg` to convert an :class:`~postbound.SqlQuery` to an
+equivalent tree of :class:`~postbound.relalg.RelNode` instances.
 
 .. note::
 
