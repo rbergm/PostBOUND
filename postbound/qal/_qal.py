@@ -9,7 +9,16 @@ import numbers
 import warnings
 from collections.abc import Callable, Collection, Iterable, Iterator, Sequence
 from types import NoneType
-from typing import Any, Generic, Literal, Optional, Type, TypeVar, Union, overload
+from typing import (
+    Any,
+    Generic,
+    Literal,
+    Optional,
+    Type,
+    TypeVar,
+    Union,
+    overload,
+)
 
 import networkx as nx
 
@@ -1512,6 +1521,7 @@ class CaseExpression(SqlExpression):
         switch statement:
 
         .. code-block:: sql
+
             SELECT  CASE R.a
                         WHEN 1 THEN 'one'
                         WHEN 2 THEN 'two'
@@ -5713,7 +5723,7 @@ class Select(BaseClause):
 
     @staticmethod
     def create_for(
-        columns: Iterable[ColumnReference],
+        columns: ColumnReference | Iterable[ColumnReference],
         *,
         distinct: Iterable[SqlExpression] | bool = False,
     ) -> Select:
@@ -5723,7 +5733,7 @@ class Select(BaseClause):
 
         Parameters
         ----------
-        columns : Iterable[ColumnReference]
+        columns : ColumnReference | Iterable[ColumnReference]
             The columns that should form the projection
         distinct : Iterable[SqlExpression] | bool, optional
             Whether a duplicate elimination should be performed. By default, this is *False* indicating no duplicate
@@ -5735,6 +5745,7 @@ class Select(BaseClause):
         Select
             The clause
         """
+        columns = util.enlist(columns)
         target_columns = [BaseProjection.column(column) for column in columns]
         return Select(target_columns, distinct=distinct)
 

@@ -9,7 +9,7 @@ Contents
 --------
 
 .. toctree::
-   :maxdepth: 2
+   :maxdepth: 1
 
    hinting
    qal
@@ -21,21 +21,22 @@ Contents
 Package structure
 -----------------
 
-===========================================  ==================================================================================================================================================================================================================================================================================================================================================================================
-Package                                      Description
-===========================================  ==================================================================================================================================================================================================================================================================================================================================================================================
-*root*                                       The main entry point into PostBOUND as well as fundamental data structures like :class:`OptimizationPipeline <postbound.OptimizationPipeline>` or :class:`QueryPlan <postbound.optimizer.QueryPlan>` are located here. See :doc:`optimization` for details.
-:mod:`optimizer <postbound.optimizer>`       Provides the optimizer-related data structures such as :class:`JoinGraph <postbound.optimizer.JoinGraph>`, :class:`JoinOrder <postbound.optimizer.JoinOrder>`, or :class:`PhysicalOperatorAssignment <postbound.optimizer.PhysicalOperatorAssignment>`, as well as :doc:`existing optimization algorithms <../advanced/existing-strategies>`. See :doc:`optimization` for details.
-:mod:`qal <postbound.qal>`                   Home of the query abstraction used throughout PostBOUND, as well as logic to parse and transform query instances. See :doc:`qal` for details.
-:mod:`db <postbound.db>`                     Contains all parts of PostBOUND that concern database interaction. That includes retrieving data from different database systems, as well as generating optimized queries to execute on the database system. Notably, the :class:`Database <postbound.db.Database>` interface is defined here. See :doc:`databases` for details.
-:mod:`experiments <postbound.experiments>`   All tools to conveniently load benchmarks (:mod:`workloads <postbound.experiments.workloads>`) and to measure their execution time for different optimization settings are located here (from the :mod:`executor <postbound.experiments.executor>` module). See the package documentation for more details.
-:mod:`util <postbound.util>`                 Utilities that are not really specific to query optimization find their home here. See the package documentation for more details.
-:mod:`vis <postbound.vis>`                   Contains utilities to visualize different concepts in query optimization (join orders, join graphs, query execution plans, ...).
-===========================================  ==================================================================================================================================================================================================================================================================================================================================================================================
-
-On a high-level, these packages interact as follows:
-
-.. figure:: ../../figures/postbound-package-overview.svg
-   :align: center
-
-   Interaction between the main PostBOUND packages.
+==============================  =============================================================================================================================================================================================================================================================================================
+Package                         Description
+==============================  =============================================================================================================================================================================================================================================================================================
+*root*                          The main entry point into PostBOUND as well as fundamental data structures like :class:`OptimizationPipeline <postbound.OptimizationPipeline>` or :class:`QueryPlan <postbound.QueryPlan>` are located here. See :doc:`optimization` for details.
+:mod:`~postbound.qal`           Home of the query abstraction used throughout PostBOUND. See :doc:`qal` for details.
+:mod:`~postbound.parser`        Contains our SQL parser
+:mod:`~postbound.transform`     Collects different utilities to modify SQL queries
+:mod:`~postbound.relalg`        Provides a simple relational algebra implementation to represent SQL queries.
+:mod:`~postbound.db`            Contains all parts of PostBOUND that concern database interaction. See :doc:`databases` for details.
+:mod:`~postbound.postgres`      Implements the database backend for PostgreSQL.
+:mod:`~postbound.duckdb`        Implements the database backend for DuckDB.
+:mod:`~postbound.mysql`         Provides a simple database backend implementation for MySQL. MySQL is currently provided on a best-effort basis and not an official backend. Not all features are implemented.
+:mod:`~postbound.workloads`     Provides the :class:`~postbound.Workload` interface to represent query workloads and routines to load commonly-used benchmarks like JOB or Stats.
+:mod:`~postbound.bench`         Contains benchmarking utilities to measure the performance of different optimizers and optimization settings. See :doc:`benchmarking` for details.
+:mod:`~postbound.opt`           Provides utilities to aid with optimizer development like :class:`~postbound.opt.JoinGraph`, basic optimization algorithms like :class:`~postbound.opt.dynprog.DynamicProgrammingEnumerator`, and additional utilities. See :doc:`../advanced/existing-strategies` for available optimizers.
+:mod:`~postbound.validation`    Provides the basic definitions to check the applicability of optimizer prototypes to different queries and database systems. In addition, some commonly-used validations are implemented here.
+:mod:`~postbound.util`          Utilities that are not really specific to query optimization find their home here. See the package documentation for more details.
+:mod:`~postbound.vis`           Contains utilities to visualize different concepts in query optimization (join orders, join graphs, query execution plans, ...).
+==============================  =============================================================================================================================================================================================================================================================================================

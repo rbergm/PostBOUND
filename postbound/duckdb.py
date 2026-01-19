@@ -421,6 +421,17 @@ def _bind_node_to_table(
 def parse_duckdb_plan(
     raw_plan: dict | str, *, query: Optional[SqlQuery] = None
 ) -> QueryPlan:
+    """Parses a DuckDB query plan from its JSON representation.
+
+    The query can be supplied to help with binding scan nodes to their corresponding tables (see Notes).
+
+    Notes
+    -----
+    Once central limitation of DuckDB's EXPLAIN plans is that they do not contain table aliases. Thus, if a table is
+    referenced multiple times in a query, we cannot unambiguously bind scan nodes to their corresponding table. We employ
+    some heuristics (e.g. trying to match filter predicates) to resolve this ambiguity, but there is no guarantee that this
+    always works correctly.
+    """
     if isinstance(raw_plan, str):
         raw_plan = json.loads(raw_plan)
 
@@ -823,6 +834,20 @@ def connect(
     refresh: bool = False,
     private: bool = False,
 ) -> DuckDBInterface:
+    """Connects to a DuckDB database file.
+
+    Parameters
+    ----------
+    name : str, optional
+        A name to identify the current connection if multiple connections to different DuckDB instances should be
+        maintained. This is used to register the instance on the `DatabasePool`. Defaults to *duckdb*.
+    refresh : bool, optional
+        If true, a new connection to the database will always be established, even if a connection to the same database is
+        already pooled. The registration key will be suffixed to prevent collisions. By default, the current connection is
+        re-used. If that is the case, no further information (e.g. config strings) is read and only the `name` is accessed.
+    private : bool, optional
+        If true, skips registration of the new instance on the `DatabasePool`. Registration is performed by default.
+    """
     db_pool = DatabasePool.get_instance()
     if name in db_pool and not refresh:
         return _reconnect(name, pool=db_pool)

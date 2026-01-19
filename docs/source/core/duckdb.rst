@@ -36,14 +36,15 @@ The entire setup process might take some time, so feel free to grab a cup of cof
 Once the setup is complete, you can create commonly-used database instances such as IMDB/JOB or Stats using the
 ``workload-setup.py`` script. This script must be executed while the virtual environment containing the quacklab
 installation is active.
-
+The workload setup shell scripts serve the same purpose but require the DuckDB executable to be available on your *PATH*.
+This is currently not the case when building quacklab due to limitations of the build system.
 
 Usage
 -----
 
 The DuckDB backend is available from the :mod:`~postbound.duckdb` module. You can create a connection to a DuckDB database
 file using the :func:`~postbound.duckdb.connect` function. The returned database instance functions like any regular
-:class:`postbound.Database` interface:
+:class:`~postbound.Database` interface:
 
 .. code-block:: python
 
@@ -71,11 +72,11 @@ Supported Backend Features
 +-------------------------------------------+--------------------------------------------------------------------+
 | Schema interface                          | fully implemented                                                  |
 +-------------------------------------------+--------------------------------------------------------------------+
-| Statistics interface                      | fully implemented[#available_stats]_                               |
+| Statistics interface                      | fully implemented [#f1]_                                           |
 +-------------------------------------------+--------------------------------------------------------------------+
-| EXPLAIN parsing and query plan extraction | fully supported[#plan_shenanigans]_                                |
+| EXPLAIN parsing and query plan extraction | fully supported [#f2]_                                             |
 +-------------------------------------------+--------------------------------------------------------------------+
-| EXPLAIN ANALYZE plans                     | fully supported[#plan_shenanigans]_                                |
+| EXPLAIN ANALYZE plans                     | fully supported [#f2]_                                             |
 +-------------------------------------------+--------------------------------------------------------------------+
 | Extraction of cardinality estimates       | fully supported                                                    |
 +-------------------------------------------+--------------------------------------------------------------------+
@@ -84,6 +85,19 @@ Supported Backend Features
 | Plan hinting                              | partially supported (see :ref:`limitations <duckdb-limitations>`)  |
 +-------------------------------------------+--------------------------------------------------------------------+
 
+To obtain DuckDB query plans, you can either use the :meth:`~postbound.duckdb.DuckDBOptimizer.query_plan` method or parse
+the EXPLAIN output manually using :func:`~postbound.duckdb.parse_duckdb_plan`. Both options yield the same results:
+
+.. code-block:: python
+
+    # obtain a query plan directly:
+    plan = duck_instance.optimizer().query_plan(stats["q-1"])
+    
+    # this is equivalent to:
+    explain_query = pb.transform.as_explain(stats["q-1"])
+    raw_plan = duck_instance.execute_query(explain_query)
+    equivalent_plan = pb.duckdb.parse_duckdb_plan(raw_plan)
+
 
 .. _duckdb-optimizer-architecture:
 
@@ -91,10 +105,10 @@ Optimizer Essentials
 --------------------
 
 DuckDB employs a sequential optimizer that performs complex algebraic transformations (e.g., subquery unnesting) on the
-logical query plan. The join order is determined using a dynamic programming algorithm based on [1]_. It uses a simple
-"cost model" that sums the cardinality estimates of the input relations and the output cardinality of the intermediate.
-Based on this join order, physical operators are selected following a rule-based approach. Basically, hash joins are used
-whenever possible and nested loop joins are only used as a last resort.
+logical query plan. The join order is determined using a dynamic programming algorithm based on [Moerkotte08]_. It uses a
+simple "cost model" that sums the cardinality estimates of the input relations and the output cardinality of the
+intermediate. Based on this join order, physical operators are selected following a rule-based approach. Basically, hash
+joins are used whenever possible and nested loop joins are only used as a last resort.
 
 
 .. _duckdb-limitations:
@@ -125,12 +139,12 @@ References
 
 .. rubric:: footnotes
 
-.. [#available_stats]
+.. [#f1]
     DuckDB maintains only a minimal set of statistics (due to the large variety of input sources).
     In particular, only the number of rows is reliably available. Other statistics can only be
     :ref:`emulated <database-statistics>`.
 
-.. [#plan_shenanigans]
+.. [#f2]
     DuckDB query plans lack one crucial piece of information: if a table appears multiple times in a query, we cannot
     distinguish between the different instances in the plan. For example, for the query
     ``SELECT former.title, latter.title FROM movies former, movies latter WHERE former.series = latter.series AND former.year < latter.year;``,

@@ -63,10 +63,10 @@ To learn more about optimization pipelines, take a look at the separate :doc:`co
 Query Abstraction
 -----------------
 
-PostBOUND provides a powerful query abstraction centered around the :class:`SqlQuery <postbound.qal.SqlQuery>`.
+PostBOUND provides a powerful query abstraction centered around the :class:`~postbound.qal.SqlQuery`.
 Pretty much all other parts of the framework operate on this abstraction.
 You can obtain an instance of this class by parsing a raw SQL query string using
-:func:`parse_query() <postbound.qal.parse_query>`:
+:func:`~postbound.parse_query`:
 
 .. ipython:: python
 
@@ -77,7 +77,7 @@ You can obtain an instance of this class by parsing a raw SQL query string using
 Alternatively, you can use the :ref:`workload functionality <10minutes-workloads>` to load an entire set of queries at
 once.
 All query-related functionality is provided by the :mod:`qal <postbound.qal>` module (short for *query abstraction layer*).
-For example, use :func:`qal.format_quick() <postbound.qal.formatter.format_quick>` to obtain a nicely formatted string for
+For example, use :func:`qal.format_quick() <postbound.qal.format_quick>` to obtain a nicely formatted string for
 a query.
 
 Once you have a query object, you can access different properties, such as the tables that are referenced in the query,
@@ -148,7 +148,7 @@ See the separate :doc:`core/databases` documentation for more details on the dat
 Workload Handling
 -----------------
 
-A :class:`Workload <postbound.experiments.Workload>` is a collection of queries that can be used to benchmark the
+A :class:`Workload <postbound.Workload>` is a collection of queries that can be used to benchmark the
 performance of different optimization strategies.
 All queries are associated with labels that are typically used to retrieve them, e.g., ``job["1a"]``.
 A workload provides rich functionality to retrieve (subsets of) the queries, such as by specific properties or randomly to
@@ -156,7 +156,7 @@ obtain a test set.
 
 Following the *batteries included* philosophy, PostBOUND already ships some of the commonly used workloads in query
 optimization.
-These can be accessed from the :mod:`workloads <postbound.experiments.workloads>` module.
+These can be accessed from the :mod:`~postbound.workloads` module.
 Specifically, the Join Order Benchmark (JOB), the Stats Benchmark and the Stack Benchmark are available out-of-the-box:
 
 .. ipython:: python
@@ -164,8 +164,8 @@ Specifically, the Join Order Benchmark (JOB), the Stats Benchmark and the Stack 
     stats = pb.workloads.stats()
     stats
 
-You can also load your own workloads by using :func:`read_workload() <postbound.experiments.workloads.read_workload>` or
-:func:`read_csv_workload() <postbound.experiments.workloads.read_csv_workload>`.
+You can also load your own workloads by using :func:`~postbound.workloads.read_workload` or
+:func:`~postbound.workloads.read_csv_workload`.
 See the separate :doc:`core/benchmarking` documentation for more details.
 
 .. _10minutes-benchmarking:
@@ -174,7 +174,7 @@ Benchmarking
 ------------
 
 Once you have implemented you own optimization algorithm, you can benchmark it using the
-:func:`execute_workload() <postbound.bench.execute_workload>` utility.
+:func:`~postbound.bench.execute_workload` utility.
 
 It produces a pandas DataFrame with the results of the executed queries:
 
@@ -185,11 +185,11 @@ It produces a pandas DataFrame with the results of the executed queries:
     results
 
 If you want to export the results to a CSV file, you can use
-:func:`prepare_export() <postbound.bench.prepare_export>` to serialize all columns to JSON as necessary.
+:func:`~postbound.bench.prepare_export` to serialize all columns to JSON as necessary.
 Even simpler, you can pass a file to the *progressive_output* parameter to automatically flush all results to disk as soon as
 they arrive.
 
-The :class:`QueryPreparation <postbound.bench.QueryPreparation>` enables you to customize the
+The :class:`~postbound.bench.QueryPreparation` enables you to customize the
 execution of the queries.
 For example, you can ensure that all queries are executed as *EXPLAIN ANALYZE* to capture their query plans, or you can
 prewarm the shared buffer before execution to ensure that timing measurements are not affected by I/O activity.

@@ -50,5 +50,6 @@ html_theme_options = {
 
 # -- Options for API documentation -------------------------------------------------
 
-autodoc_default_options = {"member_order": "bysource"}
 autodoc_member_order = "bysource"
+
+autodoc_typehints = "both"

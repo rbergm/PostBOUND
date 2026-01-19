@@ -388,6 +388,7 @@ def nx_frontier_walks(graph: nx.Graph) -> Generator[GraphWalk, None, None]:
     For example, consider this fully-connected graph:
 
     ::
+    
          a
         /  \\
         b - c

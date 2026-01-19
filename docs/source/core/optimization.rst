@@ -2,9 +2,9 @@ Optimizer Abstraction
 =====================
 
 To implement a new optimizer prototype in PostBOUND, you need to implement an appropriate
-:class:`OptimizationPipeline <postbound.OptimizationPipeline>`. Pipelines are mental models for different optimizer
-architectures. This section describes the most commonly used pipelines and how to use them. The final section contains a
-summary of the core optimizer-related data structures.
+:class:`~postbound.OptimizationPipeline`. Pipelines are mental models for different optimizer architectures.
+This section describes the most commonly used pipelines and how to use them. The final section contains a summary of the
+core optimizer-related data structures.
 
 .. _textbook-optimizer:
 
@@ -47,10 +47,10 @@ Essentially, you can provide any combination of plan enumerator, cost model, and
 .. tip::
 
     If you do not implement your own plan enumerator, PostBOUND will select a dynamic programming-based algorithm (see
-    :class:`~postbound.optimizer.dynprog.DynamicProgrammingEnumerator`) by
+    :class:`~postbound.opt.dynprog.DynamicProgrammingEnumerator`) by
     default.
     If your target database happens to be a Postgres system, a DP algorithm specifically designed to mimic the Postgres
-    algorithm will be used (see :class:`~postbound.optimizer.dynprog.PostgresDynProg`).
+    algorithm will be used (see :class:`~postbound.opt.dynprog.PostgresDynProg`).
 
     In contrast to the :ref:`multi-stage pipeline <multistage-optimizer>`, we cannot simply let the target database system
     supply its own enumerator, because it is typically the enumerators job to request cost and cardinality estimates.
@@ -86,11 +86,11 @@ available methods.
 Essentially, you can provide any combination of join ordering, operator selection and plan parameterization:
 
 1. The :class:`~postbound.JoinOrderOptimization` is responsible for computing the
-   :class:`~postbound.optimizer.JoinTree` of the query. If this stage is skipped, the native optimizer has to
+   :class:`~postbound.JoinTree` of the query. If this stage is skipped, the native optimizer has to
    perform its own join ordering.
 2. The :class:`~postbound.PhysicalOperatorSelection` determines the scan and join operators for
    each intermediate of the query. Those are encoded in the
-   :class:`~postbound.optimizer.PhysicalOperatorAssignment`. If this stage is skipped, the
+   :class:`~postbound.PhysicalOperatorAssignment`. If this stage is skipped, the
    native optimizer has to select its own physical operators. If the join order stage is skipped, the selected operators
    will only be used if their corresponding intermediates are actually calculated.
 3. The :class:`~postbound.PlanParameterization` allows to generate metadata for the query plan.
@@ -115,68 +115,67 @@ Essentially, you can provide any combination of join ordering, operator selectio
     The reasoning behind this recommendation is that the textbook pipeline requires a plan enumerator which currently
     cannot be re-used from the target database system (because it is the enumerator's job to request cost and cardinality
     estimates, see :ref:`the textbook pipeline <default-enumerator>` for details).
-    While this default enumerator can mimic the actual enumerator pretty well for PostgreSQL, it is still a simplification.
+    While the default enumerator can mimic the actual enumerator pretty well for PostgreSQL, it is still a simplification.
 
-    On the other hand, the multi-stage pipeline would just pass the cardinality estimates from the plan parameterization
+    On the other hand, the multi-stage pipeline just passes the cardinality estimates from the plan parameterization
     to the native optimizer. Therefore, the key idea is to use a multi-stage pipeline that does not perform any join
     ordering or operator selection. During the plan parameterization stage, estimates for all potential intermediates
-    should be generated.
+    are generated.
 
     See the :ref:`Cookbook <cookbook-cardinality-estimation>` for a practical example. In short, by implementing your own
     cardinality estimator, you can use it both in a textbook pipeline as well as in a multi-stage pipeline.
 
 Integrated optimization pipeline
-================================
+--------------------------------
 
 TODO
 
 .. _optimizer-data-structures:
 
 Fundamental data structures
-===========================
+---------------------------
 
 .. _query-plan:
 
 Query plans
------------
+^^^^^^^^^^^
 
 The :class:`~postbound.QueryPlan` is the central artifact of the optimizer. It represents the physical execution
 plan of a query (or a part of it). There are three main ways to obtain a query plan:
 
 1. query plans can be created manually just like any other Python object
 2. query plans are the main output of the optimization pipelines.
-3. the :class:`~postbound.db.Database` provides an :class:`~postbound.db.OptimizerInterface`
+3. the :class:`~postbound.Database` provides an :class:`~postbound.db.OptimizerInterface`
    which in turn has a :meth:`~postbound.db.OptimizerInterface.query_plan` (and
    :meth:`~postbound.db.OptimizerInterface.analyze_plan`) method to the query plan that the database system
    would use to execute a specific query
 4. query plans can be constructed from the optimizer artifacts (see below) using
-   :func:`~postbound.optimizer.to_query_plan`
+   :func:`~postbound.opt.to_query_plan`
 
 Use the normal :ref:`jsonize` tools to export query plans as JSON.
-:func:`~postbound.optimizer.read_query_plan_json` can be used to load a plan back from its JSON
+:func:`~postbound.opt.read_query_plan_json` can be used to load a plan back from its JSON
 representation.
 
 Optimizer artifacts
--------------------
+^^^^^^^^^^^^^^^^^^^
 
-The :class:`~postbound.optimizer.JoinTree` is used to represent the join order of a query. Nodes can be annotated
+The :class:`~postbound.JoinTree` is used to represent the join order of a query. Nodes can be annotated
 to keep track of additional information. Other than constructing a tree manually, trees can be extracted from query plans
-via :func:`~postbound.optimizer.jointree_from_plan`. Use the normal :ref:`jsonize` tools to export
-join trees as JSON. :func:`~postbound.optimizer.read_jointree_json` can be used to load a tree back
+via :func:`~postbound.jointree_from_plan`. Use the normal :ref:`jsonize` tools to export
+join trees as JSON. :func:`~postbound.opt.read_jointree_json` can be used to load a tree back
 from its JSON representation.
 
-:class:`~postbound.optimizer.PhysicalOperatorAssignment` and
-:class:`~postbound.optimizer.PlanParameterization` can be used to reperesent (partial) optimizer decisions.
+:class:`~postbound.PhysicalOperatorAssignment` and :class:`~postbound.PlanParameterization` can be used to reperesent
+(partial) optimizer decisions.
 Similar to join trees, these artifacts can be either constructed manually or extracted from query plans using
-:func:`~postbound.optimizer.operators_from_plan` or
-:func:`~postbound.optimizer.parameters_from_plan`. Use the normal :ref:`jsonize` tools to export
-them as JSON and :func:`~postbound.optimizer.read_operator_assignment_json` or
-:func:`~postbound.optimizer.read_plan_params_json` to load them from their JSON representation.
+:func:`~postbound.operators_from_plan` or :func:`~postbound.parameters_from_plan`.
+Use the normal :ref:`jsonize` tools to export them as JSON and :func:`~postbound.opt.read_operator_assignment_json` or
+:func:`~postbound.opt.read_plan_params_json` to load them from their JSON representation.
 
 .. tip::
 
     If you want to convert a query plan into all artifacts, you can use
-    :func:`~postbound.optimizer.explode_query_plan` as a convenience function.
+    :func:`~postbound.opt.explode_query_plan` as a convenience function.
 
 Join tree, operator assignment and plan parameterization can also be used to generate hinted queries. See the
 :ref:`Cookbook <cookbook-partial-hinting>` for details.
@@ -184,11 +183,11 @@ Join tree, operator assignment and plan parameterization can also be used to gen
 .. _optimizer-utilities:
 
 Optimizer utilities
-===================
+-------------------
 
 To aid the implementation of new optimizers, PostBOUND provides a number of commonly used data structures:
 
-The :class:`~postbound.optimizer.JoinGraph` can be used to keep track of relations that have already been joined
+The :class:`~postbound.opt.JoinGraph` can be used to keep track of relations that have already been joined
 or that can be integrated into a join tree.
 
 Other utilities are implemented as pre-defined optimization stages, see :doc:`../advanced/existing-strategies` for
