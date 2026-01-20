@@ -37,6 +37,7 @@ preventing an explosion of dependencies). This will affect the UES and TONIC opt
   (_CASE R.a WHEN 1 THEN 'one' WHEN 2 THEN 'two'_), _IS DISTINCT FROM_ predicates and _ANY_/_ALL_ predicates.
 - Calling `execute_workload()` with progressive output now automatically exports the experiment configuration to the output
   directory for better reproducibility. This is our first step towards an lab notebook-like experiment management.
+- `PhysicalOperatorAssignment` and `PlanParameterization` now support method chaining for better usability.
 
 ## 💀 Breaking changes
 - Transition to [quacklab-python](https://github.com/rbergm/quacklab-python) as the new backend for hinting-aware DuckDB

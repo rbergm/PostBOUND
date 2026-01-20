@@ -1,4 +1,4 @@
-# Changelog
+# Historical Changelog
 
 This document contains the changelog of older PostBOUND releases.
 
@@ -31,7 +31,7 @@ This document contains the changelog of older PostBOUND releases.
 ---
 
 
-# Version 0.19.1 _(current)_
+# Version 0.19.1
 
 (due to the short-lived nature of v0.19.0 we include its changelog entries here as well)
 
