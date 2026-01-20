@@ -31,6 +31,8 @@ preventing an explosion of dependencies). This will affect the UES and TONIC opt
 ## 🐣 New features
 - Consistently use lazy-loading for all modules.
 - The `postgres.connect()` method now accepts many additional file formats (TOML, JSON, YAML) for the configuration files.
+- Overriding the  `describe()` method is no longer required for all optimization stages. If not implemented, a minimal
+  default description is provided.
 - Added `use()` methods to all optimization pipelines that did not have them yet.
 - Added a new `scale_cardinality()` to query plans to scale estimated and/or actual cardinalities by a given factor.
 - Extended SQL support: we can now parse and represent simple CASE expressions

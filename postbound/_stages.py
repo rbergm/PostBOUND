@@ -19,6 +19,9 @@ class CompleteOptimizationAlgorithm(abc.ABC):
     """Constructs an entire query plan for an input query in one integrated optimization process.
 
     This stage closely models the behaviour of traditional optimization algorithms, e.g. based on dynamic programming.
+    Implement the `optimize_query` method to provide the actual optimization logic.
+    The `describe` and `pre_check` methods should be overridden to provide metadata about the specific algorithm for
+    benchmarking and to ensure that the input query and database system are compatible with the algorithm.
     """
 
     @abc.abstractmethod
@@ -37,7 +40,6 @@ class CompleteOptimizationAlgorithm(abc.ABC):
         """
         raise NotImplementedError
 
-    @abc.abstractmethod
     def describe(self) -> jsondict:
         """Provides a JSON-serializable representation of the specific strategy, as well as important parameters.
 
@@ -48,9 +50,9 @@ class CompleteOptimizationAlgorithm(abc.ABC):
 
         See Also
         --------
-        postbound.postbound.OptimizationPipeline.describe
+        OptimizationPipeline.describe
         """
-        raise NotImplementedError
+        return {"name": type(self).__name__}
 
     def pre_check(self) -> OptimizationPreCheck:
         """Provides requirements that input query or database system have to satisfy for the optimizer to work properly.
@@ -73,6 +75,9 @@ class JoinOrderOptimization(abc.ABC):
     """The join order optimization generates a complete join order for an input query.
 
     This is the first step in a multi-stage optimizer design.
+    Implement the `optimize_join_order` method to provide the actual optimization logic.
+    The `describe` and `pre_check` methods should be overridden to provide metadata about the specific algorithm for
+    benchmarking and to ensure that the input query and database system are compatible with the algorithm.
 
     See Also
     --------
@@ -105,7 +110,6 @@ class JoinOrderOptimization(abc.ABC):
         """
         raise NotImplementedError
 
-    @abc.abstractmethod
     def describe(self) -> jsondict:
         """Provides a JSON-serializable representation of the specific strategy, as well as important parameters.
 
@@ -116,9 +120,9 @@ class JoinOrderOptimization(abc.ABC):
 
         See Also
         --------
-        postbound.postbound.OptimizationPipeline.describe
+        OptimizationPipeline.describe
         """
-        raise NotImplementedError
+        return {"name": type(self).__name__}
 
     def pre_check(self) -> OptimizationPreCheck:
         """Provides requirements that input query or database system have to satisfy for the optimizer to work properly.
@@ -160,7 +164,12 @@ class JoinOrderOptimizationError(RuntimeError):
 class PhysicalOperatorSelection(abc.ABC):
     """The physical operator selection assigns scan and join operators to the tables of the input query.
 
-    This is the second stage in the two-phase optimization process, and takes place after the join order has been determined.
+    This is the second stage in the two-phase optimization process, and takes place after the join order has been
+    determined.
+    Implement the `select_physical_operators` method to provide the actual optimization logic.
+    The `describe` and `pre_check` methods should be overridden to provide metadata about the specific algorithm for
+    benchmarking and to ensure that the input query and database system are compatible with the algorithm.
+
 
     See Also
     --------
@@ -195,7 +204,6 @@ class PhysicalOperatorSelection(abc.ABC):
         """
         raise NotImplementedError
 
-    @abc.abstractmethod
     def describe(self) -> jsondict:
         """Provides a JSON-serializable representation of the specific strategy, as well as important parameters.
 
@@ -206,9 +214,9 @@ class PhysicalOperatorSelection(abc.ABC):
 
         See Also
         --------
-        postbound.postbound.OptimizationPipeline.describe
+        OptimizationPipeline.describe
         """
-        raise NotImplementedError
+        return {"name": type(self).__name__}
 
     def pre_check(self) -> OptimizationPreCheck:
         """Provides requirements that input query or database system have to satisfy for the optimizer to work properly.
@@ -232,6 +240,9 @@ class ParameterGeneration(abc.ABC):
 
     Such parameters do not influence the previous choice of join order and physical operators directly, but affect their
     specific implementation. Therefore, this is an optional final step in a multi-stage optimization process.
+    Implement the `generate_plan_parameters` method to provide the actual optimization logic.
+    The `describe` and `pre_check` methods should be overridden to provide metadata about the specific algorithm for
+    benchmarking and to ensure that the input query and database system are compatible with the algorithm.
 
     See Also
     --------
@@ -274,7 +285,6 @@ class ParameterGeneration(abc.ABC):
         """
         raise NotImplementedError
 
-    @abc.abstractmethod
     def describe(self) -> jsondict:
         """Provides a JSON-serializable representation of the specific strategy, as well as important parameters.
 
@@ -287,7 +297,7 @@ class ParameterGeneration(abc.ABC):
         --------
         OptimizationPipeline.describe
         """
-        raise NotImplementedError
+        return {"name": type(self).__name__}
 
     def pre_check(self) -> OptimizationPreCheck:
         """Provides requirements that input query or database system have to satisfy for the optimizer to work properly.
@@ -309,6 +319,12 @@ class ParameterGeneration(abc.ABC):
 class CardinalityEstimator(ParameterGeneration, abc.ABC):
     """The cardinality estimator calculates how many tuples specific operators will produce.
 
+    Implement the `calculate_estimate` method to provide the actual optimization logic.
+    The `describe` and `pre_check` methods should be overridden to provide metadata about the specific algorithm for
+    benchmarking and to ensure that the input query and database system are compatible with the algorithm.
+    In addition, use `initialize` and `cleanup` methods to implement any necessary setup and teardown logic for the
+    current query.
+
     See Also
     --------
     TextBookOptimizationPipeline
@@ -316,20 +332,29 @@ class CardinalityEstimator(ParameterGeneration, abc.ABC):
 
     Notes
     -----
+    If you only care about cardinality estimation, you should generally use this class in a
+    `MultiStageOptimizationPipeline` instead of a `TextBookOptimizationPipeline`. This is because a multi-stage pipeline
+    has a simple control flow from one stage to the next. This allows us to just generate cardinality estimates for all
+    possible intermediates if no join order is given, or just for the intermediates defined in a specific join order
+    otherwise. In contrast, the textbook pipeline is controlled by the plan enumerator which decides which plans to
+    construct and by extension for which intermediates cardinality estimates are required. However, the framework
+    implementation does not provide any way for the actual query optimizer of a database system to hook back into the
+    framework to request such data. Therefore, we rely on emulating the behaviour of the actual plan enumerator of the
+    target database system (unless a enumerator is explicitly provided). While our approximation for Postgres works quite
+    well, it is not entirely accurate and other backends are much less supported.
 
-    The default implementation of all methods related to the `ParameterGeneration` either request cardinality estimates for all
-    possible intermediate results (in the `estimate_cardinalities` method), or for exactly those intermediates that are defined
-    in a specific join order (in the `generate_plan_parameters` method that implements the protocol of the
+    The default implementation of all methods related to the `ParameterGeneration` either request cardinality estimates for
+    all possible intermediate results (in the `estimate_cardinalities` method), or for exactly those intermediates that are
+    defined in a specific join order (in the `generate_plan_parameters` method that implements the protocol of the
     `ParameterGeneration` class). Therefore, developers working on their own cardinality estimation algorithm only need to
     implement the `calculate_estimate` method. All related processes are provided by the generator with reasonable default
     strategies.
 
-    However, special care is required when considering cross products: depending on the setting intermediates can either allow
-    cross products at all stages (by passing ``allow_cross_products=True`` during instantiation), or to disallow them entirely.
-    Therefore, the `calculate_estimate` method should act accordingly. Implementations of this class should pass the
-    appropriate parameter value to the super *__init__* method. If they support both scenarios, the parameter can also be
-    exposed to the client.
-
+    However, special care is required when considering cross products: depending on the setting intermediates can either
+    allow cross products at all stages (by passing ``allow_cross_products=True`` during instantiation), or to disallow them
+    entirely. Therefore, the `calculate_estimate` method should act accordingly. Implementations of this class should pass
+    the appropriate parameter value to the super *__init__* method. If they support both scenarios, the parameter can also
+    be exposed to the client.
     """
 
     def __init__(self, *, allow_cross_products: bool = False) -> None:
@@ -358,7 +383,6 @@ class CardinalityEstimator(ParameterGeneration, abc.ABC):
         """
         raise NotImplementedError
 
-    @abc.abstractmethod
     def describe(self) -> jsondict:
         """Provides a JSON-serializable representation of the specific estimator, as well as important parameters.
 
@@ -369,9 +393,9 @@ class CardinalityEstimator(ParameterGeneration, abc.ABC):
 
         See Also
         --------
-        postbound.postbound.OptimizationPipeline.describe
+        OptimizationPipeline.describe
         """
-        raise NotImplementedError
+        return {"name": type(self).__name__}
 
     def initialize(self, target_db: Database, query: SqlQuery) -> None:
         """Hook method that is called before the actual optimization process starts.
@@ -496,6 +520,13 @@ class CardinalityEstimator(ParameterGeneration, abc.ABC):
 class CostModel(abc.ABC):
     """The cost model estimates how expensive computing a certain query plan is.
 
+    Implement the `estimate_cost` method to provide the actual optimization logic.
+    The `describe` and `pre_check` methods should be overridden to provide metadata about the specific algorithm for
+    benchmarking and to ensure that the input query and database system are compatible with the algorithm.
+    In addition, use `initialize` and `cleanup` methods to implement any necessary setup and teardown logic for the
+    current query.
+
+
     See Also
     --------
     postbound.TextBookOptimizationPipeline
@@ -531,7 +562,6 @@ class CostModel(abc.ABC):
         """
         raise NotImplementedError
 
-    @abc.abstractmethod
     def describe(self) -> jsondict:
         """Provides a JSON-serializable representation of the specific cost model, as well as important parameters.
 
@@ -542,9 +572,9 @@ class CostModel(abc.ABC):
 
         See Also
         --------
-        postbound.postbound.OptimizationPipeline.describe
+        OptimizationPipeline.describe
         """
-        raise NotImplementedError
+        return {"name": type(self).__name__}
 
     def initialize(self, target_db: Database, query: SqlQuery) -> None:
         """Hook method that is called before the actual optimization process starts.
@@ -588,6 +618,10 @@ class CostModel(abc.ABC):
 class PlanEnumerator(abc.ABC):
     """The plan enumerator traverses the space of different candidate plans and ultimately selects the optimal one.
 
+    Implement the `generate_execution_plan` method to provide the actual optimization logic.
+    The `describe` and `pre_check` methods should be overridden to provide metadata about the specific algorithm for
+    benchmarking and to ensure that the input query and database system are compatible with the algorithm.
+
     See Also
     --------
     postbound.TextBookOptimizationPipeline
@@ -628,7 +662,6 @@ class PlanEnumerator(abc.ABC):
         """
         raise NotImplementedError
 
-    @abc.abstractmethod
     def describe(self) -> jsondict:
         """Provides a JSON-serializable representation of the specific enumerator, as well as important parameters.
 
@@ -639,9 +672,9 @@ class PlanEnumerator(abc.ABC):
 
         See Also
         --------
-        postbound.postbound.OptimizationPipeline.describe
+        OptimizationPipeline.describe
         """
-        raise NotImplementedError
+        return {"name": type(self).__name__}
 
     def pre_check(self) -> OptimizationPreCheck:
         """Provides requirements that input query or database system have to satisfy for the optimizer to work properly.
@@ -665,6 +698,10 @@ class IncrementalOptimizationStep(abc.ABC):
 
     Each step receives the query plan of its predecessor and can change its decisions in arbitrary ways. For example, this
     scheme can be used to gradually correct mistakes or risky decisions of individual optimizers.
+
+    Implement the `optimize_query` method to provide the actual optimization logic.
+    The `describe` and `pre_check` methods should be overridden to provide metadata about the specific algorithm for
+    benchmarking and to ensure that the input query and database system are compatible with the algorithm.
     """
 
     @abc.abstractmethod
@@ -688,7 +725,6 @@ class IncrementalOptimizationStep(abc.ABC):
         """
         raise NotImplementedError
 
-    @abc.abstractmethod
     def describe(self) -> jsondict:
         """Provides a JSON-serializable representation of the specific strategy, as well as important parameters.
 
@@ -699,9 +735,9 @@ class IncrementalOptimizationStep(abc.ABC):
 
         See Also
         --------
-        postbound.postbound.OptimizationPipeline.describe
+        OptimizationPipeline.describe
         """
-        raise NotImplementedError
+        return {"name": type(self).__name__}
 
     def pre_check(self) -> OptimizationPreCheck:
         """Provides requirements that input query or database system have to satisfy for the optimizer to work properly.
