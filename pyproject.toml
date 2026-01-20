@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "PostBOUND"
-version = "0.20.0-alpha"
+version = "0.20.0"
 authors = [{ name = "Rico Bergmann", email = "rico.bergmann1@tu-dresden.de" }]
 description = "PostBOUND is a research framework to prototype and benchmark database query optimizers"
 readme = "README.md"
@@ -12,7 +12,6 @@ requires-python = ">=3.12"
 license = "Apache-2.0"
 classifiers = [
     "Programming Language :: Python :: 3",
-    "Development Status :: 4 - Beta",
     "Intended Audience :: Science/Research",
     "Topic :: Database :: Database Engines/Servers",
     "Topic :: Scientific/Engineering",
