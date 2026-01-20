@@ -1,7 +1,4 @@
-"""The optimizer package defines the central interfaces to implement optimization algorithms.
-
-TODO: detailed documentation
-"""
+"""The optimizer module contains utilities to develop optimizers as well as simple optimization algorithms."""
 
 import lazy_loader
 
