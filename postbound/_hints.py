@@ -3,7 +3,7 @@ from __future__ import annotations
 import math
 from collections.abc import Collection, Container, Iterable
 from enum import Enum
-from typing import Any, Generic, Literal, Optional, TypeVar
+from typing import Any, Generic, Literal, Optional, Self, TypeVar
 
 from . import util
 from ._base import T
@@ -68,9 +68,7 @@ class PhysicalOperatorAssignment:
     """
 
     def __init__(self) -> None:
-        self.global_settings: dict[
-            ScanOperator | JoinOperator | IntermediateOperator, bool
-        ] = {}
+        self.global_settings: dict[PhysicalOperator, bool] = {}
         self.join_operators: dict[
             frozenset[TableReference], JoinOperatorAssignment
         ] = {}
@@ -122,7 +120,7 @@ class PhysicalOperatorAssignment:
         enabled: bool,
         *,
         overwrite_fine_grained_selection: bool = False,
-    ) -> None:
+    ) -> Self:
         """Enables or disables an operator for all parts of a query.
 
         Parameters
@@ -137,6 +135,11 @@ class PhysicalOperatorAssignment:
             a specific join has already been assigned to be executed with an NLJ. In this case, setting
             `overwrite_fine_grained_selection` removes the assignment for the specific join. This is off by default, to enable
             the per-node selection to overwrite global settings.
+
+        Returns
+        -------
+        PhysicalOperatorAssignment
+            The assignment is updated in place and returned for chaining.
         """
         self.global_settings[operator] = enabled
 
@@ -167,11 +170,13 @@ class PhysicalOperatorAssignment:
             case _:
                 raise ValueError(f"Unknown operator type: {operator}")
 
+        return self
+
     def set_join_operator(
         self,
         operator: JoinOperatorAssignment | JoinOperator,
         tables: Iterable[TableReference] | None = None,
-    ) -> None:
+    ) -> Self:
         """Enforces a specific join operator for the join that consists of the contained tables.
 
         This overwrites all previous assignments for the same join. Global settings are left unmodified since per-join settings
@@ -186,9 +191,13 @@ class PhysicalOperatorAssignment:
             The tables to join. This parameter is only used if only a join operator without a proper assignment is supplied in
             the `join_operator` parameter. Otherwise it is ignored.
 
+        Returns
+        -------
+        PhysicalOperatorAssignment
+            The assignment is updated in place and returned for chaining.
+
         Notes
         -----
-
         You can also pass a `DirectionalJoinOperatorAssignment` to this method. In contrast to the normal assignment, this
         one also distinguishes between inner and outer relations of the join.
         """
@@ -196,12 +205,13 @@ class PhysicalOperatorAssignment:
             operator = JoinOperatorAssignment(operator, tables)
 
         self.join_operators[operator.join] = operator
+        return self
 
     def set_scan_operator(
         self,
         operator: ScanOperatorAssignment | ScanOperator,
         table: TableReference | Iterable[TableReference] | None = None,
-    ) -> None:
+    ) -> Self:
         """Enforces a specific scan operator for the contained base table.
 
         This overwrites all previous assignments for the same table. Global settings are left unmodified since per-table
@@ -215,16 +225,22 @@ class PhysicalOperatorAssignment:
         table : TableReference | Iterable[TableReference], optional
             The table to scan. This parameter is only used if only a scan operator without a proper assignment is supplied in
             the `scan_operator` parameter. Otherwise it is ignored.
+
+        Returns
+        -------
+        PhysicalOperatorAssignment
+            The assignment is updated in place and returned for chaining.
         """
         if isinstance(operator, ScanOperator):
             table = util.simplify(table)
             operator = ScanOperatorAssignment(operator, table)
 
         self.scan_operators[operator.table] = operator
+        return self
 
     def set_intermediate_operator(
         self, operator: IntermediateOperator, tables: Iterable[TableReference]
-    ) -> None:
+    ) -> Self:
         """Enforces an intermediate operator to process specific tables.
 
         This overwrites all previous assignments for the same intermediate. Global settings are left unmodified since
@@ -240,14 +256,19 @@ class PhysicalOperatorAssignment:
             (perhaps because they stem from an expensive index access). In this case, the assignment should contain a
             nested-loop assignment for the intermediate *{R, S}* and an assignment for the materialize operator for *S*.
 
+        Returns
+        -------
+        PhysicalOperatorAssignment
+            The assignment is updated in place and returned for chaining.
         """
         self.intermediate_operators[frozenset(tables)] = operator
+        return self
 
     def add(
         self,
         operator: ScanOperatorAssignment | JoinOperatorAssignment | PhysicalOperator,
         tables: Iterable[TableReference] | None = None,
-    ) -> None:
+    ) -> Self:
         """Adds an arbitrary operator assignment to the current settings.
 
         In contrast to the `set_scan_operator` and `set_join_operator` methods, this method figures out the correct assignment
@@ -261,6 +282,11 @@ class PhysicalOperatorAssignment:
         tables : Iterable[TableReference] | None, optional
             The tables to join. This parameter is only used if a plain operator is supplied in the `operator` parameter.
             Otherwise it is ignored.
+
+        Returns
+        -------
+        PhysicalOperatorAssignment
+            The assignment is updated in place and returned for chaining.
         """
         match operator:
             case ScanOperator():
@@ -275,6 +301,20 @@ class PhysicalOperatorAssignment:
                 self.set_intermediate_operator(operator, tables)
             case _:
                 raise ValueError(f"Unknown operator assignment: {operator}")
+
+        return self
+
+    def set(self, operator: PhysicalOperator, enabled: bool) -> Self:
+        """Shortcut method for `set_operator_enabled_globally`.
+
+        Fine-grained selections are not overwritten.
+
+        Returns
+        -------
+        PhysicalOperatorAssignment
+            The assignment is updated in place and returned for chaining.
+        """
+        return self.set_operator_enabled_globally(operator, enabled)
 
     def merge_with(
         self, other_assignment: PhysicalOperatorAssignment
@@ -630,7 +670,7 @@ class PlanParameterization:
 
     def add_cardinality(
         self, tables: Iterable[TableReference], cardinality: Cardinality
-    ) -> None:
+    ) -> Self:
         """Assigns a specific cardinality hint to a (join of) tables.
 
         Parameters
@@ -639,11 +679,17 @@ class PlanParameterization:
             The tables for which the hint is generated. This can be an iterable of a single table, which denotes a scan hint.
         cardinality : Cardinality
             The estimated or known cardinality.
+
+        Returns
+        -------
+        PlanParameterization
+            The parameters are updated in place and returned for chaining.
         """
         cardinality = Cardinality.of(cardinality)
         self.cardinalities[frozenset(tables)] = cardinality
+        return self
 
-    def set_workers(self, tables: Iterable[TableReference], num_workers: int) -> None:
+    def set_workers(self, tables: Iterable[TableReference], num_workers: int) -> Self:
         """Assigns a specific number of parallel workers to a (join of) tables.
 
         How these workers are implemented depends on the database system. They could become actual system processes, threads,
@@ -658,12 +704,18 @@ class PlanParameterization:
             some database systems this is an important distinction since one operator node will always be created. This node
             is then responsible for spawning the workers, but can also take part in the actual calculation. To prevent one-off
             errors, we standardize this number to denote the total number of workers that take part in the calculation.
+
+        Returns
+        -------
+        PlanParameterization
+            The parameters are updated in place and returned for chaining.
         """
         self.parallel_workers[frozenset(tables)] = num_workers
+        return self
 
     def set_system_settings(
         self, setting_name: str = "", setting_value: Any = None, **kwargs
-    ) -> None:
+    ) -> Self:
         """Stores a specific system setting.
 
         This may happen in one of two ways: giving the setting name and value as two different parameters, or combining their
@@ -680,6 +732,11 @@ class PlanParameterization:
             integrated keyword parameter mode.
         kwargs
             The key/value pairs in the integrated keyword parameter mode.
+
+        Returns
+        -------
+        PlanParameterization
+            The parameters are updated in place and returned for chaining.
 
         Raises
         ------
@@ -704,6 +761,8 @@ class PlanParameterization:
         else:
             self.system_settings |= kwargs
 
+        return self
+
     def merge_with(
         self, other_parameters: PlanParameterization
     ) -> PlanParameterization:
@@ -720,7 +779,7 @@ class PlanParameterization:
         Returns
         -------
         PlanParameterization
-            The merged parameters
+            The merged parameters. The original parameterizations are not modified.
         """
         merged_params = PlanParameterization()
         merged_params.cardinalities = (
