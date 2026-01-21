@@ -35,6 +35,9 @@ vis = [
     "seaborn~=0.13",
     "graphviz~=0.21",
 ]
+duckdb = [
+    "quacklab~=1.4",
+]
 mysql = [
     "mysql-connector-python~=9.5"
 ]

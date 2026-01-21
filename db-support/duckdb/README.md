@@ -5,7 +5,18 @@ These modifications add the necessary hooks for PostBOUND to influence the inter
 All modifications are captured in the [quacklab](https://github.com/rbergm/quacklab) project.
 Here, we use the [Python-packaged version](https://github.com/rbergm/quacklab-python) of quacklab.
 
-## Setup
+## Installation
+
+The simplest way to install the DuckDB/quacklab Python package is via pip:
+
+```bash
+pip install quacklab
+```
+
+quacklab provides pre-built binary wheels for a variety of Python version for Linux and MacOS.
+An installation from source will take significantly longer, as DuckDB needs to be compiled from scratch.
+
+## Manual Setup
 
 The Python package can be built using the `duckdb-setup.sh` script. This script will:
 

@@ -11,6 +11,7 @@ numpy==2.3.4
 pandas==2.3.3
 pglast==7.10
 psycopg[binary]==3.2.12
+quacklab==1.4.1
 setuptools==59.6.0
 sphinx==8.2.3
 sphinx-book-theme==1.1.4

@@ -1,5 +1,6 @@
 # ignore DuckDB installation
 quacklab/
+*.whl
 
 # Ignore DuckDB database files
 *.duckdb
