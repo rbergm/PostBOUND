@@ -7259,7 +7259,7 @@ class OrderBy(BaseClause):
         columns = util.flatten(columns)
         return OrderBy(
             [
-                OrderByExpression(col, ascending=ascending, nulls_first=nulls_first)
+                OrderByExpression.create_for(col, ascending=ascending, nulls_first=nulls_first)
                 for col in columns
             ]
         )
