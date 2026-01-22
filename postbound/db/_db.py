@@ -707,8 +707,13 @@ class DatabaseSchema(abc.ABC):
         self._db = db
         self._prep_placeholder = prep_placeholder
 
-    def tables(self) -> set[TableReference]:
+    def tables(self, *, include_system_tables: bool = False) -> set[TableReference]:
         """Fetches all user-defined tables that are contained in the current database.
+
+        Parameters
+        ----------
+        include_system_tables : bool, optional
+            Whether system tables should also be included. By default, only user-defined tables are returned.
 
         Returns
         -------
