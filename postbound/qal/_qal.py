@@ -8299,6 +8299,7 @@ class SqlQuery:
         "_limit_clause",
         "_hints",
         "_explain",
+        "_query_predicates",
         "_hash_val",
     )
 

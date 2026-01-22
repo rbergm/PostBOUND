@@ -1284,7 +1284,7 @@ class PostgresSchemaInterface(DatabaseSchema):
     def __int__(self, postgres_db: PostgresInterface) -> None:
         super().__init__(postgres_db)
 
-    def tables(self, *, schema: str = "public") -> set[TableReference]:
+    def tables(self, *, include_system_tables: bool = False, schema: str = "public") -> set[TableReference]:
         query_template = textwrap.dedent("""
                                          SELECT table_name
                                          FROM information_schema.tables
@@ -1292,7 +1292,13 @@ class PostgresSchemaInterface(DatabaseSchema):
         self._db.cursor().execute(query_template, (self._db.database_name(), schema))
         result_set = self._db.cursor().fetchall()
         assert result_set is not None
-        return set(TableReference(row[0]) for row in result_set)
+
+        tables = set(TableReference(row[0]) for row in result_set)
+        if not include_system_tables:
+            tables = {
+                tab for tab in tables if not tab.full_name.startswith("pg_")
+            }
+        return tables
 
     def lookup_column(
         self,
