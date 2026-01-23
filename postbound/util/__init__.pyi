@@ -18,7 +18,7 @@ from ._errors import InvariantViolationError, LogicError, StateError
 from .collections import enlist, flatten, powerset, set_union, simplify
 from .dicts import argmin, frozendict, hash_dict
 from .jsonize import jsondict, to_json, to_json_dump
-from .logging import Logger, make_logger, timestamp
+from .logging import Logger, make_logger, standard_logger, timestamp
 from .misc import DependencyGraph, Version, camel_case2snake_case
 from .proc import run_cmd
 from .stats import jaccard
@@ -51,9 +51,10 @@ __all__ = [
     "jsondict",
     "to_json",
     "to_json_dump",
-    "timestamp",
-    "make_logger",
     "Logger",
+    "make_logger",
+    "standard_logger",
+    "timestamp",
     "camel_case2snake_case",
     "Version",
     "DependencyGraph",

@@ -3,13 +3,13 @@
 from __future__ import annotations
 
 import atexit
-import pprint
 import functools
+import inspect
+import pprint
 import sys
 from collections.abc import Callable
 from datetime import datetime
 from typing import IO
-
 
 Logger = Callable[..., None]
 """Type alias for our loggers.
@@ -76,6 +76,28 @@ def make_logger(
         return functools.partial(pprint.pprint, stream=file)
 
     return _log if enabled else _dummy_log
+
+
+def standard_logger(enabled: bool = True) -> Logger:
+    """A standardized logger for consistent output throughout the codebase."""
+
+    def _standard_prefix() -> str:
+        ts = timestamp()
+        callstack = inspect.stack()[2:]
+        callee = "<unknown>"
+        while callstack:
+            current_frame = callstack.pop(0)
+            module = inspect.getmodule(current_frame.frame)
+            if not module or module.__name__.startswith("_"):
+                continue
+
+            callee = module.__name__
+            callee = callee.split(".")[-1]
+            break
+
+        return f"{ts} ({callee}) -"
+
+    return make_logger(enabled, file=sys.stderr, prefix=_standard_prefix)
 
 
 def print_stderr(*args, **kwargs) -> None:
