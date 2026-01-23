@@ -3368,7 +3368,7 @@ class PredicateVisitor(abc.ABC, Generic[VisitorResult]):
 
 
 def as_predicate(
-    column: ColumnReference, operation: LogicalOperator, *arguments
+    column: ColumnReference, operation: LogicalOperator | str, *arguments
 ) -> BasePredicate:
     """Utility method to quickly construct instances of base predicates.
 
@@ -3386,8 +3386,9 @@ def as_predicate(
     ----------
     column : ColumnReference
         The column that should become the first operand of the predicate
-    operation : LogicalSqlOperators
+    operation : LogicalSqlOperators | str
         The operation that should be used to build the predicate. The actual return type depends on this value.
+        As an alternative to `LogicalOperator`, the operation can also be provided as a string (e.g. `"="` for `LogicalOperator.Equal`).
     *arguments
         Further operands for the predicate. The allowed values and their structure depend on the precise predicate (see rules
         above).
@@ -3402,6 +3403,12 @@ def as_predicate(
     ValueError
         If a binary predicate is requested, but `*arguments` does not contain a single value
     """
+    if isinstance(operation, str):
+        operation = operation.upper()
+        aliases = {"!=": "<>", "==": "="}
+        operation = aliases.get(operation, operation)
+        operation = LogicalOperator(operation)
+
     column = ColumnExpression(column)
 
     if operation == LogicalOperator.Between:
@@ -7259,7 +7266,9 @@ class OrderBy(BaseClause):
         columns = util.flatten(columns)
         return OrderBy(
             [
-                OrderByExpression.create_for(col, ascending=ascending, nulls_first=nulls_first)
+                OrderByExpression.create_for(
+                    col, ascending=ascending, nulls_first=nulls_first
+                )
                 for col in columns
             ]
         )
