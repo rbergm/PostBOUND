@@ -44,7 +44,7 @@ Postgres server running [pg_hint_plan](https://github.com/ossc-db/pg_hint_plan).
 
 If you prefer a more integrated setup, we provide a Docker image that contains PostBOUND as well as a readily-configured
 Postgres server or DuckDB installation.
-You can build your Docker image with the following command:
+You can build the Docker image with the following command:
 
 ```sh
 docker build -t postbound --build-arg TIMEZONE=$(cat /etc/timezone) .
@@ -54,13 +54,13 @@ Once the image is built, you can create any number of containers with different 
 For example, to create a container with a local Postgres instance (using [pg_lab](https://github.com/rbergm/pg_lab)) and
 setup the Stats, JOB and Stack benchmarks, use the following command:
 
-
 ```sh
 docker run -dt \
     --shm-size 4G \
     --name postbound \
     --env USE_PGLAB=true \
     --env OPTIMIZE_PG_CONFIG=true \
+    --env PG_DISK_TYPE=SSD \
     --env SETUP_DUCKDB=false \
     --env SETUP_STATS=true \
     --env SETUP_JOB=false \
@@ -97,8 +97,7 @@ docker exec -it postbound /bin/bash
 
 The shell enviroment is setup to have PostBOUND available in a fresh Python virtual environment (which is activated by
 default).
-Furthermore, all Postgres and DuckDB utilities are available on the _PATH_ (if the respective systems have been build during
-the setup).
+Furthermore, all Postgres utilities are available on the _PATH_.
 
 > [!TIP]
 > If you want to install PostBOUND directly on your machine, the
@@ -284,7 +283,7 @@ which must be specified as a `--build-arg` when creating the image).
 | `USERNAME` | Any valid UNIX username. | The username within the Docker container. This will also be the Postgres user and password. | `postbound` |
 | `SETUP_POSTGRES` | `true` or `false` | Whether to include a Postgres server in the setup. By default, this is a vanilla Postgres server with the latest minor release. However, this can be customized with `USE_PGLAB` and `PGVER`. | `true` |
 | `USE_PGLAB` | `true` or `false` | Whether to initialize a [pg_lab](https://github.com/rbergm/pg_lab) server instead of a normal Postgres server. pg_lab provides advanced hinting capabilities and offers additional extension points for the query optimizer. | `false` |
-| `OPTIMIZE_PG_CONFIG` |  `true` or `false` | Whether the Postgres configuration parameters should be automatically set based on your hardware platform. Rules are based on [PGTune](https://pgtune.leopard.in.ua/) by [le0pard](https://github.com/le0pard). | `false` |
+| `OPTIMIZE_PG_CONFIG` |  `true` or `false` | Whether the Postgres configuration parameters should be automatically set based on your hardware platform. Rules are based on [PGTune](https://pgtune.leopard.in.ua/) by [le0pard](https://github.com/le0pard). **If you use this setting, you should also specify the `PG_DISK_TYPE`.** Otherwise, the optimization process might fail! | `false` |
 | `PG_DISK_TYPE` | `SSD` or `HDD` | In case the Postgres server is automatically configured (see `OPTIMIZE_PG_CONFIG`) this indicates the kind of storage for the actual database. In turn, this influences the relative cost of sequential access and index-based access for the query optimizer. | `SSD` |
 | `PGVER` | 16, 17, ... | The Postgres version to use. Notice that pg_lab supports fewer versions. This value is passed to the `postgres-setup.sh` script of the Postgres tooling (either under `db-support` or from pg_lab), which provides the most up to date list of supported versions. | 17 |
 | `SETUP_DUCKDB` | `true` or `false` | Whether DuckDB-support should be added to PostBOUND. If enabled, a [DuckDB version with hinting support](https://github.com/rbergm/quacklab) will be compiled and images for all selected benchmarks will be created. Please be aware that during testing we noticed that creating an optimized build of DuckDB takes a lot of time on some platforms (think a couple of hours). | `false` |

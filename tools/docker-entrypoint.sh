@@ -4,8 +4,18 @@ if [ -z "$SETUP_POSTGRES" ] ; then
     SETUP_POSTGRES="true"
 fi
 
+if [ -z "$PG_DISK_TYPE" -a "$OPTIMIZE_PG_CONFIG" = "true" ] ; then
+    echo "[setup] PG_DISK_TYPE is not set, but PG server should be optimized. Assuming SSD."
+    PG_DISK_TYPE="SSD"
+fi
+
 if [ -z "$PGVER" ] ; then
-    echo "[setup] PGVER is not set, using default version"
+    echo "[setup] PGVER is not set, using default version 18"
+    PGVER="18"
+fi
+
+if [ "$USE_PGLAB" = "true" -a "$PGVER" -gt "17" ] ; then
+    echo "[setup] pg_lab currently only supports Postgres up to version 17. Falling back to 17."
     PGVER="17"
 fi
 
