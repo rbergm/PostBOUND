@@ -1,6 +1,7 @@
 #!/bin/bash
 
 if [ -z "$SETUP_POSTGRES" ] ; then
+    echo "[setup] SETUP_POSTGRES is not set, defaulting to true"
     SETUP_POSTGRES="true"
 fi
 
@@ -42,17 +43,24 @@ if [ -z "$(ls /postbound)" ] ; then
     git clone --depth 1 --branch=main https://github.com/rbergm/PostBOUND /postbound
 
     # Setup local Postgres or pg_lab
-    if [ "$USE_PGLAB" = "true" -a -z "$(ls /pg_lab)" ] ; then
-        echo "[setup] Building pg_lab"
-        git clone --depth 1 --branch=main https://github.com/rbergm/pg_lab /pg_lab
-        cd /pg_lab && ./postgres-setup.sh --pg-ver "$PGVER" --remote-password "postbound" --stop
-        . ./postgres-start.sh
-    elif [ "$USE_PGLAB" = "false" ] ; then
-        echo "[setup] Building vanilla Postgres server"
-        cd /postbound/db-support/postgres && ./postgres-setup.sh --pg-ver "$PGVER" --remote-password "postbound" --stop
-        . ./postgres-start.sh
-    else
-        echo "[setup] Reusing existing pg_lab installation"
+    if [ "$SETUP_POSTGRES" = "true" -a "$USE_PGLAB" = "true" ] ; then
+        if [ -z "$(ls /pg_lab)" ] ; then
+            echo "[setup] Building pg_lab"
+            cd /pg_lab && ./postgres-setup.sh --pg-ver "$PGVER" --remote-password "postbound" --stop
+            . ./postgres-start.sh
+        else
+            echo "[setup] Reusing existing pg_lab installation"
+            cd /pg_lab && . ./postgres-load-env.sh && . ./postgres-start.sh
+        fi
+    elif [ "$SETUP_POSTGRES" = "true" ] ; then
+        if [ -z "$(ls /postbound/db-support/postgres/postgres-server)" ] ; then
+            echo "[setup] Building vanilla Postgres server"
+            cd /postbound/db-support/postgres && ./postgres-setup.sh --pg-ver "$PGVER" --remote-password "postbound" --stop
+            . ./postgres-start.sh
+        else
+            echo "[setup] Reusing existing Postgres installation"
+            cd /postbound/db-support/postgres && . ./postgres-load-env.sh && . ./postgres-start.sh
+        fi
     fi
 
     cd /postbound/db-support/postgres
