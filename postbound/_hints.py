@@ -144,7 +144,7 @@ class PhysicalOperatorAssignment:
         self.global_settings[operator] = enabled
 
         if not overwrite_fine_grained_selection or enabled:
-            return
+            return self
 
         # at this point we know that we should disable a scan or join operator that was potentially set for
         # individual joins or tables
