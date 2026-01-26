@@ -10,6 +10,39 @@ The [history](HISTORY.md) contains the changelogs of older PostBOUND releases.
 
 ---
 
+# Version 0.20.1
+
+This is just a small bug fix/patch release with some minor additions.
+
+## 🐣 New features
+- `as_predicate()` now supports string representations of the operators for better usability. E.g., you can now do
+  `as_predicate(my_col, "=", 5)` instead of `as_predicate(my_col, LogicalOperator.Equal, 5)`. The old way still works is not
+  intended to be removed.
+- Added a `standard_logger()` utility for consistent logging output across all modules
+
+## 💀 Breaking changes
+- Technically the change to the `tables()` method of `DatabaseSchema` is breaking, but the method was already documented to
+  return all user-defined tables.
+
+## 📰 Updates
+- `DatabaseSchema.tables()` now ignores system tables by default
+
+## 🏥 Fixes
+- Fixed internal storage layout of `SqlQuery`
+- Fixed type error in `OrderBy.create_for()`
+- Fixed `PhysicalOperatorAssignment` method chaining not working correctly
+
+## ⚠️ Deprecations
+- The _ues_, _tonic_, _presets_, and _experiments_ module are now deprecated and will be moved to the separate optimizer
+  repository for version 0.21.0.
+
+## 🪲 Known bugs
+- The automatic optimization of the Postgres server configuration as part of the Docker installation does not work
+  on MacOS. Currently, this should be considered as wontfix.
+
+---
+
+
 # Version 0.20.0
 
 This release conducts some major changes of the framework structure, making the different parts more accessible and more
