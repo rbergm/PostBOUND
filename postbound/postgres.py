@@ -1284,7 +1284,9 @@ class PostgresSchemaInterface(DatabaseSchema):
     def __int__(self, postgres_db: PostgresInterface) -> None:
         super().__init__(postgres_db)
 
-    def tables(self, *, include_system_tables: bool = False, schema: str = "public") -> set[TableReference]:
+    def tables(
+        self, *, include_system_tables: bool = False, schema: str = "public"
+    ) -> set[TableReference]:
         query_template = textwrap.dedent("""
                                          SELECT table_name
                                          FROM information_schema.tables
@@ -1295,9 +1297,7 @@ class PostgresSchemaInterface(DatabaseSchema):
 
         tables = set(TableReference(row[0]) for row in result_set)
         if not include_system_tables:
-            tables = {
-                tab for tab in tables if not tab.full_name.startswith("pg_")
-            }
+            tables = {tab for tab in tables if not tab.full_name.startswith("pg_")}
         return tables
 
     def lookup_column(
@@ -3284,6 +3284,7 @@ def _timeout_query_worker(
     kwargs : Any
         Additional parameters to pass to the `PostgresInterface.execute_query` method.
     """
+    pg_instance: PostgresInterface | None = None
     try:
         connect_string = pg_config["connect_string"]
         cache_enabled = pg_config.get("cache_enabled", False)
@@ -3349,7 +3350,8 @@ def _timeout_query_worker(
     except Exception as e:
         status_pipe.send(_WorkerErrorEvent(e))
     finally:
-        pg_instance.close()
+        if pg_instance is not None:
+            pg_instance.close()
 
 
 class TimeoutQueryExecutor:
