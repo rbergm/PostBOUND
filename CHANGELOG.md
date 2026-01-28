@@ -10,6 +10,22 @@ The [history](HISTORY.md) contains the changelogs of older PostBOUND releases.
 
 ---
 
+# Version 0.20.2
+
+This is an incremental updating that polishes some rough edges and fixes a couple bugs.
+
+## 📰 Updates
+- Improved the control flow of the Postgres server setup during Docker initialization.
+
+## 🏥 Fixes
+- Fixed the Postgres timeout executor always creating two new connections to the database server instead of just one for the
+  actual query execution.
+- Fixed a corner case in the Postgres timeout handling when the timeout worker could not establish a connection to the
+  database.
+
+---
+
+
 # Version 0.20.1
 
 This is just a small bug fix/patch release with some minor additions.

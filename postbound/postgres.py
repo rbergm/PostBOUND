@@ -3382,10 +3382,7 @@ class TimeoutQueryExecutor:
             if postgres_instance is not None
             else DatabasePool.get_instance().current_database()
         )
-        self._timeout_watchdog = psycopg.connect(
-            self._pg_instance.connect_string,
-            application_name="PostBOUND Timeout Watchdog",
-        )
+        self._timeout_watchdog = None
 
     def execute_query(self, query: SqlQuery | str, timeout: float, **kwargs) -> Any:
         """Runs a query on the database connection, cancelling if it takes longer than a specific timeout.
@@ -3420,6 +3417,8 @@ class TimeoutQueryExecutor:
         )
         if cached_query:
             return self._pg_instance._query_cache[query]
+
+        self._init_watchdog()
 
         # We implement the timeout mechanism in a separate worker process. The main process keeps track of the progress of that
         # worker using a state pattern. Each major step in the process is represented by a separate event that is in turn
@@ -3502,6 +3501,15 @@ class TimeoutQueryExecutor:
                 runtime_changeable_only=True
             ),
         }
+
+    def _init_watchdog(self) -> None:
+        if self._timeout_watchdog is not None:
+            return
+
+        self._timeout_watchdog = psycopg.connect(
+            self._pg_instance.connect_string,
+            application_name="PostBOUND Timeout Watchdog",
+        )
 
     def _abort_backend(self, pid: int) -> None:
         with self._timeout_watchdog.cursor() as cursor:
