@@ -4,7 +4,7 @@ import math
 import re
 from enum import Enum
 from numbers import Number
-from typing import Optional, TypeVar
+from typing import Optional, SupportsFloat, SupportsIndex, TypeVar
 
 from .util._errors import StateError
 from .util.jsonize import jsondict
@@ -206,7 +206,7 @@ class Cardinality(Number):
         # Cardinalities are always positive integers, so rounding does nothing
         return self
 
-    def __divmod__(self, other: object) -> tuple[Number, Number]:
+    def __divmod__(self, other: SupportsFloat | SupportsIndex):
         if not self._valid:
             return math.nan, math.nan
         if isinstance(other, Cardinality):
@@ -219,19 +219,21 @@ class Cardinality(Number):
             return divmod(self.value, other)
         return NotImplemented
 
-    def __rdivmod__(self, other: object) -> tuple[Number, Number]:
+    def __rdivmod__(
+        self, other: SupportsFloat | SupportsIndex
+    ) -> tuple[Number, Number]:
         if self._nan:
             own_value = math.nan
         elif self._inf:
             own_value = math.inf
         else:
             own_value = self.value
-        return divmod(other, own_value)
+        return divmod(float(other), own_value)
 
     def __floordiv__(self, other: object) -> int:
         return math.floor(self / other)
 
-    def __rfloordiv__(self, other: object) -> int:
+    def __rfloordiv__(self, other: SupportsFloat | SupportsIndex) -> int:
         return math.floor(other / self)
 
     def __mod__(self, other: object) -> Cardinality:
@@ -258,15 +260,15 @@ class Cardinality(Number):
 
         return NotImplemented
 
-    def __rmod__(self, other: object) -> Cardinality:
+    def __rmod__(self, other: SupportsFloat | SupportsIndex) -> Cardinality:
         if math.isnan(other) or math.isinf(other):
             return Cardinality.unknown()
 
         if self._nan:
             return Cardinality.unknown()
         if self._inf:
-            return Cardinality(other)
-        return Cardinality(other % self.value)
+            return Cardinality(float(other))
+        return Cardinality(float(other) % self.value)
 
     def __lt__(self, other: object) -> bool:
         if not self._valid:
@@ -385,7 +387,7 @@ class Cardinality(Number):
             return complex(math.inf)
         return complex(float(self.value))
 
-    def __eq__(self, other: object) -> None:
+    def __eq__(self, other: object) -> bool:
         match other:
             case Cardinality():
                 if self._nan and other._nan:
@@ -824,7 +826,7 @@ class TableReference:
             The qualified name, quoted as necessary.
         """
         if self.virtual:
-            raise VirtualTableError(f"Table {self} does not have a qualified name.")
+            raise VirtualTableError(self)
         return (
             f"{quote(self._schema)}.{quote(self._full_name)}"
             if self._schema
@@ -1064,7 +1066,7 @@ class ColumnReference:
         return ColumnReference(self.name, None)
 
     def __json__(self) -> object:
-        return {"name": self._name, "table": self._table}
+        return {"column": self._name, "table": self._table}
 
     def __lt__(self, other: object) -> bool:
         if not isinstance(other, ColumnReference):
