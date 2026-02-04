@@ -2,37 +2,26 @@
 
 from __future__ import annotations
 
-from collections.abc import Collection, Iterable
-from typing import Any, Optional
+from collections.abc import Sequence
+from pathlib import Path
+from typing import Any
 
 import pandas as pd
 
 
-def _df_from_dict(
-    data: dict[Any, Collection[Any]],
-    key_name: Optional[str] = None,
-    column_names: Optional[Iterable[str]] = None,
+def as_df(
+    data: Sequence[dict[str, Any]],
 ) -> pd.DataFrame:
-    data_template = next(iter(data.values()))
-    if column_names is None:
-        column_name_map = {i: str(i) for i in range(len(data_template))}
-    else:
-        column_name_map = {idx: col for idx, col in enumerate(column_names)}
+    """Generates a new Pandas `DataFrame` based on an array-of-structs style data input.
 
-    df_container: dict[str, list[Any]] = {col: [] for col in column_name_map.values()}
-    for row in data.values():
-        for col_idx, col in enumerate(row):
-            col_name = column_name_map[col_idx]
-            df_container[col_name].append(col)
+    Each dictionary corresponds to one row of the dataframe. All dictionaries have to consist of exactly the same key-value
+    pairs. Each key becomes a column in the dataframe. The precise columns are inferred from the first dictionary in the
+    collection. In this case, column values are derived directly from the keys.
+    """
+    if not data:
+        return pd.DataFrame()
 
-    key_name = "key" if key_name is None else key_name
-    df_container[key_name] = list(data.keys())
-
-    return pd.DataFrame(df_container)
-
-
-def _df_from_list(data: Collection[dict[Any, Any]]) -> pd.DataFrame:
-    data_template = next(iter(data))
+    data_template = data[0]
     df_container: dict[str, list[Any]] = {col: [] for col in data_template.keys()}
     for row in data:
         for key in df_container.keys():
@@ -40,32 +29,53 @@ def _df_from_list(data: Collection[dict[Any, Any]]) -> pd.DataFrame:
     return pd.DataFrame(df_container)
 
 
-def as_df(
-    data: dict[Any, Collection[Any]] | Collection[dict[Any, Any]],
-    *,
-    key_name: Optional[str] = None,
-    column_names: Optional[Iterable[str]] = None,
-) -> pd.DataFrame:
-    """Generates a new Pandas `DataFrame`.
+def read_df(path: Path | str, **kwargs) -> pd.DataFrame:
+    """Reads a Pandas `DataFrame` from a file, inferring the file format from the file extension.
 
-    The contents of the dataframe can be supplied in one of two forms: a collection of dictionaries will be transformed
-    into a dataframe such that each dictionary corresponds to one row of the dataframe. All dictionaries have to
-    consist of exactly the same key-value pairs. Each key becomes a column in the dataframe. The precise columns are
-    inferred from the first dictionary in the collection. In this case, column values are derived directly from the
-    keys.
-
-    The other form consists of one large dictionary of keys mapping to several columns. The resulting dataframe will
-    have one column that corresponds to the key values and additional columns that correspond to the entries in the
-    collection which was mapped-to by the key. All collections have to consist of exactly the same number of elements.
-    The precise number is inferred based on the first key-value pair. To name the different columns of the dataframe,
-    the `key_name` and `column_names` can be used. If no key name is given, it defaults to `key`. If no column names
-    are given, they default to numerical indices that correspond to the position in the mapped collection.
+    All additional arguments are passed directly to the respective Pandas read function.
     """
-    if not data:
-        return pd.DataFrame()
-    if isinstance(data, dict):
-        return _df_from_dict(data, key_name, column_names)
-    elif isinstance(data, Collection):
-        return _df_from_list(data)
-    else:
-        raise TypeError("Unexpected data type: " + str(data))
+    path = Path(path)
+    match path.suffix.lower():
+        case ".csv":
+            return pd.read_csv(path, **kwargs)
+        case ".parquet":
+            return pd.read_parquet(path, **kwargs)
+        case ".xlsx" | ".xls":
+            return pd.read_excel(path, **kwargs)
+        case ".json":
+            return pd.read_json(path, **kwargs)
+        case ".hdf" | ".h5" | ".hdf5":
+            return pd.read_hdf(path, **kwargs)
+        case ".feather":
+            return pd.read_feather(path, **kwargs)
+        case ".orc":
+            return pd.read_orc(path, **kwargs)
+        case _:
+            raise ValueError(f"Unsupported file format: {path.suffix}")
+
+
+def write_df(
+    df: pd.DataFrame, path: Path | str, *, index: bool = False, **kwargs
+) -> None:
+    """Writes a Pandas `DataFrame` to a file, inferring the file format from the file extension.
+
+    All additional arguments are passed directly to the respective Pandas write function.
+    """
+    path = Path(path)
+    match path.suffix.lower():
+        case ".csv":
+            df.to_csv(path, index=index, **kwargs)
+        case ".parquet":
+            df.to_parquet(path, **kwargs)
+        case ".xlsx" | ".xls":
+            df.to_excel(path, index=index, **kwargs)
+        case ".json":
+            df.to_json(path, index=index, **kwargs)
+        case ".hdf" | ".h5" | ".hdf5":
+            df.to_hdf(path, **kwargs)
+        case ".feather":
+            df.to_feather(path, **kwargs)
+        case ".orc":
+            df.to_orc(path, **kwargs)
+        case _:
+            raise ValueError(f"Unsupported file format: {path.suffix}")

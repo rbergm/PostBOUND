@@ -12,7 +12,10 @@ The [history](HISTORY.md) contains the changelogs of older PostBOUND releases.
 
 # Version 0.20.2
 
-This is an incremental updating that polishes some rough edges and fixes a couple bugs.
+This is an incremental update that polishes some rough edges and fixes a couple bugs.
+
+## 🐣 New features
+- Added a `write_df()` and `read_df()` utility to read/write Pandas DataFrames in various file formats.
 
 ## 📰 Updates
 - Improved the control flow of the Postgres server setup during Docker initialization.
@@ -33,7 +36,7 @@ This is an incremental updating that polishes some rough edges and fixes a coupl
   repository for version 0.21.0.
 - `Workload.read()` is deprecated in favor of `read_workload()`. The old method will be removed in version 0.21.0.
   This change unifies the workload API and consistently uses `read_workload_XXX` functions for input.
-- `CompoundPredicate` will no longer be used to represent *NOT* predicates from version 0.21.0 onwards. Instead, a dedicated
+- `CompoundPredicate` will no longer be used to represent NOT predicates from version 0.21.0 onwards. Instead, a dedicated
   `NotPredicate` class will be introduced.
 
 ## 🪲 Known bugs
