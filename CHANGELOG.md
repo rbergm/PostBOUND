@@ -20,6 +20,7 @@ This is an incremental update that polishes some rough edges and fixes a couple 
 ## 📰 Updates
 - Improved the control flow of the Postgres server setup during Docker initialization.
 - Miscellaneous improvements to the type hints across the entire codebase. We will continue this work in the upcoming releases.
+- More precise reporting of estimated cardinalities in Postgres query plans when parallel workers are used.
 
 ## 🏥 Fixes
 - Fixed the Postgres timeout executor always creating two new connections to the database server instead of just one for the
@@ -27,7 +28,7 @@ This is an incremental update that polishes some rough edges and fixes a couple 
 - Fixed a corner case in the Postgres timeout handling when the timeout worker could not establish a connection to the
   database.
 - Fixed closing a Postgres connection leaving the timeout watcher connection open.
-- Fixed discrepancy between JSON export format of `ColumnReference` and the expected format during loading
+- Fixed discrepancy between JSON export format of `ColumnReference` and the expected format during loading.
 - Fixed SQL parser sometimes still representing ANY/ALL predicates as function expressions instead of the new quantifier
   expressions.
 

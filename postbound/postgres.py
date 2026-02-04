@@ -2614,7 +2614,7 @@ class PostgresOptimizer(OptimizerInterface):
 
         try:
             raw_query_plan: dict = self._pg_instance.execute_query(
-                query, cache_enabled=False, raw=True, timeout=timeout
+                query, cache_enabled=False, timeout=timeout
             )[0]
         except TimeoutError:
             return None
@@ -3733,9 +3733,8 @@ class PostgresExplainNode:
         self.parent_relationship: str | None = explain_data.get(
             "Parent Relationship", None
         )
-        self.parallel_workers: int = explain_data.get("Workers Launched", math.nan)
-        if math.isnan(self.parallel_workers):
-            self.parallel_workers: int = explain_data.get("Workers Planned", math.nan)
+        self.launched_workers: int = explain_data.get("Workers Launched", 0)
+        self.planned_workers: int = explain_data.get("Workers Planned", 0)
         self.sort_keys: str = explain_data.get("Sort Key", "")
 
         self.shared_blocks_read: int = explain_data.get("Shared Read Blocks", math.nan)
@@ -3764,7 +3763,7 @@ class PostgresExplainNode:
                 self.hash_condition,
                 self.recheck_condition,
                 self.parent_relationship,
-                self.parallel_workers,
+                self.launched_workers,
                 tuple(self.children),
             )
         )
@@ -3899,11 +3898,22 @@ class PostgresExplainNode:
         ValueError
             If the node contains more than two children.
         """
+        return self._generate_qep()
+
+    def _generate_qep(self, *, card_adjustment: float = 1.0) -> QueryPlan:
         child_nodes = []
         inner_child, outer_child, subplan_child = None, None, None
+
+        # planned workers is 0 for sequential execution, otherwise it contains the number of additional workers
+        # if we already have a card adjustment, we are alrady in a parallel subplan so we re-use the existing adjustment
+        # otherwise, the total adjustment is planned_workers + 1 to account for the main process
+        child_adjustment = (
+            card_adjustment if card_adjustment > 1 else (self.planned_workers + 1)
+        )
+
         for child in self.children:
             parent_rel = child.parent_relationship
-            qep_child = child.as_qep()
+            qep_child = child._generate_qep(card_adjustment=child_adjustment)
 
             match parent_rel:
                 case "Inner":
@@ -3928,7 +3938,9 @@ class PostgresExplainNode:
 
         table = self.parse_table()
         subplan_name = self.subplan_name or self.cte_name
+
         true_card = self.true_cardinality * self.loops
+        estimated_card = self.cardinality_estimate * card_adjustment
 
         if self.is_scan():
             operator = PostgresExplainScanNodes.get(self.node_type, None)
@@ -3948,9 +3960,13 @@ class PostgresExplainNode:
         shared_misses = (
             None if math.isnan(self.shared_blocks_read) else self.shared_blocks_read
         )
-        par_workers = (
-            None if math.isnan(self.parallel_workers) else self.parallel_workers
-        )
+
+        if self.launched_workers > 0:
+            par_workers = self.launched_workers
+        elif self.planned_workers > 0:
+            par_workers = self.planned_workers
+        else:
+            par_workers = None
 
         plan = QueryPlan(
             self.node_type,
@@ -3961,7 +3977,7 @@ class PostgresExplainNode:
             index=self.index_name,
             sort_keys=sort_keys,
             estimated_cost=self.cost,
-            estimated_cardinality=Cardinality(self.cardinality_estimate),
+            estimated_cardinality=Cardinality(estimated_card),
             actual_cardinality=Cardinality(true_card),
             execution_time=self.execution_time,
             cache_hits=shared_hits,
@@ -3969,12 +3985,6 @@ class PostgresExplainNode:
             subplan_root=subplan_child,
             subplan_name=subplan_name,
         )
-
-        if par_workers and par_workers > 1:
-            # Postgres reports both the estimated and the actual cardinality as per-worker averages.
-            # Our QueryPlan does not make this distinction. Therefore, we need to re-scale the cardinalities
-            # for parallel plans. Note the extra +1 to account for the main process.
-            plan = plan.scale_cardinality(par_workers + 1, kind="both", recursive=True)
 
         return plan
 
