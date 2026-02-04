@@ -16,6 +16,7 @@ This is an incremental update that polishes some rough edges and fixes a couple 
 
 ## 🐣 New features
 - Added a `write_df()` and `read_df()` utility to read/write Pandas DataFrames in various file formats.
+- The parser can now extract hint blocks that are not at the beginning of the query string.
 
 ## 📰 Updates
 - Improved the control flow of the Postgres server setup during Docker initialization.

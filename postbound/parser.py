@@ -2156,7 +2156,7 @@ def _parse_hint_block(
     _current_hint_text = _current_hint_text or []
 
     raw_query = raw_query.lstrip()
-    block_hint = raw_query.startswith("/*")
+    block_hint = "/*" in raw_query
     line_hint = raw_query.startswith("--")
     if not block_hint and not line_hint:
         prep_stms = "\n".join(set_cmds)
@@ -2178,12 +2178,13 @@ def _parse_hint_block(
         )
 
     # must be block hint
+    block_start = raw_query.find("/*")
     block_end = raw_query.find("*/")
     if block_end == -1:
         # should never be raised b/c parsing should have failed already at this point
         raise ParserError(f"Unterminated block comment: {raw_query}")
 
-    block_comment = raw_query[: block_end + 2].strip()
+    block_comment = raw_query[block_start : block_end + 2].strip()
     _current_hint_text.append(block_comment)
     return _parse_hint_block(
         raw_query[block_end + 2 :],
