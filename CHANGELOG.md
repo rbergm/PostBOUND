@@ -24,6 +24,8 @@ This is an incremental updating that polishes some rough edges and fixes a coupl
   database.
 - Fixed closing a Postgres connection leaving the timeout watcher connection open.
 - Fixed discrepancy between JSON export format of `ColumnReference` and the expected format during loading
+- Fixed SQL parser sometimes still representing ANY/ALL predicates as function expressions instead of the new quantifier
+  expressions.
 
 ---
 

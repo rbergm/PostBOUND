@@ -1124,11 +1124,11 @@ def _pglast_parse_expression(
 
             if sublink_type == "ANY_SUBLINK":
                 operator = _PglastOperatorMap[expression["operName"]]
-                subquery_expression = FunctionExpression.any_func(subquery)
+                subquery_expression = QuantifierExpression.any(subquery)
                 return BinaryPredicate(operator, testexpr, subquery_expression)
             elif sublink_type == "ALL_SUBLINK":
                 operator = _PglastOperatorMap[expression["operName"]]
-                subquery_expression = FunctionExpression.all_func(subquery)
+                subquery_expression = QuantifierExpression.all(subquery)
                 return BinaryPredicate(operator, testexpr, subquery_expression)
             else:
                 raise NotImplementedError("Subquery handling is not yet implemented")
