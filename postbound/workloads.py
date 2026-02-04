@@ -22,14 +22,14 @@ References
 
 from __future__ import annotations
 
-import collections
-import pathlib
 import random
 import typing
 import urllib.request
 import warnings
 import zipfile
+from collections import UserDict
 from collections.abc import Callable, Hashable, Iterable, Sequence
+from pathlib import Path
 from typing import Literal, Optional
 
 import natsort
@@ -51,7 +51,7 @@ _WorkloadSources = {
 }
 
 
-def _fetch_workload(name: str) -> pathlib.Path:
+def _fetch_workload(name: str) -> Path:
     """Determines the local path of a workload, downloading it if necessary."""
     name = name.lower()
     workload_dir = pbdir / "workloads" / name
@@ -80,7 +80,7 @@ NewLabelType = typing.TypeVar("NewLabelType", bound=Hashable)
 """In case of mutations of the workload labels, this denotes the new type of the labels after the mutation."""
 
 
-class Workload(collections.UserDict[LabelType, SqlQuery]):
+class Workload(UserDict[LabelType, SqlQuery]):
     """A workload collects a number of queries (read: benchmark) and provides utilities to operate on them conveniently.
 
     In addition to the actual queries, each query is annotated by a label that can be used to retrieve the query more
@@ -104,7 +104,7 @@ class Workload(collections.UserDict[LabelType, SqlQuery]):
         The queries that form the actual workload
     name : str, optional
         A name that can be used to identify or represent the workload, by default ``""``.
-    root : Optional[pathlib.Path], optional
+    root : Optional[Path], optional
         The root directory that contains the workload queries. This is mainly used to somehow identify the workload when no
         name is given or the workload contents do not match the expected queries. Defaults to ``None``.
 
@@ -117,7 +117,7 @@ class Workload(collections.UserDict[LabelType, SqlQuery]):
 
     @staticmethod
     def read(
-        root_dir: str,
+        root_dir: str | Path,
         *,
         query_file_pattern: str = "*.sql",
         name: str = "",
@@ -129,6 +129,11 @@ class Workload(collections.UserDict[LabelType, SqlQuery]):
         verbose: bool = False,
     ) -> Workload[str]:
         """Reads all SQL queries from a specific directory into a workload object.
+
+        .. deprecated:: 0.20.2
+            Use the `read_workload` function instead, which provides more flexibility and features.
+            We will unify the workload API in 0.21.0 to make sure all workload loading functions are methods of the
+            `workloads` module.
 
         This method assumes that the queries are stored in individual files, one query per file. The query labels will be
         constructed based on the file name of the source files. For example, a query contained in file ``q-1-1.sql`` will
@@ -166,11 +171,11 @@ class Workload(collections.UserDict[LabelType, SqlQuery]):
 
         See Also
         --------
-        pathlib.Path.glob
+        Path.glob
         parser.parse_query
         """
         queries: dict[str, SqlQuery] = {}
-        root = pathlib.Path(root_dir)
+        root = Path(root_dir)
 
         if verbose:
             matching_files = list(root.glob(query_file_pattern))
@@ -211,7 +216,7 @@ class Workload(collections.UserDict[LabelType, SqlQuery]):
         self,
         queries: dict[LabelType, SqlQuery],
         name: str = "",
-        root: Optional[pathlib.Path] = None,
+        root: Optional[Path] = None,
     ) -> None:
         super().__init__(queries)
         self._name = name
@@ -544,11 +549,12 @@ class Workload(collections.UserDict[LabelType, SqlQuery]):
             root=self._root,
         )
 
-    def __or__(self, other: Workload[LabelType]) -> Workload[LabelType]:
-        if not isinstance(other, Workload):
-            raise TypeError("Can only compute union of workloads")
+    def __or__(
+        self, other: dict[LabelType, SqlQuery] | UserDict[LabelType, SqlQuery]
+    ) -> Workload[LabelType]:
+        other_data = other.data if isinstance(other, UserDict) else other
         return Workload(
-            other.data | self.data, name=self._name, root=self._root
+            other_data | self.data, name=self._name, root=self._root
         )  # retain own labels in case of conflict
 
     def __repr__(self) -> str:
@@ -563,8 +569,15 @@ class Workload(collections.UserDict[LabelType, SqlQuery]):
             return f"Workload: {len(self)} queries"
 
 
+def wrap_workload(
+    queries: Iterable[SqlQuery], name: str = "", root: Path | str | None = None
+) -> Workload[int]:
+    """Wraps a number of queries in a workload with numerical labels."""
+    return generate_workload(queries, name=name, workload_root=root)
+
+
 def read_workload(
-    path: str,
+    path: str | Path,
     name: str = "",
     *,
     query_file_pattern: str = "*.sql",
@@ -612,23 +625,45 @@ def read_workload(
     Workload[str]
         The workload
     """
-    base_dir_workload = Workload.read(
-        path,
-        name=name,
-        query_file_pattern=query_file_pattern,
-        label_prefix=query_label_prefix,
-        file_encoding=file_encoding,
-        bind_columns=bind_columns,
-        include_hints=include_hints,
-        on_error=on_error,
-        verbose=verbose,
-    )
-    if not recurse_subdirectories:
-        return base_dir_workload
+    root = Path(path)
+    queries: dict[str, SqlQuery] = {}
 
-    merged_queries = dict(base_dir_workload.data)
-    root_dir = pathlib.Path(path)
-    for subdir in root_dir.iterdir():
+    if verbose:
+        matching_files = list(root.glob(query_file_pattern))
+        matching_files = tqdm.tqdm(matching_files, desc=root.name, unit="q")
+    else:
+        matching_files = root.glob(query_file_pattern)
+
+    for query_file_path in matching_files:
+        with open(query_file_path, "r", encoding=file_encoding) as query_file:
+            raw_contents = query_file.readlines()
+        query_contents = "\n".join([line for line in raw_contents])
+
+        try:
+            parsed_query = parser.parse_query(
+                query_contents,
+                include_hints=include_hints,
+                bind_columns=bind_columns,
+            )
+        except Exception as e:
+            match on_error:
+                case "raise":
+                    raise ValueError(f"Could not parse query from {query_file_path}", e)
+                case "warn":
+                    warnings.warn(
+                        f"Could not parse query {query_file_path}: {e} ({type(e)})"
+                    )
+                case "ignore":
+                    pass
+
+        query_label = query_file_path.stem
+        queries[query_label] = parsed_query
+
+    base_workload = Workload(queries, name=name, root=root)
+    if not recurse_subdirectories:
+        return base_workload
+
+    for subdir in root.iterdir():
         if not subdir.is_dir():
             continue
         subdir_prefix = (
@@ -638,7 +673,7 @@ def read_workload(
         )
         subdir_prefix += subdir.stem + "/"
         subdir_workload = read_workload(
-            str(subdir),
+            subdir,
             query_file_pattern=query_file_pattern,
             recurse_subdirectories=True,
             query_label_prefix=subdir_prefix,
@@ -647,8 +682,8 @@ def read_workload(
             on_error=on_error,
             verbose=verbose,
         )
-        merged_queries |= subdir_workload.data
-    return Workload(merged_queries, name, root_dir)
+        queries |= subdir_workload.data
+    return Workload(queries, name, root)
 
 
 def read_batch_workload(
@@ -677,7 +712,7 @@ def read_batch_workload(
     Workload[int]
         The workload
     """
-    filepath = pathlib.Path(filename)
+    filepath = Path(filename)
     name = name if name else filepath.stem
     with open(filename, "r", encoding=file_encoding) as query_file:
         raw_queries = query_file.readlines()
@@ -686,7 +721,7 @@ def read_batch_workload(
 
 
 def read_csv_workload(
-    filename: str,
+    filename: str | Path,
     name: str = "",
     *,
     query_column: str = "query",
@@ -704,7 +739,7 @@ def read_csv_workload(
 
     Parameters
     ----------
-    filename : str
+    filename : str | Path
         The name of the CSV file to read. The extension does not matter, as long as the file can be read by the pandas CSV
         parser. The parser can receive additional arguments via the `pd_args` parameter.
     name : str, optional
@@ -729,11 +764,11 @@ def read_csv_workload(
     ---------
     pandas.read_csv
     """
-    filepath = pathlib.Path(filename)
-    name = name if name else filepath.stem
-    columns = [query_column] + [label_column] if label_column else []
+    filepath = Path(filename)
+    name = name or filepath.stem
+    columns = [query_column, label_column] if label_column else [query_column]
 
-    if pd_args is not None:
+    if pd_args:
         # Prepare the pd_args to not overwrite any of our custom parameters
         pd_args = dict(pd_args)
         pd_args.pop("usecols", None)
@@ -741,7 +776,7 @@ def read_csv_workload(
         pd_args.pop("encoding", None)
 
     workload_df = pd.read_csv(
-        filename,
+        filepath,
         usecols=columns,
         converters={query_column: parser.parse_query},
         encoding=file_encoding,
@@ -765,7 +800,7 @@ def generate_workload(
     *,
     name: str = "",
     labels: Optional[dict[SqlQuery, LabelType]] = None,
-    workload_root: Optional[pathlib.Path] = None,
+    workload_root: Optional[Path | str] = None,
 ) -> Workload[LabelType]:
     """Wraps a number of queries in a workload object.
 
@@ -785,7 +820,7 @@ def generate_workload(
     labels : Optional[dict[SqlQuery, LabelType]], optional
         The labels of the workload queries. Defaults to ``None``, in which case numerical labels will be used. In the first
         case the label type is inferred from the dictionary values. In the second case, it will be `int`.
-    workload_root : Optional[pathlib.Path], optional
+    workload_root : Optional[Path], optional
         The directory or file that originally contained the workload queries. Defaults to ``None`` if this is not known or not
         appropriate (e.g. for workloads that are read from a remote source)
 
@@ -794,6 +829,9 @@ def generate_workload(
     Workload[LabelType]
         The workload
     """
+    workload_root = (
+        Path(workload_root) if isinstance(workload_root, str) else workload_root
+    )
     name = name if name else (workload_root.stem if workload_root else "")
     if not labels:
         labels: dict[SqlQuery, int] = {
@@ -803,10 +841,9 @@ def generate_workload(
     return Workload(workload_contents, name, workload_root)
 
 
-def _assert_workload_loaded(workload: Workload[LabelType], expected_dir: str) -> None:
+def _assert_workload_loaded(workload: Workload[LabelType], expected_dir: Path) -> None:
     """Ensures that workload queries have been read successfully. The expected directory is used for error messages."""
     if not workload:
-        expected_dir = pathlib.Path.home() / ".postbound" / "workloads"
         raise ValueError(
             f"Could not load {workload.name} workload. "
             f"Please check {expected_dir} and make sure that it contains valid query files. "

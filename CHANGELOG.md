@@ -28,6 +28,19 @@ This is an incremental updating that polishes some rough edges and fixes a coupl
 - Fixed SQL parser sometimes still representing ANY/ALL predicates as function expressions instead of the new quantifier
   expressions.
 
+## ⚠️ Deprecations
+- The _ues_, _tonic_, _presets_, and _experiments_ module are now deprecated and will be moved to the separate optimizer
+  repository for version 0.21.0.
+- `Workload.read()` is deprecated in favor of `read_workload()`. The old method will be removed in version 0.21.0.
+  This change unifies the workload API and consistently uses `read_workload_XXX` functions for input.
+- `CompoundPredicate` will no longer be used to represent *NOT* predicates from version 0.21.0 onwards. Instead, a dedicated
+  `NotPredicate` class will be introduced.
+
+## 🪲 Known bugs
+- The automatic optimization of the Postgres server configuration as part of the Docker installation does not work
+  on MacOS. Currently, this should be considered as wontfix.
+
+
 ---
 
 
