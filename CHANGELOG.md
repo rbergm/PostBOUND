@@ -22,6 +22,7 @@ This is an incremental updating that polishes some rough edges and fixes a coupl
   actual query execution.
 - Fixed a corner case in the Postgres timeout handling when the timeout worker could not establish a connection to the
   database.
+- Fixed closing a Postgres connection leaving the timeout watcher connection open.
 - Fixed discrepancy between JSON export format of `ColumnReference` and the expected format during loading
 
 ---

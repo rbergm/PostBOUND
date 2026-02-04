@@ -308,7 +308,7 @@ class PostgresSetting(str):
         """
         return PostgresSetting(self.parameter, value)
 
-    def __getnewargs__(self) -> tuple[str, object]:
+    def __getnewargs__(self):
         return (self.parameter, self.value)
 
 
@@ -381,7 +381,10 @@ class PostgresConfiguration(collections.UserString):
         return list(self._settings.keys())
 
     def add(
-        self, setting: PostgresSetting | str = None, value: object = None, **kwargs
+        self,
+        setting: PostgresSetting | str | None = None,
+        value: object = None,
+        **kwargs,
     ) -> PostgresConfiguration:
         """Creates a new configuration with additional settings.
 
@@ -876,6 +879,7 @@ class PostgresInterface(Database):
 
     def reset_connection(self) -> int:
         try:
+            self._timeout_executor.close()
             self._connection.cancel()
             self._cursor.close()
             self._connection.close()
@@ -912,6 +916,7 @@ class PostgresInterface(Database):
     def close(self) -> None:
         self._cursor.close()
         self._connection.close()
+        self._timeout_executor.close()
 
     def prewarm_tables(
         self,
@@ -950,6 +955,7 @@ class PostgresInterface(Database):
         --------
         >>> pg.prewarm_tables([table1, table2])
         >>> pg.prewarm_tables(table1, table2)
+        >>> pg.prewarm_tables(query.tables())
         """
         self._assert_active_extension("pg_prewarm")
         tables: Iterable[TableReference] = list(util.enlist(tables)) + list(more_tables)
@@ -1015,6 +1021,7 @@ class PostgresInterface(Database):
         --------
         >>> pg.cooldown_tables([table1, table2])
         >>> pg.cooldown_tables(table1, table2)
+        >>> pg.cooldown_tables(query.tables())
 
         References
         ----------
@@ -3491,6 +3498,15 @@ class TimeoutQueryExecutor:
             raise TimeoutError(query)
         else:
             return query_result
+
+    def close(self) -> None:
+        """Closes any internal resources held by the timeout executor.
+
+        After calling this method, the timeout executor should no longer be used.
+        """
+        if self._timeout_watchdog is not None:
+            self._timeout_watchdog.close()
+            self._timeout_watchdog = None
 
     def _pg_fingerprint(self) -> dict:
         """Generate a pickable representation of the current Postgres connection."""
