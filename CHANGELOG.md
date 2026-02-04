@@ -16,6 +16,7 @@ This is an incremental updating that polishes some rough edges and fixes a coupl
 
 ## 📰 Updates
 - Improved the control flow of the Postgres server setup during Docker initialization.
+- Miscellaneous improvements to the type hints across the entire codebase. We will continue this work in the upcoming releases.
 
 ## 🏥 Fixes
 - Fixed the Postgres timeout executor always creating two new connections to the database server instead of just one for the

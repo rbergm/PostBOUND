@@ -16,7 +16,7 @@ import json
 from pathlib import Path
 from typing import IO, Any, Protocol, runtime_checkable
 
-jsondict = dict
+jsondict = object
 """Type alias for a JSON-izeable dictionary."""
 
 
@@ -36,16 +36,16 @@ class JsonizeEncoder(json.JSONEncoder):
     (required) parameters and returns a JSON-izeable representation of the current instance, e.g. a `dict` or a `list`.
     """
 
-    def default(self, obj: Any) -> Any:
-        if isinstance(obj, enum.Enum):
-            return obj.value
-        elif isinstance(obj, (set, frozenset)):
-            return list(obj)
-        elif isinstance(obj, Path):
-            return str(obj)
-        elif "__json__" in dir(obj):
-            return obj.__json__()
-        return json.JSONEncoder.default(self, obj)
+    def default(self, o: Any) -> Any:
+        if isinstance(o, enum.Enum):
+            return o.value
+        elif isinstance(o, (set, frozenset)):
+            return list(o)
+        elif isinstance(o, Path):
+            return str(o)
+        elif "__json__" in dir(o):
+            return o.__json__()
+        return json.JSONEncoder.default(self, o)
 
 
 def to_json(obj: Any, *args, **kwargs) -> str | None:

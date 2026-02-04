@@ -154,7 +154,7 @@ def hash_dict(dictionary: dict[K, V]) -> int:
     return hash((keys_hash, values_hash))
 
 
-def generate_multi(entries: list[tuple[K, V]]) -> dict[K, list[V]]:
+def generate_multi(entries: Iterable[tuple[K, V]]) -> dict[K, list[V]]:
     """Generates a multi-dict based on its entries.
 
     Each key can occur multiple times and values will be aggregated in a list.

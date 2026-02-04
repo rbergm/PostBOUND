@@ -29,7 +29,6 @@ References
 
 from __future__ import annotations
 
-import collections
 import json
 import warnings
 from collections.abc import Iterable
@@ -128,9 +127,7 @@ class SchemaCache:
 
     def __init__(self, schema: Optional[DatabaseSchema] = None) -> None:
         self._schema = schema
-        self._lookup_cache: dict[TableReference, tuple[list[str], set[str]]] = (
-            collections.defaultdict(set)
-        )
+        self._lookup_cache: dict[str, tuple[list[str], set[str]]] = {}
 
     def initialize_with(self, schema: Optional[DatabaseSchema]) -> None:
         """Sets the catalog if necessary"""
@@ -169,7 +166,7 @@ class SchemaCache:
 
         return None
 
-    def columns_of(self, table: str) -> list[str]:
+    def columns_of(self, table: str | TableReference) -> list[str]:
         """Provides the columns that belong to a specific table.
 
         If no catalog is available, this method will always return an empty list.
@@ -180,7 +177,7 @@ class SchemaCache:
         cols, _ = self._inflate_cache(table)
         return cols
 
-    def _inflate_cache(self, table: str) -> tuple[list[str], set[str]]:
+    def _inflate_cache(self, table: str | TableReference) -> tuple[list[str], set[str]]:
         """Provides the columns that belong to a specific table, consulting the online catalog if necessary.
 
         This method assumes that there is indeed an online schema available. Calling this method without a schema will
@@ -191,9 +188,13 @@ class SchemaCache:
         tuple[list[str], set[str]]
             The columns of the table in their defined order, as well as the same columns as a set.
         """
+        table = table.full_name if isinstance(table, TableReference) else table
         cached_res = self._lookup_cache.get(table)
         if cached_res:
             return cached_res
+        if not self._schema:
+            return [], set()
+
         cols: list[str] = [col.name for col in self._schema.columns(table)]
         cols_set = set(cols)
         self._lookup_cache[table] = cols, cols_set
@@ -315,6 +316,7 @@ class QueryNamespace:
             self._output_shape = list(self._setop_children[0]._output_shape)
             return
 
+        assert select_clause is not None, "SELECT clause expected for non-setop query"
         for projection in select_clause:
             if isinstance(projection, (str, ColumnReference)):
                 # this is for temporary tables (CTEs or VALUES) that define their schema
@@ -865,6 +867,9 @@ def _pglast_parse_expression(
             if operation in LogicalOperator:
                 return BinaryPredicate(operation, left, right)
 
+            if isinstance(operation, CompoundOperator):
+                raise ParserError(f"Unexpected compound in query '{query_txt}'")
+
             return MathExpression(operation, left, right)
 
         case "A_Expr" if pglast_data["A_Expr"]["kind"] == "AEXPR_LIKE":
@@ -980,6 +985,8 @@ def _pglast_parse_expression(
                 _pglast_parse_predicate(child, namespace=namespace, query_txt=query_txt)
                 for child in expression["args"]
             ]
+            if not isinstance(operator, CompoundOperator):
+                raise ParserError(f"Unexpected non-compound in query '{query_txt}'")
             return CompoundPredicate(operator, children)
 
         case "NullTest":
@@ -1057,7 +1064,7 @@ def _pglast_parse_expression(
                 order = None
 
             if "agg_filter" in expression:
-                filter_expr = _pglast_parse_expression(
+                filter_expr = _pglast_parse_predicate(
                     expression["agg_filter"], namespace=namespace, query_txt=query_txt
                 )
             else:
@@ -1188,7 +1195,7 @@ def _pglast_parse_expression(
 
 
 def _pglast_parse_values_cte(
-    pglast_data: dict, *, namespace: QueryNamespace
+    pglast_data: dict, *, namespace: QueryNamespace, query_txt: str
 ) -> tuple[ValuesList, list[str]]:
     """Handler method to parse a CTE with a *VALUES* expressions.
 
@@ -1198,6 +1205,9 @@ def _pglast_parse_values_cte(
         JSON encoding of the CTE data. This data is extracted from the pglast data structure.
     namespace: QueryNamespace
         The tables and columns that are available in the current query.
+    query_txt : str
+        The raw query text that was passed to the parser. This is used to extract information that the PG parser does not
+        consider, such as hint blocks.
 
     Returns
     -------
@@ -1208,7 +1218,8 @@ def _pglast_parse_values_cte(
     for row in pglast_data["ctequery"]["SelectStmt"]["valuesLists"]:
         raw_items = row["List"]["items"]
         parsed_items = [
-            _pglast_parse_expression(item, namespace=namespace) for item in raw_items
+            _pglast_parse_expression(item, namespace=namespace, query_txt=query_txt)
+            for item in raw_items
         ]
         values.append(tuple(parsed_items))
 
@@ -1242,7 +1253,7 @@ def _pglast_parse_ctes(
     CommonTableExpression
         The parsed CTEs.
     """
-    parsed_ctes: list[CommonTableExpression] = []
+    parsed_ctes: list[WithQuery] = []
     for pglast_data in json_data["ctes"]:
         current_cte: dict = pglast_data["CommonTableExpr"]
         target_name = current_cte["ctename"]
@@ -1260,7 +1271,9 @@ def _pglast_parse_ctes(
         child_nsp = parent_namespace.open_nested(alias=target_name, source="cte")
         if "targetList" not in query_data and query_data["op"] == "SETOP_NONE":
             # CTE is a VALUES query
-            values, columns = _pglast_parse_values_cte(current_cte, namespace=child_nsp)
+            values, columns = _pglast_parse_values_cte(
+                current_cte, namespace=child_nsp, query_txt=query_txt
+            )
             parsed_cte = ValuesWithQuery(
                 values,
                 target_name=target_table.identifier(),
@@ -2078,6 +2091,8 @@ def _pglast_parse_query(
         limit_clause = _pglast_parse_limit(
             stmt, namespace=namespace, query_txt=query_txt
         )
+        if limit_clause is None:
+            raise ParserError(f"Malformed LIMIT/OFFSET clause for query {query_txt}")
         clauses.append(limit_clause)
 
     return build_query(clauses)
@@ -2118,7 +2133,7 @@ def _pglast_parse_set_commands(pglast_data: list[dict]) -> tuple[list[str], list
 
 
 def _parse_hint_block(
-    raw_query: str, *, set_cmds: list[str], _current_hint_text: list[str] = None
+    raw_query: str, *, set_cmds: list[str], _current_hint_text: list[str] | None = None
 ) -> Optional[Hint]:
     """Handler method to extract the hint block (i.e. preceding comments) from a query
 
@@ -2202,11 +2217,22 @@ def parse_query(
 def parse_query(
     query: str,
     *,
-    accept_set_query: bool,
+    accept_set_query: Literal[True],
     include_hints: bool = True,
     bind_columns: Optional[bool] = None,
     db_schema: Optional[DatabaseSchema] = None,
 ) -> SelectStatement: ...
+
+
+@overload
+def parse_query(
+    query: str,
+    *,
+    accept_set_query: Literal[False],
+    include_hints: bool = True,
+    bind_columns: Optional[bool] = None,
+    db_schema: Optional[DatabaseSchema] = None,
+) -> SqlQuery: ...
 
 
 def parse_query(
@@ -2322,7 +2348,15 @@ def load_query(
     )
 
 
-def load_table_json(json_data: dict | str) -> Optional[TableReference]:
+@overload
+def load_table_json(json_data: Literal[None] | Literal[""]) -> None: ...
+
+
+@overload
+def load_table_json(json_data: dict | str) -> TableReference: ...
+
+
+def load_table_json(json_data):
     """Re-creates a table reference from its JSON encoding.
 
     Parameters
@@ -2346,7 +2380,15 @@ def load_table_json(json_data: dict | str) -> Optional[TableReference]:
     )
 
 
-def load_column_json(json_data: dict | str) -> Optional[ColumnReference]:
+@overload
+def load_column_json(json_data: Literal[None] | Literal[""]) -> None: ...
+
+
+@overload
+def load_column_json(json_data: dict | str) -> ColumnReference: ...
+
+
+def load_column_json(json_data):
     """Re-creates a column reference from its JSON encoding.
 
     Parameters
@@ -2363,11 +2405,19 @@ def load_column_json(json_data: dict | str) -> Optional[ColumnReference]:
         return None
     json_data = json_data if isinstance(json_data, dict) else json.loads(json_data)
     return ColumnReference(
-        json_data.get("column"), load_table_json(json_data.get("table", None))
+        json_data.get["column"], load_table_json(json_data.get("table", None))
     )
 
 
-def load_expression_json(json_data: dict | str) -> Optional[SqlExpression]:
+@overload
+def load_expression_json(json_data: Literal[None] | Literal[""]) -> None: ...
+
+
+@overload
+def load_expression_json(json_data: dict | str) -> SqlExpression: ...
+
+
+def load_expression_json(json_data):
     """Re-creates an arbitrary SQL expression from its JSON encoding.
 
     Parameters
@@ -2397,7 +2447,15 @@ def load_expression_json(json_data: dict | str) -> Optional[SqlExpression]:
     return parsed_query.select_clause.targets[0].expression
 
 
-def load_predicate_json(json_data: dict | str) -> Optional[AbstractPredicate]:
+@overload
+def load_predicate_json(json_data: Literal[None] | Literal[""]) -> None: ...
+
+
+@overload
+def load_predicate_json(json_data: dict | str) -> AbstractPredicate: ...
+
+
+def load_predicate_json(json_data):
     """Re-creates an arbitrary predicate from its JSON encoding.
 
     Parameters
@@ -2429,4 +2487,6 @@ def load_predicate_json(json_data: dict | str) -> Optional[AbstractPredicate]:
     predicate_str = json_data["predicate"]
     emulated_query = f"SELECT * FROM {from_clause_str} WHERE {predicate_str}"
     parsed_query = parse_query(emulated_query)
+    if not parsed_query.where_clause:
+        raise ParserError(f"No predicate found. Inferred query was '{parsed_query}'.")
     return parsed_query.where_clause.predicate

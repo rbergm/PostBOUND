@@ -84,15 +84,14 @@ def standard_logger(enabled: bool = True) -> Logger:
     def _standard_prefix() -> str:
         ts = timestamp()
         callstack = inspect.stack()[2:]
-        callee = "<unknown>"
+        callee = "<main>"
         while callstack:
             current_frame = callstack.pop(0)
             module = inspect.getmodule(current_frame.frame)
             if not module or module.__name__.startswith("_"):
                 continue
 
-            callee = module.__name__
-            callee = callee.split(".")[-1]
+            callee = module.__name__.split(".")[-1]
             break
 
         return f"{ts} ({callee}) -"

@@ -247,12 +247,12 @@ class QueryCacheWarning(UserWarning):
         super().__init__(msg)
 
 
-def simplify_result_set(result_set: ResultSet) -> Any:
+def simplify_result_set(result_set: ResultSet | None) -> Any:
     """Default implementation of the result set simplification logic outlined in `Database.execute_query`.
 
     Parameters
     ----------
-    result_set : ResultSet
+    result_set : ResultSet | None
         Result set to simplify: each entry in the list corresponds to one row in the result set and each component of the
         tuples corresponds to one column in the result set
 
@@ -280,16 +280,16 @@ def simplify_result_set(result_set: ResultSet) -> Any:
 
 
 class _DBCacheJsonEncoder(json.JSONEncoder):
-    def default(self, obj: Any) -> Any:
-        if isinstance(obj, datetime):
-            return {"$datetime": obj.isoformat()}
-        elif isinstance(obj, date):
-            return {"$date": obj.isoformat()}
-        elif isinstance(obj, time):
-            return {"$time": obj.isoformat()}
-        elif isinstance(obj, timedelta):
-            return {"$timedelta": obj.total_seconds()}
-        return super().default(obj)
+    def default(self, o: Any) -> Any:
+        if isinstance(o, datetime):
+            return {"$datetime": o.isoformat()}
+        elif isinstance(o, date):
+            return {"$date": o.isoformat()}
+        elif isinstance(o, time):
+            return {"$time": o.isoformat()}
+        elif isinstance(o, timedelta):
+            return {"$timedelta": o.total_seconds()}
+        return super().default(o)
 
 
 class _DBCacheJsonDecoder(json.JSONDecoder):
@@ -510,7 +510,7 @@ class Database(abc.ABC):
         raise NotImplementedError
 
     @abc.abstractmethod
-    def describe(self) -> dict:
+    def describe(self) -> util.jsondict:
         """Provides a representation of the current database connection as well as its system settings.
 
         This description is intended to transparently document which customizations have been applied, thereby giving
@@ -519,18 +519,23 @@ class Database(abc.ABC):
 
         Returns
         -------
-        dict
+        util.jsondict
             The actual description
         """
         raise NotImplementedError
 
     @abc.abstractmethod
-    def reset_connection(self) -> None:
+    def reset_connection(self) -> Any:
         """Obtains a new network connection for the database. Useful for debugging purposes or in case of crashes.
 
         Notice that resetting the connection can have unintended side-effects if other methods rely on the cursor
         object. After resetting, the former cursor object will probably no longer be valid. Therefore, this method
         should be used with caution.
+
+        Returns
+        -------
+        Any
+            Backend-specific information about the new connection. E.g., this might be a connection ID or nothing at all.
 
         See Also
         --------
@@ -897,13 +902,11 @@ class DatabaseSchema(abc.ABC):
         **Hint for implementors:** the default implementation of this method relies on the
         *information_schema.table_constraints* and *information_schema.constraint_column_usage* views.
         """
-        if not column.is_bound():
-            raise UnboundColumnError(
-                f"Cannot check primary key status for column {column}: Column is not bound to any table."
-            )
+        if (table := column.table) is None:
+            raise UnboundColumnError(column)
 
         schema_placeholder = (
-            self._prep_placeholder if column.table.schema else "current_schema()"
+            self._prep_placeholder if table.schema else "current_schema()"
         )
         query_template = textwrap.dedent(f"""
             SELECT ccu.column_name
@@ -921,9 +924,9 @@ class DatabaseSchema(abc.ABC):
                 AND tc.table_schema = {schema_placeholder};
             """)
 
-        params = [column.table.full_name, column.name]
-        if column.table.schema:
-            params.append(column.table.schema)
+        params = [table.full_name, column.name]
+        if table.schema:
+            params.append(table.schema)
 
         self._db.cursor().execute(query_template, params)
         result_set = self._db.cursor().fetchone()
@@ -950,6 +953,7 @@ class DatabaseSchema(abc.ABC):
         **Hint for implementors:** the default implementation of this method relies on the
         *information_schema.table_constraints* and *information_schema.constraint_column_usage* views.
         """
+        table = table if isinstance(table, TableReference) else TableReference(table)
         schema_placeholder = (
             self._prep_placeholder if table.schema else "current_schema()"
         )
@@ -1017,13 +1021,11 @@ class DatabaseSchema(abc.ABC):
         # The documentation of has_index() references an implementation detail of this method.
         # Make sure to keep the two in sync.
 
-        if not column.is_bound():
-            raise UnboundColumnError(
-                f"Cannot check index status for column {column}: Column is not bound to any table."
-            )
+        if (table := column.table) is None:
+            raise UnboundColumnError(column)
 
         schema_placeholder = (
-            self._prep_placeholder if column.table.schema else "current_schema()"
+            self._prep_placeholder if table.schema else "current_schema()"
         )
 
         # The query template is much more complicated here, due to the different semantics of the constraint_column_usage
@@ -1062,12 +1064,12 @@ class DatabaseSchema(abc.ABC):
         # Due to the UNION query, we need to repeat the placeholders. While the implementation is definitely not elegant,
         # this solution is arguably better than relying on named parameters which might or might not be supported by the
         # target database.
-        params = [column.table.full_name, column.name]
-        if column.table.schema:
-            params.append(column.table.schema)
-        params.extend([column.table.full_name, column.name])
-        if column.table.schema:
-            params.append(column.table.schema)
+        params = [table.full_name, column.name]
+        if table.schema:
+            params.append(table.schema)
+        params.extend([table.full_name, column.name])
+        if table.schema:
+            params.append(table.schema)
 
         self._db.cursor().execute(query_template, params)
         result_set = self._db.cursor().fetchone()
@@ -1100,13 +1102,11 @@ class DatabaseSchema(abc.ABC):
         postbound.qal.VirtualTableError
             If the table associated with the column is a virtual table (e.g. subquery or CTE)
         """
-        if not column.is_bound():
-            raise UnboundColumnError(
-                f"Cannot check foreign keys for column {column}: Column is not bound to any table."
-            )
+        if (table := column.table) is None:
+            raise UnboundColumnError(column)
 
         schema_placeholder = (
-            self._prep_placeholder if column.table.schema else "current_schema()"
+            self._prep_placeholder if table.schema else "current_schema()"
         )
         query_template = textwrap.dedent(f"""
             SELECT ccu.table_name, ccu.column_name
@@ -1125,15 +1125,16 @@ class DatabaseSchema(abc.ABC):
                 AND tc.table_schema = {schema_placeholder}
                 AND tc.table_catalog = current_database();
             """)
-        params = [column.table.full_name, column.name]
-        if column.table.schema:
-            params.append(column.table.schema)
+        params = [table.full_name, column.name]
+        if table.schema:
+            params.append(table.schema)
 
         self._db.cursor().execute(query_template, params)
         result_set = self._db.cursor().fetchall()
+        assert result_set
 
         return {
-            ColumnReference(row[1], TableReference(row[0], schema=column.table.schema))
+            ColumnReference(row[1], TableReference(row[0], schema=table.schema))
             for row in result_set
         }
 
@@ -1194,13 +1195,11 @@ class DatabaseSchema(abc.ABC):
         The implementation relies on the *information_schema.table_constraints*, *information_schema.constraint_column_usage*
         and *information_schema.key_column_usage* views.
         """
-        if not column.is_bound():
-            raise UnboundColumnError(
-                f"Cannot retrieve indexes for column {column}: Column is not bound to any table."
-            )
+        if (table := column.table) is None:
+            raise UnboundColumnError(column)
 
         schema_placeholder = (
-            self._prep_placeholder if column.table.schema else "current_schema()"
+            self._prep_placeholder if table.schema else "current_schema()"
         )
 
         # The query template is much more complicated here, due to the different semantics of the constraint_column_usage
@@ -1239,15 +1238,16 @@ class DatabaseSchema(abc.ABC):
         # Due to the UNION query, we need to repeat the placeholders. While the implementation is definitely not elegant,
         # this solution is arguably better than relying on named parameters which might or might not be supported by the
         # target database.
-        params = [column.table.full_name, column.name]
-        if column.table.schema:
-            params.append(column.table.schema)
-        params.extend([column.table.full_name, column.name])
-        if column.table.schema:
-            params.append(column.table.schema)
+        params = [table.full_name, column.name]
+        if table.schema:
+            params.append(table.schema)
+        params.extend([table.full_name, column.name])
+        if table.schema:
+            params.append(table.schema)
 
         self._db.cursor().execute(query_template, params)
         result_set = self._db.cursor().fetchall()
+        assert result_set
 
         return {row[0] for row in result_set}
 
@@ -1278,13 +1278,11 @@ class DatabaseSchema(abc.ABC):
         -----
         **Hint for implementors:** the default implementation of this method relies on the *information_schema.columns* view.
         """
-        if not column.is_bound():
-            raise UnboundColumnError(
-                f"Cannot check datatype for column {column}: Column is not bound to any table."
-            )
+        if (table := column.table) is None:
+            raise UnboundColumnError(column)
 
         schema_placeholder = (
-            self._prep_placeholder if column.table.schema else "current_schema()"
+            self._prep_placeholder if table.schema else "current_schema()"
         )
         query_template = textwrap.dedent(f"""
             SELECT data_type
@@ -1295,9 +1293,9 @@ class DatabaseSchema(abc.ABC):
                 AND table_schema = {schema_placeholder};
             """)
 
-        params = [column.table.full_name, column.name]
-        if column.table.schema:
-            params.append(column.table.schema)
+        params = [table.full_name, column.name]
+        if table.schema:
+            params.append(table.schema)
 
         self._db.cursor().execute(query_template, params)
         result_set = self._db.cursor().fetchone()
@@ -1329,13 +1327,11 @@ class DatabaseSchema(abc.ABC):
         -----
         **Hint for implementors:** the default implementation of this method relies on the *information_schema.columns* view.
         """
-        if not column.is_bound():
-            raise UnboundColumnError(
-                f"Cannot check nullability for column {column}: Column is not bound to any table."
-            )
+        if (table := column.table) is None:
+            raise UnboundColumnError(column)
 
         schema_placeholder = (
-            self._prep_placeholder if column.table.schema else "current_schema()"
+            self._prep_placeholder if table.schema else "current_schema()"
         )
         query_template = textwrap.dedent(f"""
             SELECT is_nullable
@@ -1346,9 +1342,9 @@ class DatabaseSchema(abc.ABC):
                 AND table_schema = {schema_placeholder};
             """)
 
-        params = [column.table.full_name, column.name]
-        if column.table.schema:
-            params.append(column.table.schema)
+        params = [table.full_name, column.name]
+        if table.schema:
+            params.append(table.schema)
 
         self._db.cursor().execute(query_template, params)
         result_set = self._db.cursor().fetchone()
@@ -1753,6 +1749,7 @@ class DatabaseStatistics(abc.ABC):
         int
             The number of distinct values in the column
         """
+        assert column.table is not None
         query_template = "SELECT COUNT(DISTINCT {col}) FROM {tab}".format(
             col=column.name, tab=column.table.full_name
         )
@@ -1782,6 +1779,7 @@ class DatabaseStatistics(abc.ABC):
         tuple[Any, Any]
             A tuple of *(min, max)*
         """
+        assert column.table is not None
         query_template = "SELECT MIN({col}), MAX({col}) FROM {tab}".format(
             col=column.name, tab=column.table.full_name
         )
@@ -1818,6 +1816,7 @@ class DatabaseStatistics(abc.ABC):
             The most common values in *(value, frequency)* pairs, ordered by largest frequency first. Can be smaller
             than the requested `k` value if the column contains less distinct values.
         """
+        assert column.table is not None
         query_template = textwrap.dedent(
             """
             SELECT {col}, COUNT(*) AS n

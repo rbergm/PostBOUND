@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import itertools
-import typing
 from collections.abc import (
     Callable,
     Collection,
@@ -14,34 +13,35 @@ from collections.abc import (
     Sequence,
     Sized,
 )
-from typing import Any, Optional, overload
+from typing import Any, Literal, Optional, Union, overload
 
 from .._base import T
 from .dicts import HashableDict
 
-ContainerType = typing.TypeVar("ContainerType", list, tuple, set, frozenset)
+ContainerType = Union[list[T], tuple[T, ...], set[T], frozenset[T]]
 """Specifies which types are considered containers.
 
 For some methods this is necessary to determine whether any work still has to be done.
 """
 
 
-def flatten(deep_list: Iterable[Iterable[T] | T]) -> list[T]:
+@overload
+def flatten[T](xs: Iterable[Iterable[T]]) -> list[T]: ...
+
+
+@overload
+def flatten[T](xs: Iterable[Iterable[T] | T]) -> list[T]: ...
+
+
+def flatten[T](xs):
     """Transforms a nested list into a flat list: ``[[1, 2], [3]]`` is turned into ``[1, 2, 3]``
 
-    Parameters
-    ----------
-    deep_list : Iterable[Iterable[T]  |  T]
-        The list to flatten
-
-    Returns
-    -------
-    list[T]
-        The flattened list: all elements of iterables from the `deep_list` are now contained directly in the resulting list.
+    Scalar elements (including strings) are preserved as-is. Elements of containers are extracted and added to the resulting
+    list. Nested containers are treated as scalar elements and are not flattened recursively.
     """
-    flattened: list[T] = []
-    for nested in deep_list:
-        if isinstance(nested, Iterable) and not isinstance(nested, str):
+    flattened = []
+    for nested in xs:
+        if isinstance(nested, Iterable) and not isinstance(nested, (str, bytes)):
             flattened.extend(nested)
         else:
             flattened.append(nested)
@@ -54,8 +54,12 @@ def enlist(obj: list[T]) -> list[T]: ...
 
 @overload
 def enlist(
-    obj: tuple[T, ...], *, enlist_tuples: bool = False
+    obj: tuple[T, ...], *, enlist_tuples: Literal[True]
 ) -> list[tuple[T, ...]]: ...
+
+
+@overload
+def enlist(obj: tuple[T, ...], *, enlist_tuples: Literal[False]) -> tuple[T, ...]: ...
 
 
 @overload
@@ -71,10 +75,22 @@ def enlist(obj: frozenset[T]) -> frozenset[T]: ...
 
 
 @overload
+def enlist(obj: str) -> list[str]: ...
+
+
+@overload
+def enlist(obj: Iterable[T]) -> Iterable[T]: ...
+
+
+@overload
+def enlist(obj: Iterable[T] | T) -> Iterable[T]: ...
+
+
+@overload
 def enlist(obj: T) -> list[T]: ...
 
 
-def enlist(obj: T | Iterable[T], *, enlist_tuples: bool = False) -> Iterable[T]:
+def enlist(obj, *, enlist_tuples: bool = False):
     """Transforms any object into a singular list of that object, if it is not a container already.
 
     Specifically, the following types are treated as container-like and will not be transformed: lists, tuples, sets
@@ -122,7 +138,15 @@ def get_any(elems: Iterable[T]) -> T:
     return next(iter(elems))
 
 
-def simplify(obj: Iterable[T]) -> T:
+@overload
+def simplify(obj: Iterable[T]) -> T: ...
+
+
+@overload
+def simplify(obj: T) -> T: ...
+
+
+def simplify(obj):
     """Unwraps containers containing just a single element.
 
     This can be thought of as the inverse operation to `enlist`. If the object contains multiple elements, nothing happens.
@@ -143,11 +167,15 @@ def simplify(obj: Iterable[T]) -> T:
     --------
     The singular list ``[1]`` is simplified to ``1``. On the other hand, ``[1,2]`` is returned unmodified.
     """
-    if "__len__" not in dir(obj) or "__iter__" not in dir(obj):
+    if not isinstance(obj, Iterable) or isinstance(obj, (str, bytes)):
         return obj
+
+    if not isinstance(obj, Collection):
+        obj = list(obj)
 
     if len(obj) == 1:
         return list(obj)[0]
+
     return obj
 
 
@@ -211,7 +239,7 @@ def sliding_window(
         elements of the sequence before the current window, *window* contains exactly those elements that are part of the
         current window and *suffix* contains all elements after the current window.
     """
-    for i in range(0, len(lst) - size + 1, step=step):
+    for i in range(0, len(lst) - size + 1, step):
         prefix = lst[:i]
         window = lst[i : i + size]
         suffix = lst[i + size :]
@@ -243,13 +271,13 @@ def pairs(lst: Iterable[T]) -> Generator[tuple[T, T], None, None]:
             yield a, b
 
 
-def set_union(sets: Iterable[set[T] | frozenset[T]]) -> set[T]:
+def set_union(sets: Iterable[Iterable[T]]) -> set[T]:
     """Computes the union of many sets.
 
     Parameters
     ----------
     sets : Iterable[set[T]  |  frozenset[T]]
-        The sets to combine. Frozensets are "expanded" to regular sets.
+        The sets to combine.
 
     Returns
     -------
@@ -258,7 +286,7 @@ def set_union(sets: Iterable[set[T] | frozenset[T]]) -> set[T]:
     """
     union_set: set[T] = set()
     for s in sets:
-        union_set |= s
+        union_set = union_set.union(s)
     return union_set
 
 
@@ -444,12 +472,12 @@ class SizedQueue(Collection[T]):
             self.data.pop(0)
         self.data.append(value)
 
-    def extend(self, values: typing.Iterable[T]) -> None:
+    def extend(self, values: Iterable[T]) -> None:
         """Adds all the items to the end of the queue, popping any excess items.
 
         Parameters
         ----------
-        values : typing.Iterable[T]
+        values : Iterable[T]
             The values to add
         """
         self.data = (self.data + list(values))[: self.capacity]
@@ -474,10 +502,10 @@ class SizedQueue(Collection[T]):
         """
         return self.data.pop(0) if self.data else None
 
-    def __contains__(self, other: T) -> bool:
+    def __contains__(self, other: object) -> bool:
         return other in self.data
 
-    def __iter__(self) -> typing.Iterator[T]:
+    def __iter__(self) -> Iterator[T]:
         return self.data.__iter__()
 
     def __len__(self) -> int:
