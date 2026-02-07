@@ -115,6 +115,7 @@ For Ubuntu-based distributions, these can be installed like so:
     sudo apt install \
         build-essential meson ninja-build flex bison curl pkg-config llvm clang \
         libreadline-dev libssl-dev libicu-dev liblz4-dev libossp-uuid-dev python3-dev \
+        liburing-dev \
         git unzip zstd
 
 Adjust the packages depending on your distribution.
@@ -125,12 +126,12 @@ All scripts support ``--help`` to view the available options.
 .. code-block:: bash
 
     cd db-support/postgres
-    ./postgres-setup.sh --pg-ver 17 --stop
+    ./postgres-setup.sh --pg-ver 18 --stop
     . ./postgres-start.sh
 
-This will pull the latest stable release of Postgres 17, compile it from source and initialize a new database cluster along
+This will pull the latest stable release of Postgres 18, compile it from source and initialize a new database cluster along
 with all required extensions (e.g., pg_hint_plan).
-The server will have a default user that correponds to your system username.
+The server will have a default user that corresponds to your system username.
 All binaries, data directory, etc. are placed under *postgres-server* in the working directory.
 A central challenge of this manual setup is that the Postgres binaries, etc. are not globally available, e.g., on your
 PATH.
@@ -189,7 +190,7 @@ Putting things together, you can create an entirely new Postgres server like so:
 .. code-block:: bash
 
     cd db-support/postgres
-    ./postgres-setup.sh --pg-ver 17 --stop
+    ./postgres-setup.sh --pg-ver 18 --stop
     . ./postgres-start.sh
     ./workload-job-setup.sh
     ./postgres-psycopg-setup.sh job imdb
@@ -247,7 +248,7 @@ Use ``docker logs -f <container name>`` to monitor the installation progress.
 +------------------------+-------------------------------+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+---------------+
 | ``PG_DISK_TYPE``.      | *SSD* or *HDD*                | In case the Postgres server is automatically configured (see ``OPTIMIZE_PG_CONFIG``) this indicates the kind of storage for the actual database. In turn, this influences the relative cost of sequential access and index-based access for the query optimizer.                    | *SSD*         |
 +------------------------+-------------------------------+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+---------------+
-| ``PGVER``              | 16, 17, ...                   | The Postgres version to use. Notice that pg_lab supports fewer versions. This value is passed to the ``postgres-setup.sh`` script of the Postgres tooling (either under ``db-support`` or from pg_lab), which provides the most up to date list of supported versions.              | *17*          |
+| ``PGVER``              | 16, 17, ...                   | The Postgres version to use. Notice that pg_lab supports fewer versions. This value is passed to the ``postgres-setup.sh`` script of the Postgres tooling (either under ``db-support`` or from pg_lab), which provides the most up to date list of supported versions.              | *18*          |
 +------------------------+-------------------------------+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+---------------+
 | ``USE_PGLAB``          | *true* or *false*             | Whether to initialize a `pg_lab <https://github.com/rbergm/pg_lab>`__ server instead of a normal Postgres server. pg_lab provides advanced hinting capabilities and offers additional extension points for the query optimizer.                                                     | *false*       |
 +------------------------+-------------------------------+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+---------------+
@@ -289,7 +290,7 @@ Putting things together, you can create a Docker container with PostBOUND runnin
         --env SETUP_STATS=true \
         --env OPTIMIZE_PG_CONFIG=true \
         --env PG_DISK_TYPE=SSD \
-        --env PGVER=17 \
+        --env PGVER=18 \
         --env USE_PGLAB=true \
         --volume $PWD/vol-postbound:/postbound \
         --volume $PWD/vol-pglab:/pg_lab \

@@ -15,11 +15,6 @@ if [ -z "$PGVER" ] ; then
     PGVER="18"
 fi
 
-if [ "$USE_PGLAB" = "true" -a "$PGVER" -gt "17" ] ; then
-    echo "[setup] pg_lab currently only supports Postgres up to version 17. Falling back to 17."
-    PGVER="17"
-fi
-
 if [ "$USE_PGLAB" = "true" ] ; then
     PGPATH=/pg_lab
 else

@@ -29,5 +29,6 @@ On Ubuntu-based systems, the requirements can be installed like so:
 sudo apt install -y \
     build-essential flex bison curl pkg-config llvm clang meson ninja-build \
     libreadline-dev libssl-dev libicu-dev liblz4-dev libossp-uuid-dev python3-dev \
+    liburing-dev \
     git unzip zstd
 ```
