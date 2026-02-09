@@ -22,7 +22,7 @@ This is an incremental update that polishes some rough edges and fixes a couple 
 - Improved the control flow of the Postgres server setup during Docker initialization.
 - Miscellaneous improvements to the type hints across the entire codebase. We will continue this work in the upcoming releases.
 - More precise reporting of estimated cardinalities in Postgres query plans when parallel workers are used.
-- Default to PostgreSQL version 18 during Docker setup.
+- Default to PostgreSQL version 18 during Docker setup - both for PostgreSQL/pg_hint_plan, as well as for pg_lab backends.
 
 ## 🏥 Fixes
 - Fixed the Postgres timeout executor always creating two new connections to the database server instead of just one for the
