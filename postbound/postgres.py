@@ -488,10 +488,10 @@ class PostgresConfiguration(collections.UserString):
         """
         return "\n".join([str(setting) for setting in self.settings])
 
-    def __getitem__(self, key) -> str:
-        if isinstance(key, str):
-            return self._settings[key]
-        return super().__getitem__(key)
+    def __getitem__(self, index):
+        if isinstance(index, str):
+            return self._settings[index]
+        return super().__getitem__(index)
 
     def __setitem__(self, key: str, value: object) -> None:
         self._settings[key] = value
@@ -4445,8 +4445,8 @@ class WorkloadShifter:
             Path(f"{marker_table}.csv").absolute() if out_file is None else out_file
         )
         self.pg_instance.cursor().execute(
-            f"COPY {marker_table} TO '{out_file}' DELIMITER ',' CSV HEADER;"  # type: ignore
-        )
+            f"COPY {marker_table} TO '{out_file}' DELIMITER ',' CSV HEADER;"
+        )  # type: ignore
 
     def import_marker_table(
         self,
