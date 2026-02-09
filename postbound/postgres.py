@@ -37,7 +37,6 @@ from typing import Any, Literal, Optional, TextIO, overload
 import psycopg
 import psycopg.rows
 import psycopg.types.datetime as psycopg_datetime
-from matplotlib.collections import Collection
 
 from . import qal, transform, util
 from ._core import (
@@ -1321,11 +1320,8 @@ class PostgresSchemaInterface(DatabaseSchema):
         *,
         expect_match: bool = False,
     ) -> Optional[TableReference]:
-        candidate_tables: Collection[TableReference] = (
-            list(candidate_tables)
-            if not isinstance(candidate_tables, Sized)
-            else candidate_tables
-        )
+        if not isinstance(candidate_tables, Sized):
+            candidate_tables = list(candidate_tables)
         candidate_tables = (
             set(candidate_tables)
             if len(candidate_tables) > 5
@@ -1341,9 +1337,9 @@ class PostgresSchemaInterface(DatabaseSchema):
 
         if not expect_match:
             return None
-        candidate_tables = [table.qualified_name() for table in candidate_tables]
+        table_strings = [table.qualified_name() for table in candidate_tables]
         raise ValueError(
-            f"Column '{column}' not found in candidate tables {candidate_tables}"
+            f"Column '{column}' not found in candidate tables {table_strings}"
         )
 
     def is_primary_key(self, column: ColumnReference) -> bool:
@@ -1390,7 +1386,7 @@ class PostgresSchemaInterface(DatabaseSchema):
             query_template, (column.table.full_name, column.name, schema)
         )
         result_set = self._db.cursor().fetchall()
-        assert result_set
+        assert result_set is not None
 
         return {row[0] for row in result_set}
 
@@ -1418,6 +1414,8 @@ class PostgresSchemaInterface(DatabaseSchema):
 
         self._db.cursor().execute(query_template, (index, schema))
         result_set = self._db.cursor().fetchall()
+        assert result_set is not None
+
         if not result_set:
             return None
         if len(result_set) > 1:
@@ -1454,7 +1452,7 @@ class PostgresSchemaInterface(DatabaseSchema):
             query_template, (column.table.full_name, column.name, schema)
         )
         result_set = self._db.cursor().fetchall()
-        assert result_set
+        assert result_set is not None
 
         return {ColumnReference(row[1], TableReference(row[0])) for row in result_set}
 
@@ -1519,7 +1517,7 @@ class PostgresSchemaInterface(DatabaseSchema):
 
         self._db.cursor().execute(query_template, (table.full_name, schema))
         result_set = self._db.cursor().fetchall()
-        assert result_set
+        assert result_set is not None
 
         return [col[0] for col in result_set]
 
@@ -1559,7 +1557,7 @@ class PostgresSchemaInterface(DatabaseSchema):
 
         self._db.cursor().execute(index_query, (table_name, schema))
         result_set = self._db.cursor().fetchall()
-        assert result_set
+        assert result_set is not None
 
         index_map = dict(result_set)
         return index_map
@@ -1618,8 +1616,10 @@ class PostgresStatisticsInterface(DatabaseStatistics):
     def n_pages(self, table: TableReference | str) -> int:
         query_template = "SELECT relpages FROM pg_class WHERE oid = %s::regclass"
         regclass = table.full_name if isinstance(table, TableReference) else table
+
         self._db.cursor().execute(query_template, (regclass,))
         result_set = self._db.cursor().fetchone()
+
         if not result_set:
             raise ValueError(f"Could not retrieve page count for table '{table}'")
         return result_set[0]
@@ -1809,7 +1809,7 @@ class PostgresStatisticsInterface(DatabaseStatistics):
         )
         self._db.cursor().execute(mcv_query, (column.table.full_name, column.name))
         result_set = self._db.cursor().fetchall()
-        assert result_set
+        assert result_set is not None
 
         return result_set[:k]
 
