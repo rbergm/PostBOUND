@@ -11,6 +11,7 @@ Sadly (or luckily?), the inverse conversion does not work because JSON does not 
 from __future__ import annotations
 
 import abc
+import dataclasses
 import enum
 import json
 from pathlib import Path
@@ -45,6 +46,8 @@ class JsonizeEncoder(json.JSONEncoder):
             return str(o)
         elif "__json__" in dir(o):
             return o.__json__()
+        elif dataclasses.is_dataclass(o):
+            return dataclasses.asdict(o)
         return json.JSONEncoder.default(self, o)
 
 

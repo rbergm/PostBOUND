@@ -28,6 +28,7 @@ The [history](HISTORY.md) contains the changelogs of older PostBOUND releases.
   The `MostCommonValues` can be used as a drop-in replacement for the old tuple-based API. In addition, it provides more
   high-level methods for working with the most common values.
 - Enabled the MySQL and DuckDB backends to fall back to emulated statistics if the database does not provide them.
+- The `to_json()` and `to_json_dump()` utilities now support dataclasses out-of-the-box.
 
 ## 🏥 Fixes
 - _None_
