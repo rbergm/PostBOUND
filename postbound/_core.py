@@ -12,6 +12,7 @@ from .util.jsonize import jsondict
 VisitorResult = TypeVar("VisitorResult")
 """Result of visitor invocations."""
 
+TimeMs = float
 
 Cost = float
 """Type alias for a cost estimate."""

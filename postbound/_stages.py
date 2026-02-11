@@ -2,17 +2,22 @@ from __future__ import annotations
 
 import abc
 import math
-from collections.abc import Generator, Iterable
-from typing import Optional
+from collections.abc import Generator, Iterable, Sequence
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Literal, Optional, Protocol, get_args, runtime_checkable
+
+import pandas as pd
 
 from . import util
-from ._core import Cardinality, Cost, TableReference
+from ._core import Cardinality, Cost, TableReference, TimeMs
 from ._hints import JoinTree, PhysicalOperatorAssignment, PlanParameterization
 from ._qep import QueryPlan
-from .db import Database, DatabasePool
+from .db import Database, DatabasePool, ResultSet
 from .qal import SqlQuery
 from .util.jsonize import jsondict
 from .validation import CrossProductPreCheck, EmptyPreCheck, OptimizationPreCheck
+from .workloads import Workload
 
 
 class CompleteOptimizationAlgorithm(abc.ABC):
@@ -819,15 +824,14 @@ class _CompleteAlgorithmEmulator(CompleteOptimizationAlgorithm):
         JoinOrderOptimization | PhysicalOperatorSelection | ParameterGeneration
             The optimization stage.
         """
-        return (
-            self._join_order_optimizer
-            if self._join_order_optimizer is not None
-            else (
-                self._operator_selection
-                if self._operator_selection is not None
-                else self._plan_parameterization
-            )
-        )
+        if self._join_order_optimizer is not None:
+            return self._join_order_optimizer
+
+        if self._operator_selection is not None:
+            return self._operator_selection
+
+        assert self._plan_parameterization is not None
+        return self._plan_parameterization
 
     def optimize_query(self, query: SqlQuery) -> QueryPlan:
         join_order = (
@@ -896,6 +900,153 @@ def as_complete_algorithm(
         operator_selection=operator_selection,
         plan_parameterization=parameter_generation,
     )
+
+
+TrainingMetrics = jsondict
+
+
+TrainingFeature = Literal["query", "runtime", "query-plan", "cost-estimate"]
+
+
+class TrainingSpec:
+    def __init__(self, features: Iterable[TrainingFeature]) -> None:
+        self._features: list[TrainingFeature] = list(features)
+        self._feature_set = frozenset(self._features)
+
+    @property
+    def features(self) -> Sequence[TrainingFeature]:
+        return self._features
+
+    @property
+    def feature_set(self) -> frozenset[TrainingFeature]:
+        return self._feature_set
+
+    def provides(self, feature: TrainingFeature | Iterable[TrainingFeature]) -> bool:
+        feature: set[TrainingFeature] = set(util.enlist(feature))
+        return feature.issubset(self._feature_set)
+
+    def requires(self, feature: TrainingFeature | Iterable[TrainingFeature]) -> bool:
+        return self.provides(feature)
+
+    def satisfies(self, other: TrainingSpec) -> SpecViolations:
+        missing = other._feature_set - self._feature_set
+        return SpecViolations(missing)
+
+    def __iter__(self):
+        return iter(self.features)
+
+
+class SpecViolations:
+    def __init__(self, missing_features: frozenset[TrainingFeature]) -> None:
+        self.missing_features = missing_features
+
+    def __bool__(self) -> bool:
+        return not bool(self.missing_features)
+
+
+def _df_reader(path: Path | str) -> pd.DataFrame:
+    pass
+
+
+@dataclass
+class TrainingData:
+    @staticmethod
+    def from_df(
+        df: pd.DataFrame | Path | str, *, source: Optional[Path | str] = None
+    ) -> TrainingData:
+        if isinstance(df, (str, Path)):
+            source = Path(df)
+            df = _df_reader(source)
+        if isinstance(source, str):
+            source = Path(source)
+
+        detected_features: list[TrainingFeature] = []
+        available_features = set(get_args(TrainingFeature))
+        for col in df.columns:
+            if col not in available_features:
+                continue
+            detected_features.append(col)
+
+        feature_map: dict[TrainingFeature, str] = {
+            feat: feat for feat in detected_features
+        }
+        return TrainingData(df, source=source, feature_map=feature_map)
+
+    def __init__(
+        self,
+        samples: pd.DataFrame,
+        *,
+        source: Optional[Path] = None,
+        feature_map: dict[TrainingFeature, str],
+    ) -> None:
+        self.source = source
+        self.feature_map = feature_map
+        self.samples = samples
+        self._spec = TrainingSpec(self.feature_map.keys())
+
+    def provides(self, feature: TrainingFeature) -> bool:
+        return self._spec.provides(feature)
+
+    def conform_to(
+        self, features: Iterable[TrainingFeature] | TrainingSpec
+    ) -> TrainingData:
+        spec = (
+            features if isinstance(features, TrainingSpec) else TrainingSpec(features)
+        )
+        if not self._spec.satisfies(spec):
+            raise ValueError("Requested spec is not compatible with the training data")
+        reduced_spec: dict[TrainingFeature, str] = {
+            feature: col
+            for feature, col in self.feature_map.items()
+            if spec.requires(feature)
+        }
+        return TrainingData(self.samples, source=self.source, feature_map=reduced_spec)
+
+    def as_df(self, requested_spec: TrainingSpec | None = None) -> pd.DataFrame:
+        if requested_spec is None:
+            target_cols = self.feature_map.values()
+        elif not self._spec.satisfies(requested_spec):
+            raise ValueError("Requested spec is not compatible with the training data")
+            target_cols = [self.feature_map[feature] for feature in requested_spec]
+        return self.samples[target_cols]
+
+    def __len__(self) -> int:
+        return len(self.samples)
+
+    def __getitem__(self, idx) -> list:
+        sample = self.samples.iloc[idx]
+        remapped = sample[self.feature_map.values()]
+        return list(remapped)
+
+
+class TrainingDataRepository:
+    def __init__(self) -> None:
+        self.specs: list[TrainingSpec] = []
+
+
+@runtime_checkable
+class DataDrivenOptimizer(Protocol):
+    def fit_database(self, database: Database) -> TrainingMetrics: ...
+
+    def database_is_setup(self) -> bool: ...
+
+
+@runtime_checkable
+class QueryDrivenOptimizer(Protocol):
+    def fit_workload(self, queries: Workload) -> TrainingMetrics: ...
+
+    def fit_training_data(self, samples: TrainingData) -> TrainingMetrics: ...
+
+    def requires(self) -> Optional[TrainingSpec]: ...
+
+    def workload_is_setup(self) -> bool: ...
+
+
+@runtime_checkable
+class OnlineOptimizer(Protocol):
+    def learn_from_feedback(
+        self, query: SqlQuery, result_set: ResultSet, *, exec_time: TimeMs
+    ) -> TrainingMetrics: ...
 
 
 OptimizationStage = (

@@ -35,6 +35,7 @@ from .db import (
     Database,
     DatabasePool,
     PrewarmingSupport,
+    ResultSet,
     StopwatchSupport,
     TimeoutSupport,
     simplify_result_set,
@@ -77,7 +78,7 @@ class ExecutionResult:
     status: ExecStatus = "ok"
     """Whether the query was executed successfully or not."""
 
-    query_result: object = None
+    query_result: ResultSet | None = None
     """The result set of the query or *None* if the query failed."""
 
     optimization_time: float = np.nan
@@ -104,7 +105,7 @@ class ExecutionResult:
     def passed(
         query: SqlQuery,
         *,
-        query_result: object,
+        query_result: ResultSet,
         execution_time: float,
         optimization_time: float = np.nan,
     ) -> ExecutionResult:
@@ -470,14 +471,13 @@ def _execute_query(
     try:
         if timeout:
             exec_start = time.perf_counter_ns()
-            raw_result = on.execute_with_timeout(query, timeout=timeout)
+            result_set = on.execute_with_timeout(query, timeout=timeout)
             exec_end = time.perf_counter_ns()
-            if raw_result is None:
+            if result_set is None:
                 return _TimeoutExecution(timeout=timeout)
-            query_result = simplify_result_set(raw_result)
         else:
             exec_start = time.perf_counter_ns()
-            query_result = on.execute_query(query, cache_enabled=False, raw=False)
+            result_set = on.execute_query(query, cache_enabled=False, raw=False)
             exec_end = time.perf_counter_ns()
         exec_time = (exec_end - exec_start) / 10**9  # convert to seconds
 
@@ -487,7 +487,7 @@ def _execute_query(
     except Exception as e:
         return _FailedExecution(error=e)
 
-    return _SuccessfullExecution(query_result=query_result, exec_time=exec_time)
+    return _SuccessfullExecution(query_result=result_set, exec_time=exec_time)
 
 
 class _NoOpLogger:
@@ -576,12 +576,12 @@ class _ResultSample:
 
         # collected data
         self.timestamps: list[datetime] = []
-        self.status: list[str] = []
+        self.status: list[ExecStatus] = []
         self.optimization_time: float = np.nan
         self.optimization_pipeline: OptimizationPipeline | None = None
         self.optimized_query: SqlQuery | None = None
         self.failure_reasons: list[str] = []
-        self.result_sets: list[object] = []
+        self.result_sets: list[ResultSet] = []
         self.exec_times: list[float] = []
         self.db_configs: list[dict] = []
 
@@ -617,7 +617,7 @@ class _ResultSample:
         self.timestamps.append(datetime.now())
 
     def add_exec_sample(
-        self, result_set: object, *, exec_time: float, db_config: dict
+        self, result_set: ResultSet, *, exec_time: float, db_config: dict
     ) -> None:
         self.status.append("ok")
         self.failure_reasons.append("")
@@ -652,10 +652,11 @@ class _ResultSample:
         if self._optimization_failure or not self.result_sets:
             return None
 
+        result_set = simplify_result_set(self.result_sets[-1])
         return ExecutionResult(
             query=self.query,
             status=self.status[-1],
-            query_result=self.result_sets[-1],
+            query_result=result_set,
             optimization_time=self.optimization_time,
             execution_time=self.exec_times[-1],
         )
@@ -666,6 +667,7 @@ class _ResultSample:
             return pd.DataFrame()
 
         if only_last:
+            result_set = simplify_result_set(self.result_sets[-1])
             rows = {
                 "exec_index": [self._initial_idx + n_samples - 1],
                 "label": [self.label],
@@ -674,7 +676,7 @@ class _ResultSample:
                 "query_repetition": [n_samples],
                 "query": [self.query],
                 "status": [self.status[-1]],
-                "query_result": [self.result_sets[-1]],
+                "query_result": [result_set],
                 "exec_time": [self.exec_times[-1]],
                 "failure_reason": [self.failure_reasons[-1]],
                 "db_config": [self.db_configs[-1]],
@@ -692,7 +694,7 @@ class _ResultSample:
                 "query_repetition": [i + 1 for i in range(n_samples)],
                 "query": [self.query] * n_samples,
                 "status": self.status,
-                "query_result": self.result_sets,
+                "query_result": [simplify_result_set(rs) for rs in self.result_sets],
                 "exec_time": self.exec_times,
                 "failure_reason": self.failure_reasons,
                 "db_config": self.db_configs,
@@ -703,6 +705,22 @@ class _ResultSample:
             }
 
         return pd.DataFrame(rows)
+
+    def to_execution_results(self) -> list[ExecutionResult]:
+        results: list[ExecutionResult] = []
+        for i, status in enumerate(self.status):
+            if status in ["optimization-error", "execution-error"]:
+                continue
+
+            sample = ExecutionResult(
+                query=self.query,
+                status=status,
+                query_result=self.result_sets[i],
+                optimization_time=self.optimization_time,
+                execution_time=self.exec_times[i],
+            )
+            results.append(sample)
+        return results
 
     def write_progressive(self, file: Path | None) -> None:
         if file is None:
@@ -858,6 +876,17 @@ def _workload_ctl_loop(
                 cfg=cfg,
             )
 
+        if (pipeline := cfg.optimizer) is None:
+            continue
+        if not pipeline.requires_online_learning():
+            continue
+
+        for exec_result in sample.to_execution_results():
+            exec_time = 1000 * exec_result.execution_time
+            pipeline.learn_from_sample(
+                query, exec_result.query_result, exec_time=exec_time
+            )
+
 
 def execute_workload(
     queries: Iterable[SqlQuery] | Workload,
@@ -975,6 +1004,11 @@ def execute_workload(
         on = _wrap_optimization_stage(on)
     target_db = on if isinstance(on, Database) else on.target_database()
     optimizer = on if isinstance(on, OptimizationPipeline) else None
+
+    if optimizer is not None and optimizer.requires_data_learning():
+        optimizer.train_on_database(target_db)
+    if optimizer is not None and optimizer.requires_workload_learning():
+        optimizer.train_on_workload(queries)
 
     query_preparation = (
         QueryPreparation(**query_preparation)
