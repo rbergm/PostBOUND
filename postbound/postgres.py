@@ -69,6 +69,8 @@ from .db import (
     DatabaseUserError,
     HintService,
     HintWarning,
+    Histogram,
+    HistogramApproximation,
     OptimizerInterface,
     QueryCacheWarning,
     ResultSet,
@@ -1682,7 +1684,7 @@ class PostgresStatisticsInterface(DatabaseStatistics):
                     column,
                     use_stderr=True,
                 )
-                raw = self.distinct_values(column, emulated=True, cache_enabled=True)
+                raw = self.num_distinct(column, emulated=True, cache_enabled=True)
                 assert raw is not None
                 n_distinct = round(raw)
                 if perfect_n_distinct:
@@ -1777,24 +1779,13 @@ class PostgresStatisticsInterface(DatabaseStatistics):
         return self._calculate_min_max_values(column, cache_enabled=True)
 
     def _retrieve_most_common_values_from_stats(
-        self, column: ColumnReference, k: int
+        self, column: ColumnReference, k: int | None
     ) -> Sequence[tuple[Any, int]]:
         assert column.table is not None, "Unbound table"
         # Postgres stores the Most common values in a column of type anyarray (since in this column, many MCVs from
         # many different tables and data types are present). However, this type is not very convenient to work on.
         # Therefore, we first need to convert the anyarray to an array of the actual attribute type.
-
-        # determine the attributes data type to figure out how it should be converted
-        attribute_query = "SELECT data_type FROM information_schema.columns WHERE table_name = %s AND column_name = %s"
-
-        self._db.cursor().execute(
-            attribute_query, (column.table.full_name, column.name)
-        )
-        result_set = self._db.cursor().fetchone()
-        assert result_set
-
-        attribute_dtype = result_set[0]
-        attribute_converter = _DTypeArrayConverters[attribute_dtype]
+        attribute_converter = self._array_cast(column)
 
         # now, load the most frequent values. Since the frequencies are expressed as a fraction of the total number of
         # rows, we need to multiply this number again to obtain the true number of occurrences
@@ -1811,7 +1802,58 @@ class PostgresStatisticsInterface(DatabaseStatistics):
         result_set = self._db.cursor().fetchall()
         assert result_set is not None
 
-        return result_set[:k]
+        if not result_set:
+            return []
+        elif k is None or k <= 0:
+            return result_set
+        else:
+            return result_set[:k]
+
+    def _retrieve_histogram_from_stats(
+        self, column: ColumnReference, *, interpolation: HistogramApproximation
+    ) -> Optional[Histogram]:
+        assert column.table is not None, "Unbound table"
+        attribute_converter = self._array_cast(column)
+        schema = column.table.schema or "public"
+
+        query_template = """
+            SELECT UNNEST(histogram_bounds::text::{conv})
+            FROM pg_stats
+            WHERE schemaname = %s AND tablename = %s AND attname = %s
+            """.format(conv=attribute_converter)
+
+        self._db.cursor().execute(
+            query_template, (schema, column.table.full_name, column.name)
+        )
+        result_set = self._db.cursor().fetchall()
+        if not result_set:
+            return None
+        bounds = [row[0] for row in result_set]
+
+        n_rows = self._retrieve_total_rows_from_stats(column.table)
+        assert n_rows
+
+        return Histogram(bounds, n_rows=n_rows, bucket_interpolation=interpolation)
+
+    def _array_cast(self, column: ColumnReference) -> str:
+        assert column is not None
+
+        # determine the attributes data type to figure out how it should be converted
+        attribute_query = "SELECT data_type FROM information_schema.columns WHERE table_name = %s AND column_name = %s"
+
+        self._db.cursor().execute(
+            attribute_query, (column.table.full_name, column.name)
+        )
+        result_set = self._db.cursor().fetchone()
+        assert result_set
+
+        attribute_dtype = result_set[0]
+        converter = _DTypeArrayConverters.get(attribute_dtype)
+        if not converter:
+            raise ValueError(
+                "Cannot cast column array of type {attribute_dtype} - no converter found."
+            )
+        return converter
 
 
 PostgresOptimizerSettings = {

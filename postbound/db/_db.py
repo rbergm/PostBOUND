@@ -18,18 +18,21 @@ from __future__ import annotations
 
 import abc
 import atexit
+import bisect
 import collections
 import json
+import math
 import os
 import textwrap
 import warnings
-from collections.abc import Iterable, Sequence
+from collections.abc import Iterable, Iterator, Sequence
 from datetime import date, datetime, time, timedelta
-from typing import Any, Optional, Protocol, Type, runtime_checkable
+from typing import Any, Literal, Optional, Protocol, Type, overload, runtime_checkable
 
 import networkx as nx
 
 from .. import util
+from .._base import SupportsRichComparison
 from .._core import (
     Cardinality,
     ColumnReference,
@@ -1451,6 +1454,163 @@ class DatabaseSchema(abc.ABC):
         return f"Database schema of {self._db}"
 
 
+class MostCommonValues[T]:
+    def __init__(self, mcvs: Iterable[tuple[T, int]]) -> None:
+        self.mcvs = list(mcvs)
+        self._mcv_map = dict(self.mcvs)
+        self._min_freq: int = math.inf
+        self._max_freq = 0
+        for freq in self._mcv_map.values():
+            if freq < self._min_freq:
+                self._min_freq = freq
+            elif freq > self._max_freq:
+                self._max_freq = freq
+
+    @property
+    def k(self) -> int:
+        return len(self.mcvs)
+
+    @property
+    def min_freq(self) -> int:
+        return self._min_freq
+
+    @property
+    def max_freq(self) -> int:
+        return self._max_freq
+
+    @property
+    def frequencies(self) -> Sequence[int]:
+        return list(self._mcv_map.values())
+
+    @overload
+    def frequency_of(self, value: T) -> Optional[int]: ...
+
+    @overload
+    def frequency_of(self, value: T, *, bound_missing: Literal[True]) -> int: ...
+
+    @overload
+    def frequency_of(
+        self, value: T, *, bound_missing: Literal[False]
+    ) -> Optional[int]: ...
+
+    @overload
+    def frequency_of(self, value: T, *, default: int) -> int: ...
+
+    def frequency_of(
+        self, value: T, *, default: int | None = None, bound_missing: bool = False
+    ) -> Optional[int]:
+        if default is not None:
+            fallback = default
+        elif bound_missing:
+            fallback = self._min_freq
+        else:
+            fallback = None
+        return self._mcv_map.get(value, fallback)
+
+    def __len__(self) -> int:
+        return len(self.mcvs)
+
+    def __contains__(self, value: object) -> bool:
+        return value in self._mcv_map
+
+    def __iter__(self) -> Iterator[tuple[T, int]]:
+        return iter(self.mcvs)
+
+    def __getitem__(self, idx: int) -> tuple[T, int]:
+        return self.mcvs[idx]
+
+    def __repr__(self) -> str:
+        return str(self)
+
+    def __str__(self) -> str:
+        return str(self.mcvs)
+
+
+HistogramApproximation = Literal["approx-uni", "bound"]
+
+
+def _infer_histogram_bounds[T](frequencies: Sequence[tuple[T, int]]) -> Sequence[T]:
+    pass
+
+
+class Histogram[T: SupportsRichComparison[T]]:
+    def __init__(
+        self,
+        bounds: Iterable[T],
+        *,
+        n_rows: int,
+        bucket_interpolation: HistogramApproximation = "bound",
+    ) -> None:
+        self._bounds = list(bounds)
+        if not self.bounds:
+            raise ValueError("Bounds cannot be empty")
+        self._n_rows = n_rows
+        self._freq_per_bucket = n_rows // len(self._bounds)
+        self._bucket_interpolation = bucket_interpolation
+
+    @property
+    def bounds(self) -> Sequence[T]:
+        return list(self._bounds)
+
+    @property
+    def n_buckets(self) -> int:
+        return len(self._bounds)
+
+    @property
+    def freq_per_bucket(self) -> int:
+        return self._freq_per_bucket
+
+    def frequency_below(self, value: T) -> int:
+        upper_idx = bisect.bisect_right(self._bounds, value)
+        if upper_idx == 0:
+            return 0
+        elif upper_idx == len(self._bounds):
+            return self._n_rows
+
+        if self._bucket_interpolation == "bound":
+            return upper_idx * self._freq_per_bucket
+
+        assert self._bucket_interpolation == "approx-uni"
+
+        if not isinstance(value, (int, float, date, datetime)):
+            raise ValueError(
+                "Cannot estimate frequency within bucket. "
+                f"Strategy '{self._bucket_interpolation}' is unknown or unsupported "
+                f"for histograms of type {type(value).__name__}."
+            )
+
+        lower_idx = upper_idx - 1
+        upper_bound = self._bounds[upper_idx]
+        lower_bound = self._bounds[lower_idx]
+        in_bucket_frac = (value - lower_bound) / (upper_bound - lower_bound)
+        return (lower_idx + in_bucket_frac) * self._freq_per_bucket
+
+    def frequency_above(self, value: T) -> int:
+        lower_idx = bisect.bisect_left(self._bounds, value)
+        if lower_idx == 0:
+            return self._n_rows
+        elif lower_idx == len(self._bounds):
+            return 0
+
+        if self._bucket_interpolation == "bound":
+            return lower_idx * self._freq_per_bucket
+
+        assert self._bucket_interpolation == "approx-uni"
+
+        if not isinstance(value, (int, float, date, datetime)):
+            raise ValueError(
+                "Cannot estimate frequency within bucket. "
+                f"Strategy '{self._bucket_interpolation}' is unknown or unsupported "
+                f"for histograms of type {type(value).__name__}."
+            )
+
+        upper_idx = lower_idx + 1
+        upper_bound = self._bounds[upper_idx]
+        lower_idx = self._bounds[lower_idx]
+        in_bucket_frac = (value - lower_idx) / (upper_bound - lower_idx)
+        return (upper_idx + in_bucket_frac) * self._freq_per_bucket
+
+
 class DatabaseStatistics(abc.ABC):
     """The statistics interface provides unified access to table-level and column-level statistics.
 
@@ -1567,6 +1727,21 @@ class DatabaseStatistics(abc.ABC):
         emulated: Optional[bool] = None,
         cache_enabled: Optional[bool] = None,
     ) -> Optional[int]:
+        """Legacy alias for `num_distinct`.
+
+        .. deprecated:: v0.20.2
+            distinct_values() is deprecated due to the confusing name. Use the more aptly-named num_distinct(),
+            which provides exactly the same interface and functionality.
+        """
+        return self.num_distinct(column, emulated=emulated, cache_enabled=cache_enabled)
+
+    def num_distinct(
+        self,
+        column: ColumnReference,
+        *,
+        emulated: Optional[bool] = None,
+        cache_enabled: Optional[bool] = None,
+    ) -> Optional[int]:
         """Provides (an estimate of) the total number of different column values of a specific column.
 
         Parameters
@@ -1655,19 +1830,19 @@ class DatabaseStatistics(abc.ABC):
         self,
         column: ColumnReference,
         *,
-        k: int = 10,
+        k: Optional[int] = 10,
         emulated: Optional[bool] = None,
         cache_enabled: Optional[bool] = None,
-    ) -> Sequence[tuple[Any, int]]:
+    ) -> MostCommonValues:
         """Provides (an estimate of) the total number of occurrences of the `k` most frequent values of a column.
 
         Parameters
         ----------
         column : ColumnReference
             The column to check
-        k : int, optional
+        k : Optional[int], optional
             The maximum number of most common values to return. Defaults to 10. If there are less values available, all
-            of the available values will be returned.
+            of the available values will be returned. Setting this to *None* or a negative value will return the frequency of all distinct values.
         emulated : Optional[bool], optional
             Whether to force emulation mode for this single call. Defaults to *None* which indicates that the
             emulation setting of the statistics interface should be used.
@@ -1677,7 +1852,7 @@ class DatabaseStatistics(abc.ABC):
 
         Returns
         -------
-        Sequence[tuple[Any, int]]
+        MostCommonValues
             The most common values in pairs of (value, frequency), starting with the highest frequency. Notice that
             this sequence can be empty if no values are available. This can happen if the database system in principle
             maintains this statistic but does considers the value distribution to uniform to make the maintenance
@@ -1695,12 +1870,64 @@ class DatabaseStatistics(abc.ABC):
             raise UnboundColumnError(column)
         elif column.table.virtual:
             raise VirtualTableError(column.table)
+
         if emulated or (emulated is None and self.emulated):
-            return self._calculate_most_common_values(
+            mcv_list = self._calculate_most_common_values(
                 column, k, cache_enabled=self._determine_caching_behavior(cache_enabled)
             )
         else:
-            return self._retrieve_most_common_values_from_stats(column, k)
+            mcv_list = self._retrieve_most_common_values_from_stats(column, k)
+        return MostCommonValues(mcv_list)
+
+    @overload
+    def histogram(
+        self,
+        column: ColumnReference,
+        *,
+        n_bins: int,
+        interpolation: HistogramApproximation = "approx-uni",
+        emulated: Literal[True],
+        cache_enabled: Optional[bool] = None,
+    ) -> Histogram: ...
+
+    @overload
+    def histogram(
+        self,
+        column: ColumnReference,
+        *,
+        interpolation: HistogramApproximation = "approx-uni",
+        emulated: Literal[False],
+    ) -> Optional[Histogram]: ...
+
+    def histogram(
+        self,
+        column: ColumnReference,
+        *,
+        n_bins: Optional[int] = None,
+        interpolation: HistogramApproximation = "approx-uni",
+        emulated: Optional[bool] = None,
+        cache_enabled: Optional[bool] = None,
+    ) -> Optional[Histogram]:
+        if not column.table:
+            raise UnboundColumnError(column)
+        elif column.table.virtual:
+            raise VirtualTableError(column.table)
+
+        use_emulation = emulated or (emulated is None and self.emulated)
+        if use_emulation and not n_bins:
+            raise ValueError("n_bins must be set for emulated histograms.")
+        if not use_emulation and n_bins:
+            warnings.warn("n_bins is ignored if the histogram is loaded from stats")
+
+        if use_emulation:
+            assert n_bins is not None
+            return self._calculate_histogram(
+                column, n_bins, interpolation=interpolation, cache_enabled=cache_enabled
+            )
+        else:
+            return self._retrieve_histogram_from_stats(
+                column, interpolation=interpolation
+            )
 
     def _calculate_total_rows(
         self, table: TableReference, *, cache_enabled: Optional[bool] = None
@@ -1789,7 +2016,11 @@ class DatabaseStatistics(abc.ABC):
         )
 
     def _calculate_most_common_values(
-        self, column: ColumnReference, k: int, *, cache_enabled: Optional[bool] = None
+        self,
+        column: ColumnReference,
+        k: int | None,
+        *,
+        cache_enabled: Optional[bool] = None,
     ) -> Sequence[tuple[Any, int]]:
         """Retrieves the `k` most frequent values of a column along with their frequencies by issuing a query over that
         column against the live database.
@@ -1803,9 +2034,9 @@ class DatabaseStatistics(abc.ABC):
         ----------
         column : ColumnReference
             The column to check
-        k : int
+        k : Optional[int]
             The number of most frequent values to retrieve. If less values are available (because there are not as much
-            distinct values in the column), the frequencies of all values is returned.
+            distinct values in the column), the frequencies of all values is returned. If *None*, all values are returned.
         cache_enabled : Optional[bool], optional
             Whether to enable result caching in emulation mode. Defaults to *None* which indicates that the caching
             setting of the statistics interface should be used.
@@ -1816,20 +2047,61 @@ class DatabaseStatistics(abc.ABC):
             The most common values in *(value, frequency)* pairs, ordered by largest frequency first. Can be smaller
             than the requested `k` value if the column contains less distinct values.
         """
-        assert column.table is not None
-        query_template = textwrap.dedent(
-            """
-            SELECT {col}, COUNT(*) AS n
-            FROM {tab}
-            GROUP BY {col}
-            ORDER BY n DESC, {col}
-            LIMIT {k}""".format(col=column.name, tab=column.table.full_name, k=k)
-        )
+        assert column.table
+
+        if k is None or k <= 0:
+            query_template = """
+                SELECT {col}, COUNT(*) AS n
+                FROM {tab}
+                GROUP BY {col}
+                ORDER BY n DESC, {col}""".format(
+                col=column.name, tab=column.table.full_name
+            )
+        else:
+            query_template = textwrap.dedent(
+                """
+                SELECT {col}, COUNT(*) AS n
+                FROM {tab}
+                GROUP BY {col}
+                ORDER BY n DESC, {col}
+                LIMIT {k}""".format(col=column.name, tab=column.table.full_name, k=k)
+            )
+
         return self._db.execute_query(
             query_template,
             cache_enabled=self._determine_caching_behavior(cache_enabled),
             raw=True,
         )
+
+    def _calculate_histogram(
+        self,
+        column: ColumnReference,
+        n_bins: int,
+        *,
+        interpolation: HistogramApproximation,
+        cache_enabled: Optional[bool] = None,
+    ) -> Optional[Histogram]:
+        assert column.table
+
+        n_rows = self._calculate_total_rows(column.table)
+        if n_rows == 0:
+            return None
+
+        query_template = """
+            SELECT {col}, COUNT(*) AS n
+            FROM {tab}
+            GROUP BY {col}
+            ORDER BY {col}
+            """.format(col=column.name, tab=column.table.full_name)
+        result_set = self._db.execute_query(
+            query_template,
+            cache_enabled=self._determine_caching_behavior(cache_enabled),
+            raw=True,
+        )
+        assert result_set
+
+        bounds = _infer_histogram_bounds(result_set)
+        return Histogram(bounds, n_rows=n_rows, bucket_interpolation=interpolation)
 
     @abc.abstractmethod
     def _retrieve_total_rows_from_stats(self, table: TableReference) -> Optional[int]:
@@ -1899,7 +2171,7 @@ class DatabaseStatistics(abc.ABC):
 
     @abc.abstractmethod
     def _retrieve_most_common_values_from_stats(
-        self, column: ColumnReference, k: int
+        self, column: ColumnReference, k: int | None
     ) -> Sequence[tuple[Any, int]]:
         """Queries the DBMS-internal metadata for the `k` most common values of the `column`.
 
@@ -1910,8 +2182,8 @@ class DatabaseStatistics(abc.ABC):
         column : ColumnReference
             The column to check
         k : int, optional
-            The maximum number of most common values to return. Defaults to 10. If there are less values available, all
-            of the available values will be returned.
+            The maximum number of most common values to return. If there are less values available, all
+            of the available values will be returned. If `None`, all available values will be returned.
 
         Returns
         -------
@@ -1922,6 +2194,12 @@ class DatabaseStatistics(abc.ABC):
             worthwhile. Likewise, if less common values exist than the requested `k` value, only the available values
             will be returned (and the sequence will be shorter than `k` in that case).
         """
+        raise NotImplementedError
+
+    @abc.abstractmethod
+    def _retrieve_histogram_from_stats(
+        self, column: ColumnReference, *, interpolation: HistogramApproximation
+    ) -> Optional[Histogram]:
         raise NotImplementedError
 
     def _determine_caching_behavior(
