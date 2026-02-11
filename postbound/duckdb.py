@@ -353,6 +353,8 @@ class DuckDBStatistics(DatabaseStatistics):
     def _retrieve_distinct_values_from_stats(
         self, column: ColumnReference
     ) -> Optional[int]:
+        if self.enable_emulation_fallback:
+            return self._calculate_distinct_values(column)
         raise UnsupportedDatabaseFeatureError(
             self._db, "distinct value count statistics."
         )
@@ -360,11 +362,15 @@ class DuckDBStatistics(DatabaseStatistics):
     def _retrieve_min_max_values_from_stats(
         self, column: ColumnReference
     ) -> Optional[tuple[Any, Any]]:
+        if self.enable_emulation_fallback:
+            return self._calculate_min_max_values(column)
         raise UnsupportedDatabaseFeatureError(self._db, "min/max value statistics.")
 
     def _retrieve_most_common_values_from_stats(
-        self, column: ColumnReference, k: int
+        self, column: ColumnReference, k: int | None
     ) -> Sequence[tuple[Any, int]]:
+        if self.enable_emulation_fallback:
+            return self._calculate_most_common_values(column, k)
         raise UnsupportedDatabaseFeatureError(self._db, "most common value statistics.")
 
 
@@ -534,6 +540,9 @@ class DuckDBOptimizer(OptimizerInterface):
         raw_explain = result_set[1]
         parsed = json.loads(raw_explain)
         return parse_duckdb_plan(parsed[0], query=query)
+
+    def parse_plan(self, plan: Any, *, query: Optional[SqlQuery]) -> QueryPlan:
+        return parse_duckdb_plan(plan, query=query)
 
     def cardinality_estimate(self, query: SqlQuery | str) -> Cardinality:
         plan = self.query_plan(query)

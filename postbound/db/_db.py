@@ -2414,6 +2414,19 @@ class OptimizerInterface(abc.ABC):
         return self.analyze_plan(query)
 
     @abc.abstractmethod
+    def parse_plan(self, plan: Any, *, query: Optional[SqlQuery]) -> QueryPlan:
+        """Transforms the system-specific EXPLAIN output into a standardized `QueryPlan`.
+
+        The optional `query` can be used to provide additional context for the plan. This can be used by
+        some database systems for correct parsing (e.g. DuckDB), while others might not use it at all.
+        Omitting the `query` parameter is acceptable.
+
+        This method is mainly inteded to parse a previously generated plan, or when the plan could not simply
+        be obtained via `query_plan` or `analyze_plan`.
+        """
+        raise NotImplementedError
+
+    @abc.abstractmethod
     def cardinality_estimate(self, query: SqlQuery | str) -> Cardinality:
         """Queries the DBMS query optimizer for its cardinality estimate, instead of executing the query.
 

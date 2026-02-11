@@ -14,11 +14,20 @@ The [history](HISTORY.md) contains the changelogs of older PostBOUND releases.
 
 ## 🐣 New features
 - Database statistics now also provide histograms.
+- The `OptimizerInterface` (e.g. `pg_instance.optimizer()`) now provides a method to parse an existing system-specific
+  query plan to the generalized `QueryPlan`. This can be used as follows:
+
+  ```python
+  explain_query = pb.transform.as_explain(query)
+  raw_plan = database.execute_query(explain_query)
+  plan = database.optimizer().parse_plan(raw_plan)
+  ```
 
 ## 📰 Updates
 - `DatabaseStatistics.most_common_values()` now returns an actual `MostCommonValues` object instead of a list of tuples.
   The `MostCommonValues` can be used as a drop-in replacement for the old tuple-based API. In addition, it provides more
   high-level methods for working with the most common values.
+- Enabled the MySQL and DuckDB backends to fall back to emulated statistics if the database does not provide them.
 
 ## 🏥 Fixes
 - _None_

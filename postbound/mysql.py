@@ -434,7 +434,7 @@ class MysqlStatisticsInterface(DatabaseStatistics):
         return self._calculate_min_max_values(column, cache_enabled=True)
 
     def _retrieve_most_common_values_from_stats(
-        self, column: ColumnReference, k: int
+        self, column: ColumnReference, k: int | None
     ) -> Sequence[tuple[Any, int]]:
         if not self.enable_emulation_fallback:
             raise UnsupportedDatabaseFeatureError(
@@ -651,11 +651,15 @@ class MysqlOptimizer(OptimizerInterface):
     def analyze_plan(self, query: SqlQuery) -> QueryPlan:
         raise NotImplementedError("MySQL interface does not support ANALYZE plans yet")
 
+    def parse_plan(self, plan: Any, *, query: Optional[SqlQuery]) -> QueryPlan:
+        mysql_plan = MysqlExplainPlan(plan)
+        return mysql_plan.as_qep()
+
     def cardinality_estimate(self, query: SqlQuery | str) -> Cardinality:
         return self.query_plan(query).estimated_cardinality
 
     def cost_estimate(self, query: SqlQuery | str) -> float:
-        return self.query_plan(query).cost
+        return self.query_plan(query).estimated_cost
 
 
 def _parse_mysql_connection(config_file: str) -> MysqlConnectionArguments:
@@ -1188,7 +1192,9 @@ class MysqlExplainNode:
 
 
 class MysqlExplainPlan:
-    def __init__(self, root: MysqlExplainNode, total_cost: float) -> None:
+    def __init__(
+        self, root: MysqlExplainNode, total_cost: Optional[float] = None
+    ) -> None:
         self.root = root
         self.total_cost = total_cost
 

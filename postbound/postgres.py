@@ -2664,6 +2664,10 @@ class PostgresOptimizer(OptimizerInterface):
         query_plan = PostgresExplainPlan(raw_query_plan)
         return query_plan.as_qep()
 
+    def parse_plan(self, plan: Any, *, query: Optional[SqlQuery]) -> QueryPlan:
+        pg_plan = PostgresExplainPlan(plan)
+        return pg_plan.as_qep()
+
     def cardinality_estimate(self, query: SqlQuery | str) -> Cardinality:
         if isinstance(query, SqlQuery):
             query = transform.as_explain(query)
