@@ -360,7 +360,7 @@ class MaxFrequencyStats(StatsContainer[MaxFrequency]):
         """
         n_tuples = self.database_stats.total_rows(column.table)
         n_tuples = 1 if n_tuples is None else n_tuples
-        n_distinct = self.database_stats.distinct_values(column)
+        n_distinct = self.database_stats.num_distinct(column)
         n_distinct = 1 if n_distinct is None else n_distinct
         return n_tuples / n_distinct
 
