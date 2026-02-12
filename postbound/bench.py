@@ -40,7 +40,7 @@ from .db import (
     TimeoutSupport,
     simplify_result_set,
 )
-from .qal import Explain, SqlQuery
+from .qal import SqlQuery
 from .util.jsonize import Jsonizable
 from .workloads import Workload, generate_workload
 
@@ -156,16 +156,37 @@ class QueryPreparation:
 
     Parameters
     ----------
+    projection : Literal["none", "star", "count_star", "\\*", "count(\\*)"], optional
+        Modify the *SELECT* clause of all queries to provide a uniform projection. Allowed values are *none* (no modification),
+        *star* or *\\** for *SELECT \\** and *count_star* or *count(\\*)* for *SELECT COUNT(\\*)*. Defaults to *none*.
+
+    output : Literal["default", "explain", "analyze", "explain_analyze"], optional
+        What kind of results to gather. *default* executes the queries as they are, *explain* transforms all queries to
+        *EXPLAIN* queries, *analyze* or *explain_analyze* transforms all queries to *EXPLAIN ANALYZE* queries.
+
     explain : bool, optional
         Whether to force all queries to be executed as *EXPLAIN* queries, by default *False*
+
+        .. deprecated:: 0.21.0
+            This option is deprecated in favor of the more versatile `output` option.
+
     count_star : bool, optional
         Whether to force all queries to be executed as *COUNT(\\*)* queries, overwriting their default projection. Defaults to
         *False*
+
+        .. deprecated:: 0.21.0
+            This option is deprecated in favor of the more versatile `projection` option.
+
     analyze : bool, optional
         Whether to force all queries to be executed as ``EXPLAIN ANALYZE`` queries. Setting this option implies `explain`,
         which therefore does not need to set manually. Defaults to *False*
+
+        .. deprecated:: 0.21.0
+            This option is deprecated in favor of the more versatile `output` option.
+
     prewarm : bool, optional
         For database systems that support prewarming, this inflates the buffer pool with pages from the prepared query.
+
     preparatory_statements : Optional[list[str]], optional
         Statements that are executed as-is on the database connection before running the query, by default *None*
 
@@ -177,50 +198,90 @@ class QueryPreparation:
     def __init__(
         self,
         *,
-        explain: bool = False,
-        count_star: bool = False,
-        analyze: bool = False,
+        projection: Literal["none", "star", "count_star", "*", "count(*)"] = "none",
+        output: Literal["default", "explain", "analyze", "explain_analyze"] = "default",
+        explain: Optional[bool] = None,
+        count_star: Optional[bool] = None,
+        analyze: Optional[bool] = None,
         prewarm: bool = False,
         preparatory_statements: Optional[list[str]] = None,
     ) -> None:
-        self.explain = explain
-        self.analyze = analyze
-        self.count_star = count_star
-        self.preparatory_stmts = (
-            preparatory_statements if preparatory_statements else []
-        )
+        if explain is not None:
+            warnings.warn(
+                "The 'explain' parameter is deprecated in favor of the more versatile 'output' parameter. "
+                "Please use 'output=\"explain\"' instead.",
+                DeprecationWarning,
+            )
+            self.output = "explain" if explain else output
+        else:
+            self.output = output
 
-        if explain and not analyze:
-            if prewarm:
-                warnings.warn(
-                    "Ignoring prewarm setting since queries are only explained. Set prewarm manually to overwrite."
-                )
+        if analyze is not None:
+            warnings.warn(
+                "The 'analyze' parameter is deprecated in favor of the more versatile 'output' parameter. "
+                "Please use 'output=\"analyze\"' instead.",
+                DeprecationWarning,
+            )
+            self.output = "analyze" if analyze else self.output
+
+        if count_star is not None:
+            warnings.warn(
+                "The 'count_star' parameter is deprecated in favor of the more versatile 'projection' parameter. "
+                "Please use 'projection=\"count_star\"' instead.",
+                DeprecationWarning,
+            )
+            self.projection = "count_star" if count_star else projection
+        else:
+            self.projection = projection
+
+        if self.output == "explain" and prewarm:
+            warnings.warn(
+                "Prewarming is not compatible with EXPLAIN queries. Ignoring prewarm setting."
+            )
             self.prewarm = False
         else:
             self.prewarm = prewarm
 
-    def prepare_query(self, query: SqlQuery, *, on: Database) -> SqlQuery:
+        self.preparatory_stmts = preparatory_statements or []
+
+    def prepare_query(
+        self, query: SqlQuery, *, on: Optional[Database] = None
+    ) -> SqlQuery:
         """Applies the selected transformations to the given input query and executes the preparatory statements
 
         Parameters
         ----------
         query : SqlQuery
             The query to prepare
-        on : Database
-            The database to execute the preparatory statements on
+        on : Optional[Database]
+            The database to execute the preparatory statements on. If no database is given, only query transformations are
+            applied.
 
         Returns
         -------
         SqlQuery
             The prepared query
         """
-        if self.analyze:
-            query = transform.as_explain(query, Explain.explain_analyze())
-        elif self.explain:
-            query = transform.as_explain(query, Explain.plan())
+        match self.projection:
+            case "none":
+                pass
+            case "star" | "*":
+                query = transform.as_star_query(query)
+            case "count_star" | "count(*)":
+                query = transform.as_count_star_query(query)
+            case _:
+                raise ValueError(f"Unsupported projection type: {self.projection}")
 
-        if self.count_star:
-            query = transform.as_count_star_query(query)
+        match self.output:
+            case "default":
+                pass
+            case "explain":
+                query = transform.as_explain(query)
+            case "analyze" | "explain_analyze":
+                query = transform.as_explain_analyze(query)
+
+        if on is None:
+            return query
 
         if self.prewarm:
             if not isinstance(on, PrewarmingSupport):
@@ -237,15 +298,14 @@ class QueryPreparation:
 
     def __json__(self) -> util.jsondict:
         return {
-            "explain": self.explain,
-            "analyze": self.analyze,
-            "count_star": self.count_star,
+            "output": self.output,
+            "projection": self.projection,
             "prewarm": self.prewarm,
             "preparatory_statements": self.preparatory_stmts,
         }
 
     def __repr__(self) -> str:
-        return f"QueryPreparation(explain={self.explain}, analyze={self.analyze}, count_star={self.count_star}, prewarm={self.prewarm}, preparatory_statements={self.preparatory_stmts})"
+        return f"QueryPreparation(output={self.output}, projection={self.projection}, prewarm={self.prewarm}, preparatory_statements={self.preparatory_stmts})"
 
     def __str__(self) -> str:
         return repr(self)
