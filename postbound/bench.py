@@ -397,7 +397,7 @@ def _init_benchmark_log(experiment: str, *, cfg: _BenchmarkConfig) -> None:
 
     with open(log_file, "r+", encoding="utf-8") as f:
         existing_logs = json.load(f)
-        complete_log = existing_logs + [util.to_json(log_data)]
+        complete_log = existing_logs + [log_data]
         f.seek(0)
         util.to_json_dump(complete_log, f)
 

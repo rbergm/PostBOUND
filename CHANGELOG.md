@@ -35,7 +35,8 @@ The [history](HISTORY.md) contains the changelogs of older PostBOUND releases.
 - The `to_json()` and `to_json_dump()` utilities now support dataclasses out-of-the-box.
 
 ## 🏥 Fixes
-- _None_
+- Fixed output format of the benchmarking log if additional entries are appended to an existing log. Essentially, we fix such
+  entries being escaped twice.
 
 ## 💀 Breaking changes
 - _None_
