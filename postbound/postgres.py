@@ -1616,14 +1616,43 @@ class PostgresStatisticsInterface(DatabaseStatistics):
         )
 
     def n_pages(self, table: TableReference | str) -> int:
-        query_template = "SELECT relpages FROM pg_class WHERE oid = %s::regclass"
-        regclass = table.full_name if isinstance(table, TableReference) else table
+        table = table if isinstance(table, TableReference) else TableReference(table)
+        schema = table.schema or "public"
 
-        self._db.cursor().execute(query_template, (regclass,))
+        query_template = """
+            SELECT relpages
+            FROM pg_class
+            WHERE oid = %s::regclass
+                AND relnamespace = %s::regnamespace
+        """
+
+        self._db.cursor().execute(query_template, (table, schema))
         result_set = self._db.cursor().fetchone()
+        if result_set is None:
+            raise ValueError(f"Relation not found: {table}")
+        return result_set[0]
 
-        if not result_set:
-            raise ValueError(f"Could not retrieve page count for table '{table}'")
+    def n_buffered(self, table: TableReference | str) -> int:
+        table = table if isinstance(table, TableReference) else TableReference(table)
+        schema = table.schema or "public"
+
+        query_template = """
+            SELECT count(*) AS buffers
+            FROM pg_buffercache buf
+            JOIN pg_class cls
+                ON buf.relfilenode = pg_relation_filenode(cls.oid)
+                AND buf.reldatabase IN (0, (SELECT oid FROM pg_database WHERE datname = current_database()))
+            JOIN pg_namespace nsp
+                ON nsp.oid = cls.relnamespace
+            WHERE nsp.nspname = %s
+                AND cls.relname = %s
+            GROUP BY nsp.oid, cls.oid
+        """
+
+        self._db.cursor().execute(query_template, (schema, table.full_name))
+        result_set = self._db.cursor().fetchone()
+        if result_set is None:
+            raise ValueError(f"Relation not found: {table}")
         return result_set[0]
 
     def update_statistics(
@@ -1731,25 +1760,31 @@ class PostgresStatisticsInterface(DatabaseStatistics):
             self._db.cursor().execute(distinct_update_query)
 
     def _retrieve_total_rows_from_stats(self, table: TableReference) -> Optional[int]:
-        count_query = (
-            f"SELECT reltuples FROM pg_class WHERE oid = '{table.full_name}'::regclass"
-        )
-        self._db.cursor().execute(count_query)
+        schema = table.schema or "public"
+        count_query = "SELECT reltuples FROM pg_class WHERE oid = %s::regclass AND relnamespace = %s::regnamespace"
+        self._db.cursor().execute(count_query, (table.full_name, schema))
         result_set = self._db.cursor().fetchone()
         if not result_set:
             return None
         count = result_set[0]
-        return count
+        return int(count)
 
     def _retrieve_distinct_values_from_stats(
         self, column: ColumnReference
     ) -> Optional[int]:
         assert column.table is not None, "Unbound table"
 
-        dist_query = (
-            "SELECT n_distinct FROM pg_stats WHERE tablename = %s and attname = %s"
+        schema = column.table.schema or "public"
+        dist_query = """
+            SELECT n_distinct
+            FROM pg_stats
+            WHERE tablename = %s
+                AND attname = %s
+                AND schemaname = %s
+        """
+        self._db.cursor().execute(
+            dist_query, (column.table.full_name, column.name, schema)
         )
-        self._db.cursor().execute(dist_query, (column.table.full_name, column.name))
         result_set = self._db.cursor().fetchone()
         if not result_set:
             return None
@@ -1762,13 +1797,13 @@ class PostgresStatisticsInterface(DatabaseStatistics):
         # If the value is < 0, it represents 'the negative of the number of distinct values divided by the number of
         # rows'. Therefore, we have to correct the number of distinct values manually in this case.
         if dist_values >= 0:
-            return dist_values
+            return int(dist_values)
 
         # correct negative values
         n_rows = self._retrieve_total_rows_from_stats(column.table)
         assert n_rows is not None, "Could not retrieve total row count for table"
 
-        return -1 * n_rows * dist_values
+        return int(-1 * n_rows * dist_values)
 
     def _retrieve_min_max_values_from_stats(
         self, column: ColumnReference
@@ -1782,6 +1817,8 @@ class PostgresStatisticsInterface(DatabaseStatistics):
         self, column: ColumnReference, k: int | None
     ) -> Sequence[tuple[Any, int]]:
         assert column.table is not None, "Unbound table"
+        table = column.table
+        schema = table.schema or "public"
         # Postgres stores the Most common values in a column of type anyarray (since in this column, many MCVs from
         # many different tables and data types are present). However, this type is not very convenient to work on.
         # Therefore, we first need to convert the anyarray to an array of the actual attribute type.
@@ -1789,16 +1826,24 @@ class PostgresStatisticsInterface(DatabaseStatistics):
 
         # now, load the most frequent values. Since the frequencies are expressed as a fraction of the total number of
         # rows, we need to multiply this number again to obtain the true number of occurrences
-        mcv_query = textwrap.dedent(
-            """
-                SELECT UNNEST(most_common_vals::text::{conv}),
-                    UNNEST(most_common_freqs) * (SELECT reltuples FROM pg_class WHERE oid = '{tab}'::regclass)
-                FROM pg_stats
-                WHERE tablename = %s AND attname = %s""".format(
-                conv=attribute_converter, tab=column.table.full_name
-            )
+        mcv_query = """
+            SELECT UNNEST(most_common_vals::text::{conv}),
+                UNNEST(most_common_freqs) * (SELECT reltuples
+                                             FROM pg_class
+                                             WHERE oid = %s::regclass
+                                             AND relnamespace = %s::regnamespace)
+            FROM pg_stats
+            WHERE tablename = %s
+                AND attname = %s
+                AND schemaname = %s
+        """
+        mcv_query = mcv_query.format(conv=attribute_converter)
+
+        # NB: we have to repeat a few parameters here. Unfortunately, it seems that psycopg
+        # does not support casts for named parameters - %(tab)s::regclass does not work
+        self._db.cursor().execute(
+            mcv_query, (table.full_name, schema, table.full_name, column.name, schema)
         )
-        self._db.cursor().execute(mcv_query, (column.table.full_name, column.name))
         result_set = self._db.cursor().fetchall()
         assert result_set is not None
 
@@ -1836,7 +1881,7 @@ class PostgresStatisticsInterface(DatabaseStatistics):
         return Histogram(bounds, n_rows=n_rows, bucket_interpolation=interpolation)
 
     def _array_cast(self, column: ColumnReference) -> str:
-        assert column is not None
+        assert column.table is not None
 
         # determine the attributes data type to figure out how it should be converted
         attribute_query = "SELECT data_type FROM information_schema.columns WHERE table_name = %s AND column_name = %s"

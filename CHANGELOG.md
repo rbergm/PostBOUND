@@ -24,12 +24,15 @@ The [history](HISTORY.md) contains the changelogs of older PostBOUND releases.
   ```
 - `execute_workload()` now supports many new output formats for writing the progressive output.
   Currently supported are: CSV, Parquet, JSON, HDF
+- Added a `n_buffered()` method to the Postgres statistics interface to retrieve the number of currently buffered
+  pages of a relation.
 
 ## 📰 Updates
 - `DatabaseStatistics.most_common_values()` now returns an actual `MostCommonValues` object instead of a list of tuples.
   The `MostCommonValues` can be used as a drop-in replacement for the old tuple-based API. In addition, it provides more
   high-level methods for working with the most common values.
 - Enabled the MySQL and DuckDB backends to fall back to emulated statistics if the database does not provide them.
+- The Postgres statistics interface now consistently supports table references with a schema.
 - The `QueryPreparation` API now provides the `projection` and `output` parameters to modify the *SELECT* clause and the type
   of results to gather for all queries in a more flexible and intuitive way (how did *explain=True*  and *analyze=True*
   interact?).
