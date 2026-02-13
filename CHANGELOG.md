@@ -22,6 +22,8 @@ The [history](HISTORY.md) contains the changelogs of older PostBOUND releases.
   raw_plan = database.execute_query(explain_query)
   plan = database.optimizer().parse_plan(raw_plan)
   ```
+- `execute_workload()` now supports many new output formats for writing the progressive output.
+  Currently supported are: CSV, Parquet, JSON, HDF
 
 ## 📰 Updates
 - `DatabaseStatistics.most_common_values()` now returns an actual `MostCommonValues` object instead of a list of tuples.

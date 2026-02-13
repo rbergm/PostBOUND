@@ -166,6 +166,7 @@ dt-venv/
 postbound-venv/
 pb-venv/
 .psycopg_connection*
+.pg-connect*.toml
 .mysql_connection.config
 
 # PostBOUND-specific files

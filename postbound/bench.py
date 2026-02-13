@@ -349,6 +349,7 @@ class _BenchmarkConfig:
     target_db: Database
     optimizer: OptimizationPipeline | None
     output: Path | None
+    output_args: dict
     workload_repetitions: int
     per_query_repetitions: int
     shuffled: bool
@@ -399,7 +400,7 @@ def _init_benchmark_log(experiment: str, *, cfg: _BenchmarkConfig) -> None:
         existing_logs = json.load(f)
         complete_log = existing_logs + [log_data]
         f.seek(0)
-        util.to_json_dump(complete_log, f)
+        util.to_json_dump(complete_log, f, indent=2)
 
 
 def _finalize_benchmark_log(experiment: str, *, cfg: _BenchmarkConfig) -> None:
@@ -407,6 +408,11 @@ def _finalize_benchmark_log(experiment: str, *, cfg: _BenchmarkConfig) -> None:
         return
     out_dir = cfg.output.parent
     log_file = out_dir / "experiment_log.json"
+    if cfg.start_time is None:
+        raise ValueError(
+            f"Malformed experiment log '{log_file}': start time is missing!"
+        )
+
     with open(log_file, "r+", encoding="utf-8") as f:
         existing_logs = json.load(f)
         for log_entry in existing_logs:
@@ -427,6 +433,11 @@ def _failed_benchmark_log(
         return
     out_dir = cfg.output.parent
     log_file = out_dir / "experiment_log.json"
+    if cfg.start_time is None:
+        raise ValueError(
+            f"Malformed experiment log '{log_file}': start time is missing!"
+        )
+
     with open(log_file, "r+", encoding="utf-8") as f:
         existing_logs = json.load(f)
         for log_entry in existing_logs:
@@ -531,13 +542,13 @@ def _execute_query(
     try:
         if timeout:
             exec_start = time.perf_counter_ns()
-            result_set = on.execute_with_timeout(query, timeout=timeout)
+            result_set = on.execute_with_timeout(query, timeout=timeout)  # type: ignore[arg-type]
             exec_end = time.perf_counter_ns()
             if result_set is None:
                 return _TimeoutExecution(timeout=timeout)
         else:
             exec_start = time.perf_counter_ns()
-            result_set = on.execute_query(query, cache_enabled=False, raw=False)
+            result_set = on.execute_query(query, cache_enabled=False, raw=True)
             exec_end = time.perf_counter_ns()
         exec_time = (exec_end - exec_start) / 10**9  # convert to seconds
 
@@ -635,15 +646,15 @@ class _ResultSample:
         self.query_prep = query_prep
 
         # collected data
-        self.timestamps: list[datetime] = []
+        self.timestamps: list[datetime | None] = []
         self.status: list[ExecStatus] = []
         self.optimization_time: float = np.nan
         self.optimization_pipeline: OptimizationPipeline | None = None
         self.optimized_query: SqlQuery | None = None
         self.failure_reasons: list[str] = []
-        self.result_sets: list[ResultSet] = []
+        self.result_sets: list[ResultSet | None] = []
         self.exec_times: list[float] = []
-        self.db_configs: list[dict] = []
+        self.db_configs: list[util.jsondict] = []
 
         # internal fields
         self._max_query_reps = max_query_reps
@@ -654,7 +665,7 @@ class _ResultSample:
         self,
         *,
         optimized_query: SqlQuery,
-        pipeline: OptimizationPipeline,
+        pipeline: OptimizationPipeline | None,
         optimization_time: float,
     ) -> None:
         self.optimization_time = optimization_time
@@ -662,12 +673,12 @@ class _ResultSample:
         self.optimized_query = optimized_query
 
     def optimization_failure(
-        self, reason: Exception, *, pipeline: OptimizationPipeline
+        self, reason: Exception, *, pipeline: OptimizationPipeline | None
     ) -> None:
         self._optimization_failure = reason
         self.optimization_pipeline = pipeline
         self.timestamps += [None] * self._max_query_reps
-        self.status += ["optimization-error"] * self._max_query_reps
+        self.status += ["optimization-error"] * self._max_query_reps  # type: ignore[list-item]]
         self.failure_reasons += [str(reason)] * self._max_query_reps
         self.result_sets += [None] * self._max_query_reps
         self.exec_times += [np.nan] * self._max_query_reps
@@ -677,7 +688,7 @@ class _ResultSample:
         self.timestamps.append(datetime.now())
 
     def add_exec_sample(
-        self, result_set: ResultSet, *, exec_time: float, db_config: dict
+        self, result_set: ResultSet, *, exec_time: float, db_config: util.jsondict
     ) -> None:
         self.status.append("ok")
         self.failure_reasons.append("")
@@ -685,14 +696,14 @@ class _ResultSample:
         self.exec_times.append(exec_time)
         self.db_configs.append(db_config)
 
-    def add_exec_timeout(self, timeout: float, *, db_config: dict) -> None:
+    def add_exec_timeout(self, timeout: float, *, db_config: util.jsondict) -> None:
         self.status.append("timeout")
         self.failure_reasons.append("")
         self.result_sets.append(None)
         self.exec_times.append(timeout)
         self.db_configs.append(db_config)
 
-    def add_exec_failure(self, reason: Exception, *, db_config: dict) -> None:
+    def add_exec_failure(self, reason: Exception, *, db_config: util.jsondict) -> None:
         self.status.append("execution-error")
         self.failure_reasons.append(str(reason))
         self.result_sets.append(None)
@@ -706,7 +717,7 @@ class _ResultSample:
         return len(self.result_sets)
 
     def last_successful(self) -> bool:
-        return self.status and self.status[-1] in ("ok", "timeout")
+        return bool(self.status and self.status[-1] in ("ok", "timeout"))
 
     def last_result(self) -> Optional[ExecutionResult]:
         if self._optimization_failure or not self.result_sets:
@@ -774,7 +785,7 @@ class _ResultSample:
 
             sample = ExecutionResult(
                 query=self.query,
-                status=status,
+                status=status,  # type: ignore[list-item]
                 query_result=self.result_sets[i],
                 optimization_time=self.optimization_time,
                 execution_time=self.exec_times[i],
@@ -782,19 +793,67 @@ class _ResultSample:
             results.append(sample)
         return results
 
-    def write_progressive(self, file: Path | None) -> None:
+    def write_progressive(self, file: Path | None, output_args: dict) -> None:
         if file is None:
             return
 
         df = self.to_df(only_last=True)
         df = prepare_export(df)
+
+        match file.suffix:
+            case ".csv":
+                self._write_csv(df, file, writer_args=output_args)
+            case ".parquet":
+                self._write_parquet(df, file, writer_args=output_args)
+            case ".hdf" | ".hdf5" | ".h5":
+                self._write_hdf(df, file, writer_args=output_args)
+            case ".json":
+                self._write_json(df, file, writer_args=output_args)
+
+    def _write_csv(self, df: pd.DataFrame, file: Path, *, writer_args: dict) -> None:
         if file.is_file():
-            df.to_csv(file, mode="a", header=False, index=False)
+            df.to_csv(file, mode="a", header=False, index=False, **writer_args)
             return
 
         # We are the first sample to write to the output file. Create it with headers
         file.parent.mkdir(parents=True, exist_ok=True)
-        df.to_csv(file, index=False)
+        df.to_csv(file, index=False, **writer_args)
+
+    def _write_parquet(
+        self, df: pd.DataFrame, file: Path, *, writer_args: dict
+    ) -> None:
+        if file.is_file():
+            existing_results = pd.read_parquet(file)
+            df = pd.concat([existing_results, df], ignore_index=True)
+        else:
+            file.parent.mkdir(parents=True, exist_ok=True)
+
+        df.to_parquet(file, index=False, **writer_args)
+
+    def _write_hdf(self, df: pd.DataFrame, file: Path, *, writer_args: dict) -> None:
+        if "key" not in writer_args:
+            raise ValueError(
+                "'key' must be given when writing to HDF. "
+                "Please specify the key in the 'output_args' of execute_workload()!"
+            )
+
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            if file.is_file():
+                df.to_hdf(file, mode="a", index=False, **writer_args)
+                return
+
+            file.parent.mkdir(parents=True, exist_ok=True)
+            df.to_hdf(file, mode="w", index=False, **writer_args)
+
+    def _write_json(self, df: pd.DataFrame, file: Path, *, writer_args: dict) -> None:
+        if file.is_file():
+            existing_results = pd.read_json(file)
+            df = pd.concat([existing_results, df], ignore_index=True)
+        else:
+            file.parent.mkdir(parents=True, exist_ok=True)
+
+        df.to_json(file, index=False, **writer_args)
 
     def __len__(self) -> int:
         return self.num_executions()
@@ -886,7 +945,7 @@ def _exec_ctl_loop(
             raise RuntimeError(f"Unhandled execution result: {other}")
 
     if cfg.output and sample.last_successful():
-        sample.write_progressive(cfg.output)
+        sample.write_progressive(cfg.output, cfg.output_args)
 
     if cfg.exec_callback and sample.last_successful():
         cfg.exec_callback(sample.last_result())
@@ -919,12 +978,14 @@ def _workload_ctl_loop(
         if sample.failed_optimization():
             match cfg.error_action:
                 case "log" if cfg.output:
-                    sample.write_progressive(cfg.output)
+                    sample.write_progressive(cfg.output, cfg.output_args)
                 case "log" if not cfg.output:
                     # we handle the output to CSV as part of the normal result export, no need to do anything here
                     pass
                 case "raise":
-                    raise sample.failed_optimization()
+                    err = sample.failed_optimization()
+                    assert err is not None
+                    raise err
                 case "ignore":
                     results.scratch_last_sample()
             continue
@@ -942,6 +1003,7 @@ def _workload_ctl_loop(
             continue
 
         for exec_result in sample.to_execution_results():
+            assert exec_result.query_result is not None
             exec_time = 1000 * exec_result.execution_time
             pipeline.learn_from_sample(
                 query, exec_result.query_result, exec_time=exec_time
@@ -956,11 +1018,12 @@ def execute_workload(
     workload_repetitions: int = 1,
     per_query_repetitions: int = 1,
     shuffled: bool = False,
-    query_preparation: Optional[QueryPreparation | dict] = None,
+    query_preparation: Optional[QueryPreparation | dict[str, Any]] = None,
     timeout: Optional[float] = None,
     exec_callback: Optional[Callable[[ExecutionResult], None]] = None,
     repetition_callback: Optional[Callable[[int], None]] = None,
     progressive_output: Optional[str | Path] = None,
+    output_args: Optional[dict] = None,
     logger: Optional[Callable[[str], None] | PredefLogger] = None,
     error_action: ErrorHandling = "log",
 ) -> pd.DataFrame:
@@ -999,7 +1062,10 @@ def execute_workload(
         timeouts require the database to implement `TimeoutSupport`.
     progressive_output : Optional[str  |  Path], optional
         If provided, results will be written to this file as soon as they are obtained. If the file already exists, it
-        will be appended. This is file is assumed to be a CSV file.
+        will be appended. Supported file formats are CSV, JSON, Parquet, and HDF. When writing to HDF, the output key must
+        be specified in the `output_args`.
+    output_args: Optional[dict], optional
+        Additional arguments to pass to the Pandas writer function for the progressive output file.
     logger : Optional[Callable[[str], None]  |  PredefLogger], optional
         Configures how progress should be logged. Depending on the specific argument, a number of different strategies are
         available:
@@ -1071,7 +1137,7 @@ def execute_workload(
         optimizer.train_on_workload(queries)
 
     query_preparation = (
-        QueryPreparation(**query_preparation)
+        QueryPreparation(**query_preparation)  # type: ignore[call-arg]
         if isinstance(query_preparation, dict)
         else query_preparation
     )
@@ -1094,6 +1160,7 @@ def execute_workload(
         target_db=target_db,
         optimizer=optimizer,
         output=progressive_output,
+        output_args=output_args or {},
         workload_repetitions=workload_repetitions,
         per_query_repetitions=per_query_repetitions,
         shuffled=shuffled,
@@ -1183,7 +1250,8 @@ def prepare_export(results_df: pd.DataFrame) -> pd.DataFrame:
 
 
 def sort_results(
-    results_df: pd.DataFrame, by_column: str | tuple[str] = ("label", "exec_index")
+    results_df: pd.DataFrame,
+    by_column: str | tuple[str] = ("label", "exec_index"),  # type: ignore
 ) -> pd.DataFrame:
     """Provides a better sorting of the benchmark results in a data frame.
 
