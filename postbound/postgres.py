@@ -32,7 +32,7 @@ from collections.abc import Callable, Generator, Iterable, Sequence, Sized
 from dataclasses import dataclass
 from multiprocessing import connection as mp_conn
 from pathlib import Path
-from typing import Any, Literal, Optional, TextIO, overload
+from typing import Any, Literal, Optional, TextIO, get_args, overload
 
 import psycopg
 import psycopg.rows
@@ -3709,6 +3709,56 @@ PostgresExplainIntermediateNodes = {
 """A mapping from Postgres EXPLAIN node names to the corresponding intermediate operators."""
 
 
+NodeType = Literal[
+    "Result",
+    "ProjectSet",
+    "ModifyTable",
+    "Append",
+    "Merge Append",
+    "Recursive Union",
+    "BitmapAnd",
+    "BitmapOr",
+    "Nested Loop",
+    "Merge Join",
+    "Hash Join",
+    "Seq Scan",
+    "Sample Scan",
+    "Gather",
+    "Gather Merge",
+    "Index Scan",
+    "Index Only Scan",
+    "Bitmap Index Scan",
+    "Bitmap Heap Scan",
+    "Tid Scan",
+    "Tid Range Scan",
+    "Subquery Scan",
+    "Function Scan",
+    "Table Function Scan",
+    "Values Scan",
+    "CTE Scan",
+    "Named Tuplestore Scan",
+    "WorkTable Scan",
+    "Foreign Scan",
+    "Custom Scan",
+    "Materialize",
+    "Memoize",
+    "Sort",
+    "Incremental Sort",
+    "Group",
+    "Aggregate",
+    "WindowAgg",
+    "Unique",
+    "SetOp",
+    "LockRows",
+    "Limit",
+    "Hash",
+]
+"""All different nodes that can be created by Postgres.
+
+This has been extracted directly from ExplainNode() in explain.c from the Postgres source code.
+"""
+
+
 class PostgresExplainNode:
     """Simplified model of a plan node as provided by Postgres' *EXPLAIN* output in JSON format.
 
@@ -3729,7 +3779,7 @@ class PostgresExplainNode:
 
     Attributes
     ----------
-    node_type : str | None, default None
+    node_type : NodeType | None, default None
         The node type. This should never be empty or *None*, even though it is technically allowed.
     cost : float, default NaN
         The optimizer's cost estimation for this node. This includes the cost of all child nodes as well. This should normally
@@ -3796,8 +3846,13 @@ class PostgresExplainNode:
         All child / input nodes for the current node
     """
 
+    @staticmethod
+    def all_node_types(self) -> frozenset[NodeType]:
+        """All node types that are currently recognized by PostBOUND."""
+        return frozenset(get_args(NodeType))
+
     def __init__(self, explain_data: dict) -> None:
-        self.node_type: str = explain_data["Node Type"]
+        self.node_type: NodeType = explain_data["Node Type"]
 
         self.cost: float = explain_data.get("Total Cost", math.nan)
         self.cardinality_estimate: float = explain_data.get("Plan Rows", math.nan)
