@@ -12,7 +12,7 @@ from collections import UserString
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Optional, overload
 
 import quacklab
 
@@ -524,10 +524,18 @@ class DuckDBOptimizer(OptimizerInterface):
             parsed[0], query=query if isinstance(query, SqlQuery) else None
         )
 
+    @overload
+    def analyze_plan(self, query: SqlQuery) -> QueryPlan: ...
+
+    @overload
+    def analyze_plan(
+        self, query: SqlQuery, *, timeout: float
+    ) -> Optional[QueryPlan]: ...
+
     def analyze_plan(
         self, query: SqlQuery, *, timeout: Optional[float] = None
     ) -> Optional[QueryPlan]:
-        query = transform.as_explain_analyze(query, qal.Explain)
+        query = transform.as_explain_analyze(query)
 
         try:
             result_set = self._db.execute_query(
@@ -541,7 +549,15 @@ class DuckDBOptimizer(OptimizerInterface):
         parsed = json.loads(raw_explain)
         return parse_duckdb_plan(parsed[0], query=query)
 
-    def parse_plan(self, plan: Any, *, query: Optional[SqlQuery]) -> QueryPlan:
+    def parse_plan(self, plan: Any, *, query: Optional[SqlQuery] = None) -> QueryPlan:
+        # Similar to the Postgres implementation of parse_plan(), we try to be gracefull
+        # and accept both simplified and raw versions of the execute_query() output.
+        # In essence, we always try to break the input down to a plain dictionary and
+        # unwrap the lists and tuples that come with a raw result set.
+        if isinstance(plan, list):
+            plan = plan[0]
+        if isinstance(plan, tuple):
+            plan = plan[1]
         return parse_duckdb_plan(plan, query=query)
 
     def cardinality_estimate(self, query: SqlQuery | str) -> Cardinality:

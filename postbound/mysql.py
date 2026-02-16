@@ -651,7 +651,7 @@ class MysqlOptimizer(OptimizerInterface):
     def analyze_plan(self, query: SqlQuery) -> QueryPlan:
         raise NotImplementedError("MySQL interface does not support ANALYZE plans yet")
 
-    def parse_plan(self, plan: Any, *, query: Optional[SqlQuery]) -> QueryPlan:
+    def parse_plan(self, plan: Any, *, query: Optional[SqlQuery] = None) -> QueryPlan:
         mysql_plan = MysqlExplainPlan(plan)
         return mysql_plan.as_qep()
 

@@ -2709,7 +2709,20 @@ class PostgresOptimizer(OptimizerInterface):
         query_plan = PostgresExplainPlan(raw_query_plan)
         return query_plan.as_qep()
 
-    def parse_plan(self, plan: Any, *, query: Optional[SqlQuery]) -> QueryPlan:
+    def parse_plan(self, plan: Any, *, query: Optional[SqlQuery] = None) -> QueryPlan:
+        # We should be graceful and handle both simplified and unsimplified
+        # versions of the execute_query() output. This only works because PostgresExplainPlan
+        # is also cooperative and excepts a dictionary and a list-of-dictionary input as well
+        # Therefore, we can aggressively unwrap a list, which either yields a dictionary (in
+        # case of simplified result sets), or a tuple-of-list-of-dictionary (in case of a raw
+        # result set).
+        # If we should ever encouter an EXPLAIN query whose list contains multiple dictionaries
+        # we have a problem.
+        if isinstance(plan, list):
+            plan = plan[0]
+        if isinstance(plan, tuple):
+            plan = plan[0]
+
         pg_plan = PostgresExplainPlan(plan)
         return pg_plan.as_qep()
 
@@ -3847,7 +3860,7 @@ class PostgresExplainNode:
     """
 
     @staticmethod
-    def all_node_types(self) -> frozenset[NodeType]:
+    def all_node_types() -> frozenset[NodeType]:
         """All node types that are currently recognized by PostBOUND."""
         return frozenset(get_args(NodeType))
 
@@ -4224,7 +4237,7 @@ class PostgresExplainPlan:
 
     Parameters
     ----------
-    explain_data : dict
+    explain_data : dict | list[dict]
         The JSON data of the entire explain plan. This is parsed and prepared as part of the *__init__* method.
 
 
@@ -4239,7 +4252,7 @@ class PostgresExplainPlan:
         The actual plan
     """
 
-    def __init__(self, explain_data: dict) -> None:
+    def __init__(self, explain_data: dict | list[dict]) -> None:
         self.explain_data = (
             explain_data[0] if isinstance(explain_data, list) else explain_data
         )

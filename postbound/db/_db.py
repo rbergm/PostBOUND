@@ -1560,6 +1560,14 @@ class Histogram[T: SupportsRichComparison[T]]:
     def freq_per_bucket(self) -> int:
         return self._freq_per_bucket
 
+    @property
+    def lower(self) -> T:
+        pass
+
+    @property
+    def upper(self) -> T:
+        pass
+
     def frequency_below(self, value: T) -> int:
         upper_idx = bisect.bisect_right(self._bounds, value)
         if upper_idx == 0:
@@ -2414,7 +2422,7 @@ class OptimizerInterface(abc.ABC):
         return self.analyze_plan(query)
 
     @abc.abstractmethod
-    def parse_plan(self, plan: Any, *, query: Optional[SqlQuery]) -> QueryPlan:
+    def parse_plan(self, plan: Any, *, query: Optional[SqlQuery] = None) -> QueryPlan:
         """Transforms the system-specific EXPLAIN output into a standardized `QueryPlan`.
 
         The optional `query` can be used to provide additional context for the plan. This can be used by
