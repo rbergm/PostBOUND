@@ -1626,7 +1626,7 @@ class PostgresStatisticsInterface(DatabaseStatistics):
                 AND relnamespace = %s::regnamespace
         """
 
-        self._db.cursor().execute(query_template, (table, schema))
+        self._db.cursor().execute(query_template, (table.full_name, schema))
         result_set = self._db.cursor().fetchone()
         if result_set is None:
             raise ValueError(f"Relation not found: {table}")
