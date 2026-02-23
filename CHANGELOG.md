@@ -38,6 +38,7 @@ The [history](HISTORY.md) contains the changelogs of older PostBOUND releases.
   interact?).
   The old API using *analyze=True*, etc. is now deprecated in favor of these new parameters.
 - The `to_json()` and `to_json_dump()` utilities now support dataclasses out-of-the-box.
+- Expose `argmax()` directly in _util_ module
 
 ## 🏥 Fixes
 - Fixed output format of the benchmarking log if additional entries are appended to an existing log. Essentially, we fix such
