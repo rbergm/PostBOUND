@@ -26,6 +26,7 @@ The [history](HISTORY.md) contains the changelogs of older PostBOUND releases.
   Currently supported are: CSV, Parquet, JSON, HDF
 - Added a `n_buffered()` method to the Postgres statistics interface to retrieve the number of currently buffered
   pages of a relation.
+- `util.simpify()` now supports single-item mappings as well.
 
 ## 📰 Updates
 - `DatabaseStatistics.most_common_values()` now returns an actual `MostCommonValues` object instead of a list of tuples.

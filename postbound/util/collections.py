@@ -10,6 +10,7 @@ from collections.abc import (
     Generator,
     Iterable,
     Iterator,
+    Mapping,
     Sequence,
     Sized,
 )
@@ -139,7 +140,12 @@ def get_any(elems: Iterable[T]) -> T:
 
 
 @overload
-def simplify(obj: Iterable[T]) -> T: ...
+def simplify[K, V](obj: Mapping[K, V]) -> tuple[K, V]:
+    pass
+
+
+@overload
+def simplify[T](obj: Iterable) -> T: ...
 
 
 @overload
@@ -153,7 +159,7 @@ def simplify(obj):
 
     Parameters
     ----------
-    obj : Iterable[T]
+    obj : Iterable[T] | Mapping[K, V]
         The object to simplify
 
     Returns
@@ -162,6 +168,7 @@ def simplify(obj):
         For a singular list, the object that was contained in that list. Otherwise `obj` is returned unmodified. Since this
         method is mainly intended for lists which are known to contain exactly one element, we use *T* as a return type to
         assist the type checker.
+        We use the same logic for dictionaries, however here we return the single key/value pair.
 
     Examples
     --------
@@ -169,6 +176,12 @@ def simplify(obj):
     """
     if not isinstance(obj, Iterable) or isinstance(obj, (str, bytes)):
         return obj
+
+    if isinstance(obj, Mapping):
+        if len(obj) != 1:
+            return obj
+        key = next(iter(obj))
+        return key, obj[key]
 
     if not isinstance(obj, Collection):
         obj = list(obj)
