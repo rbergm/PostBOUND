@@ -25,11 +25,14 @@ import math
 import os
 import textwrap
 import warnings
-from collections.abc import Iterable, Iterator, Sequence
+from collections.abc import Iterable, Iterator, Mapping, Sequence
+from dataclasses import dataclass
 from datetime import date, datetime, time, timedelta
 from typing import Any, Literal, Optional, Protocol, Type, overload, runtime_checkable
 
 import networkx as nx
+
+from postbound.util import set_union
 
 from .. import util
 from .._base import SupportsRichComparison
@@ -684,7 +687,42 @@ A foreign key references has a foreign key column `fk_col` (the first element) t
 """
 
 
-class DatabaseSchema(abc.ABC):
+@dataclass
+class ColumnInfo:
+    column: ColumnReference
+    table: TableReference
+
+    datatype: str
+    nullable: bool
+    primary_key: bool
+    indexed: bool
+
+
+@dataclass
+class TableInfo(Mapping[ColumnReference, ColumnInfo]):
+    table: TableReference
+    columns: Sequence[ColumnInfo]
+
+    primary_key: ColumnReference | None
+    outgoing_foreign_keys: set[ForeignKeyRef]
+    incoming_foreign_keys: set[ForeignKeyRef]
+
+    def __getitem__(self, key: ColumnReference | str) -> ColumnInfo:
+        if isinstance(key, str):
+            key = ColumnReference(key, self.table)
+        for column_info in self.columns:
+            if column_info.column == key:
+                return column_info
+        raise KeyError(f"Column '{key}' not found in table '{self.table}'")
+
+    def __len__(self) -> int:
+        return len(self.columns)
+
+    def __iter__(self) -> Iterator[ColumnReference]:
+        return iter(column_info.column for column_info in self.columns)
+
+
+class DatabaseSchema(abc.ABC, Mapping[TableReference, TableInfo]):
     """This interface provides access to different information about the logical structure of a database.
 
     In contrast to database statistics, schema information is much more standardized. PostBOUND therefore only takes on
@@ -1440,6 +1478,64 @@ class DatabaseSchema(abc.ABC):
             edges = [(col, fk_target) for fk_target in self.foreign_keys_on(col)]
             g.add_edges_from(edges)
         return list(nx.connected_components(g))
+
+    @overload
+    def __getitem__(self, key: TableReference) -> TableInfo: ...
+
+    @overload
+    def __getitem__(self, key: ColumnReference) -> ColumnInfo: ...
+
+    def __getitem__(self, key):
+        match key:
+            case ColumnReference():
+                return ColumnInfo(
+                    column=key,
+                    table=key.table,
+                    datatype=self.datatype(key),
+                    nullable=self.is_nullable(key),
+                    indexed=self.has_index(key),
+                    primary_key=self.is_primary_key(key),
+                )
+            case TableReference():
+                schema_graph = self.as_graph()
+                col_infos = [self[col] for col in self.columns(key)]
+                outgoing_fks = set_union(
+                    edge[2] for edge in schema_graph.out_edges(key, data="foreign_keys")
+                )
+                incoming_fks = set_union(
+                    edge[2] for edge in schema_graph.in_edges(key, data="foreign_keys")
+                )
+                return TableInfo(
+                    table=key,
+                    columns=col_infos,
+                    primary_key=self.primary_key_column(key),
+                    outgoing_foreign_keys=outgoing_fks,
+                    incoming_foreign_keys=incoming_fks,
+                )
+            case str():
+                try:
+                    ref = TableReference(key)
+                    return self[ref]
+                except KeyError:
+                    pass
+
+                try:
+                    col, tab = key.split(".", 1)
+                    ref = ColumnReference(col, TableReference(tab))
+                    return self[ref]
+                except KeyError:
+                    raise KeyError(f"Key '{key}' not found in database schema")
+            case _:
+                raise KeyError(
+                    f"Unsupported key type: {type(key).__name__}. "
+                    "Only TableReference, ColumnReference, or str are supported."
+                )
+
+    def __iter__(self) -> Iterator[TableReference]:
+        return iter(self.tables())
+
+    def __len__(self) -> int:
+        return len(self.tables())
 
     def __hash__(self) -> int:
         return hash(self._db)
