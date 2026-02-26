@@ -305,6 +305,66 @@ class StaticValueExpression(SqlExpression, Generic[T]):
                 return f"'{escaped}'"
 
 
+class StarExpression(SqlExpression):
+    """A special expression that is only used in *SELECT* clauses to select all columns.
+
+    Parameters
+    ----------
+    from_table : Optional[TableReference], optional
+        The table from which to select all columns. Defaults to **None**, in which case all columns of all tables are being
+        selected.
+    """
+
+    def __init__(self, *, from_table: Optional[TableReference] = None) -> None:
+        self._table = from_table
+        super().__init__(hash(("*", self._table)))
+
+    __slots__ = ("_table",)
+    __match_args__ = ("from_table",)
+
+    @property
+    def from_table(self) -> Optional[TableReference]:
+        """Get the table from which to select all columns.
+
+        If no such table was selected, all columns of all tables are being selected.
+
+        Returns
+        -------
+        Optional[TableReference]
+            The table, or **None** if all columns are selected
+        """
+        return self._table
+
+    def tables(self) -> set[TableReference]:
+        if self._table:
+            return {self._table}
+        return set()
+
+    def columns(self) -> set[ColumnReference]:
+        return set()
+
+    def itercolumns(self) -> Iterable[ColumnReference]:
+        return []
+
+    def iterchildren(self) -> Iterable[SqlExpression]:
+        return []
+
+    def accept_visitor(
+        self, visitor: SqlExpressionVisitor[VisitorResult], *args, **kwargs
+    ) -> VisitorResult:
+        return visitor.visit_star_expr(self, *args, **kwargs)
+
+    __hash__ = SqlExpression.__hash__
+
+    def __eq__(self, other) -> bool:
+        return isinstance(other, type(self)) and self._table == other._table
+
+    def __str__(self) -> str:
+        if not self._table:
+            return "*"
+        return f"{quote(self._table.identifier())}.*"
+
+
 class CastExpression(SqlExpression):
     """An expression that casts the type of another nested expression.
 
@@ -663,6 +723,11 @@ class ColumnExpression(SqlExpression):
         The column being wrapped
     """
 
+    @staticmethod
+    def of(column_name: str) -> ColumnExpression:
+        """Shortcut method to create a new column reference + expression."""
+        return ColumnExpression(ColumnReference(column_name))
+
     def __init__(self, column: ColumnReference) -> None:
         if column is None:
             raise ValueError("Column cannot be none")
@@ -764,6 +829,41 @@ class FunctionExpression(SqlExpression):
     --------
     postbound.transform.replace_expressions
     """
+
+    @staticmethod
+    def create_count(
+        column: SqlExpression | Iterable[SqlExpression] = StarExpression(),
+    ) -> FunctionExpression:
+        """Shortcut method to create a new *COUNT()*  expression over (one or multiple) columns.
+
+        If no column is given, a *COUNT(\\*)* is created.
+        """
+        column = [column] if isinstance(column, SqlExpression) else list(column)
+        return FunctionExpression("count", column)
+
+    @staticmethod
+    def create_max(
+        column: SqlExpression | Iterable[SqlExpression],
+    ) -> FunctionExpression:
+        """Shortcut method to create a new *MAX()*  expression over (one or multiple) columns."""
+        column = [column] if isinstance(column, SqlExpression) else list(column)
+        return FunctionExpression("max", column)
+
+    @staticmethod
+    def create_min(
+        column: SqlExpression | Iterable[SqlExpression],
+    ) -> FunctionExpression:
+        """Shortcut method to create a new *MIN()*  expression over (one or multiple) columns."""
+        column = [column] if isinstance(column, SqlExpression) else list(column)
+        return FunctionExpression("min", column)
+
+    @staticmethod
+    def create_sum(
+        column: SqlExpression | Iterable[SqlExpression],
+    ) -> FunctionExpression:
+        """Shortcut method to create a new *SUM()*  expression over (one or multiple) columns."""
+        column = [column] if isinstance(column, SqlExpression) else list(column)
+        return FunctionExpression("sum", column)
 
     def __init__(
         self,
@@ -1180,66 +1280,6 @@ class SubqueryExpression(SqlExpression):
     def __str__(self) -> str:
         query_str = str(self._query).removesuffix(";")
         return f"({query_str})"
-
-
-class StarExpression(SqlExpression):
-    """A special expression that is only used in *SELECT* clauses to select all columns.
-
-    Parameters
-    ----------
-    from_table : Optional[TableReference], optional
-        The table from which to select all columns. Defaults to **None**, in which case all columns of all tables are being
-        selected.
-    """
-
-    def __init__(self, *, from_table: Optional[TableReference] = None) -> None:
-        self._table = from_table
-        super().__init__(hash(("*", self._table)))
-
-    __slots__ = ("_table",)
-    __match_args__ = ("from_table",)
-
-    @property
-    def from_table(self) -> Optional[TableReference]:
-        """Get the table from which to select all columns.
-
-        If no such table was selected, all columns of all tables are being selected.
-
-        Returns
-        -------
-        Optional[TableReference]
-            The table, or **None** if all columns are selected
-        """
-        return self._table
-
-    def tables(self) -> set[TableReference]:
-        if self._table:
-            return {self._table}
-        return set()
-
-    def columns(self) -> set[ColumnReference]:
-        return set()
-
-    def itercolumns(self) -> Iterable[ColumnReference]:
-        return []
-
-    def iterchildren(self) -> Iterable[SqlExpression]:
-        return []
-
-    def accept_visitor(
-        self, visitor: SqlExpressionVisitor[VisitorResult], *args, **kwargs
-    ) -> VisitorResult:
-        return visitor.visit_star_expr(self, *args, **kwargs)
-
-    __hash__ = SqlExpression.__hash__
-
-    def __eq__(self, other) -> bool:
-        return isinstance(other, type(self)) and self._table == other._table
-
-    def __str__(self) -> str:
-        if not self._table:
-            return "*"
-        return f"{quote(self._table.identifier())}.*"
 
 
 class WindowExpression(SqlExpression):
@@ -5421,7 +5461,7 @@ class ValuesWithQuery(WithQuery):
         if self._columns:
             return self._columns
         return [
-            ColumnExpression(f"column_{i + 1}") for i in range(len(self._values[0]))
+            ColumnExpression.of(f"column_{i + 1}") for i in range(len(self._values[0]))
         ]
 
     def iterexpressions(self) -> Iterable[SqlExpression]:
@@ -5603,15 +5643,22 @@ class BaseProjection:
     """
 
     @staticmethod
-    def count_star() -> BaseProjection:
+    def count_star(target_name: str = "") -> BaseProjection:
         """Shortcut method to create a ``COUNT(*)`` projection.
+
+        Parameters
+        ----------
+        target_name : str, optional
+            An optional name under which the column should be accessible.
 
         Returns
         -------
         BaseProjection
             The projection
         """
-        return BaseProjection(FunctionExpression("count", [StarExpression()]))
+        return BaseProjection(
+            FunctionExpression("count", [StarExpression()]), target_name=target_name
+        )
 
     @staticmethod
     def star() -> BaseProjection:
