@@ -7089,6 +7089,16 @@ class GroupBy(BaseClause):
         If `group_columns` is empty.
     """
 
+    @staticmethod
+    def create_for(
+        column: ColumnReference | Iterable[ColumnReference], *more_cols
+    ) -> GroupBy:
+        """Shortcut method to create a *GROUP BY* clause from column references."""
+        column = [column] if isinstance(column, ColumnReference) else list(column)
+        column.extend(more_cols)
+
+        return GroupBy([ColumnExpression(col) for col in column])
+
     def __init__(
         self, group_columns: Sequence[SqlExpression], distinct: bool = False
     ) -> None:
