@@ -10,6 +10,20 @@ The [history](HISTORY.md) contains the changelogs of older PostBOUND releases.
 
 ---
 
+# Version 0.20.3
+
+This is an incremental update that fixes a couple bugs.
+
+## 🏥 Fixes
+- Fixed typing errors in Postgres `n_pages()`.
+- Fixed some overly aggressive assertions in the Postgres pg_lab hint generation.
+- Fixed output format of the benchmarking log if additional entries are appended to an existing log. Essentially, we fix such
+  entries being escaped twice.
+
+
+---
+
+
 # Version 0.20.2
 
 This is an incremental update that polishes some rough edges and fixes a couple bugs.
