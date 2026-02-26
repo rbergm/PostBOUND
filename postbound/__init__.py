@@ -30,8 +30,13 @@ Package Structure
 - Simple optimization algorithms (e.g. dynamic-programming-based plan enumeration) are provided in the `opt` module
 """
 
+from importlib.metadata import PackageNotFoundError, version
+
 import lazy_loader
 
 __getattr__, __dir__, __all__ = lazy_loader.attach_stub(__name__, __file__)
 
-__version__ = "0.21.0-dev"
+try:
+    __version__ = version("PostBOUND")
+except PackageNotFoundError:
+    __version__ = "<development>"
