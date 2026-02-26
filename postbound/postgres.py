@@ -2251,28 +2251,29 @@ def _generate_pglab_plan(
                 category=HintWarning,
             )
 
-        assert node.operator is not None
+        if node.operator is None:
+            continue
         operator = PGLabOptimizerHints.get(node.operator)
+        if not operator:
+            continue
         intermediate = " ".join(tab.identifier() for tab in node.tables())
 
-        if operator:
-            if par_workers and not used_parallel:
-                metadata = f" (workers={par_workers})"
-                par_workers = None
-                used_parallel = True
-            elif par_workers and used_parallel:
-                metadata = ""
-                warnings.warn(
-                    "Cannot set multiple parallel hints for Postgres. Ignoring additional hints.",
-                    category=HintWarning,
-                )
-            else:
-                metadata = ""
-
-            hints.append(f"{operator}({intermediate}{metadata})")
+        if par_workers and not used_parallel:
+            metadata = f" (workers={par_workers})"
+            par_workers = None
+            used_parallel = True
+        elif par_workers and used_parallel:
+            metadata = ""
+            warnings.warn(
+                "Cannot set multiple parallel hints for Postgres. Ignoring additional hints.",
+                category=HintWarning,
+            )
+        else:
+            metadata = ""
+        hints.append(f"{operator}({intermediate}{metadata})")
 
         card = node.actual_cardinality or node.estimated_cardinality
-        if operator and card.is_valid():
+        if card.is_valid():
             hints.append(f"Card({intermediate} #{card})")
 
     hints = [f"  {line}" for line in hints]
