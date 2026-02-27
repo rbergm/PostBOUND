@@ -40,6 +40,7 @@ The [history](HISTORY.md) contains the changelogs of older PostBOUND releases.
   The old API using *analyze=True*, etc. is now deprecated in favor of these new parameters.
 - The `to_json()` and `to_json_dump()` utilities now support dataclasses out-of-the-box.
 - Expose `argmax()` directly in _util_ module
+- The `PredicateVisitor` can now be started at the query. It will extract the predicates as needed.
 
 ## 🏥 Fixes
 - Fixed output format of the benchmarking log if additional entries are appended to an existing log. Essentially, we fix such

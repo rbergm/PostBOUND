@@ -3354,6 +3354,15 @@ class PredicateVisitor(abc.ABC, Generic[VisitorResult]):
     .. Visitor pattern: https://en.wikipedia.org/wiki/Visitor_pattern
     """
 
+    def visit_query_predicates(
+        self, query: SqlQuery | QueryPredicates
+    ) -> VisitorResult:
+        if isinstance(query, SqlQuery):
+            predicates = query.predicates()
+        else:
+            predicates = query
+        return predicates.root.accept_visitor(self)
+
     @abc.abstractmethod
     def visit_binary_predicate(
         self, predicate: BinaryPredicate, *args, **kwargs
