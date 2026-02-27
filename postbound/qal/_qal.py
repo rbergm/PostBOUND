@@ -3355,13 +3355,13 @@ class PredicateVisitor(abc.ABC, Generic[VisitorResult]):
     """
 
     def visit_query_predicates(
-        self, query: SqlQuery | QueryPredicates
+        self, query: SqlQuery | QueryPredicates, *args, **kwargs
     ) -> VisitorResult:
         if isinstance(query, SqlQuery):
             predicates = query.predicates()
         else:
             predicates = query
-        return predicates.root.accept_visitor(self)
+        return predicates.root.accept_visitor(self, *args, **kwargs)
 
     @abc.abstractmethod
     def visit_binary_predicate(
