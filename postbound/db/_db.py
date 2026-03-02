@@ -21,7 +21,6 @@ import atexit
 import bisect
 import collections
 import json
-import math
 import os
 import textwrap
 import warnings
@@ -1551,31 +1550,64 @@ class DatabaseSchema(abc.ABC, Mapping[TableReference, TableInfo]):
 
 
 class MostCommonValues[T]:
+    """Most Common Values contain an ordered list of (column value, frequency) pairs.
+
+    The list is sorted in descending order of the frequencies. Ties are broken according to
+    the column values (once again in descending order).
+
+    By default, Most Common Values acts as a drop-in replacement for a list of tuples, so all
+    sequence-like methods like *__iter__*, *__getitem__*, etc. are implemented in terms of
+    lists.
+
+    In addition, Most Common Values provide a number of utility functions like `min_freq` or
+    `frequency_of` to extract commonly-used information.
+
+    Parameters
+    ----------
+    mcvs: Sequence[tuple[T, int]]
+        The value, frequency pairs in the list.
+    """
+
     def __init__(self, mcvs: Iterable[tuple[T, int]]) -> None:
-        self.mcvs = list(mcvs)
+        self.mcvs: Sequence[tuple[T, int]] = list(mcvs)
+        self.mcvs.sort(key=lambda pair: (pair[1], pair[0]), reverse=True)
         self._mcv_map = dict(self.mcvs)
-        self._min_freq: int = math.inf
-        self._max_freq = 0
-        for freq in self._mcv_map.values():
-            if freq < self._min_freq:
-                self._min_freq = freq
-            elif freq > self._max_freq:
-                self._max_freq = freq
+        if self.mcvs:
+            self._min_freq = self.mcvs[-1][1]
+            self._max_freq = self.mcvs[0][1]
+        else:
+            self._min_freq = 0
+            self._max_freq = 0
 
     @property
     def k(self) -> int:
+        """Get the number of values in the MCV list."""
         return len(self.mcvs)
 
     @property
     def min_freq(self) -> int:
+        """Get the lowest frequency in the MCV list.
+
+        This is equivalent to the frequeny of the final value in the list.
+        """
         return self._min_freq
 
     @property
     def max_freq(self) -> int:
+        """Get the highest frequency in the MCV list.
+
+        This is equivalent to the frequency of the first value in the list.
+        """
         return self._max_freq
 
     @property
+    def values(self) -> Sequence[T]:
+        """Get the values in the MCV list, ordered by their frequency (highest first)."""
+        return list(self._mcv_map.keys())
+
+    @property
     def frequencies(self) -> Sequence[int]:
+        """Get the frequencies in the MCV list, starting with the highest frequency."""
         return list(self._mcv_map.values())
 
     @overload
@@ -1595,6 +1627,21 @@ class MostCommonValues[T]:
     def frequency_of(
         self, value: T, *, default: int | None = None, bound_missing: bool = False
     ) -> Optional[int]:
+        """Load the frequency of a specific value.
+
+        Parameters
+        ----------
+        value : T
+            The value to check
+        default : int, optional
+            The frequency to return if the given value is not in the MCV list. If not provided,
+            the behavior depends on the `bound_missing` parameter.
+        bound_missing : bool, optional
+            If enabled, the frequency of missing values (i.e. values that are not in the MCV list)
+            is assumed to be at least the frequency of the least common value in the MCV list.
+            Otherwise, *None* is returned to indicate a missing value.
+            If a `default` value is provided, this parameter is ignored. By default, this is disabled.
+        """
         if default is not None:
             fallback = default
         elif bound_missing:
@@ -1602,6 +1649,17 @@ class MostCommonValues[T]:
         else:
             fallback = None
         return self._mcv_map.get(value, fallback)
+
+    def top(self, k: int) -> MostCommonValues:
+        """Provide the most common values up-to (and including) the k-th most frequent."""
+        return MostCommonValues(self.mcvs[:k])
+
+    def below(self, k: int) -> MostCommonValues:
+        """Provide the most common values after the k-th most frequent."""
+        return MostCommonValues(self.mcvs[k:])
+
+    def __bool__(self) -> bool:
+        return bool(self.mcvs)
 
     def __len__(self) -> int:
         return len(self.mcvs)
