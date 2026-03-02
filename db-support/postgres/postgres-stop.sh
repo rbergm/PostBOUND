@@ -13,7 +13,6 @@ fi
 echo ".. Stopping Postgres Server"
 . ./postgres-load-env.sh "$1"
 
-cd $PG_INSTALL_DIR
 pg_ctl -D $PG_INSTALL_DIR/data stop
 export PATH="${PATH//$PG_BIN_PATH:}"
 export LD_LIBRARY_PATH="${LD_LIBRARY_PATH//$PG_INSTALL_DIR/build/lib:}"
@@ -28,5 +27,3 @@ fi
 if [ -z "$PGDATA" ] ; then
     unset PGDATA
 fi
-
-cd $WD
