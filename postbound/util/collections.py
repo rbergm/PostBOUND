@@ -230,7 +230,7 @@ def powerset(lst: Collection[T]) -> Iterable[tuple[T, ...]]:
 
 def sliding_window(
     lst: Sequence[T], size: int, step: int = 1
-) -> Generator[tuple[Sequence[T], Sequence[T], Sequence[T]], None, None]:
+) -> Generator[Sequence[T], None, None]:
     """Iterates over the given sequence using a sliding window.
 
     The window will contain exactly `size` many entries, starting at the beginning of the sequence. After yielding a
@@ -247,16 +247,11 @@ def sliding_window(
 
     Yields
     ------
-    Generator[tuple[Sequence[T], Sequence[T], Sequence[T]]]
-        The sliding window subsets. The tuples are structured as follows: *(prefix, window, suffix)* where *prefix* are all
-        elements of the sequence before the current window, *window* contains exactly those elements that are part of the
-        current window and *suffix* contains all elements after the current window.
+    Generator[Sequence[T], None, None]
+        The current window.
     """
     for i in range(0, len(lst) - size + 1, step):
-        prefix = lst[:i]
-        window = lst[i : i + size]
-        suffix = lst[i + size :]
-        yield prefix, window, suffix
+        yield lst[i : i + size]
 
 
 def pairs(lst: Iterable[T]) -> Generator[tuple[T, T], None, None]:

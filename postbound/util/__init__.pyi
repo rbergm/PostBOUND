@@ -14,7 +14,7 @@ from . import (
     typing,
 )
 from ._errors import InvariantViolationError, LogicError, StateError
-from .collections import enlist, flatten, powerset, set_union, simplify
+from .collections import enlist, flatten, powerset, set_union, simplify, sliding_window
 from .df import as_df, read_df, write_df
 from .dicts import argmax, argmin, frozendict, hash_dict
 from .jsonize import jsondict, to_json, to_json_dump
@@ -40,6 +40,7 @@ __all__ = [
     "enlist",
     "simplify",
     "set_union",
+    "sliding_window",
     "powerset",
     "hash_dict",
     "argmax",

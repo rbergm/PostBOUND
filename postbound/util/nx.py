@@ -17,7 +17,6 @@ from collections.abc import (
     Callable,
     Collection,
     Generator,
-    Iterable,
     Iterator,
     Sequence,
 )
@@ -71,12 +70,6 @@ def nx_filter_nodes(
     graph: nx.Graph, predicate: Callable[[NodeType, dict], bool]
 ) -> Collection[tuple[NodeType, dict]]:
     return [(n, d) for n, d in graph.nodes.data() if predicate(n, d)]
-
-
-def nx_merge_nodes(
-    graph: nx.Graph, nodes: Iterable[NodeType], *, target_node: NodeType
-) -> nx.Graph:
-    pass
 
 
 def nx_random_walk(
@@ -388,7 +381,7 @@ def nx_frontier_walks(graph: nx.Graph) -> Generator[GraphWalk, None, None]:
     For example, consider this fully-connected graph:
 
     ::
-    
+
          a
         /  \\
         b - c
