@@ -26,6 +26,9 @@ The [history](HISTORY.md) contains the changelogs of older PostBOUND releases.
   Currently supported are: CSV, Parquet, JSON, HDF
 - Added a `n_buffered()` method to the Postgres statistics interface to retrieve the number of currently buffered
   pages of a relation.
+- Added an additional `BoundColumnReference` core type. Instances guarantee to be bound to a `TableReference`.
+  The new `assert_bound()` serves as a type guard to narrow references. This should prevent constant checks for valid
+  table references on columns.
 - `util.simpify()` now supports single-item mappings as well.
 
 ## 📰 Updates

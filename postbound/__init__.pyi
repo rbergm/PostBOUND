@@ -18,6 +18,7 @@ from . import (
     workloads,
 )
 from ._core import (
+    BoundColumnReference,
     Cardinality,
     ColumnReference,
     Cost,
@@ -26,6 +27,8 @@ from ._core import (
     PhysicalOperator,
     ScanOperator,
     TableReference,
+    UnboundColumnError,
+    VirtualTableError,
 )
 from ._hints import (
     DirectionalJoinOperatorAssignment,
@@ -91,14 +94,17 @@ __all__ = [
     "validation",
     "vis",
     "workloads",
-    "Cost",
+    "BoundColumnReference",
     "Cardinality",
-    "TableReference",
     "ColumnReference",
+    "Cost",
+    "IntermediateOperator",
+    "JoinOperator",
     "PhysicalOperator",
     "ScanOperator",
-    "JoinOperator",
-    "IntermediateOperator",
+    "TableReference",
+    "UnboundColumnError",
+    "VirtualTableError",
     "OptimizationPipeline",
     "CompleteOptimizationAlgorithm",
     "IntegratedOptimizationPipeline",

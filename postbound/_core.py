@@ -4,7 +4,7 @@ import math
 import re
 from enum import Enum
 from numbers import Number
-from typing import Optional, SupportsFloat, SupportsIndex, TypeVar
+from typing import Optional, SupportsFloat, SupportsIndex, TypeGuard, TypeVar
 
 from .util._errors import StateError
 from .util.jsonize import jsondict
@@ -942,6 +942,11 @@ class ColumnReference:
 
     Column references can be sorted lexicographically and are designed as immutable data objects.
 
+    For situations where columns must be bound to a table, the `BoundColumnReference` subclass exists. It has the same
+    interface like normal column references, but with one difference: its ``table`` property is guaranteed to always be
+    a valid `TableReference`. Use the static `assert_bound` method to ensure that you are dealing with a bound reference.
+    It returns a *TypeGuard* so type checkers should work with the narrowed type after a successful check.
+
     Parameters
     ----------
     name : str
@@ -969,12 +974,31 @@ class ColumnReference:
 
     In this case, the CTE exports a column *sum* that is constructed based on two "actual" columns. Hence, the sum
     column itself does not have any physical representation but will be modelled as a column reference nevertheless.
+
+    See Also
+    --------
+    BoundColumnReference : A subclass of `ColumnReference` that is always bound to a valid table.
     """
 
     @staticmethod
     def create(column: str, *, table: str) -> ColumnReference:
         """Shortcut method to create a column along with its table."""
         return ColumnReference(column, TableReference(table))
+
+    @staticmethod
+    def assert_bound(col: ColumnReference) -> TypeGuard[BoundColumnReference]:
+        """Checks whether a specific column is bound to (any) table.
+
+        If it is, the column can be treated as an instance of `BoundColumnReference` and the type checker will be able
+        to narrow the type accordingly. Most importantly, the `table` property of the column will be guaranteed to be a
+        valid `TableReference` and not *None*.
+
+        Notes
+        -----
+        Sadly, the current spec of the TypeGuard explicitly excludes self from the type check. Therefore, we cannot simply
+        modify `is_bound` to return a TypeGuard and have to use an additional method. Ugh.
+        """
+        return col.is_bound()
 
     def __init__(self, name: str, table: Optional[TableReference] = None) -> None:
         if not name:
@@ -988,6 +1012,13 @@ class ColumnReference:
             self._sql_repr = f"{quote(self._table.identifier())}.{quote(self._name)}"
         else:
             self._sql_repr = quote(self._name)
+
+    def __new__(
+        cls, name: str, table: Optional[TableReference] = None
+    ) -> ColumnReference:
+        if cls is not ColumnReference or table is None:
+            return super().__new__(cls)
+        return BoundColumnReference(name, table)
 
     __match_args__ = ("name", "table")
 
@@ -1020,6 +1051,11 @@ class ColumnReference:
         -------
         bool
             Whether a valid table reference is set
+
+        See Also
+        --------
+        assert_bound : A static method that performs the same check but also serves as a type guard to narrow
+                       the type to `BoundColumnReference` if the check is successful.
         """
         return self.table is not None
 
@@ -1041,7 +1077,7 @@ class ColumnReference:
         """
         return table == self.table
 
-    def bind_to(self, table: TableReference) -> ColumnReference:
+    def bind_to(self, table: TableReference) -> BoundColumnReference:
         """Binds this column to a new table.
 
         Parameters
@@ -1051,10 +1087,10 @@ class ColumnReference:
 
         Returns
         -------
-        ColumnReference
+        BoundColumnReference
             The updated column reference, the original reference is not modified.
         """
-        return ColumnReference(self.name, table)
+        return BoundColumnReference(self.name, table)
 
     def as_unbound(self) -> ColumnReference:
         """Removes the table binding from this column.
@@ -1083,9 +1119,9 @@ class ColumnReference:
     def __hash__(self) -> int:
         return self._hash_val
 
-    def __eq__(self, other) -> bool:
+    def __eq__(self, other: object) -> bool:
         return (
-            isinstance(other, type(self))
+            isinstance(other, (ColumnReference, BoundColumnReference))
             and self._normalized_name == other._normalized_name
             and self.table == other.table
         )
@@ -1095,6 +1131,34 @@ class ColumnReference:
 
     def __str__(self) -> str:
         return self._sql_repr
+
+
+class BoundColumnReference(ColumnReference):
+    """A column reference that is guaranteed to be bound to a table.
+
+    The main purpose of this class is communication: it conveys the requirement of consumers to have a valid
+    table reference on the column - or the guarantee of producers to only return columns that are bound to a
+    table.
+    """
+
+    def __init__(self, name: str, table: TableReference) -> None:
+        super().__init__(name, table)
+
+    __match_args__ = ("name", "table")
+
+    @property
+    def table(self) -> TableReference:
+        """Get the table to which this column belongs. This is guaranteed to be set and will never be *None*."""
+        return self._table  # type: ignore
+
+    def is_bound(self) -> bool:
+        return True
+
+    __lt__ = ColumnReference.__lt__
+    __hash__ = ColumnReference.__hash__
+    __eq__ = ColumnReference.__eq__
+    __repr__ = ColumnReference.__repr__
+    __str__ = ColumnReference.__str__
 
 
 class UnboundColumnError(StateError):
