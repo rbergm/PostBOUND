@@ -51,10 +51,11 @@ The [history](HISTORY.md) contains the changelogs of older PostBOUND releases.
 - Expose `argmax()` directly in _util_ module
 
 ## 🏥 Fixes
-- Fixed output format of the benchmarking log if additional entries are appended to an existing log. Essentially, we fix such
-  entries being escaped twice.
 - Fixed string representation of `COUNT(DISTINCT ...)` for multiple arguments. We now generate the correct
   `COUNT(DISTINCT (a, b))` instead of `COUNT(DISTINCT a, b)`.
+- Fixed output format of the benchmarking log if additional entries are appended to an existing log. Essentially, we fix
+  such entries being escaped twice.
+- Fixed the `standard_logger` sometimes logging internal module names.
 
 ## 💀 Breaking changes
 - _None_
@@ -77,4 +78,3 @@ Currently, we plan to implement the following features in the future (in no part
 - Providing a Substrait export for query plans
 - Better benchmarking setup, mostly focused on comparing one or multiple optimization pipelines and creating better
   experiment logs and the ability to cancel/resume long-running benchmarks
-- Adding popular optimization algorithms to the collection of pre-defined optimizers
