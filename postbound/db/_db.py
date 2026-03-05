@@ -1840,6 +1840,59 @@ class DatabaseStatistics(abc.ABC):
         self.cache_enabled = cache_enabled
         self._db = db
 
+    @overload
+    def total_rows(self, table: TableReference) -> Optional[int]: ...
+
+    @overload
+    def total_rows(
+        self,
+        table: TableReference,
+        *,
+        emulated: Literal[True],
+    ) -> int: ...
+
+    @overload
+    def total_rows(
+        self, table: TableReference, *, emulated: Literal[False, None]
+    ) -> Optional[int]: ...
+
+    @overload
+    def total_rows(
+        self, table: TableReference, *, emulated: Optional[bool]
+    ) -> Optional[bool]: ...
+
+    @overload
+    def total_rows(
+        self, table: TableReference, *, cache_enabled: Optional[bool]
+    ) -> Optional[int]: ...
+
+    @overload
+    def total_rows(
+        self,
+        table: TableReference,
+        *,
+        emulated: Literal[True],
+        cache_enabled: Optional[bool],
+    ) -> Optional[int]: ...
+
+    @overload
+    def total_rows(
+        self,
+        table: TableReference,
+        *,
+        emulated: Literal[False, None],
+        cache_enabled: Optional[bool],
+    ) -> Optional[int]: ...
+
+    @overload
+    def total_rows(
+        self,
+        table: TableReference,
+        *,
+        emulated: Optional[bool],
+        cache_enabled: Optional[bool],
+    ) -> Optional[int]: ...
+
     def total_rows(
         self,
         table: TableReference,
@@ -1897,6 +1950,65 @@ class DatabaseStatistics(abc.ABC):
         """
         return self.num_distinct(column, emulated=emulated, cache_enabled=cache_enabled)
 
+    @overload
+    def num_distinct(self, column: ColumnReference) -> Optional[int]: ...
+
+    @overload
+    def num_distinct(
+        self,
+        column: ColumnReference,
+        *,
+        emulated: Literal[True],
+    ) -> int: ...
+
+    @overload
+    def num_distinct(
+        self,
+        column: ColumnReference,
+        *,
+        emulated: Literal[False, None],
+    ) -> Optional[int]: ...
+
+    @overload
+    def num_distinct(
+        self,
+        column: ColumnReference,
+        *,
+        emulated: Optional[bool],
+    ) -> Optional[int]: ...
+
+    @overload
+    def num_distinct(
+        self, column: ColumnReference, *, cache_enabled: Optional[bool]
+    ) -> Optional[int]: ...
+
+    @overload
+    def num_distinct(
+        self,
+        column: ColumnReference,
+        *,
+        emulated: Literal[True],
+        cache_enabled: Optional[bool],
+    ) -> int: ...
+
+    @overload
+    def num_distinct(
+        self,
+        column: ColumnReference,
+        *,
+        emulated: Literal[False, None],
+        cache_enabled: Optional[bool],
+    ) -> Optional[int]: ...
+
+    @overload
+    def num_distinct(
+        self,
+        column: ColumnReference,
+        *,
+        emulated: Optional[bool],
+        cache_enabled: Optional[bool],
+    ) -> Optional[int]: ...
+
     def num_distinct(
         self,
         column: ColumnReference,
@@ -1942,6 +2054,56 @@ class DatabaseStatistics(abc.ABC):
             )
         else:
             return self._retrieve_distinct_values_from_stats(column)
+
+    @overload
+    def min_max(self, column: ColumnReference) -> Optional[tuple[Any, Any]]: ...
+
+    @overload
+    def min_max(
+        self, column: ColumnReference, *, emulated: Literal[True]
+    ) -> tuple[Any, Any]: ...
+
+    @overload
+    def min_max(
+        self, column: ColumnReference, *, emulated: Literal[False, None]
+    ) -> Optional[tuple[Any, Any]]: ...
+
+    @overload
+    def min_max(
+        self, column: ColumnReference, *, emulated: Optional[bool]
+    ) -> Optional[tuple[Any, Any]]: ...
+
+    @overload
+    def min_max(
+        self, column: ColumnReference, *, cache_enabled: Optional[bool]
+    ) -> Optional[tuple[Any, Any]]: ...
+
+    @overload
+    def min_max(
+        self,
+        column: ColumnReference,
+        *,
+        emulated: Literal[True],
+        cache_enabled: Optional[bool],
+    ) -> tuple[Any, Any]: ...
+
+    @overload
+    def min_max(
+        self,
+        column: ColumnReference,
+        *,
+        emulated: Literal[False, None],
+        cache_enabled: Optional[bool],
+    ) -> Optional[tuple[Any, Any]]: ...
+
+    @overload
+    def min_max(
+        self,
+        column: ColumnReference,
+        *,
+        emulated: Optional[bool],
+        cache_enabled: Optional[bool],
+    ) -> Optional[tuple[Any, Any]]: ...
 
     def min_max(
         self,
@@ -2042,14 +2204,50 @@ class DatabaseStatistics(abc.ABC):
         return MostCommonValues(mcv_list)
 
     @overload
+    def histogram(self, column: ColumnReference) -> Optional[Histogram]: ...
+
+    @overload
+    def histogram(
+        self, column: ColumnReference, *, n_bins: Optional[int]
+    ) -> Optional[Histogram]: ...
+
+    @overload
+    def histogram(
+        self, column: ColumnReference, *, interpolation: HistogramApproximation
+    ) -> Optional[Histogram]: ...
+
+    @overload
+    def histogram(
+        self, column: ColumnReference, *, emulated: Literal[True]
+    ) -> Histogram: ...
+
+    @overload
+    def histogram(
+        self, column: ColumnReference, *, emulated: Literal[False, None]
+    ) -> Optional[Histogram]: ...
+
+    @overload
+    def histogram(
+        self, column: ColumnReference, *, emulated: Optional[bool]
+    ) -> Optional[Histogram]: ...
+
+    @overload
+    def histogram(
+        self, column: ColumnReference, *, cache_enabled: Optional[bool]
+    ) -> Optional[Histogram]: ...
+
+    @overload
     def histogram(
         self,
         column: ColumnReference,
         *,
-        n_bins: int,
-        interpolation: HistogramApproximation = "approx-uni",
-        emulated: Literal[True],
-        cache_enabled: Optional[bool] = None,
+        n_bins: Optional[int],
+        interpolation: HistogramApproximation,
+    ) -> Optional[Histogram]: ...
+
+    @overload
+    def histogram(
+        self, column: ColumnReference, *, n_bins: Optional[int], emulated: Literal[True]
     ) -> Histogram: ...
 
     @overload
@@ -2057,8 +2255,222 @@ class DatabaseStatistics(abc.ABC):
         self,
         column: ColumnReference,
         *,
-        interpolation: HistogramApproximation = "approx-uni",
-        emulated: Literal[False],
+        n_bins: Optional[int],
+        emulated: Literal[False, None],
+    ) -> Optional[Histogram]: ...
+
+    @overload
+    def histogram(
+        self,
+        column: ColumnReference,
+        *,
+        n_bins: Optional[int],
+        emulated: Optional[bool],
+    ) -> Optional[Histogram]: ...
+
+    @overload
+    def histogram(
+        self,
+        column: ColumnReference,
+        *,
+        n_bins: Optional[int],
+        cache_enabled: Optional[bool],
+    ) -> Optional[Histogram]: ...
+
+    @overload
+    def histogram(
+        self,
+        column: ColumnReference,
+        *,
+        interpolation: HistogramApproximation,
+        emulated: Literal[True],
+    ) -> Histogram: ...
+
+    @overload
+    def histogram(
+        self,
+        column: ColumnReference,
+        *,
+        interpolation: HistogramApproximation,
+        emulated: Literal[False, None],
+    ) -> Optional[Histogram]: ...
+
+    @overload
+    def histogram(
+        self,
+        column: ColumnReference,
+        *,
+        interpolation: HistogramApproximation,
+        emulated: Optional[bool],
+    ) -> Optional[Histogram]: ...
+
+    @overload
+    def histogram(
+        self,
+        column: ColumnReference,
+        *,
+        interpolation: HistogramApproximation,
+        cache_enabled: Optional[bool],
+    ) -> Optional[Histogram]: ...
+
+    @overload
+    def histogram(
+        self,
+        column: ColumnReference,
+        *,
+        emulated: Literal[True],
+        cache_enabled: Optional[bool],
+    ) -> Histogram: ...
+
+    @overload
+    def histogram(
+        self,
+        column: ColumnReference,
+        *,
+        emulated: Literal[False, None],
+        cache_enabled: Optional[bool],
+    ) -> Optional[Histogram]: ...
+
+    @overload
+    def histogram(
+        self,
+        column: ColumnReference,
+        *,
+        emulated: Optional[bool],
+        cache_enabled: Optional[bool],
+    ) -> Optional[Histogram]: ...
+
+    @overload
+    def histogram(
+        self,
+        column: ColumnReference,
+        *,
+        n_bins: Optional[int],
+        interpolation: HistogramApproximation,
+        emulated: Literal[True],
+    ) -> Histogram: ...
+
+    @overload
+    def histogram(
+        self,
+        column: ColumnReference,
+        *,
+        n_bins: Optional[int],
+        interpolation: HistogramApproximation,
+        emulated: Literal[False, None],
+    ) -> Optional[Histogram]: ...
+
+    @overload
+    def histogram(
+        self,
+        column: ColumnReference,
+        *,
+        n_bins: Optional[int],
+        interpolation: HistogramApproximation,
+        emulated: Optional[bool],
+    ) -> Optional[Histogram]: ...
+
+    @overload
+    def histogram(
+        self,
+        column: ColumnReference,
+        *,
+        n_bins: Optional[int],
+        emulated: Literal[True],
+        cache_enabled: Optional[bool],
+    ) -> Histogram: ...
+
+    @overload
+    def histogram(
+        self,
+        column: ColumnReference,
+        *,
+        n_bins: Optional[int],
+        emulated: Literal[False, None],
+        cache_enabled: Optional[bool],
+    ) -> Optional[Histogram]: ...
+
+    @overload
+    def histogram(
+        self,
+        column: ColumnReference,
+        *,
+        n_bins: Optional[int],
+        emulated: Optional[bool],
+        cache_enabled: Optional[bool],
+    ) -> Optional[Histogram]: ...
+
+    @overload
+    def histogram(
+        self,
+        column: ColumnReference,
+        *,
+        n_bins: Optional[int],
+        interpolation: HistogramApproximation,
+        cache_enabled: Optional[bool],
+    ) -> Optional[Histogram]: ...
+
+    @overload
+    def histogram(
+        self,
+        column: ColumnReference,
+        *,
+        interpolation: HistogramApproximation,
+        emulated: Literal[True],
+        cache_enabled: Optional[bool],
+    ) -> Histogram: ...
+
+    @overload
+    def histogram(
+        self,
+        column: ColumnReference,
+        *,
+        interpolation: HistogramApproximation,
+        emulated: Literal[False, None],
+        cache_enabled: Optional[bool],
+    ) -> Optional[Histogram]: ...
+
+    @overload
+    def histogram(
+        self,
+        column: ColumnReference,
+        *,
+        interpolation: HistogramApproximation,
+        emulated: Optional[bool],
+        cache_enabled: Optional[bool],
+    ) -> Optional[Histogram]: ...
+
+    @overload
+    def histogram(
+        self,
+        column: ColumnReference,
+        *,
+        n_bins: Optional[int],
+        interpolation: HistogramApproximation,
+        emulated: Literal[True],
+        cache_enabled: Optional[bool],
+    ) -> Histogram: ...
+
+    @overload
+    def histogram(
+        self,
+        column: ColumnReference,
+        *,
+        n_bins: Optional[int],
+        interpolation: HistogramApproximation,
+        emulated: Literal[False, None],
+        cache_enabled: Optional[bool],
+    ) -> Optional[Histogram]: ...
+
+    @overload
+    def histogram(
+        self,
+        column: ColumnReference,
+        *,
+        n_bins: Optional[int],
+        interpolation: HistogramApproximation,
+        emulated: Optional[bool],
+        cache_enabled: Optional[bool],
     ) -> Optional[Histogram]: ...
 
     def histogram(
