@@ -1024,7 +1024,7 @@ class QueryPlan:
         else:
             self._input_node = None
 
-        self._children: tuple[QueryPlan] = tuple(children) if children else ()
+        self._children: tuple[QueryPlan, ...] = tuple(children) if children else ()
         self._plan_params = plan_params
         self._estimates = estimates
         self._measures = measures

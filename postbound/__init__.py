@@ -31,6 +31,7 @@ Package Structure
 """
 
 from importlib.metadata import PackageNotFoundError, version
+from importlib.util import find_spec
 
 import lazy_loader
 
@@ -40,3 +41,8 @@ try:
     __version__ = version("PostBOUND")
 except PackageNotFoundError:
     __version__ = "<development>"
+
+if find_spec("IPython") is not None:
+    from ._ipython import setup_pretty_printers
+
+    setup_pretty_printers()

@@ -1,10 +1,10 @@
 # Changelog
 
 Version numbers are composed of three components, i.e. _major_._minor_._patch_
-As a rough guideline, patch releases are just for fixing bugs or adding minor details (e.g. a new default parameter to some
-function), minor releases change slightly larger parts of the framework or add significant new functionality (e.g. a new
-optimization pipeline or support for an SQL feature). Major releases fundamentally shift how the framework is used and indicate
-stability. Since we are not ready for the 1.0 release yet, this does not matter right now.
+As a rough guideline, patch releases are just for fixing bugs or adding minor details (e.g. a new default parameter to
+some function), minor releases change slightly larger parts of the framework or add significant new functionality (e.g.
+a new optimization pipeline or support for an SQL feature). Major releases fundamentally shift how the framework is used
+and indicate stability. Since we are not ready for the 1.0 release yet, this does not matter right now.
 
 The [history](HISTORY.md) contains the changelogs of older PostBOUND releases.
 
@@ -30,6 +30,8 @@ The [history](HISTORY.md) contains the changelogs of older PostBOUND releases.
   The new `assert_bound()` serves as a type guard to narrow references. This should prevent constant checks for valid
   table references on columns.
 - `util.simpify()` now supports single-item mappings as well.
+- In IPython and Jupyter sessions, common PostBOUND objects like SQL queries or query plans are now automatically
+  pretty-printed. Instead of calling `print(plan.explain())`, one can now simply make `plan` the result of a cell.
 
 ## 📰 Updates
 - `DatabaseStatistics.most_common_values()` now returns an actual `MostCommonValues` object instead of a list of tuples.
@@ -37,9 +39,9 @@ The [history](HISTORY.md) contains the changelogs of older PostBOUND releases.
   high-level methods for working with the most common values.
 - Enabled the MySQL and DuckDB backends to fall back to emulated statistics if the database does not provide them.
 - The Postgres statistics interface now consistently supports table references with a schema.
-- The `QueryPreparation` API now provides the `projection` and `output` parameters to modify the *SELECT* clause and the type
-  of results to gather for all queries in a more flexible and intuitive way (how did *explain=True*  and *analyze=True*
-  interact?).
+- The `QueryPreparation` API now provides the `projection` and `output` parameters to modify the *SELECT* clause and the
+  type of results to gather for all queries in a more flexible and intuitive way (how did *explain=True*  and
+  *analyze=True* interact?).
   The old API using *analyze=True*, etc. is now deprecated in favor of these new parameters.
 - Column references now provide a `drop_table_alias()` method to obtain a normalized-ish representation of the column.
   This should be helpful in situations where references to the same column are not consistent in their table references,
@@ -58,8 +60,8 @@ The [history](HISTORY.md) contains the changelogs of older PostBOUND releases.
 - _None_
 
 ## ⚠️ Deprecations
-- The old `QueryPrepration` API using *analyze=True*, etc. is now deprecated in favor of the more flexible *projection* and
-  *output*  parameters. However, we currently have no plans to remove the old API.
+- The old `QueryPrepration` API using *analyze=True*, etc. is now deprecated in favor of the more flexible *projection*
+  and *output*  parameters. However, we currently have no plans to remove the old API.
 
 ## 🪲 Known bugs
 - The automatic optimization of the Postgres server configuration as part of the Docker installation does not work
@@ -73,6 +75,6 @@ The [history](HISTORY.md) contains the changelogs of older PostBOUND releases.
 Currently, we plan to implement the following features in the future (in no particular order):
 
 - Providing a Substrait export for query plans
-- Better benchmarking setup, mostly focused on comparing one or multiple optimization pipelines and creating better experiment
-  logs and the ability to cancel/resume long-running benchmarks
+- Better benchmarking setup, mostly focused on comparing one or multiple optimization pipelines and creating better
+  experiment logs and the ability to cancel/resume long-running benchmarks
 - Adding popular optimization algorithms to the collection of pre-defined optimizers
