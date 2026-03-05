@@ -36,6 +36,7 @@ from postbound.util import set_union
 from .. import util
 from .._base import SupportsRichComparison
 from .._core import (
+    BoundColumnReference,
     Cardinality,
     ColumnReference,
     Cost,
@@ -688,7 +689,7 @@ A foreign key references has a foreign key column `fk_col` (the first element) t
 
 @dataclass
 class ColumnInfo:
-    column: ColumnReference
+    column: BoundColumnReference
     table: TableReference
 
     datatype: str
@@ -698,11 +699,11 @@ class ColumnInfo:
 
 
 @dataclass
-class TableInfo(Mapping[ColumnReference, ColumnInfo]):
+class TableInfo(Mapping[BoundColumnReference, ColumnInfo]):
     table: TableReference
     columns: Sequence[ColumnInfo]
 
-    primary_key: ColumnReference | None
+    primary_key: BoundColumnReference | None
     outgoing_foreign_keys: set[ForeignKeyRef]
     incoming_foreign_keys: set[ForeignKeyRef]
 
@@ -717,7 +718,7 @@ class TableInfo(Mapping[ColumnReference, ColumnInfo]):
     def __len__(self) -> int:
         return len(self.columns)
 
-    def __iter__(self) -> Iterator[ColumnReference]:
+    def __iter__(self) -> Iterator[BoundColumnReference]:
         return iter(column_info.column for column_info in self.columns)
 
 
@@ -780,7 +781,7 @@ class DatabaseSchema(abc.ABC, Mapping[TableReference, TableInfo]):
         assert result_set is not None
         return set(TableReference(row[0]) for row in result_set)
 
-    def columns(self, table: TableReference | str) -> Sequence[ColumnReference]:
+    def columns(self, table: TableReference | str) -> Sequence[BoundColumnReference]:
         """Fetches all columns of the given table.
 
         Parameters
@@ -790,7 +791,7 @@ class DatabaseSchema(abc.ABC, Mapping[TableReference, TableInfo]):
 
         Returns
         -------
-        Sequence[ColumnReference]
+        Sequence[BoundColumnReference]
             All columns for the given table. Columns are ordered according to their position in the table.
             Will be empty if the table is not found or does not contain any columns.
 
@@ -827,7 +828,7 @@ class DatabaseSchema(abc.ABC, Mapping[TableReference, TableInfo]):
         self._db.cursor().execute(query_template, params)
         result_set = self._db.cursor().fetchall()
         assert result_set is not None
-        return [ColumnReference(row[0], table) for row in result_set]
+        return [BoundColumnReference(row[0], table) for row in result_set]
 
     def is_view(self, table: TableReference | str) -> bool:
         """Checks, whether a specific table is actually is a view.
@@ -975,7 +976,7 @@ class DatabaseSchema(abc.ABC, Mapping[TableReference, TableInfo]):
 
     def primary_key_column(
         self, table: TableReference | str
-    ) -> Optional[ColumnReference]:
+    ) -> Optional[BoundColumnReference]:
         """Determines the primary key column of a specific table.
 
         Parameters
@@ -985,7 +986,7 @@ class DatabaseSchema(abc.ABC, Mapping[TableReference, TableInfo]):
 
         Returns
         -------
-        Optional[ColumnReference]
+        Optional[BoundColumnReference]
             The primary key if it exists, or *None* otherwise.
 
         Notes
@@ -1026,7 +1027,7 @@ class DatabaseSchema(abc.ABC, Mapping[TableReference, TableInfo]):
                 f"Table {table} has multiple primary key columns: {result_set}"
             )
         col = result_set[0][0]
-        return ColumnReference(col, table)
+        return BoundColumnReference(col, table)
 
     def has_secondary_index(self, column: ColumnReference) -> bool:
         """Checks, whether a secondary index is available for a specific column.
@@ -1116,7 +1117,7 @@ class DatabaseSchema(abc.ABC, Mapping[TableReference, TableInfo]):
 
         return result_set is not None
 
-    def foreign_keys_on(self, column: ColumnReference) -> set[ColumnReference]:
+    def foreign_keys_on(self, column: ColumnReference) -> set[BoundColumnReference]:
         """Fetches all foreign key constraints that are specified on a specific column.
 
         The provided columns are the target columns that are referenced by the foreign key constraint. E.g., suppose there are
@@ -1131,7 +1132,7 @@ class DatabaseSchema(abc.ABC, Mapping[TableReference, TableInfo]):
 
         Returns
         -------
-        set[ColumnReference]
+        set[BoundColumnReference]
             The columns that are "pointed to" by foreign key constraints on the given column. If no such foreign keys exist,
             an empty set is returned.
 
@@ -1174,7 +1175,7 @@ class DatabaseSchema(abc.ABC, Mapping[TableReference, TableInfo]):
         assert result_set
 
         return {
-            ColumnReference(row[1], TableReference(row[0], schema=table.schema))
+            BoundColumnReference(row[1], TableReference(row[0], schema=table.schema))
             for row in result_set
         }
 
@@ -1407,7 +1408,7 @@ class DatabaseSchema(abc.ABC, Mapping[TableReference, TableInfo]):
         relationships. Each such constraint is described by a `ForeignKeyRef`.
         """
         g = nx.DiGraph()
-        all_columns: set[ColumnReference] = set()
+        all_columns: set[BoundColumnReference] = set()
 
         for table in self.tables():
             if self.is_view(table):
@@ -1433,7 +1434,9 @@ class DatabaseSchema(abc.ABC, Mapping[TableReference, TableInfo]):
 
         return g
 
-    def join_equivalence_keys(self) -> dict[ColumnReference, set[ColumnReference]]:
+    def join_equivalence_keys(
+        self,
+    ) -> dict[BoundColumnReference, set[BoundColumnReference]]:
         """Calculates the equivalence classes of joinable columns in the database schema.
 
         Two columns are considered joinable, if they are linked by a foreign key constraint.
@@ -1444,7 +1447,7 @@ class DatabaseSchema(abc.ABC, Mapping[TableReference, TableInfo]):
 
         Returns
         -------
-        dict[ColumnReference, set[ColumnReference]]
+        dict[BoundColumnReference, set[BoundColumnReference]]
             A mapping from each column to its equivalence class, i.e. the set of all columns that are joinable with it
             (including itself).
         """
@@ -1454,14 +1457,14 @@ class DatabaseSchema(abc.ABC, Mapping[TableReference, TableInfo]):
             edges = [(col, fk_target) for fk_target in self.foreign_keys_on(col)]
             g.add_edges_from(edges)
 
-        eq_keys: dict[ColumnReference, set[ColumnReference]] = {}
+        eq_keys: dict[BoundColumnReference, set[BoundColumnReference]] = {}
         for component in nx.connected_components(g):
             for key in component:
                 eq_keys[key] = component
 
         return eq_keys
 
-    def join_equivalence_classes(self) -> Iterable[set[ColumnReference]]:
+    def join_equivalence_classes(self) -> Iterable[set[BoundColumnReference]]:
         """Calculates the quivalence classes of joinable columns in the database schema.
 
         This method is similar to `join_equivalence_keys`, but returns the different equivalence classes instead of a
@@ -2044,7 +2047,7 @@ class DatabaseStatistics(abc.ABC):
         postbound.qal.VirtualTableError
             If the table associated with the column is a virtual table (e.g. subquery or CTE)
         """
-        if not column.table:
+        if not ColumnReference.assert_bound(column):
             raise UnboundColumnError(column)
         elif column.table.virtual:
             raise VirtualTableError(column.table)
@@ -2139,7 +2142,7 @@ class DatabaseStatistics(abc.ABC):
         postbound.qal.VirtualTableError
             If the table associated with the column is a virtual table (e.g. subquery or CTE)
         """
-        if not column.table:
+        if not ColumnReference.assert_bound(column):
             raise UnboundColumnError(column)
         elif column.table.virtual:
             raise VirtualTableError(column.table)
@@ -2190,7 +2193,7 @@ class DatabaseStatistics(abc.ABC):
         postbound.qal.VirtualTableError
             If the table associated with the column is a virtual table (e.g. subquery or CTE)
         """
-        if not column.table:
+        if not ColumnReference.assert_bound(column):
             raise UnboundColumnError(column)
         elif column.table.virtual:
             raise VirtualTableError(column.table)
@@ -2482,7 +2485,7 @@ class DatabaseStatistics(abc.ABC):
         emulated: Optional[bool] = None,
         cache_enabled: Optional[bool] = None,
     ) -> Optional[Histogram]:
-        if not column.table:
+        if not ColumnReference.assert_bound(column):
             raise UnboundColumnError(column)
         elif column.table.virtual:
             raise VirtualTableError(column.table)
@@ -2530,7 +2533,7 @@ class DatabaseStatistics(abc.ABC):
         )
 
     def _calculate_distinct_values(
-        self, column: ColumnReference, *, cache_enabled: Optional[bool] = None
+        self, column: BoundColumnReference, *, cache_enabled: Optional[bool] = None
     ) -> int:
         """Retrieves the number of distinct column values by issuing a *COUNT(\\*)* / *GROUP BY* query over that
         column against the live database.
@@ -2550,7 +2553,6 @@ class DatabaseStatistics(abc.ABC):
         int
             The number of distinct values in the column
         """
-        assert column.table is not None
         query_template = "SELECT COUNT(DISTINCT {col}) FROM {tab}".format(
             col=column.name, tab=column.table.full_name
         )
@@ -2560,7 +2562,7 @@ class DatabaseStatistics(abc.ABC):
         )
 
     def _calculate_min_max_values(
-        self, column: ColumnReference, *, cache_enabled: Optional[bool] = None
+        self, column: BoundColumnReference, *, cache_enabled: Optional[bool] = None
     ) -> tuple[Any, Any]:
         """Retrieves the minimum/maximum values in a column by issuing an aggregation query for that column against the
         live database.
@@ -2580,7 +2582,6 @@ class DatabaseStatistics(abc.ABC):
         tuple[Any, Any]
             A tuple of *(min, max)*
         """
-        assert column.table is not None
         query_template = "SELECT MIN({col}), MAX({col}) FROM {tab}".format(
             col=column.name, tab=column.table.full_name
         )
@@ -2591,7 +2592,7 @@ class DatabaseStatistics(abc.ABC):
 
     def _calculate_most_common_values(
         self,
-        column: ColumnReference,
+        column: BoundColumnReference,
         k: int | None,
         *,
         cache_enabled: Optional[bool] = None,
@@ -2621,8 +2622,6 @@ class DatabaseStatistics(abc.ABC):
             The most common values in *(value, frequency)* pairs, ordered by largest frequency first. Can be smaller
             than the requested `k` value if the column contains less distinct values.
         """
-        assert column.table
-
         if k is None or k <= 0:
             query_template = """
                 SELECT {col}, COUNT(*) AS n
@@ -2649,14 +2648,12 @@ class DatabaseStatistics(abc.ABC):
 
     def _calculate_histogram(
         self,
-        column: ColumnReference,
+        column: BoundColumnReference,
         n_bins: int,
         *,
         interpolation: HistogramApproximation,
         cache_enabled: Optional[bool] = None,
     ) -> Optional[Histogram]:
-        assert column.table
-
         n_rows = self._calculate_total_rows(column.table)
         if n_rows == 0:
             return None
@@ -2700,7 +2697,7 @@ class DatabaseStatistics(abc.ABC):
 
     @abc.abstractmethod
     def _retrieve_distinct_values_from_stats(
-        self, column: ColumnReference
+        self, column: BoundColumnReference
     ) -> Optional[int]:
         """Queries the DBMS-internal metadata for the number of distinct values of the column.
 
@@ -2723,7 +2720,7 @@ class DatabaseStatistics(abc.ABC):
 
     @abc.abstractmethod
     def _retrieve_min_max_values_from_stats(
-        self, column: ColumnReference
+        self, column: BoundColumnReference
     ) -> Optional[tuple[Any, Any]]:
         """Queries the DBMS-internal metadata for the minimum / maximum value in a column.
 
@@ -2745,7 +2742,7 @@ class DatabaseStatistics(abc.ABC):
 
     @abc.abstractmethod
     def _retrieve_most_common_values_from_stats(
-        self, column: ColumnReference, k: int | None
+        self, column: BoundColumnReference, k: int | None
     ) -> Sequence[tuple[Any, int]]:
         """Queries the DBMS-internal metadata for the `k` most common values of the `column`.
 
@@ -2772,7 +2769,7 @@ class DatabaseStatistics(abc.ABC):
 
     @abc.abstractmethod
     def _retrieve_histogram_from_stats(
-        self, column: ColumnReference, *, interpolation: HistogramApproximation
+        self, column: BoundColumnReference, *, interpolation: HistogramApproximation
     ) -> Optional[Histogram]:
         raise NotImplementedError
 

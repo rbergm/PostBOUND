@@ -18,6 +18,7 @@ import quacklab
 
 from . import qal, transform
 from ._core import (
+    BoundColumnReference,
     Cardinality,
     ColumnReference,
     Cost,
@@ -25,6 +26,7 @@ from ._core import (
     PhysicalOperator,
     ScanOperator,
     TableReference,
+    UnboundColumnError,
 )
 from ._hints import (
     HintType,
@@ -232,10 +234,8 @@ class DuckDBSchema(DatabaseSchema):
         super().__init__(db, prep_placeholder="?")
 
     def has_secondary_index(self, column: ColumnReference) -> bool:
-        if not column.is_bound():
-            raise ValueError(
-                f"Cannot check index status for {column}: Column is not bound to a table"
-            )
+        if not ColumnReference.assert_bound(column):
+            raise UnboundColumnError(column)
 
         schema_placeholder = "?" if column.table.schema else "current_schema()"
 
@@ -259,10 +259,8 @@ class DuckDBSchema(DatabaseSchema):
         return result_set is not None
 
     def indexes_on(self, column: ColumnReference) -> set[str]:
-        if not column.is_bound():
-            raise ValueError(
-                f"Cannot retrieve indexes for {column}: Column is not bound to a table"
-            )
+        if not ColumnReference.assert_bound(column):
+            raise UnboundColumnError(column)
 
         schema_placeholder = "?" if column.table.schema else "current_schema()"
 
@@ -307,6 +305,7 @@ class DuckDBSchema(DatabaseSchema):
         cur = self._db.cursor()
         cur.execute(query_template, params)
         result_set = cur.fetchall()
+        assert result_set is not None
 
         return {row[0] for row in result_set}
 
@@ -351,7 +350,7 @@ class DuckDBStatistics(DatabaseStatistics):
         return result_set[0] if result_set[0] is not None else None
 
     def _retrieve_distinct_values_from_stats(
-        self, column: ColumnReference
+        self, column: BoundColumnReference
     ) -> Optional[int]:
         if self.enable_emulation_fallback:
             return self._calculate_distinct_values(column)
@@ -360,14 +359,14 @@ class DuckDBStatistics(DatabaseStatistics):
         )
 
     def _retrieve_min_max_values_from_stats(
-        self, column: ColumnReference
+        self, column: BoundColumnReference
     ) -> Optional[tuple[Any, Any]]:
         if self.enable_emulation_fallback:
             return self._calculate_min_max_values(column)
         raise UnsupportedDatabaseFeatureError(self._db, "min/max value statistics.")
 
     def _retrieve_most_common_values_from_stats(
-        self, column: ColumnReference, k: int | None
+        self, column: BoundColumnReference, k: int | None
     ) -> Sequence[tuple[Any, int]]:
         if self.enable_emulation_fallback:
             return self._calculate_most_common_values(column, k)

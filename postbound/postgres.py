@@ -40,6 +40,7 @@ import psycopg.types.datetime as psycopg_datetime
 
 from . import qal, transform, util
 from ._core import (
+    BoundColumnReference,
     Cardinality,
     ColumnReference,
     IntermediateOperator,
@@ -1394,7 +1395,7 @@ class PostgresSchemaInterface(DatabaseSchema):
 
     def indexed_column(
         self, index: str, *, schema: str = "public"
-    ) -> Optional[ColumnReference]:
+    ) -> Optional[BoundColumnReference]:
         """Retrieves the column that is indexed by a specific index.
 
         Returns
@@ -1429,7 +1430,7 @@ class PostgresSchemaInterface(DatabaseSchema):
         col, tab = result_set[0]
         return ColumnReference.create(col, table=tab)
 
-    def foreign_keys_on(self, column: ColumnReference) -> set[ColumnReference]:
+    def foreign_keys_on(self, column: ColumnReference) -> set[BoundColumnReference]:
         if not column.table:
             raise UnboundColumnError(column)
         if column.table.virtual:
@@ -1456,7 +1457,9 @@ class PostgresSchemaInterface(DatabaseSchema):
         result_set = self._db.cursor().fetchall()
         assert result_set is not None
 
-        return {ColumnReference(row[1], TableReference(row[0])) for row in result_set}
+        return {
+            BoundColumnReference(row[1], TableReference(row[0])) for row in result_set
+        }
 
     def datatype(self, column: ColumnReference) -> str:
         if not column.table:
@@ -1770,10 +1773,8 @@ class PostgresStatisticsInterface(DatabaseStatistics):
         return int(count)
 
     def _retrieve_distinct_values_from_stats(
-        self, column: ColumnReference
+        self, column: BoundColumnReference
     ) -> Optional[int]:
-        assert column.table is not None, "Unbound table"
-
         schema = column.table.schema or "public"
         dist_query = """
             SELECT n_distinct
@@ -1806,7 +1807,7 @@ class PostgresStatisticsInterface(DatabaseStatistics):
         return int(-1 * n_rows * dist_values)
 
     def _retrieve_min_max_values_from_stats(
-        self, column: ColumnReference
+        self, column: BoundColumnReference
     ) -> Optional[tuple[Any, Any]]:
         # Postgres does not keep track of min/max values, so we need to determine them manually
         if not self.enable_emulation_fallback:
@@ -1814,9 +1815,8 @@ class PostgresStatisticsInterface(DatabaseStatistics):
         return self._calculate_min_max_values(column, cache_enabled=True)
 
     def _retrieve_most_common_values_from_stats(
-        self, column: ColumnReference, k: int | None
+        self, column: BoundColumnReference, k: int | None
     ) -> Sequence[tuple[Any, int]]:
-        assert column.table is not None, "Unbound table"
         table = column.table
         schema = table.schema or "public"
         # Postgres stores the Most common values in a column of type anyarray (since in this column, many MCVs from
@@ -1855,9 +1855,8 @@ class PostgresStatisticsInterface(DatabaseStatistics):
             return result_set[:k]
 
     def _retrieve_histogram_from_stats(
-        self, column: ColumnReference, *, interpolation: HistogramApproximation
+        self, column: BoundColumnReference, *, interpolation: HistogramApproximation
     ) -> Optional[Histogram]:
-        assert column.table is not None, "Unbound table"
         attribute_converter = self._array_cast(column)
         schema = column.table.schema or "public"
 
@@ -1880,9 +1879,7 @@ class PostgresStatisticsInterface(DatabaseStatistics):
 
         return Histogram(bounds, n_rows=n_rows, bucket_interpolation=interpolation)
 
-    def _array_cast(self, column: ColumnReference) -> str:
-        assert column.table is not None
-
+    def _array_cast(self, column: BoundColumnReference) -> str:
         # determine the attributes data type to figure out how it should be converted
         attribute_query = "SELECT data_type FROM information_schema.columns WHERE table_name = %s AND column_name = %s"
 
@@ -2768,6 +2765,9 @@ class PostgresOptimizer(OptimizerInterface):
             )
         status = "on" if enabled else "off"
         self._pg_instance.cursor.execute(f"SET {setting_name} TO {status}")  # type: ignore
+
+    def uses_geqo(self, query: SqlQuery) -> bool:
+        pass
 
     def _explainify(self, query: str) -> str:
         if not query.upper().startswith("EXPLAIN (FORMAT JSON)"):

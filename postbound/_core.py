@@ -981,9 +981,9 @@ class ColumnReference:
     """
 
     @staticmethod
-    def create(column: str, *, table: str) -> ColumnReference:
+    def create(column: str, *, table: str) -> BoundColumnReference:
         """Shortcut method to create a column along with its table."""
-        return ColumnReference(column, TableReference(table))
+        return BoundColumnReference(column, TableReference(table))
 
     @staticmethod
     def assert_bound(col: ColumnReference) -> TypeGuard[BoundColumnReference]:
