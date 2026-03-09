@@ -937,15 +937,18 @@ class TableReference:
 class ColumnReference:
     """A column reference represents a specific column of a specific database table.
 
-    This reference always consists of the name of the "physical" column (see below for special cases). In addition,
-    each column can be bound to the table to which it belongs by providing the associated table reference.
+    This reference always consists of the name of the "physical" column (see below for special
+    cases). In addition, each column can be bound to the table to which it belongs by providing the
+    associated table reference.
 
     Column references can be sorted lexicographically and are designed as immutable data objects.
 
-    For situations where columns must be bound to a table, the `BoundColumnReference` subclass exists. It has the same
-    interface like normal column references, but with one difference: its ``table`` property is guaranteed to always be
-    a valid `TableReference`. Use the static `assert_bound` method to ensure that you are dealing with a bound reference.
-    It returns a *TypeGuard* so type checkers should work with the narrowed type after a successful check.
+    For situations where columns must be bound to a table, the `BoundColumnReference` subclass
+    exists. It has the same interface like normal column references, but with one difference: its
+    ``table`` property is guaranteed to always be a valid `TableReference`. Use the static
+    `assert_bound` method to ensure that you are dealing with a bound reference.
+    It returns a *TypeGuard* so type checkers should work with the narrowed type after a successful
+    check.
 
     Parameters
     ----------
@@ -961,9 +964,10 @@ class ColumnReference:
 
     Notes
     -----
-    A number of special cases arise when dealing with subqueries and common table expressions. The first one is the
-    fact that columns can be bound to virtual tables, e.g. if they are exported by subqueries, etc. In the same vein,
-    columns also do not always need to refer directly to physical columns. Consider the following example query:
+    A number of special cases arise when dealing with subqueries and common table expressions. The
+    first one is the fact that columns can be bound to virtual tables, e.g. if they are exported by
+    subqueries, etc. In the same vein, columns also do not always need to refer directly to physical
+    columns. Consider the following example query:
 
     ::
 
@@ -972,8 +976,18 @@ class ColumnReference:
         FROM bar JOIN cte_table ON bar.b_id = cte_table.f_id
         WHERE cte_table.sum < 42
 
-    In this case, the CTE exports a column *sum* that is constructed based on two "actual" columns. Hence, the sum
-    column itself does not have any physical representation but will be modelled as a column reference nevertheless.
+    In this case, the CTE exports a column *sum* that is constructed based on two "actual" columns.
+    Hence, the sum column itself does not have any physical representation but will be modelled as a
+    column reference nevertheless.
+
+    Due to these situations, we use the full table reference when comparing columns. BUt this can
+    have unintended side effects as well. For example, consider a physical column *production_year*
+    of a *title* relation. In one query, the column is referenced as *title.production_year*,
+    whereas in the other query, *title* is aliased and the column referenced as *t.production_year*.
+    While both columns are bound to the *title* relation, only one of the table references contains
+    an alias. Therefore, the table references do not compare equal and by extension the columns do
+    not compare equal either. To mitigate this issue (at least to some extend), the
+    `drop_table_alias` method can be used to obtain a "normalized" version of a column reference.
 
     See Also
     --------
@@ -1101,6 +1115,20 @@ class ColumnReference:
             The updated column reference, the original reference is not modified.
         """
         return ColumnReference(self.name, None)
+
+    def drop_table_alias(self) -> ColumnReference:
+        """Removes the alias from the table this column is bound to, if there is one.
+
+        For example, if this column is *t.production_year* based on a table alias *title as t*,
+        calling this method turns the column into *title.production_year*, effectively dropping the
+        *t* alias.
+
+        This can be useful to obtain a "normalized" version of a column reference.
+        """
+        if not self.assert_bound(self):
+            return self
+        unaliased = self.table.drop_alias()
+        return self.bind_to(unaliased)
 
     def __json__(self) -> object:
         return {"column": self._name, "table": self._table}
