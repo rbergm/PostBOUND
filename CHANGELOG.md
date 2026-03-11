@@ -51,6 +51,8 @@ The [history](HISTORY.md) contains the changelogs of older PostBOUND releases.
 ## 🏥 Fixes
 - Fixed output format of the benchmarking log if additional entries are appended to an existing log. Essentially, we fix such
   entries being escaped twice.
+- Fixed string representation of `COUNT(DISTINCT ...)` for multiple arguments. We now generate the correct
+  `COUNT(DISTINCT (a, b))` instead of `COUNT(DISTINCT a, b)`.
 
 ## 💀 Breaking changes
 - _None_

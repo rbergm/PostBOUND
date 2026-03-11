@@ -881,7 +881,7 @@ class FunctionExpression(SqlExpression):
             )
 
         self._function = function.upper()
-        self._arguments: tuple[SqlExpression] = (
+        self._arguments: tuple[SqlExpression, ...] = (
             () if arguments is None else tuple(arguments)
         )
         self._distinct = distinct
@@ -1001,6 +1001,12 @@ class FunctionExpression(SqlExpression):
     def __str__(self) -> str:
         args_str = ", ".join(str(arg) for arg in self._arguments)
         distinct_str = "DISTINCT " if self._distinct else ""
+        if len(self._arguments) > 1 and self._distinct:
+            # Postgres, DuckDB (and others?) require brackets around the arguments if DISTINCT is used with multiple arguments,
+            # e.g. COUNT(DISTINCT (a, b))
+            # Notice that this is NOT documented in the aggregate syntax under
+            # https://www.postgresql.org/docs/current/sql-expressions.html#SYNTAX-AGGREGATES
+            args_str = f"({args_str})"
         parameterization = f"({distinct_str}{args_str})"
         filter_str = f" FILTER (WHERE {self._filter_expr})" if self._filter_expr else ""
         return f"{self._function}{parameterization}{filter_str}"
@@ -5796,6 +5802,10 @@ class Select(BaseClause):
     """
 
     @staticmethod
+    def count() -> Select:  # TODO: optional expression/column(s), distinct
+        pass
+
+    @staticmethod
     def count_star(*, distinct: Iterable[SqlExpression] | bool = False) -> Select:
         """Shortcut method to create a ``SELECT COUNT(*)`` clause.
 
@@ -5833,7 +5843,8 @@ class Select(BaseClause):
 
     @staticmethod
     def create_for(
-        columns: ColumnReference | Iterable[ColumnReference],
+        columns: ColumnReference
+        | Iterable[ColumnReference],  # TODO: optional expression(s)
         *,
         distinct: Iterable[SqlExpression] | bool = False,
     ) -> Select:
