@@ -14,6 +14,7 @@ import abc
 import dataclasses
 import enum
 import json
+from datetime import date, datetime, time, timedelta
 from pathlib import Path
 from typing import IO, Any, Protocol, runtime_checkable
 
@@ -44,6 +45,10 @@ class JsonizeEncoder(json.JSONEncoder):
             return list(o)
         elif isinstance(o, Path):
             return str(o)
+        elif isinstance(o, (date, datetime, time)):
+            return o.isoformat()
+        elif isinstance(o, timedelta):
+            return o.total_seconds()
         elif "__json__" in dir(o):
             return o.__json__()
         elif dataclasses.is_dataclass(o):

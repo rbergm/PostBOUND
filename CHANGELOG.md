@@ -29,7 +29,8 @@ The [history](HISTORY.md) contains the changelogs of older PostBOUND releases.
 - Added an additional `BoundColumnReference` core type. Instances guarantee to be bound to a `TableReference`.
   The new `assert_bound()` serves as a type guard to narrow references. This should prevent constant checks for valid
   table references on columns.
-- `util.simpify()` now supports single-item mappings as well.
+- `util.simplify()` now supports single-item mappings as well.
+- `util.to_json()` now supports the standard date-like objects (_datetime_, _date_, _time_, and _timedelta_)
 - In IPython and Jupyter sessions, common PostBOUND objects like SQL queries or query plans are now automatically
   pretty-printed. Instead of calling `print(plan.explain())`, one can now simply make `plan` the result of a cell.
 
