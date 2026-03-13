@@ -1190,6 +1190,9 @@ class BoundColumnReference(ColumnReference):
     def is_bound(self) -> bool:
         return True
 
+    def drop_table_alias(self) -> BoundColumnReference:
+        return super().drop_table_alias()  # type: ignore
+
     __lt__ = ColumnReference.__lt__
     __hash__ = ColumnReference.__hash__
     __eq__ = ColumnReference.__eq__
