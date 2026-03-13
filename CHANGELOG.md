@@ -57,6 +57,7 @@ The [history](HISTORY.md) contains the changelogs of older PostBOUND releases.
 - Fixed output format of the benchmarking log if additional entries are appended to an existing log. Essentially, we fix
   such entries being escaped twice.
 - Fixed the `standard_logger` sometimes logging internal module names.
+- Fixed parser for column JSON
 
 ## 💀 Breaking changes
 - _None_

@@ -2406,7 +2406,7 @@ def load_column_json(json_data):
         return None
     json_data = json_data if isinstance(json_data, dict) else json.loads(json_data)
     return ColumnReference(
-        json_data.get["column"], load_table_json(json_data.get("table", None))
+        json_data.get("column"), load_table_json(json_data.get("table", None))
     )
 
 
