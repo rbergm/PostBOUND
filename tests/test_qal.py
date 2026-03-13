@@ -6,6 +6,7 @@ queried for joins, etc.
 
 from __future__ import annotations
 
+import copy
 import pathlib
 import textwrap
 import unittest
@@ -645,5 +646,12 @@ class StatsWorkloadTests(regression_suite.DatabaseTestCase):
 
 
 class RegressionTests(unittest.TestCase):
-    # No regressions so far!
-    pass
+    def test_column_copy(self) -> None:
+        posts = pb.TableReference("posts")
+        score = pb.ColumnReference("score", posts)
+
+        cpy = copy.copy(score)
+        self.assertEqual(score, cpy)
+
+        deep_cpy = copy.deepcopy(score)
+        self.assertEqual(score, deep_cpy)

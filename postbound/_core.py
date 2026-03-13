@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 import math
 import re
 from enum import Enum
@@ -1153,6 +1154,13 @@ class ColumnReference:
             and self._normalized_name == other._normalized_name
             and self.table == other.table
         )
+
+    def __copy__(self) -> ColumnReference:
+        return ColumnReference(self.name, self.table)
+
+    def __deepcopy__(self, memo: dict) -> ColumnReference:
+        tab = copy.deepcopy(self.table, memo)
+        return ColumnReference(str(self.name), tab)
 
     def __repr__(self) -> str:
         return f"ColumnReference(name='{self.name}', table={repr(self.table)})"
