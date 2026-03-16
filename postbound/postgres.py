@@ -899,6 +899,13 @@ class PostgresInterface(Database):
         """
         return self._connection
 
+    def rollback_tx(self) -> None:
+        """Perform a ROLLBACK on the current transaction (connection).
+
+        This should be executed if any errors occurred while running a query.
+        """
+        self._connection.rollback()
+
     def obtain_new_local_connection(self) -> psycopg.Connection:
         """Provides a new database connection to be used exclusively be the client.
 
