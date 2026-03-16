@@ -3176,7 +3176,7 @@ class UnsupportedDatabaseFeatureError(RuntimeError):
         A textual description for the requested feature
     """
 
-    def __init__(self, database: Database, feature: str) -> None:
+    def __init__(self, database: Database, feature: str | PhysicalOperator) -> None:
         super().__init__(
             f"Database {database.system_name} does not support feature {feature}"
         )

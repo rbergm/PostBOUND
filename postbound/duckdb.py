@@ -39,7 +39,6 @@ from ._hints import (
 )
 from ._qep import QueryPlan
 from .db import (
-    Cursor,
     Database,
     DatabasePool,
     DatabaseSchema,
@@ -163,18 +162,22 @@ class DuckDBInterface(Database):
 
     def database_name(self) -> str:
         self._cur.execute("SELECT CURRENT_DATABASE();")
-        db_name = self._cur.fetchone()[0]
+        result_set = self._cur.fetchone()
+        assert result_set is not None
+        db_name = result_set[0]
         return db_name
 
     def database_system_version(self) -> Version:
         self._cur.execute("SELECT version();")
-        raw_ver: str = self._cur.fetchone()[0]
+        result_set = self._cur.fetchone()
+        assert result_set is not None
+        raw_ver: str = result_set[0]
         raw_ver = raw_ver.removeprefix("v")
         raw_ver = raw_ver.split("-")[0]  # remove the build information
         return Version(raw_ver)
 
-    def cursor(self) -> Cursor:
-        return self._cur
+    def cursor(self) -> quacklab.DuckDBPyConnection:
+        return self._cur.cursor()
 
     def close(self) -> None:
         self._cur.close()
@@ -191,7 +194,7 @@ class DuckDBInterface(Database):
         self._cur = quacklab.connect(self._dbfile)
 
     def describe(self) -> jsondict:
-        base_info = {
+        base_info: dict[str, object] = {
             "system_name": self.database_system_name(),
             "system_version": self.database_system_version(),
             "database": self.database_name(),
@@ -494,7 +497,7 @@ def parse_duckdb_plan(
         node_type,
         children=children,
         base_table=base_table,
-        estimated_cardinality=card_est,
+        estimated_cardinality=Cardinality(card_est),
         actual_cardinality=card_act,
         execution_time=total_runtime,
     )
@@ -515,7 +518,7 @@ class DuckDBOptimizer(OptimizerInterface):
 
         self._db.cursor().execute(explain_query)
         result_set = self._db.cursor().fetchone()
-        assert len(result_set) == 2
+        assert result_set is not None and len(result_set) == 2
 
         raw_explain = result_set[1]
         parsed = json.loads(raw_explain)
@@ -836,7 +839,8 @@ class DuckDBHintService(HintService):
 
 
 def _reconnect(name: str, *, pool: DatabasePool) -> DuckDBInterface:
-    current_conn: DuckDBInterface = pool.retrieve_database(name)
+    current_conn = pool.retrieve_database(name)
+    assert isinstance(current_conn, DuckDBInterface)
 
     try:
         # check if the connection is still active
