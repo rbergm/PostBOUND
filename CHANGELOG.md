@@ -48,6 +48,7 @@ The [history](HISTORY.md) contains the changelogs of older PostBOUND releases.
 - Column references now provide a `drop_table_alias()` method to obtain a normalized-ish representation of the column.
   This should be helpful in situations where references to the same column are not consistent in their table references,
   e.g., when one was obtained from the schema and the other was obtained from the query.
+- While obtaining a join graph for a query, aliased tables can now be merged into the same node.
 - The `PredicateVisitor` can now be started at the query. It will extract the predicates as needed.
 - The `to_json()` and `to_json_dump()` utilities now support dataclasses out-of-the-box.
 - Expose `argmax()` directly in _util_ module

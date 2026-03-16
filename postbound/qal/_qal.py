@@ -4362,13 +4362,21 @@ class QueryPredicates:
         return _collect_join_predicates(self._root)
 
     @functools.cache
-    def join_graph(self) -> nx.Graph:
+    def join_graph(self, *, merge_aliases: bool = False) -> nx.Graph:
         """Provides the join graph for the predicates.
 
         A join graph is an undirected graph, where each node corresponds to a base table and each edge corresponds to a
         join predicate between two base tables. In addition, each node is annotated by a ``predicate`` key which is a
         conjunction of all filter predicates on that table (or *None* if the table is unfiltered). Likewise, each edge is
         annotated by a ``predicate`` key that corresponds to the join predicate (which can never be *None*).
+
+        Parameters
+        ----------
+        merge_aliases : bool, optional
+            Whether to merge aliases of the same base table into one node. Setting this to *True*
+            transforms all predicates to dictionaries that map the aliased tables to their
+            filter predicates and frozensets of tables to their join predicates.
+            Otherwise, the predicates are annotated directly.
 
         Returns
         -------
@@ -4383,16 +4391,48 @@ class QueryPredicates:
         join_graph = nx.Graph()
         if self.is_empty():
             return join_graph
+        assert self._root is not None
 
-        for table in self._root.tables():
-            filter_predicates = self.filters_for(table)
-            join_graph.add_node(table, predicate=filter_predicates)
+        if not merge_aliases:
+            for table in self._root.tables():
+                filter_predicates = self.filters_for(table)
+                join_graph.add_node(table, predicate=filter_predicates)
 
+            for join in self.joins():
+                for first_col, second_col in join.join_partners():
+                    join_graph.add_edge(
+                        first_col.table, second_col.table, predicate=join
+                    )
+
+            return join_graph
+
+        table2alias = collections.defaultdict(set)
+        for tab in self._root.tables():
+            table2alias[tab.drop_alias()].add(tab)
+
+        table2preds = {
+            tab: {alias: self.filters_for(alias) for alias in aliased}
+            for tab, aliased in table2alias.items()
+        }
+        for table, preds in table2preds.items():
+            join_graph.add_node(table, predicate=preds, aliases=table2alias[table])
+
+        col2join: dict[frozenset[ColumnReference], AbstractPredicate] = {}
         for join in self.joins():
             for first_col, second_col in join.join_partners():
-                join_graph.add_edge(first_col.table, second_col.table, predicate=join)
+                partners = frozenset([first_col, second_col])
+                col2join[partners] = join
 
-        return join_graph.copy()
+        tab2join = collections.defaultdict(dict)
+        for partners, join in col2join.items():
+            tabs = frozenset([col.drop_table_alias() for col in partners])
+            tab2join[tabs][partners] = join
+
+        for tabs, joins in tab2join.items():
+            first_tab, second_tab = tabs
+            join_graph.add_edge(first_tab, second_tab, predicate=joins)
+
+        return join_graph
 
     @functools.cache
     def filters_for(self, table: TableReference) -> Optional[AbstractPredicate]:
@@ -8757,14 +8797,14 @@ class SqlQuery:
         """
         return self.predicates().joins()
 
-    def join_graph(self) -> nx.Graph:
+    def join_graph(self, *, merge_aliases: bool = False) -> nx.Graph:
         """Alias for `predicates().join_graph()`.
 
         See Also
         --------
         QueryPredicates.join_graph
         """
-        return self.predicates().join_graph()
+        return self.predicates().join_graph(merge_aliases=merge_aliases)
 
     def filters_for(self, table: TableReference) -> Optional[AbstractPredicate]:
         """Alias for `predicates().filters_for(table)`.
