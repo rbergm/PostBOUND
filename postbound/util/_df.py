@@ -2,31 +2,11 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
 from pathlib import Path
-from typing import Any
 
 import pandas as pd
 
-
-def as_df(
-    data: Sequence[dict[str, Any]],
-) -> pd.DataFrame:
-    """Generates a new Pandas `DataFrame` based on an array-of-structs style data input.
-
-    Each dictionary corresponds to one row of the dataframe. All dictionaries have to consist of exactly the same key-value
-    pairs. Each key becomes a column in the dataframe. The precise columns are inferred from the first dictionary in the
-    collection. In this case, column values are derived directly from the keys.
-    """
-    if not data:
-        return pd.DataFrame()
-
-    data_template = data[0]
-    df_container: dict[str, list[Any]] = {col: [] for col in data_template.keys()}
-    for row in data:
-        for key in df_container.keys():
-            df_container[key].append(row[key])
-    return pd.DataFrame(df_container)
+from .jsonize import to_json
 
 
 def read_df(path: Path | str, **kwargs) -> pd.DataFrame:
@@ -59,9 +39,23 @@ def write_df(
 ) -> None:
     """Writes a Pandas `DataFrame` to a file, inferring the file format from the file extension.
 
+    In addition to the automatic dispatch based on the file type, this function performs the following preprocessing steps:
+
+    1. It ensures that the parent directory of the target file exists, creating it if necessary.
+    2. It transforms all complex objects in the data frame into their JSON representation
+
     All additional arguments are passed directly to the respective Pandas write function.
     """
     path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+
+    for col in df.columns:
+        if df[col].dtype != "object":
+            continue
+        if all(t is str for t in df[col].map(type)):
+            continue
+        df[col] = df[col].map(to_json)
+
     match path.suffix.lower():
         case ".csv":
             df.to_csv(path, index=index, **kwargs)
