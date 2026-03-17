@@ -4264,6 +4264,11 @@ class PostgresExplainPlan:
         self.explain_data = (
             explain_data[0] if isinstance(explain_data, list) else explain_data
         )
+        if not (isinstance(self.explain_data, dict) and "Plan" in self.explain_data):
+            raise ValueError(
+                f"Invalid explain data: missing 'Plan' key: {explain_data}"
+            )
+
         self.planning_time: float = (
             self.explain_data.get("Planning Time", math.nan) / 1000
         )
