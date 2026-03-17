@@ -1649,20 +1649,17 @@ class PostgresStatisticsInterface(DatabaseStatistics):
         query_template = """
             SELECT count(*) AS buffers
             FROM pg_buffercache buf
-            JOIN pg_class cls
-                ON buf.relfilenode = pg_relation_filenode(cls.oid)
-                AND buf.reldatabase IN (0, (SELECT oid FROM pg_database WHERE datname = current_database()))
-            JOIN pg_namespace nsp
-                ON nsp.oid = cls.relnamespace
-            WHERE nsp.nspname = %s
+            JOIN pg_class cls ON buf.relfilenode = pg_relation_filenode(cls.oid)
+            WHERE cls.relnamespace = %s::regnamespace
                 AND cls.relname = %s
-            GROUP BY nsp.oid, cls.oid
+                AND buf.reldatabase IN (0, (SELECT oid FROM pg_database WHERE datname = current_database()))
         """
 
         self._db.cursor().execute(query_template, (schema, table.full_name))
         result_set = self._db.cursor().fetchone()
         if result_set is None:
-            raise ValueError(f"Relation not found: {table}")
+            # No pages have been buffered
+            return 0
         return result_set[0]
 
     def update_statistics(
