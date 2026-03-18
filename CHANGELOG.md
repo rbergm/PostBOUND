@@ -43,6 +43,8 @@ The [history](HISTORY.md) contains the changelogs of older PostBOUND releases.
 - Enabled the MySQL and DuckDB backends to fall back to emulated statistics if the database does not provide them.
 - The Postgres interface now has a `rollback()` method to put connections back into a valid state.
 - The Postgres statistics interface now consistently supports table references with a schema.
+- Much improved handling of database schemas during query parsing. We now omit clear warnings in case the database pool is
+  is weird.
 - The `QueryPreparation` API now provides the `projection` and `output` parameters to modify the *SELECT* clause and the
   type of results to gather for all queries in a more flexible and intuitive way (how did *explain=True*  and
   *analyze=True* interact?).

@@ -2285,11 +2285,27 @@ def parse_query(
 
     bind_columns = bind_columns or (bind_columns is None and auto_bind_columns)
     if db_schema is None and bind_columns:
-        db_schema = (
-            None
-            if DatabasePool.get_instance().empty()
-            else DatabasePool.get_instance().current_database().schema()
-        )
+        pool = DatabasePool.get_instance()
+        match pool.n_databases():
+            case 0:
+                warnings.warn(
+                    "The database pool does not contain any databases. Did you call connect() on any? "
+                    "Having no database available means that the parser will be unable to infer the correct table for "
+                    "unqualified column references.",
+                    category=ParserWarning,
+                )
+                db_schema = None
+            case 1:
+                db_schema = pool.current_database().schema()
+            case _:
+                warnings.warn(
+                    "The database pool contains multiple databases. The parser will use an arbitrary one "
+                    "for inferring the correct table of unqualified column references. This might lead to incorrect parsing "
+                    "results if the databases have different schemas. Consider obtaining private connections to your databases to "
+                    "prevent registration in the global database pool.",
+                    category=ParserWarning,
+                )
+                db_schema = pool.any_database().schema()
 
     pglast_data = json.loads(pglast.parser.parse_sql_json(query))
     stmts = pglast_data["stmts"]

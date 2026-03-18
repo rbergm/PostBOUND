@@ -3086,7 +3086,17 @@ class DatabasePool:
         ValueError
             If there are multiple database instances registered in the pool
         """
+        if self.n_databases() != 1:
+            raise ValueError(
+                f"Expected exactly one database in the pool, but found {self.n_databases()}."
+            )
         return util.dicts.value(self._pool)
+
+    def any_database(self) -> Database:
+        """Provides any database that is currently stored in the pool, provided there is at least one."""
+        if self.empty():
+            raise ValueError("No database instance registered in the pool.")
+        return next(iter(self._pool.values()))
 
     def register_database(self, key: str, db: Database) -> None:
         """Stores a new database in the pool.
@@ -3131,6 +3141,10 @@ class DatabasePool:
             *True* if the pool is empty.
         """
         return len(self._pool) == 0
+
+    def n_databases(self) -> int:
+        """Returns the number of databases currently registered in the pool."""
+        return len(self._pool)
 
     def clear(self) -> None:
         """Removes all currently registered databases from the pool."""
