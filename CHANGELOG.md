@@ -24,8 +24,8 @@ The [history](HISTORY.md) contains the changelogs of older PostBOUND releases.
   ```
 - `execute_workload()` now supports many new output formats for writing the progressive output.
   Currently supported are: CSV, Parquet, JSON, HDF
-- Added a `n_buffered()` method to the Postgres statistics interface to retrieve the number of currently buffered
-  pages of a relation.
+- Added a `n_buffered()` and `buffer_state()` methods to the Postgres statistics interface to retrieve the number of currently
+  buffered pages of a relation.
 - Added an additional `BoundColumnReference` core type. Instances guarantee to be bound to a `TableReference`.
   The new `assert_bound()` serves as a type guard to narrow references. This should prevent constant checks for valid
   table references on columns.

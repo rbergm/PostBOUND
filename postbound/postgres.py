@@ -1643,6 +1643,22 @@ class PostgresStatisticsInterface(DatabaseStatistics):
         return result_set[0]
 
     def n_buffered(self, table: TableReference | str) -> int:
+        """Retrieves the number of buffered pages for the specified table.
+
+        The table can either be a base table or the name of an index.
+
+        Notes
+        -----
+
+        The current implementation of this method relies on the *pg_buffercache* extension and works by scanning the
+        entire buffer cache. Therefore, it incurs a slight overhead and should not be called inside of hot loops.
+        Instead, you can use `buffer_state` to retrieve the number of buffered pages for all relations in a single pass.
+
+        See Also
+        --------
+        buffer_state
+        """
+
         table = table if isinstance(table, TableReference) else TableReference(table)
         schema = table.schema or "public"
 
@@ -1661,6 +1677,36 @@ class PostgresStatisticsInterface(DatabaseStatistics):
             # No pages have been buffered
             return 0
         return result_set[0]
+
+    def buffer_state(self, *, schema: str = "public") -> dict[str, int]:
+        """Retrieves the current buffer state for all relations in the given schema (*public* by default).
+
+        If a relation is not contained in the result, none of its pages are currently buffered.
+
+        The result contains *all* PG relations, i.e. including indexes and other non-table relations. Typically,
+        primary key indexes are named *<relation_name>_pkey*. The name of secondary indexes depends on the schema.
+
+        See Also
+        --------
+        n_buffered
+        """
+
+        query_template = """
+            SELECT cls.relname, count(*) AS buffers
+            FROM pg_buffercache buf
+            JOIN pg_class cls ON buf.relfilenode = pg_relation_filenode(cls.oid)
+            WHERE cls.relnamespace = %s::regnamespace
+                AND buf.reldatabase IN (0, (SELECT oid FROM pg_database WHERE datname = current_database()))
+            GROUP BY cls.relname
+        """
+
+        self._db.cursor().execute(query_template, (schema,))
+        result_set = self._db.cursor().fetchall()
+        if result_set is None:
+            # No pages have been buffered
+            return {}
+
+        return {row[0]: row[1] for row in result_set}
 
     def update_statistics(
         self,
