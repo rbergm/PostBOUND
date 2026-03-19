@@ -1162,6 +1162,9 @@ class ColumnReference:
         tab = copy.deepcopy(self.table, memo)
         return ColumnReference(str(self.name), tab)
 
+    def __reduce__(self) -> tuple:
+        return (self.__class__, (self._name, self._table))
+
     def __repr__(self) -> str:
         return f"ColumnReference(name='{self.name}', table={repr(self.table)})"
 

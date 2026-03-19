@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import copy
 import pathlib
+import pickle
 import textwrap
 import unittest
 from collections.abc import Sequence
@@ -655,3 +656,18 @@ class RegressionTests(unittest.TestCase):
 
         deep_cpy = copy.deepcopy(score)
         self.assertEqual(score, deep_cpy)
+
+    def test_column_pickle(self) -> None:
+        posts = pb.TableReference("posts")
+        score = pb.ColumnReference("score", posts)
+
+        serialized = pickle.dumps(score)
+        reloaded = pickle.loads(serialized)
+        self.assertEqual(score, reloaded)
+        self.assertIs(type(reloaded), pb.BoundColumnReference)
+
+        unbound = pb.ColumnReference("id")
+        serialized = pickle.dumps(unbound)
+        reloaded = pickle.loads(serialized)
+        self.assertEqual(unbound, reloaded)
+        self.assertIs(type(reloaded), pb.ColumnReference)
