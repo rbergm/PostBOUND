@@ -1065,3 +1065,26 @@ def stats(*, file_encoding: str = "utf-8") -> Workload[str]:
     )
     _assert_workload_loaded(stats_workload, workload_dir)
     return stats_workload
+
+
+def fetch_workload(name: str, *, file_encoding: str = "utf-8") -> Workload[str]:
+    """Utility method to fetch a pre-defined workload by name."""
+    match name:
+        case "job" | "imdb":
+            return job(flavor="default", file_encoding=file_encoding)
+        case "job-light" | "joblight":
+            return job(flavor="light", file_encoding=file_encoding)
+        case "job-complex" | "jobcomplex":
+            return job(flavor="complex", file_encoding=file_encoding)
+        case "stats":
+            return stats(file_encoding=file_encoding)
+        case "stack":
+            return stack(file_encoding=file_encoding)
+        case "ssb":
+            return ssb(file_encoding=file_encoding)
+        case _:
+            raise ValueError(
+                f"No pre-defined workload registered for key '{name}'. "
+                "Available workloads are: 'job', 'job-light', 'job-complex', "
+                "'stats', 'stack', 'ssb'"
+            )
