@@ -2251,6 +2251,26 @@ class AbstractPredicate(SqlExpression, abc.ABC):
             for first_col, second_col in self.join_partners()
         )
 
+    def joins_tables(self, a: TableReference, b: TableReference) -> bool:
+        """Checks, whether this predicate describes a join between the given tables.
+
+        The order of the tables does not matter.
+        """
+        if not self.is_join():
+            return False
+        given = {a, b}
+        return given.issubset(self.tables())
+
+    def joins_columns(self, a: ColumnReference, b: ColumnReference) -> bool:
+        """Checks, whether this predicate describes a join between the given columns.
+
+        The order of the columns does not matter.
+        """
+        if not self.is_join():
+            return False
+        given = {a, b}
+        return given.issubset(self.columns())
+
     def columns_of(self, table: TableReference) -> set[ColumnReference]:
         """Retrieves all columns of a specific table that are referenced by this predicate.
 
