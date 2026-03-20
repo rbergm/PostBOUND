@@ -41,11 +41,12 @@ if [ -z "$(ls /postbound)" ] ; then
     if [ "$SETUP_POSTGRES" = "true" -a "$USE_PGLAB" = "true" ] ; then
         if [ -z "$(ls /pg_lab)" ] ; then
             echo "[setup] Building pg_lab"
+            git clone --depth 1 --branch=main https://github.com/rbergm/pg_lab /pg_lab
             cd /pg_lab && ./postgres-setup.sh --pg-ver "$PGVER" --remote-password "postbound" --stop
             . ./postgres-start.sh
         else
             echo "[setup] Reusing existing pg_lab installation"
-            cd /pg_lab && . ./postgres-load-env.sh && . ./postgres-start.sh
+            cd /pg_lab && . ./postgres-start.sh
         fi
     elif [ "$SETUP_POSTGRES" = "true" ] ; then
         if [ -z "$(ls /postbound/db-support/postgres/postgres-server)" ] ; then
@@ -54,7 +55,7 @@ if [ -z "$(ls /postbound)" ] ; then
             . ./postgres-start.sh
         else
             echo "[setup] Reusing existing Postgres installation"
-            cd /postbound/db-support/postgres && . ./postgres-load-env.sh && . ./postgres-start.sh
+            cd /postbound/db-support/postgres && . ./postgres-start.sh
         fi
     fi
 
