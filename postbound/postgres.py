@@ -695,12 +695,23 @@ class PostgresInterface(Database):
         self,
         query: SqlQuery | str,
         *,
+        plan: Optional[QueryPlan] = None,
+        join_order: Optional[JoinTree] = None,
+        physical_operators: Optional[PhysicalOperatorAssignment] = None,
+        plan_parameters: Optional[PlanParameterization] = None,
         cache_enabled: Optional[bool] = None,
         raw: bool = False,
         timeout: Optional[float] = None,
     ) -> Any:
         # NB: some of the execution logic is duplicated in TimeoutQueryExecutor.execute_query.
         # Make sure to keep both implementations in sync.
+        query = self._apply_query_hints(
+            query,
+            plan,
+            join_order=join_order,
+            physical_operators=physical_operators,
+            plan_parameters=plan_parameters,
+        )
 
         if timeout is not None and timeout > 0:
             return self._timeout_executor.execute_query(
@@ -1224,6 +1235,34 @@ class PostgresInterface(Database):
 
         self._cursor: psycopg.Cursor = self._connection.cursor()
         return self.backend_pid()
+
+    def _apply_query_hints(
+        self,
+        query: str | SqlQuery,
+        plan: Optional[QueryPlan],
+        *,
+        join_order: Optional[JoinTree],
+        physical_operators: Optional[PhysicalOperatorAssignment],
+        plan_parameters: Optional[PlanParameterization],
+    ) -> str | SqlQuery:
+        if isinstance(query, str):
+            # XXX: should we rather parse the query here?
+            return query
+
+        has_hint = any(
+            hint is not None
+            for hint in (plan, join_order, physical_operators, plan_parameters)
+        )
+        if not has_hint:
+            return query
+
+        return self.hinting().generate_hints(
+            query,
+            plan,
+            join_order=join_order,
+            physical_operators=physical_operators,
+            plan_parameters=plan_parameters,
+        )
 
     def _fetch_index_relnames(
         self, table: TableReference | str
