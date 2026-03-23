@@ -64,6 +64,7 @@ The [history](HISTORY.md) contains the changelogs of older PostBOUND releases.
   buffered. We now return 0 in this case.
 - Fixed string representation of `COUNT(DISTINCT ...)` for multiple arguments. We now generate the correct
   `COUNT(DISTINCT (a, b))` instead of `COUNT(DISTINCT a, b)`.
+- Fixed `DatabaseSchema.as_graph()` having the assignment of primary key and foreign key columns reversed on join edges.
 - Fixed output format of the benchmarking log if additional entries are appended to an existing log. Essentially, we fix
   such entries being escaped twice.
 - Fixed the `standard_logger` sometimes logging internal module names.

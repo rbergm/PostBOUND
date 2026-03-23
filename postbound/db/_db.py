@@ -1424,7 +1424,7 @@ class DatabaseSchema(abc.ABC, Mapping[TableReference, TableInfo]):
         for col in all_columns:
             foreign_keys = self.foreign_keys_on(col)
             for fk_target in foreign_keys:
-                fk_constraint = ForeignKeyRef(fk_target, col)
+                fk_constraint = ForeignKeyRef(col, fk_target)
                 current_edge = g.edges.get([col.table, fk_target.table])
 
                 if current_edge:
