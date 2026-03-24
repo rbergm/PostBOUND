@@ -23,6 +23,7 @@ The [history](HISTORY.md) contains the changelogs of older PostBOUND releases.
   ```
 - `execute_workload()` now supports many new output formats for writing the progressive output.
   Currently supported are: CSV, Parquet, JSON, HDF
+- Workloads now support transformations of their queries, e.g. `workload.map(pb.transform.as_star_query)`
 - Added a `fetch_workload()` function to the workloads module. It allows to load a pre-defined workload by name.
 - Added a `n_buffered()` and `buffer_state()` methods to the Postgres statistics interface to retrieve the number of currently
   buffered pages of a relation.

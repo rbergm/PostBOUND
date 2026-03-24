@@ -65,7 +65,7 @@ def make_logger(
     def _log(*args, **kwargs) -> None:
         if prefix and isinstance(prefix, str):
             args = [prefix] + list(args)
-        elif prefix:
+        elif prefix and not isinstance(prefix, str):
             args = [prefix()] + list(args)
         print(*args, file=file, **kwargs)
 

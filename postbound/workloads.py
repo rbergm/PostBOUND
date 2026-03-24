@@ -479,6 +479,75 @@ class Workload(UserDict[LabelType, SqlQuery]):
         }
         return Workload(relabeled_queries, self._name, self._root)
 
+    def map(self, transformation: Callable, *args, **kwargs) -> Workload[LabelType]:
+        """Constructs a new workload, leaving the labels intact but replacing the queries.
+
+        The new workload will ordered according to the natural order of the labels.
+
+        Parameters
+        ----------
+        transformation : Callable[[SqlQuery, ...], SqlQuery]
+            Replacement method that maps all old queries to new query values. The replacement receives the old query as input
+            and produces the new query value. Additional arguments can be passed to the transformation and will be
+            forwarded.
+        *args
+            Additional positional arguments that should be forwarded to the transformation method. These are passed after the
+            query argument.
+        **kwargs
+            Additional keyword arguments that should be forwarded to the transformation method.
+
+        Returns
+        -------
+        Workload[LabelType]
+            All queries of the current workload, but with new query values
+
+        See Also
+        --------
+        transform : if the transformation also needs access to the query labels, or if labels should be updated as well
+        """
+        transformed_queries = {
+            label: transformation(query, *args, **kwargs)
+            for label, query in self.data.items()
+        }
+        return Workload(transformed_queries, self._name, self._root)
+
+    def transform(
+        self,
+        transformation: Callable,
+        *args,
+        **kwargs,
+    ) -> Workload[LabelType]:
+        """Constructs a new workload, replacing both the labels and the queries.
+
+        The new workload will ordered according to the natural order of the new labels.
+
+        Parameters
+        ----------
+        transformation : Callable[[LabelType, SqlQuery, ...], tuple[LabelType, SqlQuery]]
+            Replacement method that maps all old (label, query) pairs to new (label, query) pairs. If only queries should be
+            updated according to their labels, the transformation is free to return the old label value. Additional arguments
+            can be passed to the transformation and will be forwarded.
+        *args
+            Additional positional arguments that should be forwarded to the transformation method. These are passed after the
+            label and query.
+        **kwargs
+            Additional keyword arguments that should be forwarded to the transformation method.
+
+        Returns
+        -------
+        Workload[LabelType]
+             All queries of the current workload, but with new labels and query values
+
+        See Also
+        --------
+        map : if the transformation is purely query-based and does not need access to the labels
+        """
+        transformed_queries = [
+            transformation(label, query, *args, **kwargs)
+            for label, query in self.data.items()
+        ]
+        return Workload(dict(transformed_queries), self._name, self._root)
+
     def shuffle(self) -> Workload[LabelType]:
         """Randomly changes the order of the queries in the workload.
 
@@ -774,6 +843,8 @@ def read_csv_workload(
         pd_args.pop("usecols", None)
         pd_args.pop("converters", None)
         pd_args.pop("encoding", None)
+    else:
+        pd_args = {}
 
     workload_df = pd.read_csv(
         filepath,
