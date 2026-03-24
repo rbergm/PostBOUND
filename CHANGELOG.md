@@ -31,6 +31,7 @@ The [history](HISTORY.md) contains the changelogs of older PostBOUND releases.
   The new `assert_bound()` serves as a type guard to narrow references. This should prevent constant checks for valid
   table references on columns.
 - Added a `joins_tables()` and `joins_columns()` utilities to query predicates.
+- Added a `merge_tables()` transformation to rewrite queries for materialized views.
 - `util.simplify()` now supports single-item mappings as well.
 - `util.to_json()` now supports the standard date-like objects (_datetime_, _date_, _time_, and _timedelta_)
 - `util.write_df()` now automatically transforms complex objects in the data frame into their JSON representation before
@@ -66,6 +67,7 @@ pg_instance.execute_query(hinted_query)
   e.g., when one was obtained from the schema and the other was obtained from the query.
 - While obtaining a join graph for a query, aliased tables can now be merged into the same node.
 - The `PredicateVisitor` can now be started at the query. It will extract the predicates as needed.
+- The `extract_query_fragment()` tranformation now supports modifying the output projection.
 - The `to_json()` and `to_json_dump()` utilities now support dataclasses out-of-the-box.
 - Expose `argmax()` directly in _util_ module
 

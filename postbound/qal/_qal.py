@@ -9,16 +9,7 @@ import numbers
 import warnings
 from collections.abc import Callable, Collection, Iterable, Iterator, Sequence
 from types import NoneType
-from typing import (
-    Any,
-    Generic,
-    Literal,
-    Optional,
-    Type,
-    TypeVar,
-    Union,
-    overload,
-)
+from typing import Any, Generic, Literal, Optional, Type, TypeVar, Union, overload
 
 import networkx as nx
 
@@ -7955,7 +7946,9 @@ class ClauseVisitor(abc.ABC, Generic[VisitorResult]):
         raise NotImplementedError
 
     @abc.abstractmethod
-    def visit_cte_clause(self, clause: WithQuery, *args, **kwargs) -> VisitorResult:
+    def visit_cte_clause(
+        self, clause: CommonTableExpression, *args, **kwargs
+    ) -> VisitorResult:
         raise NotImplementedError
 
     @abc.abstractmethod

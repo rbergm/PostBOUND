@@ -24,7 +24,7 @@ from __future__ import annotations
 import typing
 import warnings
 from collections.abc import Callable, Iterable, Sequence
-from typing import Optional, overload
+from typing import Literal, Optional, overload
 
 from . import util
 from ._core import ColumnReference, TableReference
@@ -292,10 +292,30 @@ def _get_predicate_fragment(
         return CompoundPredicate(compound_predicate.operation, child_fragments)
 
 
+@overload
 def extract_query_fragment(
-    source_query: SelectQueryType,
+    source_query: ImplicitSqlQuery,
     referenced_tables: TableReference | Iterable[TableReference],
-) -> Optional[SelectQueryType]:
+    *,
+    projection: Literal["keep", "star", "*", "count_star"] = "keep",
+) -> Optional[ImplicitSqlQuery]: ...
+
+
+@overload
+def extract_query_fragment(
+    source_query: SetQuery,
+    referenced_tables: TableReference | Iterable[TableReference],
+    *,
+    projection: Literal["keep", "star", "*", "count_star"] = "keep",
+) -> Optional[SetQuery]: ...
+
+
+def extract_query_fragment(
+    source_query,
+    referenced_tables: TableReference | Iterable[TableReference],
+    *,
+    projection: Literal["keep", "star", "*", "count_star"] = "keep",
+):
     """Filters a query to only include parts that reference specific tables.
 
     This builds a new query from the given query that contains exactly those parts of the original query's clauses that
@@ -316,6 +336,10 @@ def extract_query_fragment(
         The query that should be transformed
     referenced_tables : TableReference | Iterable[TableReference]
         The tables that should be extracted
+    projection : Literal["keep", "star", "*", "count_star"], optional
+        How the projection of the resulting query should look like. Defaults to *keep*, which retains the original
+        projection/*SELECT* clause. Alternatively, the projection can be set to *star* or (literal) *\\** to use a *SELECT \\**
+        projection, or to *count_star* to use a *SELECT COUNT(\\*)* projection.
 
     Returns
     -------
@@ -370,25 +394,38 @@ def extract_query_fragment(
         return SetQuery(
             left_query,
             right_query,
-            source_query.set_operation,
+            set_operation=source_query.set_operation,
             cte_clause=cte_clause,
             orderby_clause=orderby_clause,
             limit_clause=source_query.limit_clause,
             hints=source_query.hints,
-            explain=source_query.explain,
+            explain_clause=source_query.explain,
         )
 
-    select_fragment = []
-    for target in source_query.select_clause:
-        if target.tables() == referenced_tables or not target.columns():
-            select_fragment.append(target)
+    match projection:
+        case "keep":
+            select_fragment = []
+            for target in source_query.select_clause:
+                if target.tables() == referenced_tables or not target.columns():
+                    select_fragment.append(target)
 
-    if select_fragment:
-        select_clause = Select(
-            select_fragment, distinct=source_query.select_clause.is_distinct()
-        )
-    else:
-        select_clause = Select.star(distinct=source_query.select_clause.is_distinct())
+            if select_fragment:
+                select_clause = Select(
+                    select_fragment, distinct=source_query.select_clause.is_distinct()
+                )
+            else:
+                select_clause = Select.star(
+                    distinct=source_query.select_clause.is_distinct()
+                )
+
+        case "star" | "*":
+            select_clause = Select.star()
+
+        case "count_star":
+            select_clause = Select.count_star()
+
+        case _:
+            raise ValueError("Invalid projection type: " + str(projection))
 
     if source_query.from_clause:
         from_clause = ImplicitFromClause(
@@ -474,7 +511,7 @@ def expand_to_query(predicate: AbstractPredicate) -> ImplicitSqlQuery:
         An SQL query of the form ``SELECT * FROM <predicate tables> WHERE <predicate>``.
     """
     select_clause = Select.star()
-    from_clause = ImplicitFromClause(predicate.tables())
+    from_clause = ImplicitFromClause.create_for(predicate.tables())
     where_clause = Where(predicate)
     return build_query([select_clause, from_clause, where_clause])
 
@@ -1924,13 +1961,15 @@ class _TableReferenceRenamer(
             )
         self._renamings = {source_table: target_table}
 
-    def visit_hint_clause(self, clause: Hint) -> Hint:
+    def visit_hint_clause(self, clause: Hint, *args, **kwargs) -> Hint:
         return clause
 
-    def visit_explain_clause(self, clause: Explain) -> Explain:
+    def visit_explain_clause(self, clause: Explain, *args, **kwargs) -> Explain:
         return clause
 
-    def visit_cte_clause(self, clause: CommonTableExpression) -> CommonTableExpression:
+    def visit_cte_clause(
+        self, clause: CommonTableExpression, *args, **kwargs
+    ) -> CommonTableExpression:
         ctes: list[WithQuery] = []
 
         for cte in clause.queries:
@@ -1944,7 +1983,7 @@ class _TableReferenceRenamer(
 
         return CommonTableExpression(ctes, recursive=clause.recursive)
 
-    def visit_select_clause(self, clause) -> Select:
+    def visit_select_clause(self, clause, *args, **kwargs) -> Select:
         projections: list[BaseProjection] = []
 
         for proj in clause:
@@ -1953,7 +1992,7 @@ class _TableReferenceRenamer(
 
         return Select(projections, distinct=clause.distinct_specifier())
 
-    def visit_from_clause(self, clause: From) -> From:
+    def visit_from_clause(self, clause: From, *args, **kwargs) -> From:
         match clause:
             case ImplicitFromClause(tables):
                 renamed_tables = [self._rename_table_source(src) for src in tables]
@@ -1970,21 +2009,21 @@ class _TableReferenceRenamer(
             case _:
                 raise ValueError("Unknown from clause type: " + str(clause))
 
-    def visit_where_clause(self, clause: Where) -> Where:
+    def visit_where_clause(self, clause: Where, *args, **kwargs) -> Where:
         renamed_predicate = clause.predicate.accept_visitor(self)
         return Where(renamed_predicate)
 
-    def visit_groupby_clause(self, clause: GroupBy) -> GroupBy:
+    def visit_groupby_clause(self, clause: GroupBy, *args, **kwargs) -> GroupBy:
         renamed_groupings = [
             grouping.accept_visitor(self) for grouping in clause.group_columns
         ]
         return GroupBy(renamed_groupings, clause.distinct)
 
-    def visit_having_clause(self, clause: Having) -> Having:
+    def visit_having_clause(self, clause: Having, *args, **kwargs) -> Having:
         renamed_predicate = clause.condition.accept_visitor(self)
         return Having(renamed_predicate)
 
-    def visit_orderby_clause(self, clause: OrderBy) -> OrderBy:
+    def visit_orderby_clause(self, clause: OrderBy, *args, **kwargs) -> OrderBy:
         renamed_orderings: list[OrderByExpression] = []
 
         for ordering in clause:
@@ -1997,46 +2036,62 @@ class _TableReferenceRenamer(
 
         return renamed_orderings
 
-    def visit_limit_clause(self, clause: Limit) -> Limit:
+    def visit_limit_clause(self, clause: Limit, *args, **kwargs) -> Limit:
         return clause
 
-    def visit_union_clause(self, clause: UnionClause) -> UnionClause:
+    def visit_union_clause(self, clause: UnionClause, *args, **kwargs) -> UnionClause:
         renamed_lhs = clause.left_query.accept_visitor(self)
         renamed_rhs = clause.right_query.accept_visitor(self)
         return UnionClause(renamed_lhs, renamed_rhs, union_all=clause.union_all)
 
-    def visit_except_clause(self, clause: ExceptClause) -> ExceptClause:
+    def visit_except_clause(
+        self, clause: ExceptClause, *args, **kwargs
+    ) -> ExceptClause:
         renamed_lhs = clause.left_query.accept_visitor(self)
         renamed_rhs = clause.right_query.accept_visitor(self)
         return ExceptClause(renamed_lhs, renamed_rhs)
 
-    def visit_intersect_clause(self, clause: IntersectClause) -> IntersectClause:
+    def visit_intersect_clause(
+        self, clause: IntersectClause, *args, **kwargs
+    ) -> IntersectClause:
         renamed_lhs = clause.left_query.accept_visitor(self)
         renamed_rhs = clause.right_query.accept_visitor(self)
         return IntersectClause(renamed_lhs, renamed_rhs)
 
-    def visit_binary_predicate(self, predicate: BinaryPredicate) -> BinaryPredicate:
+    def visit_binary_predicate(
+        self, predicate: BinaryPredicate, *args, **kwargs
+    ) -> BinaryPredicate:
         renamed_lhs = predicate.first_argument.accept_visitor(self)
         renamed_rhs = predicate.second_argument.accept_visitor(self)
         return BinaryPredicate(predicate.operation, renamed_lhs, renamed_rhs)
 
-    def visit_between_predicate(self, predicate: BetweenPredicate) -> BetweenPredicate:
+    def visit_between_predicate(
+        self, predicate: BetweenPredicate, *args, **kwargs
+    ) -> BetweenPredicate:
         renamed_col = predicate.column.accept_visitor(self)
         renamed_start = predicate.interval_start.accept_visitor(self)
         renamed_end = predicate.interval_end.accept_visitor(self)
         return BetweenPredicate(renamed_col, (renamed_start, renamed_end))
 
-    def visit_in_predicate(self, predicate: InPredicate) -> InPredicate:
+    def visit_in_predicate(
+        self, predicate: InPredicate, *args, **kwargs
+    ) -> InPredicate:
         renamed_col = predicate.column.accept_visitor(self)
         renamed_vals = [val.accept_visitor(self) for val in predicate.values]
         return InPredicate(renamed_col, renamed_vals)
 
-    def visit_unary_predicate(self, predicate: UnaryPredicate) -> UnaryPredicate:
+    def visit_unary_predicate(
+        self, predicate: UnaryPredicate, *args, **kwargs
+    ) -> UnaryPredicate:
         renamed_col = predicate.column.accept_visitor(self)
         return UnaryPredicate(renamed_col, predicate.operation)
 
     def visit_not_predicate(
-        self, predicate: CompoundPredicate, child_predicate: AbstractPredicate
+        self,
+        predicate: CompoundPredicate,
+        child_predicate: AbstractPredicate,
+        *args,
+        **kwargs,
     ) -> CompoundPredicate:
         renamed_child = child_predicate.accept_visitor(self)
         return CompoundPredicate(CompoundOperator.Not, [renamed_child])
@@ -2044,25 +2099,29 @@ class _TableReferenceRenamer(
     def visit_or_predicate(
         self,
         predicate: CompoundPredicate,
-        child_predicates: Sequence[AbstractPredicate],
+        components: Sequence[AbstractPredicate],
+        *args,
+        **kwargs,
     ) -> CompoundPredicate:
-        renamed_children = [child.accept_visitor(self) for child in child_predicates]
+        renamed_children = [child.accept_visitor(self) for child in components]
         return CompoundPredicate(CompoundOperator.Or, renamed_children)
 
     def visit_and_predicate(
         self,
         predicate: CompoundPredicate,
-        child_predicates: Sequence[AbstractPredicate],
+        components: Sequence[AbstractPredicate],
+        *args,
+        **kwargs,
     ) -> CompoundPredicate:
-        renamed_children = [child.accept_visitor(self) for child in child_predicates]
+        renamed_children = [child.accept_visitor(self) for child in components]
         return CompoundPredicate(CompoundOperator.And, renamed_children)
 
     def visit_static_value_expr(
-        self, expr: StaticValueExpression
+        self, expr: StaticValueExpression, *args, **kwargs
     ) -> StaticValueExpression:
         return expr
 
-    def visit_cast_expr(self, expr: CastExpression) -> CastExpression:
+    def visit_cast_expr(self, expr: CastExpression, *args, **kwargs) -> CastExpression:
         renamed_child = expr.casted_expression.accept_visitor(self)
         renamed_params = (
             [param.accept_visitor(self) for param in expr.type_params]
@@ -2076,7 +2135,7 @@ class _TableReferenceRenamer(
             array_type=expr.array_type,
         )
 
-    def visit_math_expr(self, expr: MathExpression) -> MathExpression:
+    def visit_math_expr(self, expr: MathExpression, *args, **kwargs) -> MathExpression:
         renamed_lhs = expr.first_arg.accept_visitor(self)
 
         if isinstance(expr.second_arg, SqlExpression):
@@ -2090,10 +2149,15 @@ class _TableReferenceRenamer(
 
         return MathExpression(expr.operator, renamed_lhs, renamed_rhs)
 
-    def visit_column_expr(self, expr: ColumnExpression) -> ColumnExpression:
-        return self._rename_column(expr)
+    def visit_column_expr(
+        self, expr: ColumnExpression, *args, **kwargs
+    ) -> ColumnExpression:
+        col = self._rename_column(expr.column)
+        return ColumnExpression(col)
 
-    def visit_function_expr(self, expr: FunctionExpression) -> FunctionExpression:
+    def visit_function_expr(
+        self, expr: FunctionExpression, *args, **kwargs
+    ) -> FunctionExpression:
         renamed_args = [arg.accept_visitor(self) for arg in expr.arguments]
         renamed_filter = (
             expr.filter_where.accept_visitor(self) if expr.filter_where else None
@@ -2105,15 +2169,20 @@ class _TableReferenceRenamer(
             filter_where=renamed_filter,
         )
 
-    def visit_subquery_expr(self, expr: SubqueryExpression) -> SubqueryExpression:
-        renamed_subquery = expr.query.accept_visitor(self)
+    def visit_subquery_expr(
+        self, expr: SubqueryExpression, *args, **kwargs
+    ) -> SubqueryExpression:
+        subquery_comps = expr.query.accept_visitor(self)
+        renamed_subquery = build_query(subquery_comps.values())
         return SubqueryExpression(renamed_subquery)
 
-    def visit_star_expr(self, expr: StarExpression) -> StarExpression:
+    def visit_star_expr(self, expr: StarExpression, *args, **kwargs) -> StarExpression:
         renamed_table = self._rename_table(expr.from_table) if expr.from_table else None
         return StarExpression(from_table=renamed_table)
 
-    def visit_window_expr(self, expr: WindowExpression) -> WindowExpression:
+    def visit_window_expr(
+        self, expr: WindowExpression, *args, **kwargs
+    ) -> WindowExpression:
         renamed_window_func = expr.window_function.accept_visitor(self)
         renamed_partition = [part.accept_visitor(self) for part in expr.partitioning]
         renamed_ordering = expr.ordering.accept_visitor(self) if expr.ordering else None
@@ -2129,7 +2198,7 @@ class _TableReferenceRenamer(
             filter_condition=renamed_filter,
         )
 
-    def visit_case_expr(self, expr: CaseExpression) -> CaseExpression:
+    def visit_case_expr(self, expr: CaseExpression, *args, **kwargs) -> CaseExpression:
         renamed_cases: list[tuple[AbstractPredicate, SqlExpression]] = []
 
         for condition, value in expr.cases:
@@ -2151,18 +2220,19 @@ class _TableReferenceRenamer(
         )
 
     def visit_quantifier_expr(
-        self,
-        expr: QuantifierExpression,
+        self, expr: QuantifierExpression, *args, **kwargs
     ) -> QuantifierExpression:
         renamed_child = expr.expression.accept_visitor(self)
         return QuantifierExpression(expr.quantifier, quantifier=renamed_child)
 
-    def visit_array_expr(self, expr: ArrayExpression) -> ArrayExpression:
+    def visit_array_expr(
+        self, expr: ArrayExpression, *args, **kwargs
+    ) -> ArrayExpression:
         renamed_elems = [elem.accept_visitor(self) for elem in expr.elements]
         return ArrayExpression(renamed_elems)
 
     def visit_array_access_expr(
-        self, expr: ArrayAccessExpression
+        self, expr: ArrayAccessExpression, *args, **kwargs
     ) -> ArrayAccessExpression:
         renamed_array = expr.array.accept_visitor(self)
         renamed_idx = expr.lower_index.accept_visitor(self) if expr.index else None
@@ -2179,7 +2249,9 @@ class _TableReferenceRenamer(
             upper_index=renamed_upper,
         )
 
-    def visit_predicate_expr(self, expr: AbstractPredicate) -> AbstractPredicate:
+    def visit_predicate_expr(
+        self, expr: AbstractPredicate, *args, **kwargs
+    ) -> AbstractPredicate:
         return expr.accept_visitor(self)
 
     def _rename_table_source(self, source: TableSource) -> JoinTableSource:
@@ -2242,7 +2314,7 @@ class _TableReferenceRenamer(
 
     def _rename_column(self, column: ColumnReference) -> ColumnReference:
         """Helper method to rename a specific column reference."""
-        if not column.is_bound():
+        if not ColumnReference.assert_bound(column):
             return column
 
         target_table = self._renamings.get(column.table)
@@ -2297,3 +2369,30 @@ def rename_table(
     renamed_clauses = renamed_cols.accept_visitor(tab_renamer)
 
     return build_query(renamed_clauses.values())
+
+
+def merge_tables(
+    query: SelectQueryType, tables: Iterable[TableReference], *, target: TableReference
+) -> SelectQueryType:
+    """Rewrites a query to replace all references to any of the given tables by references to a single target table.
+
+    This is useful, for example, for mat view scenarios where queries should re-written after a materialized view has been
+    created over a specific join.
+
+    Examples
+    --------
+    >>> stats = pb.workloads.stats()
+    >>> posts = pb.TableReference("posts", "p")
+    >>> comments = pb.TableReference("comments", "c")
+    >>> mat_view = pb.TableReference("post_comments", "pc")
+    >>> pb.transform.merge_tables(stats["q-10"], [posts, comments], target=mat_view)
+    """
+
+    tables = set(tables)
+    cols_to_rename = {
+        col: col.bind_to(target) for col in query.columns() if col.table in tables
+    }
+    merged = rename_columns_in_query(query, cols_to_rename)
+    for tab in tables:
+        merged = rename_table(merged, from_table=tab, target_table=target)
+    return merged
