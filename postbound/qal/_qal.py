@@ -2585,7 +2585,7 @@ class BinaryPredicate(BasePredicate):
         *args,
         **kwargs,
     ) -> VisitorResult:
-        if isinstance(visitor, SqlExpressionVisitor):
+        if _safe_recurse_expression_visitor(visitor):
             return visitor.visit_predicate_expr(self, *args, **kwargs)
         return visitor.visit_binary_predicate(self, *args, **kwargs)
 
@@ -2748,7 +2748,7 @@ class BetweenPredicate(BasePredicate):
         *args,
         **kwargs,
     ) -> VisitorResult:
-        if isinstance(visitor, SqlExpressionVisitor):
+        if _safe_recurse_expression_visitor(visitor):
             return visitor.visit_predicate_expr(self, *args, **kwargs)
         return visitor.visit_between_predicate(self, *args, **kwargs)
 
@@ -2913,7 +2913,7 @@ class InPredicate(BasePredicate):
         *args,
         **kwargs,
     ) -> VisitorResult:
-        if isinstance(visitor, SqlExpressionVisitor):
+        if _safe_recurse_expression_visitor(visitor):
             return visitor.visit_predicate_expr(self, *args, **kwargs)
         return visitor.visit_in_predicate(self, *args, **kwargs)
 
@@ -3040,7 +3040,7 @@ class UnaryPredicate(BasePredicate):
         *args,
         **kwargs,
     ) -> VisitorResult:
-        if isinstance(visitor, SqlExpressionVisitor):
+        if _safe_recurse_expression_visitor(visitor):
             return visitor.visit_predicate_expr(self, *args, **kwargs)
         return visitor.visit_unary_predicate(self, *args, **kwargs)
 
@@ -3309,7 +3309,7 @@ class CompoundPredicate(AbstractPredicate):
         *args,
         **kwargs,
     ) -> VisitorResult:
-        if isinstance(visitor, SqlExpressionVisitor):
+        if _safe_recurse_expression_visitor(visitor):
             return visitor.visit_predicate_expr(self, *args, **kwargs)
 
         match self.operation:
@@ -3433,6 +3433,13 @@ class PredicateVisitor(abc.ABC, Generic[VisitorResult]):
         **kwargs,
     ) -> VisitorResult:
         raise NotImplementedError
+
+
+def _safe_recurse_expression_visitor(visitor) -> bool:
+    return (  #
+        isinstance(visitor, SqlExpressionVisitor)  #
+        and not isinstance(visitor, PredicateVisitor)  #
+    )
 
 
 @overload
@@ -3890,7 +3897,7 @@ class SimpleFilter(AbstractPredicate):
         *args,
         **kwargs,
     ) -> VisitorResult:
-        if isinstance(visitor, SqlExpressionVisitor):
+        if _safe_recurse_expression_visitor(visitor):
             return visitor.visit_predicate_expr(self, *args, **kwargs)
         return self._predicate.accept_visitor(visitor, *args, **kwargs)
 
@@ -4124,7 +4131,7 @@ class SimpleJoin(AbstractPredicate):
         *args,
         **kwargs,
     ) -> VisitorResult:
-        if isinstance(visitor, SqlExpressionVisitor):
+        if _safe_recurse_expression_visitor(visitor):
             return visitor.visit_predicate_expr(self, *args, **kwargs)
         return self._predicate.accept_visitor(visitor, *args, **kwargs)
 
@@ -6199,6 +6206,10 @@ class DirectTableSource(TableSource):
             The table.
         """
         return self._table
+
+    def identifier(self) -> str:
+        """Get the table's identifier."""
+        return self._table.identifier()
 
     def tables(self) -> set[TableReference]:
         return {self._table}

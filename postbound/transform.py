@@ -870,9 +870,7 @@ drop_clause
 """
 
 
-def drop_clause(
-    query: SelectQueryType, clauses_to_drop: ClauseDescription
-) -> SelectQueryType:
+def drop_clause[T: SelectStatement](query: T, clauses_to_drop: ClauseDescription) -> T:
     """Removes specific clauses from a query.
 
     The clauses can be denoted in two different ways: either as the raw type of the clause, or as an instance of the same
@@ -1335,9 +1333,9 @@ def replace_predicate(
     return replace_clause(query, [clause for clause in candidate_clauses if clause])
 
 
-def rename_columns_in_query(
-    query: SelectQueryType, available_renamings: dict[ColumnReference, ColumnReference]
-) -> SelectQueryType:
+def rename_columns_in_query[T: SelectStatement](
+    query: T, available_renamings: dict[ColumnReference, ColumnReference]
+) -> T:
     """Replaces specific column references by new references for an entire query.
 
     Parameters
@@ -1947,19 +1945,12 @@ class _TableReferenceRenamer(
 
     def __init__(
         self,
-        renamings: Optional[dict[TableReference, TableReference]] = None,
-        *,
-        source_table: Optional[TableReference] = None,
-        target_table: Optional[TableReference] = None,
+        renamings: dict[TableReference, TableReference],
     ) -> None:
-        if renamings is not None:
-            self._renamings = renamings
-
-        if source_table is None or target_table is None:
-            raise ValueError(
-                "Both source_table and target_table must be provided if renamings are not given explicitly"
-            )
-        self._renamings = {source_table: target_table}
+        self._renamings = renamings
+        self._renaming_targets = set(
+            tab.identifier() for tab in self._renamings.values()
+        )
 
     def visit_hint_clause(self, clause: Hint, *args, **kwargs) -> Hint:
         return clause
@@ -1993,16 +1984,43 @@ class _TableReferenceRenamer(
         return Select(projections, distinct=clause.distinct_specifier())
 
     def visit_from_clause(self, clause: From, *args, **kwargs) -> From:
+        used_identifieres = set(tab.identifier() for tab in clause.tables())
+        intersect = used_identifieres & self._renaming_targets
         match clause:
             case ImplicitFromClause(tables):
                 renamed_tables = [self._rename_table_source(src) for src in tables]
-                return ImplicitFromClause.create_for(renamed_tables)
+                if not intersect:
+                    return ImplicitFromClause(renamed_tables)
+
+                separate_tables = used_identifieres - intersect
+                final_tables: list[DirectTableSource] = []
+                for tab in renamed_tables:
+                    if tab.identifier() in separate_tables:
+                        final_tables.append(tab)
+                        continue
+                    if tab.identifier() not in intersect:
+                        continue
+                    final_tables.append(tab)
+                    intersect.remove(tab.identifier())
+                return ImplicitFromClause(final_tables)
 
             case ExplicitFromClause(join):
+                if intersect:
+                    raise ValueError(
+                        "Cannot rename explicit JOINs: "
+                        f"Renaming targets {intersect} is already present in the query. "
+                        "This is currently not supported."
+                    )
                 renamed_join = self._rename_table_source(join)
                 return ExplicitFromClause(renamed_join)
 
             case From(items):
+                if intersect:
+                    raise ValueError(
+                        "Cannot rename explicit JOINs: "
+                        f"Renaming targets {intersect} is already present in the query. "
+                        "This is currently not supported."
+                    )
                 renamed_items = [self._rename_table_source(item) for item in items]
                 return From(renamed_items)
 
@@ -2254,7 +2272,7 @@ class _TableReferenceRenamer(
     ) -> AbstractPredicate:
         return expr.accept_visitor(self)
 
-    def _rename_table_source(self, source: TableSource) -> JoinTableSource:
+    def _rename_table_source[T: TableSource](self, source: T) -> T:
         """Helper method to traverse and rename (the contents of) an arbitrary *FROM* item."""
         match source:
             case DirectTableSource(tab):
@@ -2321,13 +2339,32 @@ class _TableReferenceRenamer(
         return column.bind_to(target_table) if target_table else column
 
 
-def rename_table(
-    source_query: SelectQueryType,
+@overload
+def rename_table[T: SelectStatement](
+    source_query: T,
+    renamings: dict[TableReference, TableReference],
+    *,
+    prefix_column_names: bool = False,
+) -> T: ...
+
+
+@overload
+def rename_table[T: SelectStatement](
+    source_query: T,
     from_table: TableReference,
     target_table: TableReference,
     *,
     prefix_column_names: bool = False,
-) -> SelectQueryType:
+) -> T: ...
+
+
+def rename_table[T: SelectStatement](
+    source_query: T,
+    from_table: TableReference | dict[TableReference, TableReference],
+    target_table: TableReference | None = None,
+    *,
+    prefix_column_names: bool = False,
+) -> T:
     """Changes all references to a specific table to refer to another table instead.
 
     Parameters
@@ -2349,11 +2386,21 @@ def rename_table(
     SelectQueryType
         The updated query
     """
+    if isinstance(from_table, TableReference) and target_table is None:
+        raise ValueError(
+            "Renamings must be specified as a dict, or both from_table and target_table must be set!"
+        )
+    elif isinstance(from_table, TableReference):
+        renamings = {from_table: target_table}
+    else:
+        renamings = from_table
+
+    tabs_to_rename = set(tab for tab in renamings.keys())
 
     # Despite the convenient _TableReferenceRenamer, we still need to do a little bit of manual gathering/traversal to support
     # column prefixes.
     necessary_renamings: dict[ColumnReference, ColumnReference] = {}
-    for column in filter(lambda col: col.table == from_table, source_query.columns()):
+    for column in filter(lambda c: c.table in tabs_to_rename, source_query.columns()):
         new_column_name = (
             f"{column.table.identifier()}_{column.name}"
             if prefix_column_names
@@ -2363,17 +2410,15 @@ def rename_table(
 
     renamed_cols = rename_columns_in_query(source_query, necessary_renamings)
 
-    tab_renamer = _TableReferenceRenamer(
-        source_table=from_table, target_table=target_table
-    )
+    tab_renamer = _TableReferenceRenamer(renamings)
     renamed_clauses = renamed_cols.accept_visitor(tab_renamer)
 
     return build_query(renamed_clauses.values())
 
 
-def merge_tables(
-    query: SelectQueryType, tables: Iterable[TableReference], *, target: TableReference
-) -> SelectQueryType:
+def merge_tables[T: SelectStatement](
+    query: T, tables: Iterable[TableReference], *, target: TableReference
+) -> T:
     """Rewrites a query to replace all references to any of the given tables by references to a single target table.
 
     This is useful, for example, for mat view scenarios where queries should re-written after a materialized view has been
@@ -2388,8 +2433,12 @@ def merge_tables(
     >>> pb.transform.merge_tables(stats["q-10"], [posts, comments], target=mat_view)
     """
 
+    # The issue of merging tables is a bit more complicated than just calling rename_tables()
+    # because we also need to update the FROM clause to not contain any duplicate entries after
+    # the fact. Therefore, we perform the required steps manually here.
+
     tables = set(tables)
-    cols_to_rename = {
+    cols_to_rename: dict[ColumnReference, ColumnReference] = {
         col: col.bind_to(target) for col in query.columns() if col.table in tables
     }
     merged = rename_columns_in_query(query, cols_to_rename)
