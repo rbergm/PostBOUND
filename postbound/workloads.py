@@ -23,6 +23,7 @@ References
 from __future__ import annotations
 
 import random
+import shutil
 import typing
 import urllib.request
 import warnings
@@ -42,12 +43,12 @@ from .db import DatabasePool
 from .qal import SqlQuery
 
 _WorkloadSources = {
-    "job": "https://db4701.inf.tu-dresden.de:8443/public.php/dav/files/qQEBsM2Zx4x9BBW",
-    "job-complex": "https://db4701.inf.tu-dresden.de:8443/public.php/dav/files/MBFejJXSdHbnoix",
-    "job-light": "https://db4701.inf.tu-dresden.de:8443/public.php/dav/files/q4b9Mq6C485CnXw",
-    "ssb": "https://db4701.inf.tu-dresden.de:8443/public.php/dav/files/iXD5p3J5q6DwdbQ",
-    "stack": "https://db4701.inf.tu-dresden.de:8443/public.php/dav/files/AQgxPe9KrNGJ5nT",
-    "stats": "https://db4701.inf.tu-dresden.de:8443/public.php/dav/files/STTdpKR3LB5ojt3",
+    "job": "https://zenodo.org/records/19205561/files/job.zip?download=1",
+    "job-complex": "https://zenodo.org/records/19205561/files/job-complex.zip?download=1",
+    "job-light": "https://zenodo.org/records/19205561/files/job-light.zip?download=1",
+    # "ssb": "https://db4701.inf.tu-dresden.de:8443/public.php/dav/files/iXD5p3J5q6DwdbQ",
+    "stack": "https://datashare.tu-dresden.de/public.php/dav/files/JSaFxzzGHGABbxY",
+    "stats": "https://zenodo.org/records/19131189/files/queries.zip?download=1",
 }
 
 
@@ -61,13 +62,21 @@ def _fetch_workload(name: str) -> Path:
 
     archive_url = _WorkloadSources.get(name)
     if not archive_url:
-        raise ValueError(f"No known source for workload '{name}'")
+        raise ValueError(
+            f"Could not automatically load queries for workload '{name}': no known data source. "
+            f"Please insert the queries manually at {workload_dir} and re-run the operation."
+        )
 
     archive_file = workload_dir.parent / f"{name}.zip"
     urllib.request.urlretrieve(archive_url, archive_file)
 
     with zipfile.ZipFile(archive_file, "r") as zip:
         zip.extractall(workload_dir)
+
+    temp_dir = workload_dir / name
+    for file in temp_dir.iterdir():
+        shutil.move(file, workload_dir)
+    temp_dir.rmdir()
 
     archive_file.unlink()
     return workload_dir
@@ -970,7 +979,7 @@ def job(
 
 
 def job_light(*, file_encoding: str = "utf-8") -> Workload[str]:
-    """Reads the JOB-light benchmark, with numeric query labels (1, 2, 3, ...).
+    """Reads the JOB-light benchmark, with numeric query labels (q-1, q-2, q-3, ...).
 
     Parameters
     ----------
@@ -997,7 +1006,7 @@ def job_light(*, file_encoding: str = "utf-8") -> Workload[str]:
 
 
 def job_complex(*, file_encoding: str = "utf-8") -> Workload[str]:
-    """Reads the JOB-complex benchmark, with numeric query labels (1, 2, 3, ...).
+    """Reads the JOB-complex benchmark, with numeric query labels (q-1, q-2, q-3, ...).
 
     Parameters
     ----------

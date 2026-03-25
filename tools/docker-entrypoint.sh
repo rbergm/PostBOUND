@@ -110,12 +110,12 @@ if [ -z "$(ls /postbound)" ] ; then
     if [ "$SETUP_DUCKDB" = "true" -a "$SETUP_IMDB" = "true" ] ; then
         echo "[setup] Setting up IMDB benchmark for DuckDB"
         cd /postbound/db-support/duckdb
-        python3 ./workload-setup.py --workload imdb
+        ./workload-imdb-setup.sh
     fi
     if [ "$SETUP_DUCKDB" = "true" -a "$SETUP_STATS" = "true" ] ; then
         echo "[setup] Setting up Stats benchmark for DuckDB"
         cd /postbound/db-support/duckdb
-        python3 ./workload-setup.py --workload stats
+        ./workload-stats-setup.sh
     fi
     mv /postbound/db-support/duckdb/*.duckdb /postbound
 

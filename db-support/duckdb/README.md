@@ -35,5 +35,5 @@ automatically created at `.venv` in the current directory. Use `--help` to see a
 
 ## Databases
 
-You can create instances of popular databases (currently JOB/IMDB and Stats) using the `workload-setup.py` script.
+You can create instances of popular databases (currently JOB/IMDB and Stats) using the `workload-XYZ-setup.sh` scripts.
 Use `--help` to see all available options.

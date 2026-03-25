@@ -25,8 +25,8 @@ The [history](HISTORY.md) contains the changelogs of older PostBOUND releases.
   Currently supported are: CSV, Parquet, JSON, HDF
 - Workloads now support transformations of their queries, e.g. `workload.map(pb.transform.as_star_query)`
 - Added a `fetch_workload()` function to the workloads module. It allows to load a pre-defined workload by name.
-- Added a `n_buffered()` and `buffer_state()` methods to the Postgres statistics interface to retrieve the number of currently
-  buffered pages of a relation.
+- Added a `n_buffered()` and `buffer_state()` methods to the Postgres statistics interface to retrieve the number of
+  currently buffered pages of a relation.
 - Added an additional `BoundColumnReference` core type. Instances guarantee to be bound to a `TableReference`.
   The new `assert_bound()` serves as a type guard to narrow references. This should prevent constant checks for valid
   table references on columns.
@@ -56,8 +56,8 @@ pg_instance.execute_query(hinted_query)
  ```
 - The Postgres interface now has a `rollback()` method to put connections back into a valid state.
 - The Postgres statistics interface now consistently supports table references with a schema.
-- Much improved handling of database schemas during query parsing. We now omit clear warnings in case the database pool is
-  is weird.
+- Much improved handling of database schemas during query parsing. We now omit clear warnings in case the database pool
+  looks weird.
 - The `QueryPreparation` API now provides the `projection` and `output` parameters to modify the *SELECT* clause and the
   type of results to gather for all queries in a more flexible and intuitive way (how did *explain=True*  and
   *analyze=True* interact?).
@@ -72,8 +72,8 @@ pg_instance.execute_query(hinted_query)
 - Expose `argmax()` directly in _util_ module
 
 ## 🏥 Fixes
-- Fixed `n_buffered()` method of the Postgres statistics interface raising an error if no pages of the relation are currently
-  buffered. We now return 0 in this case.
+- Fixed `n_buffered()` method of the Postgres statistics interface raising an error if no pages of the relation are
+  currently buffered. We now return 0 in this case.
 - Fixed string representation of `COUNT(DISTINCT ...)` for multiple arguments. We now generate the correct
   `COUNT(DISTINCT (a, b))` instead of `COUNT(DISTINCT a, b)`.
 - Fixed `DatabaseSchema.as_graph()` having the assignment of primary key and foreign key columns reversed on join edges.
@@ -81,6 +81,16 @@ pg_instance.execute_query(hinted_query)
   such entries being escaped twice.
 - Fixed the `standard_logger` sometimes logging internal module names.
 - Fixed parser for column JSON
+- Updated all database setup scripts for Postgres and DuckDB. Since our data server that hosted the raw input data
+  crashed once again and broke all download links, we now moved the entire setup to Zenodo. Hopefully, this setup is
+  more stable. There are several practical implications of this change:
+  1. Instead of distributing raw CSV data, we now provide pre-build database images for Postgres and DuckDB. This should
+     lower the setup time significantly
+  2. The JOB-complex and JOB-light workloads now use a different indexing scheme. Instead of queries 1, 2, 3, ... we now
+     label them similar to Stats, i.e. q-1, q-2, ...
+  3. The DuckDB workload-setup.py script was removed - as a consequence of 1., we no longer need to create the database
+     files, but distribute them directly.
+  4. The SSB queries can currently not be loaded from the workloads module.
 
 ## 💀 Breaking changes
 - _None_
@@ -92,6 +102,8 @@ pg_instance.execute_query(hinted_query)
 ## 🪲 Known bugs
 - The automatic optimization of the Postgres server configuration as part of the Docker installation does not work
   on MacOS. Currently, this should be considered as wontfix.
+- The SSB queries can currently not be loaded from the workloads module. The underlying data server crashed and we are
+  currently exploring alternative, more reliable solutions.
 
 ---
 
