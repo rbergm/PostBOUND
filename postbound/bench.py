@@ -41,6 +41,7 @@ from .db import (
     simplify_result_set,
 )
 from .qal import SqlQuery
+from .train import TrainingData, TrainingDataRepository
 from .util.jsonize import Jsonizable
 from .workloads import Workload, generate_workload
 
@@ -785,7 +786,7 @@ class _ResultSample:
 
             sample = ExecutionResult(
                 query=self.query,
-                status=status,  # type: ignore[list-item]
+                status=status,
                 query_result=self.result_sets[i],
                 optimization_time=self.optimization_time,
                 execution_time=self.exec_times[i],
@@ -999,13 +1000,13 @@ def _workload_ctl_loop(
 
         if (pipeline := cfg.optimizer) is None:
             continue
-        if not pipeline.requires_online_learning():
+        if not pipeline.requires_online_training():
             continue
 
         for exec_result in sample.to_execution_results():
             assert exec_result.query_result is not None
             exec_time = 1000 * exec_result.execution_time
-            pipeline.learn_from_sample(
+            pipeline.learn_from_feedback(
                 query, exec_result.query_result, exec_time=exec_time
             )
 
@@ -1019,6 +1020,7 @@ def execute_workload(
     per_query_repetitions: int = 1,
     shuffled: bool = False,
     query_preparation: Optional[QueryPreparation | dict[str, Any]] = None,
+    training_data: Optional[TrainingData, TrainingDataRepository] = None,
     timeout: Optional[float] = None,
     exec_callback: Optional[Callable[[ExecutionResult], None]] = None,
     repetition_callback: Optional[Callable[[int], None]] = None,
@@ -1131,13 +1133,27 @@ def execute_workload(
     target_db = on if isinstance(on, Database) else on.target_database()
     optimizer = on if isinstance(on, OptimizationPipeline) else None
 
-    if optimizer is not None and optimizer.requires_data_learning():
+    if optimizer is not None and optimizer.requires_data_training():
         optimizer.train_on_database(target_db)
-    if optimizer is not None and optimizer.requires_workload_learning():
-        optimizer.train_on_workload(queries)
+    if optimizer is not None and optimizer.requires_workload_training():
+        optimizer.train_on_workload(queries, target_db)
+    if optimizer is not None and optimizer.requires_sample_training():
+        missing_training_data = training_data is None
+        fit_completed = optimizer.sample_fit_completed()
+        if missing_training_data and not fit_completed:
+            raise ValueError(
+                "Some optimization stages still need training data. "
+                "Make sure to supply applicable samples via the training_data parameter!"
+            )
+        elif not missing_training_data:
+            optimizer.train_on_samples(training_data)  # type: ignore
+        else:
+            # We have not received any training data, but the optimizer is also already trained.
+            # Everything is in order.
+            pass
 
     query_preparation = (
-        QueryPreparation(**query_preparation)  # type: ignore[call-arg]
+        QueryPreparation(**query_preparation)  # type: ignore
         if isinstance(query_preparation, dict)
         else query_preparation
     )

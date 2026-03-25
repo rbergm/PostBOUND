@@ -2,12 +2,8 @@ from __future__ import annotations
 
 import abc
 import math
-from collections.abc import Generator, Iterable, Sequence
-from dataclasses import dataclass
-from pathlib import Path
-from typing import Literal, Optional, Protocol, get_args, runtime_checkable
-
-import pandas as pd
+from collections.abc import Generator, Iterable
+from typing import Optional, Type
 
 from . import util
 from ._core import Cardinality, Cost, TableReference, TimeMs
@@ -15,19 +11,182 @@ from ._hints import JoinTree, PhysicalOperatorAssignment, PlanParameterization
 from ._qep import QueryPlan
 from .db import Database, DatabasePool, ResultSet
 from .qal import SqlQuery
+from .train import TrainingData, TrainingMetrics, TrainingSpec
 from .util.jsonize import jsondict
-from .validation import CrossProductPreCheck, EmptyPreCheck, OptimizationPreCheck
+from .validation import EmptyPreCheck, OptimizationPreCheck
 from .workloads import Workload
 
 
-class CompleteOptimizationAlgorithm(abc.ABC):
+def _missing_method_impls(
+    child_cls: Type, base_cls: Type, *, methods: list[str]
+) -> list[str]:
+    missing: list[str] = []
+    for meth in methods:
+        if getattr(child_cls, meth, None) != getattr(base_cls, meth, None):
+            continue
+        missing.append(meth)
+
+    if len(missing) == len(methods):
+        # all are missing - estimator does not implement this component
+        return []
+    return missing
+
+
+class OptimizationStage:
+    def __new__(cls, *args, **kwargs):
+        missing = _missing_method_impls(
+            cls, OptimizationStage, methods=["fit_database", "database_fit_completed"]
+        )
+        if missing:
+            raise NotImplementedError(
+                f"Optimization stage '{cls.__name__}' needs to implement all methods for "
+                f"data-based training, but is currently lacking an implementation for {missing}"
+            )
+
+        missing = _missing_method_impls(
+            cls, OptimizationStage, methods=["fit_workload", "workload_fit_completed"]
+        )
+        if missing:
+            raise NotImplementedError(
+                f"Optimization stage '{cls.__name__}' needs to implement all methods for "
+                f"workload-based training, but is currently lacking an implementation for {missing}"
+            )
+
+        missing = _missing_method_impls(
+            cls,
+            OptimizationStage,
+            methods=["fit_samples", "sample_spec", "sample_fit_completed"],
+        )
+        if missing:
+            raise NotImplementedError(
+                f"Optimization stage '{cls.__name__}' needs to implement all methods for "
+                f"sample-based training, but is currently lacking an implementation for {missing}"
+            )
+
+        missing = _missing_method_impls(
+            cls,
+            OptimizationStage,
+            methods=["learn_from_feedback", "uses_online_learning"],
+        )
+        if missing:
+            raise NotImplementedError(
+                f"Optimization stage '{cls.__name__}' needs to implement all methods for "
+                f"online training, but is currently lacking an implementation for {missing}"
+            )
+
+        return super().__new__(cls, *args, **kwargs)
+
+    def __init__(self, name: str = "") -> None:
+        self.name = name if name else type(self).__name__
+
+    def fit_database(self, database: Database) -> TrainingMetrics:
+        raise NotImplementedError(
+            f"OptimizationStage {self.name} does not learn from the database"
+        )
+
+    def database_fit_completed(self) -> bool:
+        raise NotImplementedError(
+            f"OptimizationStage {self.name} does not learn from the database"
+        )
+
+    @classmethod
+    def requires_data_training(cls) -> bool:
+        return getattr(cls, "fit_database", None) != OptimizationStage.fit_database
+
+    def fit_workload(self, queries: Workload, database: Database) -> TrainingMetrics:
+        raise NotImplementedError(
+            f"OptimizationStage {self.name} does not learn from workloads"
+        )
+
+    def workload_fit_completed(self) -> bool:
+        raise NotImplementedError(
+            f"OptimizationStage {self.name} does not learn from workloads"
+        )
+
+    @classmethod
+    def requires_workload_training(cls) -> bool:
+        return getattr(cls, "fit_workload", None) != OptimizationStage.fit_workload
+
+    def fit_samples(self, samples: TrainingData) -> TrainingMetrics:
+        raise NotImplementedError(
+            f"OptimizationStage {self.name} does not require training samples"
+        )
+
+    def sample_spec(self) -> TrainingSpec:
+        raise NotImplementedError(
+            f"OptimizationStage {self.name} does not require training samples"
+        )
+
+    def sample_fit_completed(self) -> bool:
+        raise NotImplementedError(
+            f"OptimizationStage {self.name} does not require training samples"
+        )
+
+    @classmethod
+    def requires_sample_training(cls) -> bool:
+        return getattr(cls, "fit_samples", None) != OptimizationStage.fit_samples
+
+    def learn_from_feedback(
+        self, query: SqlQuery, result_set: ResultSet, *, exec_time: TimeMs
+    ) -> TrainingMetrics:
+        raise NotImplementedError(
+            f"OptimizationStage {self.name} does not learn online"
+        )
+
+    @classmethod
+    def uses_online_feedback(cls) -> bool:
+        return (
+            getattr(cls, "learn_from_feedback", None)
+            != OptimizationStage.learn_from_feedback
+        )
+
+    def pre_check(self) -> OptimizationPreCheck:
+        """Provides requirements that input query or database system have to satisfy for the optimizer to work properly.
+
+        Returns
+        -------
+        OptimizationPreCheck
+            The check instance. Can be an empty check if no specific requirements exist.
+        """
+        return EmptyPreCheck()
+
+    def describe(self) -> jsondict:
+        """Provides a JSON-serializable representation of the specific strategy, as well as important parameters.
+
+        Returns
+        -------
+        jsondict
+            The description
+
+        See Also
+        --------
+        OptimizationPipeline.describe
+        """
+        return {"name": type(self).__name__}
+
+    def __repr__(self) -> str:
+        return str(self)
+
+    def __str__(self) -> str:
+        return type(self).__name__
+
+
+class CompleteOptimizationAlgorithm(OptimizationStage, abc.ABC):
     """Constructs an entire query plan for an input query in one integrated optimization process.
 
     This stage closely models the behaviour of traditional optimization algorithms, e.g. based on dynamic programming.
     Implement the `optimize_query` method to provide the actual optimization logic.
     The `describe` and `pre_check` methods should be overridden to provide metadata about the specific algorithm for
     benchmarking and to ensure that the input query and database system are compatible with the algorithm.
+
+    Notes
+    -----
+    When implementing this class, make sure to call *super().__init__* to ensure that all of the
+    internal data is set up properly.
     """
+
+    def __init__(self) -> None:
+        super().__init__()
 
     @abc.abstractmethod
     def optimize_query(self, query: SqlQuery) -> QueryPlan:
@@ -45,38 +204,8 @@ class CompleteOptimizationAlgorithm(abc.ABC):
         """
         raise NotImplementedError
 
-    def describe(self) -> jsondict:
-        """Provides a JSON-serializable representation of the specific strategy, as well as important parameters.
 
-        Returns
-        -------
-        jsondict
-            The description
-
-        See Also
-        --------
-        OptimizationPipeline.describe
-        """
-        return {"name": type(self).__name__}
-
-    def pre_check(self) -> OptimizationPreCheck:
-        """Provides requirements that input query or database system have to satisfy for the optimizer to work properly.
-
-        Returns
-        -------
-        OptimizationPreCheck
-            The check instance. Can be an empty check if no specific requirements exist.
-        """
-        return EmptyPreCheck()
-
-    def __repr__(self) -> str:
-        return str(self)
-
-    def __str__(self) -> str:
-        return type(self).__name__
-
-
-class JoinOrderOptimization(abc.ABC):
+class JoinOrderOptimization(OptimizationStage, abc.ABC):
     """The join order optimization generates a complete join order for an input query.
 
     This is the first step in a multi-stage optimizer design.
@@ -84,10 +213,19 @@ class JoinOrderOptimization(abc.ABC):
     The `describe` and `pre_check` methods should be overridden to provide metadata about the specific algorithm for
     benchmarking and to ensure that the input query and database system are compatible with the algorithm.
 
+    Notes
+    -----
+    When implementing this class, make sure to call *super().__init__* to ensure that all of the
+    internal data is set up properly.
+
+
     See Also
     --------
     postbound.MultiStageOptimizationPipeline
     """
+
+    def __init__(self) -> None:
+        super().__init__()
 
     @abc.abstractmethod
     def optimize_join_order(self, query: SqlQuery) -> Optional[JoinTree]:
@@ -115,36 +253,6 @@ class JoinOrderOptimization(abc.ABC):
         """
         raise NotImplementedError
 
-    def describe(self) -> jsondict:
-        """Provides a JSON-serializable representation of the specific strategy, as well as important parameters.
-
-        Returns
-        -------
-        jsondict
-            The description
-
-        See Also
-        --------
-        OptimizationPipeline.describe
-        """
-        return {"name": type(self).__name__}
-
-    def pre_check(self) -> OptimizationPreCheck:
-        """Provides requirements that input query or database system have to satisfy for the optimizer to work properly.
-
-        Returns
-        -------
-        OptimizationPreCheck
-            The check instance. Can be an empty check if no specific requirements exist.
-        """
-        return EmptyPreCheck()
-
-    def __repr__(self) -> str:
-        return str(self)
-
-    def __str__(self) -> str:
-        return type(self).__name__
-
 
 class JoinOrderOptimizationError(RuntimeError):
     """Error to indicate that something went wrong while optimizing the join order.
@@ -166,7 +274,7 @@ class JoinOrderOptimizationError(RuntimeError):
         self.query = query
 
 
-class PhysicalOperatorSelection(abc.ABC):
+class PhysicalOperatorSelection(OptimizationStage, abc.ABC):
     """The physical operator selection assigns scan and join operators to the tables of the input query.
 
     This is the second stage in the two-phase optimization process, and takes place after the join order has been
@@ -175,11 +283,19 @@ class PhysicalOperatorSelection(abc.ABC):
     The `describe` and `pre_check` methods should be overridden to provide metadata about the specific algorithm for
     benchmarking and to ensure that the input query and database system are compatible with the algorithm.
 
+    Notes
+    -----
+    When implementing this class, make sure to call *super().__init__* to ensure that all of the
+    internal data is set up properly.
+
 
     See Also
     --------
     postbound.MultiStageOptimizationPipeline
     """
+
+    def __init__(self) -> None:
+        super().__init__()
 
     @abc.abstractmethod
     def select_physical_operators(
@@ -209,38 +325,8 @@ class PhysicalOperatorSelection(abc.ABC):
         """
         raise NotImplementedError
 
-    def describe(self) -> jsondict:
-        """Provides a JSON-serializable representation of the specific strategy, as well as important parameters.
 
-        Returns
-        -------
-        jsondict
-            The description
-
-        See Also
-        --------
-        OptimizationPipeline.describe
-        """
-        return {"name": type(self).__name__}
-
-    def pre_check(self) -> OptimizationPreCheck:
-        """Provides requirements that input query or database system have to satisfy for the optimizer to work properly.
-
-        Returns
-        -------
-        OptimizationPreCheck
-            The check instance. Can be an empty check if no specific requirements exist.
-        """
-        return EmptyPreCheck()
-
-    def __repr__(self) -> str:
-        return str(self)
-
-    def __str__(self) -> str:
-        return type(self).__name__
-
-
-class ParameterGeneration(abc.ABC):
+class ParameterGeneration(OptimizationStage, abc.ABC):
     """The parameter generation assigns additional metadata to a query plan.
 
     Such parameters do not influence the previous choice of join order and physical operators directly, but affect their
@@ -249,10 +335,19 @@ class ParameterGeneration(abc.ABC):
     The `describe` and `pre_check` methods should be overridden to provide metadata about the specific algorithm for
     benchmarking and to ensure that the input query and database system are compatible with the algorithm.
 
+    Notes
+    -----
+    When implementing this class, make sure to call *super().__init__* to ensure that all of the
+    internal data is set up properly.
+
+
     See Also
     --------
     postbound.MultiStageOptimizationPipeline
     """
+
+    def __init__(self) -> None:
+        super().__init__()
 
     @abc.abstractmethod
     def generate_plan_parameters(
@@ -289,36 +384,6 @@ class ParameterGeneration(abc.ABC):
           assignment matters, not any assignment contained in the join order)
         """
         raise NotImplementedError
-
-    def describe(self) -> jsondict:
-        """Provides a JSON-serializable representation of the specific strategy, as well as important parameters.
-
-        Returns
-        -------
-        jsondict
-            The description
-
-        See Also
-        --------
-        OptimizationPipeline.describe
-        """
-        return {"name": type(self).__name__}
-
-    def pre_check(self) -> OptimizationPreCheck:
-        """Provides requirements that input query or database system have to satisfy for the optimizer to work properly.
-
-        Returns
-        -------
-        OptimizationPreCheck
-            The check instance. Can be an empty check if no specific requirements exist.
-        """
-        return EmptyPreCheck()
-
-    def __repr__(self) -> str:
-        return str(self)
-
-    def __str__(self) -> str:
-        return type(self).__name__
 
 
 class CardinalityEstimator(ParameterGeneration, abc.ABC):
@@ -359,13 +424,15 @@ class CardinalityEstimator(ParameterGeneration, abc.ABC):
     allow cross products at all stages (by passing ``allow_cross_products=True`` during instantiation), or to disallow them
     entirely. Therefore, the `calculate_estimate` method should act accordingly. Implementations of this class should pass
     the appropriate parameter value to the super *__init__* method. If they support both scenarios, the parameter can also
-    be exposed to the client.
+    be exposed to the client. In either case, make sure to call *super().__init__* to ensure that all of the internal data
+    is set up properly.
     """
 
     def __init__(self, *, allow_cross_products: bool = False) -> None:
+        super().__init__()
         self.allow_cross_products = allow_cross_products
-        self.target_db: Database = None  # type: ignore[assignment]
-        self.query: SqlQuery = None  # type: ignore[assignment]
+        self.target_db: Database = None  # type: ignore
+        self.query: SqlQuery = None  # type: ignore
 
     @abc.abstractmethod
     def calculate_estimate(
@@ -387,20 +454,6 @@ class CardinalityEstimator(ParameterGeneration, abc.ABC):
             The estimated cardinality of the specific intermediate
         """
         raise NotImplementedError
-
-    def describe(self) -> jsondict:
-        """Provides a JSON-serializable representation of the specific estimator, as well as important parameters.
-
-        Returns
-        -------
-        jsondict
-            The description
-
-        See Also
-        --------
-        OptimizationPipeline.describe
-        """
-        return {"name": type(self).__name__}
 
     def initialize(self, target_db: Database, query: SqlQuery) -> None:
         """Hook method that is called before the actual optimization process starts.
@@ -426,8 +479,8 @@ class CardinalityEstimator(ParameterGeneration, abc.ABC):
 
         The default implementation removes the references to the target database and query.
         """
-        self.target_db = None  # type: ignore[assignment]
-        self.query = None  # type: ignore[assignment]
+        self.target_db = None  # type: ignore
+        self.query = None  # type: ignore
 
     def generate_intermediates(
         self, query: SqlQuery
@@ -503,26 +556,8 @@ class CardinalityEstimator(ParameterGeneration, abc.ABC):
 
         return parameterization
 
-    def pre_check(self) -> OptimizationPreCheck:
-        """Provides requirements that input query or database system have to satisfy for the optimizer to work properly.
 
-        Returns
-        -------
-        OptimizationPreCheck
-            The check instance. Can be an empty check if no specific requirements exist.
-        """
-        if self.allow_cross_products:
-            return CrossProductPreCheck()
-        return EmptyPreCheck()
-
-    def __repr__(self) -> str:
-        return str(self)
-
-    def __str__(self) -> str:
-        return type(self).__name__
-
-
-class CostModel(abc.ABC):
+class CostModel(OptimizationStage, abc.ABC):
     """The cost model estimates how expensive computing a certain query plan is.
 
     Implement the `estimate_cost` method to provide the actual optimization logic.
@@ -531,11 +566,19 @@ class CostModel(abc.ABC):
     In addition, use `initialize` and `cleanup` methods to implement any necessary setup and teardown logic for the
     current query.
 
+    Notes
+    -----
+    When implementing this class, make sure to call *super().__init__* to ensure that all of the
+    internal data is set up properly.
+
 
     See Also
     --------
     postbound.TextBookOptimizationPipeline
     """
+
+    def __init__(self) -> None:
+        super().__init__()
 
     @abc.abstractmethod
     def estimate_cost(self, query: SqlQuery, plan: QueryPlan) -> Cost:
@@ -566,20 +609,6 @@ class CostModel(abc.ABC):
             The estimated cost
         """
         raise NotImplementedError
-
-    def describe(self) -> jsondict:
-        """Provides a JSON-serializable representation of the specific cost model, as well as important parameters.
-
-        Returns
-        -------
-        jsondict
-            The description
-
-        See Also
-        --------
-        OptimizationPipeline.describe
-        """
-        return {"name": type(self).__name__}
 
     def initialize(self, target_db: Database, query: SqlQuery) -> None:
         """Hook method that is called before the actual optimization process starts.
@@ -613,24 +642,27 @@ class CostModel(abc.ABC):
         """
         return EmptyPreCheck()
 
-    def __repr__(self) -> str:
-        return str(self)
 
-    def __str__(self) -> str:
-        return type(self).__name__
-
-
-class PlanEnumerator(abc.ABC):
+class PlanEnumerator(OptimizationStage, abc.ABC):
     """The plan enumerator traverses the space of different candidate plans and ultimately selects the optimal one.
 
     Implement the `generate_execution_plan` method to provide the actual optimization logic.
     The `describe` and `pre_check` methods should be overridden to provide metadata about the specific algorithm for
     benchmarking and to ensure that the input query and database system are compatible with the algorithm.
 
+    Notes
+    -----
+    When implementing this class, make sure to call *super().__init__* to ensure that all of the
+    internal data is set up properly.
+
+
     See Also
     --------
     postbound.TextBookOptimizationPipeline
     """
+
+    def __init__(self) -> None:
+        super().__init__()
 
     @abc.abstractmethod
     def generate_execution_plan(
@@ -667,38 +699,8 @@ class PlanEnumerator(abc.ABC):
         """
         raise NotImplementedError
 
-    def describe(self) -> jsondict:
-        """Provides a JSON-serializable representation of the specific enumerator, as well as important parameters.
 
-        Returns
-        -------
-        jsondict
-            The description
-
-        See Also
-        --------
-        OptimizationPipeline.describe
-        """
-        return {"name": type(self).__name__}
-
-    def pre_check(self) -> OptimizationPreCheck:
-        """Provides requirements that input query or database system have to satisfy for the optimizer to work properly.
-
-        Returns
-        -------
-        OptimizationPreCheck
-            The check instance. Can be an empty check if no specific requirements exist.
-        """
-        return EmptyPreCheck()
-
-    def __repr__(self) -> str:
-        return str(self)
-
-    def __str__(self) -> str:
-        return type(self).__name__
-
-
-class IncrementalOptimizationStep(abc.ABC):
+class IncrementalOptimizationStep(OptimizationStage, abc.ABC):
     """Incremental optimization allows to chain different smaller optimization strategies.
 
     Each step receives the query plan of its predecessor and can change its decisions in arbitrary ways. For example, this
@@ -707,7 +709,15 @@ class IncrementalOptimizationStep(abc.ABC):
     Implement the `optimize_query` method to provide the actual optimization logic.
     The `describe` and `pre_check` methods should be overridden to provide metadata about the specific algorithm for
     benchmarking and to ensure that the input query and database system are compatible with the algorithm.
+
+    Notes
+    -----
+    When implementing this class, make sure to call *super().__init__* to ensure that all of the
+    internal data is set up properly.
     """
+
+    def __init__(self) -> None:
+        super().__init__()
 
     @abc.abstractmethod
     def optimize_query(self, query: SqlQuery, current_plan: QueryPlan) -> QueryPlan:
@@ -729,36 +739,6 @@ class IncrementalOptimizationStep(abc.ABC):
             The optimized plan
         """
         raise NotImplementedError
-
-    def describe(self) -> jsondict:
-        """Provides a JSON-serializable representation of the specific strategy, as well as important parameters.
-
-        Returns
-        -------
-        jsondict
-            The description
-
-        See Also
-        --------
-        OptimizationPipeline.describe
-        """
-        return {"name": type(self).__name__}
-
-    def pre_check(self) -> OptimizationPreCheck:
-        """Provides requirements that input query or database system have to satisfy for the optimizer to work properly.
-
-        Returns
-        -------
-        OptimizationPreCheck
-            The check instance. Can be an empty check if no specific requirements exist.
-        """
-        return EmptyPreCheck()
-
-    def __repr__(self) -> str:
-        return str(self)
-
-    def __str__(self) -> str:
-        return type(self).__name__
 
 
 class _CompleteAlgorithmEmulator(CompleteOptimizationAlgorithm):
@@ -900,163 +880,3 @@ def as_complete_algorithm(
         operator_selection=operator_selection,
         plan_parameterization=parameter_generation,
     )
-
-
-TrainingMetrics = jsondict
-
-
-TrainingFeature = Literal["query", "runtime", "query-plan", "cost-estimate"]
-
-
-class TrainingSpec:
-    def __init__(self, features: Iterable[TrainingFeature]) -> None:
-        self._features: list[TrainingFeature] = list(features)
-        self._feature_set = frozenset(self._features)
-
-    @property
-    def features(self) -> Sequence[TrainingFeature]:
-        return self._features
-
-    @property
-    def feature_set(self) -> frozenset[TrainingFeature]:
-        return self._feature_set
-
-    def provides(self, feature: TrainingFeature | Iterable[TrainingFeature]) -> bool:
-        feature: set[TrainingFeature] = set(util.enlist(feature))
-        return feature.issubset(self._feature_set)
-
-    def requires(self, feature: TrainingFeature | Iterable[TrainingFeature]) -> bool:
-        return self.provides(feature)
-
-    def satisfies(self, other: TrainingSpec) -> SpecViolations:
-        missing = other._feature_set - self._feature_set
-        return SpecViolations(missing)
-
-    def __iter__(self):
-        return iter(self.features)
-
-
-class SpecViolations:
-    def __init__(self, missing_features: frozenset[TrainingFeature]) -> None:
-        self.missing_features = missing_features
-
-    def __bool__(self) -> bool:
-        return not bool(self.missing_features)
-
-
-def _df_reader(path: Path | str) -> pd.DataFrame:
-    pass
-
-
-@dataclass
-class TrainingData:
-    @staticmethod
-    def from_df(
-        df: pd.DataFrame | Path | str, *, source: Optional[Path | str] = None
-    ) -> TrainingData:
-        if isinstance(df, (str, Path)):
-            source = Path(df)
-            df = _df_reader(source)
-        if isinstance(source, str):
-            source = Path(source)
-
-        detected_features: list[TrainingFeature] = []
-        available_features = set(get_args(TrainingFeature))
-        for col in df.columns:
-            if col not in available_features:
-                continue
-            detected_features.append(col)
-
-        feature_map: dict[TrainingFeature, str] = {
-            feat: feat for feat in detected_features
-        }
-        return TrainingData(df, source=source, feature_map=feature_map)
-
-    def __init__(
-        self,
-        samples: pd.DataFrame,
-        *,
-        source: Optional[Path] = None,
-        feature_map: dict[TrainingFeature, str],
-    ) -> None:
-        self.source = source
-        self.feature_map = feature_map
-        self.samples = samples
-        self._spec = TrainingSpec(self.feature_map.keys())
-
-    def provides(self, feature: TrainingFeature) -> bool:
-        return self._spec.provides(feature)
-
-    def conform_to(
-        self, features: Iterable[TrainingFeature] | TrainingSpec
-    ) -> TrainingData:
-        spec = (
-            features if isinstance(features, TrainingSpec) else TrainingSpec(features)
-        )
-        if not self._spec.satisfies(spec):
-            raise ValueError("Requested spec is not compatible with the training data")
-        reduced_spec: dict[TrainingFeature, str] = {
-            feature: col
-            for feature, col in self.feature_map.items()
-            if spec.requires(feature)
-        }
-        return TrainingData(self.samples, source=self.source, feature_map=reduced_spec)
-
-    def as_df(self, requested_spec: TrainingSpec | None = None) -> pd.DataFrame:
-        if requested_spec is None:
-            target_cols = self.feature_map.values()
-        elif not self._spec.satisfies(requested_spec):
-            raise ValueError("Requested spec is not compatible with the training data")
-            target_cols = [self.feature_map[feature] for feature in requested_spec]
-        return self.samples[target_cols]
-
-    def __len__(self) -> int:
-        return len(self.samples)
-
-    def __getitem__(self, idx) -> list:
-        sample = self.samples.iloc[idx]
-        remapped = sample[self.feature_map.values()]
-        return list(remapped)
-
-
-class TrainingDataRepository:
-    def __init__(self) -> None:
-        self.specs: list[TrainingSpec] = []
-
-
-@runtime_checkable
-class DataDrivenOptimizer(Protocol):
-    def fit_database(self, database: Database) -> TrainingMetrics: ...
-
-    def database_is_setup(self) -> bool: ...
-
-
-@runtime_checkable
-class QueryDrivenOptimizer(Protocol):
-    def fit_workload(self, queries: Workload) -> TrainingMetrics: ...
-
-    def fit_training_data(self, samples: TrainingData) -> TrainingMetrics: ...
-
-    def requires(self) -> Optional[TrainingSpec]: ...
-
-    def workload_is_setup(self) -> bool: ...
-
-
-@runtime_checkable
-class OnlineOptimizer(Protocol):
-    def learn_from_feedback(
-        self, query: SqlQuery, result_set: ResultSet, *, exec_time: TimeMs
-    ) -> TrainingMetrics: ...
-
-
-OptimizationStage = (
-    CompleteOptimizationAlgorithm
-    | JoinOrderOptimization
-    | PhysicalOperatorSelection
-    | ParameterGeneration
-    | PlanEnumerator
-    | CostModel
-    | CardinalityEstimator
-    | IncrementalOptimizationStep
-)
-"""Type alias for all currently supported optimization stages."""

@@ -20,20 +20,17 @@ from ._stages import (
     CardinalityEstimator,
     CompleteOptimizationAlgorithm,
     CostModel,
-    DataDrivenOptimizer,
     IncrementalOptimizationStep,
     JoinOrderOptimization,
-    OnlineOptimizer,
     OptimizationStage,
     ParameterGeneration,
     PhysicalOperatorSelection,
     PlanEnumerator,
-    QueryDrivenOptimizer,
-    TrainingMetrics,
 )
 from .db import Database, DatabasePool, ResultSet
 from .postgres import PostgresInterface
 from .qal import SqlQuery
+from .train import TrainingData, TrainingDataRepository, TrainingMetrics
 from .util._errors import StateError
 from .util.jsonize import jsondict
 from .validation import (
@@ -43,10 +40,6 @@ from .validation import (
     UnsupportedSystemError,
     merge_checks,
 )
-
-
-def _stage_name(stage: OptimizationStage) -> str:
-    return stage.__class__.__name__
 
 
 class OptimizationPipeline(abc.ABC):
@@ -181,48 +174,79 @@ class OptimizationPipeline(abc.ABC):
         """
         raise NotImplementedError
 
-    def requires_workload_learning(self) -> bool:
-        return any(isinstance(stage, QueryDrivenOptimizer) for stage in self.stages())
+    def requires_workload_training(self) -> bool:
+        return any(stage.requires_workload_training() for stage in self.stages())
 
-    def requires_data_learning(self) -> bool:
-        return any(isinstance(stage, DataDrivenOptimizer) for stage in self.stages())
+    def requires_sample_training(self) -> bool:
+        return any(stage.requires_sample_training() for stage in self.stages())
 
-    def requires_online_learning(self) -> bool:
-        return any(isinstance(stage, OnlineOptimizer) for stage in self.stages())
+    def requires_data_training(self) -> bool:
+        return any(stage.requires_data_training() for stage in self.stages())
+
+    def requires_online_training(self) -> bool:
+        return any(stage.uses_online_feedback() for stage in self.stages())
 
     def train_on_database(self, database: Database) -> dict[str, TrainingMetrics]:
         metrics: dict[str, TrainingMetrics] = {}
         for stage in self.stages():
-            if not isinstance(stage, DataDrivenOptimizer):
-                continue
-            if stage.database_is_setup():
+            if not stage.requires_data_training() or stage.database_fit_completed():
                 continue
             current_metrics = stage.fit_database(database)
-            metrics[_stage_name(stage)] = current_metrics
+            metrics[stage.name] = current_metrics
         return metrics
 
-    def train_on_workload(self, workload: Workload) -> dict[str, TrainingMetrics]:
+    def train_on_workload(
+        self, workload: Workload, database: Database
+    ) -> dict[str, TrainingMetrics]:
         metrics: dict[str, TrainingMetrics] = {}
         for stage in self.stages():
-            if not isinstance(stage, QueryDrivenOptimizer):
+            if not stage.requires_workload_training() or stage.workload_fit_completed():
                 continue
-            if stage.workload_is_setup():
-                continue
-            current_metrics = stage.fit_workload(workload)
-            metrics[_stage_name(stage)] = current_metrics
+            current_metrics = stage.fit_workload(workload, database)
+            metrics[stage.name] = current_metrics
         return metrics
 
-    def learn_from_sample(
+    def train_on_samples(
+        self, samples: TrainingData | TrainingDataRepository
+    ) -> dict[str, TrainingMetrics]:
+        metrics: dict[str, TrainingMetrics] = {}
+
+        for stage in self.stages():
+            if not stage.requires_sample_training() or stage.sample_fit_completed():
+                continue
+
+            if isinstance(samples, TrainingDataRepository):
+                current_sample = samples.retrieve_merged(stage.sample_spec())
+            else:
+                current_sample = samples
+
+            if current_sample is None:
+                raise ValueError(
+                    f"No training data available for optimization stage {stage.name}"
+                )
+
+            current_metrics = stage.fit_samples(current_sample)
+            metrics[stage.name] = current_metrics
+
+        return metrics
+
+    def sample_fit_completed(self) -> bool:
+        return all(
+            not stage.requires_sample_training() or stage.sample_fit_completed()
+            for stage in self.stages()
+        )
+
+    def learn_from_feedback(
         self, query: SqlQuery, result_set: ResultSet, *, exec_time: TimeMs
     ) -> dict[str, TrainingMetrics]:
         metrics: dict[str, TrainingMetrics] = {}
         for stage in self.stages():
-            if not isinstance(stage, OnlineOptimizer):
+            if not stage.uses_online_feedback():
                 continue
             current_metrics = stage.learn_from_feedback(
                 query, result_set, exec_time=exec_time
             )
-            metrics[_stage_name(stage)] = current_metrics
+            metrics[stage.name] = current_metrics
         return metrics
 
 
@@ -346,6 +370,7 @@ class IntegratedOptimizationPipeline(OptimizationPipeline):
                 "No algorithm has been selected. Don't forget to call `build()` after setting the algorithm."
             )
 
+        assert self.optimization_algorithm is not None
         pre_check = self.optimization_algorithm.pre_check()
         if pre_check is not None:
             pre_check.check_supported_query(query).ensure_all_passed()
