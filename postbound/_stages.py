@@ -74,7 +74,7 @@ class OptimizationStage:
                 f"online training, but is currently lacking an implementation for {missing}"
             )
 
-        return super().__new__(cls, *args, **kwargs)
+        return super().__new__(cls)
 
     def __init__(self, name: str = "") -> None:
         self.name = name if name else type(self).__name__
