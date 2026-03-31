@@ -1966,7 +1966,68 @@ class PostgresStatisticsInterface(DatabaseStatistics):
         n_rows = self._retrieve_total_rows_from_stats(column.table)
         assert n_rows
 
-        return Histogram(bounds, n_rows=n_rows, bucket_interpolation=interpolation)
+        bucket_freq = n_rows // len(bounds)
+
+        mcvs = self._retrieve_most_common_values_from_stats(column, k=None)
+
+        normalized_bounds = []
+        normalized_frequencies = []
+        lo = None
+        hist_iter = iter(bounds)
+        mcv_iter = iter(mcvs)
+        cur_hist = next(hist_iter, None)
+        cur_mcv = next(mcv_iter, None)
+        while cur_hist is not None or cur_mcv is not None:
+            if cur_mcv is not None:
+                cur_mcv_val, cur_mcv_freq = cur_mcv
+            else:
+                cur_mcv_val, cur_mcv_freq = None, None
+
+            if lo is None:
+                lo = min(
+                    filter(None, [cur_hist, cur_mcv_val]),
+                    default=None,
+                )
+
+            if cur_hist is None:
+                assert cur_mcv_val is not None
+                normalized_bounds.append(cur_mcv_val)
+                normalized_frequencies.append(cur_mcv_freq)
+                cur_mcv = next(mcv_iter, None)
+
+            elif cur_mcv_val is None:
+                normalized_bounds.append(cur_hist)
+                normalized_frequencies.append(bucket_freq)
+
+                prev_hist = cur_hist
+                while (cur_hist := next(hist_iter, None)) == prev_hist:
+                    # for very frequent values, Postgres might put the same value into multiple (equi-depth) buckets
+                    # in this case, we need to sum up the frequencies of all buckets with the same bound value
+                    normalized_frequencies[-1] += bucket_freq
+
+            elif cur_hist < cur_mcv_val:
+                normalized_bounds.append(cur_hist)
+                normalized_frequencies.append(bucket_freq)
+
+                prev_hist = cur_hist
+                while (cur_hist := next(hist_iter, None)) == prev_hist:
+                    # see comment above for the case of duplicate histogram bounds
+                    normalized_frequencies[-1] += bucket_freq
+
+            else:
+                assert cur_mcv_val < cur_hist
+                normalized_bounds.append(cur_mcv_val)
+                normalized_frequencies.append(cur_mcv_freq)
+                cur_mcv = next(mcv_iter, None)
+
+        assert lo is not None
+        return Histogram(
+            normalized_bounds,
+            normalized_frequencies,
+            lower=lo,
+            n_rows=n_rows,
+            bucket_interpolation=interpolation,
+        )
 
     def _array_cast(self, column: BoundColumnReference) -> str:
         # determine the attributes data type to figure out how it should be converted

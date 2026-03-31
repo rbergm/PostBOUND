@@ -44,6 +44,8 @@ from .db import (
     DatabaseSchema,
     DatabaseStatistics,
     HintService,
+    Histogram,
+    HistogramApproximation,
     OptimizerInterface,
     ResultSet,
     UnsupportedDatabaseFeatureError,
@@ -312,6 +314,50 @@ class DuckDBSchema(DatabaseSchema):
 
         return {row[0] for row in result_set}
 
+    def foreign_keys_on(self, column: ColumnReference) -> set[BoundColumnReference]:
+        if not ColumnReference.assert_bound(column):
+            raise UnboundColumnError(column)
+
+        schema_placeholder = "?" if column.table.schema else "current_schema()"
+        query_template = f"""
+            SELECT referenced_table, referenced_column_names
+            FROM duckdb_constraints
+            WHERE database_name = current_database()
+                AND schema_name = {schema_placeholder}
+                AND table_name = ?
+                AND constraint_column_names = array_value(?)
+                AND constraint_type = 'FOREIGN KEY';
+        """
+
+        params = [column.table.full_name, column.name]
+        if column.table.schema:
+            params = [column.table.schema] + params
+
+        cur = self._db.cursor()
+        cur.execute(query_template, params)
+        result_set = cur.fetchall()
+        assert result_set is not None
+
+        foreign_keys: set[BoundColumnReference] = set()
+        for table_name, column_names in result_set:
+            if len(column_names) > 1:
+                warnings.warn(
+                    f"Column {column} is part of a multi-column foreign key constraint. "
+                    "This is currently not fully supported, only the first column will be returned."
+                )
+            if not column_names:
+                warnings.warn(
+                    f"Column {column} is part of a foreign key constraint, but no referenced columns could be identified."
+                )
+                continue
+            column_names = column_names[:1]
+            referenced_column = column_names[0]
+            table = TableReference(table_name, schema=column.table.schema)
+            column = BoundColumnReference(referenced_column, table)
+            foreign_keys.add(column)
+
+        return foreign_keys
+
 
 class DuckDBStatistics(DatabaseStatistics):
     def __init__(
@@ -344,8 +390,9 @@ class DuckDBStatistics(DatabaseStatistics):
         if table.schema:
             params.append(table.schema)
 
-        self._db.cursor().execute(query_template, parameters=params)
-        result_set = self._db.cursor().fetchone()
+        cur = self._db.cursor()
+        cur.execute(query_template, parameters=params)
+        result_set = cur.fetchone()
 
         if not result_set:
             return None
@@ -374,6 +421,15 @@ class DuckDBStatistics(DatabaseStatistics):
         if self.enable_emulation_fallback:
             return self._calculate_most_common_values(column, k)
         raise UnsupportedDatabaseFeatureError(self._db, "most common value statistics.")
+
+    def _retrieve_histogram_from_stats(
+        self, column: BoundColumnReference, *, interpolation: HistogramApproximation
+    ) -> Optional[Histogram]:
+        if self.enable_emulation_fallback:
+            return self._calculate_histogram(
+                column, n_bins=100, interpolation=interpolation
+            )
+        raise UnsupportedDatabaseFeatureError(self._db, "histogram statistics.")
 
 
 def _bind_node_to_table(
@@ -516,8 +572,9 @@ class DuckDBOptimizer(OptimizerInterface):
         else:
             explain_query = query
 
-        self._db.cursor().execute(explain_query)
-        result_set = self._db.cursor().fetchone()
+        cur = self._db.cursor()
+        cur.execute(explain_query)
+        result_set = cur.fetchone()
         assert result_set is not None and len(result_set) == 2
 
         raw_explain = result_set[1]

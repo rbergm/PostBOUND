@@ -53,6 +53,7 @@ from .._hints import (
 )
 from .._qep import QueryPlan
 from ..qal import SqlQuery
+from ..util import jsondict
 
 ResultRow = tuple
 """Simple type alias to denote a single tuple from a result set."""
@@ -516,17 +517,12 @@ class Database(abc.ABC):
         raise NotImplementedError
 
     @abc.abstractmethod
-    def describe(self) -> util.jsondict:
+    def describe(self) -> jsondict:
         """Provides a representation of the current database connection as well as its system settings.
 
         This description is intended to transparently document which customizations have been applied, thereby giving
         an idea of how the default query execution might have been affected. It can be JSON-serialized and will be
         included by most of the output of the utilities in the `runner` module of the `experiments` package.
-
-        Returns
-        -------
-        util.jsondict
-            The actual description
         """
         raise NotImplementedError
 
@@ -776,8 +772,9 @@ class DatabaseSchema(abc.ABC, Mapping[TableReference, TableInfo]):
             WHERE table_catalog = {self._prep_placeholder}
                 AND table_schema = current_schema()
             """)
-        self._db.cursor().execute(query_template, (self._db.database_name(),))
-        result_set = self._db.cursor().fetchall()
+        cur = self._db.cursor()
+        cur.execute(query_template, (self._db.database_name(),))
+        result_set = cur.fetchall()
         assert result_set is not None
         return set(TableReference(row[0]) for row in result_set)
 
@@ -825,8 +822,9 @@ class DatabaseSchema(abc.ABC, Mapping[TableReference, TableInfo]):
         params = [table.full_name]
         if table.schema:
             params.append(table.schema)
-        self._db.cursor().execute(query_template, params)
-        result_set = self._db.cursor().fetchall()
+        cur = self._db.cursor()
+        cur.execute(query_template, params)
+        result_set = cur.fetchall()
         assert result_set is not None
         return [BoundColumnReference(row[0], table) for row in result_set]
 
@@ -864,8 +862,9 @@ class DatabaseSchema(abc.ABC, Mapping[TableReference, TableInfo]):
                 AND table_name = {self._prep_placeholder}
                 AND table_catalog = current_database()
             """)
-        self._db.cursor().execute(query_template, (db_name, table))
-        result_set = self._db.cursor().fetchall()
+        cur = self._db.cursor()
+        cur.execute(query_template, (db_name, table))
+        result_set = cur.fetchall()
 
         assert result_set is not None
         if not result_set:
@@ -969,8 +968,9 @@ class DatabaseSchema(abc.ABC, Mapping[TableReference, TableInfo]):
         if table.schema:
             params.append(table.schema)
 
-        self._db.cursor().execute(query_template, params)
-        result_set = self._db.cursor().fetchone()
+        cur = self._db.cursor()
+        cur.execute(query_template, params)
+        result_set = cur.fetchone()
 
         return result_set is not None
 
@@ -1017,8 +1017,9 @@ class DatabaseSchema(abc.ABC, Mapping[TableReference, TableInfo]):
         if table.schema:
             params.append(table.schema)
 
-        self._db.cursor().execute(query_template, params)
-        result_set = self._db.cursor().fetchall()
+        cur = self._db.cursor()
+        cur.execute(query_template, params)
+        result_set = cur.fetchall()
 
         if not result_set:
             return None
@@ -1112,8 +1113,9 @@ class DatabaseSchema(abc.ABC, Mapping[TableReference, TableInfo]):
         if table.schema:
             params.append(table.schema)
 
-        self._db.cursor().execute(query_template, params)
-        result_set = self._db.cursor().fetchone()
+        cur = self._db.cursor()
+        cur.execute(query_template, params)
+        result_set = cur.fetchone()
 
         return result_set is not None
 
@@ -1149,30 +1151,34 @@ class DatabaseSchema(abc.ABC, Mapping[TableReference, TableInfo]):
         schema_placeholder = (
             self._prep_placeholder if table.schema else "current_schema()"
         )
-        query_template = textwrap.dedent(f"""
-            SELECT ccu.table_name, ccu.column_name
+        query_template = f"""
+            SELECT ccu.table_schema, ccu.table_name, ccu.column_name
             FROM information_schema.table_constraints tc
                 JOIN information_schema.key_column_usage kcu
-                    ON tc.constraint_name = kcu.constraint_name
+                ON tc.table_name = kcu.table_name
+                    AND tc.table_catalog = kcu.table_catalog
                     AND tc.table_schema = kcu.table_schema
-                    AND tc.table_name = kcu.table_name
+                    AND tc.constraint_catalog = kcu.constraint_catalog
+                    AND tc.constraint_schema = kcu.constraint_schema
+                    AND tc.constraint_name = kcu.constraint_name
                 JOIN information_schema.constraint_column_usage ccu
-                    ON tc.constraint_name = ccu.constraint_name
-                    AND tc.table_schema = ccu.table_schema
-                    AND tc.table_catalog = ccu.table_catalog
-            WHERE tc.table_name = {self._prep_placeholder}
-                AND kcu.column_name = {self._prep_placeholder}
+                ON tc.constraint_catalog = ccu.constraint_catalog
+                    AND tc.constraint_schema = ccu.constraint_schema
+                    AND tc.constraint_name = ccu.constraint_name
+            WHERE tc.table_catalog = current_database()
                 AND tc.constraint_type = 'FOREIGN KEY'
                 AND tc.table_schema = {schema_placeholder}
-                AND tc.table_catalog = current_database();
-            """)
+                AND tc.table_name = {self._prep_placeholder}
+                AND kcu.column_Name = {self._prep_placeholder};
+            """
         params = [table.full_name, column.name]
         if table.schema:
-            params.append(table.schema)
+            params = [table.schema] + params
 
-        self._db.cursor().execute(query_template, params)
-        result_set = self._db.cursor().fetchall()
-        assert result_set
+        cur = self._db.cursor()
+        cur.execute(query_template, params)
+        result_set = cur.fetchall()
+        assert result_set is not None
 
         return {
             BoundColumnReference(row[1], TableReference(row[0], schema=table.schema))
@@ -1286,9 +1292,10 @@ class DatabaseSchema(abc.ABC, Mapping[TableReference, TableInfo]):
         if table.schema:
             params.append(table.schema)
 
-        self._db.cursor().execute(query_template, params)
-        result_set = self._db.cursor().fetchall()
-        assert result_set
+        cur = self._db.cursor()
+        cur.execute(query_template, params)
+        result_set = cur.fetchall()
+        assert result_set is not None
 
         return {row[0] for row in result_set}
 
@@ -1338,8 +1345,9 @@ class DatabaseSchema(abc.ABC, Mapping[TableReference, TableInfo]):
         if table.schema:
             params.append(table.schema)
 
-        self._db.cursor().execute(query_template, params)
-        result_set = self._db.cursor().fetchone()
+        cur = self._db.cursor()
+        cur.execute(query_template, params)
+        result_set = cur.fetchone()
         assert result_set
 
         return result_set[0]
@@ -1387,8 +1395,9 @@ class DatabaseSchema(abc.ABC, Mapping[TableReference, TableInfo]):
         if table.schema:
             params.append(table.schema)
 
-        self._db.cursor().execute(query_template, params)
-        result_set = self._db.cursor().fetchone()
+        cur = self._db.cursor()
+        cur.execute(query_template, params)
+        result_set = cur.fetchone()
         assert result_set
 
         return result_set[0] == "YES"
@@ -1686,22 +1695,50 @@ class MostCommonValues[T]:
 HistogramApproximation = Literal["approx-uni", "bound"]
 
 
-def _infer_histogram_bounds[T](frequencies: Sequence[tuple[T, int]]) -> Sequence[T]:
-    pass
+def _infer_histogram_bounds[T](
+    frequencies: Sequence[tuple[T, int]], *, n_bins: int, n_rows: int
+) -> tuple[T, Sequence[T], Sequence[int]]:
+    if not frequencies:
+        raise ValueError("Cannot infer histogram bounds from empty frequency list")
+
+    bucket_size = n_rows // n_bins
+
+    bounds: list[T] = []
+    buckets: list[int] = []
+    cumulative_freq = 0
+    for value, freq in frequencies:
+        cumulative_freq += freq
+        if cumulative_freq < bucket_size:
+            continue
+        bounds.append(value)
+        buckets.append(cumulative_freq)
+        cumulative_freq = 0
+
+    return frequencies[0][0], bounds, buckets
 
 
 class Histogram[T: SupportsRichComparison[T]]:
     def __init__(
         self,
         bounds: Iterable[T],
+        frequencies: Iterable[int],
         *,
+        lower: T,
         n_rows: int,
         bucket_interpolation: HistogramApproximation = "bound",
     ) -> None:
         self._bounds = list(bounds)
+        self._frequencies = list(frequencies)
         if not self.bounds:
             raise ValueError("Bounds cannot be empty")
+        elif len(self._bounds) != len(self._frequencies):
+            raise ValueError(
+                "Bounds and frequencies must have the same length. "
+                f"Got {len(self._bounds)} bounds and {len(self._frequencies)} frequencies."
+            )
+
         self._n_rows = n_rows
+        self._lower = lower
         self._freq_per_bucket = n_rows // len(self._bounds)
         self._bucket_interpolation = bucket_interpolation
 
@@ -1719,11 +1756,11 @@ class Histogram[T: SupportsRichComparison[T]]:
 
     @property
     def lower(self) -> T:
-        pass
+        return self._lower
 
     @property
     def upper(self) -> T:
-        pass
+        return self._bounds[-1]
 
     def frequency_below(self, value: T) -> int:
         upper_idx = bisect.bisect_right(self._bounds, value)
@@ -1774,6 +1811,34 @@ class Histogram[T: SupportsRichComparison[T]]:
         lower_idx = self._bounds[lower_idx]
         in_bucket_frac = (value - lower_idx) / (upper_bound - lower_idx)
         return (upper_idx + in_bucket_frac) * self._freq_per_bucket
+
+    def __json__(self) -> jsondict:
+        return {
+            "bounds": self._bounds,
+            "frequencies": self._frequencies,
+            "lower": self._lower,
+            "n_rows": self._n_rows,
+            "bucket_interpolation": self._bucket_interpolation,
+        }
+
+    def __eq__(self, other: object) -> bool:
+        return (
+            isinstance(other, type(self))
+            and self._bounds == other._bounds
+            and self._frequencies == other._frequencies
+            and self._lower == other._lower
+            and self._n_rows == other._n_rows
+            and self._bucket_interpolation == other._bucket_interpolation
+        )
+
+    def __repr__(self) -> str:
+        return str(self)
+
+    def __str__(self) -> str:
+        buckets = ", ".join(
+            f"{bound} ({freq})" for bound, freq in zip(self._bounds, self._frequencies)
+        )
+        return f"Histogram(buckets=[{buckets}], lower={self._lower})"
 
 
 class DatabaseStatistics(abc.ABC):
@@ -2671,8 +2736,16 @@ class DatabaseStatistics(abc.ABC):
         )
         assert result_set
 
-        bounds = _infer_histogram_bounds(result_set)
-        return Histogram(bounds, n_rows=n_rows, bucket_interpolation=interpolation)
+        lo, bounds, buckets = _infer_histogram_bounds(
+            result_set, n_bins=n_bins, n_rows=n_rows
+        )
+        return Histogram(
+            bounds,
+            buckets,
+            n_rows=n_rows,
+            lower=lo,
+            bucket_interpolation=interpolation,
+        )
 
     @abc.abstractmethod
     def _retrieve_total_rows_from_stats(self, table: TableReference) -> Optional[int]:
