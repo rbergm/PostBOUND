@@ -237,6 +237,27 @@ class DuckDBInterface(Database):
 class DuckDBSchema(DatabaseSchema):
     def __init__(self, db: DuckDBInterface) -> None:
         super().__init__(db, prep_placeholder="?")
+        self._tables: set[TableReference] = set()
+
+    def tables(self, *, include_system_tables: bool = False) -> set[TableReference]:
+        if self._tables:
+            return self._tables
+
+        cur = self._db.cursor()
+        cur.execute(
+            """
+            SELECT table_name
+            FROM duckdb_tables()
+            WHERE database_name = current_database()
+                AND schema_name = current_schema();
+            """
+        )
+        result_set = cur.fetchall()
+        assert result_set is not None
+
+        tables = {TableReference(row[0]) for row in result_set}
+        self._tables = tables
+        return self._tables
 
     def has_secondary_index(self, column: ColumnReference) -> bool:
         if not ColumnReference.assert_bound(column):

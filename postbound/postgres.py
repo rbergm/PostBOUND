@@ -1343,12 +1343,16 @@ class PostgresSchemaInterface(DatabaseSchema):
         The database for which schema information should be retrieved
     """
 
-    def __int__(self, postgres_db: PostgresInterface) -> None:
+    def __init__(self, postgres_db: PostgresInterface) -> None:
         super().__init__(postgres_db)
+        self._tables: set[TableReference] = set()
 
     def tables(
         self, *, include_system_tables: bool = False, schema: str = "public"
     ) -> set[TableReference]:
+        if self._tables:
+            return self._tables
+
         query_template = textwrap.dedent("""
                                          SELECT table_name
                                          FROM information_schema.tables
@@ -1357,10 +1361,11 @@ class PostgresSchemaInterface(DatabaseSchema):
         result_set = self._db.cursor().fetchall()
         assert result_set is not None
 
-        tables = set(TableReference(row[0]) for row in result_set)
+        tables = {TableReference(row[0]) for row in result_set}
         if not include_system_tables:
             tables = {tab for tab in tables if not tab.full_name.startswith("pg_")}
-        return tables
+        self._tables = tables
+        return self._tables
 
     def lookup_column(
         self,
