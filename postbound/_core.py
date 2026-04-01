@@ -284,14 +284,7 @@ class Cardinality(Number):
                     return True
                 return self.value < otherval
 
-            case int():
-                return self.value < other
-
-            case float():
-                if math.isnan(other):
-                    return False
-                if math.isinf(other):
-                    return True
+            case int() | float():
                 return self.value < other
 
         return NotImplemented
@@ -308,14 +301,7 @@ class Cardinality(Number):
                     return True
                 return self.value <= otherval
 
-            case int():
-                return self.value <= other
-
-            case float():
-                if math.isnan(other):
-                    return False
-                if math.isinf(other):
-                    return True
+            case int() | float():
                 return self.value <= other
 
         return NotImplemented
@@ -332,14 +318,7 @@ class Cardinality(Number):
                     return True
                 return self.value > otherval
 
-            case int():
-                return self.value > other
-
-            case float():
-                if math.isnan(other):
-                    return False
-                if math.isinf(other):
-                    return True
+            case int() | float():
                 return self.value > other
 
         return NotImplemented
@@ -356,14 +335,7 @@ class Cardinality(Number):
                     return True
                 return self.value >= otherval
 
-            case int():
-                return self.value >= other
-
-            case float():
-                if math.isnan(other):
-                    return False
-                if math.isinf(other):
-                    return True
+            case int() | float():
                 return self.value >= other
 
         return NotImplemented
@@ -729,7 +701,7 @@ class TableReference:
         self._normalized_schema = normalize(self._schema)
         self._normalized_full_name = normalize(self._full_name)
         self._normalized_alias = normalize(self._alias)
-        self._nomalized_identifier = normalize(self._identifier)
+        self._normalized_identifier = normalize(self._identifier)
         self._hash_val = hash(
             (
                 self._normalized_full_name,
@@ -752,6 +724,19 @@ class TableReference:
         else:
             raise ValueError("Full name or alias required")
 
+    __slots__ = (
+        "_schema",
+        "_full_name",
+        "_alias",
+        "_virtual",
+        "_identifier",
+        "_normalized_schema",
+        "_normalized_full_name",
+        "_normalized_alias",
+        "_normalized_identifier",
+        "_hash_val",
+        "_sql_repr",
+    )
     __match_args__ = ("full_name", "alias", "virtual", "schema")
 
     @property
@@ -912,7 +897,7 @@ class TableReference:
     def __lt__(self, other: object) -> bool:
         if not isinstance(other, TableReference):
             return NotImplemented
-        return self._nomalized_identifier < other._nomalized_identifier
+        return self._normalized_identifier < other._normalized_identifier
 
     def __hash__(self) -> int:
         return self._hash_val
@@ -1035,6 +1020,7 @@ class ColumnReference:
             return super().__new__(cls)
         return BoundColumnReference(name, table)
 
+    __slots__ = ("_name", "_table", "_normalized_name", "_hash_val", "_sql_repr")
     __match_args__ = ("name", "table")
 
     @property
