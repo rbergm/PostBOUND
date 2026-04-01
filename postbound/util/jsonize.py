@@ -18,7 +18,7 @@ from datetime import date, datetime, time, timedelta
 from pathlib import Path
 from typing import IO, Any, Protocol, runtime_checkable
 
-jsondict = object
+type jsondict = object
 """Type alias for a JSON-izeable dictionary."""
 
 

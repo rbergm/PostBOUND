@@ -167,61 +167,189 @@ class OptimizationStage:
         self.name = name if name else type(self).__name__
 
     def fit_database(self, database: Database) -> TrainingMetrics:
+        """Performs training based on the target database.
+
+        This method is automatically called by the benchmarking tools before the actual optimization process starts. The
+        training process can include arbitrary interactions with the database, e.g. executing queries, fetching statistics,
+        analyzing the schema, etc.
+
+        Notes
+        -----
+        If this method is implemented, `database_fit_completed` method has to be implemented as well. Otherwise, PostBOUND will
+        raise an error when an instance of this stage is created.
+        """
         raise NotImplementedError(
             f"OptimizationStage {self.name} does not learn from the database"
         )
 
     def database_fit_completed(self) -> bool:
+        """Checks, if a data-driven optimization stage has already been trained on the target database.
+
+        Notes
+        -----
+        If this method is implemented, `fit_database` method has to be implemented as well. Otherwise, PostBOUND will raise an
+        error when an instance of this stage is created.
+        """
         raise NotImplementedError(
             f"OptimizationStage {self.name} does not learn from the database"
         )
 
     @classmethod
     def requires_data_training(cls) -> bool:
+        """Checks, if this optimization stage supports data-driven training.
+
+        In contrast to `database_fit_completed`, this method does not check whether a specific instance of the optimization
+        stage has already been trained on the target database, but rather whether the stage in general supports data-driven
+        training.
+
+        Notes
+        -----
+        This method uses reflection on the optimization stage and does not need to be implemented/overridden by the client.
+        """
         return getattr(cls, "fit_database", None) != OptimizationStage.fit_database
 
     def fit_workload(self, queries: Workload, database: Database) -> TrainingMetrics:
+        """Performs training based on the entire workload of queries.
+
+        This method is automatically called by the benchmarking tools before the actual optimization process starts. The
+        training process can include arbitrary interactions with the workload, e.g. analyzing which joins are executed, or
+        which columns are used for specific filter predicates. Since this is a severe leak of the test set, it should only be
+        used to extract general information about the workload.
+
+        Notes
+        -----
+        If this method is implemented, `workload_fit_completed` method has to be implemented as well. Otherwise, PostBOUND will
+        raise an error when an instance of this stage is created.
+        """
         raise NotImplementedError(
             f"OptimizationStage {self.name} does not learn from workloads"
         )
 
     def workload_fit_completed(self) -> bool:
+        """Checks, if a workload-driven optimization stage has already been trained on the target workload.
+
+        Notes
+        -----
+        If this method is implemented, `fit_workload` method has to be implemented as well. Otherwise, PostBOUND will raise an
+        error when an instance of this stage is created.
+        """
         raise NotImplementedError(
             f"OptimizationStage {self.name} does not learn from workloads"
         )
 
     @classmethod
     def requires_workload_training(cls) -> bool:
+        """Checks, if this optimization stage supports workload-driven training.
+
+        In contrast to `workload_fit_completed`, this method does not check whether a specific instance of the optimization
+        stage has already been trained, but rather whether the stage in general supports workload-driven training.
+
+        Notes
+        -----
+        This method uses reflection on the optimization stage and does not need to be implemented/overridden by the client.
+        """
         return getattr(cls, "fit_workload", None) != OptimizationStage.fit_workload
 
     def fit_samples(self, samples: TrainingData) -> TrainingMetrics:
+        """Performs training based on a set of pre-computed training samples.
+
+        This method is automatically called by the benchmarking tools before the actual optimization process starts. It is
+        completely up to the implementation to decide what to do with the training samples.
+
+        To make sure that the benchmarking tools provide the appropriate training samples, the `sample_spec` method is used.
+        This method must describe the kind of data required for training.
+
+        Notes
+        -----
+        If this method is implemented, `sample_spec` and `sample_fit_completed` methods have to be implemented as well.
+        Otherwise, PostBOUND will raise an error when an instance of this stage is created.
+        """
         raise NotImplementedError(
             f"OptimizationStage {self.name} does not require training samples"
         )
 
     def sample_spec(self) -> TrainingSpec:
+        """Describes the structure of the training samples that are required to train this optimization stage.
+
+        PostBOUND uses a tabular model for training data. The `TrainingSpec` describes what columns need to be present in
+        a dataset. However, we currently cannot enforce any specific semantics for the columns. This needs to be handled by
+        the user. This is a pragmatic choice to prevent us from implementing a full meta-model of data sets and to provide a
+        rather lightweight interface to the user.
+
+        Notes
+        -----
+        If this method is implemented, `fit_samples` and `sample_fit_completed` methods have to be implemented as well.
+        Otherwise, PostBOUND will raise an error when an instance of this stage is created.
+        """
         raise NotImplementedError(
             f"OptimizationStage {self.name} does not require training samples"
         )
 
     def sample_fit_completed(self) -> bool:
+        """Checks, if a sample-driven optimization stage has already been trained.
+
+        Notes
+        -----
+        If this method is implemented, `fit_samples` and `sample_spec` methods have to be implemented as well.
+        Otherwise, PostBOUND will raise an error when an instance of this stage is created.
+        """
         raise NotImplementedError(
             f"OptimizationStage {self.name} does not require training samples"
         )
 
     @classmethod
     def requires_sample_training(cls) -> bool:
+        """Checks, if this optimization stage supports sample-based training.
+
+        In contrast to `sample_fit_completed`, this method does not check whether a specific instance of the optimization
+        stage has already been trained, but rather whether the stage in general supports data-driven training.
+
+        Notes
+        -----
+        This method uses reflection on the optimization stage and does not need to be implemented/overridden by the client.
+        """
         return getattr(cls, "fit_samples", None) != OptimizationStage.fit_samples
 
     def learn_from_feedback(
         self, query: SqlQuery, result_set: ResultSet, *, exec_time: TimeMs
     ) -> TrainingMetrics:
+        """Performs online learning based on the execution of a past query.
+
+        This method is automatically called by the benchmarking tools after each query is executed. Only valid runs are
+        considered. If the query timed out or produced an error, this method will not be called.
+
+        Parameters
+        ----------
+        query : SqlQuery
+            The query that was executed, exactly as it was passed to the database system for execution.
+        result_set : ResultSet
+            The raw result set that was returned by the database system after executing the query. This is not processed in any
+            way, so it is up to the implementation to extract any relevant information from it.
+        exec_time : TimeMs
+            The execution time of the query in milliseconds. This is measured directly by the benchmarking tools and will
+            always be a valid number (i.e. not *NaN*, negative, nor infinite).
+
+
+        Notes
+        -----
+        If this method is implemented, `uses_online_learning` method has to be implemented as well. Otherwise, PostBOUND will
+        raise an error when an instance of this stage is created.
+        """
         raise NotImplementedError(
             f"OptimizationStage {self.name} does not learn online"
         )
 
     @classmethod
     def uses_online_feedback(cls) -> bool:
+        """Checks, if this optimization stage supports online learning.
+
+        In contrast to `learn_from_feedback`, this method does not check whether a specific instance of the optimization
+        stage has already been trained, but rather whether the stage in general supports online learning.
+
+        Notes
+        -----
+        This method uses reflection on the optimization stage and does not need to be implemented/overridden by the client.
+        """
         return (
             getattr(cls, "learn_from_feedback", None)
             != OptimizationStage.learn_from_feedback
@@ -249,13 +377,13 @@ class OptimizationStage:
         --------
         OptimizationPipeline.describe
         """
-        return {"name": type(self).__name__}
+        return {"name": self.name}
 
     def __repr__(self) -> str:
         return str(self)
 
     def __str__(self) -> str:
-        return type(self).__name__
+        return self.name
 
 
 class CompleteOptimizationAlgorithm(OptimizationStage, abc.ABC):
