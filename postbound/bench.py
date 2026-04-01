@@ -1095,8 +1095,8 @@ def execute_workload(
         - *query_repetition* indicates the current per-query repetition (in contrast to repetitions of the entire workload)
         - *query* contains the input query being executed. If the query was optimized or prepared, these modifications are
           **not** included here
-        - *status* indicates whether the query was executed successfully, or whether an error occurred during execution.
-          Possible values are "ok", "timeout", and "execution-error"
+        - *status* indicates whether the query was executed successfully, or whether an error occurred.
+          Possible values are "ok", "timeout", "optimization-error", and "execution-error"
         - *result_set*  is the actual result of the query. Scalar results are represented as-is. In case of an error this will
           be *None*
         - *exec_time* contains the time it took to execute the query (in seconds). This includes the entire time from

@@ -8,11 +8,14 @@ from collections.abc import (
     Collection,
     Container,
     Generator,
+    ItemsView,
     Iterable,
     Iterator,
+    KeysView,
     Mapping,
     Sequence,
     Sized,
+    ValuesView,
 )
 from typing import Any, Literal, Optional, Union, overload
 
@@ -76,6 +79,10 @@ def enlist(obj: frozenset[T]) -> frozenset[T]: ...
 
 
 @overload
+def enlist(obj: KeysView[T] | ValuesView[T] | ItemsView[T]) -> list[T]: ...
+
+
+@overload
 def enlist(obj: str) -> list[str]: ...
 
 
@@ -115,6 +122,9 @@ def enlist(obj, *, enlist_tuples: bool = False):
         return [obj]
     if isinstance(obj, tuple) and enlist_tuples:
         return [obj]
+    if isinstance(obj, (KeysView, ValuesView, ItemsView)):
+        return list(obj)
+
     list_types = [tuple, list, set, frozenset]
     if any(isinstance(obj, target_type) for target_type in list_types):
         return obj

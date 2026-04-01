@@ -150,17 +150,6 @@ class OptimizationStage:
                 f"sample-based training, but is currently lacking an implementation for {missing}"
             )
 
-        missing = _missing_method_impls(
-            cls,
-            OptimizationStage,
-            methods=["learn_from_feedback", "uses_online_learning"],
-        )
-        if missing:
-            raise NotImplementedError(
-                f"Optimization stage '{cls.__name__}' needs to implement all methods for "
-                f"online training, but is currently lacking an implementation for {missing}"
-            )
-
         return super().__new__(cls)
 
     def __init__(self, name: str = "") -> None:
@@ -332,8 +321,7 @@ class OptimizationStage:
 
         Notes
         -----
-        If this method is implemented, `uses_online_learning` method has to be implemented as well. Otherwise, PostBOUND will
-        raise an error when an instance of this stage is created.
+        This method stands on its own and does not require any other methods to be implemented.
         """
         raise NotImplementedError(
             f"OptimizationStage {self.name} does not learn online"

@@ -28,6 +28,7 @@ from ._core import (
     PhysicalOperator,
     ScanOperator,
     TableReference,
+    TimeMs,
     UnboundColumnError,
     VirtualTableError,
 )
@@ -100,6 +101,7 @@ __all__ = [
     "Cardinality",
     "ColumnReference",
     "Cost",
+    "TimeMs",
     "IntermediateOperator",
     "JoinOperator",
     "PhysicalOperator",
