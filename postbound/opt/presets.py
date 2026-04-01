@@ -20,7 +20,7 @@ from . import native, ues
 
 warnings.warn(
     "The 'postbound.opt.presets' module is deprecated and will be moved to the "
-    "separate optimizer repository with version 0.21.0",
+    "separate optimizer repository with version 0.22.0",
     category=DeprecationWarning,
     stacklevel=2,
 )

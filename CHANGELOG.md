@@ -12,6 +12,17 @@ The [history](HISTORY.md) contains the changelogs of older PostBOUND releases.
 
 # Version 0.21.0
 
+This is a rather large release with a lot of new features and improvements. Some highlights include:
+
+- Optimization stages now provide high-level support for learning from different kinds of data, such as workloads,
+  databases, etc.
+- Lots of usability improvements throughout the framework, e.g. for better retrieval of information from the database
+  schema, easier specification of query preparations in benchmarks, etc.
+- Introduction of new histogram and most common values types for high-level access to these statistics.
+
+While this release does not contain any breaking changes, we are preparing to clean up some old and unfortunate parts of
+the framework. Currently, these are planned for version 0.22.0.
+
 ## 🐣 New features
 - Optimization stages can now specify whether they require training on data samples or actual query executions. The
   benchmarking tools and optimization pipeline will automatically trigger the training of such stages if they have not been
@@ -104,6 +115,14 @@ pg_instance.execute_query(hinted_query)
 ## ⚠️ Deprecations
 - The old `QueryPrepration` API using *analyze=True*, etc. is now deprecated in favor of the more flexible *projection*
   and *output*  parameters. However, we currently have no plans to remove the old API.
+- The _ues_, _tonic_, _presets_, and _experiments_ module are now deprecated and will be moved to the separate optimizer
+  repository for version 0.22.0.
+- `Workload.read()` is deprecated in favor of `read_workload()`. The old method will be removed in version 0.22.0.
+  This change unifies the workload API and consistently uses `read_workload_XXX` functions for input.
+- `CompoundPredicate` will no longer be used to represent NOT predicates from version 0.22.0 onwards. Instead, a dedicated
+  `NotPredicate` class will be introduced.
+- Databases will no longer support the database cache out-of-the-box. Instead, the cache will become a proper high-level
+  component that can be used with any database. This change is planned for version 0.22.0
 
 ## 🪲 Known bugs
 - The automatic optimization of the Postgres server configuration as part of the Docker installation does not work
