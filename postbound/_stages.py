@@ -3,7 +3,7 @@ from __future__ import annotations
 import abc
 import math
 from collections.abc import Generator, Iterable
-from typing import Optional, Type
+from typing import Optional, Self, Type
 
 from . import util
 from ._core import Cardinality, Cost, TableReference, TimeMs
@@ -20,6 +20,17 @@ from .workloads import Workload
 def _missing_method_impls(
     child_cls: Type, base_cls: Type, *, methods: list[str]
 ) -> list[str]:
+    """Scan the `child_cls` for methods that are implemented in the `base_cls` but not overridden in the `child_cls`.
+
+    This check fails gracefully if none of the methods are implemented. This behavior is used to simulate our "poor man's
+    protocol" and to indicate that the "child" simply does not implement that part of the base class's protocol.
+
+    Returns
+    -------
+    list[str]
+        The list of missing method implementations. If the list is empty, either all methods are implemented or the client
+        does not implement this part of the protocol at all.
+    """
     missing: list[str] = []
     for meth in methods:
         if getattr(child_cls, meth, None) != getattr(base_cls, meth, None):
@@ -33,7 +44,83 @@ def _missing_method_impls(
 
 
 class OptimizationStage:
-    def __new__(cls, *args, **kwargs):
+    """Optimization stages are the core building blocks of optimization pipelines.
+
+    Each stage implements a different, pipeline-specific step of the optimization process. When developing a new
+    optimizer prototype, you generally identify which mental optimizer architecture is most suitable for your needs
+    (i.e. which pipeline you need to use) and then implement the relevant stages for that pipeline and your specific idea.
+
+    Optimization stages are generally "hooks" that extend the optimization process at specific points. If you do not care
+    about a specific stage, you simply do not implement it. The pipeline will either skip the stage entirely or use a
+    reasonable default implementation. However, there might be some stages that are required for a specific pipeline.
+    Check the documentation of the pipeline you want to use for more details.
+
+    Customizing Your Pipeline
+    -------------------------
+    When implementing a new optimization stage, the specific type of stage has at least one abstract method that you have
+    to implement. This method is used to provide the core logic of the stage. For example, the `JoinOrderOptimization`
+    stage requires you to implement the `optimize_join_order` method.
+
+    In addition, you should also override the `describe` method. This method provides a JSON-serializable description of
+    the specific optimization strategy along with important parameters. This information is used (among others) for
+    benchmarking to document precisely how a pipeline was set up, with the end goal of being able to debug and reproduce
+    results. For example, you could provide sample sizes, learning rates, etc. in the description. The default
+    implementation only provides a name for the stage.
+
+    Furthermore, you can implement the `pre_check` method to provide requirements that the input query or database system
+    have to satisfy for the optimization stage to work properly. For example, if your hook only works for equi-join
+    predicates, the pre-check can verify that the input query contains only such predicates. The benchmarking tools will
+    make sure that only supported queries are passed to the stage.
+
+    Finally, optimization stages provide a number of methods related to training. Specifically, each stage can specify that
+    it needs to be trained on the database, the workload, or some sort of training samples in order to work properly.
+    This is realized once again by a set of methods that you can implement to provide the actual training logic. The
+    benchmarking tools will analyze the final optimization pipeline and make sure to initialize all of its stages with the
+    appropriate kind of training data. The training methods generally come in pairs of two: one method to perform the
+    actual training logic and another method to indicate whether the training process has already been completed. If you
+    implement one of the training methods, you always have to implement the other one as well. Otherwise PostBOUND will
+    raise an error when creating an instance of your stage. The training methods should return a `TrainingMetrics` object
+    that contains information about the training process, e.g. how long it took, how many samples were used, etc. This
+    information is included in the benchmark results for later analysis. PostBOUND does not make any assumptions about the
+    kind of information that is included in the metrics object, so you should include whatever makes sense for your
+    specific training process.
+
+    The entire training process is completely optional. If you do not require any kind of training, you don't need to do
+    anything.
+
+    Data-driven Training
+    --------------------
+    This kind of training gives you access to the target database. You can execute arbitrary queries, fetch statistics,
+    analyze the schema, etc. For example, this can be used to implement new kinds of statistics for cardinality estimation.
+    To use data-driven training, implement the `fit_database` and `database_fit_completed` methods.
+
+    Workload-based Training
+    -----------------------
+    This kind of training gives you access to the entire workload of queries that will be optimized. Since this is a severe
+    leak of the test set, you should only use it to extract general information about the workload. For example, many
+    research ideas need to know which joins are executed in the workload, or which columns are used for specific filter
+    predicates. To use workload-based training, implement the `fit_workload` and `workload_fit_completed` methods.
+
+    Sample-based Training
+    ----------------------
+    This kind of training implements traditional offline training based on a set of pre-computed training samples. Samples
+    can contain arbitrary information. For example, a learned cardinality estimator might require pairs of SQL queries and
+    their actual cardinalities as training samples. Since multiple optimization stages might require similar training data,
+    PostBOUND implements a flexible system to describe the required training samples. Therefore, you need to implement
+    three methods to use sample-based training: the usual `fit_samples` and `sample_fit_completed` methods, as well as a
+    `sample_spec` method. This method provides a description of the kind of information that is required for training. The
+    benchmarking tools will analyze the available training data and make sure to provide the appropriate samples to the
+    stage.
+
+    Online Training
+    ---------------
+    This kind of training allows you to learn from the actual execution of past queries, live during the benchmark.
+    The benchmarking tools will provide the executed query, its execution time, and the raw result set. This can be used to
+    implement a wide range of reinforcement learning-style approaches. To use online training, implement the
+    `learn_from_feedback` and `uses_online_learning` methods.
+    """
+
+    def __new__(cls, *args, **kwargs) -> Self:
         missing = _missing_method_impls(
             cls, OptimizationStage, methods=["fit_database", "database_fit_completed"]
         )
