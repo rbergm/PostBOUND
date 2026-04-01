@@ -13,9 +13,11 @@ The [history](HISTORY.md) contains the changelogs of older PostBOUND releases.
 # Version 0.21.0
 
 ## 🐣 New features
+- The database interface now provides a shortcut `explain()` method to obtain the query plan for a given query. This can be
+   used instead of calling the optimizer and it's explain method.
 - Database statistics now also provide histograms.
-- The `OptimizerInterface` (e.g. `pg_instance.optimizer()`) now provides a method to parse an existing system-specific
-  query plan to the generalized `QueryPlan`. This can be used as follows:
+- The `OptimizerInterface` (e.g. `pg_instance.optimizer()`) now provides a `parse_plan` method to parse an existing
+  system-specific query plan to the generalized `QueryPlan`. This can be used as follows:
   ```python
   explain_query = pb.transform.as_explain(query)
   raw_plan = database.execute_query(explain_query)

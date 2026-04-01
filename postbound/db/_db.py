@@ -484,6 +484,33 @@ class Database(abc.ABC):
         """
         raise NotImplementedError
 
+    def explain(
+        self,
+        query: SqlQuery,
+        *,
+        plan: Optional[QueryPlan] = None,
+        join_order: Optional[JoinTree] = None,
+        physical_ops: Optional[PhysicalOperatorAssignment] = None,
+        plan_params: Optional[PlanParameterization] = None,
+    ) -> QueryPlan:
+        """Shortcut method to obtain the query plan for a given query.
+
+        Calling this method is equivalent to calling ``.optimizer().query_plan()`` on the query, but it also allows to
+        directly pass hints for the plan generation. These are passed as-is to the hinting backend.
+        """
+        needs_hinting = any(
+            hint is not None for hint in [plan, join_order, physical_ops, plan_params]
+        )
+        if needs_hinting:
+            query = self.hinting().generate_hints(
+                query,
+                plan=plan,
+                join_order=join_order,
+                physical_ops=physical_ops,
+                plan_params=plan_params,
+            )
+        return self.optimizer().query_plan(query)
+
     @abc.abstractmethod
     def database_name(self) -> str:
         """Provides the name of the (physical) database that the database interface is connected to.
