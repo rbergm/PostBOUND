@@ -1130,7 +1130,8 @@ class PostgresInterface(Database):
             and configuration.parameter not in _RuntimeChangeablePostgresSettings
         ):
             warnings.warn(
-                f"Cannot apply configuration setting '{configuration.parameter}' at runtime"
+                f"Cannot apply configuration setting '{configuration.parameter}' at runtime",
+                stacklevel=2,
             )
             return
         elif isinstance(configuration, PostgresConfiguration):
@@ -1144,7 +1145,8 @@ class PostgresInterface(Database):
             if unsupported_settings:
                 warnings.warn(
                     f"Skipping configuration settings {unsupported_settings} "
-                    "because they cannot be changed at runtime"
+                    "because they cannot be changed at runtime",
+                    stacklevel=2,
                 )
             configuration = str(PostgresConfiguration(supported_settings))
 
@@ -1474,7 +1476,8 @@ class PostgresSchemaInterface(DatabaseSchema):
             return None
         if len(result_set) > 1:
             warnings.warn(
-                f"Multi-index {index} detected. Only returning the first column"
+                f"Multi-index {index} detected. Only returning the first column",
+                stacklevel=2,
             )
             result_set = result_set[:1]
 
@@ -2222,6 +2225,7 @@ def _generate_pghintplan_hints(
         warnings.warn(
             "Temporarily disabling GEQO. pg_hint_plan only works with the DP optimizer.",
             category=HintWarning,
+            stacklevel=3,
         )
         hints.append("Set(geqo off)")
 
@@ -2241,6 +2245,7 @@ def _generate_pghintplan_hints(
                 warnings.warn(
                     "Cannot set multiple parallel hints for Postgres. Ignoring additional hints.",
                     category=HintWarning,
+                    stacklevel=3,
                 )
 
         for join in phys_ops.join_operators.values():
@@ -2252,6 +2257,7 @@ def _generate_pghintplan_hints(
                     "Cannot directly set parallel workers on a join with pg_hint_plan. "
                     "Setting on all base tables instead.",
                     category=HintWarning,
+                    stacklevel=3,
                 )
                 for tab in join.intermediate:
                     hints.append(
@@ -2261,6 +2267,7 @@ def _generate_pghintplan_hints(
                 warnings.warn(
                     "Cannot set multiple parallel hints for Postgres. Ignoring additional hints.",
                     category=HintWarning,
+                    stacklevel=3,
                 )
 
         for tabs, intermediate_op in phys_ops.intermediate_operators.items():
@@ -2269,6 +2276,7 @@ def _generate_pghintplan_hints(
                 warnings.warn(
                     f"Cannot enforce operator {intermediate_op} with pg_hint_plan. Ignoring this hint",
                     category=HintWarning,
+                    stacklevel=3,
                 )
                 continue
             intermediate = " ".join(tab.identifier() for tab in tabs)
@@ -2288,6 +2296,7 @@ def _generate_pghintplan_hints(
                 warnings.warn(
                     f"Ignoring infinite cardinality for intermediate {intermediate}",
                     category=HintWarning,
+                    stacklevel=3,
                 )
                 continue
 
@@ -2300,6 +2309,7 @@ def _generate_pghintplan_hints(
                 warnings.warn(
                     "Cannot set multiple parallel hints for Postgres. Ignoring additional hints.",
                     category=HintWarning,
+                    stacklevel=3,
                 )
                 continue
 
@@ -2321,6 +2331,7 @@ def _generate_pghintplan_hints(
             warnings.warn(
                 "pg_hint_plan does not support execution mode hints",
                 category=HintWarning,
+                stacklevel=3,
             )
 
     hints = [f" {line}" for line in hints]
@@ -2345,6 +2356,7 @@ def _generate_pglab_hints(
         warnings.warn(
             "pg_lab can only force parallel execution of nodes with known operators. Ignoring worker hints.",
             category=HintWarning,
+            stacklevel=3,
         )
     elif has_worker_params:
         assert plan_params is not None and phys_ops is not None
@@ -2356,6 +2368,7 @@ def _generate_pglab_hints(
             warnings.warn(
                 "pg_lab can only force parallel execution of nodes with known operators. Ignoring additional hints.",
                 category=HintWarning,
+                stacklevel=3,
             )
         phys_ops = phys_ops.integrate_workers_from(plan_params)
 
@@ -2378,6 +2391,7 @@ def _generate_pglab_hints(
                 warnings.warn(
                     "Cannot set multiple parallel hints for Postgres. Ignoring additional hints.",
                     category=HintWarning,
+                    stacklevel=3,
                 )
             else:
                 hint = f"{op}({table})"
@@ -2394,6 +2408,7 @@ def _generate_pglab_hints(
                 warnings.warn(
                     "Cannot set multiple parallel hints for Postgres. Ignoring additional hints.",
                     category=HintWarning,
+                    stacklevel=3,
                 )
             else:
                 hint = f"{op}({intermediate})"
@@ -2419,6 +2434,7 @@ def _generate_pglab_hints(
                 warnings.warn(
                     f"Ignoring infinite cardinality for intermediate {intermediate}",
                     category=HintWarning,
+                    stacklevel=3,
                 )
                 continue
 
@@ -2488,6 +2504,7 @@ def _generate_pglab_plan(
             warnings.warn(
                 "Cannot set multiple parallel hints for Postgres. Ignoring additional hints.",
                 category=HintWarning,
+                stacklevel=3,
             )
 
         if node.operator is None:
@@ -2506,6 +2523,7 @@ def _generate_pglab_plan(
             warnings.warn(
                 "Cannot set multiple parallel hints for Postgres. Ignoring additional hints.",
                 category=HintWarning,
+                stacklevel=3,
             )
         else:
             metadata = ""
@@ -2715,7 +2733,8 @@ class PostgresHintService(HintService):
                 "there might be (many) dragons. "
                 "Proceed at your own risk. "
                 "We assume that the Postgres server has pg_hint_plan enabled. "
-                "Please set the backend property to pg_lab manually if you are using pg_lab."
+                "Please set the backend property to pg_lab manually if you are using pg_lab.",
+                stacklevel=3,
             )
             self._backend = "pg_hint_plan"
             self._inactive = False
@@ -2761,7 +2780,8 @@ class PostgresHintService(HintService):
                 "It seems you are connecting to a remote Postgres instance. "
                 "PostBOUND cannot infer the hinting backend for such connections. "
                 "We assume that the this server has pg_hint_plan enabled. "
-                "Please set the backend property to pg_lab manually if you are using pg_lab."
+                "Please set the backend property to pg_lab manually if you are using pg_lab.",
+                stacklevel=3,
             )
             self._backend = "pg_hint_plan"
             self._inactive = False
@@ -2786,7 +2806,8 @@ class PostgresHintService(HintService):
         else:
             warnings.warn(
                 "No supported hinting backend found. "
-                "Please ensure that either pg_hint_plan or pg_lab is available in your Postgres instance."
+                "Please ensure that either pg_hint_plan or pg_lab is available in your Postgres instance.",
+                stacklevel=3,
             )
             self._inactive = True
             self._backend = "none"
@@ -3109,7 +3130,9 @@ def connect(
         with open(".psycopg_connection", "r") as f:
             connect_string = f.readline().strip()
     elif os.getenv("PGDATABASE"):
-        warnings.warn("Using environment variables to construct connection string.")
+        warnings.warn(
+            "Using environment variables to construct connection string.", stacklevel=2
+        )
         env_vars = {
             "PGDATABASE": "dbname",
             "PGHOST": "host",
@@ -3809,6 +3832,7 @@ class TimeoutQueryExecutor:
             warnings.warn(
                 "Cannot cache query results that were obtained with a timeout.",
                 category=QueryCacheWarning,
+                stacklevel=2,
             )
 
         if timed_out:
@@ -4089,7 +4113,8 @@ class PostgresExplainNode:
             # For BitmapAnd/BitmapOr nodes, the actual number of rows is always 0.
             # This is due to limitations in the Postgres implementation.
             warnings.warn(
-                "Postgres does not report the actual number of rows for bitmap nodes correctly. Returning NaN."
+                "Postgres does not report the actual number of rows for bitmap nodes correctly. Returning NaN.",
+                stacklevel=2,
             )
             return math.nan
         return self._true_card

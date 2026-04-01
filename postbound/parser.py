@@ -369,6 +369,7 @@ class QueryNamespace:
                         f"Found complex expression without an alias: '{projection.expression}'. "
                         "Such expressions may currently not be referenced later on.",
                         category=ParserWarning,
+                        stacklevel=2,
                     )
 
     def register_table(self, table: TableReference) -> None:
@@ -2293,6 +2294,7 @@ def parse_query(
                     "Having no database available means that the parser will be unable to infer the correct table for "
                     "unqualified column references.",
                     category=ParserWarning,
+                    stacklevel=2,
                 )
                 db_schema = None
             case 1:
@@ -2304,6 +2306,7 @@ def parse_query(
                     "results if the databases have different schemas. Consider obtaining private connections to your databases to "
                     "prevent registration in the global database pool.",
                     category=ParserWarning,
+                    stacklevel=2,
                 )
                 db_schema = pool.any_database().schema()
 

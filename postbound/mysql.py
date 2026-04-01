@@ -85,6 +85,7 @@ from .util import Version
 warnings.warn(
     "The MySQL interface is experimental and may be incomplete. Use it at your own risk.",
     UserWarning,
+    stacklevel=2,
 )
 
 

@@ -148,7 +148,7 @@ def hash_dict(dictionary: dict[K, V]) -> int:
         elif isinstance(val, dict):
             values.append(hash_dict(val))
         else:
-            warnings.warn("Unhashable type, skipping: " + type(val))
+            warnings.warn(f"Unhashable type, skipping: {type(val)}", stacklevel=2)
     keys_hash = hash(tuple(keys))
     values_hash = hash(tuple(values))
     return hash((keys_hash, values_hash))

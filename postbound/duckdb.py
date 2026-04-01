@@ -364,11 +364,13 @@ class DuckDBSchema(DatabaseSchema):
             if len(column_names) > 1:
                 warnings.warn(
                     f"Column {column} is part of a multi-column foreign key constraint. "
-                    "This is currently not fully supported, only the first column will be returned."
+                    "This is currently not fully supported, only the first column will be returned.",
+                    stacklevel=2,
                 )
             if not column_names:
                 warnings.warn(
-                    f"Column {column} is part of a foreign key constraint, but no referenced columns could be identified."
+                    f"Column {column} is part of a foreign key constraint, but no referenced columns could be identified.",
+                    stacklevel=2,
                 )
                 continue
             column_names = column_names[:1]
@@ -495,7 +497,7 @@ def _bind_node_to_table(
     score_ranking = sorted(scores.values(), reverse=True)
     if 0.99 * score_ranking[0] <= score_ranking[1]:
         warnings.warn(
-            f"Could not unambiguously bind scan node to a table. Candidates are {scores}."
+            f"Could not unambiguously bind scan node to a table. Candidates are {scores}.",
         )
         return None
 
@@ -644,7 +646,8 @@ class DuckDBOptimizer(OptimizerInterface):
         plan = self.query_plan(query)
         if "AGGREGATE" in plan.node_type:
             warnings.warn(
-                "Plan could have an aggregate node as root. DuckDB does not estimate cardinalities for aggregations."
+                "Plan could have an aggregate node as root. DuckDB does not estimate cardinalities for aggregations.",
+                stacklevel=2,
             )
         return plan.estimated_cardinality
 

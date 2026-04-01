@@ -212,6 +212,7 @@ class QueryPreparation:
                 "The 'explain' parameter is deprecated in favor of the more versatile 'output' parameter. "
                 "Please use 'output=\"explain\"' instead.",
                 DeprecationWarning,
+                stacklevel=2,
             )
             self.output = "explain" if explain else output
         else:
@@ -222,6 +223,7 @@ class QueryPreparation:
                 "The 'analyze' parameter is deprecated in favor of the more versatile 'output' parameter. "
                 "Please use 'output=\"analyze\"' instead.",
                 DeprecationWarning,
+                stacklevel=2,
             )
             self.output = "analyze" if analyze else self.output
 
@@ -230,6 +232,7 @@ class QueryPreparation:
                 "The 'count_star' parameter is deprecated in favor of the more versatile 'projection' parameter. "
                 "Please use 'projection=\"count_star\"' instead.",
                 DeprecationWarning,
+                stacklevel=2,
             )
             self.projection = "count_star" if count_star else projection
         else:
@@ -237,7 +240,8 @@ class QueryPreparation:
 
         if self.output == "explain" and prewarm:
             warnings.warn(
-                "Prewarming is not compatible with EXPLAIN queries. Ignoring prewarm setting."
+                "Prewarming is not compatible with EXPLAIN queries. Ignoring prewarm setting.",
+                stacklevel=2,
             )
             self.prewarm = False
         else:
@@ -287,7 +291,8 @@ class QueryPreparation:
         if self.prewarm:
             if not isinstance(on, PrewarmingSupport):
                 warnings.warn(
-                    "Ignoring prewarm setting since the database does not support prewarming"
+                    "Ignoring prewarm setting since the database does not support prewarming",
+                    stacklevel=2,
                 )
             else:
                 on.prewarm_tables(query.tables())

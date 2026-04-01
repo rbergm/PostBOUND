@@ -3781,7 +3781,9 @@ class SimpleFilter(AbstractPredicate):
             return False
         except Exception as e:
             warnings.warn(
-                "Unexpected error during filter unwrapping: " + str(e), RuntimeWarning
+                f"Unexpected error during filter unwrapping: {e}",
+                RuntimeWarning,
+                stacklevel=2,
             )
             return False
 
@@ -8730,7 +8732,8 @@ class SqlQuery:
                 case StarExpression():
                     warnings.warn(
                         "Cannot compute the output columns for SELECT * queries. Please use the database schema "
-                        "to infer the columns. The result of this method is likely not what you want."
+                        "to infer the columns. The result of this method is likely not what you want.",
+                        stacklevel=2,
                     )
                 case _:
                     cols.append(ColumnReference(f"column_{anon_idx}"))
@@ -9423,12 +9426,14 @@ class SetQuery:
     ) -> None:
         if left_query.is_explain():
             warnings.warn(
-                "Left query is an EXPLAIN query. Ignoring the EXPLAIN clause."
+                "Left query is an EXPLAIN query. Ignoring the EXPLAIN clause.",
+                stacklevel=2,
             )
             left_query = build_query(left_query.clauses(skip=Explain))
         if right_query.is_explain():
             warnings.warn(
-                "Right query is an EXPLAIN query. Ignoring the EXPLAIN clause."
+                "Right query is an EXPLAIN query. Ignoring the EXPLAIN clause.",
+                stacklevel=2,
             )
             right_query = build_query(right_query.clauses(skip=Explain))
 

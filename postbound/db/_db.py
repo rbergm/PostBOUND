@@ -647,14 +647,16 @@ class Database(abc.ABC):
                     self._query_cache = json.load(cache_file, cls=_DBCacheJsonDecoder)
                 except json.JSONDecodeError as e:
                     warnings.warn(
-                        "Could not read query cache: " + str(e),
+                        f"Could not read query cache: {e}",
                         category=QueryCacheWarning,
+                        stacklevel=4,
                     )
                     self._query_cache = {}
         else:
             warnings.warn(
                 f"Could not read query cache: File {query_cache_name} does not exist",
                 category=QueryCacheWarning,
+                stacklevel=4,
             )
             self._query_cache = {}
         atexit.register(self._store_query_cache, query_cache_name)
@@ -2586,7 +2588,9 @@ class DatabaseStatistics(abc.ABC):
         if use_emulation and not n_bins:
             raise ValueError("n_bins must be set for emulated histograms.")
         if not use_emulation and n_bins:
-            warnings.warn("n_bins is ignored if the histogram is loaded from stats")
+            warnings.warn(
+                "n_bins is ignored if the histogram is loaded from stats", stacklevel=2
+            )
 
         if use_emulation:
             assert n_bins is not None
