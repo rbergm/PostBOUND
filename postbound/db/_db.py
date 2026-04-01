@@ -506,8 +506,8 @@ class Database(abc.ABC):
                 query,
                 plan=plan,
                 join_order=join_order,
-                physical_ops=physical_ops,
-                plan_params=plan_params,
+                physical_operators=physical_ops,
+                plan_parameters=plan_params,
             )
         return self.optimizer().query_plan(query)
 
@@ -1721,12 +1721,14 @@ class MostCommonValues[T]:
         return str(self.mcvs)
 
 
-HistogramApproximation = Literal["approx-uni", "bound"]
+type HistogramApproximation = Literal["approx-uni", "bound"]
+"""The strategy to estimate the frequency of values that are not exactly on the bucket bounds of a histogram."""
 
 
 def _infer_histogram_bounds[T](
     frequencies: Sequence[tuple[T, int]], *, n_bins: int, n_rows: int
 ) -> tuple[T, Sequence[T], Sequence[int]]:
+    """Infer the bucket bounds and frequencies for a histogram from a list of (value, frequency) pairs."""
     if not frequencies:
         raise ValueError("Cannot infer histogram bounds from empty frequency list")
 
@@ -1747,13 +1749,46 @@ def _infer_histogram_bounds[T](
 
 
 class Histogram[T: SupportsRichComparison[T]]:
+    """Histograms are a common way to approximate the distribution of values in a column.
+
+    Our implementation models a general histogram as a list of buckets. Each bucket is associated with a frequency, i.e.
+    the number of elements that fall into the bucket. This might be an equi-depth or an equi-width histogram, but this is
+    not a requirement.
+
+    Currently, we only provide two high-level methods for cardinality estimation: `frequency_below` and `frequency_above`.
+    The former estimates the number of elements that are less than or equal to a given value, while the latter estimates
+    the number of elements that are greater than a given value. If the queried value does not align perfectly with the
+    bucket bounds, the behavior depends on the selected `bucket_interpolation` strategy:
+
+    - "bound" is a conservative strategy. It *bounds* the frequency of the queried value by the frequency of the entire
+      bucket that contains it.
+    - "approx-uni" is a more aggressive strategy. It assumes that the values within each bucket are uniformly distributed
+      and uses a simple linear interpolation to estimate the frequency of the queried value.
+
+    Histograms can be iterated over to access the individual (bucket bound, frequency) pairs. In addition, we provide
+    *__getitem__* access to get the i-th bucket bound and its frequency.
+
+    Parameters
+    ----------
+    bounds : Sequence[T]
+        The upper bounds of the buckets. These must be sorted in ascending order. The lower bound of the first bucket is
+        given by the additional `lower` parameter. The upper bound of the final bucket is implicitly given by the final
+        element in this list.
+    frequencies : Sequence[int]
+        The frequencies of the buckets. The i-th element in this list corresponds to the i-th bucket.
+    lower : T
+        The lower bound of the first bucket. This is required to be less than or equal to the first element in `bounds`.
+    bucket_interpolation : Literal["approx-uni", "bound"], optional
+        The strategy to estimate the frequency of values that fall into a bucket, but are not exactly on the bucket bounds.
+        The default is "bound".
+    """
+
     def __init__(
         self,
         bounds: Iterable[T],
         frequencies: Iterable[int],
         *,
         lower: T,
-        n_rows: int,
         bucket_interpolation: HistogramApproximation = "bound",
     ) -> None:
         self._bounds = list(bounds)
@@ -1766,32 +1801,65 @@ class Histogram[T: SupportsRichComparison[T]]:
                 f"Got {len(self._bounds)} bounds and {len(self._frequencies)} frequencies."
             )
 
-        self._n_rows = n_rows
+        self._n_rows = sum(self._frequencies)
         self._lower = lower
-        self._freq_per_bucket = n_rows // len(self._bounds)
+        self._freq_per_bucket = self._n_rows // len(self._bounds)
         self._bucket_interpolation = bucket_interpolation
 
     @property
     def bounds(self) -> Sequence[T]:
+        """Get the upper bounds of all buckets."""
         return list(self._bounds)
 
     @property
     def n_buckets(self) -> int:
+        """Get the number of buckets in the histogram."""
         return len(self._bounds)
 
     @property
     def freq_per_bucket(self) -> int:
+        """Get the average number of elements per bucket.
+
+        For equi-depth histograms, this number will be pretty accurate. For all other kinds of histograms, this number is
+        really just an average.
+        """
         return self._freq_per_bucket
 
     @property
+    def n_rows(self) -> int:
+        """Get the total number of rows that are represented by the histogram."""
+        return self._n_rows
+
+    @property
     def lower(self) -> T:
+        """Get the lower bound of the first bucket (and thus of the entire histogram)."""
         return self._lower
 
     @property
     def upper(self) -> T:
+        """Get the upper bound of the last bucket (and thus of the entire histogram)."""
         return self._bounds[-1]
 
+    @property
+    def bucket_interpolation(self) -> HistogramApproximation:
+        """Get the strategy to estimate the frequency of values that are not exactly on the bucket bounds."""
+        return self._bucket_interpolation
+
+    @bucket_interpolation.setter
+    def bucket_interpolation(self, strategy: HistogramApproximation) -> None:
+        if strategy not in ("approx-uni", "bound"):
+            raise ValueError(
+                f"Unsupported bucket interpolation strategy: {strategy}. "
+                "Supported strategies are 'approx-uni' and 'bound'."
+            )
+        self._bucket_interpolation = strategy
+
     def frequency_below(self, value: T) -> int:
+        """Estimate the frequency of values that are less than or equal to a given value.
+
+        If the value does not align exactly with the bucket bounds, the behavior depends on the selected
+        `bucket_interpolation` strategy. See the class documentation for details.
+        """
         upper_idx = bisect.bisect_right(self._bounds, value)
         if upper_idx == 0:
             return 0
@@ -1817,6 +1885,14 @@ class Histogram[T: SupportsRichComparison[T]]:
         return (lower_idx + in_bucket_frac) * self._freq_per_bucket
 
     def frequency_above(self, value: T) -> int:
+        """Estimate the frequency of values that are greater than a given value.
+
+        Due to the way we model histograms, we cannot directly estimate the frequency of values greater or equal to a given
+        value, but only the frequency of values that are strictly greater than it.
+
+        If the value does not align exactly with the bucket bounds, the behavior depends on the selected
+        `bucket_interpolation` strategy. See the class documentation for details.
+        """
         lower_idx = bisect.bisect_left(self._bounds, value)
         if lower_idx == 0:
             return self._n_rows
@@ -1837,9 +1913,18 @@ class Histogram[T: SupportsRichComparison[T]]:
 
         upper_idx = lower_idx + 1
         upper_bound = self._bounds[upper_idx]
-        lower_idx = self._bounds[lower_idx]
-        in_bucket_frac = (value - lower_idx) / (upper_bound - lower_idx)
+        lower_bound = self._bounds[lower_idx]
+        in_bucket_frac = (value - lower_bound) / (upper_bound - lower_bound)
         return (upper_idx + in_bucket_frac) * self._freq_per_bucket
+
+    def __len__(self) -> int:
+        return len(self._bounds)
+
+    def __iter__(self) -> Iterator[tuple[T, int]]:
+        return iter(zip(self._bounds, self._frequencies))
+
+    def __getitem__(self, idx: int) -> tuple[T, int]:
+        return self._bounds[idx], self._frequencies[idx]
 
     def __json__(self) -> jsondict:
         return {
@@ -2773,7 +2858,6 @@ class DatabaseStatistics(abc.ABC):
         return Histogram(
             bounds,
             buckets,
-            n_rows=n_rows,
             lower=lo,
             bucket_interpolation=interpolation,
         )

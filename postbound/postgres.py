@@ -2033,7 +2033,6 @@ class PostgresStatisticsInterface(DatabaseStatistics):
             normalized_bounds,
             normalized_frequencies,
             lower=lo,
-            n_rows=n_rows,
             bucket_interpolation=interpolation,
         )
 
