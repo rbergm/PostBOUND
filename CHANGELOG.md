@@ -13,6 +13,10 @@ The [history](HISTORY.md) contains the changelogs of older PostBOUND releases.
 # Version 0.21.0
 
 ## 🐣 New features
+- Optimization stages can now specify whether they require training on data samples or actual query executions. The
+  benchmarking tools and optimization pipeline will automatically trigger the training of such stages if they have not been
+  trained already. This allows to easily use data-driven and workload-driven optimization stages without any explicit
+  action needed by the user.
 - The database interface now provides a shortcut `explain()` method to obtain the query plan for a given query. This can be
    used instead of calling the optimizer and it's explain method.
 - Database statistics now also provide histograms.

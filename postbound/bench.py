@@ -1020,7 +1020,7 @@ def execute_workload(
     per_query_repetitions: int = 1,
     shuffled: bool = False,
     query_preparation: Optional[QueryPreparation | dict[str, Any]] = None,
-    training_data: Optional[TrainingData, TrainingDataRepository] = None,
+    training_data: Optional[TrainingData | TrainingDataRepository] = None,
     timeout: Optional[float] = None,
     exec_callback: Optional[Callable[[ExecutionResult], None]] = None,
     repetition_callback: Optional[Callable[[int], None]] = None,
@@ -1058,6 +1058,10 @@ def execute_workload(
         Preparation steps that should be performed before running the query. The preparation result will be used in place of
         the original query for all repetitions. If a dictionary is passed, all keys are assumed to be valid parameters to the
         `QueryPreparation` constructor.
+    training_data : Optional[TrainingData | TrainingDataRepository], optional
+        If any of the stages in the optimization pipeline requires training on data samples, this data has to be passed
+        here. This only applies if the stages have not been trained already. Data-driven and workload-driven stages will be
+        trained automatically without any explicit action needed by the user.
     timeout : Optional[float], optional
         The maximum time in seconds that the query is allowed to run. If the query exceeds this time, the execution is
         cancelled and the execution time is set to *Inf*. If this parameter is omitted, no timeout is enforced. Notice that

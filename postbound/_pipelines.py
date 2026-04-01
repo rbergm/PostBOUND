@@ -8,7 +8,7 @@ the smallest common denominator among all pipeline implementations.
 from __future__ import annotations
 
 import abc
-from collections.abc import Collection
+from collections.abc import Collection, Mapping
 from typing import Optional, Protocol, Self
 
 from postbound import Workload
@@ -56,6 +56,28 @@ class OptimizationPipeline(abc.ABC):
 
     If in doubt what the best pipeline implementation is, it is probably best to start with the
     `MultiStageOptimizationPipeline` or the `TextBookOptimizationPipeline`, since they are the most flexible.
+
+    Training of Optimization Stages
+    -------------------------------
+    Some optimization strategies require training on the database, the workload or sample queries. For example, a learned
+    cardinality estimator might need prior access to the statistics catalog of the target database or the database schema.
+
+    Each pipeline automatically analyzes the requirements of its optimization stages and passes the appropriate training
+    data to them. This is tightly integrated into the benchmarking tools, which in turn analyze what each pipeline needs
+    (based on its optimization stages) and provide the necessary training data to the pipeline. If you are using an
+    optimization pipeline outside of the benchmarking utilities, you must make sure to call these methods yourself.
+
+    The training process is organized in the following steps:
+
+    - Training on the target database is performed first. This is handled by the `train_on_database` method. Use
+      `requires_data_training` to check whether this step is necessary.
+    - Training on the workload is performed next. The `train_on_workload` method is responsible for this step.. Use
+      `requires_workload_training` to check whether this it is necessary.
+    - Training on sample queries is performed last. This is handled by the `train_on_samples` method. Use
+      `requires_sample_training` to check whether this step is necessary.
+    - Lastly, some optimization stages might require training on actual query executions in an online fashion. The
+      `learn_from_feedback` method takes care of this process. Use `requires_online_training` to check whether this step is
+      necessary.
     """
 
     @abc.abstractmethod
@@ -146,47 +168,28 @@ class OptimizationPipeline(abc.ABC):
 
     @abc.abstractmethod
     def stages(self) -> Collection[OptimizationStage]:
+        """Provides all optimization stages that are part of the pipeline. The order of the stages is not relevant."""
         raise NotImplementedError
 
     @abc.abstractmethod
     def target_database(self) -> Database:
-        """Provides the current target database.
-
-        Returns
-        -------
-        Database
-            The database for which the input queries should be optimized
-        """
+        """Provides the current target database."""
         raise NotImplementedError
-
-    @abc.abstractmethod
-    def describe(self) -> jsondict:
-        """Generates a description of the current pipeline configuration.
-
-        This description is intended to transparently document which optimization strategies have been selected and
-        how they have been instantiated. It can be JSON-serialized and will be included in the output of the benchmarking
-        utilities.
-
-        Returns
-        -------
-        jsondict
-            The actual description
-        """
-        raise NotImplementedError
-
-    def requires_workload_training(self) -> bool:
-        return any(stage.requires_workload_training() for stage in self.stages())
-
-    def requires_sample_training(self) -> bool:
-        return any(stage.requires_sample_training() for stage in self.stages())
 
     def requires_data_training(self) -> bool:
+        """Checks, whether any of the selected optimization stages requires training on the database."""
         return any(stage.requires_data_training() for stage in self.stages())
 
-    def requires_online_training(self) -> bool:
-        return any(stage.uses_online_feedback() for stage in self.stages())
+    def train_on_database(self, database: Database) -> Mapping[str, TrainingMetrics]:
+        """Trains all optimization stages that require training on the database.
 
-    def train_on_database(self, database: Database) -> dict[str, TrainingMetrics]:
+        Returns
+        -------
+        Mapping[str, TrainingMetrics]
+            A dictionary mapping each optimization stage to the metrics obtained during training. Optimization stages are
+            identified by their name. If a stage does not require training on the database or has already completed its
+            training, it is not included in the output.
+        """
         metrics: dict[str, TrainingMetrics] = {}
         for stage in self.stages():
             if not stage.requires_data_training() or stage.database_fit_completed():
@@ -195,9 +198,22 @@ class OptimizationPipeline(abc.ABC):
             metrics[stage.name] = current_metrics
         return metrics
 
+    def requires_workload_training(self) -> bool:
+        """Checks, whether any of the selected optimization stages requires training on the workload."""
+        return any(stage.requires_workload_training() for stage in self.stages())
+
     def train_on_workload(
         self, workload: Workload, database: Database
-    ) -> dict[str, TrainingMetrics]:
+    ) -> Mapping[str, TrainingMetrics]:
+        """Trains all optimization stages that require training on the workload.
+
+        Returns
+        -------
+        Mapping[str, TrainingMetrics]
+            A dictionary mapping each optimization stage to the metrics obtained during training. Optimization stages are
+            identified by their name. If a stage does not require training on the workload or has already completed its
+            training, it is not included in the output.
+        """
         metrics: dict[str, TrainingMetrics] = {}
         for stage in self.stages():
             if not stage.requires_workload_training() or stage.workload_fit_completed():
@@ -206,9 +222,22 @@ class OptimizationPipeline(abc.ABC):
             metrics[stage.name] = current_metrics
         return metrics
 
+    def requires_sample_training(self) -> bool:
+        """Checks, whether any of the selected optimization stages requires training on sample queries."""
+        return any(stage.requires_sample_training() for stage in self.stages())
+
     def train_on_samples(
         self, samples: TrainingData | TrainingDataRepository
-    ) -> dict[str, TrainingMetrics]:
+    ) -> Mapping[str, TrainingMetrics]:
+        """Trains all optimization stages that require training on sample queries.
+
+        Returns
+        -------
+        Mapping[str, TrainingMetrics]
+            A dictionary mapping each optimization stage to the metrics obtained during training. Optimization stages are
+            identified by their name. If a stage does not require training on sample queries or has already completed its
+            training, it is not included in the output.
+        """
         metrics: dict[str, TrainingMetrics] = {}
 
         for stage in self.stages():
@@ -231,14 +260,37 @@ class OptimizationPipeline(abc.ABC):
         return metrics
 
     def sample_fit_completed(self) -> bool:
+        """Checks, whether all optimization stages that require training on sample queries have completed their training."""
         return all(
             not stage.requires_sample_training() or stage.sample_fit_completed()
             for stage in self.stages()
         )
 
+    def requires_online_training(self) -> bool:
+        """Checks, whether any of the selected optimization stages requires training on actual query executions."""
+        return any(stage.uses_online_feedback() for stage in self.stages())
+
     def learn_from_feedback(
         self, query: SqlQuery, result_set: ResultSet, *, exec_time: TimeMs
-    ) -> dict[str, TrainingMetrics]:
+    ) -> Mapping[str, TrainingMetrics]:
+        """Trains all optimization stages that require training on actual query executions.
+
+        Parameters
+        ----------
+        query : SqlQuery
+            The query that has been executed
+        result_set : ResultSet
+            The result set obtained from executing the query
+        exec_time : TimeMs
+            The execution time of the query in milliseconds
+
+        Returns
+        -------
+        Mapping[str, TrainingMetrics]
+            A dictionary mapping each optimization stage to the metrics obtained during training. Optimization stages are
+            identified by their name. If a stage does not require training on actual query executions it is not included in
+            the output.
+        """
         metrics: dict[str, TrainingMetrics] = {}
         for stage in self.stages():
             if not stage.uses_online_feedback():
@@ -248,6 +300,21 @@ class OptimizationPipeline(abc.ABC):
             )
             metrics[stage.name] = current_metrics
         return metrics
+
+    @abc.abstractmethod
+    def describe(self) -> jsondict:
+        """Generates a description of the current pipeline configuration.
+
+        This description is intended to transparently document which optimization strategies have been selected and
+        how they have been instantiated. It can be JSON-serialized and will be included in the output of the benchmarking
+        utilities.
+
+        Returns
+        -------
+        jsondict
+            The actual description
+        """
+        raise NotImplementedError
 
 
 class IntegratedOptimizationPipeline(OptimizationPipeline):
