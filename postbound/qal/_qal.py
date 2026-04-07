@@ -823,38 +823,64 @@ class FunctionExpression(SqlExpression):
 
     @staticmethod
     def create_count(
-        column: SqlExpression | Iterable[SqlExpression] = StarExpression(),
+        column: ColumnReference
+        | SqlExpression
+        | Iterable[SqlExpression] = StarExpression(),
     ) -> FunctionExpression:
         """Shortcut method to create a new *COUNT()*  expression over (one or multiple) columns.
 
         If no column is given, a *COUNT(\\*)* is created.
         """
-        column = [column] if isinstance(column, SqlExpression) else list(column)
-        return FunctionExpression("count", column)
+        match column:
+            case ColumnReference():
+                args = [ColumnExpression(column)]
+            case SqlExpression():
+                args = [column]
+            case Iterable():
+                args = list(column)
+        return FunctionExpression("count", args)
 
     @staticmethod
     def create_max(
-        column: SqlExpression | Iterable[SqlExpression],
+        column: ColumnReference | SqlExpression | Iterable[SqlExpression],
     ) -> FunctionExpression:
         """Shortcut method to create a new *MAX()*  expression over (one or multiple) columns."""
-        column = [column] if isinstance(column, SqlExpression) else list(column)
-        return FunctionExpression("max", column)
+        match column:
+            case ColumnReference():
+                args = [ColumnExpression(column)]
+            case SqlExpression():
+                args = [column]
+            case Iterable():
+                args = list(column)
+        return FunctionExpression("max", args)
 
     @staticmethod
     def create_min(
         column: SqlExpression | Iterable[SqlExpression],
     ) -> FunctionExpression:
         """Shortcut method to create a new *MIN()*  expression over (one or multiple) columns."""
-        column = [column] if isinstance(column, SqlExpression) else list(column)
-        return FunctionExpression("min", column)
+        match column:
+            case ColumnReference():
+                args = [ColumnExpression(column)]
+            case SqlExpression():
+                args = [column]
+            case Iterable():
+                args = list(column)
+        return FunctionExpression("min", args)
 
     @staticmethod
     def create_sum(
-        column: SqlExpression | Iterable[SqlExpression],
+        column: ColumnReference | SqlExpression | Iterable[SqlExpression],
     ) -> FunctionExpression:
         """Shortcut method to create a new *SUM()*  expression over (one or multiple) columns."""
-        column = [column] if isinstance(column, SqlExpression) else list(column)
-        return FunctionExpression("sum", column)
+        match column:
+            case ColumnReference():
+                args = [ColumnExpression(column)]
+            case SqlExpression():
+                args = [column]
+            case Iterable():
+                args = list(column)
+        return FunctionExpression("sum", args)
 
     def __init__(
         self,
