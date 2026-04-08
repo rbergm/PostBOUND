@@ -252,9 +252,9 @@ class PredicateTests(unittest.TestCase):
 
 class MockSchemaLookup:
     LookupData = {
-        "a": TableReference("R"),
-        "b": TableReference("R"),
-        "c": TableReference("S"),
+        "a": TableReference("r"),
+        "b": TableReference("r"),
+        "c": TableReference("s"),
     }
 
     def lookup_column(
@@ -263,10 +263,11 @@ class MockSchemaLookup:
         column = column.name if isinstance(column, ColumnReference) else column
         return MockSchemaLookup.LookupData[column]
 
-    def columns(self, table: TableReference) -> Sequence[ColumnReference]:
-        if table == TableReference("R"):
+    def columns(self, table: TableReference | str) -> Sequence[ColumnReference]:
+        table = TableReference(table) if isinstance(table, str) else table
+        if table == TableReference("r"):
             return [ColumnReference("a", table), ColumnReference("b", table)]
-        elif table == TableReference("S"):
+        elif table == TableReference("s"):
             return [ColumnReference("c", table)]
         else:
             raise ValueError(f"Unknown table {table}")
