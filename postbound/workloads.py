@@ -927,7 +927,7 @@ def _assert_workload_loaded(workload: Workload[LabelType], expected_dir: Path) -
         raise ValueError(
             f"Could not load {workload.name} workload. "
             f"Please check {expected_dir} and make sure that it contains valid query files. "
-            f"If it does, please open an issue at https://github.com/rbergm/PostBOUND to report the problem."
+            f"If it does, please open an issue at https://github.com/Optimizer-Playground/PostBOUND to report the problem."
             f"If there are no queries in the directory, try re-running the workload access and open an issue if the problem "
             f"persists."
         )

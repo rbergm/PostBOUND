@@ -18,7 +18,7 @@ Currently, the following optimizers are implemented:
     We are constantly looking for new contributions to the PostBOUND optimimzer library.
     Our goal is to provide a comprehensive collection of optimizers that can be used for research and benchmarking.
     If you have developed an optimizer prototype we would be happy to include it in PostBOUND.
-    Just reach out to us at our `GitHub repository <https://github.com/rbergm/PostBOUND>`_ or by emailing us at
+    Just reach out to us at our `GitHub repository <https://github.com/Optimizer-Playground/PostBOUND>`_ or by emailing us at
     `rico.bergmann1@tu-dresden.de <mailto:rico.bergmann1@tu-dresden.de>`_.
 
 .. warning::

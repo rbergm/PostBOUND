@@ -1104,7 +1104,7 @@ wheels = [
 
 [[package]]
 name = "postbound"
-version = "0.21.0.dev0"
+version = "0.21.0"
 source = { editable = "." }
 dependencies = [
     { name = "lazy-loader" },
@@ -1133,6 +1133,7 @@ vis = [
 
 [package.dev-dependencies]
 dev = [
+    { name = "ipython" },
     { name = "pyarrow" },
     { name = "tables" },
 ]
@@ -1163,6 +1164,7 @@ provides-extras = ["vis", "duckdb", "mysql"]
 
 [package.metadata.requires-dev]
 dev = [
+    { name = "ipython", specifier = ">=9.8.0" },
     { name = "pyarrow", specifier = ">=23.0.0" },
     { name = "tables", git = "https://github.com/PyTables/PyTables" },
 ]

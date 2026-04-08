@@ -13,7 +13,8 @@ class LogicError(RuntimeError):
 
     def __init__(self, *args, **kwargs) -> None:
         super().__init__(
-            "Internal PostBOUND error found. Please file a bug report on Github (https://github.com/rbergm/PostBOUND): ",
+            "Internal PostBOUND error found. Please file a bug report on Github "
+            "(https://github.com/Optimizer-Playground/PostBOUND): ",
             *args,
             **kwargs,
         )

@@ -44,7 +44,7 @@ mysql = [
 
 
 [project.urls]
-"Homepage" = "https://github.com/rbergm/PostBOUND"
+"Homepage" = "https://github.com/Optimizer-Playground/PostBOUND"
 
 [dependency-groups]
 dev = [

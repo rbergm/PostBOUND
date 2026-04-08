@@ -69,6 +69,7 @@ You can obtain an instance of this class by parsing a raw SQL query string using
 :func:`~postbound.parse_query`:
 
 .. ipython:: python
+    :okwarning:
 
     raw_query = "SELECT p.creationdate, min(p.score) FROM posts p GROUP BY p.creationdate"
     query = pb.parse_query(raw_query)
@@ -160,6 +161,7 @@ These can be accessed from the :mod:`~postbound.workloads` module.
 Specifically, the Join Order Benchmark (JOB), the Stats Benchmark and the Stack Benchmark are available out-of-the-box:
 
 .. ipython:: python
+    :okwarning:
 
     stats = pb.workloads.stats()
     stats

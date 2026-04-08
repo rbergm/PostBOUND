@@ -35,7 +35,7 @@ if [ -z "$(ls /postbound)" ] ; then
     sudo chown -R $USERNAME:$USERNAME /pg_lab
     sudo chmod -R 755 /pg_lab
 
-    git clone --depth 1 --branch=main https://github.com/rbergm/PostBOUND /postbound
+    git clone --depth 1 --branch=main https://github.com/Optimizer-Playground/PostBOUND /postbound
 
     # Setup local Postgres or pg_lab
     if [ "$SETUP_POSTGRES" = "true" -a "$USE_PGLAB" = "true" ] ; then

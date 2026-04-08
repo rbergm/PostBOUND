@@ -8,13 +8,15 @@
 
 import os
 import sys
+from datetime import date
 
 sys.path.insert(0, os.path.abspath("../.."))
 
 import postbound as pb
 
+current_year = date.today().year
 project = "PostBOUND"
-copyright = "2025, Dresden Database Research Group"
+copyright = f"2023-{current_year}, Dresden Database Research Group"
 author = "Dresden Database Research Group"
 release = pb.__version__
 
@@ -31,6 +33,7 @@ extensions = [
 
 templates_path = ["_templates"]
 exclude_patterns = []
+ipython_warning_is_error = False
 
 # -- Options for HTML output -------------------------------------------------
 # https://www.sphinx-doc.org/en/master/usage/configuration.html#options-for-html-output

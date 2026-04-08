@@ -38,8 +38,8 @@ If you require custom features, simply pass them as strings to the relevant meth
 unknown features.
 
 If you think that your feature is relevant to a wider range of optimizers, please open an issue or a pull request at
-https://github.com/rbergm/PostBOUND to have it added to the list of supported features. We are happy to extend the list of
-supported features!
+https://github.com/Optimizer-Playground/PostBOUND to have it added to the list of supported features. We are happy to extend
+the list of supported features!
 """
 
 

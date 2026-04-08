@@ -4,7 +4,8 @@ Optimization Pipelines
 .. autoclass:: postbound.OptimizationPipeline
     :members:
 
-.. autodata:: postbound.OptimizationStage
+.. autoclass:: postbound.OptimizationStage
+    :members:
 
 Textbook Pipeline
 ------------------
@@ -56,7 +57,7 @@ Other Pipelines
 
 .. autoclass:: postbound.IncrementalOptimizationStep
     :members:
-    
+
 .. autofunction:: postbound.as_complete_algorithm
 
 

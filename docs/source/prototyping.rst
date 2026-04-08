@@ -15,7 +15,7 @@ relevant for your idea. PostBOUND will then either select reasonable default imp
 or skip them entirely (which usually forces the native optimizer of the target database to step in).
 
 The remainder of this document provides a high-level overview of the available optimization stages.
-To learn more about optimization pipelines, check the `dedicated documentation <core/optimization>`.
+To learn more about optimization pipelines, check the :doc:`dedicated documentation <core/optimization>`.
 
 
 Basic Optimization Scenarios
@@ -70,7 +70,7 @@ database system by a fixed factor:
 
 The estimator can be used in the :class:`~postbound.TextBookOptimizationPipeline` as well as the
 :class:`~postbound.MultiStageOptimizationPipeline`. In the latter case, it acts as a plan parameterization stage.
-The article on :ref:`optimization pipelines <core/optimization>` provides more insight into which
+The article on :doc:`optimization pipelines <core/optimization>` provides more insight into which
 pipeline to use under which circumstances. In short, use the :class:`~postbound.MultiStageOptimizationPipeline` if you
 "only" want to develop a novel cardinality estimator and leave the rest of the optimizer as-is.
 See the documentation of :class:`~postbound.CardinalityEstimator` for additional methods that a cardinality estimator
@@ -144,8 +144,9 @@ relational algebra. However, the enumerator is free to process the query before 
 can interact with the :mod:`~postbound.relalg` module for relational algebra support.
 
 Since implementing an entire plan enumerator is a complex undertaking, we do not show a full example here. Instead, you can
-check out the implementation of the :class:`~postbound.DynamicProgrammingEnumerator` for a textbook-style dynamic
-programming plan enumerator (`reference <https://github.com/rbergm/PostBOUND/blob/main/postbound/opt/dynprog.py#L79>`__).
+check out the implementation of the :class:`~postbound.opt.dynprog.DynamicProgrammingEnumerator` for a textbook-style dynamic
+programming plan enumerator
+(`reference <https://github.com/Optimizer-Playground/PostBOUND/blob/main/postbound/opt/dynprog.py#L79>`__).
 
 Plan enumerators can currently only be used in the :class:`~postbound.TextBookOptimizationPipeline`. As part of this
 pipeline, the cardinality estimator and cost model can also be selected. The pipeline than takes care of passing these on
@@ -181,7 +182,7 @@ As an example, the following implementation generates (linear) join order by alw
         def optimize_join_order(self, query: pb.SqlQuery) -> pb.JoinTree:
             join_order = pb.JoinTree()
             available_relations = list(query.tables())
-            
+
             # we use the statistics catalog to figure out the relation sizes
             available_relations = sorted(
                 available_relations, key=self._target_db.statistics().total_rows
@@ -202,7 +203,7 @@ As an example, the following implementation generates (linear) join order by alw
 
                 join_order = join_order.join_with(candidate)
                 available_relations.remove(candidate)
-            
+
             return join_order
 
 In this example, we would end up in an infinite loop if the query actually contains a cross product. Therefore, we would
@@ -252,7 +253,7 @@ In the following example, we simply execute all joins as hash joins and all scan
                 joins = (intermediate for intermediate in pb.util.powerset(query.tables()) if len(intermediate) > 1)
             else:
                 joins = (node.tables() for node in join_order.iterjoins())
-            
+
             assignment = pb.PhysicalOperatorAssignment()
             for tab in query.tables():
                 assignment.add(pb.ScanOperator.SequentialScan, tab)
@@ -280,9 +281,10 @@ To supply plan parameters, the :class:`~postbound.ParameterGeneration` interface
 
 A parameterization can only be used in the :class:`~postbound.MultiStageOptimizationPipeline` (with one exception, see
 below). In this pipeline, it acts as the final stage. Consequently, it serves two distinct purposes:
-First, parameters can supply information about the plan which neither the :ref:`join-order` nor the :ref:`op-selection`
-stage provided. This is particularly useful for choosing the number of parallel workers a subplan should use.
-Second, if the :ref:`join-order` and :ref:`op-selection` stages are not implemented, the parameterization can be used to
+First, parameters can supply information about the plan which neither the :ref:`stage-join-order` nor the
+:ref:`stage-op-selection` stage provided. This is particularly useful for choosing the number of parallel workers a subplan
+should use.
+Second, if the :ref:`stage-join-order` and :ref:`stage-op-selection` stages are not implemented, the parameterization can be used to
 supply cardinality estimates. For example, if you skip the operator selection stage, the native optimizer would use the
 calculated join order, but perform its normal logic for operator selection. However, this selection happens with a twist:
 instead of calculating its own cardinality estimates, the cost model would use the estimates supplied by the
@@ -335,8 +337,8 @@ Each individual transformation must implement the :class:`~postbound.Incremental
 
     Plan transformations are currently not widely used. You will notice that the overall developer experience for modifying
     existing plans is not very comfortable. If you have a specific use case for plan transformation and are struggling
-    with the current API, please reach out to us on `GitHub <https://github.com/rbergm/PostBOUND/issues>`_. We are happy to
-    improve the API but need more diverse use cases to do so.
+    with the current API, please reach out to us on `GitHub <https://github.com/Optimizer-Playground/PostBOUND/issues>`_. We
+    are happy to improve the API but need more diverse use cases to do so.
 
 
 .. _stage-complete-opt:
@@ -370,7 +372,7 @@ strategies to still implement it in PostBOUND (in increasing order of complexity
    the textbook pipeline. However, this strategy requires you to implement more complex logic that might be beyond the scope
    of the specific optimization idea you want to implement.
 3. Implement a new subclass of the :class:`~postbound.OptimizationPipeline` with its own custom subclasses of
-   :class:`~postbound.OptimizationStage` (see :ref:`beyond-built-in` below).
+   :class:`~postbound.OptimizationStage` (see :ref:`stages-beyond-built-in` below).
 4. Move away from the pipeline-based optimization paradigm. Even in this extreme case, you can still use PostBOUND to
    benefit from query abstraction, database interaction, and hinting utilities. The :doc:`cookbook` contains some examples
    of how to perform hinting manually, etc. In our own research, we opted for this strategy when we wanted to obtain

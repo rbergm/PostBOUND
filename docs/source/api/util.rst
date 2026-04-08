@@ -36,13 +36,6 @@ Logging
     :members:
 
 
-DataFrames
-----------
-
-.. automodule:: postbound.util.df
-    :members:
-
-
 NetworkX
 --------
 

@@ -44,16 +44,18 @@ Contents
   10minutes
   setup
   core/index
-  advanced/index
+  prototyping
   cookbook
+  advanced/index
   api/index
 
 .. important ::
 
   This documentation is a work in progress and currently under construction.
   Currently, the best place to familiarize yourself with PostBOUND is to take a look at the
-  `examples <https://github.com/rbergm/PostBOUND/tree/main/examples>`__.
-  If you have any questions, please feel free to `open an issue on GitHub <https://github.com/rbergm/PostBOUND/issues>`__
+  `examples <https://github.com/Optimizer-Playground/PostBOUND/tree/main/examples>`__.
+  If you have any questions, please feel free to
+  `open an issue on GitHub <https://github.com/Optimizer-Playground/PostBOUND/issues>`__
   or `send us an email <mailto:rico.bergmann1@tu-dresden.de>`__.
   User experience is very important to us, and we are happy to help you get started.
 
@@ -137,8 +139,8 @@ The implementation is compared to the native PostgreSQL optimizer on the Stats b
       logger="tqdm",
   )
 
-Need more? There are a lot of `basic examples <https://github.com/rbergm/PostBOUND/tree/main/examples>`_ in the PostBOUND
-repository!
+Need more? There are a lot of `basic examples <https://github.com/Optimizer-Playground/PostBOUND/tree/main/examples>`_ in the
+PostBOUND repository!
 
 
 History
@@ -147,7 +149,7 @@ History
 .. note::
 
   If you are looking for new features or bug fixes, please check out the
-  `Changelog <https://github.com/rbergm/PostBOUND/blob/main/CHANGELOG.md>`_.
+  `Changelog <https://github.com/Optimizer-Playground/PostBOUND/blob/main/CHANGELOG.md>`_.
 
 PostBOUND was initially created as framework to study pessimistic (or *upper bound-driven*) query optimization techniques
 in PostgreSQL (hence the name).

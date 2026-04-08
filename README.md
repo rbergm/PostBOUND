@@ -1,10 +1,10 @@
 # PostBOUND
 
-![GitHub License](https://img.shields.io/github/license/rbergm/PostBOUND)
-![GitHub Release](https://img.shields.io/github/v/release/rbergm/PostBOUND?color=blue)
+![GitHub License](https://img.shields.io/github/license/Optimizer-Playground/PostBOUND)
+![GitHub Release](https://img.shields.io/github/v/release/Optimizer-Playground/PostBOUND?color=blue)
 
 <p align="center">
-    <img src="https://raw.githubusercontent.com/rbergm/PostBOUND/refs/heads/main/docs/figures/postbound-logo.svg" style="width: 150px; margin: 15px;">
+    <img src="https://raw.githubusercontent.com/Optimizer-Playground/PostBOUND/refs/heads/main/docs/figures/postbound-logo.svg" style="width: 150px; margin: 15px;" alt="PostBOUND logo">
 </p>
 
 PostBOUND is a Python framework for studying query optimization in database systems.
@@ -24,7 +24,7 @@ At a high level, PostBOUND has the following goals and features:
 
 | **[💻 Installation](https://postbound.readthedocs.io/en/latest/setup.html)**
 | **[📖 Documentation](https://postbound.readthedocs.io/en/latest/)**
-| **[🧑‍🏫 Examples](https://github.com/rbergm/PostBOUND/tree/main/examples)** |
+| **[🧑‍🏫 Examples](https://github.com/Optimizer-Playground/PostBOUND/tree/main/examples)** |
 
 
 ## ⚡️ Quick Start
@@ -119,7 +119,7 @@ This is achieved by using query hints which typically encode the optimization de
 In the case of Postgres, this interaction roughly looks like this:
 
 <p align="center">
-  <img src="https://raw.githubusercontent.com/rbergm/PostBOUND/refs/heads/main/docs/figures/postbound-pg-interaction.svg" style="width: 600px; margin: 15px;">
+  <img src="https://raw.githubusercontent.com/Optimizer-Playground/PostBOUND/refs/heads/main/docs/figures/postbound-pg-interaction.svg" style="width: 600px; margin: 15px;">
 </p>
 
 Users implement their optimization strategies in terms of
