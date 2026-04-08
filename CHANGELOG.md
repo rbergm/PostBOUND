@@ -18,26 +18,33 @@ This is a rather large release with a lot of new features and improvements. Some
   databases, etc.
 - Lots of usability improvements throughout the framework, e.g. for better retrieval of information from the database
   schema, easier specification of query preparations in benchmarks, etc.
+- The usability of the database schema has been improved significantly. You can now iterate over the schema to obtain all
+  contained tables, or use dict-style access to obtain more information about specific tables or columns.
 - Introduction of new histogram and most common values types for high-level access to these statistics.
 
-While this release does not contain any breaking changes, we are preparing to clean up some old and unfortunate parts of
+While this release does not contain any major breaking changes, we are preparing to clean up some old and unfortunate parts of
 the framework. Currently, these are planned for version 0.22.0.
 
 ## 🐣 New features
+
 - Optimization stages can now specify whether they require training on data samples or actual query executions. The
   benchmarking tools and optimization pipeline will automatically trigger the training of such stages if they have not been
   trained already. This allows to easily use data-driven and workload-driven optimization stages without any explicit
   action needed by the user.
 - The database interface now provides a shortcut `explain()` method to obtain the query plan for a given query. This can be
    used instead of calling the optimizer and it's explain method.
+- The database schema now provides a high-level API centered around iteration and dict-style access. This makes the repeated
+  calls to different schema methods somewhat redundant.
 - Database statistics now also provide histograms.
 - The `OptimizerInterface` (e.g. `pg_instance.optimizer()`) now provides a `parse_plan` method to parse an existing
   system-specific query plan to the generalized `QueryPlan`. This can be used as follows:
+
   ```python
   explain_query = pb.transform.as_explain(query)
   raw_plan = database.execute_query(explain_query)
   plan = database.optimizer().parse_plan(raw_plan)
   ```
+
 - `execute_workload()` now supports many new output formats for writing the progressive output.
   Currently supported are: CSV, Parquet, JSON, HDF
 - Workloads now support transformations of their queries, e.g. `workload.map(pb.transform.as_star_query)`
@@ -57,28 +64,31 @@ the framework. Currently, these are planned for version 0.22.0.
   pretty-printed. Instead of calling `print(plan.explain())`, one can now simply make `plan` the result of a cell.
 
 ## 📰 Updates
+
 - `DatabaseStatistics.most_common_values()` now returns an actual `MostCommonValues` object instead of a list of tuples.
   The `MostCommonValues` can be used as a drop-in replacement for the old tuple-based API. In addition, it provides more
   high-level methods for working with the most common values.
 - Enabled the MySQL and DuckDB backends to fall back to emulated statistics if the database does not provide them.
 - The Postgres `execute_query()` method now accepts hint parameters and automatically applies them. For example, the
   following can now be done without explicit hinting:
-```python
-query, plan = ...  # whatever
-pg_instance.execute_query(query, plan=plan)
 
-# this is equivalent to
-hinted_query = pg_instance.hinting().generate_hints(query, plan)
-pg_instance.execute_query(hinted_query)
- ```
+  ```python
+  query, plan = ...  # whatever
+  pg_instance.execute_query(query, plan=plan)
+
+  # this is equivalent to
+  hinted_query = pg_instance.hinting().generate_hints(query, plan)
+  pg_instance.execute_query(hinted_query)
+  ```
+
 - The Postgres interface now has a `rollback()` method to put connections back into a valid state.
 - The Postgres statistics interface now consistently supports table references with a schema.
 - Much improved handling of database schemas during query parsing. We now omit clear warnings in case the database pool
   looks weird.
-- The `QueryPreparation` API now provides the `projection` and `output` parameters to modify the *SELECT* clause and the
-  type of results to gather for all queries in a more flexible and intuitive way (how did *explain=True*  and
-  *analyze=True* interact?).
-  The old API using *analyze=True*, etc. is now deprecated in favor of these new parameters.
+- The `QueryPreparation` API now provides the `projection` and `output` parameters to modify the SELECT* clause and the
+  type of results to gather for all queries in a more flexible and intuitive way (how did _explain=True_  and
+  _analyze=True_ interact?).
+  The old API using _analyze=True_, etc. is now deprecated in favor of these new parameters.
 - Column references now provide a `drop_table_alias()` method to obtain a normalized-ish representation of the column.
   This should be helpful in situations where references to the same column are not consistent in their table references,
   e.g., when one was obtained from the schema and the other was obtained from the query.
@@ -89,6 +99,7 @@ pg_instance.execute_query(hinted_query)
 - Expose `argmax()` directly in _util_ module
 
 ## 🏥 Fixes
+
 - Fixed `n_buffered()` method of the Postgres statistics interface raising an error if no pages of the relation are
   currently buffered. We now return 0 in this case.
 - Fixed string representation of `COUNT(DISTINCT ...)` for multiple arguments. We now generate the correct
@@ -110,12 +121,14 @@ pg_instance.execute_query(hinted_query)
   4. The SSB queries can currently not be loaded from the workloads module.
 
 ## 💀 Breaking changes
+
 - Renamed `PreciseCardinalityHintGenerator` to `PreciseCardinalities` to align with the other pre-defined cardinality
   "estimators".
 
 ## ⚠️ Deprecations
-- The old `QueryPrepration` API using *analyze=True*, etc. is now deprecated in favor of the more flexible *projection*
-  and *output*  parameters. However, we currently have no plans to remove the old API.
+
+- The old `QueryPrepration` API using _analyze=True_, etc. is now deprecated in favor of the more flexible _projection_
+  and _output_  parameters. However, we currently have no plans to remove the old API.
 - The _ues_, _tonic_, _presets_, and _experiments_ module are now deprecated and will be moved to the separate optimizer
   repository for version 0.22.0.
 - `Workload.read()` is deprecated in favor of `read_workload()`. The old method will be removed in version 0.22.0.
@@ -126,13 +139,13 @@ pg_instance.execute_query(hinted_query)
   component that can be used with any database. This change is planned for version 0.22.0
 
 ## 🪲 Known bugs
+
 - The automatic optimization of the Postgres server configuration as part of the Docker installation does not work
   on MacOS. Currently, this should be considered as wontfix.
 - The SSB queries can currently not be loaded from the workloads module. The underlying data server crashed and we are
   currently exploring alternative, more reliable solutions.
 
 ---
-
 
 # 🛣 Roadmap
 
