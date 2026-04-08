@@ -981,6 +981,7 @@ class MultiStageOptimizationPipeline(OptimizationPipeline):
 
     def optimize_query(self, query: SqlQuery) -> SqlQuery:
         self._assert_is_build()
+        assert self._pre_check is not None
         supported_query_check = self._pre_check.check_supported_query(query)
         if not supported_query_check.passed:
             raise UnsupportedQueryError(query, supported_query_check.failure_reason)
@@ -997,13 +998,20 @@ class MultiStageOptimizationPipeline(OptimizationPipeline):
                 query, join_order
             )
         )
-        plan_parameters = (
-            PlanParameterization()
-            if self.plan_parameterization is None
-            else self.plan_parameterization.generate_plan_parameters(
+
+        if self._plan_parameterization is None:
+            plan_parameters = PlanParameterization()
+        else:
+            # Hack: all CardinalityEstimator instances are also PlanParameterization instances
+            # However, CardinalityEstimators might require additional setup via initialze() and cleanup()
+            # To support this, we manually call these methods to prevent weird errors on the user side.
+            if isinstance(self._plan_parameterization, CardinalityEstimator):
+                self._plan_parameterization.initialize(self._target_db, query)
+            plan_parameters = self._plan_parameterization.generate_plan_parameters(
                 query, join_order, physical_operators
             )
-        )
+            if isinstance(self._plan_parameterization, CardinalityEstimator):
+                self._plan_parameterization.cleanup()
 
         return self._target_db.hinting().generate_hints(
             query,
