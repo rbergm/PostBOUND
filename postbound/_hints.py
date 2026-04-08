@@ -267,7 +267,7 @@ class PhysicalOperatorAssignment:
     def add(
         self,
         operator: ScanOperatorAssignment | JoinOperatorAssignment | PhysicalOperator,
-        tables: Iterable[TableReference] | None = None,
+        tables: TableReference | Iterable[TableReference] | None = None,
     ) -> Self:
         """Adds an arbitrary operator assignment to the current settings.
 
@@ -279,7 +279,7 @@ class PhysicalOperatorAssignment:
         operator : ScanOperatorAssignment | JoinOperatorAssignment | PhysicalOperator
             The operator to use. If this is a complete assignment, it is used as such. Otherwise, the `tables` parameter must
             contain the tables that are affected by the operator.
-        tables : Iterable[TableReference] | None, optional
+        tables : TableReference | Iterable[TableReference] | None, optional
             The tables to join. This parameter is only used if a plain operator is supplied in the `operator` parameter.
             Otherwise it is ignored.
 
@@ -292,12 +292,14 @@ class PhysicalOperatorAssignment:
             case ScanOperator():
                 self.set_scan_operator(operator, tables)
             case JoinOperator():
+                tables = util.enlist(tables)
                 self.set_join_operator(operator, tables)
             case ScanOperatorAssignment():
                 self.set_scan_operator(operator)
             case JoinOperatorAssignment():
                 self.set_join_operator(operator)
             case IntermediateOperator():
+                tables = util.enlist(tables)
                 self.set_intermediate_operator(operator, tables)
             case _:
                 raise ValueError(f"Unknown operator assignment: {operator}")

@@ -756,6 +756,13 @@ class DatabaseSchema(abc.ABC, Mapping[TableReference, TableInfo]):
     method exists. Take a look at these methods to understand the functionality provided by the database schema
     interface.
 
+    The database schema can be iterated over to obtain all tables in the current database. Key-based access is supported as
+    follows: ``schema[table]`` provides a `TableInfo` that contains a summary of the tables structure (e.g. its columns,
+    primary key, foreign keys, etc.). Similarly, ``schema[column]`` provides a `ColumnInfo` with detailed information about
+    the column (e.g. its datatype, whether it is nullable, etc.). Generally speaking, you should pass a proper
+    `TableReference` or `ColumnReference`. It is also possible to pass just a string, but in this case the schema has to
+    guess whether you are referring to a table or a column.
+
     Parameters
     ----------
     db : Database

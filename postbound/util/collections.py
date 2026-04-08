@@ -79,7 +79,19 @@ def enlist(obj: frozenset[T]) -> frozenset[T]: ...
 
 
 @overload
-def enlist(obj: KeysView[T] | ValuesView[T] | ItemsView[T]) -> list[T]: ...
+def enlist(obj: KeysView[T] | ValuesView[T]) -> list[T]: ...
+
+
+@overload
+def enlist[K, T](obj: ItemsView[K, T]) -> list[tuple[K, T]]: ...
+
+
+@overload
+def enlist(obj: Sequence[T]) -> Sequence[T]: ...
+
+
+@overload
+def enlist(obj: Sequence[T] | T) -> Sequence[T]: ...
 
 
 @overload
@@ -150,12 +162,11 @@ def get_any(elems: Iterable[T]) -> T:
 
 
 @overload
-def simplify[K, V](obj: Mapping[K, V]) -> tuple[K, V]:
-    pass
+def simplify[K, V](obj: Mapping[K, V]) -> tuple[K, V]: ...
 
 
 @overload
-def simplify[T](obj: Iterable) -> T: ...
+def simplify[T](obj: Iterable[T]) -> T: ...
 
 
 @overload
