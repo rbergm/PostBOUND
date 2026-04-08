@@ -1,10 +1,11 @@
 from __future__ import annotations
 
+import copy
 import math
 import re
 from enum import Enum
 from numbers import Number
-from typing import Optional, SupportsFloat, SupportsIndex, TypeVar
+from typing import Optional, SupportsFloat, SupportsIndex, TypeGuard, TypeVar
 
 from .util._errors import StateError
 from .util.jsonize import jsondict
@@ -12,6 +13,7 @@ from .util.jsonize import jsondict
 VisitorResult = TypeVar("VisitorResult")
 """Result of visitor invocations."""
 
+TimeMs = float
 
 Cost = float
 """Type alias for a cost estimate."""
@@ -282,14 +284,7 @@ class Cardinality(Number):
                     return True
                 return self.value < otherval
 
-            case int():
-                return self.value < other
-
-            case float():
-                if math.isnan(other):
-                    return False
-                if math.isinf(other):
-                    return True
+            case int() | float():
                 return self.value < other
 
         return NotImplemented
@@ -306,14 +301,7 @@ class Cardinality(Number):
                     return True
                 return self.value <= otherval
 
-            case int():
-                return self.value <= other
-
-            case float():
-                if math.isnan(other):
-                    return False
-                if math.isinf(other):
-                    return True
+            case int() | float():
                 return self.value <= other
 
         return NotImplemented
@@ -330,14 +318,7 @@ class Cardinality(Number):
                     return True
                 return self.value > otherval
 
-            case int():
-                return self.value > other
-
-            case float():
-                if math.isnan(other):
-                    return False
-                if math.isinf(other):
-                    return True
+            case int() | float():
                 return self.value > other
 
         return NotImplemented
@@ -354,14 +335,7 @@ class Cardinality(Number):
                     return True
                 return self.value >= otherval
 
-            case int():
-                return self.value >= other
-
-            case float():
-                if math.isnan(other):
-                    return False
-                if math.isinf(other):
-                    return True
+            case int() | float():
                 return self.value >= other
 
         return NotImplemented
@@ -727,7 +701,7 @@ class TableReference:
         self._normalized_schema = normalize(self._schema)
         self._normalized_full_name = normalize(self._full_name)
         self._normalized_alias = normalize(self._alias)
-        self._nomalized_identifier = normalize(self._identifier)
+        self._normalized_identifier = normalize(self._identifier)
         self._hash_val = hash(
             (
                 self._normalized_full_name,
@@ -750,6 +724,19 @@ class TableReference:
         else:
             raise ValueError("Full name or alias required")
 
+    __slots__ = (
+        "_schema",
+        "_full_name",
+        "_alias",
+        "_virtual",
+        "_identifier",
+        "_normalized_schema",
+        "_normalized_full_name",
+        "_normalized_alias",
+        "_normalized_identifier",
+        "_hash_val",
+        "_sql_repr",
+    )
     __match_args__ = ("full_name", "alias", "virtual", "schema")
 
     @property
@@ -910,7 +897,7 @@ class TableReference:
     def __lt__(self, other: object) -> bool:
         if not isinstance(other, TableReference):
             return NotImplemented
-        return self._nomalized_identifier < other._nomalized_identifier
+        return self._normalized_identifier < other._normalized_identifier
 
     def __hash__(self) -> int:
         return self._hash_val
@@ -936,10 +923,18 @@ class TableReference:
 class ColumnReference:
     """A column reference represents a specific column of a specific database table.
 
-    This reference always consists of the name of the "physical" column (see below for special cases). In addition,
-    each column can be bound to the table to which it belongs by providing the associated table reference.
+    This reference always consists of the name of the "physical" column (see below for special
+    cases). In addition, each column can be bound to the table to which it belongs by providing the
+    associated table reference.
 
     Column references can be sorted lexicographically and are designed as immutable data objects.
+
+    For situations where columns must be bound to a table, the `BoundColumnReference` subclass
+    exists. It has the same interface like normal column references, but with one difference: its
+    ``table`` property is guaranteed to always be a valid `TableReference`. Use the static
+    `assert_bound` method to ensure that you are dealing with a bound reference.
+    It returns a *TypeGuard* so type checkers should work with the narrowed type after a successful
+    check.
 
     Parameters
     ----------
@@ -955,9 +950,10 @@ class ColumnReference:
 
     Notes
     -----
-    A number of special cases arise when dealing with subqueries and common table expressions. The first one is the
-    fact that columns can be bound to virtual tables, e.g. if they are exported by subqueries, etc. In the same vein,
-    columns also do not always need to refer directly to physical columns. Consider the following example query:
+    A number of special cases arise when dealing with subqueries and common table expressions. The
+    first one is the fact that columns can be bound to virtual tables, e.g. if they are exported by
+    subqueries, etc. In the same vein, columns also do not always need to refer directly to physical
+    columns. Consider the following example query:
 
     ::
 
@@ -966,14 +962,43 @@ class ColumnReference:
         FROM bar JOIN cte_table ON bar.b_id = cte_table.f_id
         WHERE cte_table.sum < 42
 
-    In this case, the CTE exports a column *sum* that is constructed based on two "actual" columns. Hence, the sum
-    column itself does not have any physical representation but will be modelled as a column reference nevertheless.
+    In this case, the CTE exports a column *sum* that is constructed based on two "actual" columns.
+    Hence, the sum column itself does not have any physical representation but will be modelled as a
+    column reference nevertheless.
+
+    Due to these situations, we use the full table reference when comparing columns. BUt this can
+    have unintended side effects as well. For example, consider a physical column *production_year*
+    of a *title* relation. In one query, the column is referenced as *title.production_year*,
+    whereas in the other query, *title* is aliased and the column referenced as *t.production_year*.
+    While both columns are bound to the *title* relation, only one of the table references contains
+    an alias. Therefore, the table references do not compare equal and by extension the columns do
+    not compare equal either. To mitigate this issue (at least to some extend), the
+    `drop_table_alias` method can be used to obtain a "normalized" version of a column reference.
+
+    See Also
+    --------
+    BoundColumnReference : A subclass of `ColumnReference` that is always bound to a valid table.
     """
 
     @staticmethod
-    def create(column: str, *, table: str) -> ColumnReference:
+    def create(column: str, *, table: str) -> BoundColumnReference:
         """Shortcut method to create a column along with its table."""
-        return ColumnReference(column, TableReference(table))
+        return BoundColumnReference(column, TableReference(table))
+
+    @staticmethod
+    def assert_bound(col: ColumnReference) -> TypeGuard[BoundColumnReference]:
+        """Checks whether a specific column is bound to (any) table.
+
+        If it is, the column can be treated as an instance of `BoundColumnReference` and the type checker will be able
+        to narrow the type accordingly. Most importantly, the `table` property of the column will be guaranteed to be a
+        valid `TableReference` and not *None*.
+
+        Notes
+        -----
+        Sadly, the current spec of the TypeGuard explicitly excludes self from the type check. Therefore, we cannot simply
+        modify `is_bound` to return a TypeGuard and have to use an additional method. Ugh.
+        """
+        return col.is_bound()
 
     def __init__(self, name: str, table: Optional[TableReference] = None) -> None:
         if not name:
@@ -988,6 +1013,14 @@ class ColumnReference:
         else:
             self._sql_repr = quote(self._name)
 
+    def __new__(
+        cls, name: str, table: Optional[TableReference] = None
+    ) -> ColumnReference:
+        if cls is not ColumnReference or table is None:
+            return super().__new__(cls)
+        return BoundColumnReference(name, table)
+
+    __slots__ = ("_name", "_table", "_normalized_name", "_hash_val", "_sql_repr")
     __match_args__ = ("name", "table")
 
     @property
@@ -1019,6 +1052,11 @@ class ColumnReference:
         -------
         bool
             Whether a valid table reference is set
+
+        See Also
+        --------
+        assert_bound : A static method that performs the same check but also serves as a type guard to narrow
+                       the type to `BoundColumnReference` if the check is successful.
         """
         return self.table is not None
 
@@ -1040,7 +1078,7 @@ class ColumnReference:
         """
         return table == self.table
 
-    def bind_to(self, table: TableReference) -> ColumnReference:
+    def bind_to(self, table: TableReference) -> BoundColumnReference:
         """Binds this column to a new table.
 
         Parameters
@@ -1050,10 +1088,10 @@ class ColumnReference:
 
         Returns
         -------
-        ColumnReference
+        BoundColumnReference
             The updated column reference, the original reference is not modified.
         """
-        return ColumnReference(self.name, table)
+        return BoundColumnReference(self.name, table)
 
     def as_unbound(self) -> ColumnReference:
         """Removes the table binding from this column.
@@ -1064,6 +1102,20 @@ class ColumnReference:
             The updated column reference, the original reference is not modified.
         """
         return ColumnReference(self.name, None)
+
+    def drop_table_alias(self) -> ColumnReference:
+        """Removes the alias from the table this column is bound to, if there is one.
+
+        For example, if this column is *t.production_year* based on a table alias *title as t*,
+        calling this method turns the column into *title.production_year*, effectively dropping the
+        *t* alias.
+
+        This can be useful to obtain a "normalized" version of a column reference.
+        """
+        if not self.assert_bound(self):
+            return self
+        unaliased = self.table.drop_alias()
+        return self.bind_to(unaliased)
 
     def __json__(self) -> object:
         return {"column": self._name, "table": self._table}
@@ -1082,18 +1134,59 @@ class ColumnReference:
     def __hash__(self) -> int:
         return self._hash_val
 
-    def __eq__(self, other) -> bool:
+    def __eq__(self, other: object) -> bool:
         return (
-            isinstance(other, type(self))
+            isinstance(other, (ColumnReference, BoundColumnReference))
             and self._normalized_name == other._normalized_name
             and self.table == other.table
         )
+
+    def __copy__(self) -> ColumnReference:
+        return ColumnReference(self.name, self.table)
+
+    def __deepcopy__(self, memo: dict) -> ColumnReference:
+        tab = copy.deepcopy(self.table, memo)
+        return ColumnReference(str(self.name), tab)
+
+    def __reduce__(self) -> tuple:
+        return (self.__class__, (self._name, self._table))
 
     def __repr__(self) -> str:
         return f"ColumnReference(name='{self.name}', table={repr(self.table)})"
 
     def __str__(self) -> str:
         return self._sql_repr
+
+
+class BoundColumnReference(ColumnReference):
+    """A column reference that is guaranteed to be bound to a table.
+
+    The main purpose of this class is communication: it conveys the requirement of consumers to have a valid
+    table reference on the column - or the guarantee of producers to only return columns that are bound to a
+    table.
+    """
+
+    def __init__(self, name: str, table: TableReference) -> None:
+        super().__init__(name, table)
+
+    __match_args__ = ("name", "table")
+
+    @property
+    def table(self) -> TableReference:
+        """Get the table to which this column belongs. This is guaranteed to be set and will never be *None*."""
+        return self._table  # type: ignore
+
+    def is_bound(self) -> bool:
+        return True
+
+    def drop_table_alias(self) -> BoundColumnReference:
+        return super().drop_table_alias()  # type: ignore
+
+    __lt__ = ColumnReference.__lt__
+    __hash__ = ColumnReference.__hash__
+    __eq__ = ColumnReference.__eq__
+    __repr__ = ColumnReference.__repr__
+    __str__ = ColumnReference.__str__
 
 
 class UnboundColumnError(StateError):

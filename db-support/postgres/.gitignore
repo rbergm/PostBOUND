@@ -1,3 +1,4 @@
 # The postgres-server directory contains the postgres installation, which will
 # be initialized via the control scripts. We don't want it in VC
 postgres-server/
+pg-*/

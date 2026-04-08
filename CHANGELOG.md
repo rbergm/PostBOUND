@@ -1,181 +1,156 @@
 # Changelog
 
 Version numbers are composed of three components, i.e. _major_._minor_._patch_
-As a rough guideline, patch releases are just for fixing bugs or adding minor details (e.g. a new default parameter to some
-function), minor releases change slightly larger parts of the framework or add significant new functionality (e.g. a new
-optimization pipeline or support for an SQL feature). Major releases fundamentally shift how the framework is used and indicate
-stability. Since we are not ready for the 1.0 release yet, this does not matter right now.
+As a rough guideline, patch releases are just for fixing bugs or adding minor details (e.g. a new default parameter to
+some function), minor releases change slightly larger parts of the framework or add significant new functionality (e.g.
+a new optimization pipeline or support for an SQL feature). Major releases fundamentally shift how the framework is used
+and indicate stability. Since we are not ready for the 1.0 release yet, this does not matter right now.
 
 The [history](HISTORY.md) contains the changelogs of older PostBOUND releases.
 
 ---
 
-# Version 0.20.3
+# Version 0.21.0
 
-This is an incremental update that fixes a couple bugs.
+This is a rather large release with a lot of new features and improvements. Some highlights include:
 
-## 🏥 Fixes
-- Fixed typing errors in Postgres `n_pages()`.
-- Fixed some overly aggressive assertions in the Postgres pg_lab hint generation.
-- Fixed output format of the benchmarking log if additional entries are appended to an existing log. Essentially, we fix such
-  entries being escaped twice.
+- Optimization stages now provide high-level support for learning from different kinds of data, such as workloads,
+  databases, etc.
+- Lots of usability improvements throughout the framework, e.g. for better retrieval of information from the database
+  schema, easier specification of query preparations in benchmarks, etc.
+- The usability of the database schema has been improved significantly. You can now iterate over the schema to obtain all
+  contained tables, or use dict-style access to obtain more information about specific tables or columns.
+- Introduction of new histogram and most common values types for high-level access to these statistics.
 
-
----
-
-
-# Version 0.20.2
-
-This is an incremental update that polishes some rough edges and fixes a couple bugs.
+While this release does not contain any major breaking changes, we are preparing to clean up some old and unfortunate parts of
+the framework. Currently, these are planned for version 0.22.0.
 
 ## 🐣 New features
-- Added a `write_df()` and `read_df()` utility to read/write Pandas DataFrames in various file formats.
-- The parser can now extract hint blocks that are not at the beginning of the query string.
+
+- Optimization stages can now specify whether they require training on data samples or actual query executions. The
+  benchmarking tools and optimization pipeline will automatically trigger the training of such stages if they have not been
+  trained already. This allows to easily use data-driven and workload-driven optimization stages without any explicit
+  action needed by the user.
+- The database interface now provides a shortcut `explain()` method to obtain the query plan for a given query. This can be
+   used instead of calling the optimizer and it's explain method.
+- The database schema now provides a high-level API centered around iteration and dict-style access. This makes the repeated
+  calls to different schema methods somewhat redundant.
+- Database statistics now also provide histograms.
+- The `OptimizerInterface` (e.g. `pg_instance.optimizer()`) now provides a `parse_plan` method to parse an existing
+  system-specific query plan to the generalized `QueryPlan`. This can be used as follows:
+
+  ```python
+  explain_query = pb.transform.as_explain(query)
+  raw_plan = database.execute_query(explain_query)
+  plan = database.optimizer().parse_plan(raw_plan)
+  ```
+
+- `execute_workload()` now supports many new output formats for writing the progressive output.
+  Currently supported are: CSV, Parquet, JSON, HDF
+- Workloads now support transformations of their queries, e.g. `workload.map(pb.transform.as_star_query)`
+- Added a `fetch_workload()` function to the workloads module. It allows to load a pre-defined workload by name.
+- Added a `n_buffered()` and `buffer_state()` methods to the Postgres statistics interface to retrieve the number of
+  currently buffered pages of a relation.
+- Added an additional `BoundColumnReference` core type. Instances guarantee to be bound to a `TableReference`.
+  The new `assert_bound()` serves as a type guard to narrow references. This should prevent constant checks for valid
+  table references on columns.
+- Added a `joins_tables()` and `joins_columns()` utilities to query predicates.
+- Added a `merge_tables()` transformation to rewrite queries for materialized views.
+- `util.simplify()` now supports single-item mappings as well.
+- `util.to_json()` now supports the standard date-like objects (_datetime_, _date_, _time_, and _timedelta_)
+- `util.write_df()` now automatically transforms complex objects in the data frame into their JSON representation before
+  writing.
+- In IPython and Jupyter sessions, common PostBOUND objects like SQL queries or query plans are now automatically
+  pretty-printed. Instead of calling `print(plan.explain())`, one can now simply make `plan` the result of a cell.
 
 ## 📰 Updates
-- Improved the control flow of the Postgres server setup during Docker initialization.
-- Miscellaneous improvements to the type hints across the entire codebase. We will continue this work in the upcoming releases.
-- More precise reporting of estimated cardinalities in Postgres query plans when parallel workers are used.
-- Default to PostgreSQL version 18 during Docker setup - both for PostgreSQL/pg_hint_plan, as well as for pg_lab backends.
+
+- `DatabaseStatistics.most_common_values()` now returns an actual `MostCommonValues` object instead of a list of tuples.
+  The `MostCommonValues` can be used as a drop-in replacement for the old tuple-based API. In addition, it provides more
+  high-level methods for working with the most common values.
+- Enabled the MySQL and DuckDB backends to fall back to emulated statistics if the database does not provide them.
+- The Postgres `execute_query()` method now accepts hint parameters and automatically applies them. For example, the
+  following can now be done without explicit hinting:
+
+  ```python
+  query, plan = ...  # whatever
+  pg_instance.execute_query(query, plan=plan)
+
+  # this is equivalent to
+  hinted_query = pg_instance.hinting().generate_hints(query, plan)
+  pg_instance.execute_query(hinted_query)
+  ```
+
+- The Postgres interface now has a `rollback()` method to put connections back into a valid state.
+- The Postgres statistics interface now consistently supports table references with a schema.
+- Much improved handling of database schemas during query parsing. We now omit clear warnings in case the database pool
+  looks weird.
+- The `QueryPreparation` API now provides the `projection` and `output` parameters to modify the SELECT* clause and the
+  type of results to gather for all queries in a more flexible and intuitive way (how did _explain=True_  and
+  _analyze=True_ interact?).
+  The old API using _analyze=True_, etc. is now deprecated in favor of these new parameters.
+- Column references now provide a `drop_table_alias()` method to obtain a normalized-ish representation of the column.
+  This should be helpful in situations where references to the same column are not consistent in their table references,
+  e.g., when one was obtained from the schema and the other was obtained from the query.
+- While obtaining a join graph for a query, aliased tables can now be merged into the same node.
+- The `PredicateVisitor` can now be started at the query. It will extract the predicates as needed.
+- The `extract_query_fragment()` tranformation now supports modifying the output projection.
+- The `to_json()` and `to_json_dump()` utilities now support dataclasses out-of-the-box.
+- Expose `argmax()` directly in _util_ module
 
 ## 🏥 Fixes
-- Fixed the Postgres timeout executor always creating two new connections to the database server instead of just one for the
-  actual query execution.
-- Fixed a corner case in the Postgres timeout handling when the timeout worker could not establish a connection to the
-  database.
-- Fixed closing a Postgres connection leaving the timeout watcher connection open.
-- Fixed discrepancy between JSON export format of `ColumnReference` and the expected format during loading.
-- Fixed SQL parser sometimes still representing ANY/ALL predicates as function expressions instead of the new quantifier
-  expressions.
+
+- Fixed `n_buffered()` method of the Postgres statistics interface raising an error if no pages of the relation are
+  currently buffered. We now return 0 in this case.
+- Fixed string representation of `COUNT(DISTINCT ...)` for multiple arguments. We now generate the correct
+  `COUNT(DISTINCT (a, b))` instead of `COUNT(DISTINCT a, b)`.
+- Fixed `DatabaseSchema.as_graph()` having the assignment of primary key and foreign key columns reversed on join edges.
+- Fixed output format of the benchmarking log if additional entries are appended to an existing log. Essentially, we fix
+  such entries being escaped twice.
+- Fixed the `standard_logger` sometimes logging internal module names.
+- Fixed parser for column JSON
+- Updated all database setup scripts for Postgres and DuckDB. Since our data server that hosted the raw input data
+  crashed once again and broke all download links, we now moved the entire setup to Zenodo. Hopefully, this setup is
+  more stable. There are several practical implications of this change:
+  1. Instead of distributing raw CSV data, we now provide pre-build database images for Postgres and DuckDB. This should
+     lower the setup time significantly
+  2. The JOB-complex and JOB-light workloads now use a different indexing scheme. Instead of queries 1, 2, 3, ... we now
+     label them similar to Stats, i.e. q-1, q-2, ...
+  3. The DuckDB workload-setup.py script was removed - as a consequence of 1., we no longer need to create the database
+     files, but distribute them directly.
+  4. The SSB queries can currently not be loaded from the workloads module.
+
+## 💀 Breaking changes
+
+- Renamed `PreciseCardinalityHintGenerator` to `PreciseCardinalities` to align with the other pre-defined cardinality
+  "estimators".
 
 ## ⚠️ Deprecations
+
+- The old `QueryPrepration` API using _analyze=True_, etc. is now deprecated in favor of the more flexible _projection_
+  and _output_  parameters. However, we currently have no plans to remove the old API.
 - The _ues_, _tonic_, _presets_, and _experiments_ module are now deprecated and will be moved to the separate optimizer
-  repository for version 0.21.0.
-- `Workload.read()` is deprecated in favor of `read_workload()`. The old method will be removed in version 0.21.0.
+  repository for version 0.22.0.
+- `Workload.read()` is deprecated in favor of `read_workload()`. The old method will be removed in version 0.22.0.
   This change unifies the workload API and consistently uses `read_workload_XXX` functions for input.
-- `CompoundPredicate` will no longer be used to represent NOT predicates from version 0.21.0 onwards. Instead, a dedicated
+- `CompoundPredicate` will no longer be used to represent NOT predicates from version 0.22.0 onwards. Instead, a dedicated
   `NotPredicate` class will be introduced.
+- Databases will no longer support the database cache out-of-the-box. Instead, the cache will become a proper high-level
+  component that can be used with any database. This change is planned for version 0.22.0
 
 ## 🪲 Known bugs
+
 - The automatic optimization of the Postgres server configuration as part of the Docker installation does not work
   on MacOS. Currently, this should be considered as wontfix.
-
-
----
-
-
-# Version 0.20.1
-
-This is just a small bug fix/patch release with some minor additions.
-
-## 🐣 New features
-- `as_predicate()` now supports string representations of the operators for better usability. E.g., you can now do
-  `as_predicate(my_col, "=", 5)` instead of `as_predicate(my_col, LogicalOperator.Equal, 5)`. The old way still works is not
-  intended to be removed.
-- Added a `standard_logger()` utility for consistent logging output across all modules
-
-## 💀 Breaking changes
-- Technically the change to the `tables()` method of `DatabaseSchema` is breaking, but the method was already documented to
-  return all user-defined tables.
-
-## 📰 Updates
-- `DatabaseSchema.tables()` now ignores system tables by default
-
-## 🏥 Fixes
-- Fixed internal storage layout of `SqlQuery`
-- Fixed type error in `OrderBy.create_for()`
-- Fixed `PhysicalOperatorAssignment` method chaining not working correctly
-
-## ⚠️ Deprecations
-- The _ues_, _tonic_, _presets_, and _experiments_ module are now deprecated and will be moved to the separate optimizer
-  repository for version 0.21.0.
-
-## 🪲 Known bugs
-- The automatic optimization of the Postgres server configuration as part of the Docker installation does not work
-  on MacOS. Currently, this should be considered as wontfix.
+- The SSB queries can currently not be loaded from the workloads module. The underlying data server crashed and we are
+  currently exploring alternative, more reliable solutions.
 
 ---
-
-
-# Version 0.20.0
-
-This release conducts some major changes of the framework structure, making the different parts more accessible and more
-visible. Sadly, this comes with a few breaking changes. In particular, we perform the following high-level updates:
-
-1. Almost all of the framework is now accessible with just one module indirection, i.e. using `pb.module.function` instead
-   of the old `pb.module1.module2.module3.function`.
-2. This flat structure allows for consistent lazy-loading of all modules to improve overall responsiveness
-3. We transition to [quacklab-python](https://github.com/rbergm/quacklab-python) as the new backend for hinting-aware
-   DuckDB. This change was required due to upstream updates of the DuckDB packaging that broke our previous implementation.
-   We use this opportunity to also rename the dependency from _duckdb_ to _quacklab_. This has the nice property of
-   erroring if our backend cannot find a DuckDB installation with hinting support.
-
-At the same time, we use this release to prepare for a (perhaps final) major restructuring that we plan for v0.21.0:
-moving existing optimizers from the core framework into a separate optimizer repository. This repository will be used as
-a collection of interesting ideas in query optimization and will help to keep the core framework lean (especially by
-preventing an explosion of dependencies). This will affect the UES and TONIC optimizers as well as the query generators.
-
-## 🐣 New features
-- Consistently use lazy-loading for all modules.
-- The `postgres.connect()` method now accepts many additional file formats (TOML, JSON, YAML) for the configuration files.
-- Overriding the  `describe()` method is no longer required for all optimization stages. If not implemented, a minimal
-  default description is provided.
-- Added `use()` methods to all optimization pipelines that did not have them yet.
-- Added a new `scale_cardinality()` to query plans to scale estimated and/or actual cardinalities by a given factor.
-- Extended SQL support: we can now parse and represent simple CASE expressions
-  (_CASE R.a WHEN 1 THEN 'one' WHEN 2 THEN 'two'_), _IS DISTINCT FROM_ predicates and _ANY_/_ALL_ predicates.
-- Calling `execute_workload()` with progressive output now automatically exports the experiment configuration to the output
-  directory for better reproducibility. This is our first step towards an lab notebook-like experiment management.
-- `PhysicalOperatorAssignment` and `PlanParameterization` now support method chaining for better usability.
-
-## 💀 Breaking changes
-- Transition to [quacklab-python](https://github.com/rbergm/quacklab-python) as the new backend for hinting-aware DuckDB
-- All hinting-related data structures (e.g., `PhysicalOperatorAssignment`) are now available as top-level types.
-- The query abstraction layer now exclusively focuses on query representation:
-  - The query parser is now its own module (`postbound.parser`) instead of part of the qal. This solves all dependency
-    issues between the query abstraction and the database schema in a very nice way. `parse_query()` is still available as
-    a top-level function.
-  - The query transformation tools are now its own module `postbound.transform` instead of part of the qal.
-  - The relation algebra representation is now its own module `postbound.relalg` instead of part of the qal.
-- All hinting-related data structures (e.g., `PhysicalOperatorAssignment`) are now available as top-level types.
-- The optimizer module is now always called _opt_, i.e. the following does no longer work:
-  `from postbound import optimizer` while calling `pb.opt` directly remains unchanged.
-- Removed the `DBCatalog` type. This was only used to circumvent cyclic import issues with the `DatabaseSchema` between
-  qal (parser) and the database module. Since the parser is now its own module, this is no longer necessary.
-- The Postgres and DuckDB backends are now available as top-level modules.
-- The visualization module is now available as a top-level module.
-
-## 📰 Updates
-- `Workload` is now a top-level type (in addition to being available in the `postbound.workloads` module).
-- `Workload.read()` now accepts many additional options tailored for loading large workloads
-- Added a *str* and *repr* method to `QueryPreparation` for better debugging support.
-- Virtual tables are no longer included in database prewarming for Postgres.
-- Improved methods to manually create _FROM_ and _ORDER BY_ clauses.
-
-## 🏥 Fixes
-- Rewrote the entire query execution with timeouts for Postgres. This should (hopefully) fix any remaining corner cases
-  that previoulsy resulted in deadlocks.
-- Fixed EXPLAIN ANALYZE plans that were extracted from Postgres and converted to a query plan not containing the correct
-  actual cardinalities when parallel workers were used.
-- Fixed handling of infinite date/timestamp values in the Postgres backend
-- The _postgres-setup.sh_ script now actually uses PG 12.4 if that version was requested.
-
-## ⚠️ Deprecations
-- The _ues_, _tonic_, _presets_, and _experiments_ module are now deprecated and will be moved to the separate optimizer
-  repository for version 0.21.0.
-
-## 🪲 Known bugs
-- The automatic optimization of the Postgres server configuration as part of the Docker installation does not work
-  on MacOS. Currently, this should be considered as wontfix.
-
----
-
 
 # 🛣 Roadmap
 
 Currently, we plan to implement the following features in the future (in no particular order):
 
 - Providing a Substrait export for query plans
-- Better benchmarking setup, mostly focused on comparing one or multiple optimization pipelines and creating better experiment
-  logs and the ability to cancel/resume long-running benchmarks
-- Adding popular optimization algorithms to the collection of pre-defined optimizers
+- Better benchmarking setup, mostly focused on comparing one or multiple optimization pipelines and creating better
+  experiment logs and the ability to cancel/resume long-running benchmarks

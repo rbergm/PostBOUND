@@ -12,12 +12,13 @@ from collections import UserString
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Optional, overload
 
 import quacklab
 
 from . import qal, transform
 from ._core import (
+    BoundColumnReference,
     Cardinality,
     ColumnReference,
     Cost,
@@ -25,6 +26,7 @@ from ._core import (
     PhysicalOperator,
     ScanOperator,
     TableReference,
+    UnboundColumnError,
 )
 from ._hints import (
     HintType,
@@ -37,12 +39,13 @@ from ._hints import (
 )
 from ._qep import QueryPlan
 from .db import (
-    Cursor,
     Database,
     DatabasePool,
     DatabaseSchema,
     DatabaseStatistics,
     HintService,
+    Histogram,
+    HistogramApproximation,
     OptimizerInterface,
     ResultSet,
     UnsupportedDatabaseFeatureError,
@@ -161,18 +164,22 @@ class DuckDBInterface(Database):
 
     def database_name(self) -> str:
         self._cur.execute("SELECT CURRENT_DATABASE();")
-        db_name = self._cur.fetchone()[0]
+        result_set = self._cur.fetchone()
+        assert result_set is not None
+        db_name = result_set[0]
         return db_name
 
     def database_system_version(self) -> Version:
         self._cur.execute("SELECT version();")
-        raw_ver: str = self._cur.fetchone()[0]
+        result_set = self._cur.fetchone()
+        assert result_set is not None
+        raw_ver: str = result_set[0]
         raw_ver = raw_ver.removeprefix("v")
         raw_ver = raw_ver.split("-")[0]  # remove the build information
         return Version(raw_ver)
 
-    def cursor(self) -> Cursor:
-        return self._cur
+    def cursor(self) -> quacklab.DuckDBPyConnection:
+        return self._cur.cursor()
 
     def close(self) -> None:
         self._cur.close()
@@ -189,7 +196,7 @@ class DuckDBInterface(Database):
         self._cur = quacklab.connect(self._dbfile)
 
     def describe(self) -> jsondict:
-        base_info = {
+        base_info: dict[str, object] = {
             "system_name": self.database_system_name(),
             "system_version": self.database_system_version(),
             "database": self.database_name(),
@@ -230,12 +237,31 @@ class DuckDBInterface(Database):
 class DuckDBSchema(DatabaseSchema):
     def __init__(self, db: DuckDBInterface) -> None:
         super().__init__(db, prep_placeholder="?")
+        self._tables: set[TableReference] = set()
+
+    def tables(self, *, include_system_tables: bool = False) -> set[TableReference]:
+        if self._tables:
+            return self._tables
+
+        cur = self._db.cursor()
+        cur.execute(
+            """
+            SELECT table_name
+            FROM duckdb_tables()
+            WHERE database_name = current_database()
+                AND schema_name = current_schema();
+            """
+        )
+        result_set = cur.fetchall()
+        assert result_set is not None
+
+        tables = {TableReference(row[0]) for row in result_set}
+        self._tables = tables
+        return self._tables
 
     def has_secondary_index(self, column: ColumnReference) -> bool:
-        if not column.is_bound():
-            raise ValueError(
-                f"Cannot check index status for {column}: Column is not bound to a table"
-            )
+        if not ColumnReference.assert_bound(column):
+            raise UnboundColumnError(column)
 
         schema_placeholder = "?" if column.table.schema else "current_schema()"
 
@@ -259,10 +285,8 @@ class DuckDBSchema(DatabaseSchema):
         return result_set is not None
 
     def indexes_on(self, column: ColumnReference) -> set[str]:
-        if not column.is_bound():
-            raise ValueError(
-                f"Cannot retrieve indexes for {column}: Column is not bound to a table"
-            )
+        if not ColumnReference.assert_bound(column):
+            raise UnboundColumnError(column)
 
         schema_placeholder = "?" if column.table.schema else "current_schema()"
 
@@ -307,8 +331,55 @@ class DuckDBSchema(DatabaseSchema):
         cur = self._db.cursor()
         cur.execute(query_template, params)
         result_set = cur.fetchall()
+        assert result_set is not None
 
         return {row[0] for row in result_set}
+
+    def foreign_keys_on(self, column: ColumnReference) -> set[BoundColumnReference]:
+        if not ColumnReference.assert_bound(column):
+            raise UnboundColumnError(column)
+
+        schema_placeholder = "?" if column.table.schema else "current_schema()"
+        query_template = f"""
+            SELECT referenced_table, referenced_column_names
+            FROM duckdb_constraints
+            WHERE database_name = current_database()
+                AND schema_name = {schema_placeholder}
+                AND table_name = ?
+                AND constraint_column_names = array_value(?)
+                AND constraint_type = 'FOREIGN KEY';
+        """
+
+        params = [column.table.full_name, column.name]
+        if column.table.schema:
+            params = [column.table.schema] + params
+
+        cur = self._db.cursor()
+        cur.execute(query_template, params)
+        result_set = cur.fetchall()
+        assert result_set is not None
+
+        foreign_keys: set[BoundColumnReference] = set()
+        for table_name, column_names in result_set:
+            if len(column_names) > 1:
+                warnings.warn(
+                    f"Column {column} is part of a multi-column foreign key constraint. "
+                    "This is currently not fully supported, only the first column will be returned.",
+                    stacklevel=2,
+                )
+            if not column_names:
+                warnings.warn(
+                    f"Column {column} is part of a foreign key constraint, but no referenced columns could be identified.",
+                    stacklevel=2,
+                )
+                continue
+            column_names = column_names[:1]
+            referenced_column = column_names[0]
+            table = TableReference(table_name, schema=column.table.schema)
+            column = BoundColumnReference(referenced_column, table)
+            foreign_keys.add(column)
+
+        return foreign_keys
 
 
 class DuckDBStatistics(DatabaseStatistics):
@@ -342,8 +413,9 @@ class DuckDBStatistics(DatabaseStatistics):
         if table.schema:
             params.append(table.schema)
 
-        self._db.cursor().execute(query_template, parameters=params)
-        result_set = self._db.cursor().fetchone()
+        cur = self._db.cursor()
+        cur.execute(query_template, parameters=params)
+        result_set = cur.fetchone()
 
         if not result_set:
             return None
@@ -351,21 +423,36 @@ class DuckDBStatistics(DatabaseStatistics):
         return result_set[0] if result_set[0] is not None else None
 
     def _retrieve_distinct_values_from_stats(
-        self, column: ColumnReference
+        self, column: BoundColumnReference
     ) -> Optional[int]:
+        if self.enable_emulation_fallback:
+            return self._calculate_distinct_values(column)
         raise UnsupportedDatabaseFeatureError(
             self._db, "distinct value count statistics."
         )
 
     def _retrieve_min_max_values_from_stats(
-        self, column: ColumnReference
+        self, column: BoundColumnReference
     ) -> Optional[tuple[Any, Any]]:
+        if self.enable_emulation_fallback:
+            return self._calculate_min_max_values(column)
         raise UnsupportedDatabaseFeatureError(self._db, "min/max value statistics.")
 
     def _retrieve_most_common_values_from_stats(
-        self, column: ColumnReference, k: int
+        self, column: BoundColumnReference, k: int | None
     ) -> Sequence[tuple[Any, int]]:
+        if self.enable_emulation_fallback:
+            return self._calculate_most_common_values(column, k)
         raise UnsupportedDatabaseFeatureError(self._db, "most common value statistics.")
+
+    def _retrieve_histogram_from_stats(
+        self, column: BoundColumnReference, *, interpolation: HistogramApproximation
+    ) -> Optional[Histogram]:
+        if self.enable_emulation_fallback:
+            return self._calculate_histogram(
+                column, n_bins=100, interpolation=interpolation
+            )
+        raise UnsupportedDatabaseFeatureError(self._db, "histogram statistics.")
 
 
 def _bind_node_to_table(
@@ -410,7 +497,7 @@ def _bind_node_to_table(
     score_ranking = sorted(scores.values(), reverse=True)
     if 0.99 * score_ranking[0] <= score_ranking[1]:
         warnings.warn(
-            f"Could not unambiguously bind scan node to a table. Candidates are {scores}."
+            f"Could not unambiguously bind scan node to a table. Candidates are {scores}.",
         )
         return None
 
@@ -489,7 +576,7 @@ def parse_duckdb_plan(
         node_type,
         children=children,
         base_table=base_table,
-        estimated_cardinality=card_est,
+        estimated_cardinality=Cardinality(card_est),
         actual_cardinality=card_act,
         execution_time=total_runtime,
     )
@@ -508,9 +595,10 @@ class DuckDBOptimizer(OptimizerInterface):
         else:
             explain_query = query
 
-        self._db.cursor().execute(explain_query)
-        result_set = self._db.cursor().fetchone()
-        assert len(result_set) == 2
+        cur = self._db.cursor()
+        cur.execute(explain_query)
+        result_set = cur.fetchone()
+        assert result_set is not None and len(result_set) == 2
 
         raw_explain = result_set[1]
         parsed = json.loads(raw_explain)
@@ -518,10 +606,18 @@ class DuckDBOptimizer(OptimizerInterface):
             parsed[0], query=query if isinstance(query, SqlQuery) else None
         )
 
+    @overload
+    def analyze_plan(self, query: SqlQuery) -> QueryPlan: ...
+
+    @overload
+    def analyze_plan(
+        self, query: SqlQuery, *, timeout: float
+    ) -> Optional[QueryPlan]: ...
+
     def analyze_plan(
         self, query: SqlQuery, *, timeout: Optional[float] = None
     ) -> Optional[QueryPlan]:
-        query = transform.as_explain_analyze(query, qal.Explain)
+        query = transform.as_explain_analyze(query)
 
         try:
             result_set = self._db.execute_query(
@@ -535,11 +631,23 @@ class DuckDBOptimizer(OptimizerInterface):
         parsed = json.loads(raw_explain)
         return parse_duckdb_plan(parsed[0], query=query)
 
+    def parse_plan(self, plan: Any, *, query: Optional[SqlQuery] = None) -> QueryPlan:
+        # Similar to the Postgres implementation of parse_plan(), we try to be gracefull
+        # and accept both simplified and raw versions of the execute_query() output.
+        # In essence, we always try to break the input down to a plain dictionary and
+        # unwrap the lists and tuples that come with a raw result set.
+        if isinstance(plan, list):
+            plan = plan[0]
+        if isinstance(plan, tuple):
+            plan = plan[1]
+        return parse_duckdb_plan(plan, query=query)
+
     def cardinality_estimate(self, query: SqlQuery | str) -> Cardinality:
         plan = self.query_plan(query)
         if "AGGREGATE" in plan.node_type:
             warnings.warn(
-                "Plan could have an aggregate node as root. DuckDB does not estimate cardinalities for aggregations."
+                "Plan could have an aggregate node as root. DuckDB does not estimate cardinalities for aggregations.",
+                stacklevel=2,
             )
         return plan.estimated_cardinality
 
@@ -812,7 +920,8 @@ class DuckDBHintService(HintService):
 
 
 def _reconnect(name: str, *, pool: DatabasePool) -> DuckDBInterface:
-    current_conn: DuckDBInterface = pool.retrieve_database(name)
+    current_conn = pool.retrieve_database(name)
+    assert isinstance(current_conn, DuckDBInterface)
 
     try:
         # check if the connection is still active

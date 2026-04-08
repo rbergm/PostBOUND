@@ -32,7 +32,7 @@ from collections.abc import Callable, Generator, Iterable, Sequence, Sized
 from dataclasses import dataclass
 from multiprocessing import connection as mp_conn
 from pathlib import Path
-from typing import Any, Literal, Optional, TextIO, overload
+from typing import Any, Literal, Optional, TextIO, get_args, overload
 
 import psycopg
 import psycopg.rows
@@ -40,6 +40,7 @@ import psycopg.types.datetime as psycopg_datetime
 
 from . import qal, transform, util
 from ._core import (
+    BoundColumnReference,
     Cardinality,
     ColumnReference,
     IntermediateOperator,
@@ -69,6 +70,8 @@ from .db import (
     DatabaseUserError,
     HintService,
     HintWarning,
+    Histogram,
+    HistogramApproximation,
     OptimizerInterface,
     QueryCacheWarning,
     ResultSet,
@@ -692,12 +695,23 @@ class PostgresInterface(Database):
         self,
         query: SqlQuery | str,
         *,
+        plan: Optional[QueryPlan] = None,
+        join_order: Optional[JoinTree] = None,
+        physical_operators: Optional[PhysicalOperatorAssignment] = None,
+        plan_parameters: Optional[PlanParameterization] = None,
         cache_enabled: Optional[bool] = None,
         raw: bool = False,
         timeout: Optional[float] = None,
     ) -> Any:
         # NB: some of the execution logic is duplicated in TimeoutQueryExecutor.execute_query.
         # Make sure to keep both implementations in sync.
+        query = self._apply_query_hints(
+            query,
+            plan,
+            join_order=join_order,
+            physical_operators=physical_operators,
+            plan_parameters=plan_parameters,
+        )
 
         if timeout is not None and timeout > 0:
             return self._timeout_executor.execute_query(
@@ -895,6 +909,13 @@ class PostgresInterface(Database):
             The connection
         """
         return self._connection
+
+    def rollback_tx(self) -> None:
+        """Perform a ROLLBACK on the current transaction (connection).
+
+        This should be executed if any errors occurred while running a query.
+        """
+        self._connection.rollback()
 
     def obtain_new_local_connection(self) -> psycopg.Connection:
         """Provides a new database connection to be used exclusively be the client.
@@ -1109,7 +1130,8 @@ class PostgresInterface(Database):
             and configuration.parameter not in _RuntimeChangeablePostgresSettings
         ):
             warnings.warn(
-                f"Cannot apply configuration setting '{configuration.parameter}' at runtime"
+                f"Cannot apply configuration setting '{configuration.parameter}' at runtime",
+                stacklevel=2,
             )
             return
         elif isinstance(configuration, PostgresConfiguration):
@@ -1123,7 +1145,8 @@ class PostgresInterface(Database):
             if unsupported_settings:
                 warnings.warn(
                     f"Skipping configuration settings {unsupported_settings} "
-                    "because they cannot be changed at runtime"
+                    "because they cannot be changed at runtime",
+                    stacklevel=2,
                 )
             configuration = str(PostgresConfiguration(supported_settings))
 
@@ -1215,6 +1238,34 @@ class PostgresInterface(Database):
         self._cursor: psycopg.Cursor = self._connection.cursor()
         return self.backend_pid()
 
+    def _apply_query_hints(
+        self,
+        query: str | SqlQuery,
+        plan: Optional[QueryPlan],
+        *,
+        join_order: Optional[JoinTree],
+        physical_operators: Optional[PhysicalOperatorAssignment],
+        plan_parameters: Optional[PlanParameterization],
+    ) -> str | SqlQuery:
+        if isinstance(query, str):
+            # XXX: should we rather parse the query here?
+            return query
+
+        has_hint = any(
+            hint is not None
+            for hint in (plan, join_order, physical_operators, plan_parameters)
+        )
+        if not has_hint:
+            return query
+
+        return self.hinting().generate_hints(
+            query,
+            plan,
+            join_order=join_order,
+            physical_operators=physical_operators,
+            plan_parameters=plan_parameters,
+        )
+
     def _fetch_index_relnames(
         self, table: TableReference | str
     ) -> Iterable[tuple[str, bool]]:
@@ -1294,12 +1345,16 @@ class PostgresSchemaInterface(DatabaseSchema):
         The database for which schema information should be retrieved
     """
 
-    def __int__(self, postgres_db: PostgresInterface) -> None:
+    def __init__(self, postgres_db: PostgresInterface) -> None:
         super().__init__(postgres_db)
+        self._tables: set[TableReference] = set()
 
     def tables(
         self, *, include_system_tables: bool = False, schema: str = "public"
     ) -> set[TableReference]:
+        if self._tables:
+            return self._tables
+
         query_template = textwrap.dedent("""
                                          SELECT table_name
                                          FROM information_schema.tables
@@ -1308,10 +1363,11 @@ class PostgresSchemaInterface(DatabaseSchema):
         result_set = self._db.cursor().fetchall()
         assert result_set is not None
 
-        tables = set(TableReference(row[0]) for row in result_set)
+        tables = {TableReference(row[0]) for row in result_set}
         if not include_system_tables:
             tables = {tab for tab in tables if not tab.full_name.startswith("pg_")}
-        return tables
+        self._tables = tables
+        return self._tables
 
     def lookup_column(
         self,
@@ -1392,7 +1448,7 @@ class PostgresSchemaInterface(DatabaseSchema):
 
     def indexed_column(
         self, index: str, *, schema: str = "public"
-    ) -> Optional[ColumnReference]:
+    ) -> Optional[BoundColumnReference]:
         """Retrieves the column that is indexed by a specific index.
 
         Returns
@@ -1420,14 +1476,15 @@ class PostgresSchemaInterface(DatabaseSchema):
             return None
         if len(result_set) > 1:
             warnings.warn(
-                f"Multi-index {index} detected. Only returning the first column"
+                f"Multi-index {index} detected. Only returning the first column",
+                stacklevel=2,
             )
             result_set = result_set[:1]
 
         col, tab = result_set[0]
         return ColumnReference.create(col, table=tab)
 
-    def foreign_keys_on(self, column: ColumnReference) -> set[ColumnReference]:
+    def foreign_keys_on(self, column: ColumnReference) -> set[BoundColumnReference]:
         if not column.table:
             raise UnboundColumnError(column)
         if column.table.virtual:
@@ -1454,7 +1511,9 @@ class PostgresSchemaInterface(DatabaseSchema):
         result_set = self._db.cursor().fetchall()
         assert result_set is not None
 
-        return {ColumnReference(row[1], TableReference(row[0])) for row in result_set}
+        return {
+            BoundColumnReference(row[1], TableReference(row[0])) for row in result_set
+        }
 
     def datatype(self, column: ColumnReference) -> str:
         if not column.table:
@@ -1614,15 +1673,87 @@ class PostgresStatisticsInterface(DatabaseStatistics):
         )
 
     def n_pages(self, table: TableReference | str) -> int:
-        query_template = "SELECT relpages FROM pg_class WHERE oid = %s::regclass"
-        regclass = table.full_name if isinstance(table, TableReference) else table
+        table = table if isinstance(table, TableReference) else TableReference(table)
+        schema = table.schema or "public"
 
-        self._db.cursor().execute(query_template, (regclass,))
+        query_template = """
+            SELECT relpages
+            FROM pg_class
+            WHERE oid = %s::regclass
+                AND relnamespace = %s::regnamespace
+        """
+
+        self._db.cursor().execute(query_template, (table.full_name, schema))
         result_set = self._db.cursor().fetchone()
-
-        if not result_set:
-            raise ValueError(f"Could not retrieve page count for table '{table}'")
+        if result_set is None:
+            raise ValueError(f"Relation not found: {table}")
         return result_set[0]
+
+    def n_buffered(self, table: TableReference | str) -> int:
+        """Retrieves the number of buffered pages for the specified table.
+
+        The table can either be a base table or the name of an index.
+
+        Notes
+        -----
+
+        The current implementation of this method relies on the *pg_buffercache* extension and works by scanning the
+        entire buffer cache. Therefore, it incurs a slight overhead and should not be called inside of hot loops.
+        Instead, you can use `buffer_state` to retrieve the number of buffered pages for all relations in a single pass.
+
+        See Also
+        --------
+        buffer_state
+        """
+
+        table = table if isinstance(table, TableReference) else TableReference(table)
+        schema = table.schema or "public"
+
+        query_template = """
+            SELECT count(*) AS buffers
+            FROM pg_buffercache buf
+            JOIN pg_class cls ON buf.relfilenode = pg_relation_filenode(cls.oid)
+            WHERE cls.relnamespace = %s::regnamespace
+                AND cls.relname = %s
+                AND buf.reldatabase IN (0, (SELECT oid FROM pg_database WHERE datname = current_database()))
+        """
+
+        self._db.cursor().execute(query_template, (schema, table.full_name))
+        result_set = self._db.cursor().fetchone()
+        if result_set is None:
+            # No pages have been buffered
+            return 0
+        return result_set[0]
+
+    def buffer_state(self, *, schema: str = "public") -> dict[str, int]:
+        """Retrieves the current buffer state for all relations in the given schema (*public* by default).
+
+        If a relation is not contained in the result, none of its pages are currently buffered.
+
+        The result contains *all* PG relations, i.e. including indexes and other non-table relations. Typically,
+        primary key indexes are named *<relation_name>_pkey*. The name of secondary indexes depends on the schema.
+
+        See Also
+        --------
+        n_buffered
+        """
+
+        query_template = """
+            SELECT cls.relname, count(*) AS buffers
+            FROM pg_buffercache buf
+            JOIN pg_class cls ON buf.relfilenode = pg_relation_filenode(cls.oid)
+            WHERE cls.relnamespace = %s::regnamespace
+                AND buf.reldatabase IN (0, (SELECT oid FROM pg_database WHERE datname = current_database()))
+            GROUP BY cls.relname
+        """
+
+        self._db.cursor().execute(query_template, (schema,))
+        result_set = self._db.cursor().fetchall()
+        if result_set is None:
+            # No pages have been buffered
+            return {}
+
+        return {row[0]: row[1] for row in result_set}
 
     def update_statistics(
         self,
@@ -1682,7 +1813,7 @@ class PostgresStatisticsInterface(DatabaseStatistics):
                     column,
                     use_stderr=True,
                 )
-                raw = self.distinct_values(column, emulated=True, cache_enabled=True)
+                raw = self.num_distinct(column, emulated=True, cache_enabled=True)
                 assert raw is not None
                 n_distinct = round(raw)
                 if perfect_n_distinct:
@@ -1729,25 +1860,29 @@ class PostgresStatisticsInterface(DatabaseStatistics):
             self._db.cursor().execute(distinct_update_query)
 
     def _retrieve_total_rows_from_stats(self, table: TableReference) -> Optional[int]:
-        count_query = (
-            f"SELECT reltuples FROM pg_class WHERE oid = '{table.full_name}'::regclass"
-        )
-        self._db.cursor().execute(count_query)
+        schema = table.schema or "public"
+        count_query = "SELECT reltuples FROM pg_class WHERE oid = %s::regclass AND relnamespace = %s::regnamespace"
+        self._db.cursor().execute(count_query, (table.full_name, schema))
         result_set = self._db.cursor().fetchone()
         if not result_set:
             return None
         count = result_set[0]
-        return count
+        return int(count)
 
     def _retrieve_distinct_values_from_stats(
-        self, column: ColumnReference
+        self, column: BoundColumnReference
     ) -> Optional[int]:
-        assert column.table is not None, "Unbound table"
-
-        dist_query = (
-            "SELECT n_distinct FROM pg_stats WHERE tablename = %s and attname = %s"
+        schema = column.table.schema or "public"
+        dist_query = """
+            SELECT n_distinct
+            FROM pg_stats
+            WHERE tablename = %s
+                AND attname = %s
+                AND schemaname = %s
+        """
+        self._db.cursor().execute(
+            dist_query, (column.table.full_name, column.name, schema)
         )
-        self._db.cursor().execute(dist_query, (column.table.full_name, column.name))
         result_set = self._db.cursor().fetchone()
         if not result_set:
             return None
@@ -1760,16 +1895,16 @@ class PostgresStatisticsInterface(DatabaseStatistics):
         # If the value is < 0, it represents 'the negative of the number of distinct values divided by the number of
         # rows'. Therefore, we have to correct the number of distinct values manually in this case.
         if dist_values >= 0:
-            return dist_values
+            return int(dist_values)
 
         # correct negative values
         n_rows = self._retrieve_total_rows_from_stats(column.table)
         assert n_rows is not None, "Could not retrieve total row count for table"
 
-        return -1 * n_rows * dist_values
+        return int(-1 * n_rows * dist_values)
 
     def _retrieve_min_max_values_from_stats(
-        self, column: ColumnReference
+        self, column: BoundColumnReference
     ) -> Optional[tuple[Any, Any]]:
         # Postgres does not keep track of min/max values, so we need to determine them manually
         if not self.enable_emulation_fallback:
@@ -1777,13 +1912,131 @@ class PostgresStatisticsInterface(DatabaseStatistics):
         return self._calculate_min_max_values(column, cache_enabled=True)
 
     def _retrieve_most_common_values_from_stats(
-        self, column: ColumnReference, k: int
+        self, column: BoundColumnReference, k: int | None
     ) -> Sequence[tuple[Any, int]]:
-        assert column.table is not None, "Unbound table"
+        table = column.table
+        schema = table.schema or "public"
         # Postgres stores the Most common values in a column of type anyarray (since in this column, many MCVs from
         # many different tables and data types are present). However, this type is not very convenient to work on.
         # Therefore, we first need to convert the anyarray to an array of the actual attribute type.
+        attribute_converter = self._array_cast(column)
 
+        # now, load the most frequent values. Since the frequencies are expressed as a fraction of the total number of
+        # rows, we need to multiply this number again to obtain the true number of occurrences
+        mcv_query = """
+            SELECT UNNEST(most_common_vals::text::{conv}),
+                UNNEST(most_common_freqs) * (SELECT reltuples
+                                             FROM pg_class
+                                             WHERE oid = %s::regclass
+                                             AND relnamespace = %s::regnamespace)
+            FROM pg_stats
+            WHERE tablename = %s
+                AND attname = %s
+                AND schemaname = %s
+        """
+        mcv_query = mcv_query.format(conv=attribute_converter)
+
+        # NB: we have to repeat a few parameters here. Unfortunately, it seems that psycopg
+        # does not support casts for named parameters - %(tab)s::regclass does not work
+        self._db.cursor().execute(
+            mcv_query, (table.full_name, schema, table.full_name, column.name, schema)
+        )
+        result_set = self._db.cursor().fetchall()
+        assert result_set is not None
+
+        if not result_set:
+            return []
+        elif k is None or k <= 0:
+            return result_set
+        else:
+            return result_set[:k]
+
+    def _retrieve_histogram_from_stats(
+        self, column: BoundColumnReference, *, interpolation: HistogramApproximation
+    ) -> Optional[Histogram]:
+        attribute_converter = self._array_cast(column)
+        schema = column.table.schema or "public"
+
+        query_template = """
+            SELECT UNNEST(histogram_bounds::text::{conv})
+            FROM pg_stats
+            WHERE schemaname = %s AND tablename = %s AND attname = %s
+            """.format(conv=attribute_converter)
+
+        self._db.cursor().execute(
+            query_template, (schema, column.table.full_name, column.name)
+        )
+        result_set = self._db.cursor().fetchall()
+        if not result_set:
+            return None
+        bounds = [row[0] for row in result_set]
+
+        n_rows = self._retrieve_total_rows_from_stats(column.table)
+        assert n_rows
+
+        bucket_freq = n_rows // len(bounds)
+
+        mcvs = self._retrieve_most_common_values_from_stats(column, k=None)
+
+        normalized_bounds = []
+        normalized_frequencies = []
+        lo = None
+        hist_iter = iter(bounds)
+        mcv_iter = iter(mcvs)
+        cur_hist = next(hist_iter, None)
+        cur_mcv = next(mcv_iter, None)
+        while cur_hist is not None or cur_mcv is not None:
+            if cur_mcv is not None:
+                cur_mcv_val, cur_mcv_freq = cur_mcv
+            else:
+                cur_mcv_val, cur_mcv_freq = None, None
+
+            if lo is None:
+                lo = min(
+                    filter(None, [cur_hist, cur_mcv_val]),
+                    default=None,
+                )
+
+            if cur_hist is None:
+                assert cur_mcv_val is not None
+                normalized_bounds.append(cur_mcv_val)
+                normalized_frequencies.append(cur_mcv_freq)
+                cur_mcv = next(mcv_iter, None)
+
+            elif cur_mcv_val is None:
+                normalized_bounds.append(cur_hist)
+                normalized_frequencies.append(bucket_freq)
+
+                prev_hist = cur_hist
+                while (cur_hist := next(hist_iter, None)) == prev_hist:
+                    # for very frequent values, Postgres might put the same value into multiple (equi-depth) buckets
+                    # in this case, we need to sum up the frequencies of all buckets with the same bound value
+                    normalized_frequencies[-1] += bucket_freq
+
+            elif cur_hist < cur_mcv_val:
+                normalized_bounds.append(cur_hist)
+                normalized_frequencies.append(bucket_freq)
+
+                prev_hist = cur_hist
+                while (cur_hist := next(hist_iter, None)) == prev_hist:
+                    # see comment above for the case of duplicate histogram bounds
+                    normalized_frequencies[-1] += bucket_freq
+
+            else:
+                assert cur_mcv_val < cur_hist
+                normalized_bounds.append(cur_mcv_val)
+                normalized_frequencies.append(cur_mcv_freq)
+                cur_mcv = next(mcv_iter, None)
+
+        assert lo is not None
+        return Histogram(
+            normalized_bounds,
+            normalized_frequencies,
+            lower=lo,
+            bucket_interpolation=interpolation,
+        )
+
+    def _array_cast(self, column: BoundColumnReference) -> str:
         # determine the attributes data type to figure out how it should be converted
         attribute_query = "SELECT data_type FROM information_schema.columns WHERE table_name = %s AND column_name = %s"
 
@@ -1794,24 +2047,12 @@ class PostgresStatisticsInterface(DatabaseStatistics):
         assert result_set
 
         attribute_dtype = result_set[0]
-        attribute_converter = _DTypeArrayConverters[attribute_dtype]
-
-        # now, load the most frequent values. Since the frequencies are expressed as a fraction of the total number of
-        # rows, we need to multiply this number again to obtain the true number of occurrences
-        mcv_query = textwrap.dedent(
-            """
-                SELECT UNNEST(most_common_vals::text::{conv}),
-                    UNNEST(most_common_freqs) * (SELECT reltuples FROM pg_class WHERE oid = '{tab}'::regclass)
-                FROM pg_stats
-                WHERE tablename = %s AND attname = %s""".format(
-                conv=attribute_converter, tab=column.table.full_name
+        converter = _DTypeArrayConverters.get(attribute_dtype)
+        if not converter:
+            raise ValueError(
+                "Cannot cast column array of type {attribute_dtype} - no converter found."
             )
-        )
-        self._db.cursor().execute(mcv_query, (column.table.full_name, column.name))
-        result_set = self._db.cursor().fetchall()
-        assert result_set is not None
-
-        return result_set[:k]
+        return converter
 
 
 PostgresOptimizerSettings = {
@@ -1983,6 +2224,7 @@ def _generate_pghintplan_hints(
         warnings.warn(
             "Temporarily disabling GEQO. pg_hint_plan only works with the DP optimizer.",
             category=HintWarning,
+            stacklevel=3,
         )
         hints.append("Set(geqo off)")
 
@@ -2002,6 +2244,7 @@ def _generate_pghintplan_hints(
                 warnings.warn(
                     "Cannot set multiple parallel hints for Postgres. Ignoring additional hints.",
                     category=HintWarning,
+                    stacklevel=3,
                 )
 
         for join in phys_ops.join_operators.values():
@@ -2013,6 +2256,7 @@ def _generate_pghintplan_hints(
                     "Cannot directly set parallel workers on a join with pg_hint_plan. "
                     "Setting on all base tables instead.",
                     category=HintWarning,
+                    stacklevel=3,
                 )
                 for tab in join.intermediate:
                     hints.append(
@@ -2022,6 +2266,7 @@ def _generate_pghintplan_hints(
                 warnings.warn(
                     "Cannot set multiple parallel hints for Postgres. Ignoring additional hints.",
                     category=HintWarning,
+                    stacklevel=3,
                 )
 
         for tabs, intermediate_op in phys_ops.intermediate_operators.items():
@@ -2030,6 +2275,7 @@ def _generate_pghintplan_hints(
                 warnings.warn(
                     f"Cannot enforce operator {intermediate_op} with pg_hint_plan. Ignoring this hint",
                     category=HintWarning,
+                    stacklevel=3,
                 )
                 continue
             intermediate = " ".join(tab.identifier() for tab in tabs)
@@ -2049,6 +2295,7 @@ def _generate_pghintplan_hints(
                 warnings.warn(
                     f"Ignoring infinite cardinality for intermediate {intermediate}",
                     category=HintWarning,
+                    stacklevel=3,
                 )
                 continue
 
@@ -2061,6 +2308,7 @@ def _generate_pghintplan_hints(
                 warnings.warn(
                     "Cannot set multiple parallel hints for Postgres. Ignoring additional hints.",
                     category=HintWarning,
+                    stacklevel=3,
                 )
                 continue
 
@@ -2082,6 +2330,7 @@ def _generate_pghintplan_hints(
             warnings.warn(
                 "pg_hint_plan does not support execution mode hints",
                 category=HintWarning,
+                stacklevel=3,
             )
 
     hints = [f" {line}" for line in hints]
@@ -2106,6 +2355,7 @@ def _generate_pglab_hints(
         warnings.warn(
             "pg_lab can only force parallel execution of nodes with known operators. Ignoring worker hints.",
             category=HintWarning,
+            stacklevel=3,
         )
     elif has_worker_params:
         assert plan_params is not None and phys_ops is not None
@@ -2117,6 +2367,7 @@ def _generate_pglab_hints(
             warnings.warn(
                 "pg_lab can only force parallel execution of nodes with known operators. Ignoring additional hints.",
                 category=HintWarning,
+                stacklevel=3,
             )
         phys_ops = phys_ops.integrate_workers_from(plan_params)
 
@@ -2139,6 +2390,7 @@ def _generate_pglab_hints(
                 warnings.warn(
                     "Cannot set multiple parallel hints for Postgres. Ignoring additional hints.",
                     category=HintWarning,
+                    stacklevel=3,
                 )
             else:
                 hint = f"{op}({table})"
@@ -2155,6 +2407,7 @@ def _generate_pglab_hints(
                 warnings.warn(
                     "Cannot set multiple parallel hints for Postgres. Ignoring additional hints.",
                     category=HintWarning,
+                    stacklevel=3,
                 )
             else:
                 hint = f"{op}({intermediate})"
@@ -2180,6 +2433,7 @@ def _generate_pglab_hints(
                 warnings.warn(
                     f"Ignoring infinite cardinality for intermediate {intermediate}",
                     category=HintWarning,
+                    stacklevel=3,
                 )
                 continue
 
@@ -2249,6 +2503,7 @@ def _generate_pglab_plan(
             warnings.warn(
                 "Cannot set multiple parallel hints for Postgres. Ignoring additional hints.",
                 category=HintWarning,
+                stacklevel=3,
             )
 
         if node.operator is None:
@@ -2267,6 +2522,7 @@ def _generate_pglab_plan(
             warnings.warn(
                 "Cannot set multiple parallel hints for Postgres. Ignoring additional hints.",
                 category=HintWarning,
+                stacklevel=3,
             )
         else:
             metadata = ""
@@ -2476,7 +2732,8 @@ class PostgresHintService(HintService):
                 "there might be (many) dragons. "
                 "Proceed at your own risk. "
                 "We assume that the Postgres server has pg_hint_plan enabled. "
-                "Please set the backend property to pg_lab manually if you are using pg_lab."
+                "Please set the backend property to pg_lab manually if you are using pg_lab.",
+                stacklevel=3,
             )
             self._backend = "pg_hint_plan"
             self._inactive = False
@@ -2522,7 +2779,8 @@ class PostgresHintService(HintService):
                 "It seems you are connecting to a remote Postgres instance. "
                 "PostBOUND cannot infer the hinting backend for such connections. "
                 "We assume that the this server has pg_hint_plan enabled. "
-                "Please set the backend property to pg_lab manually if you are using pg_lab."
+                "Please set the backend property to pg_lab manually if you are using pg_lab.",
+                stacklevel=3,
             )
             self._backend = "pg_hint_plan"
             self._inactive = False
@@ -2547,7 +2805,8 @@ class PostgresHintService(HintService):
         else:
             warnings.warn(
                 "No supported hinting backend found. "
-                "Please ensure that either pg_hint_plan or pg_lab is available in your Postgres instance."
+                "Please ensure that either pg_hint_plan or pg_lab is available in your Postgres instance.",
+                stacklevel=3,
             )
             self._inactive = True
             self._backend = "none"
@@ -2623,6 +2882,23 @@ class PostgresOptimizer(OptimizerInterface):
         query_plan = PostgresExplainPlan(raw_query_plan)
         return query_plan.as_qep()
 
+    def parse_plan(self, plan: Any, *, query: Optional[SqlQuery] = None) -> QueryPlan:
+        # We should be graceful and handle both simplified and unsimplified
+        # versions of the execute_query() output. This only works because PostgresExplainPlan
+        # is also cooperative and excepts a dictionary and a list-of-dictionary input as well
+        # Therefore, we can aggressively unwrap a list, which either yields a dictionary (in
+        # case of simplified result sets), or a tuple-of-list-of-dictionary (in case of a raw
+        # result set).
+        # If we should ever encouter an EXPLAIN query whose list contains multiple dictionaries
+        # we have a problem.
+        if isinstance(plan, list):
+            plan = plan[0]
+        if isinstance(plan, tuple):
+            plan = plan[0]
+
+        pg_plan = PostgresExplainPlan(plan)
+        return pg_plan.as_qep()
+
     def cardinality_estimate(self, query: SqlQuery | str) -> Cardinality:
         if isinstance(query, SqlQuery):
             query = transform.as_explain(query)
@@ -2664,6 +2940,9 @@ class PostgresOptimizer(OptimizerInterface):
             )
         status = "on" if enabled else "off"
         self._pg_instance.cursor.execute(f"SET {setting_name} TO {status}")  # type: ignore
+
+    def uses_geqo(self, query: SqlQuery) -> bool:
+        pass
 
     def _explainify(self, query: str) -> str:
         if not query.upper().startswith("EXPLAIN (FORMAT JSON)"):
@@ -2850,7 +3129,9 @@ def connect(
         with open(".psycopg_connection", "r") as f:
             connect_string = f.readline().strip()
     elif os.getenv("PGDATABASE"):
-        warnings.warn("Using environment variables to construct connection string.")
+        warnings.warn(
+            "Using environment variables to construct connection string.", stacklevel=2
+        )
         env_vars = {
             "PGDATABASE": "dbname",
             "PGHOST": "host",
@@ -3550,6 +3831,7 @@ class TimeoutQueryExecutor:
             warnings.warn(
                 "Cannot cache query results that were obtained with a timeout.",
                 category=QueryCacheWarning,
+                stacklevel=2,
             )
 
         if timed_out:
@@ -3619,6 +3901,56 @@ PostgresExplainIntermediateNodes = {
 """A mapping from Postgres EXPLAIN node names to the corresponding intermediate operators."""
 
 
+NodeType = Literal[
+    "Result",
+    "ProjectSet",
+    "ModifyTable",
+    "Append",
+    "Merge Append",
+    "Recursive Union",
+    "BitmapAnd",
+    "BitmapOr",
+    "Nested Loop",
+    "Merge Join",
+    "Hash Join",
+    "Seq Scan",
+    "Sample Scan",
+    "Gather",
+    "Gather Merge",
+    "Index Scan",
+    "Index Only Scan",
+    "Bitmap Index Scan",
+    "Bitmap Heap Scan",
+    "Tid Scan",
+    "Tid Range Scan",
+    "Subquery Scan",
+    "Function Scan",
+    "Table Function Scan",
+    "Values Scan",
+    "CTE Scan",
+    "Named Tuplestore Scan",
+    "WorkTable Scan",
+    "Foreign Scan",
+    "Custom Scan",
+    "Materialize",
+    "Memoize",
+    "Sort",
+    "Incremental Sort",
+    "Group",
+    "Aggregate",
+    "WindowAgg",
+    "Unique",
+    "SetOp",
+    "LockRows",
+    "Limit",
+    "Hash",
+]
+"""All different nodes that can be created by Postgres.
+
+This has been extracted directly from ExplainNode() in explain.c from the Postgres source code.
+"""
+
+
 class PostgresExplainNode:
     """Simplified model of a plan node as provided by Postgres' *EXPLAIN* output in JSON format.
 
@@ -3639,7 +3971,7 @@ class PostgresExplainNode:
 
     Attributes
     ----------
-    node_type : str | None, default None
+    node_type : NodeType | None, default None
         The node type. This should never be empty or *None*, even though it is technically allowed.
     cost : float, default NaN
         The optimizer's cost estimation for this node. This includes the cost of all child nodes as well. This should normally
@@ -3706,8 +4038,13 @@ class PostgresExplainNode:
         All child / input nodes for the current node
     """
 
+    @staticmethod
+    def all_node_types() -> frozenset[NodeType]:
+        """All node types that are currently recognized by PostBOUND."""
+        return frozenset(get_args(NodeType))
+
     def __init__(self, explain_data: dict) -> None:
-        self.node_type: str = explain_data["Node Type"]
+        self.node_type: NodeType = explain_data["Node Type"]
 
         self.cost: float = explain_data.get("Total Cost", math.nan)
         self.cardinality_estimate: float = explain_data.get("Plan Rows", math.nan)
@@ -3775,7 +4112,8 @@ class PostgresExplainNode:
             # For BitmapAnd/BitmapOr nodes, the actual number of rows is always 0.
             # This is due to limitations in the Postgres implementation.
             warnings.warn(
-                "Postgres does not report the actual number of rows for bitmap nodes correctly. Returning NaN."
+                "Postgres does not report the actual number of rows for bitmap nodes correctly. Returning NaN.",
+                stacklevel=2,
             )
             return math.nan
         return self._true_card
@@ -4079,7 +4417,7 @@ class PostgresExplainPlan:
 
     Parameters
     ----------
-    explain_data : dict
+    explain_data : dict | list[dict]
         The JSON data of the entire explain plan. This is parsed and prepared as part of the *__init__* method.
 
 
@@ -4094,10 +4432,15 @@ class PostgresExplainPlan:
         The actual plan
     """
 
-    def __init__(self, explain_data: dict) -> None:
+    def __init__(self, explain_data: dict | list[dict]) -> None:
         self.explain_data = (
             explain_data[0] if isinstance(explain_data, list) else explain_data
         )
+        if not (isinstance(self.explain_data, dict) and "Plan" in self.explain_data):
+            raise ValueError(
+                f"Invalid explain data: missing 'Plan' key: {explain_data}"
+            )
+
         self.planning_time: float = (
             self.explain_data.get("Planning Time", math.nan) / 1000
         )

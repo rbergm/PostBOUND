@@ -17,7 +17,7 @@ from ..qal import SqlQuery
 from ..workloads import Workload
 
 
-class PreciseCardinalityHintGenerator(CardinalityEstimator):
+class PreciseCardinalities(CardinalityEstimator):
     """Cardinality "estimator" that calculates exact cardinalities.
 
     These cardinalities are determined by actually executing the intermediate query plan and counting the number of result
@@ -55,22 +55,21 @@ class PreciseCardinalityHintGenerator(CardinalityEstimator):
             else DatabasePool.get_instance().current_database()
         )
         self.cache_enabled = enable_cache
-        self._cardinality_cache: dict[SqlQuery, int] = {}
+        self._cardinality_cache: dict[SqlQuery, Cardinality] = {}
 
     def describe(self) -> dict:
         return {"name": "true-cards", "database": self.database.describe()}
 
     def calculate_estimate(
-        self, query: SqlQuery, tables: TableReference | Iterable[TableReference]
+        self, query: SqlQuery, intermediate: TableReference | Iterable[TableReference]
     ) -> Cardinality:
-        tables = util.enlist(tables)
-        partial_query = transform.as_count_star_query(
-            transform.extract_query_fragment(query, tables)
-        )
-        if partial_query in self._cardinality_cache:
-            return self._cardinality_cache[partial_query]
-        cardinality = Cardinality(self.database.execute_query(partial_query))
-        self._cardinality_cache[partial_query] = cardinality
+        intermediate = util.enlist(intermediate)
+        subquery = transform.extract_query_fragment(query, intermediate)
+        subquery = transform.as_count_star_query(subquery)
+        if subquery in self._cardinality_cache:
+            return self._cardinality_cache[subquery]
+        cardinality = Cardinality(self.database.execute_query(subquery))
+        self._cardinality_cache[subquery] = cardinality
         return cardinality
 
     def reset_cache(self) -> None:

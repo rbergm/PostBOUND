@@ -9,16 +9,7 @@ import numbers
 import warnings
 from collections.abc import Callable, Collection, Iterable, Iterator, Sequence
 from types import NoneType
-from typing import (
-    Any,
-    Generic,
-    Literal,
-    Optional,
-    Type,
-    TypeVar,
-    Union,
-    overload,
-)
+from typing import Any, Generic, Literal, Optional, Type, TypeVar, Union, overload
 
 import networkx as nx
 
@@ -303,6 +294,66 @@ class StaticValueExpression(SqlExpression, Generic[T]):
             case _:
                 escaped = str(self.value).replace("'", "''")
                 return f"'{escaped}'"
+
+
+class StarExpression(SqlExpression):
+    """A special expression that is only used in *SELECT* clauses to select all columns.
+
+    Parameters
+    ----------
+    from_table : Optional[TableReference], optional
+        The table from which to select all columns. Defaults to **None**, in which case all columns of all tables are being
+        selected.
+    """
+
+    def __init__(self, *, from_table: Optional[TableReference] = None) -> None:
+        self._table = from_table
+        super().__init__(hash(("*", self._table)))
+
+    __slots__ = ("_table",)
+    __match_args__ = ("from_table",)
+
+    @property
+    def from_table(self) -> Optional[TableReference]:
+        """Get the table from which to select all columns.
+
+        If no such table was selected, all columns of all tables are being selected.
+
+        Returns
+        -------
+        Optional[TableReference]
+            The table, or **None** if all columns are selected
+        """
+        return self._table
+
+    def tables(self) -> set[TableReference]:
+        if self._table:
+            return {self._table}
+        return set()
+
+    def columns(self) -> set[ColumnReference]:
+        return set()
+
+    def itercolumns(self) -> Iterable[ColumnReference]:
+        return []
+
+    def iterchildren(self) -> Iterable[SqlExpression]:
+        return []
+
+    def accept_visitor(
+        self, visitor: SqlExpressionVisitor[VisitorResult], *args, **kwargs
+    ) -> VisitorResult:
+        return visitor.visit_star_expr(self, *args, **kwargs)
+
+    __hash__ = SqlExpression.__hash__
+
+    def __eq__(self, other) -> bool:
+        return isinstance(other, type(self)) and self._table == other._table
+
+    def __str__(self) -> str:
+        if not self._table:
+            return "*"
+        return f"{quote(self._table.identifier())}.*"
 
 
 class CastExpression(SqlExpression):
@@ -663,6 +714,11 @@ class ColumnExpression(SqlExpression):
         The column being wrapped
     """
 
+    @staticmethod
+    def of(column_name: str) -> ColumnExpression:
+        """Shortcut method to create a new column reference + expression."""
+        return ColumnExpression(ColumnReference(column_name))
+
     def __init__(self, column: ColumnReference) -> None:
         if column is None:
             raise ValueError("Column cannot be none")
@@ -765,6 +821,67 @@ class FunctionExpression(SqlExpression):
     postbound.transform.replace_expressions
     """
 
+    @staticmethod
+    def create_count(
+        column: ColumnReference
+        | SqlExpression
+        | Iterable[SqlExpression] = StarExpression(),
+    ) -> FunctionExpression:
+        """Shortcut method to create a new *COUNT()*  expression over (one or multiple) columns.
+
+        If no column is given, a *COUNT(\\*)* is created.
+        """
+        match column:
+            case ColumnReference():
+                args = [ColumnExpression(column)]
+            case SqlExpression():
+                args = [column]
+            case Iterable():
+                args = list(column)
+        return FunctionExpression("count", args)
+
+    @staticmethod
+    def create_max(
+        column: ColumnReference | SqlExpression | Iterable[SqlExpression],
+    ) -> FunctionExpression:
+        """Shortcut method to create a new *MAX()*  expression over (one or multiple) columns."""
+        match column:
+            case ColumnReference():
+                args = [ColumnExpression(column)]
+            case SqlExpression():
+                args = [column]
+            case Iterable():
+                args = list(column)
+        return FunctionExpression("max", args)
+
+    @staticmethod
+    def create_min(
+        column: SqlExpression | Iterable[SqlExpression],
+    ) -> FunctionExpression:
+        """Shortcut method to create a new *MIN()*  expression over (one or multiple) columns."""
+        match column:
+            case ColumnReference():
+                args = [ColumnExpression(column)]
+            case SqlExpression():
+                args = [column]
+            case Iterable():
+                args = list(column)
+        return FunctionExpression("min", args)
+
+    @staticmethod
+    def create_sum(
+        column: ColumnReference | SqlExpression | Iterable[SqlExpression],
+    ) -> FunctionExpression:
+        """Shortcut method to create a new *SUM()*  expression over (one or multiple) columns."""
+        match column:
+            case ColumnReference():
+                args = [ColumnExpression(column)]
+            case SqlExpression():
+                args = [column]
+            case Iterable():
+                args = list(column)
+        return FunctionExpression("sum", args)
+
     def __init__(
         self,
         function: str,
@@ -781,7 +898,7 @@ class FunctionExpression(SqlExpression):
             )
 
         self._function = function.upper()
-        self._arguments: tuple[SqlExpression] = (
+        self._arguments: tuple[SqlExpression, ...] = (
             () if arguments is None else tuple(arguments)
         )
         self._distinct = distinct
@@ -901,6 +1018,12 @@ class FunctionExpression(SqlExpression):
     def __str__(self) -> str:
         args_str = ", ".join(str(arg) for arg in self._arguments)
         distinct_str = "DISTINCT " if self._distinct else ""
+        if len(self._arguments) > 1 and self._distinct:
+            # Postgres, DuckDB (and others?) require brackets around the arguments if DISTINCT is used with multiple arguments,
+            # e.g. COUNT(DISTINCT (a, b))
+            # Notice that this is NOT documented in the aggregate syntax under
+            # https://www.postgresql.org/docs/current/sql-expressions.html#SYNTAX-AGGREGATES
+            args_str = f"({args_str})"
         parameterization = f"({distinct_str}{args_str})"
         filter_str = f" FILTER (WHERE {self._filter_expr})" if self._filter_expr else ""
         return f"{self._function}{parameterization}{filter_str}"
@@ -1180,66 +1303,6 @@ class SubqueryExpression(SqlExpression):
     def __str__(self) -> str:
         query_str = str(self._query).removesuffix(";")
         return f"({query_str})"
-
-
-class StarExpression(SqlExpression):
-    """A special expression that is only used in *SELECT* clauses to select all columns.
-
-    Parameters
-    ----------
-    from_table : Optional[TableReference], optional
-        The table from which to select all columns. Defaults to **None**, in which case all columns of all tables are being
-        selected.
-    """
-
-    def __init__(self, *, from_table: Optional[TableReference] = None) -> None:
-        self._table = from_table
-        super().__init__(hash(("*", self._table)))
-
-    __slots__ = ("_table",)
-    __match_args__ = ("from_table",)
-
-    @property
-    def from_table(self) -> Optional[TableReference]:
-        """Get the table from which to select all columns.
-
-        If no such table was selected, all columns of all tables are being selected.
-
-        Returns
-        -------
-        Optional[TableReference]
-            The table, or **None** if all columns are selected
-        """
-        return self._table
-
-    def tables(self) -> set[TableReference]:
-        if self._table:
-            return {self._table}
-        return set()
-
-    def columns(self) -> set[ColumnReference]:
-        return set()
-
-    def itercolumns(self) -> Iterable[ColumnReference]:
-        return []
-
-    def iterchildren(self) -> Iterable[SqlExpression]:
-        return []
-
-    def accept_visitor(
-        self, visitor: SqlExpressionVisitor[VisitorResult], *args, **kwargs
-    ) -> VisitorResult:
-        return visitor.visit_star_expr(self, *args, **kwargs)
-
-    __hash__ = SqlExpression.__hash__
-
-    def __eq__(self, other) -> bool:
-        return isinstance(other, type(self)) and self._table == other._table
-
-    def __str__(self) -> str:
-        if not self._table:
-            return "*"
-        return f"{quote(self._table.identifier())}.*"
 
 
 class WindowExpression(SqlExpression):
@@ -2205,6 +2268,26 @@ class AbstractPredicate(SqlExpression, abc.ABC):
             for first_col, second_col in self.join_partners()
         )
 
+    def joins_tables(self, a: TableReference, b: TableReference) -> bool:
+        """Checks, whether this predicate describes a join between the given tables.
+
+        The order of the tables does not matter.
+        """
+        if not self.is_join():
+            return False
+        given = {a, b}
+        return given.issubset(self.tables())
+
+    def joins_columns(self, a: ColumnReference, b: ColumnReference) -> bool:
+        """Checks, whether this predicate describes a join between the given columns.
+
+        The order of the columns does not matter.
+        """
+        if not self.is_join():
+            return False
+        given = {a, b}
+        return given.issubset(self.columns())
+
     def columns_of(self, table: TableReference) -> set[ColumnReference]:
         """Retrieves all columns of a specific table that are referenced by this predicate.
 
@@ -2528,7 +2611,7 @@ class BinaryPredicate(BasePredicate):
         *args,
         **kwargs,
     ) -> VisitorResult:
-        if isinstance(visitor, SqlExpressionVisitor):
+        if _safe_recurse_expression_visitor(visitor):
             return visitor.visit_predicate_expr(self, *args, **kwargs)
         return visitor.visit_binary_predicate(self, *args, **kwargs)
 
@@ -2691,7 +2774,7 @@ class BetweenPredicate(BasePredicate):
         *args,
         **kwargs,
     ) -> VisitorResult:
-        if isinstance(visitor, SqlExpressionVisitor):
+        if _safe_recurse_expression_visitor(visitor):
             return visitor.visit_predicate_expr(self, *args, **kwargs)
         return visitor.visit_between_predicate(self, *args, **kwargs)
 
@@ -2856,7 +2939,7 @@ class InPredicate(BasePredicate):
         *args,
         **kwargs,
     ) -> VisitorResult:
-        if isinstance(visitor, SqlExpressionVisitor):
+        if _safe_recurse_expression_visitor(visitor):
             return visitor.visit_predicate_expr(self, *args, **kwargs)
         return visitor.visit_in_predicate(self, *args, **kwargs)
 
@@ -2983,7 +3066,7 @@ class UnaryPredicate(BasePredicate):
         *args,
         **kwargs,
     ) -> VisitorResult:
-        if isinstance(visitor, SqlExpressionVisitor):
+        if _safe_recurse_expression_visitor(visitor):
             return visitor.visit_predicate_expr(self, *args, **kwargs)
         return visitor.visit_unary_predicate(self, *args, **kwargs)
 
@@ -3252,7 +3335,7 @@ class CompoundPredicate(AbstractPredicate):
         *args,
         **kwargs,
     ) -> VisitorResult:
-        if isinstance(visitor, SqlExpressionVisitor):
+        if _safe_recurse_expression_visitor(visitor):
             return visitor.visit_predicate_expr(self, *args, **kwargs)
 
         match self.operation:
@@ -3314,6 +3397,15 @@ class PredicateVisitor(abc.ABC, Generic[VisitorResult]):
     .. Visitor pattern: https://en.wikipedia.org/wiki/Visitor_pattern
     """
 
+    def visit_query_predicates(
+        self, query: SqlQuery | QueryPredicates, *args, **kwargs
+    ) -> VisitorResult:
+        if isinstance(query, SqlQuery):
+            predicates = query.predicates()
+        else:
+            predicates = query
+        return predicates.root.accept_visitor(self, *args, **kwargs)
+
     @abc.abstractmethod
     def visit_binary_predicate(
         self, predicate: BinaryPredicate, *args, **kwargs
@@ -3367,6 +3459,13 @@ class PredicateVisitor(abc.ABC, Generic[VisitorResult]):
         **kwargs,
     ) -> VisitorResult:
         raise NotImplementedError
+
+
+def _safe_recurse_expression_visitor(visitor) -> bool:
+    return (  #
+        isinstance(visitor, SqlExpressionVisitor)  #
+        and not isinstance(visitor, PredicateVisitor)  #
+    )
 
 
 @overload
@@ -3708,7 +3807,9 @@ class SimpleFilter(AbstractPredicate):
             return False
         except Exception as e:
             warnings.warn(
-                "Unexpected error during filter unwrapping: " + str(e), RuntimeWarning
+                f"Unexpected error during filter unwrapping: {e}",
+                RuntimeWarning,
+                stacklevel=2,
             )
             return False
 
@@ -3824,7 +3925,7 @@ class SimpleFilter(AbstractPredicate):
         *args,
         **kwargs,
     ) -> VisitorResult:
-        if isinstance(visitor, SqlExpressionVisitor):
+        if _safe_recurse_expression_visitor(visitor):
             return visitor.visit_predicate_expr(self, *args, **kwargs)
         return self._predicate.accept_visitor(visitor, *args, **kwargs)
 
@@ -4058,7 +4159,7 @@ class SimpleJoin(AbstractPredicate):
         *args,
         **kwargs,
     ) -> VisitorResult:
-        if isinstance(visitor, SqlExpressionVisitor):
+        if _safe_recurse_expression_visitor(visitor):
             return visitor.visit_predicate_expr(self, *args, **kwargs)
         return self._predicate.accept_visitor(visitor, *args, **kwargs)
 
@@ -4307,13 +4408,21 @@ class QueryPredicates:
         return _collect_join_predicates(self._root)
 
     @functools.cache
-    def join_graph(self) -> nx.Graph:
+    def join_graph(self, *, merge_aliases: bool = False) -> nx.Graph:
         """Provides the join graph for the predicates.
 
         A join graph is an undirected graph, where each node corresponds to a base table and each edge corresponds to a
         join predicate between two base tables. In addition, each node is annotated by a ``predicate`` key which is a
         conjunction of all filter predicates on that table (or *None* if the table is unfiltered). Likewise, each edge is
         annotated by a ``predicate`` key that corresponds to the join predicate (which can never be *None*).
+
+        Parameters
+        ----------
+        merge_aliases : bool, optional
+            Whether to merge aliases of the same base table into one node. Setting this to *True*
+            transforms all predicates to dictionaries that map the aliased tables to their
+            filter predicates and frozensets of tables to their join predicates.
+            Otherwise, the predicates are annotated directly.
 
         Returns
         -------
@@ -4328,16 +4437,48 @@ class QueryPredicates:
         join_graph = nx.Graph()
         if self.is_empty():
             return join_graph
+        assert self._root is not None
 
-        for table in self._root.tables():
-            filter_predicates = self.filters_for(table)
-            join_graph.add_node(table, predicate=filter_predicates)
+        if not merge_aliases:
+            for table in self._root.tables():
+                filter_predicates = self.filters_for(table)
+                join_graph.add_node(table, predicate=filter_predicates)
 
+            for join in self.joins():
+                for first_col, second_col in join.join_partners():
+                    join_graph.add_edge(
+                        first_col.table, second_col.table, predicate=join
+                    )
+
+            return join_graph
+
+        table2alias = collections.defaultdict(set)
+        for tab in self._root.tables():
+            table2alias[tab.drop_alias()].add(tab)
+
+        table2preds = {
+            tab: {alias: self.filters_for(alias) for alias in aliased}
+            for tab, aliased in table2alias.items()
+        }
+        for table, preds in table2preds.items():
+            join_graph.add_node(table, predicate=preds, aliases=table2alias[table])
+
+        col2join: dict[frozenset[ColumnReference], AbstractPredicate] = {}
         for join in self.joins():
             for first_col, second_col in join.join_partners():
-                join_graph.add_edge(first_col.table, second_col.table, predicate=join)
+                partners = frozenset([first_col, second_col])
+                col2join[partners] = join
 
-        return join_graph.copy()
+        tab2join = collections.defaultdict(dict)
+        for partners, join in col2join.items():
+            tabs = frozenset([col.drop_table_alias() for col in partners])
+            tab2join[tabs][partners] = join
+
+        for tabs, joins in tab2join.items():
+            first_tab, second_tab = tabs
+            join_graph.add_edge(first_tab, second_tab, predicate=joins)
+
+        return join_graph
 
     @functools.cache
     def filters_for(self, table: TableReference) -> Optional[AbstractPredicate]:
@@ -5421,7 +5562,7 @@ class ValuesWithQuery(WithQuery):
         if self._columns:
             return self._columns
         return [
-            ColumnExpression(f"column_{i + 1}") for i in range(len(self._values[0]))
+            ColumnExpression.of(f"column_{i + 1}") for i in range(len(self._values[0]))
         ]
 
     def iterexpressions(self) -> Iterable[SqlExpression]:
@@ -5603,15 +5744,22 @@ class BaseProjection:
     """
 
     @staticmethod
-    def count_star() -> BaseProjection:
+    def count_star(target_name: str = "") -> BaseProjection:
         """Shortcut method to create a ``COUNT(*)`` projection.
+
+        Parameters
+        ----------
+        target_name : str, optional
+            An optional name under which the column should be accessible.
 
         Returns
         -------
         BaseProjection
             The projection
         """
-        return BaseProjection(FunctionExpression("count", [StarExpression()]))
+        return BaseProjection(
+            FunctionExpression("count", [StarExpression()]), target_name=target_name
+        )
 
     @staticmethod
     def star() -> BaseProjection:
@@ -5740,6 +5888,10 @@ class Select(BaseClause):
     """
 
     @staticmethod
+    def count() -> Select:  # TODO: optional expression/column(s), distinct
+        pass
+
+    @staticmethod
     def count_star(*, distinct: Iterable[SqlExpression] | bool = False) -> Select:
         """Shortcut method to create a ``SELECT COUNT(*)`` clause.
 
@@ -5777,7 +5929,8 @@ class Select(BaseClause):
 
     @staticmethod
     def create_for(
-        columns: ColumnReference | Iterable[ColumnReference],
+        columns: ColumnReference
+        | Iterable[ColumnReference],  # TODO: optional expression(s)
         *,
         distinct: Iterable[SqlExpression] | bool = False,
     ) -> Select:
@@ -6081,6 +6234,10 @@ class DirectTableSource(TableSource):
             The table.
         """
         return self._table
+
+    def identifier(self) -> str:
+        """Get the table's identifier."""
+        return self._table.identifier()
 
     def tables(self) -> set[TableReference]:
         return {self._table}
@@ -7042,6 +7199,16 @@ class GroupBy(BaseClause):
         If `group_columns` is empty.
     """
 
+    @staticmethod
+    def create_for(
+        column: ColumnReference | Iterable[ColumnReference], *more_cols
+    ) -> GroupBy:
+        """Shortcut method to create a *GROUP BY* clause from column references."""
+        column = [column] if isinstance(column, ColumnReference) else list(column)
+        column.extend(more_cols)
+
+        return GroupBy([ColumnExpression(col) for col in column])
+
     def __init__(
         self, group_columns: Sequence[SqlExpression], distinct: bool = False
     ) -> None:
@@ -7818,7 +7985,9 @@ class ClauseVisitor(abc.ABC, Generic[VisitorResult]):
         raise NotImplementedError
 
     @abc.abstractmethod
-    def visit_cte_clause(self, clause: WithQuery, *args, **kwargs) -> VisitorResult:
+    def visit_cte_clause(
+        self, clause: CommonTableExpression, *args, **kwargs
+    ) -> VisitorResult:
         raise NotImplementedError
 
     @abc.abstractmethod
@@ -8589,7 +8758,8 @@ class SqlQuery:
                 case StarExpression():
                     warnings.warn(
                         "Cannot compute the output columns for SELECT * queries. Please use the database schema "
-                        "to infer the columns. The result of this method is likely not what you want."
+                        "to infer the columns. The result of this method is likely not what you want.",
+                        stacklevel=2,
                     )
                 case _:
                     cols.append(ColumnReference(f"column_{anon_idx}"))
@@ -8680,14 +8850,14 @@ class SqlQuery:
         """
         return self.predicates().joins()
 
-    def join_graph(self) -> nx.Graph:
+    def join_graph(self, *, merge_aliases: bool = False) -> nx.Graph:
         """Alias for `predicates().join_graph()`.
 
         See Also
         --------
         QueryPredicates.join_graph
         """
-        return self.predicates().join_graph()
+        return self.predicates().join_graph(merge_aliases=merge_aliases)
 
     def filters_for(self, table: TableReference) -> Optional[AbstractPredicate]:
         """Alias for `predicates().filters_for(table)`.
@@ -9282,12 +9452,14 @@ class SetQuery:
     ) -> None:
         if left_query.is_explain():
             warnings.warn(
-                "Left query is an EXPLAIN query. Ignoring the EXPLAIN clause."
+                "Left query is an EXPLAIN query. Ignoring the EXPLAIN clause.",
+                stacklevel=2,
             )
             left_query = build_query(left_query.clauses(skip=Explain))
         if right_query.is_explain():
             warnings.warn(
-                "Right query is an EXPLAIN query. Ignoring the EXPLAIN clause."
+                "Right query is an EXPLAIN query. Ignoring the EXPLAIN clause.",
+                stacklevel=2,
             )
             right_query = build_query(right_query.clauses(skip=Explain))
 

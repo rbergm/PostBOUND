@@ -30,8 +30,19 @@ Package Structure
 - Simple optimization algorithms (e.g. dynamic-programming-based plan enumeration) are provided in the `opt` module
 """
 
+from importlib.metadata import PackageNotFoundError, version
+from importlib.util import find_spec
+
 import lazy_loader
 
 __getattr__, __dir__, __all__ = lazy_loader.attach_stub(__name__, __file__)
 
-__version__ = "0.20.3"
+try:
+    __version__ = version("PostBOUND")
+except PackageNotFoundError:
+    __version__ = "<development>"
+
+if find_spec("IPython") is not None:
+    from ._ipython import setup_pretty_printers
+
+    setup_pretty_printers()

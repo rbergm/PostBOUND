@@ -8,10 +8,14 @@ from collections.abc import (
     Collection,
     Container,
     Generator,
+    ItemsView,
     Iterable,
     Iterator,
+    KeysView,
+    Mapping,
     Sequence,
     Sized,
+    ValuesView,
 )
 from typing import Any, Literal, Optional, Union, overload
 
@@ -75,6 +79,22 @@ def enlist(obj: frozenset[T]) -> frozenset[T]: ...
 
 
 @overload
+def enlist(obj: KeysView[T] | ValuesView[T]) -> list[T]: ...
+
+
+@overload
+def enlist[K, T](obj: ItemsView[K, T]) -> list[tuple[K, T]]: ...
+
+
+@overload
+def enlist(obj: Sequence[T]) -> Sequence[T]: ...
+
+
+@overload
+def enlist(obj: Sequence[T] | T) -> Sequence[T]: ...
+
+
+@overload
 def enlist(obj: str) -> list[str]: ...
 
 
@@ -114,6 +134,9 @@ def enlist(obj, *, enlist_tuples: bool = False):
         return [obj]
     if isinstance(obj, tuple) and enlist_tuples:
         return [obj]
+    if isinstance(obj, (KeysView, ValuesView, ItemsView)):
+        return list(obj)
+
     list_types = [tuple, list, set, frozenset]
     if any(isinstance(obj, target_type) for target_type in list_types):
         return obj
@@ -139,7 +162,11 @@ def get_any(elems: Iterable[T]) -> T:
 
 
 @overload
-def simplify(obj: Iterable[T]) -> T: ...
+def simplify[K, V](obj: Mapping[K, V]) -> tuple[K, V]: ...
+
+
+@overload
+def simplify[T](obj: Iterable[T]) -> T: ...
 
 
 @overload
@@ -153,7 +180,7 @@ def simplify(obj):
 
     Parameters
     ----------
-    obj : Iterable[T]
+    obj : Iterable[T] | Mapping[K, V]
         The object to simplify
 
     Returns
@@ -162,6 +189,7 @@ def simplify(obj):
         For a singular list, the object that was contained in that list. Otherwise `obj` is returned unmodified. Since this
         method is mainly intended for lists which are known to contain exactly one element, we use *T* as a return type to
         assist the type checker.
+        We use the same logic for dictionaries, however here we return the single key/value pair.
 
     Examples
     --------
@@ -169,6 +197,12 @@ def simplify(obj):
     """
     if not isinstance(obj, Iterable) or isinstance(obj, (str, bytes)):
         return obj
+
+    if isinstance(obj, Mapping):
+        if len(obj) != 1:
+            return obj
+        key = next(iter(obj))
+        return key, obj[key]
 
     if not isinstance(obj, Collection):
         obj = list(obj)
@@ -217,7 +251,7 @@ def powerset(lst: Collection[T]) -> Iterable[tuple[T, ...]]:
 
 def sliding_window(
     lst: Sequence[T], size: int, step: int = 1
-) -> Generator[tuple[Sequence[T], Sequence[T], Sequence[T]], None, None]:
+) -> Generator[Sequence[T], None, None]:
     """Iterates over the given sequence using a sliding window.
 
     The window will contain exactly `size` many entries, starting at the beginning of the sequence. After yielding a
@@ -234,16 +268,11 @@ def sliding_window(
 
     Yields
     ------
-    Generator[tuple[Sequence[T], Sequence[T], Sequence[T]]]
-        The sliding window subsets. The tuples are structured as follows: *(prefix, window, suffix)* where *prefix* are all
-        elements of the sequence before the current window, *window* contains exactly those elements that are part of the
-        current window and *suffix* contains all elements after the current window.
+    Generator[Sequence[T], None, None]
+        The current window.
     """
     for i in range(0, len(lst) - size + 1, step):
-        prefix = lst[:i]
-        window = lst[i : i + size]
-        suffix = lst[i + size :]
-        yield prefix, window, suffix
+        yield lst[i : i + size]
 
 
 def pairs(lst: Iterable[T]) -> Generator[tuple[T, T], None, None]:

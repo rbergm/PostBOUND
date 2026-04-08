@@ -23,6 +23,7 @@ References
 from __future__ import annotations
 
 import random
+import shutil
 import typing
 import urllib.request
 import warnings
@@ -42,12 +43,12 @@ from .db import DatabasePool
 from .qal import SqlQuery
 
 _WorkloadSources = {
-    "job": "https://db4701.inf.tu-dresden.de:8443/public.php/dav/files/qQEBsM2Zx4x9BBW",
-    "job-complex": "https://db4701.inf.tu-dresden.de:8443/public.php/dav/files/MBFejJXSdHbnoix",
-    "job-light": "https://db4701.inf.tu-dresden.de:8443/public.php/dav/files/q4b9Mq6C485CnXw",
-    "ssb": "https://db4701.inf.tu-dresden.de:8443/public.php/dav/files/iXD5p3J5q6DwdbQ",
-    "stack": "https://db4701.inf.tu-dresden.de:8443/public.php/dav/files/AQgxPe9KrNGJ5nT",
-    "stats": "https://db4701.inf.tu-dresden.de:8443/public.php/dav/files/STTdpKR3LB5ojt3",
+    "job": "https://zenodo.org/records/19205561/files/job.zip?download=1",
+    "job-complex": "https://zenodo.org/records/19205561/files/job-complex.zip?download=1",
+    "job-light": "https://zenodo.org/records/19205561/files/job-light.zip?download=1",
+    # "ssb": "https://db4701.inf.tu-dresden.de:8443/public.php/dav/files/iXD5p3J5q6DwdbQ",
+    "stack": "https://datashare.tu-dresden.de/public.php/dav/files/JSaFxzzGHGABbxY",
+    "stats": "https://zenodo.org/records/19131189/files/queries.zip?download=1",
 }
 
 
@@ -61,13 +62,21 @@ def _fetch_workload(name: str) -> Path:
 
     archive_url = _WorkloadSources.get(name)
     if not archive_url:
-        raise ValueError(f"No known source for workload '{name}'")
+        raise ValueError(
+            f"Could not automatically load queries for workload '{name}': no known data source. "
+            f"Please insert the queries manually at {workload_dir} and re-run the operation."
+        )
 
     archive_file = workload_dir.parent / f"{name}.zip"
     urllib.request.urlretrieve(archive_url, archive_file)
 
     with zipfile.ZipFile(archive_file, "r") as zip:
         zip.extractall(workload_dir)
+
+    temp_dir = workload_dir / name
+    for file in temp_dir.iterdir():
+        shutil.move(file, workload_dir)
+    temp_dir.rmdir()
 
     archive_file.unlink()
     return workload_dir
@@ -479,6 +488,75 @@ class Workload(UserDict[LabelType, SqlQuery]):
         }
         return Workload(relabeled_queries, self._name, self._root)
 
+    def map(self, transformation: Callable, *args, **kwargs) -> Workload[LabelType]:
+        """Constructs a new workload, leaving the labels intact but replacing the queries.
+
+        The new workload will ordered according to the natural order of the labels.
+
+        Parameters
+        ----------
+        transformation : Callable[[SqlQuery, ...], SqlQuery]
+            Replacement method that maps all old queries to new query values. The replacement receives the old query as input
+            and produces the new query value. Additional arguments can be passed to the transformation and will be
+            forwarded.
+        *args
+            Additional positional arguments that should be forwarded to the transformation method. These are passed after the
+            query argument.
+        **kwargs
+            Additional keyword arguments that should be forwarded to the transformation method.
+
+        Returns
+        -------
+        Workload[LabelType]
+            All queries of the current workload, but with new query values
+
+        See Also
+        --------
+        transform : if the transformation also needs access to the query labels, or if labels should be updated as well
+        """
+        transformed_queries = {
+            label: transformation(query, *args, **kwargs)
+            for label, query in self.data.items()
+        }
+        return Workload(transformed_queries, self._name, self._root)
+
+    def transform(
+        self,
+        transformation: Callable,
+        *args,
+        **kwargs,
+    ) -> Workload[LabelType]:
+        """Constructs a new workload, replacing both the labels and the queries.
+
+        The new workload will ordered according to the natural order of the new labels.
+
+        Parameters
+        ----------
+        transformation : Callable[[LabelType, SqlQuery, ...], tuple[LabelType, SqlQuery]]
+            Replacement method that maps all old (label, query) pairs to new (label, query) pairs. If only queries should be
+            updated according to their labels, the transformation is free to return the old label value. Additional arguments
+            can be passed to the transformation and will be forwarded.
+        *args
+            Additional positional arguments that should be forwarded to the transformation method. These are passed after the
+            label and query.
+        **kwargs
+            Additional keyword arguments that should be forwarded to the transformation method.
+
+        Returns
+        -------
+        Workload[LabelType]
+             All queries of the current workload, but with new labels and query values
+
+        See Also
+        --------
+        map : if the transformation is purely query-based and does not need access to the labels
+        """
+        transformed_queries = [
+            transformation(label, query, *args, **kwargs)
+            for label, query in self.data.items()
+        ]
+        return Workload(dict(transformed_queries), self._name, self._root)
+
     def shuffle(self) -> Workload[LabelType]:
         """Randomly changes the order of the queries in the workload.
 
@@ -774,6 +852,8 @@ def read_csv_workload(
         pd_args.pop("usecols", None)
         pd_args.pop("converters", None)
         pd_args.pop("encoding", None)
+    else:
+        pd_args = {}
 
     workload_df = pd.read_csv(
         filepath,
@@ -899,7 +979,7 @@ def job(
 
 
 def job_light(*, file_encoding: str = "utf-8") -> Workload[str]:
-    """Reads the JOB-light benchmark, with numeric query labels (1, 2, 3, ...).
+    """Reads the JOB-light benchmark, with numeric query labels (q-1, q-2, q-3, ...).
 
     Parameters
     ----------
@@ -926,7 +1006,7 @@ def job_light(*, file_encoding: str = "utf-8") -> Workload[str]:
 
 
 def job_complex(*, file_encoding: str = "utf-8") -> Workload[str]:
-    """Reads the JOB-complex benchmark, with numeric query labels (1, 2, 3, ...).
+    """Reads the JOB-complex benchmark, with numeric query labels (q-1, q-2, q-3, ...).
 
     Parameters
     ----------
@@ -1065,3 +1145,26 @@ def stats(*, file_encoding: str = "utf-8") -> Workload[str]:
     )
     _assert_workload_loaded(stats_workload, workload_dir)
     return stats_workload
+
+
+def fetch_workload(name: str, *, file_encoding: str = "utf-8") -> Workload[str]:
+    """Utility method to fetch a pre-defined workload by name."""
+    match name:
+        case "job" | "imdb":
+            return job(flavor="default", file_encoding=file_encoding)
+        case "job-light" | "joblight":
+            return job(flavor="light", file_encoding=file_encoding)
+        case "job-complex" | "jobcomplex":
+            return job(flavor="complex", file_encoding=file_encoding)
+        case "stats":
+            return stats(file_encoding=file_encoding)
+        case "stack":
+            return stack(file_encoding=file_encoding)
+        case "ssb":
+            return ssb(file_encoding=file_encoding)
+        case _:
+            raise ValueError(
+                f"No pre-defined workload registered for key '{name}'. "
+                "Available workloads are: 'job', 'job-light', 'job-complex', "
+                "'stats', 'stack', 'ssb'"
+            )

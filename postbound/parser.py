@@ -369,6 +369,7 @@ class QueryNamespace:
                         f"Found complex expression without an alias: '{projection.expression}'. "
                         "Such expressions may currently not be referenced later on.",
                         category=ParserWarning,
+                        stacklevel=2,
                     )
 
     def register_table(self, table: TableReference) -> None:
@@ -2285,11 +2286,29 @@ def parse_query(
 
     bind_columns = bind_columns or (bind_columns is None and auto_bind_columns)
     if db_schema is None and bind_columns:
-        db_schema = (
-            None
-            if DatabasePool.get_instance().empty()
-            else DatabasePool.get_instance().current_database().schema()
-        )
+        pool = DatabasePool.get_instance()
+        match pool.n_databases():
+            case 0:
+                warnings.warn(
+                    "The database pool does not contain any databases. Did you call connect() on any? "
+                    "Having no database available means that the parser will be unable to infer the correct table for "
+                    "unqualified column references.",
+                    category=ParserWarning,
+                    stacklevel=2,
+                )
+                db_schema = None
+            case 1:
+                db_schema = pool.current_database().schema()
+            case _:
+                warnings.warn(
+                    "The database pool contains multiple databases. The parser will use an arbitrary one "
+                    "for inferring the correct table of unqualified column references. This might lead to incorrect parsing "
+                    "results if the databases have different schemas. Consider obtaining private connections to your databases to "
+                    "prevent registration in the global database pool.",
+                    category=ParserWarning,
+                    stacklevel=2,
+                )
+                db_schema = pool.any_database().schema()
 
     pglast_data = json.loads(pglast.parser.parse_sql_json(query))
     stmts = pglast_data["stmts"]
@@ -2406,7 +2425,7 @@ def load_column_json(json_data):
         return None
     json_data = json_data if isinstance(json_data, dict) else json.loads(json_data)
     return ColumnReference(
-        json_data.get["column"], load_table_json(json_data.get("table", None))
+        json_data.get("column"), load_table_json(json_data.get("table", None))
     )
 
 

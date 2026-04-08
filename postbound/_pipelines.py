@@ -8,8 +8,12 @@ the smallest common denominator among all pipeline implementations.
 from __future__ import annotations
 
 import abc
+from collections.abc import Collection, Mapping
 from typing import Optional, Protocol, Self
 
+from postbound import Workload
+
+from ._core import TimeMs
 from ._hints import PhysicalOperatorAssignment, PlanParameterization
 from ._qep import QueryPlan
 from ._stages import (
@@ -18,13 +22,15 @@ from ._stages import (
     CostModel,
     IncrementalOptimizationStep,
     JoinOrderOptimization,
+    OptimizationStage,
     ParameterGeneration,
     PhysicalOperatorSelection,
     PlanEnumerator,
 )
-from .db import Database, DatabasePool
+from .db import Database, DatabasePool, ResultSet
 from .postgres import PostgresInterface
 from .qal import SqlQuery
+from .train import TrainingData, TrainingDataRepository, TrainingMetrics
 from .util._errors import StateError
 from .util.jsonize import jsondict
 from .validation import (
@@ -50,6 +56,28 @@ class OptimizationPipeline(abc.ABC):
 
     If in doubt what the best pipeline implementation is, it is probably best to start with the
     `MultiStageOptimizationPipeline` or the `TextBookOptimizationPipeline`, since they are the most flexible.
+
+    Training of Optimization Stages
+    -------------------------------
+    Some optimization strategies require training on the database, the workload or sample queries. For example, a learned
+    cardinality estimator might need prior access to the statistics catalog of the target database or the database schema.
+
+    Each pipeline automatically analyzes the requirements of its optimization stages and passes the appropriate training
+    data to them. This is tightly integrated into the benchmarking tools, which in turn analyze what each pipeline needs
+    (based on its optimization stages) and provide the necessary training data to the pipeline. If you are using an
+    optimization pipeline outside of the benchmarking utilities, you must make sure to call these methods yourself.
+
+    The training process is organized in the following steps:
+
+    - Training on the target database is performed first. This is handled by the `train_on_database` method. Use
+      `requires_data_training` to check whether this step is necessary.
+    - Training on the workload is performed next. The `train_on_workload` method is responsible for this step.. Use
+      `requires_workload_training` to check whether this it is necessary.
+    - Training on sample queries is performed last. This is handled by the `train_on_samples` method. Use
+      `requires_sample_training` to check whether this step is necessary.
+    - Lastly, some optimization stages might require training on actual query executions in an online fashion. The
+      `learn_from_feedback` method takes care of this process. Use `requires_online_training` to check whether this step is
+      necessary.
     """
 
     @abc.abstractmethod
@@ -139,15 +167,139 @@ class OptimizationPipeline(abc.ABC):
         return hinting_service.generate_hints(query, execution_plan)
 
     @abc.abstractmethod
+    def stages(self) -> Collection[OptimizationStage]:
+        """Provides all optimization stages that are part of the pipeline. The order of the stages is not relevant."""
+        raise NotImplementedError
+
+    @abc.abstractmethod
     def target_database(self) -> Database:
-        """Provides the current target database.
+        """Provides the current target database."""
+        raise NotImplementedError
+
+    def requires_data_training(self) -> bool:
+        """Checks, whether any of the selected optimization stages requires training on the database."""
+        return any(stage.requires_data_training() for stage in self.stages())
+
+    def train_on_database(self, database: Database) -> Mapping[str, TrainingMetrics]:
+        """Trains all optimization stages that require training on the database.
 
         Returns
         -------
-        Database
-            The database for which the input queries should be optimized
+        Mapping[str, TrainingMetrics]
+            A dictionary mapping each optimization stage to the metrics obtained during training. Optimization stages are
+            identified by their name. If a stage does not require training on the database or has already completed its
+            training, it is not included in the output.
         """
-        raise NotImplementedError
+        metrics: dict[str, TrainingMetrics] = {}
+        for stage in self.stages():
+            if not stage.requires_data_training() or stage.database_fit_completed():
+                continue
+            current_metrics = stage.fit_database(database)
+            metrics[stage.name] = current_metrics
+        return metrics
+
+    def requires_workload_training(self) -> bool:
+        """Checks, whether any of the selected optimization stages requires training on the workload."""
+        return any(stage.requires_workload_training() for stage in self.stages())
+
+    def train_on_workload(
+        self, workload: Workload, database: Database
+    ) -> Mapping[str, TrainingMetrics]:
+        """Trains all optimization stages that require training on the workload.
+
+        Returns
+        -------
+        Mapping[str, TrainingMetrics]
+            A dictionary mapping each optimization stage to the metrics obtained during training. Optimization stages are
+            identified by their name. If a stage does not require training on the workload or has already completed its
+            training, it is not included in the output.
+        """
+        metrics: dict[str, TrainingMetrics] = {}
+        for stage in self.stages():
+            if not stage.requires_workload_training() or stage.workload_fit_completed():
+                continue
+            current_metrics = stage.fit_workload(workload, database)
+            metrics[stage.name] = current_metrics
+        return metrics
+
+    def requires_sample_training(self) -> bool:
+        """Checks, whether any of the selected optimization stages requires training on sample queries."""
+        return any(stage.requires_sample_training() for stage in self.stages())
+
+    def train_on_samples(
+        self, samples: TrainingData | TrainingDataRepository
+    ) -> Mapping[str, TrainingMetrics]:
+        """Trains all optimization stages that require training on sample queries.
+
+        Returns
+        -------
+        Mapping[str, TrainingMetrics]
+            A dictionary mapping each optimization stage to the metrics obtained during training. Optimization stages are
+            identified by their name. If a stage does not require training on sample queries or has already completed its
+            training, it is not included in the output.
+        """
+        metrics: dict[str, TrainingMetrics] = {}
+
+        for stage in self.stages():
+            if not stage.requires_sample_training() or stage.sample_fit_completed():
+                continue
+
+            if isinstance(samples, TrainingDataRepository):
+                current_sample = samples.retrieve_merged(stage.sample_spec())
+            else:
+                current_sample = samples
+
+            if current_sample is None:
+                raise ValueError(
+                    f"No training data available for optimization stage {stage.name}"
+                )
+
+            current_metrics = stage.fit_samples(current_sample)
+            metrics[stage.name] = current_metrics
+
+        return metrics
+
+    def sample_fit_completed(self) -> bool:
+        """Checks, whether all optimization stages that require training on sample queries have completed their training."""
+        return all(
+            not stage.requires_sample_training() or stage.sample_fit_completed()
+            for stage in self.stages()
+        )
+
+    def requires_online_training(self) -> bool:
+        """Checks, whether any of the selected optimization stages requires training on actual query executions."""
+        return any(stage.uses_online_feedback() for stage in self.stages())
+
+    def learn_from_feedback(
+        self, query: SqlQuery, result_set: ResultSet, *, exec_time: TimeMs
+    ) -> Mapping[str, TrainingMetrics]:
+        """Trains all optimization stages that require training on actual query executions.
+
+        Parameters
+        ----------
+        query : SqlQuery
+            The query that has been executed
+        result_set : ResultSet
+            The result set obtained from executing the query
+        exec_time : TimeMs
+            The execution time of the query in milliseconds
+
+        Returns
+        -------
+        Mapping[str, TrainingMetrics]
+            A dictionary mapping each optimization stage to the metrics obtained during training. Optimization stages are
+            identified by their name. If a stage does not require training on actual query executions it is not included in
+            the output.
+        """
+        metrics: dict[str, TrainingMetrics] = {}
+        for stage in self.stages():
+            if not stage.uses_online_feedback():
+                continue
+            current_metrics = stage.learn_from_feedback(
+                query, result_set, exec_time=exec_time
+            )
+            metrics[stage.name] = current_metrics
+        return metrics
 
     @abc.abstractmethod
     def describe(self) -> jsondict:
@@ -264,6 +416,13 @@ class IntegratedOptimizationPipeline(OptimizationPipeline):
         --------
         CompleteOptimizationAlgorithm.pre_check
         """
+        if self._optimization_algorithm is None:
+            raise StateError(
+                "No algorithm has been selected. "
+                "Call use() with the desired optimization algorithm and "
+                "don't forget to call `build()` after setting the algorithm."
+            )
+
         pre_check = self._optimization_algorithm.pre_check()
         if pre_check is not None:
             pre_check.check_supported_database_system(
@@ -278,12 +437,18 @@ class IntegratedOptimizationPipeline(OptimizationPipeline):
                 "No algorithm has been selected. Don't forget to call `build()` after setting the algorithm."
             )
 
+        assert self.optimization_algorithm is not None
         pre_check = self.optimization_algorithm.pre_check()
         if pre_check is not None:
             pre_check.check_supported_query(query).ensure_all_passed()
 
         physical_qep = self.optimization_algorithm.optimize_query(query)
         return physical_qep
+
+    def stages(self) -> list[OptimizationStage]:
+        if self.optimization_algorithm is None:
+            return []
+        return [self.optimization_algorithm]
 
     def target_database(self) -> Database:
         return self._target_db
@@ -463,19 +628,35 @@ class TextBookOptimizationPipeline(OptimizationPipeline):
             query, cardinality_estimator=self._card_est, cost_model=self._cost_model
         )
 
+    def stages(self) -> list[OptimizationStage]:
+        s: list[OptimizationStage] = []
+        if self._plan_enumerator is not None:
+            s.append(self._plan_enumerator)
+        if self._cost_model is not None:
+            s.append(self._cost_model)
+        if self._card_est is not None:
+            s.append(self._card_est)
+        return s
+
     def describe(self) -> jsondict:
+        enumerator = (
+            self._plan_enumerator.describe()
+            if self._plan_enumerator is not None
+            else None
+        )
+        cost_model = (
+            self._cost_model.describe() if self._cost_model is not None else None
+        )
+        cardinality_estimator = (
+            self._card_est.describe() if self._card_est is not None else None
+        )
+
         return {
             "name": "textbook_pipeline",
             "database_system": self._target_db.describe(),
-            "plan_enumerator": self._plan_enumerator.describe()
-            if self._plan_enumerator is not None
-            else None,
-            "cost_model": self._cost_model.describe()
-            if self._cost_model is not None
-            else None,
-            "cardinality_estimator": self._card_est.describe()
-            if self._card_est is not None
-            else None,
+            "plan_enumerator": enumerator,
+            "cost_model": cost_model,
+            "cardinality_estimator": cardinality_estimator,
         }
 
     def __repr__(self) -> str:
@@ -767,7 +948,7 @@ class MultiStageOptimizationPipeline(OptimizationPipeline):
         UnsupportedSystemError
             If any of the selected optimization stages is not compatible with the `target_db`.
         """
-        all_checks = [self.pre_check]
+        all_checks = [self.pre_check] if self.pre_check else []
         if self.join_order_enumerator is not None:
             all_checks.append(self.join_order_enumerator.pre_check())
         if self.physical_operator_selection is not None:
@@ -781,7 +962,12 @@ class MultiStageOptimizationPipeline(OptimizationPipeline):
             self._target_db
         )
         if not db_check_result.passed:
-            raise UnsupportedSystemError(self.target_db, db_check_result.failure_reason)
+            failures = (
+                " and ".join(db_check_result.failure_reason)
+                if isinstance(db_check_result.failure_reason, list)
+                else db_check_result.failure_reason
+            )
+            raise UnsupportedSystemError(self.target_db, failures)
 
         self._build = True
         return self
@@ -795,6 +981,7 @@ class MultiStageOptimizationPipeline(OptimizationPipeline):
 
     def optimize_query(self, query: SqlQuery) -> SqlQuery:
         self._assert_is_build()
+        assert self._pre_check is not None
         supported_query_check = self._pre_check.check_supported_query(query)
         if not supported_query_check.passed:
             raise UnsupportedQueryError(query, supported_query_check.failure_reason)
@@ -811,13 +998,20 @@ class MultiStageOptimizationPipeline(OptimizationPipeline):
                 query, join_order
             )
         )
-        plan_parameters = (
-            PlanParameterization()
-            if self.plan_parameterization is None
-            else self.plan_parameterization.generate_plan_parameters(
+
+        if self._plan_parameterization is None:
+            plan_parameters = PlanParameterization()
+        else:
+            # Hack: all CardinalityEstimator instances are also PlanParameterization instances
+            # However, CardinalityEstimators might require additional setup via initialze() and cleanup()
+            # To support this, we manually call these methods to prevent weird errors on the user side.
+            if isinstance(self._plan_parameterization, CardinalityEstimator):
+                self._plan_parameterization.initialize(self._target_db, query)
+            plan_parameters = self._plan_parameterization.generate_plan_parameters(
                 query, join_order, physical_operators
             )
-        )
+            if isinstance(self._plan_parameterization, CardinalityEstimator):
+                self._plan_parameterization.cleanup()
 
         return self._target_db.hinting().generate_hints(
             query,
@@ -825,6 +1019,16 @@ class MultiStageOptimizationPipeline(OptimizationPipeline):
             physical_operators=physical_operators,
             plan_parameters=plan_parameters,
         )
+
+    def stages(self) -> list[OptimizationStage]:
+        s: list[OptimizationStage] = []
+        if self._join_order_enumerator:
+            s.append(self._join_order_enumerator)
+        if self._physical_operator_selection:
+            s.append(self._physical_operator_selection)
+        if self._plan_parameterization:
+            s.append(self._plan_parameterization)
+        return s
 
     def describe(self) -> jsondict:
         return {
@@ -977,6 +1181,13 @@ class IncrementalOptimizationPipeline(OptimizationPipeline):
         for optimization_step in self._optimization_steps:
             current_plan = optimization_step.optimize_query(query, current_plan)
         return current_plan
+
+    def stages(self) -> list[OptimizationStage]:
+        s: list[OptimizationStage] = []
+        if self._initial_plan_generator:
+            s.append(self._initial_plan_generator)
+        s.extend(self._optimization_steps)
+        return s
 
     def describe(self) -> jsondict:
         return {

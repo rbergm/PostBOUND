@@ -42,6 +42,7 @@ import mysql.connector
 
 from . import qal, transform, util
 from ._core import (
+    BoundColumnReference,
     Cardinality,
     ColumnReference,
     JoinOperator,
@@ -84,6 +85,7 @@ from .util import Version
 warnings.warn(
     "The MySQL interface is experimental and may be incomplete. Use it at your own risk.",
     UserWarning,
+    stacklevel=2,
 )
 
 
@@ -282,7 +284,7 @@ class MysqlSchemaInterface(DatabaseSchema):
     def lookup_column(
         self,
         column: ColumnReference | str,
-        candidate_tables: list[TableReference],
+        candidate_tables: Iterable[TableReference],
         *,
         expect_match: bool = False,
     ) -> Optional[TableReference]:
@@ -295,9 +297,9 @@ class MysqlSchemaInterface(DatabaseSchema):
 
         if not expect_match:
             return None
-        candidate_tables = [tab.full_name for tab in candidate_tables]
+        candidate_strs = [tab.full_name for tab in candidate_tables]
         raise ValueError(
-            f"Column {column} not found in candidate tables {candidate_tables}"
+            f"Column {column} not found in candidate tables {candidate_strs}"
         )
 
     def is_primary_key(self, column: ColumnReference) -> bool:
@@ -333,9 +335,10 @@ class MysqlSchemaInterface(DatabaseSchema):
         )
         self._db.cursor().execute(query_template, (column.table.full_name, column.name))
         result_set = self._db.cursor().fetchall()
+        assert result_set is not None
         return {index[0] for index in result_set}
 
-    def foreign_keys_on(self, column: ColumnReference) -> set[ColumnReference]:
+    def foreign_keys_on(self, column: ColumnReference) -> set[BoundColumnReference]:
         if not column.table:
             raise UnboundColumnError(column)
         if column.table.virtual:
@@ -347,8 +350,9 @@ class MysqlSchemaInterface(DatabaseSchema):
         )
         self._db.cursor().execute(query_template, (column.table.full_name, column.name))
         result_set = self._db.cursor().fetchall()
+        assert result_set is not None
         return {
-            ColumnReference(table=TableReference(name=table), name=col)
+            BoundColumnReference(col, TableReference(table))
             for table, col in result_set
         }
 
@@ -363,6 +367,7 @@ class MysqlSchemaInterface(DatabaseSchema):
         )
         self._db.cursor().execute(query_template, (column.table.full_name, column.name))
         result_set = self._db.cursor().fetchone()
+        assert result_set is not None
         return str(result_set[0])
 
     def is_nullable(self, column) -> bool:
@@ -376,6 +381,7 @@ class MysqlSchemaInterface(DatabaseSchema):
         )
         self._db.cursor().execute(query_template, (column.table.full_name, column.name))
         result_set = self._db.cursor().fetchone()
+        assert result_set is not None
         return result_set[0] == "YES"
 
     def _fetch_columns(self, table: TableReference) -> list[str]:
@@ -384,6 +390,7 @@ class MysqlSchemaInterface(DatabaseSchema):
         )
         self._db.cursor().execute(query_template, (table.full_name,))
         result_set = self._db.cursor().fetchall()
+        assert result_set is not None
         return [col[0] for col in result_set]
 
     def _fetch_indexes(self, table: TableReference) -> dict[str, bool]:
@@ -394,6 +401,7 @@ class MysqlSchemaInterface(DatabaseSchema):
         """)
         self._db.cursor().execute(index_query, table.full_name)
         result_set = self._db.cursor().fetchall()
+        assert result_set is not None
         index_map = dict(result_set)
         return index_map
 
@@ -407,18 +415,20 @@ class MysqlStatisticsInterface(DatabaseStatistics):
             "SELECT table_rows FROM information_schema.tables WHERE table_name = %s"
         )
         self._db.cursor().execute(count_query, table.full_name)
-        count = self._db.cursor().fetchone()[0]
+        result_set = self._db.cursor().fetchone()
+        assert result_set is not None
+        count = result_set[0]
         return count
 
     def _retrieve_distinct_values_from_stats(
-        self, column: ColumnReference
+        self, column: BoundColumnReference
     ) -> Optional[int]:
         stats_query = (
             "SELECT cardinality FROM information_schema.statistics "
             "WHERE table_name = %s AND column_name = %s"
         )
         self._db.cursor().execute(stats_query, (column.table.full_name, column.name))
-        distinct_vals: Optional[int] = self._db.cursor().fetchone()
+        distinct_vals = self._db.cursor().fetchone()
         if distinct_vals is None and not self.enable_emulation_fallback:
             return distinct_vals
         elif distinct_vals is None:
@@ -427,14 +437,14 @@ class MysqlStatisticsInterface(DatabaseStatistics):
             return distinct_vals
 
     def _retrieve_min_max_values_from_stats(
-        self, column: ColumnReference
+        self, column: BoundColumnReference
     ) -> Optional[tuple[Any, Any]]:
         if not self.enable_emulation_fallback:
             raise UnsupportedDatabaseFeatureError(self._db, "min/max value statistics")
         return self._calculate_min_max_values(column, cache_enabled=True)
 
     def _retrieve_most_common_values_from_stats(
-        self, column: ColumnReference, k: int
+        self, column: BoundColumnReference, k: int | None
     ) -> Sequence[tuple[Any, int]]:
         if not self.enable_emulation_fallback:
             raise UnsupportedDatabaseFeatureError(
@@ -651,11 +661,15 @@ class MysqlOptimizer(OptimizerInterface):
     def analyze_plan(self, query: SqlQuery) -> QueryPlan:
         raise NotImplementedError("MySQL interface does not support ANALYZE plans yet")
 
+    def parse_plan(self, plan: Any, *, query: Optional[SqlQuery] = None) -> QueryPlan:
+        mysql_plan = MysqlExplainPlan(plan)
+        return mysql_plan.as_qep()
+
     def cardinality_estimate(self, query: SqlQuery | str) -> Cardinality:
         return self.query_plan(query).estimated_cardinality
 
     def cost_estimate(self, query: SqlQuery | str) -> float:
-        return self.query_plan(query).cost
+        return self.query_plan(query).estimated_cost
 
 
 def _parse_mysql_connection(config_file: str) -> MysqlConnectionArguments:
@@ -1188,7 +1202,9 @@ class MysqlExplainNode:
 
 
 class MysqlExplainPlan:
-    def __init__(self, root: MysqlExplainNode, total_cost: float) -> None:
+    def __init__(
+        self, root: MysqlExplainNode, total_cost: Optional[float] = None
+    ) -> None:
         self.root = root
         self.total_cost = total_cost
 

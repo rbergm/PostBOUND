@@ -15,7 +15,7 @@ from ._analysis import (
 )
 from ._cardinalities import (
     CardinalityDistortion,
-    PreciseCardinalityHintGenerator,
+    PreciseCardinalities,
     PreComputedCardinalities,
 )
 from ._helpers import (
@@ -47,7 +47,7 @@ __all__ = [
     "PlanChangeset",
     "compare_query_plans",
     "CardinalityDistortion",
-    "PreciseCardinalityHintGenerator",
+    "PreciseCardinalities",
     "PreComputedCardinalities",
     "read_operator_json",
     "read_operator_assignment_json",

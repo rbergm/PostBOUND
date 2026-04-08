@@ -24,7 +24,7 @@ def open_files(pid: Optional[int] = None) -> list[str]:
         All opened files
     """
     if not os.name == "posix":
-        warnings.warn("Can only check for open files on POSIX systems.")
+        warnings.warn("Can only check for open files on POSIX systems.", stacklevel=2)
         return []
 
     pid = os.getpid() if pid is None else pid

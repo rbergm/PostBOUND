@@ -4,7 +4,8 @@ Optimizer Abstraction
 To implement a new optimizer prototype in PostBOUND, you need to implement an appropriate
 :class:`~postbound.OptimizationPipeline`. Pipelines are mental models for different optimizer architectures.
 This section describes the most commonly used pipelines and how to use them. The final section contains a summary of the
-core optimizer-related data structures.
+core optimizer-related data structures. If you are interested in the practical implementation of the different optimization
+stages, check out the dedicated :doc:`prototyping guide <../prototyping>`.
 
 .. _textbook-optimizer:
 

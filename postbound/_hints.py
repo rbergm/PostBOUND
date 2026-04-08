@@ -267,7 +267,7 @@ class PhysicalOperatorAssignment:
     def add(
         self,
         operator: ScanOperatorAssignment | JoinOperatorAssignment | PhysicalOperator,
-        tables: Iterable[TableReference] | None = None,
+        tables: TableReference | Iterable[TableReference] | None = None,
     ) -> Self:
         """Adds an arbitrary operator assignment to the current settings.
 
@@ -279,7 +279,7 @@ class PhysicalOperatorAssignment:
         operator : ScanOperatorAssignment | JoinOperatorAssignment | PhysicalOperator
             The operator to use. If this is a complete assignment, it is used as such. Otherwise, the `tables` parameter must
             contain the tables that are affected by the operator.
-        tables : Iterable[TableReference] | None, optional
+        tables : TableReference | Iterable[TableReference] | None, optional
             The tables to join. This parameter is only used if a plain operator is supplied in the `operator` parameter.
             Otherwise it is ignored.
 
@@ -292,12 +292,14 @@ class PhysicalOperatorAssignment:
             case ScanOperator():
                 self.set_scan_operator(operator, tables)
             case JoinOperator():
+                tables = util.enlist(tables)
                 self.set_join_operator(operator, tables)
             case ScanOperatorAssignment():
                 self.set_scan_operator(operator)
             case JoinOperatorAssignment():
                 self.set_join_operator(operator)
             case IntermediateOperator():
+                tables = util.enlist(tables)
                 self.set_intermediate_operator(operator, tables)
             case _:
                 raise ValueError(f"Unknown operator assignment: {operator}")
@@ -461,6 +463,39 @@ class PhysicalOperatorAssignment:
             if len(intermediate_set) == 1
             else self.join_operators.get(intermediate_set, default)
         )
+
+    def inspect(self) -> str:
+        padding = "  "
+        lines: list[str] = ["PhysicalOperatorAssignment"]
+
+        if self.global_settings:
+            lines.append(f"{padding}Global settings:")
+            for op, enabled in self.global_settings.items():
+                status = "enabled" if enabled else "disabled"
+                lines.append(f"{padding * 2}+- {op.value}: {status}")
+
+        if self.scan_operators:
+            lines.append(f"{padding}Scan operators:")
+            for scan in self.scan_operators.values():
+                lines.append(
+                    f"{padding * 2}+- {scan.table.identifier()}: {scan.operator.value}"
+                )
+
+        if self.join_operators:
+            lines.append(f"{padding}Join operators:")
+            for join in self.join_operators.values():
+                intermediate = ", ".join(tab.identifier() for tab in join.join)
+                lines.append(
+                    f"{padding * 2}+- {{{intermediate}}}: {join.operator.value}"
+                )
+
+        if self.intermediate_operators:
+            lines.append(f"{padding}Intermediate operators:")
+            for intermediate, op in self.intermediate_operators.items():
+                intermediate_str = ", ".join(tab.identifier() for tab in intermediate)
+                lines.append(f"{padding * 2}+- {{{intermediate_str}}}: {op.value}")
+
+        return "\n".join(lines)
 
     def __json__(self) -> jsondict:
         jsonized = {
@@ -808,6 +843,25 @@ class PlanParameterization:
         params.system_settings = dict(self.system_settings)
         params.execution_mode = self.execution_mode
         return params
+
+    def inspect(self) -> str:
+        padding = "  "
+        lines: list[str] = ["PlanParameterization"]
+        if self.system_settings:
+            lines.append(f"{padding}System settings:")
+            for setting, value in self.system_settings.items():
+                lines.append(f"{padding * 2}+- {setting}: {value}")
+        if self.cardinalities:
+            lines.append(f"{padding}Cardinalities:")
+            for tables, cardinality in self.cardinalities.items():
+                intermediate = ", ".join(tab.identifier() for tab in tables)
+                lines.append(f"{padding * 2}+- {{{intermediate}}}: {cardinality}")
+        if self.parallel_workers:
+            lines.append(f"{padding}Parallel workers:")
+            for tables, workers in self.parallel_workers.items():
+                intermediate = ", ".join(tab.identifier() for tab in tables)
+                lines.append(f"{padding * 2}+- {{{intermediate}}}: {workers}")
+        return "\n".join(lines)
 
     def __json__(self) -> jsondict:
         return {

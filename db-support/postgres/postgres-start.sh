@@ -12,6 +12,4 @@ fi
 
 . ./postgres-load-env.sh "$1"
 
-cd $PG_INSTALL_DIR
-pg_ctl -D $PG_INSTALL_DIR/data -l pg.log start
-cd $WD
+pg_ctl -D $PG_INSTALL_DIR/data -l $PG_INSTALL_DIR/pg.log start

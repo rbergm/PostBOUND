@@ -63,7 +63,7 @@ docker run -dt \
     --env PG_DISK_TYPE=SSD \
     --env SETUP_DUCKDB=false \
     --env SETUP_STATS=true \
-    --env SETUP_JOB=false \
+    --env SETUP_IMDB=false \
     --env SETUP_STACK=false \
     --volume $PWD/vol-postbound:/postbound \
     --volume $PWD/vol-pglab:/pg_lab \

@@ -65,7 +65,7 @@ def make_logger(
     def _log(*args, **kwargs) -> None:
         if prefix and isinstance(prefix, str):
             args = [prefix] + list(args)
-        elif prefix:
+        elif prefix and not isinstance(prefix, str):
             args = [prefix()] + list(args)
         print(*args, file=file, **kwargs)
 
@@ -88,10 +88,17 @@ def standard_logger(enabled: bool = True) -> Logger:
         while callstack:
             current_frame = callstack.pop(0)
             module = inspect.getmodule(current_frame.frame)
-            if not module or module.__name__.startswith("_"):
+            if not module:
                 continue
 
-            callee = module.__name__.split(".")[-1]
+            mod_path = module.__name__.split(".")
+            mod_name = next(
+                (mod for mod in mod_path[::-1] if not mod.startswith("_")), None
+            )
+            if mod_name is None:
+                continue
+
+            callee = mod_name
             break
 
         return f"{ts} ({callee}) -"

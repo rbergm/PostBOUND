@@ -1821,4 +1821,4 @@ class PostgresDynProg(PlanEnumerator):
     def _warn(self, msg: str) -> None:
         if not self._verbose:
             return
-        warnings.warn(msg, category=DPWarning)
+        warnings.warn(msg, category=DPWarning, stacklevel=2)

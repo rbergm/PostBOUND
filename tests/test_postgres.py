@@ -1,3 +1,5 @@
+import unittest
+
 import postbound as pb
 from postbound.postgres import PostgresConfiguration, PostgresSetting
 from tests import regression_suite
@@ -18,6 +20,66 @@ PGHintPlanRestrictions = PostgresConfiguration(
         PostgresSetting("enable_memoize", "off"),
     ]
 )
+
+
+@regression_suite.skip_if_no_db(f"{pg_connect_dir}/.psycopg_connection_stats")
+class QueryExecutionTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.pg_instance = pb.postgres.connect(
+            config_file=f"{pg_connect_dir}/.psycopg_connection_stats", private=True
+        )
+        self.stats = pb.workloads.stats()
+
+    def test_execute_query(self) -> None:
+        query = self.stats["q-1"]
+        result = self.pg_instance.execute_query(query, cache_enabled=False)
+        self.assertEqual(result, 79851)
+
+    def test_execute_raw_query(self) -> None:
+        query = self.stats["q-1"]
+        result_set = self.pg_instance.execute_query(
+            query, cache_enabled=False, raw=True
+        )
+        self.assertEqual(len(result_set), 1)
+
+        result = result_set[0][0]
+        self.assertEqual(result, 79851)
+
+    def test_execute_timeout(self) -> None:
+        query = self.stats["q-1"]
+        self.pg_instance.execute_query(query, cache_enabled=False)
+        vanilla_runtime = self.pg_instance.last_query_runtime()
+
+        timeout = 0.5 * vanilla_runtime
+        result_set = self.pg_instance.execute_with_timeout(query, timeout=timeout)
+        self.assertIs(result_set, None)
+
+        result_set = self.pg_instance.execute_with_timeout(
+            query, timeout=2 * vanilla_runtime
+        )
+        self.assertEqual(len(result_set), 1)
+        result = result_set[0][0]
+        self.assertEqual(result, 79851)
+
+
+class StatsSchemaTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.pg_instance = pb.postgres.connect(
+            config_file=f"{pg_connect_dir}/.psycopg_connection_stats", private=True
+        )
+        self.stats = pb.workloads.stats()
+
+    # TODO
+
+
+class StatsHintingTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.pg_instance = pb.postgres.connect(
+            config_file=f"{pg_connect_dir}/.psycopg_connection_stats", private=True
+        )
+        self.stats = pb.workloads.stats()
+
+    # TODO
 
 
 @regression_suite.skip_if_no_db(f"{pg_connect_dir}/.psycopg_connection_job")

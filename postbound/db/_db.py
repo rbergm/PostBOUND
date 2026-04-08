@@ -18,19 +18,25 @@ from __future__ import annotations
 
 import abc
 import atexit
+import bisect
 import collections
 import json
 import os
 import textwrap
 import warnings
-from collections.abc import Iterable, Sequence
+from collections.abc import Iterable, Iterator, Mapping, Sequence
+from dataclasses import dataclass
 from datetime import date, datetime, time, timedelta
-from typing import Any, Optional, Protocol, Type, runtime_checkable
+from typing import Any, Literal, Optional, Protocol, Type, overload, runtime_checkable
 
 import networkx as nx
 
+from postbound.util import set_union
+
 from .. import util
+from .._base import SupportsRichComparison
 from .._core import (
+    BoundColumnReference,
     Cardinality,
     ColumnReference,
     Cost,
@@ -47,6 +53,7 @@ from .._hints import (
 )
 from .._qep import QueryPlan
 from ..qal import SqlQuery
+from ..util import jsondict
 
 ResultRow = tuple
 """Simple type alias to denote a single tuple from a result set."""
@@ -477,6 +484,33 @@ class Database(abc.ABC):
         """
         raise NotImplementedError
 
+    def explain(
+        self,
+        query: SqlQuery,
+        *,
+        plan: Optional[QueryPlan] = None,
+        join_order: Optional[JoinTree] = None,
+        physical_ops: Optional[PhysicalOperatorAssignment] = None,
+        plan_params: Optional[PlanParameterization] = None,
+    ) -> QueryPlan:
+        """Shortcut method to obtain the query plan for a given query.
+
+        Calling this method is equivalent to calling ``.optimizer().query_plan()`` on the query, but it also allows to
+        directly pass hints for the plan generation. These are passed as-is to the hinting backend.
+        """
+        needs_hinting = any(
+            hint is not None for hint in [plan, join_order, physical_ops, plan_params]
+        )
+        if needs_hinting:
+            query = self.hinting().generate_hints(
+                query,
+                plan=plan,
+                join_order=join_order,
+                physical_operators=physical_ops,
+                plan_parameters=plan_params,
+            )
+        return self.optimizer().query_plan(query)
+
     @abc.abstractmethod
     def database_name(self) -> str:
         """Provides the name of the (physical) database that the database interface is connected to.
@@ -510,17 +544,12 @@ class Database(abc.ABC):
         raise NotImplementedError
 
     @abc.abstractmethod
-    def describe(self) -> util.jsondict:
+    def describe(self) -> jsondict:
         """Provides a representation of the current database connection as well as its system settings.
 
         This description is intended to transparently document which customizations have been applied, thereby giving
         an idea of how the default query execution might have been affected. It can be JSON-serialized and will be
         included by most of the output of the utilities in the `runner` module of the `experiments` package.
-
-        Returns
-        -------
-        util.jsondict
-            The actual description
         """
         raise NotImplementedError
 
@@ -618,14 +647,16 @@ class Database(abc.ABC):
                     self._query_cache = json.load(cache_file, cls=_DBCacheJsonDecoder)
                 except json.JSONDecodeError as e:
                     warnings.warn(
-                        "Could not read query cache: " + str(e),
+                        f"Could not read query cache: {e}",
                         category=QueryCacheWarning,
+                        stacklevel=4,
                     )
                     self._query_cache = {}
         else:
             warnings.warn(
                 f"Could not read query cache: File {query_cache_name} does not exist",
                 category=QueryCacheWarning,
+                stacklevel=4,
             )
             self._query_cache = {}
         atexit.register(self._store_query_cache, query_cache_name)
@@ -681,7 +712,42 @@ A foreign key references has a foreign key column `fk_col` (the first element) t
 """
 
 
-class DatabaseSchema(abc.ABC):
+@dataclass
+class ColumnInfo:
+    column: BoundColumnReference
+    table: TableReference
+
+    datatype: str
+    nullable: bool
+    primary_key: bool
+    indexed: bool
+
+
+@dataclass
+class TableInfo(Mapping[BoundColumnReference, ColumnInfo]):
+    table: TableReference
+    columns: Sequence[ColumnInfo]
+
+    primary_key: BoundColumnReference | None
+    outgoing_foreign_keys: set[ForeignKeyRef]
+    incoming_foreign_keys: set[ForeignKeyRef]
+
+    def __getitem__(self, key: ColumnReference | str) -> ColumnInfo:
+        if isinstance(key, str):
+            key = ColumnReference(key, self.table)
+        for column_info in self.columns:
+            if column_info.column == key:
+                return column_info
+        raise KeyError(f"Column '{key}' not found in table '{self.table}'")
+
+    def __len__(self) -> int:
+        return len(self.columns)
+
+    def __iter__(self) -> Iterator[BoundColumnReference]:
+        return iter(column_info.column for column_info in self.columns)
+
+
+class DatabaseSchema(abc.ABC, Mapping[TableReference, TableInfo]):
     """This interface provides access to different information about the logical structure of a database.
 
     In contrast to database statistics, schema information is much more standardized. PostBOUND therefore only takes on
@@ -689,6 +755,13 @@ class DatabaseSchema(abc.ABC):
     system specific - metadata catalogs of the database systems. For each kind of schema information a dedicated query
     method exists. Take a look at these methods to understand the functionality provided by the database schema
     interface.
+
+    The database schema can be iterated over to obtain all tables in the current database. Key-based access is supported as
+    follows: ``schema[table]`` provides a `TableInfo` that contains a summary of the tables structure (e.g. its columns,
+    primary key, foreign keys, etc.). Similarly, ``schema[column]`` provides a `ColumnInfo` with detailed information about
+    the column (e.g. its datatype, whether it is nullable, etc.). Generally speaking, you should pass a proper
+    `TableReference` or `ColumnReference`. It is also possible to pass just a string, but in this case the schema has to
+    guess whether you are referring to a table or a column.
 
     Parameters
     ----------
@@ -735,12 +808,13 @@ class DatabaseSchema(abc.ABC):
             WHERE table_catalog = {self._prep_placeholder}
                 AND table_schema = current_schema()
             """)
-        self._db.cursor().execute(query_template, (self._db.database_name(),))
-        result_set = self._db.cursor().fetchall()
+        cur = self._db.cursor()
+        cur.execute(query_template, (self._db.database_name(),))
+        result_set = cur.fetchall()
         assert result_set is not None
         return set(TableReference(row[0]) for row in result_set)
 
-    def columns(self, table: TableReference | str) -> Sequence[ColumnReference]:
+    def columns(self, table: TableReference | str) -> Sequence[BoundColumnReference]:
         """Fetches all columns of the given table.
 
         Parameters
@@ -750,7 +824,7 @@ class DatabaseSchema(abc.ABC):
 
         Returns
         -------
-        Sequence[ColumnReference]
+        Sequence[BoundColumnReference]
             All columns for the given table. Columns are ordered according to their position in the table.
             Will be empty if the table is not found or does not contain any columns.
 
@@ -784,10 +858,11 @@ class DatabaseSchema(abc.ABC):
         params = [table.full_name]
         if table.schema:
             params.append(table.schema)
-        self._db.cursor().execute(query_template, params)
-        result_set = self._db.cursor().fetchall()
+        cur = self._db.cursor()
+        cur.execute(query_template, params)
+        result_set = cur.fetchall()
         assert result_set is not None
-        return [ColumnReference(row[0], table) for row in result_set]
+        return [BoundColumnReference(row[0], table) for row in result_set]
 
     def is_view(self, table: TableReference | str) -> bool:
         """Checks, whether a specific table is actually is a view.
@@ -823,8 +898,9 @@ class DatabaseSchema(abc.ABC):
                 AND table_name = {self._prep_placeholder}
                 AND table_catalog = current_database()
             """)
-        self._db.cursor().execute(query_template, (db_name, table))
-        result_set = self._db.cursor().fetchall()
+        cur = self._db.cursor()
+        cur.execute(query_template, (db_name, table))
+        result_set = cur.fetchall()
 
         assert result_set is not None
         if not result_set:
@@ -928,14 +1004,15 @@ class DatabaseSchema(abc.ABC):
         if table.schema:
             params.append(table.schema)
 
-        self._db.cursor().execute(query_template, params)
-        result_set = self._db.cursor().fetchone()
+        cur = self._db.cursor()
+        cur.execute(query_template, params)
+        result_set = cur.fetchone()
 
         return result_set is not None
 
     def primary_key_column(
         self, table: TableReference | str
-    ) -> Optional[ColumnReference]:
+    ) -> Optional[BoundColumnReference]:
         """Determines the primary key column of a specific table.
 
         Parameters
@@ -945,7 +1022,7 @@ class DatabaseSchema(abc.ABC):
 
         Returns
         -------
-        Optional[ColumnReference]
+        Optional[BoundColumnReference]
             The primary key if it exists, or *None* otherwise.
 
         Notes
@@ -976,8 +1053,9 @@ class DatabaseSchema(abc.ABC):
         if table.schema:
             params.append(table.schema)
 
-        self._db.cursor().execute(query_template, params)
-        result_set = self._db.cursor().fetchall()
+        cur = self._db.cursor()
+        cur.execute(query_template, params)
+        result_set = cur.fetchall()
 
         if not result_set:
             return None
@@ -986,7 +1064,7 @@ class DatabaseSchema(abc.ABC):
                 f"Table {table} has multiple primary key columns: {result_set}"
             )
         col = result_set[0][0]
-        return ColumnReference(col, table)
+        return BoundColumnReference(col, table)
 
     def has_secondary_index(self, column: ColumnReference) -> bool:
         """Checks, whether a secondary index is available for a specific column.
@@ -1071,12 +1149,13 @@ class DatabaseSchema(abc.ABC):
         if table.schema:
             params.append(table.schema)
 
-        self._db.cursor().execute(query_template, params)
-        result_set = self._db.cursor().fetchone()
+        cur = self._db.cursor()
+        cur.execute(query_template, params)
+        result_set = cur.fetchone()
 
         return result_set is not None
 
-    def foreign_keys_on(self, column: ColumnReference) -> set[ColumnReference]:
+    def foreign_keys_on(self, column: ColumnReference) -> set[BoundColumnReference]:
         """Fetches all foreign key constraints that are specified on a specific column.
 
         The provided columns are the target columns that are referenced by the foreign key constraint. E.g., suppose there are
@@ -1091,7 +1170,7 @@ class DatabaseSchema(abc.ABC):
 
         Returns
         -------
-        set[ColumnReference]
+        set[BoundColumnReference]
             The columns that are "pointed to" by foreign key constraints on the given column. If no such foreign keys exist,
             an empty set is returned.
 
@@ -1108,33 +1187,37 @@ class DatabaseSchema(abc.ABC):
         schema_placeholder = (
             self._prep_placeholder if table.schema else "current_schema()"
         )
-        query_template = textwrap.dedent(f"""
-            SELECT ccu.table_name, ccu.column_name
+        query_template = f"""
+            SELECT ccu.table_schema, ccu.table_name, ccu.column_name
             FROM information_schema.table_constraints tc
                 JOIN information_schema.key_column_usage kcu
-                    ON tc.constraint_name = kcu.constraint_name
+                ON tc.table_name = kcu.table_name
+                    AND tc.table_catalog = kcu.table_catalog
                     AND tc.table_schema = kcu.table_schema
-                    AND tc.table_name = kcu.table_name
+                    AND tc.constraint_catalog = kcu.constraint_catalog
+                    AND tc.constraint_schema = kcu.constraint_schema
+                    AND tc.constraint_name = kcu.constraint_name
                 JOIN information_schema.constraint_column_usage ccu
-                    ON tc.constraint_name = ccu.constraint_name
-                    AND tc.table_schema = ccu.table_schema
-                    AND tc.table_catalog = ccu.table_catalog
-            WHERE tc.table_name = {self._prep_placeholder}
-                AND kcu.column_name = {self._prep_placeholder}
+                ON tc.constraint_catalog = ccu.constraint_catalog
+                    AND tc.constraint_schema = ccu.constraint_schema
+                    AND tc.constraint_name = ccu.constraint_name
+            WHERE tc.table_catalog = current_database()
                 AND tc.constraint_type = 'FOREIGN KEY'
                 AND tc.table_schema = {schema_placeholder}
-                AND tc.table_catalog = current_database();
-            """)
+                AND tc.table_name = {self._prep_placeholder}
+                AND kcu.column_Name = {self._prep_placeholder};
+            """
         params = [table.full_name, column.name]
         if table.schema:
-            params.append(table.schema)
+            params = [table.schema] + params
 
-        self._db.cursor().execute(query_template, params)
-        result_set = self._db.cursor().fetchall()
-        assert result_set
+        cur = self._db.cursor()
+        cur.execute(query_template, params)
+        result_set = cur.fetchall()
+        assert result_set is not None
 
         return {
-            ColumnReference(row[1], TableReference(row[0], schema=table.schema))
+            BoundColumnReference(row[1], TableReference(row[0], schema=table.schema))
             for row in result_set
         }
 
@@ -1245,9 +1328,10 @@ class DatabaseSchema(abc.ABC):
         if table.schema:
             params.append(table.schema)
 
-        self._db.cursor().execute(query_template, params)
-        result_set = self._db.cursor().fetchall()
-        assert result_set
+        cur = self._db.cursor()
+        cur.execute(query_template, params)
+        result_set = cur.fetchall()
+        assert result_set is not None
 
         return {row[0] for row in result_set}
 
@@ -1297,8 +1381,9 @@ class DatabaseSchema(abc.ABC):
         if table.schema:
             params.append(table.schema)
 
-        self._db.cursor().execute(query_template, params)
-        result_set = self._db.cursor().fetchone()
+        cur = self._db.cursor()
+        cur.execute(query_template, params)
+        result_set = cur.fetchone()
         assert result_set
 
         return result_set[0]
@@ -1346,8 +1431,9 @@ class DatabaseSchema(abc.ABC):
         if table.schema:
             params.append(table.schema)
 
-        self._db.cursor().execute(query_template, params)
-        result_set = self._db.cursor().fetchone()
+        cur = self._db.cursor()
+        cur.execute(query_template, params)
+        result_set = cur.fetchone()
         assert result_set
 
         return result_set[0] == "YES"
@@ -1367,7 +1453,7 @@ class DatabaseSchema(abc.ABC):
         relationships. Each such constraint is described by a `ForeignKeyRef`.
         """
         g = nx.DiGraph()
-        all_columns: set[ColumnReference] = set()
+        all_columns: set[BoundColumnReference] = set()
 
         for table in self.tables():
             if self.is_view(table):
@@ -1383,7 +1469,7 @@ class DatabaseSchema(abc.ABC):
         for col in all_columns:
             foreign_keys = self.foreign_keys_on(col)
             for fk_target in foreign_keys:
-                fk_constraint = ForeignKeyRef(fk_target, col)
+                fk_constraint = ForeignKeyRef(col, fk_target)
                 current_edge = g.edges.get([col.table, fk_target.table])
 
                 if current_edge:
@@ -1393,7 +1479,9 @@ class DatabaseSchema(abc.ABC):
 
         return g
 
-    def join_equivalence_keys(self) -> dict[ColumnReference, set[ColumnReference]]:
+    def join_equivalence_keys(
+        self,
+    ) -> dict[BoundColumnReference, set[BoundColumnReference]]:
         """Calculates the equivalence classes of joinable columns in the database schema.
 
         Two columns are considered joinable, if they are linked by a foreign key constraint.
@@ -1404,7 +1492,7 @@ class DatabaseSchema(abc.ABC):
 
         Returns
         -------
-        dict[ColumnReference, set[ColumnReference]]
+        dict[BoundColumnReference, set[BoundColumnReference]]
             A mapping from each column to its equivalence class, i.e. the set of all columns that are joinable with it
             (including itself).
         """
@@ -1414,14 +1502,14 @@ class DatabaseSchema(abc.ABC):
             edges = [(col, fk_target) for fk_target in self.foreign_keys_on(col)]
             g.add_edges_from(edges)
 
-        eq_keys: dict[ColumnReference, set[ColumnReference]] = {}
+        eq_keys: dict[BoundColumnReference, set[BoundColumnReference]] = {}
         for component in nx.connected_components(g):
             for key in component:
                 eq_keys[key] = component
 
         return eq_keys
 
-    def join_equivalence_classes(self) -> Iterable[set[ColumnReference]]:
+    def join_equivalence_classes(self) -> Iterable[set[BoundColumnReference]]:
         """Calculates the quivalence classes of joinable columns in the database schema.
 
         This method is similar to `join_equivalence_keys`, but returns the different equivalence classes instead of a
@@ -1438,6 +1526,64 @@ class DatabaseSchema(abc.ABC):
             g.add_edges_from(edges)
         return list(nx.connected_components(g))
 
+    @overload
+    def __getitem__(self, key: TableReference) -> TableInfo: ...
+
+    @overload
+    def __getitem__(self, key: ColumnReference) -> ColumnInfo: ...
+
+    def __getitem__(self, key):
+        match key:
+            case ColumnReference():
+                return ColumnInfo(
+                    column=key,
+                    table=key.table,
+                    datatype=self.datatype(key),
+                    nullable=self.is_nullable(key),
+                    indexed=self.has_index(key),
+                    primary_key=self.is_primary_key(key),
+                )
+            case TableReference():
+                schema_graph = self.as_graph()
+                col_infos = [self[col] for col in self.columns(key)]
+                outgoing_fks = set_union(
+                    edge[2] for edge in schema_graph.out_edges(key, data="foreign_keys")
+                )
+                incoming_fks = set_union(
+                    edge[2] for edge in schema_graph.in_edges(key, data="foreign_keys")
+                )
+                return TableInfo(
+                    table=key,
+                    columns=col_infos,
+                    primary_key=self.primary_key_column(key),
+                    outgoing_foreign_keys=outgoing_fks,
+                    incoming_foreign_keys=incoming_fks,
+                )
+            case str():
+                try:
+                    ref = TableReference(key)
+                    return self[ref]
+                except KeyError:
+                    pass
+
+                try:
+                    col, tab = key.split(".", 1)
+                    ref = ColumnReference(col, TableReference(tab))
+                    return self[ref]
+                except KeyError:
+                    raise KeyError(f"Key '{key}' not found in database schema")
+            case _:
+                raise KeyError(
+                    f"Unsupported key type: {type(key).__name__}. "
+                    "Only TableReference, ColumnReference, or str are supported."
+                )
+
+    def __iter__(self) -> Iterator[TableReference]:
+        return iter(self.tables())
+
+    def __len__(self) -> int:
+        return len(self.tables())
+
     def __hash__(self) -> int:
         return hash(self._db)
 
@@ -1449,6 +1595,371 @@ class DatabaseSchema(abc.ABC):
 
     def __str__(self) -> str:
         return f"Database schema of {self._db}"
+
+
+class MostCommonValues[T]:
+    """Most Common Values contain an ordered list of (column value, frequency) pairs.
+
+    The list is sorted in descending order of the frequencies. Ties are broken according to
+    the column values (once again in descending order).
+
+    By default, Most Common Values acts as a drop-in replacement for a list of tuples, so all
+    sequence-like methods like *__iter__*, *__getitem__*, etc. are implemented in terms of
+    lists.
+
+    In addition, Most Common Values provide a number of utility functions like `min_freq` or
+    `frequency_of` to extract commonly-used information.
+
+    Parameters
+    ----------
+    mcvs: Sequence[tuple[T, int]]
+        The value, frequency pairs in the list.
+    """
+
+    def __init__(self, mcvs: Iterable[tuple[T, int]]) -> None:
+        self.mcvs: Sequence[tuple[T, int]] = list(mcvs)
+        self.mcvs.sort(key=lambda pair: (pair[1], pair[0]), reverse=True)
+        self._mcv_map = dict(self.mcvs)
+        if self.mcvs:
+            self._min_freq = self.mcvs[-1][1]
+            self._max_freq = self.mcvs[0][1]
+        else:
+            self._min_freq = 0
+            self._max_freq = 0
+
+    @property
+    def k(self) -> int:
+        """Get the number of values in the MCV list."""
+        return len(self.mcvs)
+
+    @property
+    def min_freq(self) -> int:
+        """Get the lowest frequency in the MCV list.
+
+        This is equivalent to the frequeny of the final value in the list.
+        """
+        return self._min_freq
+
+    @property
+    def max_freq(self) -> int:
+        """Get the highest frequency in the MCV list.
+
+        This is equivalent to the frequency of the first value in the list.
+        """
+        return self._max_freq
+
+    @property
+    def values(self) -> Sequence[T]:
+        """Get the values in the MCV list, ordered by their frequency (highest first)."""
+        return list(self._mcv_map.keys())
+
+    @property
+    def frequencies(self) -> Sequence[int]:
+        """Get the frequencies in the MCV list, starting with the highest frequency."""
+        return list(self._mcv_map.values())
+
+    @overload
+    def frequency_of(self, value: T) -> Optional[int]: ...
+
+    @overload
+    def frequency_of(self, value: T, *, bound_missing: Literal[True]) -> int: ...
+
+    @overload
+    def frequency_of(
+        self, value: T, *, bound_missing: Literal[False]
+    ) -> Optional[int]: ...
+
+    @overload
+    def frequency_of(self, value: T, *, default: int) -> int: ...
+
+    def frequency_of(
+        self, value: T, *, default: int | None = None, bound_missing: bool = False
+    ) -> Optional[int]:
+        """Load the frequency of a specific value.
+
+        Parameters
+        ----------
+        value : T
+            The value to check
+        default : int, optional
+            The frequency to return if the given value is not in the MCV list. If not provided,
+            the behavior depends on the `bound_missing` parameter.
+        bound_missing : bool, optional
+            If enabled, the frequency of missing values (i.e. values that are not in the MCV list)
+            is assumed to be at least the frequency of the least common value in the MCV list.
+            Otherwise, *None* is returned to indicate a missing value.
+            If a `default` value is provided, this parameter is ignored. By default, this is disabled.
+        """
+        if default is not None:
+            fallback = default
+        elif bound_missing:
+            fallback = self._min_freq
+        else:
+            fallback = None
+        return self._mcv_map.get(value, fallback)
+
+    def top(self, k: int) -> MostCommonValues:
+        """Provide the most common values up-to (and including) the k-th most frequent."""
+        return MostCommonValues(self.mcvs[:k])
+
+    def below(self, k: int) -> MostCommonValues:
+        """Provide the most common values after the k-th most frequent."""
+        return MostCommonValues(self.mcvs[k:])
+
+    def __bool__(self) -> bool:
+        return bool(self.mcvs)
+
+    def __len__(self) -> int:
+        return len(self.mcvs)
+
+    def __contains__(self, value: object) -> bool:
+        return value in self._mcv_map
+
+    def __iter__(self) -> Iterator[tuple[T, int]]:
+        return iter(self.mcvs)
+
+    def __getitem__(self, idx: int) -> tuple[T, int]:
+        return self.mcvs[idx]
+
+    def __repr__(self) -> str:
+        return str(self)
+
+    def __str__(self) -> str:
+        return str(self.mcvs)
+
+
+type HistogramApproximation = Literal["approx-uni", "bound"]
+"""The strategy to estimate the frequency of values that are not exactly on the bucket bounds of a histogram."""
+
+
+def _infer_histogram_bounds[T](
+    frequencies: Sequence[tuple[T, int]], *, n_bins: int, n_rows: int
+) -> tuple[T, Sequence[T], Sequence[int]]:
+    """Infer the bucket bounds and frequencies for a histogram from a list of (value, frequency) pairs."""
+    if not frequencies:
+        raise ValueError("Cannot infer histogram bounds from empty frequency list")
+
+    bucket_size = n_rows // n_bins
+
+    bounds: list[T] = []
+    buckets: list[int] = []
+    cumulative_freq = 0
+    for value, freq in frequencies:
+        cumulative_freq += freq
+        if cumulative_freq < bucket_size:
+            continue
+        bounds.append(value)
+        buckets.append(cumulative_freq)
+        cumulative_freq = 0
+
+    return frequencies[0][0], bounds, buckets
+
+
+class Histogram[T: SupportsRichComparison[T]]:
+    """Histograms are a common way to approximate the distribution of values in a column.
+
+    Our implementation models a general histogram as a list of buckets. Each bucket is associated with a frequency, i.e.
+    the number of elements that fall into the bucket. This might be an equi-depth or an equi-width histogram, but this is
+    not a requirement.
+
+    Currently, we only provide two high-level methods for cardinality estimation: `frequency_below` and `frequency_above`.
+    The former estimates the number of elements that are less than or equal to a given value, while the latter estimates
+    the number of elements that are greater than a given value. If the queried value does not align perfectly with the
+    bucket bounds, the behavior depends on the selected `bucket_interpolation` strategy:
+
+    - "bound" is a conservative strategy. It *bounds* the frequency of the queried value by the frequency of the entire
+      bucket that contains it.
+    - "approx-uni" is a more aggressive strategy. It assumes that the values within each bucket are uniformly distributed
+      and uses a simple linear interpolation to estimate the frequency of the queried value.
+
+    Histograms can be iterated over to access the individual (bucket bound, frequency) pairs. In addition, we provide
+    *__getitem__* access to get the i-th bucket bound and its frequency.
+
+    Parameters
+    ----------
+    bounds : Sequence[T]
+        The upper bounds of the buckets. These must be sorted in ascending order. The lower bound of the first bucket is
+        given by the additional `lower` parameter. The upper bound of the final bucket is implicitly given by the final
+        element in this list.
+    frequencies : Sequence[int]
+        The frequencies of the buckets. The i-th element in this list corresponds to the i-th bucket.
+    lower : T
+        The lower bound of the first bucket. This is required to be less than or equal to the first element in `bounds`.
+    bucket_interpolation : Literal["approx-uni", "bound"], optional
+        The strategy to estimate the frequency of values that fall into a bucket, but are not exactly on the bucket bounds.
+        The default is "bound".
+    """
+
+    def __init__(
+        self,
+        bounds: Iterable[T],
+        frequencies: Iterable[int],
+        *,
+        lower: T,
+        bucket_interpolation: HistogramApproximation = "bound",
+    ) -> None:
+        self._bounds = list(bounds)
+        self._frequencies = list(frequencies)
+        if not self.bounds:
+            raise ValueError("Bounds cannot be empty")
+        elif len(self._bounds) != len(self._frequencies):
+            raise ValueError(
+                "Bounds and frequencies must have the same length. "
+                f"Got {len(self._bounds)} bounds and {len(self._frequencies)} frequencies."
+            )
+
+        self._n_rows = sum(self._frequencies)
+        self._lower = lower
+        self._freq_per_bucket = self._n_rows // len(self._bounds)
+        self._bucket_interpolation = bucket_interpolation
+
+    @property
+    def bounds(self) -> Sequence[T]:
+        """Get the upper bounds of all buckets."""
+        return list(self._bounds)
+
+    @property
+    def n_buckets(self) -> int:
+        """Get the number of buckets in the histogram."""
+        return len(self._bounds)
+
+    @property
+    def freq_per_bucket(self) -> int:
+        """Get the average number of elements per bucket.
+
+        For equi-depth histograms, this number will be pretty accurate. For all other kinds of histograms, this number is
+        really just an average.
+        """
+        return self._freq_per_bucket
+
+    @property
+    def n_rows(self) -> int:
+        """Get the total number of rows that are represented by the histogram."""
+        return self._n_rows
+
+    @property
+    def lower(self) -> T:
+        """Get the lower bound of the first bucket (and thus of the entire histogram)."""
+        return self._lower
+
+    @property
+    def upper(self) -> T:
+        """Get the upper bound of the last bucket (and thus of the entire histogram)."""
+        return self._bounds[-1]
+
+    @property
+    def bucket_interpolation(self) -> HistogramApproximation:
+        """Get the strategy to estimate the frequency of values that are not exactly on the bucket bounds."""
+        return self._bucket_interpolation
+
+    @bucket_interpolation.setter
+    def bucket_interpolation(self, strategy: HistogramApproximation) -> None:
+        if strategy not in ("approx-uni", "bound"):
+            raise ValueError(
+                f"Unsupported bucket interpolation strategy: {strategy}. "
+                "Supported strategies are 'approx-uni' and 'bound'."
+            )
+        self._bucket_interpolation = strategy
+
+    def frequency_below(self, value: T) -> int:
+        """Estimate the frequency of values that are less than or equal to a given value.
+
+        If the value does not align exactly with the bucket bounds, the behavior depends on the selected
+        `bucket_interpolation` strategy. See the class documentation for details.
+        """
+        upper_idx = bisect.bisect_right(self._bounds, value)
+        if upper_idx == 0:
+            return 0
+        elif upper_idx == len(self._bounds):
+            return self._n_rows
+
+        if self._bucket_interpolation == "bound":
+            return upper_idx * self._freq_per_bucket
+
+        assert self._bucket_interpolation == "approx-uni"
+
+        if not isinstance(value, (int, float, date, datetime)):
+            raise ValueError(
+                "Cannot estimate frequency within bucket. "
+                f"Strategy '{self._bucket_interpolation}' is unknown or unsupported "
+                f"for histograms of type {type(value).__name__}."
+            )
+
+        lower_idx = upper_idx - 1
+        upper_bound = self._bounds[upper_idx]
+        lower_bound = self._bounds[lower_idx]
+        in_bucket_frac = (value - lower_bound) / (upper_bound - lower_bound)
+        return (lower_idx + in_bucket_frac) * self._freq_per_bucket
+
+    def frequency_above(self, value: T) -> int:
+        """Estimate the frequency of values that are greater than a given value.
+
+        Due to the way we model histograms, we cannot directly estimate the frequency of values greater or equal to a given
+        value, but only the frequency of values that are strictly greater than it.
+
+        If the value does not align exactly with the bucket bounds, the behavior depends on the selected
+        `bucket_interpolation` strategy. See the class documentation for details.
+        """
+        lower_idx = bisect.bisect_left(self._bounds, value)
+        if lower_idx == 0:
+            return self._n_rows
+        elif lower_idx == len(self._bounds):
+            return 0
+
+        if self._bucket_interpolation == "bound":
+            return lower_idx * self._freq_per_bucket
+
+        assert self._bucket_interpolation == "approx-uni"
+
+        if not isinstance(value, (int, float, date, datetime)):
+            raise ValueError(
+                "Cannot estimate frequency within bucket. "
+                f"Strategy '{self._bucket_interpolation}' is unknown or unsupported "
+                f"for histograms of type {type(value).__name__}."
+            )
+
+        upper_idx = lower_idx + 1
+        upper_bound = self._bounds[upper_idx]
+        lower_bound = self._bounds[lower_idx]
+        in_bucket_frac = (value - lower_bound) / (upper_bound - lower_bound)
+        return (upper_idx + in_bucket_frac) * self._freq_per_bucket
+
+    def __len__(self) -> int:
+        return len(self._bounds)
+
+    def __iter__(self) -> Iterator[tuple[T, int]]:
+        return iter(zip(self._bounds, self._frequencies))
+
+    def __getitem__(self, idx: int) -> tuple[T, int]:
+        return self._bounds[idx], self._frequencies[idx]
+
+    def __json__(self) -> jsondict:
+        return {
+            "bounds": self._bounds,
+            "frequencies": self._frequencies,
+            "lower": self._lower,
+            "n_rows": self._n_rows,
+            "bucket_interpolation": self._bucket_interpolation,
+        }
+
+    def __eq__(self, other: object) -> bool:
+        return (
+            isinstance(other, type(self))
+            and self._bounds == other._bounds
+            and self._frequencies == other._frequencies
+            and self._lower == other._lower
+            and self._n_rows == other._n_rows
+            and self._bucket_interpolation == other._bucket_interpolation
+        )
+
+    def __repr__(self) -> str:
+        return str(self)
+
+    def __str__(self) -> str:
+        buckets = ", ".join(
+            f"{bound} ({freq})" for bound, freq in zip(self._bounds, self._frequencies)
+        )
+        return f"Histogram(buckets=[{buckets}], lower={self._lower})"
 
 
 class DatabaseStatistics(abc.ABC):
@@ -1518,6 +2029,59 @@ class DatabaseStatistics(abc.ABC):
         self.cache_enabled = cache_enabled
         self._db = db
 
+    @overload
+    def total_rows(self, table: TableReference) -> Optional[int]: ...
+
+    @overload
+    def total_rows(
+        self,
+        table: TableReference,
+        *,
+        emulated: Literal[True],
+    ) -> int: ...
+
+    @overload
+    def total_rows(
+        self, table: TableReference, *, emulated: Literal[False, None]
+    ) -> Optional[int]: ...
+
+    @overload
+    def total_rows(
+        self, table: TableReference, *, emulated: Optional[bool]
+    ) -> Optional[bool]: ...
+
+    @overload
+    def total_rows(
+        self, table: TableReference, *, cache_enabled: Optional[bool]
+    ) -> Optional[int]: ...
+
+    @overload
+    def total_rows(
+        self,
+        table: TableReference,
+        *,
+        emulated: Literal[True],
+        cache_enabled: Optional[bool],
+    ) -> Optional[int]: ...
+
+    @overload
+    def total_rows(
+        self,
+        table: TableReference,
+        *,
+        emulated: Literal[False, None],
+        cache_enabled: Optional[bool],
+    ) -> Optional[int]: ...
+
+    @overload
+    def total_rows(
+        self,
+        table: TableReference,
+        *,
+        emulated: Optional[bool],
+        cache_enabled: Optional[bool],
+    ) -> Optional[int]: ...
+
     def total_rows(
         self,
         table: TableReference,
@@ -1567,6 +2131,80 @@ class DatabaseStatistics(abc.ABC):
         emulated: Optional[bool] = None,
         cache_enabled: Optional[bool] = None,
     ) -> Optional[int]:
+        """Legacy alias for `num_distinct`.
+
+        .. deprecated:: v0.20.2
+            distinct_values() is deprecated due to the confusing name. Use the more aptly-named num_distinct(),
+            which provides exactly the same interface and functionality.
+        """
+        return self.num_distinct(column, emulated=emulated, cache_enabled=cache_enabled)
+
+    @overload
+    def num_distinct(self, column: ColumnReference) -> Optional[int]: ...
+
+    @overload
+    def num_distinct(
+        self,
+        column: ColumnReference,
+        *,
+        emulated: Literal[True],
+    ) -> int: ...
+
+    @overload
+    def num_distinct(
+        self,
+        column: ColumnReference,
+        *,
+        emulated: Literal[False, None],
+    ) -> Optional[int]: ...
+
+    @overload
+    def num_distinct(
+        self,
+        column: ColumnReference,
+        *,
+        emulated: Optional[bool],
+    ) -> Optional[int]: ...
+
+    @overload
+    def num_distinct(
+        self, column: ColumnReference, *, cache_enabled: Optional[bool]
+    ) -> Optional[int]: ...
+
+    @overload
+    def num_distinct(
+        self,
+        column: ColumnReference,
+        *,
+        emulated: Literal[True],
+        cache_enabled: Optional[bool],
+    ) -> int: ...
+
+    @overload
+    def num_distinct(
+        self,
+        column: ColumnReference,
+        *,
+        emulated: Literal[False, None],
+        cache_enabled: Optional[bool],
+    ) -> Optional[int]: ...
+
+    @overload
+    def num_distinct(
+        self,
+        column: ColumnReference,
+        *,
+        emulated: Optional[bool],
+        cache_enabled: Optional[bool],
+    ) -> Optional[int]: ...
+
+    def num_distinct(
+        self,
+        column: ColumnReference,
+        *,
+        emulated: Optional[bool] = None,
+        cache_enabled: Optional[bool] = None,
+    ) -> Optional[int]:
         """Provides (an estimate of) the total number of different column values of a specific column.
 
         Parameters
@@ -1595,7 +2233,7 @@ class DatabaseStatistics(abc.ABC):
         postbound.qal.VirtualTableError
             If the table associated with the column is a virtual table (e.g. subquery or CTE)
         """
-        if not column.table:
+        if not ColumnReference.assert_bound(column):
             raise UnboundColumnError(column)
         elif column.table.virtual:
             raise VirtualTableError(column.table)
@@ -1605,6 +2243,56 @@ class DatabaseStatistics(abc.ABC):
             )
         else:
             return self._retrieve_distinct_values_from_stats(column)
+
+    @overload
+    def min_max(self, column: ColumnReference) -> Optional[tuple[Any, Any]]: ...
+
+    @overload
+    def min_max(
+        self, column: ColumnReference, *, emulated: Literal[True]
+    ) -> tuple[Any, Any]: ...
+
+    @overload
+    def min_max(
+        self, column: ColumnReference, *, emulated: Literal[False, None]
+    ) -> Optional[tuple[Any, Any]]: ...
+
+    @overload
+    def min_max(
+        self, column: ColumnReference, *, emulated: Optional[bool]
+    ) -> Optional[tuple[Any, Any]]: ...
+
+    @overload
+    def min_max(
+        self, column: ColumnReference, *, cache_enabled: Optional[bool]
+    ) -> Optional[tuple[Any, Any]]: ...
+
+    @overload
+    def min_max(
+        self,
+        column: ColumnReference,
+        *,
+        emulated: Literal[True],
+        cache_enabled: Optional[bool],
+    ) -> tuple[Any, Any]: ...
+
+    @overload
+    def min_max(
+        self,
+        column: ColumnReference,
+        *,
+        emulated: Literal[False, None],
+        cache_enabled: Optional[bool],
+    ) -> Optional[tuple[Any, Any]]: ...
+
+    @overload
+    def min_max(
+        self,
+        column: ColumnReference,
+        *,
+        emulated: Optional[bool],
+        cache_enabled: Optional[bool],
+    ) -> Optional[tuple[Any, Any]]: ...
 
     def min_max(
         self,
@@ -1640,7 +2328,7 @@ class DatabaseStatistics(abc.ABC):
         postbound.qal.VirtualTableError
             If the table associated with the column is a virtual table (e.g. subquery or CTE)
         """
-        if not column.table:
+        if not ColumnReference.assert_bound(column):
             raise UnboundColumnError(column)
         elif column.table.virtual:
             raise VirtualTableError(column.table)
@@ -1655,19 +2343,19 @@ class DatabaseStatistics(abc.ABC):
         self,
         column: ColumnReference,
         *,
-        k: int = 10,
+        k: Optional[int] = 10,
         emulated: Optional[bool] = None,
         cache_enabled: Optional[bool] = None,
-    ) -> Sequence[tuple[Any, int]]:
+    ) -> MostCommonValues:
         """Provides (an estimate of) the total number of occurrences of the `k` most frequent values of a column.
 
         Parameters
         ----------
         column : ColumnReference
             The column to check
-        k : int, optional
+        k : Optional[int], optional
             The maximum number of most common values to return. Defaults to 10. If there are less values available, all
-            of the available values will be returned.
+            of the available values will be returned. Setting this to *None* or a negative value will return the frequency of all distinct values.
         emulated : Optional[bool], optional
             Whether to force emulation mode for this single call. Defaults to *None* which indicates that the
             emulation setting of the statistics interface should be used.
@@ -1677,7 +2365,7 @@ class DatabaseStatistics(abc.ABC):
 
         Returns
         -------
-        Sequence[tuple[Any, int]]
+        MostCommonValues
             The most common values in pairs of (value, frequency), starting with the highest frequency. Notice that
             this sequence can be empty if no values are available. This can happen if the database system in principle
             maintains this statistic but does considers the value distribution to uniform to make the maintenance
@@ -1691,16 +2379,320 @@ class DatabaseStatistics(abc.ABC):
         postbound.qal.VirtualTableError
             If the table associated with the column is a virtual table (e.g. subquery or CTE)
         """
-        if not column.table:
+        if not ColumnReference.assert_bound(column):
             raise UnboundColumnError(column)
         elif column.table.virtual:
             raise VirtualTableError(column.table)
+
         if emulated or (emulated is None and self.emulated):
-            return self._calculate_most_common_values(
+            mcv_list = self._calculate_most_common_values(
                 column, k, cache_enabled=self._determine_caching_behavior(cache_enabled)
             )
         else:
-            return self._retrieve_most_common_values_from_stats(column, k)
+            mcv_list = self._retrieve_most_common_values_from_stats(column, k)
+        return MostCommonValues(mcv_list)
+
+    @overload
+    def histogram(self, column: ColumnReference) -> Optional[Histogram]: ...
+
+    @overload
+    def histogram(
+        self, column: ColumnReference, *, n_bins: Optional[int]
+    ) -> Optional[Histogram]: ...
+
+    @overload
+    def histogram(
+        self, column: ColumnReference, *, interpolation: HistogramApproximation
+    ) -> Optional[Histogram]: ...
+
+    @overload
+    def histogram(
+        self, column: ColumnReference, *, emulated: Literal[True]
+    ) -> Histogram: ...
+
+    @overload
+    def histogram(
+        self, column: ColumnReference, *, emulated: Literal[False, None]
+    ) -> Optional[Histogram]: ...
+
+    @overload
+    def histogram(
+        self, column: ColumnReference, *, emulated: Optional[bool]
+    ) -> Optional[Histogram]: ...
+
+    @overload
+    def histogram(
+        self, column: ColumnReference, *, cache_enabled: Optional[bool]
+    ) -> Optional[Histogram]: ...
+
+    @overload
+    def histogram(
+        self,
+        column: ColumnReference,
+        *,
+        n_bins: Optional[int],
+        interpolation: HistogramApproximation,
+    ) -> Optional[Histogram]: ...
+
+    @overload
+    def histogram(
+        self, column: ColumnReference, *, n_bins: Optional[int], emulated: Literal[True]
+    ) -> Histogram: ...
+
+    @overload
+    def histogram(
+        self,
+        column: ColumnReference,
+        *,
+        n_bins: Optional[int],
+        emulated: Literal[False, None],
+    ) -> Optional[Histogram]: ...
+
+    @overload
+    def histogram(
+        self,
+        column: ColumnReference,
+        *,
+        n_bins: Optional[int],
+        emulated: Optional[bool],
+    ) -> Optional[Histogram]: ...
+
+    @overload
+    def histogram(
+        self,
+        column: ColumnReference,
+        *,
+        n_bins: Optional[int],
+        cache_enabled: Optional[bool],
+    ) -> Optional[Histogram]: ...
+
+    @overload
+    def histogram(
+        self,
+        column: ColumnReference,
+        *,
+        interpolation: HistogramApproximation,
+        emulated: Literal[True],
+    ) -> Histogram: ...
+
+    @overload
+    def histogram(
+        self,
+        column: ColumnReference,
+        *,
+        interpolation: HistogramApproximation,
+        emulated: Literal[False, None],
+    ) -> Optional[Histogram]: ...
+
+    @overload
+    def histogram(
+        self,
+        column: ColumnReference,
+        *,
+        interpolation: HistogramApproximation,
+        emulated: Optional[bool],
+    ) -> Optional[Histogram]: ...
+
+    @overload
+    def histogram(
+        self,
+        column: ColumnReference,
+        *,
+        interpolation: HistogramApproximation,
+        cache_enabled: Optional[bool],
+    ) -> Optional[Histogram]: ...
+
+    @overload
+    def histogram(
+        self,
+        column: ColumnReference,
+        *,
+        emulated: Literal[True],
+        cache_enabled: Optional[bool],
+    ) -> Histogram: ...
+
+    @overload
+    def histogram(
+        self,
+        column: ColumnReference,
+        *,
+        emulated: Literal[False, None],
+        cache_enabled: Optional[bool],
+    ) -> Optional[Histogram]: ...
+
+    @overload
+    def histogram(
+        self,
+        column: ColumnReference,
+        *,
+        emulated: Optional[bool],
+        cache_enabled: Optional[bool],
+    ) -> Optional[Histogram]: ...
+
+    @overload
+    def histogram(
+        self,
+        column: ColumnReference,
+        *,
+        n_bins: Optional[int],
+        interpolation: HistogramApproximation,
+        emulated: Literal[True],
+    ) -> Histogram: ...
+
+    @overload
+    def histogram(
+        self,
+        column: ColumnReference,
+        *,
+        n_bins: Optional[int],
+        interpolation: HistogramApproximation,
+        emulated: Literal[False, None],
+    ) -> Optional[Histogram]: ...
+
+    @overload
+    def histogram(
+        self,
+        column: ColumnReference,
+        *,
+        n_bins: Optional[int],
+        interpolation: HistogramApproximation,
+        emulated: Optional[bool],
+    ) -> Optional[Histogram]: ...
+
+    @overload
+    def histogram(
+        self,
+        column: ColumnReference,
+        *,
+        n_bins: Optional[int],
+        emulated: Literal[True],
+        cache_enabled: Optional[bool],
+    ) -> Histogram: ...
+
+    @overload
+    def histogram(
+        self,
+        column: ColumnReference,
+        *,
+        n_bins: Optional[int],
+        emulated: Literal[False, None],
+        cache_enabled: Optional[bool],
+    ) -> Optional[Histogram]: ...
+
+    @overload
+    def histogram(
+        self,
+        column: ColumnReference,
+        *,
+        n_bins: Optional[int],
+        emulated: Optional[bool],
+        cache_enabled: Optional[bool],
+    ) -> Optional[Histogram]: ...
+
+    @overload
+    def histogram(
+        self,
+        column: ColumnReference,
+        *,
+        n_bins: Optional[int],
+        interpolation: HistogramApproximation,
+        cache_enabled: Optional[bool],
+    ) -> Optional[Histogram]: ...
+
+    @overload
+    def histogram(
+        self,
+        column: ColumnReference,
+        *,
+        interpolation: HistogramApproximation,
+        emulated: Literal[True],
+        cache_enabled: Optional[bool],
+    ) -> Histogram: ...
+
+    @overload
+    def histogram(
+        self,
+        column: ColumnReference,
+        *,
+        interpolation: HistogramApproximation,
+        emulated: Literal[False, None],
+        cache_enabled: Optional[bool],
+    ) -> Optional[Histogram]: ...
+
+    @overload
+    def histogram(
+        self,
+        column: ColumnReference,
+        *,
+        interpolation: HistogramApproximation,
+        emulated: Optional[bool],
+        cache_enabled: Optional[bool],
+    ) -> Optional[Histogram]: ...
+
+    @overload
+    def histogram(
+        self,
+        column: ColumnReference,
+        *,
+        n_bins: Optional[int],
+        interpolation: HistogramApproximation,
+        emulated: Literal[True],
+        cache_enabled: Optional[bool],
+    ) -> Histogram: ...
+
+    @overload
+    def histogram(
+        self,
+        column: ColumnReference,
+        *,
+        n_bins: Optional[int],
+        interpolation: HistogramApproximation,
+        emulated: Literal[False, None],
+        cache_enabled: Optional[bool],
+    ) -> Optional[Histogram]: ...
+
+    @overload
+    def histogram(
+        self,
+        column: ColumnReference,
+        *,
+        n_bins: Optional[int],
+        interpolation: HistogramApproximation,
+        emulated: Optional[bool],
+        cache_enabled: Optional[bool],
+    ) -> Optional[Histogram]: ...
+
+    def histogram(
+        self,
+        column: ColumnReference,
+        *,
+        n_bins: Optional[int] = None,
+        interpolation: HistogramApproximation = "approx-uni",
+        emulated: Optional[bool] = None,
+        cache_enabled: Optional[bool] = None,
+    ) -> Optional[Histogram]:
+        if not ColumnReference.assert_bound(column):
+            raise UnboundColumnError(column)
+        elif column.table.virtual:
+            raise VirtualTableError(column.table)
+
+        use_emulation = emulated or (emulated is None and self.emulated)
+        if use_emulation and not n_bins:
+            raise ValueError("n_bins must be set for emulated histograms.")
+        if not use_emulation and n_bins:
+            warnings.warn(
+                "n_bins is ignored if the histogram is loaded from stats", stacklevel=2
+            )
+
+        if use_emulation:
+            assert n_bins is not None
+            return self._calculate_histogram(
+                column, n_bins, interpolation=interpolation, cache_enabled=cache_enabled
+            )
+        else:
+            return self._retrieve_histogram_from_stats(
+                column, interpolation=interpolation
+            )
 
     def _calculate_total_rows(
         self, table: TableReference, *, cache_enabled: Optional[bool] = None
@@ -1729,7 +2721,7 @@ class DatabaseStatistics(abc.ABC):
         )
 
     def _calculate_distinct_values(
-        self, column: ColumnReference, *, cache_enabled: Optional[bool] = None
+        self, column: BoundColumnReference, *, cache_enabled: Optional[bool] = None
     ) -> int:
         """Retrieves the number of distinct column values by issuing a *COUNT(\\*)* / *GROUP BY* query over that
         column against the live database.
@@ -1749,7 +2741,6 @@ class DatabaseStatistics(abc.ABC):
         int
             The number of distinct values in the column
         """
-        assert column.table is not None
         query_template = "SELECT COUNT(DISTINCT {col}) FROM {tab}".format(
             col=column.name, tab=column.table.full_name
         )
@@ -1759,7 +2750,7 @@ class DatabaseStatistics(abc.ABC):
         )
 
     def _calculate_min_max_values(
-        self, column: ColumnReference, *, cache_enabled: Optional[bool] = None
+        self, column: BoundColumnReference, *, cache_enabled: Optional[bool] = None
     ) -> tuple[Any, Any]:
         """Retrieves the minimum/maximum values in a column by issuing an aggregation query for that column against the
         live database.
@@ -1779,7 +2770,6 @@ class DatabaseStatistics(abc.ABC):
         tuple[Any, Any]
             A tuple of *(min, max)*
         """
-        assert column.table is not None
         query_template = "SELECT MIN({col}), MAX({col}) FROM {tab}".format(
             col=column.name, tab=column.table.full_name
         )
@@ -1789,7 +2779,11 @@ class DatabaseStatistics(abc.ABC):
         )
 
     def _calculate_most_common_values(
-        self, column: ColumnReference, k: int, *, cache_enabled: Optional[bool] = None
+        self,
+        column: BoundColumnReference,
+        k: int | None,
+        *,
+        cache_enabled: Optional[bool] = None,
     ) -> Sequence[tuple[Any, int]]:
         """Retrieves the `k` most frequent values of a column along with their frequencies by issuing a query over that
         column against the live database.
@@ -1803,9 +2797,9 @@ class DatabaseStatistics(abc.ABC):
         ----------
         column : ColumnReference
             The column to check
-        k : int
+        k : Optional[int]
             The number of most frequent values to retrieve. If less values are available (because there are not as much
-            distinct values in the column), the frequencies of all values is returned.
+            distinct values in the column), the frequencies of all values is returned. If *None*, all values are returned.
         cache_enabled : Optional[bool], optional
             Whether to enable result caching in emulation mode. Defaults to *None* which indicates that the caching
             setting of the statistics interface should be used.
@@ -1816,19 +2810,63 @@ class DatabaseStatistics(abc.ABC):
             The most common values in *(value, frequency)* pairs, ordered by largest frequency first. Can be smaller
             than the requested `k` value if the column contains less distinct values.
         """
-        assert column.table is not None
-        query_template = textwrap.dedent(
-            """
-            SELECT {col}, COUNT(*) AS n
-            FROM {tab}
-            GROUP BY {col}
-            ORDER BY n DESC, {col}
-            LIMIT {k}""".format(col=column.name, tab=column.table.full_name, k=k)
-        )
+        if k is None or k <= 0:
+            query_template = """
+                SELECT {col}, COUNT(*) AS n
+                FROM {tab}
+                GROUP BY {col}
+                ORDER BY n DESC, {col}""".format(
+                col=column.name, tab=column.table.full_name
+            )
+        else:
+            query_template = textwrap.dedent(
+                """
+                SELECT {col}, COUNT(*) AS n
+                FROM {tab}
+                GROUP BY {col}
+                ORDER BY n DESC, {col}
+                LIMIT {k}""".format(col=column.name, tab=column.table.full_name, k=k)
+            )
+
         return self._db.execute_query(
             query_template,
             cache_enabled=self._determine_caching_behavior(cache_enabled),
             raw=True,
+        )
+
+    def _calculate_histogram(
+        self,
+        column: BoundColumnReference,
+        n_bins: int,
+        *,
+        interpolation: HistogramApproximation,
+        cache_enabled: Optional[bool] = None,
+    ) -> Optional[Histogram]:
+        n_rows = self._calculate_total_rows(column.table)
+        if n_rows == 0:
+            return None
+
+        query_template = """
+            SELECT {col}, COUNT(*) AS n
+            FROM {tab}
+            GROUP BY {col}
+            ORDER BY {col}
+            """.format(col=column.name, tab=column.table.full_name)
+        result_set = self._db.execute_query(
+            query_template,
+            cache_enabled=self._determine_caching_behavior(cache_enabled),
+            raw=True,
+        )
+        assert result_set
+
+        lo, bounds, buckets = _infer_histogram_bounds(
+            result_set, n_bins=n_bins, n_rows=n_rows
+        )
+        return Histogram(
+            bounds,
+            buckets,
+            lower=lo,
+            bucket_interpolation=interpolation,
         )
 
     @abc.abstractmethod
@@ -1854,7 +2892,7 @@ class DatabaseStatistics(abc.ABC):
 
     @abc.abstractmethod
     def _retrieve_distinct_values_from_stats(
-        self, column: ColumnReference
+        self, column: BoundColumnReference
     ) -> Optional[int]:
         """Queries the DBMS-internal metadata for the number of distinct values of the column.
 
@@ -1877,7 +2915,7 @@ class DatabaseStatistics(abc.ABC):
 
     @abc.abstractmethod
     def _retrieve_min_max_values_from_stats(
-        self, column: ColumnReference
+        self, column: BoundColumnReference
     ) -> Optional[tuple[Any, Any]]:
         """Queries the DBMS-internal metadata for the minimum / maximum value in a column.
 
@@ -1899,7 +2937,7 @@ class DatabaseStatistics(abc.ABC):
 
     @abc.abstractmethod
     def _retrieve_most_common_values_from_stats(
-        self, column: ColumnReference, k: int
+        self, column: BoundColumnReference, k: int | None
     ) -> Sequence[tuple[Any, int]]:
         """Queries the DBMS-internal metadata for the `k` most common values of the `column`.
 
@@ -1910,8 +2948,8 @@ class DatabaseStatistics(abc.ABC):
         column : ColumnReference
             The column to check
         k : int, optional
-            The maximum number of most common values to return. Defaults to 10. If there are less values available, all
-            of the available values will be returned.
+            The maximum number of most common values to return. If there are less values available, all
+            of the available values will be returned. If `None`, all available values will be returned.
 
         Returns
         -------
@@ -1922,6 +2960,12 @@ class DatabaseStatistics(abc.ABC):
             worthwhile. Likewise, if less common values exist than the requested `k` value, only the available values
             will be returned (and the sequence will be shorter than `k` in that case).
         """
+        raise NotImplementedError
+
+    @abc.abstractmethod
+    def _retrieve_histogram_from_stats(
+        self, column: BoundColumnReference, *, interpolation: HistogramApproximation
+    ) -> Optional[Histogram]:
         raise NotImplementedError
 
     def _determine_caching_behavior(
@@ -2136,6 +3180,19 @@ class OptimizerInterface(abc.ABC):
         return self.analyze_plan(query)
 
     @abc.abstractmethod
+    def parse_plan(self, plan: Any, *, query: Optional[SqlQuery] = None) -> QueryPlan:
+        """Transforms the system-specific EXPLAIN output into a standardized `QueryPlan`.
+
+        The optional `query` can be used to provide additional context for the plan. This can be used by
+        some database systems for correct parsing (e.g. DuckDB), while others might not use it at all.
+        Omitting the `query` parameter is acceptable.
+
+        This method is mainly inteded to parse a previously generated plan, or when the plan could not simply
+        be obtained via `query_plan` or `analyze_plan`.
+        """
+        raise NotImplementedError
+
+    @abc.abstractmethod
     def cardinality_estimate(self, query: SqlQuery | str) -> Cardinality:
         """Queries the DBMS query optimizer for its cardinality estimate, instead of executing the query.
 
@@ -2224,7 +3281,17 @@ class DatabasePool:
         ValueError
             If there are multiple database instances registered in the pool
         """
+        if self.n_databases() != 1:
+            raise ValueError(
+                f"Expected exactly one database in the pool, but found {self.n_databases()}."
+            )
         return util.dicts.value(self._pool)
+
+    def any_database(self) -> Database:
+        """Provides any database that is currently stored in the pool, provided there is at least one."""
+        if self.empty():
+            raise ValueError("No database instance registered in the pool.")
+        return next(iter(self._pool.values()))
 
     def register_database(self, key: str, db: Database) -> None:
         """Stores a new database in the pool.
@@ -2270,6 +3337,10 @@ class DatabasePool:
         """
         return len(self._pool) == 0
 
+    def n_databases(self) -> int:
+        """Returns the number of databases currently registered in the pool."""
+        return len(self._pool)
+
     def clear(self) -> None:
         """Removes all currently registered databases from the pool."""
         self._pool.clear()
@@ -2314,7 +3385,7 @@ class UnsupportedDatabaseFeatureError(RuntimeError):
         A textual description for the requested feature
     """
 
-    def __init__(self, database: Database, feature: str) -> None:
+    def __init__(self, database: Database, feature: str | PhysicalOperator) -> None:
         super().__init__(
             f"Database {database.system_name} does not support feature {feature}"
         )

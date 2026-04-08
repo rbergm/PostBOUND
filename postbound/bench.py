@@ -35,11 +35,13 @@ from .db import (
     Database,
     DatabasePool,
     PrewarmingSupport,
+    ResultSet,
     StopwatchSupport,
     TimeoutSupport,
     simplify_result_set,
 )
-from .qal import Explain, SqlQuery
+from .qal import SqlQuery
+from .train import TrainingData, TrainingDataRepository
 from .util.jsonize import Jsonizable
 from .workloads import Workload, generate_workload
 
@@ -77,7 +79,7 @@ class ExecutionResult:
     status: ExecStatus = "ok"
     """Whether the query was executed successfully or not."""
 
-    query_result: object = None
+    query_result: ResultSet | None = None
     """The result set of the query or *None* if the query failed."""
 
     optimization_time: float = np.nan
@@ -104,7 +106,7 @@ class ExecutionResult:
     def passed(
         query: SqlQuery,
         *,
-        query_result: object,
+        query_result: ResultSet,
         execution_time: float,
         optimization_time: float = np.nan,
     ) -> ExecutionResult:
@@ -155,16 +157,37 @@ class QueryPreparation:
 
     Parameters
     ----------
+    projection : Literal["none", "star", "count_star", "\\*", "count(\\*)"], optional
+        Modify the *SELECT* clause of all queries to provide a uniform projection. Allowed values are *none* (no modification),
+        *star* or *\\** for *SELECT \\** and *count_star* or *count(\\*)* for *SELECT COUNT(\\*)*. Defaults to *none*.
+
+    output : Literal["default", "explain", "analyze", "explain_analyze"], optional
+        What kind of results to gather. *default* executes the queries as they are, *explain* transforms all queries to
+        *EXPLAIN* queries, *analyze* or *explain_analyze* transforms all queries to *EXPLAIN ANALYZE* queries.
+
     explain : bool, optional
         Whether to force all queries to be executed as *EXPLAIN* queries, by default *False*
+
+        .. deprecated:: 0.21.0
+            This option is deprecated in favor of the more versatile `output` option.
+
     count_star : bool, optional
         Whether to force all queries to be executed as *COUNT(\\*)* queries, overwriting their default projection. Defaults to
         *False*
+
+        .. deprecated:: 0.21.0
+            This option is deprecated in favor of the more versatile `projection` option.
+
     analyze : bool, optional
         Whether to force all queries to be executed as ``EXPLAIN ANALYZE`` queries. Setting this option implies `explain`,
         which therefore does not need to set manually. Defaults to *False*
+
+        .. deprecated:: 0.21.0
+            This option is deprecated in favor of the more versatile `output` option.
+
     prewarm : bool, optional
         For database systems that support prewarming, this inflates the buffer pool with pages from the prepared query.
+
     preparatory_statements : Optional[list[str]], optional
         Statements that are executed as-is on the database connection before running the query, by default *None*
 
@@ -176,55 +199,100 @@ class QueryPreparation:
     def __init__(
         self,
         *,
-        explain: bool = False,
-        count_star: bool = False,
-        analyze: bool = False,
+        projection: Literal["none", "star", "count_star", "*", "count(*)"] = "none",
+        output: Literal["default", "explain", "analyze", "explain_analyze"] = "default",
+        explain: Optional[bool] = None,
+        count_star: Optional[bool] = None,
+        analyze: Optional[bool] = None,
         prewarm: bool = False,
         preparatory_statements: Optional[list[str]] = None,
     ) -> None:
-        self.explain = explain
-        self.analyze = analyze
-        self.count_star = count_star
-        self.preparatory_stmts = (
-            preparatory_statements if preparatory_statements else []
-        )
+        if explain is not None:
+            warnings.warn(
+                "The 'explain' parameter is deprecated in favor of the more versatile 'output' parameter. "
+                "Please use 'output=\"explain\"' instead.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+            self.output = "explain" if explain else output
+        else:
+            self.output = output
 
-        if explain and not analyze:
-            if prewarm:
-                warnings.warn(
-                    "Ignoring prewarm setting since queries are only explained. Set prewarm manually to overwrite."
-                )
+        if analyze is not None:
+            warnings.warn(
+                "The 'analyze' parameter is deprecated in favor of the more versatile 'output' parameter. "
+                "Please use 'output=\"analyze\"' instead.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+            self.output = "analyze" if analyze else self.output
+
+        if count_star is not None:
+            warnings.warn(
+                "The 'count_star' parameter is deprecated in favor of the more versatile 'projection' parameter. "
+                "Please use 'projection=\"count_star\"' instead.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+            self.projection = "count_star" if count_star else projection
+        else:
+            self.projection = projection
+
+        if self.output == "explain" and prewarm:
+            warnings.warn(
+                "Prewarming is not compatible with EXPLAIN queries. Ignoring prewarm setting.",
+                stacklevel=2,
+            )
             self.prewarm = False
         else:
             self.prewarm = prewarm
 
-    def prepare_query(self, query: SqlQuery, *, on: Database) -> SqlQuery:
+        self.preparatory_stmts = preparatory_statements or []
+
+    def prepare_query(
+        self, query: SqlQuery, *, on: Optional[Database] = None
+    ) -> SqlQuery:
         """Applies the selected transformations to the given input query and executes the preparatory statements
 
         Parameters
         ----------
         query : SqlQuery
             The query to prepare
-        on : Database
-            The database to execute the preparatory statements on
+        on : Optional[Database]
+            The database to execute the preparatory statements on. If no database is given, only query transformations are
+            applied.
 
         Returns
         -------
         SqlQuery
             The prepared query
         """
-        if self.analyze:
-            query = transform.as_explain(query, Explain.explain_analyze())
-        elif self.explain:
-            query = transform.as_explain(query, Explain.plan())
+        match self.projection:
+            case "none":
+                pass
+            case "star" | "*":
+                query = transform.as_star_query(query)
+            case "count_star" | "count(*)":
+                query = transform.as_count_star_query(query)
+            case _:
+                raise ValueError(f"Unsupported projection type: {self.projection}")
 
-        if self.count_star:
-            query = transform.as_count_star_query(query)
+        match self.output:
+            case "default":
+                pass
+            case "explain":
+                query = transform.as_explain(query)
+            case "analyze" | "explain_analyze":
+                query = transform.as_explain_analyze(query)
+
+        if on is None:
+            return query
 
         if self.prewarm:
             if not isinstance(on, PrewarmingSupport):
                 warnings.warn(
-                    "Ignoring prewarm setting since the database does not support prewarming"
+                    "Ignoring prewarm setting since the database does not support prewarming",
+                    stacklevel=2,
                 )
             else:
                 on.prewarm_tables(query.tables())
@@ -236,15 +304,14 @@ class QueryPreparation:
 
     def __json__(self) -> util.jsondict:
         return {
-            "explain": self.explain,
-            "analyze": self.analyze,
-            "count_star": self.count_star,
+            "output": self.output,
+            "projection": self.projection,
             "prewarm": self.prewarm,
             "preparatory_statements": self.preparatory_stmts,
         }
 
     def __repr__(self) -> str:
-        return f"QueryPreparation(explain={self.explain}, analyze={self.analyze}, count_star={self.count_star}, prewarm={self.prewarm}, preparatory_statements={self.preparatory_stmts})"
+        return f"QueryPreparation(output={self.output}, projection={self.projection}, prewarm={self.prewarm}, preparatory_statements={self.preparatory_stmts})"
 
     def __str__(self) -> str:
         return repr(self)
@@ -288,6 +355,7 @@ class _BenchmarkConfig:
     target_db: Database
     optimizer: OptimizationPipeline | None
     output: Path | None
+    output_args: dict
     workload_repetitions: int
     per_query_repetitions: int
     shuffled: bool
@@ -338,7 +406,7 @@ def _init_benchmark_log(experiment: str, *, cfg: _BenchmarkConfig) -> None:
         existing_logs = json.load(f)
         complete_log = existing_logs + [log_data]
         f.seek(0)
-        util.to_json_dump(complete_log, f)
+        util.to_json_dump(complete_log, f, indent=2)
 
 
 def _finalize_benchmark_log(experiment: str, *, cfg: _BenchmarkConfig) -> None:
@@ -346,6 +414,11 @@ def _finalize_benchmark_log(experiment: str, *, cfg: _BenchmarkConfig) -> None:
         return
     out_dir = cfg.output.parent
     log_file = out_dir / "experiment_log.json"
+    if cfg.start_time is None:
+        raise ValueError(
+            f"Malformed experiment log '{log_file}': start time is missing!"
+        )
+
     with open(log_file, "r+", encoding="utf-8") as f:
         existing_logs = json.load(f)
         for log_entry in existing_logs:
@@ -366,6 +439,11 @@ def _failed_benchmark_log(
         return
     out_dir = cfg.output.parent
     log_file = out_dir / "experiment_log.json"
+    if cfg.start_time is None:
+        raise ValueError(
+            f"Malformed experiment log '{log_file}': start time is missing!"
+        )
+
     with open(log_file, "r+", encoding="utf-8") as f:
         existing_logs = json.load(f)
         for log_entry in existing_logs:
@@ -470,14 +548,13 @@ def _execute_query(
     try:
         if timeout:
             exec_start = time.perf_counter_ns()
-            raw_result = on.execute_with_timeout(query, timeout=timeout)
+            result_set = on.execute_with_timeout(query, timeout=timeout)  # type: ignore[arg-type]
             exec_end = time.perf_counter_ns()
-            if raw_result is None:
+            if result_set is None:
                 return _TimeoutExecution(timeout=timeout)
-            query_result = simplify_result_set(raw_result)
         else:
             exec_start = time.perf_counter_ns()
-            query_result = on.execute_query(query, cache_enabled=False, raw=False)
+            result_set = on.execute_query(query, cache_enabled=False, raw=True)
             exec_end = time.perf_counter_ns()
         exec_time = (exec_end - exec_start) / 10**9  # convert to seconds
 
@@ -487,7 +564,7 @@ def _execute_query(
     except Exception as e:
         return _FailedExecution(error=e)
 
-    return _SuccessfullExecution(query_result=query_result, exec_time=exec_time)
+    return _SuccessfullExecution(query_result=result_set, exec_time=exec_time)
 
 
 class _NoOpLogger:
@@ -575,15 +652,15 @@ class _ResultSample:
         self.query_prep = query_prep
 
         # collected data
-        self.timestamps: list[datetime] = []
-        self.status: list[str] = []
+        self.timestamps: list[datetime | None] = []
+        self.status: list[ExecStatus] = []
         self.optimization_time: float = np.nan
         self.optimization_pipeline: OptimizationPipeline | None = None
         self.optimized_query: SqlQuery | None = None
         self.failure_reasons: list[str] = []
-        self.result_sets: list[object] = []
+        self.result_sets: list[ResultSet | None] = []
         self.exec_times: list[float] = []
-        self.db_configs: list[dict] = []
+        self.db_configs: list[util.jsondict] = []
 
         # internal fields
         self._max_query_reps = max_query_reps
@@ -594,7 +671,7 @@ class _ResultSample:
         self,
         *,
         optimized_query: SqlQuery,
-        pipeline: OptimizationPipeline,
+        pipeline: OptimizationPipeline | None,
         optimization_time: float,
     ) -> None:
         self.optimization_time = optimization_time
@@ -602,12 +679,12 @@ class _ResultSample:
         self.optimized_query = optimized_query
 
     def optimization_failure(
-        self, reason: Exception, *, pipeline: OptimizationPipeline
+        self, reason: Exception, *, pipeline: OptimizationPipeline | None
     ) -> None:
         self._optimization_failure = reason
         self.optimization_pipeline = pipeline
         self.timestamps += [None] * self._max_query_reps
-        self.status += ["optimization-error"] * self._max_query_reps
+        self.status += ["optimization-error"] * self._max_query_reps  # type: ignore[list-item]]
         self.failure_reasons += [str(reason)] * self._max_query_reps
         self.result_sets += [None] * self._max_query_reps
         self.exec_times += [np.nan] * self._max_query_reps
@@ -617,7 +694,7 @@ class _ResultSample:
         self.timestamps.append(datetime.now())
 
     def add_exec_sample(
-        self, result_set: object, *, exec_time: float, db_config: dict
+        self, result_set: ResultSet, *, exec_time: float, db_config: util.jsondict
     ) -> None:
         self.status.append("ok")
         self.failure_reasons.append("")
@@ -625,14 +702,14 @@ class _ResultSample:
         self.exec_times.append(exec_time)
         self.db_configs.append(db_config)
 
-    def add_exec_timeout(self, timeout: float, *, db_config: dict) -> None:
+    def add_exec_timeout(self, timeout: float, *, db_config: util.jsondict) -> None:
         self.status.append("timeout")
         self.failure_reasons.append("")
         self.result_sets.append(None)
         self.exec_times.append(timeout)
         self.db_configs.append(db_config)
 
-    def add_exec_failure(self, reason: Exception, *, db_config: dict) -> None:
+    def add_exec_failure(self, reason: Exception, *, db_config: util.jsondict) -> None:
         self.status.append("execution-error")
         self.failure_reasons.append(str(reason))
         self.result_sets.append(None)
@@ -646,16 +723,17 @@ class _ResultSample:
         return len(self.result_sets)
 
     def last_successful(self) -> bool:
-        return self.status and self.status[-1] in ("ok", "timeout")
+        return bool(self.status and self.status[-1] in ("ok", "timeout"))
 
     def last_result(self) -> Optional[ExecutionResult]:
         if self._optimization_failure or not self.result_sets:
             return None
 
+        result_set = simplify_result_set(self.result_sets[-1])
         return ExecutionResult(
             query=self.query,
             status=self.status[-1],
-            query_result=self.result_sets[-1],
+            query_result=result_set,
             optimization_time=self.optimization_time,
             execution_time=self.exec_times[-1],
         )
@@ -666,6 +744,7 @@ class _ResultSample:
             return pd.DataFrame()
 
         if only_last:
+            result_set = simplify_result_set(self.result_sets[-1])
             rows = {
                 "exec_index": [self._initial_idx + n_samples - 1],
                 "label": [self.label],
@@ -674,7 +753,7 @@ class _ResultSample:
                 "query_repetition": [n_samples],
                 "query": [self.query],
                 "status": [self.status[-1]],
-                "query_result": [self.result_sets[-1]],
+                "query_result": [result_set],
                 "exec_time": [self.exec_times[-1]],
                 "failure_reason": [self.failure_reasons[-1]],
                 "db_config": [self.db_configs[-1]],
@@ -692,7 +771,7 @@ class _ResultSample:
                 "query_repetition": [i + 1 for i in range(n_samples)],
                 "query": [self.query] * n_samples,
                 "status": self.status,
-                "query_result": self.result_sets,
+                "query_result": [simplify_result_set(rs) for rs in self.result_sets],
                 "exec_time": self.exec_times,
                 "failure_reason": self.failure_reasons,
                 "db_config": self.db_configs,
@@ -704,19 +783,83 @@ class _ResultSample:
 
         return pd.DataFrame(rows)
 
-    def write_progressive(self, file: Path | None) -> None:
+    def to_execution_results(self) -> list[ExecutionResult]:
+        results: list[ExecutionResult] = []
+        for i, status in enumerate(self.status):
+            if status in ["optimization-error", "execution-error"]:
+                continue
+
+            sample = ExecutionResult(
+                query=self.query,
+                status=status,
+                query_result=self.result_sets[i],
+                optimization_time=self.optimization_time,
+                execution_time=self.exec_times[i],
+            )
+            results.append(sample)
+        return results
+
+    def write_progressive(self, file: Path | None, output_args: dict) -> None:
         if file is None:
             return
 
         df = self.to_df(only_last=True)
         df = prepare_export(df)
+
+        match file.suffix:
+            case ".csv":
+                self._write_csv(df, file, writer_args=output_args)
+            case ".parquet":
+                self._write_parquet(df, file, writer_args=output_args)
+            case ".hdf" | ".hdf5" | ".h5":
+                self._write_hdf(df, file, writer_args=output_args)
+            case ".json":
+                self._write_json(df, file, writer_args=output_args)
+
+    def _write_csv(self, df: pd.DataFrame, file: Path, *, writer_args: dict) -> None:
         if file.is_file():
-            df.to_csv(file, mode="a", header=False, index=False)
+            df.to_csv(file, mode="a", header=False, index=False, **writer_args)
             return
 
         # We are the first sample to write to the output file. Create it with headers
         file.parent.mkdir(parents=True, exist_ok=True)
-        df.to_csv(file, index=False)
+        df.to_csv(file, index=False, **writer_args)
+
+    def _write_parquet(
+        self, df: pd.DataFrame, file: Path, *, writer_args: dict
+    ) -> None:
+        if file.is_file():
+            existing_results = pd.read_parquet(file)
+            df = pd.concat([existing_results, df], ignore_index=True)
+        else:
+            file.parent.mkdir(parents=True, exist_ok=True)
+
+        df.to_parquet(file, index=False, **writer_args)
+
+    def _write_hdf(self, df: pd.DataFrame, file: Path, *, writer_args: dict) -> None:
+        if "key" not in writer_args:
+            raise ValueError(
+                "'key' must be given when writing to HDF. "
+                "Please specify the key in the 'output_args' of execute_workload()!"
+            )
+
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            if file.is_file():
+                df.to_hdf(file, mode="a", index=False, **writer_args)
+                return
+
+            file.parent.mkdir(parents=True, exist_ok=True)
+            df.to_hdf(file, mode="w", index=False, **writer_args)
+
+    def _write_json(self, df: pd.DataFrame, file: Path, *, writer_args: dict) -> None:
+        if file.is_file():
+            existing_results = pd.read_json(file)
+            df = pd.concat([existing_results, df], ignore_index=True)
+        else:
+            file.parent.mkdir(parents=True, exist_ok=True)
+
+        df.to_json(file, index=False, **writer_args)
 
     def __len__(self) -> int:
         return self.num_executions()
@@ -808,7 +951,7 @@ def _exec_ctl_loop(
             raise RuntimeError(f"Unhandled execution result: {other}")
 
     if cfg.output and sample.last_successful():
-        sample.write_progressive(cfg.output)
+        sample.write_progressive(cfg.output, cfg.output_args)
 
     if cfg.exec_callback and sample.last_successful():
         cfg.exec_callback(sample.last_result())
@@ -841,12 +984,14 @@ def _workload_ctl_loop(
         if sample.failed_optimization():
             match cfg.error_action:
                 case "log" if cfg.output:
-                    sample.write_progressive(cfg.output)
+                    sample.write_progressive(cfg.output, cfg.output_args)
                 case "log" if not cfg.output:
                     # we handle the output to CSV as part of the normal result export, no need to do anything here
                     pass
                 case "raise":
-                    raise sample.failed_optimization()
+                    err = sample.failed_optimization()
+                    assert err is not None
+                    raise err
                 case "ignore":
                     results.scratch_last_sample()
             continue
@@ -858,6 +1003,18 @@ def _workload_ctl_loop(
                 cfg=cfg,
             )
 
+        if (pipeline := cfg.optimizer) is None:
+            continue
+        if not pipeline.requires_online_training():
+            continue
+
+        for exec_result in sample.to_execution_results():
+            assert exec_result.query_result is not None
+            exec_time = 1000 * exec_result.execution_time
+            pipeline.learn_from_feedback(
+                query, exec_result.query_result, exec_time=exec_time
+            )
+
 
 def execute_workload(
     queries: Iterable[SqlQuery] | Workload,
@@ -867,11 +1024,13 @@ def execute_workload(
     workload_repetitions: int = 1,
     per_query_repetitions: int = 1,
     shuffled: bool = False,
-    query_preparation: Optional[QueryPreparation | dict] = None,
+    query_preparation: Optional[QueryPreparation | dict[str, Any]] = None,
+    training_data: Optional[TrainingData | TrainingDataRepository] = None,
     timeout: Optional[float] = None,
     exec_callback: Optional[Callable[[ExecutionResult], None]] = None,
     repetition_callback: Optional[Callable[[int], None]] = None,
     progressive_output: Optional[str | Path] = None,
+    output_args: Optional[dict] = None,
     logger: Optional[Callable[[str], None] | PredefLogger] = None,
     error_action: ErrorHandling = "log",
 ) -> pd.DataFrame:
@@ -904,13 +1063,20 @@ def execute_workload(
         Preparation steps that should be performed before running the query. The preparation result will be used in place of
         the original query for all repetitions. If a dictionary is passed, all keys are assumed to be valid parameters to the
         `QueryPreparation` constructor.
+    training_data : Optional[TrainingData | TrainingDataRepository], optional
+        If any of the stages in the optimization pipeline requires training on data samples, this data has to be passed
+        here. This only applies if the stages have not been trained already. Data-driven and workload-driven stages will be
+        trained automatically without any explicit action needed by the user.
     timeout : Optional[float], optional
         The maximum time in seconds that the query is allowed to run. If the query exceeds this time, the execution is
         cancelled and the execution time is set to *Inf*. If this parameter is omitted, no timeout is enforced. Notice that
         timeouts require the database to implement `TimeoutSupport`.
     progressive_output : Optional[str  |  Path], optional
         If provided, results will be written to this file as soon as they are obtained. If the file already exists, it
-        will be appended. This is file is assumed to be a CSV file.
+        will be appended. Supported file formats are CSV, JSON, Parquet, and HDF. When writing to HDF, the output key must
+        be specified in the `output_args`.
+    output_args: Optional[dict], optional
+        Additional arguments to pass to the Pandas writer function for the progressive output file.
     logger : Optional[Callable[[str], None]  |  PredefLogger], optional
         Configures how progress should be logged. Depending on the specific argument, a number of different strategies are
         available:
@@ -934,8 +1100,8 @@ def execute_workload(
         - *query_repetition* indicates the current per-query repetition (in contrast to repetitions of the entire workload)
         - *query* contains the input query being executed. If the query was optimized or prepared, these modifications are
           **not** included here
-        - *status* indicates whether the query was executed successfully, or whether an error occurred during execution.
-          Possible values are "ok", "timeout", and "execution-error"
+        - *status* indicates whether the query was executed successfully, or whether an error occurred.
+          Possible values are "ok", "timeout", "optimization-error", and "execution-error"
         - *result_set*  is the actual result of the query. Scalar results are represented as-is. In case of an error this will
           be *None*
         - *exec_time* contains the time it took to execute the query (in seconds). This includes the entire time from
@@ -976,8 +1142,27 @@ def execute_workload(
     target_db = on if isinstance(on, Database) else on.target_database()
     optimizer = on if isinstance(on, OptimizationPipeline) else None
 
+    if optimizer is not None and optimizer.requires_data_training():
+        optimizer.train_on_database(target_db)
+    if optimizer is not None and optimizer.requires_workload_training():
+        optimizer.train_on_workload(queries, target_db)
+    if optimizer is not None and optimizer.requires_sample_training():
+        missing_training_data = training_data is None
+        fit_completed = optimizer.sample_fit_completed()
+        if missing_training_data and not fit_completed:
+            raise ValueError(
+                "Some optimization stages still need training data. "
+                "Make sure to supply applicable samples via the training_data parameter!"
+            )
+        elif not missing_training_data:
+            optimizer.train_on_samples(training_data)  # type: ignore
+        else:
+            # We have not received any training data, but the optimizer is also already trained.
+            # Everything is in order.
+            pass
+
     query_preparation = (
-        QueryPreparation(**query_preparation)
+        QueryPreparation(**query_preparation)  # type: ignore
         if isinstance(query_preparation, dict)
         else query_preparation
     )
@@ -1000,6 +1185,7 @@ def execute_workload(
         target_db=target_db,
         optimizer=optimizer,
         output=progressive_output,
+        output_args=output_args or {},
         workload_repetitions=workload_repetitions,
         per_query_repetitions=per_query_repetitions,
         shuffled=shuffled,
@@ -1089,7 +1275,8 @@ def prepare_export(results_df: pd.DataFrame) -> pd.DataFrame:
 
 
 def sort_results(
-    results_df: pd.DataFrame, by_column: str | tuple[str] = ("label", "exec_index")
+    results_df: pd.DataFrame,
+    by_column: str | tuple[str] = ("label", "exec_index"),  # type: ignore
 ) -> pd.DataFrame:
     """Provides a better sorting of the benchmark results in a data frame.
 

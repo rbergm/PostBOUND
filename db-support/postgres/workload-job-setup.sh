@@ -2,45 +2,43 @@
 
 set -e  # exit on error
 
-WD=$(pwd)
+WD="$(pwd)"
 DB_NAME="imdb"
 FORCE_CREATION="false"
 TARGET_DIR="../imdb_data"
 PG_CONN="-U $(whoami)"
-SKIP_FKEYS="false"
 SKIP_EXTENSIONS="false"
 SKIP_VACUUM="false"
 CLEANUP="false"
 
 show_help() {
-    RET=$1
+    RET="$1"
     echo "Usage: $0 <options>"
     echo "Allowed options:"
-    echo -e "-d | --dir <directory>\tspecifies the directory to store/load the IMDB data files, defaults to '../imdb_data'"
+    echo -e "-d | --dir <directory>\tspecifies the directory to store/load the IMDB data files, defaults to '$TARGET_DIR'"
     echo -e "-f | --force\t\tdelete existing instance of the database if necessary"
     echo -e "-t | --target <db name>\tname of the IMDB database, defaults to 'imdb'"
     echo -e "--pg-conn <connection>\tconnection string to the PostgreSQL server (server, port, user) if required, e.g. '-h localhost -U admin'"
-    echo -e "--no-fkeys\t\tdoes not load foreign key indexes to the database (includes both foreign key constraints as well as the actual indexes)"
     echo -e "--no-ext\t\tdoes not install any extensions"
     echo -e "--no-vacuum\t\tdoes not run VACUUM ANALYZE after the import"
     echo -e "--cleanup\t\tremove the data files after import"
-    exit $RET
+    exit "$RET"
 }
 
 attempt_pg_ext_install() {
-    EXTENSION=$1
-    AVAILABLE_EXTS=$(psql $PG_CONN $DB_NAME -t -c "SELECT name FROM pg_available_extensions" | grep "$EXTENSION" || true)
+    EXTENSION="$1"
+    AVAILABLE_EXTS="$(psql $PG_CONN $DB_NAME -t -c "SELECT name FROM pg_available_extensions" | grep "$EXTENSION" || true)"
     if [ -z "$AVAILABLE_EXTS" ] ; then
         echo ".. Extension $EXTENSION not available, skipping"
         return
     fi
-    psql $PG_CONN $DB_NAME -c "CREATE EXTENSION IF NOT EXISTS $EXTENSION;"
+    psql $PG_CONN "$DB_NAME" -c "CREATE EXTENSION IF NOT EXISTS $EXTENSION;"
 }
 
 while [ $# -gt 0 ] ; do
     case $1 in
         -d|--dir)
-            TARGET_DIR=$2
+            TARGET_DIR="$2"
             shift
             shift
             ;;
@@ -49,16 +47,16 @@ while [ $# -gt 0 ] ; do
             shift
             ;;
         -t|--target)
-            DB_NAME=$2
+            DB_NAME="$2"
             shift
             shift
             ;;
         --no-fkeys)
-            SKIP_FKEYS="true"
+            echo "--no-fkeys is obsolete. Foreign keys are always created." >&2
             shift
             ;;
         --pg-conn)
-            PG_CONN=$2
+            PG_CONN="$2"
             shift
             shift
             ;;
@@ -84,33 +82,29 @@ while [ $# -gt 0 ] ; do
     esac
 done
 
-EXISTING_DBS=$(psql $PG_CONN -l | grep " $DB_NAME " || true)
+EXISTING_DBS="$(psql $PG_CONN -l | grep " $DB_NAME " || true)"
 
 echo ".. Working directory is $WD"
 
-if [ ! -z "$EXISTING_DBS" ] && [ $FORCE_CREATION = "false" ] ; then
+if [ ! -z "$EXISTING_DBS" ] && [ "$FORCE_CREATION" = "false" ] ; then
     echo ".. IMDB exists, doing nothing"
     exit 0
 fi
 
 if [ ! -z "$EXISTING_DBS" ] ; then
-    dropdb $PG_CONN $DB_NAME
+    dropdb $PG_CONN "$DB_NAME"
 fi
 
 echo ".. IMDB source directory is $TARGET_DIR"
 
-if [ -d $TARGET_DIR ] ; then
+SRC_FILE="$TARGET_DIR/imdb_dump.pg"
+if [ -f "$SRC_FILE" ] ; then
     echo ".. Re-using existing IMDB input data"
 else
     echo ".. IMDB source directory does not exist, re-creating"
     echo ".. Fetching IMDB data"
-    mkdir $TARGET_DIR
-    curl -k -L -o $TARGET_DIR/csv.zip "https://db4701.inf.tu-dresden.de:8443/index.php/s/H7TKaEBr5JmdaNA/download/csv.zip"
-    curl -k -L -o $TARGET_DIR/create.sql "https://db4701.inf.tu-dresden.de:8443/index.php/s/e35mDHTCZx88y6p/download/create.sql"
-    curl -k -L -o $TARGET_DIR/import.sql "https://db4701.inf.tu-dresden.de:8443/index.php/s/bNzMwSpmQESRz6P/download/import.sql"
-
-    echo ".. Extracting IMDB data"
-    unzip $TARGET_DIR/csv.zip -d $TARGET_DIR
+    mkdir -p "$TARGET_DIR"
+    curl -k -L -o "$SRC_FILE" "https://zenodo.org/records/19205561/files/imdb_dump.pg?download=1"
 fi
 
 echo ".. Creating IMDB database"
@@ -119,37 +113,33 @@ createdb $PG_CONN $DB_NAME
 if [ $SKIP_EXTENSIONS == "false" ] ; then
     attempt_pg_ext_install "pg_buffercache"
     attempt_pg_ext_install "pg_prewarm"
-    attempt_pg_ext_install "pg_cooldown"
     attempt_pg_ext_install "pg_hint_plan"
 else
     echo ".. Skipping extension generation"
 fi
 
-echo ".. Loading IMDB database schema"
-psql $PG_CONN $DB_NAME -f $TARGET_DIR/create.sql
-
-echo ".. Inserting IMDB data into database"
-cd $TARGET_DIR
-psql $PG_CONN $DB_NAME -f import.sql
-
-if [ $SKIP_FKEYS == "false" ] ; then
-	echo ".. Creating IMDB foreign key indices"
-	psql $PG_CONN $DB_NAME -f $WD/workload-job-fk-indexes.sql
+echo ".. Loading IMDB dump"
+echo "   This might raise some errors due to missing or existing extensions. It is generally safe to ignore these."
+OS_TYPE="$(uname)"
+if [[ "$OS_TYPE" = "Darwin" ]]; then
+    NCORES="$(sysctl -n hw.logicalcpu)"
+elif [[ "$OS_TYPE" = "Linux" ]]; then
+    NCORES="$(nproc)"
 else
-	echo ".. Skipping IMDB foreign key creation"
+    NCORES=1
 fi
+pg_restore $PG_CONN -d "$DB_NAME" -j "$NCORES" "$SRC_FILE"
 
 if [ $SKIP_VACUUM == "false" ] ; then
     echo ".. Vacuuming database"
-    psql $PG_CONN $DB_NAME -c "VACUUM ANALYZE;"
+    psql $PG_CONN "$DB_NAME" -c "VACUUM ANALYZE;"
 else
     echo ".. Skipping vacuuming"
 fi
 
 if [ $CLEANUP == "true" ] ; then
     echo ".. Removing data files"
-    rm -rf $TARGET_DIR
+    rm -rf "$SRC_FILE"
 fi
 
 echo ".. Done"
-cd $WD
