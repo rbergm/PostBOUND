@@ -110,7 +110,8 @@ pg_instance.execute_query(hinted_query)
   4. The SSB queries can currently not be loaded from the workloads module.
 
 ## 💀 Breaking changes
-- _None_
+- Renamed `PreciseCardinalityHintGenerator` to `PreciseCardinalities` to align with the other pre-defined cardinality
+  "estimators".
 
 ## ⚠️ Deprecations
 - The old `QueryPrepration` API using *analyze=True*, etc. is now deprecated in favor of the more flexible *projection*
