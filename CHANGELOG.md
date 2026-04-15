@@ -12,6 +12,10 @@ The [history](HISTORY.md) contains the changelogs of older PostBOUND releases.
 
 # Version 0.21.1
 
+## 📰 Updates
+
+- Added an `extract_subquery()` transformation as a saner alternative to `extract_query_fragment()`.
+
 ## 🏥 Fixes
 
 - Fixed hinting a plan for pg_lab messing up the placement of parallel workers.

@@ -310,6 +310,15 @@ def extract_query_fragment(
 ) -> Optional[SetQuery]: ...
 
 
+@overload
+def extract_query_fragment(
+    source_query: SqlQuery,
+    referenced_tables: TableReference | Iterable[TableReference],
+    *,
+    projection: Literal["keep", "star", "*", "count_star"] = "keep",
+) -> Optional[SqlQuery]: ...
+
+
 def extract_query_fragment(
     source_query,
     referenced_tables: TableReference | Iterable[TableReference],
@@ -332,8 +341,9 @@ def extract_query_fragment(
 
     Parameters
     ----------
-    source_query : SelectQueryType
-        The query that should be transformed
+    source_query : ImplicitSqlQuery | SetQuery
+        The query that should be transformed. Note that the current implementation only supports implicit queries and set
+        queries.
     referenced_tables : TableReference | Iterable[TableReference]
         The tables that should be extracted
     projection : Literal["keep", "star", "*", "count_star"], optional
@@ -343,7 +353,7 @@ def extract_query_fragment(
 
     Returns
     -------
-    Optional[SelectQueryType]
+    Optional[ImplicitSqlQuery | SetQuery]
         A query that only consists of those parts of the `source_query`, that reference (a subset of) the `referenced_tables`.
         If there is no such subset, ``None`` is returned.
 
@@ -351,11 +361,13 @@ def extract_query_fragment(
     --------
     The current implementation only works for `SetQuery` and `ImplicitSqlQuery` instances. If the `source_query` is not of one
     of these types (or contains subqueries that are not of these types), a `ValueError` is raised.
+
+    See Also
+    --------
+    extract_subquery : A wrapper with sane defaults. Use this whenever possible.
     """
-    if not isinstance(source_query, (ImplicitSqlQuery, SetQuery)):
-        raise ValueError(
-            "Fragment extraction only works for implicit queries and set queries"
-        )
+    if isinstance(source_query, ExplicitSqlQuery):
+        source_query = explicit_to_implicit(source_query)
 
     referenced_tables: set[TableReference] = set(util.enlist(referenced_tables))
     if not referenced_tables.issubset(source_query.tables()):
@@ -479,6 +491,23 @@ def extract_query_fragment(
         limit_clause=source_query.limit_clause,
         cte_clause=cte_clause,
     )
+
+
+def extract_subquery(
+    query: SqlQuery, intermediate: TableReference | Iterable[TableReference]
+) -> SqlQuery:
+    """Extracts a subquery from a given query based on a subset of its tables.
+
+    The subquery consists of exactly those predicates (join and filter) of the original query that reference the given tables.
+    This is mostly a convenience wrapper around `extract_query_fragment` with the following rules:
+
+    - if the subquery extraction fails, we raise an error
+    - the subquery will always be a *SELECT \\** query
+    """
+    subquery = extract_query_fragment(query, intermediate, projection="star")
+    if subquery is None:
+        raise ValueError("Could not extract subquery for the given tables")
+    return subquery
 
 
 def _default_subquery_name(tables: Iterable[TableReference]) -> str:
