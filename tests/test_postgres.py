@@ -72,16 +72,6 @@ class StatsSchemaTests(unittest.TestCase):
     # TODO
 
 
-class StatsHintingTests(unittest.TestCase):
-    def setUp(self) -> None:
-        self.pg_instance = pb.postgres.connect(
-            config_file=f"{pg_connect_dir}/.psycopg_connection_stats", private=True
-        )
-        self.stats = pb.workloads.stats()
-
-    # TODO
-
-
 @regression_suite.skip_if_no_db(f"{pg_connect_dir}/.psycopg_connection_job")
 class JobHintingTests(regression_suite.PlanTestCase):
     def setUp(self) -> None:
@@ -156,3 +146,34 @@ class StatsHintingTests(regression_suite.PlanTestCase):
                 )
                 explicit_plan = self.pg_instance.optimizer().query_plan(hinted_query)
                 self.assertEqual(native_plan, explicit_plan)
+
+    def test_pglab_parallel(self) -> None:
+        if self.pg_instance.hinting().backend != "pg_lab":
+            self.skipTest("pg_lab is not available")
+
+        posts = pb.TableReference("posts", "p")
+        users = pb.TableReference("users", "u")
+        query = pb.parse_query(
+            "SELECT * FROM posts p JOIN users u ON u.id = p.owneruserid"
+        )
+        plan = pb.QueryPlan(
+            "Nested Loop",
+            operator=pb.JoinOperator.NestedLoopJoin,
+            children=[
+                pb.QueryPlan(
+                    "Gather",
+                    parallel_workers=2,
+                    children=pb.QueryPlan(
+                        "Seq Scan",
+                        operator=pb.ScanOperator.SequentialScan,
+                        base_table=posts,
+                    ),
+                ),
+                pb.QueryPlan(
+                    "Index Scan", operator=pb.ScanOperator.IndexScan, base_table=users
+                ),
+            ],
+        )
+
+        hinted_plan = self.pg_instance.explain(query, plan=plan)
+        self.assertQueryExecutionPlansEqual(plan, hinted_plan)

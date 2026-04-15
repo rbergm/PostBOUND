@@ -10,6 +10,16 @@ The [history](HISTORY.md) contains the changelogs of older PostBOUND releases.
 
 ---
 
+# Version 0.21.1
+
+## 🏥 Fixes
+
+- Fixed hinting a plan for pg_lab messing up the placement of parallel workers.
+  The bug occurred when a join computed its outer child in parallel. Instead of placing the parallel workers on that child,
+  the hinting process placed them on the inner child.
+
+---
+
 # Version 0.21.0
 
 This is a rather large release with a lot of new features and improvements. Some highlights include:

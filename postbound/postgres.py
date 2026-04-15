@@ -2478,61 +2478,120 @@ def _iter_plan_bfs(plan: QueryPlan) -> Generator[QueryPlan, None, None]:
         yield node
 
 
+def _process_pglab_upperrel(
+    node: QueryPlan, *, used_parallel: bool, par_workers: int
+) -> list[str]:
+    """_summary_
+
+    Assumptions: we are in an upperrel. Parallel workers are set.
+
+    Parameters
+    ----------
+    node : QueryPlan
+        _description_
+    used_parallel : bool
+        _description_
+    par_workers : int
+        _description_
+
+    Returns
+    -------
+    list[str]
+        _description_
+    """
+
+
 def _generate_pglab_plan(
-    plan: QueryPlan,
-) -> Hint:
-    hints: list[str] = ["Config(plan_mode=full)"]
-    join_order = _extract_plan_join_order(plan)
-    hints.append(f"JoinOrder({join_order})")
+    node: QueryPlan,
+    *,
+    par_workers: int = 0,
+    used_parallel: bool = False,
+    in_upperrel: bool = True,
+    level: int = 0,
+) -> list[str]:
+    if level == 0:
+        join_order = _extract_plan_join_order(node)
+        hints: list[str] = ["Config(plan_mode=full)", f"JoinOrder({join_order})"]
+    else:
+        hints: list[str] = []
 
-    used_parallel = False
-    in_upperrel = True
-    par_workers: Optional[int] = None
-    for node in _iter_plan_bfs(plan):
-        if node.is_scan() or node.is_join():
-            in_upperrel = False
+    indentation = " " * level
+    hintable_node = node.is_scan() or node.is_join()
+    in_upperrel = in_upperrel and not hintable_node
+    par_workers = node.parallel_workers or par_workers
 
-        par_workers = (
-            node.parallel_workers if node.parallel_workers > 0 else par_workers
-        )
-        if in_upperrel and par_workers and not used_parallel:
-            hints.append(f"Result(workers={par_workers})")
-            used_parallel = True
-            par_workers = None
-        elif in_upperrel and par_workers and used_parallel:
+    if par_workers and in_upperrel:
+        if used_parallel:
             warnings.warn(
-                "Cannot set multiple parallel hints for Postgres. Ignoring additional hints.",
-                category=HintWarning,
-                stacklevel=3,
-            )
-
-        if node.operator is None:
-            continue
-        operator = PGLabOptimizerHints.get(node.operator)
-        if not operator:
-            continue
-        intermediate = " ".join(tab.identifier() for tab in node.tables())
-
-        if par_workers and not used_parallel:
-            metadata = f" (workers={par_workers})"
-            par_workers = None
-            used_parallel = True
-        elif par_workers and used_parallel:
-            metadata = ""
-            warnings.warn(
-                "Cannot set multiple parallel hints for Postgres. Ignoring additional hints.",
+                "Plan contains multiple parallel hints. This is not supported by Postgres. Ignoring additional hints.",
                 category=HintWarning,
                 stacklevel=3,
             )
         else:
-            metadata = ""
-        hints.append(f"{operator}({intermediate}{metadata})")
+            hints.append(f"Result(workers={par_workers})")
 
-        card = node.actual_cardinality or node.estimated_cardinality
-        if card.is_valid():
-            hints.append(f"Card({intermediate} #{card})")
+        for child in node.children:
+            hints.extend(
+                _generate_pglab_plan(
+                    child,
+                    par_workers=0,
+                    used_parallel=True,
+                    in_upperrel=True,
+                    level=0,
+                )
+            )
 
-    hints = [f"  {line}" for line in hints]
+        return hints
+
+    operator = PGLabOptimizerHints.get(node.operator) if node.operator else None
+    if operator is None:
+        for child in node.children:
+            hints.extend(
+                _generate_pglab_plan(
+                    child,
+                    par_workers=par_workers,
+                    used_parallel=used_parallel,
+                    in_upperrel=in_upperrel,
+                    level=level,
+                )
+            )
+        return hints
+
+    metadata_elems: list[str] = []
+    if par_workers and used_parallel:
+        warnings.warn(
+            "Plan contains multiple parallel hints. This is not supported by Postgres. Ignoring additional hints.",
+            category=HintWarning,
+            stacklevel=3,
+        )
+    elif par_workers and not used_parallel:
+        metadata_elems.append(f"workers={par_workers}")
+        used_parallel = True
+        par_workers = 0
+
+    intermediate = " ".join(tab.identifier() for tab in node.tables())
+    metadata = " (" + " ".join(metadata_elems) + ")" if metadata_elems else ""
+    hints.append(f"{indentation}{operator}({intermediate}{metadata})")
+
+    if node.is_scan():
+        return hints
+
+    for child in node.children:
+        hints.extend(
+            _generate_pglab_plan(
+                child,
+                par_workers=par_workers,
+                used_parallel=used_parallel,
+                in_upperrel=in_upperrel,
+                level=level + 1,
+            )
+        )
+
+    return hints
+
+
+def _expand_pglab_hints(raw_hints: list[str]) -> Hint:
+    hints = [f"  {line}" for line in raw_hints]
     hints.insert(0, "/*=pg_lab=")
     hints.append(" */")
     return Hint("", "\n".join(hints))
@@ -2647,7 +2706,8 @@ class PostgresHintService(HintService):
                     pg_instance=self._postgres_db,
                 )
             case "pg_lab" if plan is not None:
-                hints = _generate_pglab_plan(plan)
+                raw_hints = _generate_pglab_plan(plan)
+                hints = _expand_pglab_hints(raw_hints)
             case "pg_lab":
                 hints = _generate_pglab_hints(
                     join_order,
