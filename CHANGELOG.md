@@ -1,16 +1,24 @@
 # Changelog
 
 Version numbers are composed of three components, i.e. _major_._minor_._patch_
-As a rough guideline, patch releases are just for fixing bugs or adding minor details (e.g. a new default parameter to
-some function), minor releases change slightly larger parts of the framework or add significant new functionality (e.g.
-a new optimization pipeline or support for an SQL feature). Major releases fundamentally shift how the framework is used
-and indicate stability. Since we are not ready for the 1.0 release yet, this does not matter right now.
+As a rough guideline, patch releases are just for fixing bugs or adding minor details
+(e.g. a new default parameter to some function), minor releases change slightly
+larger parts of the framework or add significant new functionality (e.g. a new
+optimization pipeline or support for an SQL feature). Major releases fundamentally
+shift how the framework is used and indicate stability. Since we are not ready
+for the 1.0 release yet, this does not matter right now.
 
 The [history](HISTORY.md) contains the changelogs of older PostBOUND releases.
 
 ---
 
 # Version 0.21.1
+
+## 🐣 New features
+
+- Added a `pre_exec_callback` parameter to the benchmarking utilities. This is
+  called right before the query execution.
+- Added a lot of convenience functions to manually create QAL objects
 
 ## 📰 Updates
 
@@ -19,8 +27,32 @@ The [history](HISTORY.md) contains the changelogs of older PostBOUND releases.
 ## 🏥 Fixes
 
 - Fixed hinting a plan for pg_lab messing up the placement of parallel workers.
-  The bug occurred when a join computed its outer child in parallel. Instead of placing the parallel workers on that child,
-  the hinting process placed them on the inner child.
+  The bug occurred when a join computed its outer child in parallel. Instead of
+  placing the parallel workers on that child, the hinting process placed them on
+  the inner child.
+
+## ⚠️ Deprecations
+
+- The old `QueryPrepration` API using _analyze=True_, etc. is now deprecated in
+  favor of the more flexible _projection_ and _output_  parameters. However, we
+  currently have no plans to remove the old API.
+- The _ues_, _tonic_, _presets_, and _experiments_ module are now deprecated and
+  will be moved to the separate optimizer repository for version 0.22.0.
+- `Workload.read()` is deprecated in favor of `read_workload()`. The old method
+  will be removed in version 0.22.0.
+  This change unifies the workload API and consistently uses `read_workload_XXX`
+  functions for input.
+- `CompoundPredicate` will no longer be used to represent NOT predicates from
+  version 0.22.0 onwards. Instead, a dedicated `NotPredicate` class will be introduced.
+- `MathExpression`  will no longer accept sequences of expressions as the second
+  argument. To encode operations involving more than 2 operands, a hierarchy of
+  binary math expressions should be used instead.
+- Databases will no longer support the database cache out-of-the-box. Instead,
+  the cache will become a proper high-level component that can be used with any
+  database. This change is planned for version 0.22.0
+- Renamed the _exec\_callback_ parameter in `bench.execute_workload` to `post_exec_callback`.
+  This should prevent confusion regarding the precise timing of the callback execution,
+  especially since we have now also introduced a _pre\_exec\_callback_.
 
 ---
 

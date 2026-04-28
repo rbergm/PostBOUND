@@ -29,6 +29,7 @@ class MathOperator(enum.Enum):
     Divide = "/"
     Modulo = "%"
     Concatenate = "||"
+    TrueDiv = "//"
 
 
 class LogicalOperator(enum.Enum):
@@ -522,7 +523,29 @@ class MathExpression(SqlExpression):
     second_argument : SqlExpression | Sequence[SqlExpression] | None, optional
         Additional arguments. For the most common case of a binary expression, this will be exactly one argument.
         Defaults to *None* to accomodate for unary expressions.
+
+        .. deprecated:: 0.21.1
+            Passing a sequence of expressions is deprecated and will be removed in v0.22.0.
+            To encode operations involving more than two operands, a hierarchy of binary expressions
+            should be used instead.
     """
+
+    @staticmethod
+    def create_binary(
+        lhs: Any, operator: MathOperator | str, rhs: Any
+    ) -> MathExpression:
+        """Shortcut method to create a new math expression.
+
+        Lhs and rhs are processed depending on their actual types:
+
+        - `SqlExpression` instances are left as-is
+        - `ColumnReference` instances are mapped to `ColumnExpression`s
+        - Anything else is wrapped in a `StaticValueExpression`
+        """
+        if isinstance(operator, str):
+            operator = MathOperator(operator)
+        lhs, rhs = as_expression(lhs), as_expression(rhs)
+        return MathExpression(operator, lhs, rhs)
 
     def __init__(
         self,
@@ -530,8 +553,16 @@ class MathExpression(SqlExpression):
         first_argument: SqlExpression,
         second_argument: SqlExpression | Sequence[SqlExpression] | None = None,
     ) -> None:
+        if isinstance(second_argument, Sequence):
+            warnings.warn(
+                "Passing a sequence of expressions is deprecated and will be removed in "
+                "v0.22.0. To encode operations involving more than two operands, a hierarchy of "
+                "binary expressions should be used instead.",
+                category=DeprecationWarning,
+            )
         if not operator or not first_argument:
             raise ValueError("Operator and first argument are required!")
+
         self._operator = operator
         self._first_arg = first_argument
 
@@ -826,6 +857,8 @@ class FunctionExpression(SqlExpression):
         column: ColumnReference
         | SqlExpression
         | Iterable[SqlExpression] = StarExpression(),
+        *,
+        distinct: bool = False,
     ) -> FunctionExpression:
         """Shortcut method to create a new *COUNT()*  expression over (one or multiple) columns.
 
@@ -838,7 +871,7 @@ class FunctionExpression(SqlExpression):
                 args = [column]
             case Iterable():
                 args = list(column)
-        return FunctionExpression("count", args)
+        return FunctionExpression("count", args, distinct=distinct)
 
     @staticmethod
     def create_max(
@@ -856,7 +889,7 @@ class FunctionExpression(SqlExpression):
 
     @staticmethod
     def create_min(
-        column: SqlExpression | Iterable[SqlExpression],
+        column: ColumnReference | SqlExpression | Iterable[SqlExpression],
     ) -> FunctionExpression:
         """Shortcut method to create a new *MIN()*  expression over (one or multiple) columns."""
         match column:
@@ -1310,8 +1343,9 @@ class WindowExpression(SqlExpression):
 
     Parameters
     ----------
-    window_function : FunctionExpression
-        The window function to be applied.
+    window_function : FunctionExpression | str
+        The window function to be applied. If this is a string, it will be wrapped in a plain
+        function expression.
     partitioning : Optional[Sequence[SqlExpression]], optional
         The expressions used for partitioning the window. Defaults to None.
     ordering : Optional[OrderBy], optional
@@ -1322,12 +1356,14 @@ class WindowExpression(SqlExpression):
 
     def __init__(
         self,
-        window_function: FunctionExpression,
+        window_function: FunctionExpression | str,
         *,
         partitioning: Optional[Sequence[SqlExpression]] = None,
         ordering: Optional[OrderBy] = None,
         filter_condition: Optional[AbstractPredicate] = None,
     ) -> None:
+        if isinstance(window_function, str):
+            window_function = FunctionExpression(window_function)
         self._window_function = window_function
         self._partitioning = tuple(partitioning) if partitioning else tuple()
         self._ordering = ordering
@@ -2545,7 +2581,7 @@ class BinaryPredicate(BasePredicate):
 
     @property
     def operation(self) -> SqlOperator:
-        return self._operation  # type: ignore[return-value]
+        return self._operation  # type: ignore
 
     @property
     def first_argument(self) -> SqlExpression:
@@ -5492,7 +5528,7 @@ class ValuesWithQuery(WithQuery):
         columns: Optional[Iterable[str | ColumnReference]] = None,
         materialized: Optional[bool] = None,
     ) -> None:
-        self._values = values
+        self._values = list(values)
         self._materialized = materialized
 
         if isinstance(target_name, TableReference):
@@ -5551,7 +5587,7 @@ class ValuesWithQuery(WithQuery):
             return set()
         return {ColumnReference(col, self.target_table) for col in self._columns}
 
-    def output_columns(self) -> Sequence[ColumnExpression]:
+    def output_columns(self) -> Sequence[ColumnReference]:
         """Provides the columns that form the result relation of this CTE.
 
         Returns
@@ -5562,7 +5598,8 @@ class ValuesWithQuery(WithQuery):
         if self._columns:
             return self._columns
         return [
-            ColumnExpression.of(f"column_{i + 1}") for i in range(len(self._values[0]))
+            ColumnReference(f"column_{i + 1}", self.target_table)
+            for i in range(len(self._values[0]))
         ]
 
     def iterexpressions(self) -> Iterable[SqlExpression]:
@@ -5623,6 +5660,11 @@ class CommonTableExpression(BaseClause):
     The `referenced_tables()` method does not include the CTE aliases. Likewise, the `aliases()` method provides all the
     aliases, but not the tables that are referenced within the CTEs.
     """
+
+    @staticmethod
+    def create_for(query: SqlQuery, target_name: str) -> CommonTableExpression:
+        """Shortcut method to create a CTE clause with a single query."""
+        return CommonTableExpression([WithQuery(query, target_name)])
 
     def __init__(self, with_queries: Iterable[WithQuery], *, recursive: bool = False):
         self._with_queries = tuple(with_queries)
@@ -5773,6 +5815,27 @@ class BaseProjection:
         return BaseProjection(StarExpression())
 
     @staticmethod
+    def create_count(
+        column: ColumnReference | SqlExpression,
+        *,
+        target_name: str = "",
+        distinct: bool = False,
+    ) -> BaseProjection:
+        pass
+
+    @staticmethod
+    def create_min(
+        column: ColumnReference | SqlExpression, *, target_name: str = ""
+    ) -> BaseProjection:
+        pass
+
+    @staticmethod
+    def create_max(
+        column: ColumnReference | SqlExpression, *, target_name: str = ""
+    ) -> BaseProjection:
+        pass
+
+    @staticmethod
     def column(col: ColumnReference, target_name: str = "") -> BaseProjection:
         """Shortcut method to create a projection for a specific column.
 
@@ -5888,10 +5951,6 @@ class Select(BaseClause):
     """
 
     @staticmethod
-    def count() -> Select:  # TODO: optional expression/column(s), distinct
-        pass
-
-    @staticmethod
     def count_star(*, distinct: Iterable[SqlExpression] | bool = False) -> Select:
         """Shortcut method to create a ``SELECT COUNT(*)`` clause.
 
@@ -5930,7 +5989,8 @@ class Select(BaseClause):
     @staticmethod
     def create_for(
         columns: ColumnReference
-        | Iterable[ColumnReference],  # TODO: optional expression(s)
+        | SqlExpression
+        | Iterable[ColumnReference | SqlExpression],
         *,
         distinct: Iterable[SqlExpression] | bool = False,
     ) -> Select:
@@ -5953,7 +6013,12 @@ class Select(BaseClause):
             The clause
         """
         columns = util.enlist(columns)
-        target_columns = [BaseProjection.column(column) for column in columns]
+        target_columns = [
+            BaseProjection.column(column)
+            if isinstance(column, ColumnReference)
+            else BaseProjection(column)
+            for column in columns
+        ]
         return Select(target_columns, distinct=distinct)
 
     def __init__(

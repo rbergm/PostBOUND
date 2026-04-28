@@ -1,5 +1,3 @@
-# We name this file _duckdb instead of duckdb to avoid conflicts with the official duckdb package. Do not change this!
-# The module is available in the __init__ of the db package under the duckdb name. This solves our problems for now.
 from __future__ import annotations
 
 import concurrent.futures

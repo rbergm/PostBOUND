@@ -361,7 +361,8 @@ class _BenchmarkConfig:
     shuffled: bool
     query_prep: QueryPreparation | None
     timeout: float | None
-    exec_callback: Callable[[ExecutionResult], None] | None
+    pre_exec_callback: Callable[[SqlQuery], None] | None
+    post_exec_callback: Callable[[ExecutionResult], None] | None
     log: _LoggerImpl
     error_action: ErrorHandling
     start_time: datetime | None = None
@@ -930,6 +931,9 @@ def _exec_ctl_loop(
     """
     cfg.log.next_query_rep()
 
+    if cfg.pre_exec_callback is not None:
+        cfg.pre_exec_callback(query)
+
     db_config = cfg.target_db.describe()
     sample.start_execution()
     match _execute_query(
@@ -953,8 +957,8 @@ def _exec_ctl_loop(
     if cfg.output and sample.last_successful():
         sample.write_progressive(cfg.output, cfg.output_args)
 
-    if cfg.exec_callback and sample.last_successful():
-        cfg.exec_callback(sample.last_result())
+    if cfg.post_exec_callback and sample.last_successful():
+        cfg.post_exec_callback(sample.last_result())
 
 
 def _workload_ctl_loop(
@@ -1028,6 +1032,8 @@ def execute_workload(
     training_data: Optional[TrainingData | TrainingDataRepository] = None,
     timeout: Optional[float] = None,
     exec_callback: Optional[Callable[[ExecutionResult], None]] = None,
+    pre_exec_callback: Optional[Callable[[SqlQuery], None]] = None,
+    post_exec_callback: Optional[Callable[[ExecutionResult], None]] = None,
     repetition_callback: Optional[Callable[[int], None]] = None,
     progressive_output: Optional[str | Path] = None,
     output_args: Optional[dict] = None,
@@ -1071,6 +1077,17 @@ def execute_workload(
         The maximum time in seconds that the query is allowed to run. If the query exceeds this time, the execution is
         cancelled and the execution time is set to *Inf*. If this parameter is omitted, no timeout is enforced. Notice that
         timeouts require the database to implement `TimeoutSupport`.
+    exec_callback : Optional[Callable[[ExecutionResult], None]], optional
+        An optional callback that is executed after each query execution.
+
+        .. deprecated:: v0.21.1
+            This callback is deprecated in favor of post_exec_callback. Both are functionally equivalent. This is really
+            just a renaming to not cause confusion regarding the precise moment when the callback is executed.
+    pre_exec_callback : Optional[Callable[[SqlQuery], None]], optional
+        An optional callback that is executed right before each query execution. This query includes all hinted optimization
+        decisions (if any).
+    post_exec_callback : Optional[Callable[[ExecutionResult], None]], optional
+        An optional callback that is executed right after each query execution.
     progressive_output : Optional[str  |  Path], optional
         If provided, results will be written to this file as soon as they are obtained. If the file already exists, it
         will be appended. Supported file formats are CSV, JSON, Parquet, and HDF. When writing to HDF, the output key must
@@ -1168,6 +1185,20 @@ def execute_workload(
     )
     progressive_output = Path(progressive_output) if progressive_output else None
 
+    if exec_callback is not None:
+        warnings.warn(
+            "exec_callback is deprecated. "
+            "Use the functionally equivalent post_exec_callback instead.",
+            category=DeprecationWarning,
+        )
+        if post_exec_callback is not None:
+            raise ValueError(
+                "Cannot specify both exec_callback and post_exec_callback. "
+                "Use post_exec_callback and remove exec_callback from your code. "
+                "Both are functionally equivalent."
+            )
+        post_exec_callback = exec_callback
+
     log: _LoggerImpl
     if logger == "tqdm":
         log = _TqdmLogger(
@@ -1191,7 +1222,8 @@ def execute_workload(
         shuffled=shuffled,
         timeout=timeout,
         query_prep=query_preparation,
-        exec_callback=exec_callback,
+        pre_exec_callback=pre_exec_callback,
+        post_exec_callback=post_exec_callback,
         log=log,
         error_action=error_action,
     )
