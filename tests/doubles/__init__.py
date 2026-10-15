@@ -36,6 +36,7 @@ from ._doubles import (
     StaticSchema,
     UnexpectedQueryError,
     column_spec,
+    foreign_key_spec,
 )
 
 __all__ = [
@@ -48,4 +49,5 @@ __all__ = [
     "StaticSchema",
     "UnexpectedQueryError",
     "column_spec",
+    "foreign_key_spec",
 ]

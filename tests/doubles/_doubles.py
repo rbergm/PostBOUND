@@ -3,20 +3,28 @@
 from __future__ import annotations
 
 import re
-from collections.abc import Iterable, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any
 
 from postbound import Cardinality, Cost, QueryPlan, util
-from postbound._core import BoundColumnReference, ColumnReference, PhysicalOperator, TableReference
+from postbound._core import (
+    BoundColumnReference,
+    ColumnReference,
+    PhysicalOperator,
+    TableReference,
+    UnboundColumnError,
+)
 from postbound._hints import HintType, JoinTree, PhysicalOperatorAssignment, PlanParameterization
 from postbound.db import (
     Cursor,
     Database,
     DatabaseSchema,
+    ForeignKeyRef,
     HintService,
     MostCommonValues,
     OptimizerInterface,
+    PrimaryKeyRef,
     ResultSet,
     StatisticsCatalog,
 )
@@ -164,6 +172,10 @@ class ScriptedCursor(Cursor):
 class column_spec:
     """Declarative description of one column, for use with `StaticSchema`.
 
+    The flags describe *single-column* properties. Several columns of the same table that carry ``primary_key=True``
+    together form a composite primary key. Composite UNIQUE constraints, foreign keys and indexes are declared on
+    the `StaticSchema` itself.
+
     Attributes
     ----------
     name : str
@@ -173,9 +185,11 @@ class column_spec:
     nullable : bool, optional
         Whether the column accepts *NULL*. Defaults to *True*.
     primary_key : bool, optional
-        Whether the column is the table's primary key. Implies an index.
+        Whether the column is (part of) the table's primary key. Implies an index.
     indexed : bool, optional
         Whether a secondary index exists on the column.
+    unique : bool, optional
+        Whether the column carries a UNIQUE constraint of its own. Implies an index.
     references : str, optional
         ``"table.column"`` that this column has a foreign key to.
     """
@@ -185,22 +199,65 @@ class column_spec:
     nullable: bool = True
     primary_key: bool = False
     indexed: bool = False
+    unique: bool = False
     references: str | None = None
+
+
+@dataclass(frozen=True)
+class foreign_key_spec:
+    """Declarative description of a (possibly composite) foreign key, for use with `StaticSchema`.
+
+    Attributes
+    ----------
+    table : str
+        The referencing table.
+    columns : Sequence[str]
+        The foreign key columns of `table`.
+    referenced_table : str
+        The referenced table.
+    referenced_columns : Sequence[str]
+        The referenced columns. The i-th referenced column matches the i-th foreign key column.
+    """
+
+    table: str
+    columns: Sequence[str]
+    referenced_table: str
+    referenced_columns: Sequence[str]
 
 
 class StaticSchema(DatabaseSchema):
     """A `DatabaseSchema` built from a declarative spec instead of a live catalog.
 
-    Only the leaf lookups are overridden. Everything composed on top of them -- ``__getitem__``, ``has_index``,
-    ``as_graph``, ``join_equivalence_keys``, ``join_equivalence_classes``, ``lookup_column`` -- runs the real
-    implementation, so those stay genuinely under test.
+    Only the leaf lookups (``tables``, ``columns``, ``is_view``, ``is_primary_key``, ``primary_key_of``,
+    ``is_unique``, ``all_foreign_keys_on``, ``all_indexes_on``, ``datatype``, ``is_nullable``) are overridden.
+    Everything composed on top of them -- ``__getitem__``, ``foreign_keys_on``, ``has_index``,
+    ``has_secondary_index``, ``indexes_on``, ``as_graph``, ``join_equivalence_keys``,
+    ``join_equivalence_classes``, ``lookup_column`` -- runs the real implementation, so those stay genuinely under
+    test.
 
-    This generalizes the ad-hoc ``MockSchemaLookup`` that `tests/test_qal.py` defines inline.
+    The double mimics a typical Postgres catalog: primary keys and UNIQUE constraints are backed by an index
+    (``<table>_pkey``, ``<table>_<cols>_key``), foreign keys are *not* (unless an index is declared explicitly).
+    Like the real implementations, the leaf lookups are insensitive to table aliases and the order of columns passed
+    to the multi-column predicates (``is_primary_key``, ``is_unique``).
 
     Parameters
     ----------
     tables : dict[str, Iterable[column_spec | str]]
         Maps a table name to its columns. A bare string is shorthand for a nullable integer column.
+    primary_keys : dict[str, Sequence[str]], optional
+        Composite primary keys, keyed by table. The column order is the order of the key definition. Must not be
+        combined with ``primary_key=True`` flags on the columns of the same table.
+    foreign_keys : Iterable[foreign_key_spec], optional
+        Foreign keys (typically composite ones) in addition to the ``references`` of the individual columns.
+    unique : dict[str, Iterable[Sequence[str]]], optional
+        Composite UNIQUE constraints, keyed by table.
+    indexes : dict[str, dict[str, Sequence[str]]], optional
+        Additional named secondary indexes (typically composite ones), keyed by table and index name.
+
+    Raises
+    ------
+    ValueError
+        If the constraints refer to unknown tables or columns, or if a table has two primary key definitions.
 
     Examples
     --------
@@ -214,16 +271,82 @@ class StaticSchema(DatabaseSchema):
     True
     """
 
-    def __init__(self, tables: dict[str, Iterable[column_spec | str]]) -> None:
-        super().__init__(_SchemaOnlyDatabase(self))
+    def __init__(
+        self,
+        tables: dict[str, Iterable[column_spec | str]],
+        *,
+        primary_keys: dict[str, Sequence[str]] | None = None,
+        foreign_keys: Iterable[foreign_key_spec] = (),
+        unique: dict[str, Iterable[Sequence[str]]] | None = None,
+        indexes: dict[str, dict[str, Sequence[str]]] | None = None,
+    ) -> None:
+        super().__init__(
+            _SchemaOnlyDatabase(self), prep_placeholder="%s", default_schema="public", default_catalog="static"
+        )
         self._spec: dict[str, list[column_spec]] = {}
         for table_name, columns in tables.items():
             self._spec[table_name] = [column_spec(col) if isinstance(col, str) else col for col in columns]
 
+        self._pks: dict[str, tuple[str, ...]] = {}
+        self._uniques: dict[str, list[tuple[str, ...]]] = {name: [] for name in self._spec}
+        self._fks: dict[str, list[foreign_key_spec]] = {name: [] for name in self._spec}
+        self._indexes: dict[str, dict[str, tuple[str, ...]]] = {name: {} for name in self._spec}
+
+        for table_name, specs in self._spec.items():
+            flagged = tuple(spec.name for spec in specs if spec.primary_key)
+            if flagged:
+                self._pks[table_name] = flagged
+            for spec in specs:
+                if spec.unique:
+                    self._uniques[table_name].append((spec.name,))
+                if spec.indexed:
+                    self._indexes[table_name][f"{table_name}_{spec.name}_idx"] = (spec.name,)
+                if spec.references:
+                    target_table, target_column = spec.references.split(".")
+                    self._fks[table_name].append(
+                        foreign_key_spec(table_name, [spec.name], target_table, [target_column])
+                    )
+
+        for table_name, pk_columns in (primary_keys or {}).items():
+            self._require_columns(table_name, pk_columns)
+            if table_name in self._pks:
+                raise ValueError(f"Table '{table_name}' has multiple primary key definitions")
+            self._pks[table_name] = tuple(pk_columns)
+        for table_name, constraints in (unique or {}).items():
+            for unique_columns in constraints:
+                self._require_columns(table_name, unique_columns)
+                self._uniques[table_name].append(tuple(unique_columns))
+        for table_name, named_indexes in (indexes or {}).items():
+            for index_name, index_columns in named_indexes.items():
+                self._require_columns(table_name, index_columns)
+                self._indexes[table_name][index_name] = tuple(index_columns)
+        for fk in (*foreign_keys, *(fk for fks in self._fks.values() for fk in fks)):
+            self._require_columns(fk.table, fk.columns)
+            self._require_columns(fk.referenced_table, fk.referenced_columns)
+            if len(fk.columns) != len(fk.referenced_columns):
+                raise ValueError(f"Foreign key on '{fk.table}' has mismatching column counts")
+        for fk in foreign_keys:
+            self._fks[fk.table].append(fk)
+
     # -- helpers -------------------------------------------------------------------------------------
+
+    def _require_columns(self, table: str, columns: Iterable[str]) -> None:
+        if table not in self._spec:
+            raise ValueError(f"Unknown table '{table}'")
+        known = {spec.name for spec in self._spec[table]}
+        for column in columns:
+            if column not in known:
+                raise ValueError(f"Unknown column '{table}.{column}'")
 
     def _table_name(self, table: TableReference | str) -> str:
         return table if isinstance(table, str) else table.full_name
+
+    def _known_table(self, table: TableReference | str) -> tuple[str, TableReference]:
+        """Normalizes `table` (dropping any alias) and checks that it exists."""
+        reference = table.drop_alias() if isinstance(table, TableReference) else TableReference(table)
+        if reference.full_name not in self._spec:
+            raise KeyError(f"Unknown table '{reference}'")
+        return reference.full_name, reference
 
     def _lookup(self, column: ColumnReference) -> column_spec:
         table = self._table_name(column.table) if column.table is not None else None
@@ -234,6 +357,20 @@ class StaticSchema(DatabaseSchema):
                 return spec
         raise KeyError(f"Unknown column '{column}'")
 
+    def _column_set(self, column: ColumnReference | Iterable[ColumnReference]) -> tuple[str, set[str]]:
+        """Applies the argument checks of the production multi-column predicates and returns table and names."""
+        columns = [column] if isinstance(column, ColumnReference) else list(column)
+        if not columns:
+            raise ValueError("Column list cannot be empty.")
+        if not ColumnReference.all_bound(columns):
+            unbound = [col for col in columns if not col.is_bound()]
+            raise UnboundColumnError(f"Unbound columns detected: {unbound}")
+        if len({col.table.drop_alias() for col in columns}) > 1:
+            raise ValueError(f"Columns must belong to the same table. Got columns from tables: {columns}")
+        for col in columns:
+            self._lookup(col)  # strict: unknown columns fail loudly
+        return columns[0].table.full_name, {col.name for col in columns}
+
     # -- leaf lookups --------------------------------------------------------------------------------
 
     def tables(
@@ -242,50 +379,50 @@ class StaticSchema(DatabaseSchema):
         return {TableReference(name) for name in self._spec}
 
     def columns(self, table: TableReference | str) -> Sequence[BoundColumnReference]:
-        name = self._table_name(table)
-        reference = table if isinstance(table, TableReference) else TableReference(name)
-        return [ColumnReference(spec.name, reference) for spec in self._spec.get(name, [])]
+        reference = table.drop_alias() if isinstance(table, TableReference) else TableReference(table)
+        return [ColumnReference(spec.name, reference) for spec in self._spec.get(reference.full_name, [])]
 
     def is_view(self, table: TableReference | str) -> bool:
         return False
 
-    def is_primary_key(self, column: ColumnReference) -> bool:
-        return self._lookup(column).primary_key
+    def is_primary_key(self, column: ColumnReference | Iterable[ColumnReference]) -> bool:
+        table, names = self._column_set(column)
+        return set(self._pks.get(table, ())) == names
 
-    def primary_key_column(self, table: TableReference | str) -> BoundColumnReference | None:
-        # A separate leaf lookup rather than a composition over `is_primary_key`: the production
-        # implementation issues its own information_schema query against table_constraints.
-        name = self._table_name(table)
-        reference = table if isinstance(table, TableReference) else TableReference(name)
-        primary_keys = [spec for spec in self._spec.get(name, []) if spec.primary_key]
-        if not primary_keys:
+    def primary_key_of(self, table: TableReference | str) -> PrimaryKeyRef | None:
+        name, reference = self._known_table(table)
+        if name not in self._pks:
             return None
-        if len(primary_keys) > 1:
-            raise ValueError(f"Table {reference} has multiple primary key columns: {primary_keys}")
-        return ColumnReference(primary_keys[0].name, reference)
+        return PrimaryKeyRef(ColumnReference(col, reference) for col in self._pks[name])
 
-    def has_secondary_index(self, column: ColumnReference) -> bool:
-        return self._lookup(column).indexed
+    def is_unique(self, column: ColumnReference | Iterable[ColumnReference]) -> bool:
+        table, names = self._column_set(column)
+        return any(set(cols) == names for cols in self._uniques[table])
 
-    def indexes_on(self, column: ColumnReference) -> set[str]:
-        spec = self._lookup(column)
-        table = self._table_name(column.table)
-        if spec.primary_key:
-            return {f"{table}_pkey"}
-        return {f"{table}_{spec.name}_idx"} if spec.indexed else set()
+    def all_foreign_keys_on(self, table: TableReference | str) -> set[ForeignKeyRef]:
+        name, reference = self._known_table(table)
+        return {
+            ForeignKeyRef(
+                [ColumnReference(col, reference) for col in fk.columns],
+                [ColumnReference(col, TableReference(fk.referenced_table)) for col in fk.referenced_columns],
+            )
+            for fk in self._fks[name]
+        }
+
+    def all_indexes_on(self, table: TableReference | str) -> Mapping[str, set[BoundColumnReference]]:
+        name, reference = self._known_table(table)
+        indexes: dict[str, tuple[str, ...]] = dict(self._indexes[name])
+        if name in self._pks:
+            indexes[f"{name}_pkey"] = self._pks[name]
+        for cols in self._uniques[name]:
+            indexes[f"{name}_{'_'.join(cols)}_key"] = cols
+        return {index_name: {ColumnReference(col, reference) for col in cols} for index_name, cols in indexes.items()}
 
     def datatype(self, column: ColumnReference, *, raw: bool = False) -> str:
         return self._lookup(column).datatype
 
     def is_nullable(self, column: ColumnReference) -> bool:
         return self._lookup(column).nullable
-
-    def foreign_keys_on(self, column: ColumnReference) -> set[BoundColumnReference]:
-        spec = self._lookup(column)
-        if not spec.references:
-            return set()
-        table_name, column_name = spec.references.split(".")
-        return {ColumnReference(column_name, TableReference(table_name))}
 
 
 class _SchemaOnlyDatabase(Database):

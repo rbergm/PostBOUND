@@ -30,7 +30,7 @@ class MockSchemaLookup(pb.db.DatabaseSchema):
     }
 
     def __init__(self) -> None:
-        super().__init__(None)
+        super().__init__(None, prep_placeholder="%s", default_schema="public", default_catalog="mock")
 
     def tables(
         self, *, catalog: str = "", schema: str = "", include_system_tables: bool = False
