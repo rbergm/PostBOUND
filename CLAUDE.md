@@ -5,7 +5,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Project
 
 PostBOUND is a research framework for prototyping and benchmarking **query optimizers** of relational database systems.
-It is a pure Python package (`postbound/`) that runs *on top of* a live database server (Postgres, DuckDB, limited MySQL) —
+It is a pure Python package (`postbound/`) that runs _on top of_ a live database server (Postgres or DuckDB) —
 it never patches the DBMS. Optimization decisions are enforced by translating an abstract query plan into system-specific
 **query hints** (pg_hint_plan / pg_lab for Postgres, quacklab for DuckDB).
 
@@ -67,7 +67,7 @@ connection files live in the repo root as `.psycopg_connection_<workload>` (e.g.
 `.psycopg_connection_stats`), resolved relative to the repo root rather than the CWD; `tools/set-workload.sh` switches
 the active one.
 
-Workload queries are *not* in the repo — `postbound/workloads.py` downloads them on first use into `$HOME/.postbound/`.
+Workload queries are _not_ in the repo — `postbound/workloads.py` downloads them on first use into `$HOME/.postbound/`.
 
 Database instances can be provisioned with the shell scripts in `db-support/<system>/` (`postgres-setup.sh`,
 `workload-job-setup.sh`, …), or via the Dockerfile (see the README's Docker options table).
@@ -80,7 +80,7 @@ Database instances can be provisioned with the shell scripts in `db-support/<sys
 SqlQuery  --(pipeline: optimization stages)-->  QueryPlan  --(HintService)-->  hinted SqlQuery  --> real DBMS
 ```
 
-- `postbound/_pipelines.py` — four `OptimizationPipeline` flavours, each a different *mental model* of an optimizer:
+- `postbound/_pipelines.py` — four `OptimizationPipeline` flavours, each a different _mental model_ of an optimizer:
   `TextBookOptimizationPipeline` (enumerator + cost model + cardinality estimator), `MultiStageOptimizationPipeline`
   (join order → operator selection → plan parameters), `IntegratedOptimizationPipeline` (one algorithm computes
   everything), `IncrementalOptimizationPipeline` (successive plan rewrites). Pipelines are configured by chained
@@ -90,7 +90,7 @@ SqlQuery  --(pipeline: optimization stages)-->  QueryPlan  --(HintService)-->  h
   `CompleteOptimizationAlgorithm`). Every stage also declares its training needs (`fit_database`, `fit_workload`,
   `fit_samples`, `learn_from_feedback`) — the pipeline and `bench` drive these automatically.
 - `postbound/_qep.py` — `QueryPlan`, the central plan representation (physical operators, estimates, measurements).
-- `postbound/_hints.py` — the *partial* decision containers handed to the hint layer: `JoinTree`/`LogicalJoinTree`,
+- `postbound/_hints.py` — the _partial_ decision containers handed to the hint layer: `JoinTree`/`LogicalJoinTree`,
   `PhysicalOperatorAssignment`, `PlanParameterization`. Anything left unset is delegated to the native optimizer.
 - `postbound/_core.py` — foundational value types shared everywhere: `TableReference`, `ColumnReference`, `Cardinality`
   (an integer wrapper that also models NaN = unknown and inf), `Cost`, and the physical operator enums.
@@ -101,8 +101,8 @@ SqlQuery  --(pipeline: optimization stages)-->  QueryPlan  --(HintService)-->  h
 `postbound/db/_db.py` defines the abstract `Database` and its delegated interfaces: `DatabaseSchema`,
 `StatisticsCatalog`, `OptimizerInterface`, and `HintService`. `HintService.generate_hints()` is the bridge from
 PostBOUND's abstractions back to executable SQL. Concrete backends are top-level packages/modules: `postgres/` (by far
-the most complete — two hint dialects, `PostgresExplain`/`PostgresPlan` parsing, timeout executor), `duckdb/`, and
-`mysql.py`. `DatabasePool` holds the "current" database so most APIs can default to it.
+the most complete — two hint dialects, `PostgresExplain`/`PostgresPlan` parsing, timeout executor) and `duckdb/`.
+`DatabasePool` holds the "current" database so most APIs can default to it.
 
 Two cross-cutting services wrap any backend: `db/_cache.py` provides `ResultCache` (result-set caching, optionally
 persisted to a JSON file — `Database` itself does **not** cache), and `db/_stats.py` provides `PreciseStatistics`

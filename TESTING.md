@@ -270,7 +270,7 @@ Pick every category that applies to the module.
   `build()` rejects incompatible configurations.
 - Anything reaching for `DatabasePool` → use the `fake_db` fixture.
 
-### 5.3 Database backends (`db/`, `postgres/`, `duckdb/`, `mysql.py`)
+### 5.3 Database backends (`db/`, `postgres/`, `duckdb/`)
 
 - **Tier 0**: everything that generates SQL or interprets rows. Drive it with `ScriptedCursor` / `FakeDatabase` and
   assert on the generated SQL (`calls[i].mentions(...)`), on the number and order of bound parameters, and on the

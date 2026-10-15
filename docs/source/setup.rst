@@ -75,8 +75,7 @@ in your local project, simply run ``uv add path/to/postbound/directory/``.
 A key requirement for PostBOUND is a running database server to execute queries against.
 See the :doc:`core/hinting` description for more details on why this is necessary and what  functionality the database has to
 provide.
-Currently, the most well-supported DBS are PostgreSQL and DuckDB.
-Limited support for MySQL is also available.
+Currently, the supported DBs are PostgreSQL and DuckDB.
 In the following, we assume that PostBOUND should interact with a Postgres server.
 
 To ensure the smoothest interaction between PostBOUND and Postgres and to have the least configuration effort, the

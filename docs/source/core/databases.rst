@@ -37,7 +37,6 @@ Database Backends
 
     postgres
     duckdb
-    mysql
 
 
 Query execution

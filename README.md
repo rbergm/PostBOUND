@@ -78,7 +78,7 @@ For DuckDB, PostBOUND uses [quacklab](https://github.com/rbergm/quacklab) hints 
 
 > [!NOTE]
 > PostBOUND's database interaction is designed to be independent of a specific system (such as PostgreSQL, Oracle, ...).
-> However, the current implementation is most complete for PostgreSQL and DuckDB with limited support for MySQL.
+> Currently, we focus on the Postgres (most complete) and DuckDB backends.
 > This is due to practical reasons, mostly our own time budget and the popularity of the two systems in the optimizer research
 > community.
 

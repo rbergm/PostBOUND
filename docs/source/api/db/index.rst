@@ -15,4 +15,3 @@ Submodules
 
     postgres
     duckdb
-    mysql

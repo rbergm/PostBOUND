@@ -32,7 +32,6 @@ Package                         Description
 :mod:`~postbound.db`            Contains all parts of PostBOUND that concern database interaction. See :doc:`databases` for details.
 :mod:`~postbound.postgres`      Implements the database backend for PostgreSQL.
 :mod:`~postbound.duckdb`        Implements the database backend for DuckDB.
-:mod:`~postbound.mysql`         Provides a simple database backend implementation for MySQL. MySQL is currently provided on a best-effort basis and not an official backend. Not all features are implemented.
 :mod:`~postbound.workloads`     Provides the :class:`~postbound.Workload` interface to represent query workloads and routines to load commonly-used benchmarks like JOB or Stats.
 :mod:`~postbound.bench`         Contains benchmarking utilities to measure the performance of different optimizers and optimization settings. See :doc:`benchmarking` for details.
 :mod:`~postbound.opt`           Provides utilities to aid with optimizer development, including optimization algorithms like :class:`~postbound.opt.DynamicProgrammingEnumerator` and additional utilities. See :doc:`../advanced/existing-strategies` for details.

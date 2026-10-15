@@ -15,9 +15,9 @@ uv sync                     # creates .venv, installs the package, all extras an
 uv run pre-commit install   # enables the git hooks (pre-commit and pre-push)
 ```
 
-That is the whole setup. `uv sync` pulls in the optional backends (`vis`, `duckdb`, `mysql`) as well,
-because without them the type checker cannot resolve the imports in `postbound/vis/`, `duckdb.py` and
-`mysql.py`, and results would differ between developers.
+That is the whole setup. `uv sync` pulls in the optional backends (currently only `vis`) as well,
+because without them the type checker cannot resolve the imports in `postbound/vis/` and results would differ between
+developers.
 
 Prefix everything with `uv run` — the system Python does not have the dependencies:
 
